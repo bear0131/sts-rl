@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# C++ build artifacts
+cpp/sts_lightspeed/build/
+cpp/sts_lightspeed/cmake-build-*/
+*.pyd
+*.so
+*.o
+*.obj
+
+# CommunicationMod run captures (real-game logs) -- local only, can be large
+bridge/client/logs/
+
+# editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
