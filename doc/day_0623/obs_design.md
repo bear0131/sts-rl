@@ -41,6 +41,15 @@ env 输出**类型化的原始状态**，不做表示学习：
 
 encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim 后端（训练）和真机后端（推理）产出同形 canonical，共用同一 encode。词表用 canonical id（bridge 已把 sim/真机命名归一）。
 
+### 0.5 mask 不是 obs（autoregressive 多选的关键纪律）
+
+`MaskablePPO` 的 `MultiInputPolicy` **前馈无记忆**（无 LSTM）。autoregressive 每一步是一次独立 forward，**步间唯一的记忆载体是 obs 本身**。两条通道必须分清：
+
+- **action_mask** 作用在网络**输出 logits** 上，把非法动作压成 −∞。它**不进网络输入**，模型的内部表征**看不到 mask 内容**——只在出口删掉不许选的选项。
+- **obs** 喂进网络前几层，是模型**用来决策**的信息；模型“看得见”、会基于它推理。
+
+→ **推论**：mask 能阻止重选已选的牌（把那个槽 logit 设 −∞），但**不会让模型“知道”自己选过什么**。多选屏（选 k 张 / 任意张）里“已经选了哪些、还差几张、能否收手”这些决策依据，**必须显式进 obs**（见 §4.1）。少了这一半，多选训练就是瞎选 + 无记忆。已选的牌要**两条通道各标一次**：mask 管“不准再选”，obs 管“让模型看见”。
+
 ---
 
 ## 1. 词表清单（categorical id 空间）
@@ -146,7 +155,7 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 | 屏 | 键 | 类型 | 形状 | 内容 |
 |---|---|---|---|---|
 | card_reward | `offer_card_ids` | categorical | (3,) | 三张候选牌 CARD_VOCAB index（已能拿到，见上次 commit） |
-| card_select(grid) | `select_card_ids` | categorical | (G_MAX,) | grid 候选牌（转化/升级等），PAD |
+| card_select(grid) | `select_card_ids` | categorical | (G_MAX,) | grid 候选牌（转化/升级等），PAD。**G_MAX 须容纳满卡组**：全卡组选牌屏（Smith/Transform/Remove/Toke）候选 = 整副卡组，中后期 30~40+ 张，`G_MAX=12` 会截断 → 模型看不到第 13 张往后。一代正常游玩卡组上限保守取 **64**（二代有「一变二」复制可上千张，但本项目只做一代，64 足够）。截断 = 丢候选 = 必须避免。 |
 | map | `map_node_rooms` | categorical | (3,) | 可达下一节点房型 ROOM_VOCAB index（≤3 条边），PAD |
 | map | `map_node_x` | scalar | (3,) | 各可达节点列号 /6 |
 | shop | `shop_card_ids`/`_prices` (7,) · `shop_relic_ids`/`_prices` (3,) · `shop_potion_ids`/`_prices` (3,) · `shop_remove_cost` (1,) | cat+scalar | —— | 货架 positional（slot i == SHOP_* 买入 action id）。售罄槽（price=-1）→ id PAD + price 0；价格 /999 |
@@ -154,6 +163,25 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 | boss_relic | `boss_relic_ids` | categorical | (3,) | 三个 boss 遗物 RELIC_VOCAB index |
 
 > 这些“选项 obs”与**动作 mask** 配套：模型在 card_reward 看到三张牌 id + 用 mask 限定只能 take#0/1/2/skip/proceed。动作侧编码（变长语义动作→定长 id+mask）是薄层 SlayTheSpireEnv 的另一份契约，单独文档。
+
+### 4.1 选牌屏的语义 + 进度（select_context / pickCount / selected）—— 待落地
+
+`select_card_ids` 只给了“候选是哪些牌”，但模型还缺三类信息才能在选牌屏正确决策。三个量各按其类型编码（§0.1）：
+
+| 键 | 类型 | 形状 | 内容 / 来源 |
+|---|---|---|---|
+| `select_context` | **categorical** | (1,) | 这屏选牌**干嘛的**——升级/消耗/复制/转化/移除/从弃牌堆拿回/检索…。一张合并词表 `SELECT_CONTEXT_VOCAB`（战内 `CardSelectTask` 20 项 + 战外 `CardSelectScreenType` 6~8 项，index 0=NONE）。**需 C++**（`bc.cardSelectInfo.cardSelectTask` / `gc.info.selectScreenType`，见 action_design §5 #2/#5）。为何不能只靠 mask：升级一张 vs 移除一张，**可点的牌集合可能完全相同**，目的却相反（升级挑最值钱、移除挑最废）——语义不进 obs，模型在信息上无法区分这两屏。 |
+| `pick_remaining` | scalar | (1,) | **还要选几张** = `pickCount − 已选数`，/某 scale。给“还差几张”比给绝对 pickCount 有用。**需 C++**（`bc.cardSelectInfo.pickCount`，§5 #3）。 |
+| `can_pick_zero` / `can_pick_any` | flag scalar | (1,)×2 | 能否合法停手 / 是否任意张。决定模型何时该选“确认/结束选择”。**需 C++**（同 #3）。 |
+| `selected` | flag | (G_MAX,) | **本轮已点的槽**（0/1），与 `select_card_ids` **positional 平行对齐**：槽 k 是什么牌看 `select_card_ids[k]`，点没点过看 `selected[k]`。**纯 Python**：薄层 `_pending` 攒着已选槽，投影成 flag 注入 obs（同 `arg_step` 路径）。 |
+
+> **`selected` 为何是对齐 grid 的 (G_MAX,) flag，而非“已选牌 id 的可变长列表”**：
+> 1. gym `spaces` 不吃可变长——要么 PAD 成定长 id 列表，要么用这个对齐的定长 flag，后者更省且天然和动作槽 `PICK_CARD[k]` 对位。
+> 2. id 列表遇**重复牌歧义**：grid 里 slot3、slot7 都是 Strike，你点了 slot3，一串 `selected_ids=[Strike]` 无法表达“是第 3 张那个”；位置 flag `selected[3]=1` 无歧义。**位置是唯一稳定的把手，牌面 id 不是。**
+>
+> **前提**：多选过程中候选网格**不重排**（槽 k 在本轮 pending 期间一直指同一张牌）。StS 选 k 张任务候选集在一次选择内通常固定，符合；C++ 绑定批顺手确认 `cardSelectInfo.cards` 多选途中不洗牌。若某屏真会动态变，则退回“每步重读 grid + flag 按当前 grid 位置重算”。
+>
+> 这套与 §0.5 呼应：**mask 把已选槽设非法（防重选），`selected`/`pick_remaining` 进 obs（让前馈模型看见自己选了啥、还差几张、能否收手）**——两条通道各管一半。
 
 ---
 

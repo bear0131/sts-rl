@@ -63,6 +63,8 @@ autoregressive 的合法性 mask 只告诉模型**能选什么**，不告诉它*
 | `select_context` | `SELECT_TASK_VOCAB`（战内）+ `SELECT_SCREEN_VOCAB`（战外） | 这个**选牌屏的目的**：升级一张(ARMAMENTS)/消耗(EXHAUST)/复制(DUAL_WIELD)/从弃牌堆拿回(HEADBUTT)/Gamble弃/检索(SEEK)…（战内 20 种 CardSelectTask）；转化/升级/移除/获取/装瓶(战外 CardSelectScreenType 6~8 种）。**需 C++ 绑定（§5，未做）**：未绑前 `pick_card` 屏只知“在选牌”不知目的。 |
 
 > `arg_step` 已加进 obs（encode v3，`spaces.Dict` 第 29 个键，§obs_design §8 同步）；`select_context` 仍待绑定。`arg_step` 纯 Python（薄层子状态机自己知道）；`select_context` 需绑定。
+>
+> **多选屏完整契约见 obs_design §4.1**：除 `select_context` 外还要 `pick_remaining`（还选几张）、`can_pick_zero`/`can_pick_any`（能否停手）、`selected`（对齐 grid 的 (G_MAX,) 已点 flag）。关键纪律（obs_design §0.5）：`MaskablePPO` 前馈无记忆，**mask 不进网络输入**——已选的牌 mask 只能“禁止重选”，要让模型**知道**自己选过什么、还差几张，必须把 `selected`/`pick_remaining` 显式塞进 obs。另：`select_card_ids` 的 `G_MAX` 须容纳满卡组（全卡组选牌屏候选 = 整副卡组），一代取 **64**（原 12 会截断）。
 
 ---
 
