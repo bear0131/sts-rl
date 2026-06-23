@@ -139,6 +139,7 @@ def real_to_sim_card_enum(real_id):
 # Monsters: real ids are irregular CamelCase ("AcidSlime_S", "SlaverRed",
 # "FuzzyLouseNormal"); no clean transform, so map explicitly and raise on a miss
 # (a missing entry should be loud, not a silent wrong compare).
+_SIM_MONSTER_INVALID = "INVALID = 0"  # empty/not-yet-activated slot (cf. monsterIdStrings[0])
 _MONSTER_SIM2REAL = {
     "ACID_SLIME_S": "AcidSlime_S", "ACID_SLIME_M": "AcidSlime_M", "ACID_SLIME_L": "AcidSlime_L",
     "SPIKE_SLIME_S": "SpikeSlime_S", "SPIKE_SLIME_M": "SpikeSlime_M", "SPIKE_SLIME_L": "SpikeSlime_L",
@@ -146,7 +147,7 @@ _MONSTER_SIM2REAL = {
     "GREEN_LOUSE": "FuzzyLouseNormal", "RED_LOUSE": "FuzzyLouseDefensive",
     "GREMLIN_NOB": "GremlinNob", "HEXAGHOST": "Hexaghost",
     "LOOTER": "Looter", "MUGGER": "Mugger", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
-    "THE_GUARDIAN": "TheGuardian",
+    "THE_GUARDIAN": "TheGuardian", "SLIME_BOSS": "SlimeBoss",
     "RED_SLAVER": "SlaverRed", "BLUE_SLAVER": "SlaverBlue",
     "FUNGI_BEAST": "FungiBeast",
     "SPIKER": "Spiker", "BYRD": "Byrd", "CENTURION": "Centurion", "CHOSEN": "Chosen",
@@ -211,7 +212,12 @@ def normalize_sim(raw):
             "powers": _powers_sim(p["powers"]),
         },
         "monsters": [
+            # Skip empty placeholder slots: the sim's monsterCount can include
+            # not-yet-activated slots (e.g. Slime Boss reserves a slot for its
+            # split halves) which surface as id "INVALID = 0", gone=true. The
+            # real game never reports these.
             _norm_sim_monster(m) for m in raw["monsters"]
+            if m["id"] != _SIM_MONSTER_INVALID
         ],
         "hand": [_card(_sim_card_id(n), u) for n, u in raw["hand"]],
         "draw": [_card(_sim_card_id(n), u) for n, u in raw["draw"]],

@@ -32,26 +32,35 @@ from schemas.combat_state import normalize_sim             # noqa: E402
 
 import encode                                               # noqa: E402
 import actions                                              # noqa: E402
+import factories                                            # noqa: E402
 
 # sim InputState ints (see DEVNOTES / bindings): 1 = PLAYER_NORMAL, 2 = CARD_SELECT
 _PLAYER_NORMAL = 1
 _CARD_SELECT = 2
-# sim Outcome ints
+# BattleContext.to_dict()["outcome"] uses the combat-side Outcome enum
+# (BattleContext.h): UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2. This is NOT
+# the same as the module-level sts.GameOutcome enum, whose ints are different
+# (UNDECIDED=1, VICTORY=2, LOSS=0) — do not compare the two.
 _OUTCOME_UNDECIDED = 0
+_OUTCOME_VICTORY = 1
+_OUTCOME_LOSS = 2
 
 
 class SimCombatEnv(gym.Env):
     """One combat = one episode.
 
     gc_factory() -> a fresh GameContext positioned at the combat to fight, plus
-    the encounter name to force. Until overworld RNG is aligned, callers build
-    this from a real pre-combat snapshot (cf. replay.py `_sync_gc`)."""
+    the encounter name to force. Defaults to a random act-1 combat (vanilla
+    Ironclad starter loadout); pass your own to fight specific combats or to
+    replay a real pre-combat snapshot (cf. replay.py `_sync_gc`)."""
 
     metadata = {"render_modes": []}
 
-    def __init__(self, gc_factory):
+    def __init__(self, gc_factory=None, pool="normal", ascension=0):
         super().__init__()
         self._gc_factory = gc_factory
+        self._pool = pool
+        self._ascension = ascension
         self.gc = None
         self.bc = None
 
@@ -63,6 +72,12 @@ class SimCombatEnv(gym.Env):
     # ---- gym API ----
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        # Lazily build the default factory once self.np_random exists, so
+        # reset(seed=...) drives the episode stream reproducibly.
+        if self._gc_factory is None:
+            self._gc_factory = factories.random_act1_factory(
+                self.np_random, pool=self._pool, ascension=self._ascension
+            )
         self.gc, encounter = self._gc_factory()
         self.bc = sts.create_battle(self.gc, encounter)
         self._prev_hp = self.bc.to_dict()["player"]["hp"]
@@ -83,7 +98,7 @@ class SimCombatEnv(gym.Env):
         reward = float(hp - self._prev_hp) / encode.HP_SCALE
         self._prev_hp = hp
         if terminated:
-            reward += 1.0 if raw["outcome"] == sts.GameOutcome.PLAYER_VICTORY.value else -1.0
+            reward += 1.0 if raw["outcome"] == _OUTCOME_VICTORY else -1.0
         return self._obs(), reward, terminated, False, self._info()
 
     # ---- helpers ----
