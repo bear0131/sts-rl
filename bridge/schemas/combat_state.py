@@ -72,9 +72,17 @@ def _monster_real(m):
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
         "powers": _powers_real(m["powers"]) if hp > 0 else {},
-        # extra (not compared yet): real-only fields
+        # OBS move fields. NOTE: the obs MOVE_VOCAB is keyed on the sim's
+        # MonsterMoveId enum; CommunicationMod's move_id is a DIFFERENT id space,
+        # so we do NOT pass it as the obs `move_id` (that would index the wrong
+        # vocab). Real backend leaves move/move_id PAD and lets the encoder derive
+        # INTENT_CATEGORY from base_damage (attack) — a real intent->sim-move map
+        # is future work when the real inference backend is wired (see obs_design
+        # §6 / DEVNOTES). The raw real fields are kept under real_* for debugging.
+        "move": "INVALID",
+        "move_id": 0,
         "intent": m.get("intent"),
-        "move_id": m.get("move_id", -1),
+        "real_move_id": m.get("move_id", -1),
     }
 
 
@@ -195,6 +203,12 @@ def _norm_sim_monster(m):
         "base_damage": base,
         "hits": hits,
         "powers": _powers_sim(m["powers"]) if hp > 0 else {},
+        # current intent: the sim now exports the rolled MonsterMoveId as an
+        # enum-name string + int (see bindings to_dict). Carried for the obs
+        # MOVE_VOCAB / derived INTENT_CATEGORY; the differential `diff()` ignores
+        # it (real-side move ids are not aligned and not compared).
+        "move": m.get("move", "INVALID"),
+        "move_id": m.get("move_id", 0),
     }
 
 
@@ -310,6 +324,44 @@ def normalize_sim_overworld(gc):
         "relics": sorted(gc.relic_ids()),
         "phase": phase,
         "options": _sim_screen_options(gc, phase),
+    }
+
+
+# ----------------------------- obs global block -----------------------------
+# The persistent run state the OBS needs in EVERY phase (combat included): the
+# agent decides combat moves with the whole run in view (which boss is next, what
+# relics/potions it holds, how big the deck is). All of this is pure-Python off
+# the gc — the env still holds gc mid-combat. Distinct from normalize_sim_overworld
+# (which is the differential-testing snapshot) so the obs contract can evolve
+# without touching the diff path. Ids are canonical (cards/relics/potions/boss).
+
+def _enum_tail(v):
+    """'MonsterEncounter.HEXAGHOST' / 'CharacterClass.IRONCLAD' -> bare tail."""
+    return str(v).split(".")[-1]
+
+
+def normalize_sim_global(gc):
+    """Run-global obs block (obs_design.md §3/§4). Backend-agnostic shape; the
+    sim fills it from gc. `boss_relics` is only meaningful on a boss-relic
+    screen (empty/duplicate otherwise) — callers gate on phase."""
+    # boss_relic_ids() is a recent binding; fall back gracefully if absent so an
+    # older .so still imports (the field is simply omitted -> encoder PADs it).
+    try:
+        boss_relics = list(gc.boss_relic_ids())
+    except AttributeError:
+        boss_relics = []
+    return {
+        "character": _enum_tail(gc.character) if hasattr(gc, "character")
+                     else _enum_tail(gc.cc) if hasattr(gc, "cc") else "INVALID",
+        "ascension": getattr(gc, "ascension", 0),
+        "act": gc.act,
+        "floor": gc.floor_num,
+        "boss": _enum_tail(gc.boss),
+        "relics": list(gc.relic_ids()),
+        "potions": list(gc.overworld_potions),
+        "gold": gc.gold,
+        "deck": [(_sim_card_id(n), u) for n, u in gc.deck_ids()],
+        "boss_relics": boss_relics,
     }
 
 

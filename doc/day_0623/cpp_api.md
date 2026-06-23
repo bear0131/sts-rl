@@ -129,6 +129,7 @@ cur_room             ...
 boss                 ...
 cur_hp / max_hp      int
 gold                 int
+ascension            int                # obs v2 新增导出
 blue_key / green_key / red_key   bool
 card_rarity_factor / potion_chance / monster_chance / shop_chance / treasure_chance
 shop_remove_count    int
@@ -142,8 +143,11 @@ note_for_yourself_card  ...
 encounter            当前遭遇战枚举(_encounter_name 反推用)
 screen_state_name    屏幕状态名串(如 "...BATTLE" / "...REST_ROOM" / "...EVENT_SCREEN")
 cur_event_name       当前事件 id 串
+character             角色枚举名串(IRONCLAD/SILENT/DEFECT/WATCHER)  # obs v2 新增
 burning_elite_x/y    带火精英(emerald-key elite)的地图坐标;无图时 -1
 ```
+
+> obs v2 还新增方法 `boss_relic_ids()` → boss 遗物三选的 stable id 列表(读 `info.bossRelics[3]`)。
 
 ### 调试用(`_dbg_*`,谨慎)
 
@@ -189,6 +193,8 @@ burning_elite_x/y    带火精英(emerald-key elite)的地图坐标;无图时 -1
       "half_dead": bool,
       "base_damage": int,        # getMoveBaseDamage().damage
       "hits": int,               # .attackCount
+      "move_id": int,            # 当前意图 = moveHistory[0] 的 MonsterMoveId 枚举值(0=INVALID)
+      "move": str,               # 对应 monsterMoveStrings 枚举名(如 "JAW_WORM_CHOMP")
       "powers": [(name, amount), ...],
     }, ...
   ],
@@ -199,7 +205,10 @@ burning_elite_x/y    带火精英(emerald-key elite)的地图坐标;无图时 -1
 }
 ```
 
-> **未导出**:药水动作枚举(`legal_actions` 不含药水)、怪物 intent 字符串 / move_id(只导出了 `base_damage`/`hits`)。
+> **未导出**:药水动作枚举(`legal_actions` 不含药水)。
+> **意图已导出**(2026-06-23,obs v2):`move_id`/`move` = 当前回合 rolled move。
+> ⚠️ 当前意图在 **`moveHistory[0]`**(`setMove` 把旧的挪到 `[1]`、新的放 `[0]`),不是草案里写的 `[1]`。
+> 上游无富信息 intent 枚举(只有 `isMoveAttack`),attack/defend/buff/… 分类在 Python 侧从 move 名派生(`env/core/intents.py`)。
 
 ---
 
@@ -290,5 +299,5 @@ repr(m)                                    # 地图字符画
 2. `pick_reward_card` 收 **`Card` 对象**,不是下标。
 3. `drink_potion` **不 pump** action 队列 → 走 `execute(Action.POTION, ...)`。
 4. `NNInterface.observation_space_size` getter 在 pybind 2.13 下读取报错。
-5. 未导出:战斗内药水动作枚举、怪物 intent/move_id。
+5. 未导出:战斗内药水动作枚举。怪物 intent/move_id **已于 obs v2 导出**(当前意图 = `moveHistory[0]`,非 `[1]`)。
 6. 加载逻辑目前是 Windows/mingw 写死(`add_dll_directory` + `.pyd`),mac/linux 需调整。

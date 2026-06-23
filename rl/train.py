@@ -77,7 +77,13 @@ def train(args):
     )
 
     model = MaskablePPO(
-        "MlpPolicy",
+        # obs is a gymnasium Dict (typed categorical + scalar groups, see
+        # env/core/encode.py) -> MultiInputPolicy. NOTE: the default extractor
+        # treats every Box as continuous; the categorical id groups (card/monster/
+        # move/... indices) really want an embedding layer. A custom
+        # features-extractor that embeds the id groups is the next model-side step
+        # (decision C in obs_design.md) — MlpPolicy on a flat vector is gone.
+        "MultiInputPolicy",
         venv,
         n_steps=args.n_steps,
         batch_size=args.batch_size,

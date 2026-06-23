@@ -16,19 +16,21 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from env.core.combat_env import SimCombatEnv
-from env.core import encode
 from env.core import actions
 
 
-def _check_obs(obs):
-    assert obs.shape == (encode.OBS_SIZE,), f"obs shape {obs.shape}"
-    assert obs.dtype == np.float32, f"obs dtype {obs.dtype}"
-    assert np.all(np.isfinite(obs)), "obs has non-finite values"
+def _check_obs(env, obs):
+    """v2 obs is a gymnasium Dict: validate it belongs to the env's declared
+    space (shapes/dtypes/bounds), and that every scalar entry is finite."""
+    space = env.observation_space
+    assert space.contains(obs), "obs not contained in observation_space"
+    for k, v in obs.items():
+        assert np.all(np.isfinite(v)), f"obs[{k}] has non-finite values"
 
 
 def _play_one(env, rng, reset_seed=None, max_steps=300):
     obs, info = env.reset(seed=reset_seed)
-    _check_obs(obs)
+    _check_obs(env, obs)
     mask = info["action_mask"]
     assert mask.shape == (actions.N_ACTIONS,)
     assert mask.any(), "reset produced no legal actions"
@@ -43,7 +45,7 @@ def _play_one(env, rng, reset_seed=None, max_steps=300):
         legal = np.flatnonzero(mask)
         a = int(rng.choice(legal))
         obs, r, term, trunc, info = env.step(a)
-        _check_obs(obs)
+        _check_obs(env, obs)
         assert np.isfinite(r), f"non-finite reward {r}"
         total_r += r
         mask = info["action_mask"]

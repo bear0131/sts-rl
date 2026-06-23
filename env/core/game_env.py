@@ -25,11 +25,12 @@ import numpy as np
 from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
 from schemas.combat_state import (
-    normalize_sim, normalize_sim_overworld, sim_phase,
+    normalize_sim, normalize_sim_overworld, normalize_sim_global, sim_phase,
 )
 
 from . import actions
 from . import combat_env
+from . import encode
 from . import factories
 from . import game_actions as ga
 from . import spiremap
@@ -116,6 +117,24 @@ class SimGameEnv:
 
     def _info(self):
         return {"phase": self.phase(), "legal": self.legal_semantic_actions()}
+
+    # --------------------------------------------------------------- obs
+    def obs_canonical(self):
+        """The assembled OBS canonical: the combat-or-overworld block from
+        _canonical(), plus the run-global block (present every phase, §3/§4).
+        This is what encode.encode() consumes."""
+        d = self._canonical()
+        d["global"] = normalize_sim_global(self.gc)
+        return d
+
+    def obs(self):
+        """The structured Dict observation (encode v2) for the current state."""
+        return encode.encode(self.obs_canonical())
+
+    @staticmethod
+    def observation_space():
+        """The gymnasium Dict space (shared with SimCombatEnv via encode)."""
+        return encode.obs_space()
 
     # --------------------------------------------------------------- terminal
     @property

@@ -19,7 +19,7 @@ from gymnasium import spaces
 # sys.path; that must run before importing slaythespire / schemas.
 from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
-from schemas.combat_state import normalize_sim
+from schemas.combat_state import normalize_sim, normalize_sim_global
 
 from . import encode
 from . import actions
@@ -97,9 +97,7 @@ class SimCombatEnv(gym.Env):
         self.bc = None
         self.encounter = None
 
-        self.observation_space = spaces.Box(
-            low=0.0, high=np.inf, shape=(encode.OBS_SIZE,), dtype=np.float32
-        )
+        self.observation_space = encode.obs_space()
         self.action_space = spaces.Discrete(actions.N_ACTIONS)
 
     # ---- gym API ----
@@ -136,11 +134,20 @@ class SimCombatEnv(gym.Env):
 
     # ---- helpers ----
     def _canon(self):
-        """Current state as the canonical combat dict (shared by obs + render)."""
+        """Current combat as the canonical combat dict (shared by obs + render)."""
         return normalize_sim(self.bc.to_dict())
 
+    def _obs_canon(self):
+        """The assembled OBS canonical: combat block + run-global block + phase.
+        Combat decisions read the whole run (next boss, relics, deck) — see
+        obs_design.md §3 — so the global block rides along even in combat."""
+        d = self._canon()
+        d["phase"] = "combat"
+        d["global"] = normalize_sim_global(self.gc)
+        return d
+
     def _obs(self):
-        return encode.encode(self._canon())
+        return encode.encode(self._obs_canon())
 
     def _info(self):
         return {"action_mask": self.action_mask()}

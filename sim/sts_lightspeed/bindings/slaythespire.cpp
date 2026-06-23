@@ -25,6 +25,7 @@
 #include "constants/MonsterStatusEffects.h"
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterIds.h"
+#include "constants/MonsterMoves.h"
 #include "constants/Cards.h"
 #include "constants/MonsterEncounters.h"
 
@@ -96,6 +97,12 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
         md["block"] = m.block;
         md["gone"] = m.isDeadOrEscaped();
         md["half_dead"] = m.halfDead;
+        // current intent: the move the monster has rolled for this turn. setMove
+        // shifts the previous move to moveHistory[1] and stores the new one in
+        // moveHistory[0], so [0] is the *current* intent (the obs MOVE_VOCAB id).
+        const auto curMove = m.moveHistory[0];
+        md["move_id"] = static_cast<int>(curMove);
+        md["move"] = sts::monsterMoveStrings[static_cast<int>(curMove)];
         const auto dmg = m.getMoveBaseDamage(bc);
         md["base_damage"] = dmg.damage;
         md["hits"] = dmg.attackCount;
@@ -381,6 +388,25 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("shop_buy_potion", [](GameContext &gc, int idx) { gc.info.shop.buyPotion(gc, idx); })
         .def("shop_remove", [](GameContext &gc) { gc.info.shop.buyCardRemove(gc); })
         .def("shop_proceed", [](GameContext &gc) { gc.screenState = ScreenState::MAP_SCREEN; })
+        // obs globals: character + ascension are construction-time, boss_relic_ids
+        // are the 3 choices offered on a BOSS_RELIC_REWARDS screen (info.bossRelics).
+        .def_property_readonly("character",
+            [](const GameContext &gc) {
+                switch (gc.cc) {
+                    case CharacterClass::IRONCLAD: return "IRONCLAD";
+                    case CharacterClass::SILENT:   return "SILENT";
+                    case CharacterClass::DEFECT:   return "DEFECT";
+                    case CharacterClass::WATCHER:  return "WATCHER";
+                    default:                       return "INVALID";
+                }
+            }, "the player's character class as a stable enum-name string")
+        .def_readwrite("ascension", &GameContext::ascension)
+        .def("boss_relic_ids", [](const GameContext &gc) {
+            pybind11::list out;
+            for (int i = 0; i < 3; ++i)
+                out.append(std::string(sts::relicIds[static_cast<int>(gc.info.bossRelics[i])]));
+            return out;
+        }, "the 3 boss relics offered on the current boss-relic screen, as stable ids")
         .def("__repr__", [](const GameContext &gc) {
             std::ostringstream oss;
             oss << "<" << gc << ">";
