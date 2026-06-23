@@ -31,7 +31,7 @@ The exact sizes are computed below; OBS_SIZE is asserted stable in tests.
 
 import numpy as np
 
-from cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
+from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 
 # Bump whenever the layout below changes in a way that invalidates checkpoints
 # (reorder, resize, change scaling). Filling a previously-reserved zero slot with

@@ -1,7 +1,7 @@
 """End-to-end regression test for SimCombatEnv. Requires the sim to be built
-(sim/sts_lightspeed/build). Run on the training machine:
+(sim/sts_lightspeed/build). Run from the repo root on the training machine:
 
-    python env/test_combat.py
+    python -m env.scripts.test_combat
 
 Plays N random-but-legal episodes across the act-1 pools and asserts the env
 contract holds: obs shape/dtype/finiteness, the action mask agrees with what
@@ -13,12 +13,11 @@ import sys
 
 import numpy as np
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from combat_env import SimCombatEnv  # noqa: E402
-import encode                        # noqa: E402
-import actions                       # noqa: E402
+from env.core.combat_env import SimCombatEnv
+from env.core import encode
+from env.core import actions
 
 
 def _check_obs(obs):
@@ -68,8 +67,8 @@ def _play_one(env, rng, reset_seed=None, max_steps=300):
 def _check_all_encounters_spawn():
     """Every encounter name must resolve in create_battle (>=1 monster).
     Guards against the SaveFileMappings-vs-monsterEncounterStrings name mismatch."""
-    import encounters
-    from factories import fixed_factory
+    from env.core import encounters
+    from env.core.factories import fixed_factory
     bad = []
     for pool, (names, _) in encounters.POOLS.items():
         for nm in names:

@@ -1,20 +1,22 @@
-"""Smoke test for the backend-agnostic env layer (encode + actions).
+"""Smoke test for the backend-agnostic env layer (encode + actions + render).
 
 Runs WITHOUT the sim built: it feeds a hand-made canonical combat dict (the same
-shape bridge.schemas produces) through encode(), and round-trips the action
-codec. This is what we can verify on a machine where slaythespire isn't compiled.
+shape bridge.schemas produces) through encode(), round-trips the action codec,
+and renders state/actions. This is what we can verify on a machine where
+slaythespire isn't compiled.
 
-Run: python env/test_pure.py
+Run from the repo root: python -m env.scripts.test_pure
 """
 
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import numpy as np
-import encode
-import actions
+from env.core import encode
+from env.core import actions
+from env.core import render
 
 
 def _fake_canon():
@@ -71,8 +73,24 @@ def test_action_codec_roundtrip():
     print(f"N_ACTIONS = {actions.N_ACTIONS}  (version {actions.ACTION_VERSION})")
 
 
+def test_render_state_and_action():
+    canon = _fake_canon()
+    s = render.render_state(canon)
+    # state render mentions the live monster, the player hp, and a hand card
+    assert "JawWorm" in s and "68/80" in s and "Strike_R" in s, s
+    # the gone Cultist is shown as gone, not as a live foe row
+    assert "Cultist" in s and "gone" in s, s
+    # action render: end turn, an untargeted play, a targeted play with names
+    assert render.render_action(actions.END_TURN) == "end turn"
+    play_tgt = actions.encode_play(1, 0)            # play hand[1] (Bash) on foe #0
+    label = render.render_action(play_tgt, canon)
+    assert "Bash" in label and "JawWorm" in label, label
+    print("render OK:\n" + s)
+
+
 if __name__ == "__main__":
     test_encode_shape_and_stability()
     test_dead_monster_padding()
     test_action_codec_roundtrip()
+    test_render_state_and_action()
     print("OK")

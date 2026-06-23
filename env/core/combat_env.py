@@ -11,28 +11,20 @@ reproduce real combats; see DEVNOTES). For now reset() takes a gc_factory the
 caller supplies. Reward shaping is a placeholder (win/loss + hp delta).
 """
 
-import os
-import sys
-
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-# env/ is flat and not a package; make sibling modules and the sim importable.
-_HERE = os.path.dirname(__file__)
-sys.path.insert(0, _HERE)                                   # encode, actions, cards_vocab
-sys.path.insert(0, os.path.join(_HERE, "..", "bridge"))     # schemas
-_BUILD = os.path.join(_HERE, "..", "sim", "sts_lightspeed", "build")
-if hasattr(os, "add_dll_directory") and os.path.isdir(_BUILD):
-    os.add_dll_directory(os.path.abspath(_BUILD))           # windows/mingw only
-sys.path.insert(0, os.path.abspath(_BUILD))
+# `import env.core` (the package __init__) puts the sim build dir and bridge/ on
+# sys.path; that must run before importing slaythespire / schemas.
+from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
+import slaythespire as sts
+from schemas.combat_state import normalize_sim
 
-import slaythespire as sts                                  # noqa: E402
-from schemas.combat_state import normalize_sim             # noqa: E402
-
-import encode                                               # noqa: E402
-import actions                                              # noqa: E402
-import factories                                            # noqa: E402
+from . import encode
+from . import actions
+from . import factories
+from . import render
 
 # sim InputState ints (see DEVNOTES / bindings): 1 = PLAYER_NORMAL, 2 = CARD_SELECT
 _PLAYER_NORMAL = 1
@@ -54,15 +46,17 @@ class SimCombatEnv(gym.Env):
     Ironclad starter loadout); pass your own to fight specific combats or to
     replay a real pre-combat snapshot (cf. replay.py `_sync_gc`)."""
 
-    metadata = {"render_modes": []}
+    metadata = {"render_modes": ["ansi"]}
 
-    def __init__(self, gc_factory=None, pool="normal", ascension=0):
+    def __init__(self, gc_factory=None, pool="normal", ascension=0, render_mode=None):
         super().__init__()
         self._gc_factory = gc_factory
         self._pool = pool
         self._ascension = ascension
+        self.render_mode = render_mode
         self.gc = None
         self.bc = None
+        self.encounter = None
 
         self.observation_space = spaces.Box(
             low=0.0, high=np.inf, shape=(encode.OBS_SIZE,), dtype=np.float32
@@ -78,8 +72,8 @@ class SimCombatEnv(gym.Env):
             self._gc_factory = factories.random_act1_factory(
                 self.np_random, pool=self._pool, ascension=self._ascension
             )
-        self.gc, encounter = self._gc_factory()
-        self.bc = sts.create_battle(self.gc, encounter)
+        self.gc, self.encounter = self._gc_factory()
+        self.bc = sts.create_battle(self.gc, self.encounter)
         self._prev_hp = self.bc.to_dict()["player"]["hp"]
         return self._obs(), self._info()
 
@@ -102,11 +96,27 @@ class SimCombatEnv(gym.Env):
         return self._obs(), reward, terminated, False, self._info()
 
     # ---- helpers ----
+    def _canon(self):
+        """Current state as the canonical combat dict (shared by obs + render)."""
+        return normalize_sim(self.bc.to_dict())
+
     def _obs(self):
-        return encode.encode(normalize_sim(self.bc.to_dict()))
+        return encode.encode(self._canon())
 
     def _info(self):
         return {"action_mask": self.action_mask()}
+
+    # ---- rendering ----
+    def render(self):
+        """Return a human-readable string of the current combat (render_mode
+        'ansi'). Not the obs the policy sees — this is the debug/teaching view."""
+        if self.bc is None:
+            return "(combat not started — call reset())"
+        return render.render_state(self._canon())
+
+    def describe_action(self, action_id):
+        """Human-readable label for an action id in the current state."""
+        return render.render_action(action_id, self._canon() if self.bc else None)
 
     def action_mask(self):
         """Boolean mask over the fixed action space, built from the sim's own

@@ -1,12 +1,12 @@
 # `env/` — Gymnasium 战斗环境
 
-包装 `sim/`(sts_lightspeed)的强化学习环境层。**平铺,不作为可安装包** —— 用的时候把 `env/` 加进 `sys.path`,直接 `import encode` / `import actions` / `from combat_env import SimCombatEnv`。
+包装 `sim/`(sts_lightspeed)的强化学习环境层。**是一个真正的包** —— 从仓库根目录用模块方式跑脚本(`python -m env.scripts.play`),核心逻辑用相对导入(`from env.core import encode`)。
 
 ## 设计铁律
 
 1. **`env` 不许 import `rl`**(算法层)。env 只认 sim,这样才能随时换算法 / 挂 SB3 / 给别人跑 baseline。
-2. **`encode.py` / `actions.py` 不许 import `slaythespire`**。它们只跟 canonical dict 和抽象 action id 打交道,是 backend-agnostic 的。唯一碰 sim 的是 `combat_env.py`。
-3. 这条缝的回报:将来做 `RealCombatEnv`(经 bridge 接真机做 inference)时,encode/actions **原样复用**,只换掉 `combat_env.py` 这个后端。policy 不知道自己跑在 sim 还是真机上。
+2. **纯模块(`encode` / `actions` / `render` / `encounters` / `cards_vocab`)不许 import `slaythespire`**。它们只跟 canonical dict 和抽象 action id 打交道,是 backend-agnostic 的,没编译 sim 也能 import(本地/CI 测试就靠这个)。唯一碰 sim 的是 `combat_env.py` 和 `factories.py`。
+3. 这条缝的回报:将来做 `RealCombatEnv`(经 bridge 接真机做 inference)时,encode/actions/render **原样复用**,只换掉后端。policy 不知道自己跑在 sim 还是真机上。
 
 ```
         canonical 状态 ─► encode ─► obs ─► policy ─► action id ─► actions.decode ─► 后端
@@ -16,15 +16,24 @@
  (训练/sim)        (inference/真机)                              (SimCombatEnv)        (RealCombatEnv,未来)
 ```
 
-## 文件
+## 布局
 
-| 文件 | 作用 | 依赖 |
-|---|---|---|
-| `cards_vocab.py` | 全集卡词表(371 项,**canonical id 空间**,checked-in)。append-only。 | 无 |
-| `encode.py` | canonical 战斗 dict → 定长 `float32` obs 向量。obs 布局的唯一真相源。 | numpy |
-| `actions.py` | 固定整数 action 空间 + `decode` / `encode_*`。 | 无 |
-| `combat_env.py` | `SimCombatEnv(gym.Env)`,把 sim ↔ encode ↔ actions 接起来。 | slaythespire, gymnasium, numpy, bridge.schemas |
-| `test_pure.py` | 纯层冒烟测试,**不需要编译 sim** 就能跑。 | numpy |
+```
+env/
+  core/                 环境核心逻辑(包)
+    cards_vocab.py      全集卡词表(canonical id 空间,checked-in,append-only)   [无 sim]
+    encode.py           canonical 战斗 dict → 定长 float32 obs 向量(布局真相源)  [无 sim]
+    actions.py          固定整数 action 空间 + decode/encode_*                     [无 sim]
+    render.py           canonical 状态/动作 → 人读字符串                            [无 sim]
+    encounters.py       act-1 遭遇战名单(normal/elite/boss)                       [无 sim]
+    factories.py        gc_factory 构造器(random_act1 / fixed)                    [需 sim]
+    combat_env.py       SimCombatEnv(gym.Env)                                       [需 sim]
+    __init__.py         sys.path bootstrap:把 sim build 目录 + bridge/ 挂上
+  scripts/              可执行入口(不被 core import)
+    play.py             人类交互式玩一局
+    test_pure.py        纯层冒烟测试(不需要 sim)
+    test_combat.py      sim 实跑回归测试(需要 sim)
+```
 
 ## 当前规格(v1)
 
@@ -49,17 +58,33 @@
 
 手牌槽位现在存的是 **card index 标量**(占位)。单个标量 id 是糟糕的网络输入(给无关的牌强加了序数结构),v1 先这么跑通循环。将来应改成每槽 one-hot / embedding —— 那次改动会动 `OBS_SIZE`,届时 `OBS_VERSION += 1`。注意:policy 选牌靠的是 `actions` 那套 action id,**不是**靠这个标量。
 
-## 两个挂账(见 `combat_env.py` 注释)
+## 战斗怎么生成(reset)
 
-1. **`reset()` 收一个 `gc_factory`**:vanilla `GameContext` 造不出真机战斗(Neow→进图会把 miscRng 推到位,见 DEVNOTES),所以调用方得提供一个推进到战斗前状态的 gc + 遭遇战名。可参考 `bridge/replay.py` 的 `_sync_gc`。真正接训练时再补。
-2. **reward 是占位**:目前只有 胜/负 ± hp 变化。
+`SimCombatEnv(pool=...)` 默认用 `factories.random_act1_factory`:每个 episode 随机抽 `seed`、`floor`、`encounter`,用 vanilla 铁甲 `GameContext`(自带初始套牌 + 燃烧之血)强制开一场 act-1 战斗。`pool` 取 `"normal"|"elite"|"boss"`。`reset(seed=...)` 可复现整条 episode 流。
 
-## 跑测试
+要打固定战斗(测试/过拟合)用 `factories.fixed_factory(seed, encounter, floor)`,或给 env 传自定义 `gc_factory`。
+
+> ⚠️ 只有**战斗内** RNG(`Random(seed+floor)`)和真机对齐;地图/事件 RNG 没对齐。所以"随机 encounter+seed"是 seed/floor/名字三者独立组合,不还原真机地图 —— 训练要的是战斗分布覆盖,这没问题。遭遇战名必须用 `monsterEncounterStrings` 拼写(见 `encounters.py` 注释)。
+
+## reward(占位)
+
+目前 = 每步 hp 变化 / `HP_SCALE`,终局 ±1(胜/负)。胜负读 `bc.to_dict()["outcome"]` 的**战斗侧 `Outcome` 枚举**(1=胜 2=负),**不是** `sts.GameOutcome`(两者数值相反,混用会把败局判成胜局)。reward shaping 以后再细化。
+
+## 跑
 
 ```bash
-# 纯层(encode + actions),不需要 sim:
-python env/test_pure.py
+# 从仓库根目录:
 
-# combat_env.py 需要先在本机编译出 slaythespire(.so / .pyd),见 sim/DEVNOTES.md。
-# 当前这台 mac 上 sim 尚未构建;训练机(Linux)上构建后才能整体跑。
+# 交互式玩一局(需要 sim 已编译):
+python -m env.scripts.play                          # 随机 normal 战
+python -m env.scripts.play --pool elite --seed 42
+python -m env.scripts.play --encounter "Cultist" --seed 7
+
+# 纯层测试(encode + actions + render),不需要 sim:
+python -m env.scripts.test_pure
+
+# 整体回归(需要 sim):随机合法策略跑过 act-1 三类池
+python -m env.scripts.test_combat
 ```
+
+> sim(`slaythespire` 的 `.so`/`.pyd`)需先在本机编译,见 `sim/DEVNOTES.md`。当前 mac 上未构建;训练机(Linux/py3.12)上已验证整体跑通。

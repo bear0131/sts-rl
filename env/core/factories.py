@@ -16,19 +16,12 @@ with the real game). For training this is fine — we want coverage of the comba
 distribution, and the in-combat RNG stays the aligned real value.
 """
 
-import os
-import sys
+# `import env.core` runs the package __init__ which puts the sim build dir on
+# sys.path; that must happen before `import slaythespire`.
+from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
+import slaythespire as sts
 
-_HERE = os.path.dirname(__file__)
-sys.path.insert(0, _HERE)
-_BUILD = os.path.join(_HERE, "..", "sim", "sts_lightspeed", "build")
-if hasattr(os, "add_dll_directory") and os.path.isdir(_BUILD):
-    os.add_dll_directory(os.path.abspath(_BUILD))
-sys.path.insert(0, os.path.abspath(_BUILD))
-
-import slaythespire as sts  # noqa: E402
-
-import encounters  # noqa: E402
+from . import encounters
 
 # 64-bit seed space for the sim's Random.
 _SEED_HI = (1 << 63) - 1

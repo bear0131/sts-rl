@@ -20,7 +20,7 @@ DEVNOTES). Reserved to append later without disturbing existing ids.
 ===========================================================================
 """
 
-from cards_vocab import EMPTY  # noqa: F401  (kept for parity; layout below is self-contained)
+from .cards_vocab import EMPTY  # noqa: F401  (kept for parity; layout below is self-contained)
 
 ACTION_VERSION = 1
 
