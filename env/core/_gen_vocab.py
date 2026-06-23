@@ -25,7 +25,7 @@ Provenance (parsed files, all under sim/sts_lightspeed/include/constants/):
   MonsterEncounters.h    enum MonsterEncounter -> BOSS_VOCAB    (enum names; str(gc.boss))
 
 Hand-fixed (small, construction-time / sim-enum-fixed) vocabularies are written
-literally: ROOM_VOCAB, PHASE_VOCAB, CHARACTER_VOCAB, INTENT_CATEGORY.
+literally: ROOM_VOCAB, PHASE_VOCAB, CHARACTER_VOCAB, INTENT_CATEGORY, ARG_STEP_VOCAB.
 """
 
 import os
@@ -164,6 +164,16 @@ CHARACTER_VOCAB = ["INVALID", "IRONCLAD", "SILENT", "DEFECT", "WATCHER"]
 # intent categories derived from a move id (slot 0 = unknown / not-yet-exported).
 INTENT_CATEGORY = ["unknown", "attack", "defend", "buff", "debuff",
                    "strong_debuff", "sleep", "stun", "escape"]
+# autoregressive arg-step the thin SlayTheSpireEnv is on (action_design.md §1).
+# It tells the model WHY the current id menu looks the way it does: the ROOT step
+# (pick a main action) vs a parameter step (pick the target of the verb already
+# chosen). Slot 0 = "root" so the obs PAD default is the (overwhelmingly common)
+# root step — a backend that never sets arg_step (e.g. the single-combat
+# SimCombatEnv) reads as root. The pick_card_2/pick_discard/pick_scry slots are
+# RESERVED for the deferred C++ select_context batch (multi-pick screens); filling
+# a reserved slot is not an OBS bump (it is a fixed-width categorical).
+ARG_STEP_VOCAB = ["root", "pick_target", "pick_card", "pick_card_2",
+                  "pick_discard", "pick_scry", "pick_exhaust", "pick_hand"]
 
 
 _HEADER = '''"""Categorical id-space vocabularies for the v2 observation (AUTO-GENERATED).
@@ -221,6 +231,7 @@ def main():
     parts.append(_fmt_list("PHASE_VOCAB", PHASE_VOCAB))
     parts.append(_fmt_list("CHARACTER_VOCAB", CHARACTER_VOCAB))
     parts.append(_fmt_list("INTENT_CATEGORY", INTENT_CATEGORY))
+    parts.append(_fmt_list("ARG_STEP_VOCAB", ARG_STEP_VOCAB))
 
     # capacities + buff vector lengths
     cap_lines = "\n".join(f"{k}_CAPACITY = {v}" for k, v in capacities.items())
@@ -233,7 +244,7 @@ def main():
     # name -> index maps (built once, here, so every consumer shares them).
     index_names = id_order + ["PLAYER_BUFF_VOCAB", "MONSTER_BUFF_VOCAB",
                               "ROOM_VOCAB", "PHASE_VOCAB", "CHARACTER_VOCAB",
-                              "INTENT_CATEGORY"]
+                              "INTENT_CATEGORY", "ARG_STEP_VOCAB"]
     idx_lines = "\n".join(
         f"{n}_INDEX = {{name: i for i, name in enumerate({n})}}"
         for n in index_names

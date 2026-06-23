@@ -1,8 +1,12 @@
-# Observation 设计文档（v2 草案）
+# Observation 设计文档（v3，完整版）
 
-> 状态：**草案，待审定**。这是 RL 模型输入的契约。审定后据此 (a) 补能纯 Python 拿到的字段，(b) 单列 C++ 绑定补丁清单。
+> 状态：**已实现并落地**（`env/core/encode.py`，`OBS_VERSION=3`，`spaces.Dict`）。本文档是 RL 模型输入的**契约**，与 `encode.py` 的真实 layout 一一对应；改 encode.py 必须同步改本文档。
 >
-> 关联记忆/文档：`env/core/encode.py`（现 v1 战斗 obs）、`doc/plan_simgameenv.md`（两层抽象）、`bridge/schemas/combat_state.py`（canonical）。
+> v3 相对 v2：新增 `arg_step` 键（薄层 `SlayTheSpireEnv` 的 autoregressive 子步，见 `action_design.md` §1），其余不变。
+>
+> 关联：`env/core/encode.py`（实现）、`env/core/vocab.py`（词表）、`doc/day_0623/action_design.md`（动作面，姊妹文档）、`bridge/schemas/combat_state.py`（canonical 生产）。
+>
+> 决策点 A–E（原 §7）**已拍板**，结论见各节与文末。
 
 ---
 
@@ -181,10 +185,49 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 
 ---
 
-## 7. 待你拍板的决策点
+## 7. 决策点（已拍板，记录在案）
 
-- **A**：手牌升级——`hand_upgrades` 单列 scalar（推荐，词表小）vs 把 `+` 并进 CARD_VOCAB（词表翻倍，attention 干净）。
-- **B**：遗物——多热 id 列表 PAD 到 R_MAX（推荐，适合 attention）vs RELIC_VOCAB 长 0/1 向量。
-- **C**：obs 容器——确认上 `spaces.Dict` + `MultiInputPolicy`（推荐）。
-- **D**：意图绑定时机——现在就碰 C++ 把 move_id 导出（战斗 obs 才完整），还是先 PAD 训一版？
-- **E**：怪物槽位 N——固定 5（act1 够）还是直接留更大（如 6，应对后续 act 多怪场）。
+| | 议题 | 结论 | 落地 |
+|---|---|---|---|
+| **A** | 手牌升级编码 | `hand_upgrades` **单列 scalar**（词表不翻倍） | `encode.py` `hand_upgrades (10,)`，`up / UPGRADE_SCALE` |
+| **B** | 遗物编码 | **多热 id 列表，PAD 到 R_MAX=30**（适合 attention，非 0/1 长向量） | `relics (R_MAX,)` categorical |
+| **C** | obs 容器 | **`spaces.Dict` + `MultiInputPolicy`** | `obs_space()` 返回 `spaces.Dict` |
+| **D** | 意图绑定时机 | **先 PAD 训一版**：`monster_move` 槽位与词表（`MOVE_VOCAB_CAPACITY`）已就位，未绑定前填 0=unknown；`monster_intent_cat` 用纯 Python 的 `intents.derive` 先顶上 | C++ move_id 导出延后到绑定批 |
+| **E** | 怪物槽位 N | **固定 5**（act1-3 普通战足够；boss 单体）。扩容 = bump OBS_VERSION | `MAX_MONSTERS=5` |
+
+> A/B/C 已实现。D 的 `monster_intent_cat` 由 `intents.derive(move, base_damage)` 派生（不需 C++），所以即使 move_id 全 PAD，模型也已能看到 attack/defend/buff/debuff 粗类别——意图不是全黑。真正缺的是细粒度 move 身份（同为 attack 的不同招式），那才是 C++ 批要补的。
+
+---
+
+## 8. 实现对照（`encode.py` 键 → 本文档）
+
+obs 是单层 `spaces.Dict`（无嵌套），共 29 个键。下表是 `obs_space()` 的权威清单，便于审计 layout 漂移：
+
+| 键 | kind | 形状 | 词表/scale | 文档 |
+|---|---|---|---|---|
+| `player_scalars` | scalar | (6,) | hp/200,maxhp/200,block/100,energy/10,turn/30,hp_frac | §2.1 |
+| `player_buffs` | scalar | (PLAYER_BUFF_VEC,) | /BUFF_SCALE | §2.1 |
+| `monster_id` | cat | (5,) | MONSTER_VOCAB | §2.2 |
+| `monster_move` | cat | (5,) | MOVE_VOCAB（暂 PAD） | §2.2 / D |
+| `monster_intent_cat` | cat | (5,) | INTENT_CATEGORY | §2.2 |
+| `monster_scalars` | scalar | (5,6) | present,hp/200,hp_frac,block/100,dmg/100,hits/10 | §2.2 |
+| `monster_buffs` | scalar | (5,MONSTER_BUFF_VEC) | /BUFF_SCALE | §2.2 |
+| `hand_ids` | cat | (10,) | CARD_VOCAB | §2.3 |
+| `hand_upgrades` | scalar | (10,) | /UPGRADE_SCALE | §2.3 / A |
+| `draw_counts`/`discard_counts`/`exhaust_counts` | scalar | (N_CARDS,) | 计数 | §2.3 |
+| `phase` | cat | (1,) | PHASE_VOCAB | §4 |
+| `arg_step` | cat | (1,) | ARG_STEP_VOCAB（PAD=root） | action_design §1 |
+| `character` | cat | (1,) | CHARACTER_VOCAB | §3 |
+| `ascension`/`act`/`floor`/`gold` | scalar | (1,) | /20,/4,/56,/999 | §3 |
+| `next_boss` | cat | (1,) | BOSS_VOCAB | §3 |
+| `relics` | cat | (30,) | RELIC_VOCAB | §3 / B |
+| `potions` | cat | (5,) | POTION_VOCAB | §3 |
+| `deck_counts` | scalar | (N_CARDS,) | 计数 | §3 |
+| `offer_card_ids` | cat | (3,) | CARD_VOCAB | §4 |
+| `select_card_ids` | cat | (G_MAX=12,) | CARD_VOCAB | §4 |
+| `map_node_rooms` | cat | (3,) | ROOM_VOCAB | §4 |
+| `map_node_x` | scalar | (3,) | /6 | §4 |
+| `boss_relic_ids` | cat | (3,) | RELIC_VOCAB | §4 |
+| `event_id` | cat | (1,) | EVENT_VOCAB | §4 |
+
+> **缺口（与动作面共享，详见 action_design）**：(1) `select_card_ids` 现填了 grid 候选牌，但缺一个 **`select_context`**（这屏选牌是干嘛的——升级/消耗/复制/转化…）——属 C++ 批，见 action_design §C++。(2) `shop_*` 仍是 stub（货架未绑定）。(3) `event` 只有 id，选项数/选项语义未绑定。

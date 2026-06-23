@@ -344,12 +344,17 @@ def normalize_sim_global(gc):
     """Run-global obs block (obs_design.md §3/§4). Backend-agnostic shape; the
     sim fills it from gc. `boss_relics` is only meaningful on a boss-relic
     screen (empty/duplicate otherwise) — callers gate on phase."""
-    # boss_relic_ids() is a recent binding; fall back gracefully if absent so an
-    # older .so still imports (the field is simply omitted -> encoder PADs it).
-    try:
-        boss_relics = list(gc.boss_relic_ids())
-    except AttributeError:
-        boss_relics = []
+    # boss_relic_ids() reads gc.info.bossRelics[], which is only populated on a
+    # BOSS_RELIC_REWARDS screen; off-screen it holds uninitialized RelicId values
+    # whose relicIds[] lookup can be a null string (-> RuntimeError from the
+    # binding). Gate on phase so we only touch it when it is meaningful; PAD
+    # otherwise. (AttributeError guards an older .so without the binding.)
+    boss_relics = []
+    if sim_phase(gc) == "boss_relic":
+        try:
+            boss_relics = list(gc.boss_relic_ids())
+        except (AttributeError, RuntimeError):
+            boss_relics = []
     return {
         "character": _enum_tail(gc.character) if hasattr(gc, "character")
                      else _enum_tail(gc.cc) if hasattr(gc, "cc") else "INVALID",

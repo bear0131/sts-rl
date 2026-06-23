@@ -26,6 +26,7 @@ these optional top-level keys (all default to PAD/zero so a combat-only or
 overworld-only canonical both encode):
 
     phase     : semantic phase string (vocab.PHASE_VOCAB)
+    arg_step  : thin-env autoregressive sub-step (vocab.ARG_STEP_VOCAB; PAD=root)
     turn      : combat turn (int)
     player    : {hp,max_hp,block,energy,powers}
     monsters  : [{id,hp,max_hp,block,gone,base_damage,hits,powers,move,move_id}]
@@ -42,8 +43,9 @@ from . import vocab as V
 from . import intents
 
 # Bump on any layout/order/scaling change (see module docstring). v1 was a flat
-# Box; v2 is the structured Dict below.
-OBS_VERSION = 2
+# Box; v2 is the structured Dict below. v3 adds `arg_step` (the thin
+# SlayTheSpireEnv's autoregressive sub-step, action_design.md §1).
+OBS_VERSION = 3
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -109,6 +111,10 @@ def obs_space():
         "exhaust_counts": scal((N_CARDS,)),
         # ---- run-global (every phase) ----
         "phase": cat((1,), len(V.PHASE_VOCAB)),
+        # autoregressive sub-step (action_design.md §1): which step of a multi-step
+        # action the thin env is on (root / pick_target / pick_card / ...). Tells
+        # the model WHY the current action menu is shaped the way it is. PAD = root.
+        "arg_step": cat((1,), len(V.ARG_STEP_VOCAB)),
         "character": cat((1,), len(V.CHARACTER_VOCAB)),
         "ascension": scal((1,)),
         "act": scal((1,)),
@@ -154,6 +160,7 @@ def _empty():
         "discard_counts": np.zeros(N_CARDS, _SCALAR),
         "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
         "phase": np.zeros(1, _CAT),
+        "arg_step": np.zeros(1, _CAT),
         "character": np.zeros(1, _CAT),
         "ascension": np.zeros(1, _SCALAR),
         "act": np.zeros(1, _SCALAR),
@@ -237,6 +244,9 @@ def _encode_combat(o, canon):
 def _encode_global(o, canon):
     """Fill the run-global groups from canon['global'] (present every phase)."""
     o["phase"][0] = V.PHASE_VOCAB_INDEX.get(canon.get("phase", "none"), 0)
+    # arg_step rides at top level (the thin env sets it; combat-only canonicals
+    # omit it -> root, index 0). Kept here so it is filled every phase.
+    o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(canon.get("arg_step", "root"), 0)
     g = canon.get("global")
     if g is None:
         return

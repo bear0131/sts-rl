@@ -43,9 +43,25 @@ _OVERFIT_ENCOUNTER = "Jaw Worm"
 def _mask_fn(env):
     """ActionMasker callback: sb3-contrib calls this to get the legal mask.
 
-    env is the (possibly wrapped) instance; SimCombatEnv.action_mask() returns
-    the bool[N_ACTIONS] we built from the sim's own legal_actions."""
-    return env.unwrapped.action_mask()
+    env is the (possibly wrapped) instance. SimCombatEnv exposes action_mask()
+    (single combat); the whole-run SlayTheSpireEnv exposes action_masks() (the
+    phase-gated autoregressive mask). Support both."""
+    u = env.unwrapped
+    if hasattr(u, "action_masks"):
+        return u.action_masks()
+    return u.action_mask()
+
+
+def make_run_env(ascension=0, render_mode=None):
+    """Build a masked whole-run SlayTheSpireEnv (action v2). Returns a thunk."""
+    from sb3_contrib.common.wrappers import ActionMasker
+    from env.core.run_env import SlayTheSpireEnv
+
+    def _thunk():
+        env = SlayTheSpireEnv(ascension=ascension, render_mode=render_mode)
+        return ActionMasker(env, _mask_fn)
+
+    return _thunk
 
 
 def make_env(pool="normal", overfit=False, ascension=0, render_mode=None):
@@ -71,10 +87,12 @@ def train(args):
     from stable_baselines3.common.vec_env import DummyVecEnv
 
     os.makedirs(args.out, exist_ok=True)
-    venv = DummyVecEnv(
-        [make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)
-         for _ in range(args.n_envs)]
-    )
+    if args.run:
+        env_makers = [make_run_env(ascension=args.ascension) for _ in range(args.n_envs)]
+    else:
+        env_makers = [make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)
+                      for _ in range(args.n_envs)]
+    venv = DummyVecEnv(env_makers)
 
     model = MaskablePPO(
         # obs is a gymnasium Dict (typed categorical + scalar groups, see
@@ -96,7 +114,7 @@ def train(args):
         tensorboard_log=args.out if args.tensorboard else None,
     )
 
-    tag = "overfit" if args.overfit else f"pool-{args.pool}"
+    tag = "whole-run" if args.run else ("overfit" if args.overfit else f"pool-{args.pool}")
     print(f"[train] {tag}: {args.steps} steps, {args.n_envs} env(s)")
     model.learn(total_timesteps=args.steps, progress_bar=False)
 
@@ -106,7 +124,8 @@ def train(args):
 
     # quick deterministic eval right after training so the sanity signal is
     # visible without a separate command.
-    eval_env = make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)()
+    eval_env = (make_run_env(ascension=args.ascension)() if args.run
+                else make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)())
     mean_r, std_r = evaluate_policy(
         model, eval_env, n_eval_episodes=args.eval_episodes,
         deterministic=True, use_masking=True,
@@ -145,6 +164,9 @@ def build_parser():
     p = argparse.ArgumentParser(description="MaskablePPO on SimCombatEnv")
     p.add_argument("--overfit", action="store_true", default=True,
                    help="train on one fixed combat (default; trainability check)")
+    p.add_argument("--run", action="store_true", default=False,
+                   help="train on the whole-run SlayTheSpireEnv (action v2) instead "
+                        "of single combats")
     p.add_argument("--pool", default="normal", choices=["normal", "elite", "boss"],
                    help="encounter pool when not overfitting")
     p.add_argument("--no-overfit", dest="overfit", action="store_false",

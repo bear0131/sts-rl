@@ -796,6 +796,17 @@ INTENT_CATEGORY = [
     'escape',
 ]
 
+ARG_STEP_VOCAB = [
+    'root',
+    'pick_target',
+    'pick_card',
+    'pick_card_2',
+    'pick_discard',
+    'pick_scry',
+    'pick_exhaust',
+    'pick_hand',
+]
+
 # ---- embedding-table capacities (id vocabs; headroom) ----
 MONSTER_VOCAB_CAPACITY = 96
 MOVE_VOCAB_CAPACITY = 224
@@ -821,3 +832,4 @@ ROOM_VOCAB_INDEX = {name: i for i, name in enumerate(ROOM_VOCAB)}
 PHASE_VOCAB_INDEX = {name: i for i, name in enumerate(PHASE_VOCAB)}
 CHARACTER_VOCAB_INDEX = {name: i for i, name in enumerate(CHARACTER_VOCAB)}
 INTENT_CATEGORY_INDEX = {name: i for i, name in enumerate(INTENT_CATEGORY)}
+ARG_STEP_VOCAB_INDEX = {name: i for i, name in enumerate(ARG_STEP_VOCAB)}
