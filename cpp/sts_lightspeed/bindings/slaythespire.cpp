@@ -363,6 +363,17 @@ PYBIND11_MODULE(slaythespire, m) {
             if (!opened) gc.regainControlAction = saved;
         })
         .def("claim_potion", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainPotion(r.potions[idx]); r.removePotionReward(idx); })
+        .def("discard_potion", [](GameContext &gc, int slot) {
+            if (slot >= 0 && slot < gc.potionCapacity && gc.potions[slot] != sts::Potion::EMPTY_POTION_SLOT) {
+                gc.potions[slot] = sts::Potion::EMPTY_POTION_SLOT;
+                --gc.potionCount;
+            }
+        }, "discard the held potion in slot idx (0-based), out of combat")
+        .def_property_readonly("overworld_potions", [](const GameContext &gc) {
+            pybind11::list lst;
+            for (int i = 0; i < gc.potionCapacity; ++i) lst.append(std::string(sts::getPotionName(gc.potions[i])));
+            return lst;
+        }, "held potion slots out of combat")
         .def("reward_proceed", [](GameContext &gc) { gc.regainControl(); })
         // shop
         .def("shop_buy_card", [](GameContext &gc, int idx) { gc.info.shop.buyCard(gc, idx); })

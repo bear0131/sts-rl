@@ -1131,17 +1131,27 @@ void GameContext::afterBattle() {
         case Room::MONSTER: {
             regainControlAction = returnToMapAction;
             auto reward = createCombatReward();
-            if (info.stolenGold != 0) { // todo stolen gold actually comes first in the list
-                reward.addGold(info.stolenGold);
+            if (info.stolenGold != 0) {
+                // stolen gold appears first in the reward list in the real game
+                reward.gold[1] = reward.gold[0];
+                reward.gold[0] = info.stolenGold;
+                ++reward.goldRewardCount;
             }
             openCombatRewardScreen(reward);
             break;
         }
 
-        case Room::ELITE:
+        case Room::ELITE: {
             regainControlAction = returnToMapAction;
-            openCombatRewardScreen(createEliteCombatReward());
+            auto reward = createEliteCombatReward();
+            if (info.stolenGold != 0) {
+                reward.gold[1] = reward.gold[0];
+                reward.gold[0] = info.stolenGold;
+                ++reward.goldRewardCount;
+            }
+            openCombatRewardScreen(reward);
             break;
+        }
 
         case Room::BOSS:
             if (act == 1 || act == 2) {

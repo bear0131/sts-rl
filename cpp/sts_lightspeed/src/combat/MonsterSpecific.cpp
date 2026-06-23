@@ -3344,8 +3344,17 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
     assert(hp > 0);
     assert(bc.monsters.monstersAlive > 0);
 #endif
+    // The real game keeps the (now dead) large slime in the monster list and
+    // flanks it with the two medium children: [child, deadLarge, child]. The
+    // dead large slime stays at placeIdx+1 so monster indices stay aligned with
+    // the real run (mirrors SlimeBoss split, which keeps the boss at index 1).
     const auto idx1 = placeIdx;
-    const auto idx2 = placeIdx + 1;
+    const auto idx2 = placeIdx + 2;
+    const auto deadIdx = placeIdx + 1;
+
+    bc.monsters.arr[deadIdx] = bc.monsters.arr[placeIdx];
+    bc.monsters.arr[deadIdx].idx = deadIdx;
+    bc.monsters.arr[deadIdx].curHp = 0; // the large slime dies when it splits
 
     bc.monsters.arr[idx1] = Monster();
     bc.monsters.arr[idx1].initSpawnedMonster(bc, mediumSlimeType, idx1, hp);
@@ -3359,11 +3368,9 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
     }
 
     bc.monsters.monstersAlive++;
-    bc.monsters.monsterCount = std::min(bc.monsters.monsterCount+1, 4);
+    bc.monsters.monsterCount = std::min(bc.monsters.monsterCount+2, 5);
 
-    bc.noOpRollMove();
-    bc.monsters.extraRollMoveOnTurn.set(idx2, true);
-    bc.monsterTurnIdx++;
+    bc.monsterTurnIdx = idx2 + 1;
 }
 
 void Monster::slimeBossSplit(BattleContext &bc, const int hp) {

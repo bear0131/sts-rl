@@ -145,10 +145,17 @@ _MONSTER_SIM2REAL = {
     "CULTIST": "Cultist", "JAW_WORM": "JawWorm",
     "GREEN_LOUSE": "FuzzyLouseNormal", "RED_LOUSE": "FuzzyLouseDefensive",
     "GREMLIN_NOB": "GremlinNob", "HEXAGHOST": "Hexaghost",
-    "LOOTER": "Looter", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
+    "LOOTER": "Looter", "MUGGER": "Mugger", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
     "THE_GUARDIAN": "TheGuardian",
     "RED_SLAVER": "SlaverRed", "BLUE_SLAVER": "SlaverBlue",
     "FUNGI_BEAST": "FungiBeast",
+    "SPIKER": "Spiker", "BYRD": "Byrd", "CENTURION": "Centurion", "CHOSEN": "Chosen",
+    "MYSTIC": "Healer", "SHELLED_PARASITE": "Shelled Parasite", "SNAKE_PLANT": "Snake Plant",
+    "SNECKO": "Snecko", "SPHERIC_GUARDIAN": "SphericGuardian", "REPULSOR": "Repulsor",
+    "POINTY": "Repulsor", "EXPLODER": "Exploder", "TASKMASTER": "SlaverBoss",
+    "FAT_GREMLIN": "GremlinFat", "MAD_GREMLIN": "GremlinWarrior",
+    "SHIELD_GREMLIN": "GremlinTsundere", "SNEAKY_GREMLIN": "GremlinThief",
+    "GREMLIN_WIZARD": "GremlinWizard", "TORCH_HEAD": "TorchHead",
 }
 
 

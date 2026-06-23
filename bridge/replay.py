@@ -125,12 +125,22 @@ class Driver:
         elif verb == "choose":  # HAND_SELECT (single-card select)
             self.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, int(parts[1])))
         elif verb == "potion":
-            # POTION <use|discard> <slot> [target]; slot/target are 0-based
+            # POTION <use|discard> <slot> [target]; slot/target are 0-based.
+            # The real game rejects out-of-range slots (CommunicationMod logs a
+            # "Potion index out of bounds" error and the command is a no-op);
+            # mirror that here so a bad slot doesn't desync the sim.
             action, slot = parts[1].lower(), int(parts[2])
-            if action == "discard":
-                self.bc.discard_potion(slot)
+            if slot < 0 or slot >= len(self.bc.potions):
+                pass
+            elif action == "discard":
+                # target > 5 signals a discard (see Action::execute POTION case)
+                self.bc.execute(sts.Action(sts.ActionType.POTION, slot, 6))
             else:
-                self.bc.drink_potion(slot, int(parts[3]) if len(parts) > 3 else 0)
+                # Go through execute() so the potion's queued actions (e.g. Swift
+                # Potion's draw) are pumped immediately, like the real game --
+                # the bare drink_potion binding queues without draining.
+                target = int(parts[3]) if len(parts) > 3 else 0
+                self.bc.execute(sts.Action(sts.ActionType.POTION, slot, target))
         elif verb in ("confirm", "wait"):
             pass  # confirm auto-resolves; wait is a re-request
         else:
@@ -149,6 +159,15 @@ class Driver:
         if verb in ("ready", "start", "click", "key", "wait", "state"):
             return  # setup / non-actions
 
+        if verb == "potion":
+            # POTION <use|discard> <slot> [target] held out of combat (e.g.
+            # discarding a held potion to make room for a combat-reward potion).
+            action, slot = parts[1].lower(), int(parts[2])
+            if action == "discard" and 0 <= slot < len(gc.overworld_potions):
+                gc.discard_potion(slot)
+            # out-of-combat potion *use* is rare in these logs; ignore for now.
+            return
+
         if st == "EVENT":
             if ss.get("event_id") == "Neow Event":
                 if not self.neow_done and len(cl) > 1:
@@ -156,6 +175,12 @@ class Driver:
                     self.neow_done = True
                 # talk frames (1 option) are no-ops in the sim
             else:
+                # Some events show a follow-up "you ate the X / leave" frame
+                # after a choice resolves; in the sim the choice already called
+                # regainControl() so the sim has left the event (now on the map).
+                # The real "leave" CHOOSE on that frame is a no-op for the sim.
+                if not gc.screen_state_name.endswith("EVENT_SCREEN"):
+                    return
                 real_ev = ss.get("event_id")
                 if gc.cur_event_name != real_ev:
                     raise ValueError(f"event mismatch: real={real_ev!r} sim={gc.cur_event_name!r} "
@@ -186,7 +211,7 @@ class Driver:
                 gc.reward_proceed()
             else:
                 label = cl[idx]
-                if label == "gold":
+                if label in ("gold", "stolen_gold"):
                     gc.claim_gold(0)
                 elif label == "relic":
                     gc.claim_relic(0)
@@ -209,6 +234,10 @@ class Driver:
                 gc.reward_proceed()
             else:
                 gc.choose_treasure_room(True)
+        elif st == "BOSS_REWARD":
+            # boss-relic pick from the act boss treasure chest
+            if verb != "proceed":
+                gc.choose_boss_relic(idx)
         elif st == "SHOP_ROOM":
             if verb == "proceed":
                 gc.shop_proceed()
@@ -398,6 +427,12 @@ def run_natural(events, verbose):
     for cmd, post in steps:
         if pre is None:
             pre = post
+            continue
+        # CommunicationMod debug/UI commands (help, click, menu, ...) are not
+        # gameplay actions and appear as trailing noise once the recording's real
+        # play has ended -- skip them so they don't drive a phantom battle.
+        if cmd.split()[0].lower() in ("help", "click", "menu"):
+            pre = post if post is not None else pre
             continue
         try:
             if drv.bc is not None:
