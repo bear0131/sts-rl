@@ -22,13 +22,14 @@ thick layer only once both are in. To the thick layer / sim it is opaque.
 sub-partitions for a specialist/HRL reading without renumbering. The mask zeros
 everything not legal in the current (phase, arg_step).
 
-Reserved-but-masked segments (USE_POTION, the wide EVENT_OPT tail): the deferred
-C++ binding batch (action_design §5) will make these legal; reserving their ids
-NOW means turning them on later fills reserved width and does NOT bump
-ACTION_VERSION. Until then the mask simply never sets them (the thick layer does
-not enumerate those semantic actions yet). The SHOP_* segments were reserved this
-way and are now LIVE (the thick layer enumerates real buys/removes) — filling
-reserved width, so ACTION_VERSION stayed at 2.
+Reserved-but-masked segment (USE_POTION): the deferred C++ binding batch
+(action_design §5) will make it legal; reserving its ids NOW means turning them
+on later fills reserved width and does NOT bump ACTION_VERSION. Until then the
+mask simply never sets them (the thick layer does not enumerate a potion verb
+yet). EVENT_OPT is live for the low option ids (the thick layer enumerates real
+event options) with a reserved wide tail; SHOP_* likewise went LIVE this way (the
+thick layer enumerates real buys/removes) — both filling reserved width, so
+ACTION_VERSION stayed at 2.
 """
 
 from . import actions
@@ -48,13 +49,13 @@ REWARD_RELIC = 3                       # Rewards.relics is array<,3>
 REWARD_POTION = 5                      # Rewards.potions is array<,5>
 REWARD_CARD = 5                        # Rewards.cardRewards is array<,5>
 CAMPFIRE_W = len(ga.CAMPFIRE_OPTIONS)  # 6: rest/smith/recall/lift/toke/dig
-EVENT_OPT_W = 10                       # reserved width (thick gives 1 today, §5#7)
+EVENT_OPT_W = 10                       # reserved width (thick enumerates real opts, §5#7)
 NEOW_W = 4                             # the 4 Neow rewards
 CHEST_W = 2                            # open / skip
 BOSS_RELIC_W = 3                       # 3 boss relics offered
-SHOP_CARD = 7                          # Shop.cards[7]   (reserved, §5#6)
-SHOP_RELIC = 3                         # Shop.relics[3]  (reserved)
-SHOP_POTION = 3                        # Shop.potions[3] (reserved)
+SHOP_CARD = 7                          # Shop.cards[7]   (live, §5#6)
+SHOP_RELIC = 3                         # Shop.relics[3]  (live)
+SHOP_POTION = 3                        # Shop.potions[3] (live)
 
 # ---- segment table (append-only; widths above; bases computed below) ----
 # Each entry: (NAME, width). ORDER IS FROZEN — append new segments at the END only.

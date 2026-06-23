@@ -5,20 +5,30 @@ Layout (a real package; run scripts as modules from the repo root, e.g.
 
   core/                 the env core logic
     cards_vocab.py      static canonical card vocabulary (checked in)
-    encode.py           canonical combat dict -> fixed obs vector  (pure, no sim)
-    actions.py          fixed action space + decode/encode          (pure, no sim)
-    render.py           canonical state/action -> human string      (pure, no sim)
-    encounters.py       act-1 encounter name lists                  (pure, no sim)
-    factories.py        gc_factory builders                         (imports sim)
-    combat_env.py       SimCombatEnv                                (imports sim)
+    vocab.py            generated categorical vocabularies (monster/move/...) (pure)
+    intents.py          move name -> INTENT_CATEGORY derivation               (pure)
+    encode.py           canonical dict -> structured Dict obs (OBS_VERSION 4)  (pure)
+    actions.py          combat-internal sts<->id mapping (71 ids)              (pure)
+    action_space.py     thin run-wide autoregressive id space (ACTION_VERSION 2) (pure)
+    game_actions.py     backend-agnostic semantic-action vocabulary            (pure)
+    render.py           canonical state/action -> human string                 (pure)
+    encounters.py       act-1 encounter name lists                             (pure)
+    spiremap.py         RunMap: rebuilt SpireMap reachability               (imports sim)
+    factories.py        gc_factory builders                                 (imports sim)
+    combat_env.py       SimCombatEnv (single combat)                        (imports sim)
+    game_env.py         SimGameEnv (thick whole-run state machine)          (imports sim)
+    run_env.py          SlayTheSpireEnv (thin run-wide gym.Env)             (imports sim)
     __init__.py         sys.path bootstrap for sim build dir + bridge
 
   scripts/              runnable entry points (not imported by core)
-    play.py             interactive human player
+    play.py             interactive single-combat player
+    play_run.py / play_run_v2.py   interactive whole-run players
     test_pure.py        pure-module smoke test (no sim needed)
-    test_combat.py      sim-backed regression test (needs sim built)
+    test_combat.py      single-combat regression test (needs sim built)
+    test_game.py        thick whole-run regression (needs sim)
+    test_run_v2.py      thin whole-run regression (needs sim)
 
-The pure modules (encode/actions/render/encounters/cards_vocab) are
-backend-agnostic and import-safe without the sim, so a future RealCombatEnv
-(real game via bridge) reuses them unchanged.
+The pure modules listed above are backend-agnostic and import-safe without the
+sim, so a future RealCombatEnv / RealGameEnv (real game via bridge) reuses them
+unchanged.
 """

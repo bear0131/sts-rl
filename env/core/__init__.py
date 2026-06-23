@@ -1,11 +1,13 @@
-"""env.core — the combat-env core logic.
+"""env.core — the env core logic (single combat + whole run).
 
 Import discipline (unchanged from the flat layout, just enforced by the package):
-  - pure modules (cards_vocab, encode, actions, encounters, render) must NOT
-    import slaythespire — they are backend-agnostic and import-safe without the
-    sim built, so local/CI tests can exercise them anywhere.
-  - only combat_env and factories touch the sim. They rely on the sys.path setup
-    below to find the built slaythespire module and the bridge schemas.
+  - pure modules (cards_vocab, vocab, intents, encode, actions, action_space,
+    game_actions, encounters, render) must NOT import slaythespire — they are
+    backend-agnostic and import-safe without the sim built, so local/CI tests can
+    exercise them anywhere.
+  - only the sim-backed modules (combat_env, game_env, run_env, factories,
+    spiremap) touch the sim. They rely on the sys.path setup below to find the
+    built slaythespire module and the bridge schemas.
 
 This __init__ only manipulates sys.path (cheap, no heavy imports), so
 `import env.core.encode` works without the sim, while `import env.core.combat_env`

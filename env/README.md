@@ -22,41 +22,51 @@
 env/
   core/                 环境核心逻辑(包)
     cards_vocab.py      全集卡词表(canonical id 空间,checked-in,append-only)   [无 sim]
-    encode.py           canonical 战斗 dict → 定长 float32 obs 向量(布局真相源)  [无 sim]
-    actions.py          固定整数 action 空间 + decode/encode_*                     [无 sim]
-    render.py           canonical 状态/动作 → 人读字符串                            [无 sim]
-    encounters.py       act-1 遭遇战名单(normal/elite/boss)                       [无 sim]
-    factories.py        gc_factory 构造器(random_act1 / fixed)                    [需 sim]
-    combat_env.py       SimCombatEnv(gym.Env)                                       [需 sim]
+    vocab.py            生成的 categorical 词表(monster/move/relic/...)         [无 sim]
+    intents.py          move 名 → INTENT_CATEGORY 派生                          [无 sim]
+    encode.py           canonical dict → 结构化 Dict obs(OBS_VERSION=4,布局真相源) [无 sim]
+    actions.py          战斗内 71-id sts↔id 映射                                [无 sim]
+    action_space.py     薄层整局 autoregressive id 面(ACTION_VERSION=2)          [无 sim]
+    game_actions.py     backend 无关的语义动作面                                [无 sim]
+    render.py           canonical 状态/动作 → 人读字符串                        [无 sim]
+    encounters.py       act-1 遭遇战名单(normal/elite/boss)                     [无 sim]
+    spiremap.py         RunMap:重建 SpireMap 枚举可达节点                      [需 sim]
+    factories.py        gc_factory 构造器(random_act1 / fixed)                 [需 sim]
+    combat_env.py       SimCombatEnv(单场战斗)                                  [需 sim]
+    game_env.py         SimGameEnv(厚层整局状态机)                              [需 sim]
+    run_env.py          SlayTheSpireEnv(薄层整局 gym.Env)                       [需 sim]
     __init__.py         sys.path bootstrap:把 sim build 目录 + bridge/ 挂上
   scripts/              可执行入口(不被 core import)
-    play.py             人类交互式玩一局
+    play.py             人类交互式玩一场战斗
+    play_run.py / play_run_v2.py   人类交互式玩一整局
     test_pure.py        纯层冒烟测试(不需要 sim)
-    test_combat.py      sim 实跑回归测试(需要 sim)
+    test_combat.py      单场战斗回归(需要 sim)
+    test_game.py        厚层整局回归(需要 sim)
+    test_run_v2.py      薄层整局回归(需要 sim)
 ```
 
-## 当前规格(v1)
+## 当前规格
 
-- `encode.OBS_SIZE = 1288`,`encode.OBS_VERSION = 1`
-- `actions.N_ACTIONS = 71`,`actions.ACTION_VERSION = 1`
+- obs:`encode.OBS_VERSION = 4`,结构化 `spaces.Dict`(36 组,见 `doc/day_0623/obs_design.md`)。v1 的扁平 `Box(OBS_SIZE=1288)` 已废弃。
+- 动作:薄层 `action_space.N_ACTIONS = 96`,`ACTION_VERSION = 2`(整局 autoregressive id 面,见 `doc/day_0623/action_design.md`)。`actions.py` 的 71-id 平面只作战斗内 sts↔id 映射被复用。
 
 ### obs 稳定性怎么保证
 
 模型输入一旦变就等于重训,所以 obs 靠四条纪律保持稳定:
 
 - **定长 + 全集 + 预留零槽**:手牌不变长(`HAND_SLOTS` 个槽)、敌人铺到 `MAX_MONSTERS=5` 行零填充、卡组堆用全集计数向量。加内容不改长度。
-- **版本号 `OBS_VERSION`**:只有改布局(reorder/resize/改 scaling)才跳号 —— 跳号 = 旧 checkpoint 作废的信号。**把一个预留零槽填上真实数据,不算改布局,不跳号。**
-- 词表 `cards_vocab.py` 与 buff 词表(`encode.py` 里 `PLAYER_BUFFS`/`MONSTER_BUFFS`)一律 **append-only**,绝不重排/删除。
+- **版本号 `OBS_VERSION`**:只有改布局(键集合/某字段形状/词表顺序/scaling)才跳号 —— 跳号 = 旧 checkpoint 作废的信号。**把一个预留零槽填上真实数据,不算改布局,不跳号。**
+- 词表(`cards_vocab.py` + 生成的 `vocab.py`)一律 **append-only**,绝不重排/删除。
 
 ### 已经在 obs 里 / 还没在的
 
-- ✅ 敌人这回合的 `base_damage` × `hits` + `is_attack`(派生自 `base_damage>0`)—— `to_dict()` 已导出,v1 就能看见。
-- ⏳ **敌人意图类别 one-hot**(`INTENT_SLOTS`):v1 里是**预留零槽**。sim 暂未导出 intent/move_id(见 `sim/DEVNOTES.md`),补一个 cpp 绑定后填进这个槽,**obs 长度不变、版本号也不必跳**。
-- ❌ **药水**:不在 v1 的 action 空间(sim 没干净地枚举药水动作)。id 空间尾部留好了,将来 append。
+- ✅ 敌人这回合的 `base_damage` × `hits` —— `to_dict()` 已导出。
+- ✅ **敌人意图**:`monster_move`(真实 `MonsterMoveId`,obs v2 起 C++ 导出 `moveHistory[0]`)+ `monster_intent_cat`(纯 Python 从 move 名派生,见 `intents.py`)。v1 的「预留零槽 + 暂未导出」已落地。
+- ❌ **药水使用**:动作面留了 `USE_POTION` 预留段,厚层暂无喝药语义动作(mask 恒 0),待 C++ 绑定。
 
-### 手牌编码的临时方案
+### 手牌编码
 
-手牌槽位现在存的是 **card index 标量**(占位)。单个标量 id 是糟糕的网络输入(给无关的牌强加了序数结构),v1 先这么跑通循环。将来应改成每槽 one-hot / embedding —— 那次改动会动 `OBS_SIZE`,届时 `OBS_VERSION += 1`。注意:policy 选牌靠的是 `actions` 那套 action id,**不是**靠这个标量。
+手牌是 `hand_ids`(每槽一个 `CARD_VOCAB` index,categorical)+ `hand_upgrades`(每槽升级数 scalar)。模型侧 embed 这些 id —— **不是** v1 那种「单标量 id 塞进 float 向量」(那会臆造虚假序结构)。policy 选牌靠 `action_space` 的 id+mask。
 
 ## 战斗怎么生成(reset)
 
@@ -83,8 +93,13 @@ python -m env.scripts.play --encounter "Cultist" --seed 7
 # 纯层测试(encode + actions + render),不需要 sim:
 python -m env.scripts.test_pure
 
-# 整体回归(需要 sim):随机合法策略跑过 act-1 三类池
+# 单场战斗回归(需要 sim):随机合法策略跑过 act-1 三类池
 python -m env.scripts.test_combat
+
+# 整局交互玩 / 整局回归(需要 sim):
+python -m env.scripts.play_run_v2     # 薄层 SlayTheSpireEnv 跨屏幕手动玩
+python -m env.scripts.test_run_v2     # 薄层整局 masked-random 回归
+python -m env.scripts.test_game       # 厚层整局回归
 ```
 
 > sim(`slaythespire` 的 `.so`/`.pyd`)需先在本机编译,见 `sim/DEVNOTES.md`。当前 mac 上未构建;训练机(Linux/py3.12)上已验证整体跑通。

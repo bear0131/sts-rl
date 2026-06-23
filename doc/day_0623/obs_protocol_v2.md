@@ -1,5 +1,7 @@
 # Observation 协议 v2（OBS_VERSION = 2）
 
+> ⚠️ **已被取代,勿当现行契约**。现行 obs 是 `OBS_VERSION = 4`、**36 组**(v3 加 `arg_step`,v4 加 `shop_*` 货架组;本文档是 v2 的 28 组快照,二者皆缺)。权威清单见 `doc/day_0623/obs_design.md` §8 与 `env/core/encode.py`。本文件保留作 v2 冻结记录。
+
 RL 模型输入契约的事实参考。源：`env/core/encode.py`（`obs_space()` / `encode()`）、
 `env/core/vocab.py`（自动生成）、`env/core/intents.py`、`bridge/schemas/combat_state.py`。
 

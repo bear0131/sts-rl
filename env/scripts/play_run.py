@@ -11,8 +11,9 @@ choice is playable). Type the number to take it, 'q' to quit. Same env / action
 vocabulary the RL agent will consume, so it doubles as a sanity check that the
 whole-run state machine, semantic action set, and renderer are faithful.
 
-v1 scope (see doc/plan_simgameenv.md): act 1 only — shops are a stub (leave
-only), events offer option 0 only. The run ends when you die or clear act 1.
+Scope: act 1. Shops (real buys/removes), events, and campfires all enumerate
+their true legal options via the sim's own action enumerator, so the menu is
+always faithful. The run ends when you die or clear act 1.
 """
 
 import argparse

@@ -54,8 +54,10 @@ gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed: int, ascension: int)
 |---|---|
 | `choose_neow_option(idx)` | 应用第 idx 个 Neow 奖励(0–3)。 |
 | `transition_to_map_node(x)` | 进入下一行 column x 的房间(自动推进 floor/room/miscRng)。boss 节点任意 x 均可。 |
-| `choose_event_option(i)` | 事件屏选项 i。 |
+| `choose_event_option(i)` | 事件屏选项 i。合法的 i 由 `legal_event_options()` 给出。 |
+| `legal_event_options() -> list[int]` | 当前事件的**真实合法选项下标**(绑 `getValidEventSelectBits`)。已正确处理多阶段事件(Golden Idol 二阶段返回 `[2,3,4]` 而非只 0)。少数事件(MATCH_AND_KEEP/BONFIRE_SPIRITS)返回空。 |
 | `choose_campfire_option(i)` | 篝火选项 i。固定下标:rest0/smith1/recall2/lift3/toke4/dig5。 |
+| `legal_campfire_options() -> list[int]` | 篝火当前**真实可用选项下标**(绑 `getAllActionsInState`,relic/key 门控)。index 0–5 同上,6=skip。 |
 | `choose_select_card_option(i)` | CARD_SELECT/grid 屏选第 i 张(配合 `get_select_cards()`)。 |
 | `choose_treasure_room(open: bool)` | 宝箱房:开/不开。 |
 | `choose_boss_relic(i)` | 选 act-boss 宝箱的第 i 个 boss 遗物。 |
@@ -87,11 +89,24 @@ gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed: int, ascension: int)
 
 | 方法 | 说明 |
 |---|---|
-| `shop_buy_card(idx)` | 买第 idx 张牌(idx 是**完整未过滤列表**里的下标)。 |
+| `shop_contents() -> dict` | 当前货架(**positional**:槽 i 即 `shop_buy_*` 的买入下标)。结构见下。已售/空槽 `price == -1`。 |
+| `legal_shop_options() -> list[(kind, idx)]` | **真实可买/可用选项**(绑 `getAllShopActions`,gold + 售罄双重门控)。`kind` ∈ `"card"/"relic"/"potion"/"remove"/"skip"`;`idx` 为该 kind 下的槽位(跨 kind 会碰撞,故成对返回)。`"skip"` 恒在。 |
+| `shop_buy_card(idx)` | 买第 idx 张牌(idx 是**完整未过滤列表**里的下标,= `shop_contents()["cards"]` 的槽号)。 |
 | `shop_buy_relic(idx)` | 买第 idx 个遗物。 |
 | `shop_buy_potion(idx)` | 买第 idx 瓶药水。 |
 | `shop_remove()` | 用删牌服务(purge)。 |
 | `shop_proceed()` | 离开商店(切到 MAP_SCREEN)。 |
+
+`shop_contents()` 返回:
+```python
+{
+  "cards":   [{"id": str, "upgrades": int, "price": int}, ...],   # 7 槽
+  "relics":  [{"id": str, "price": int}, ...],                    # 3 槽
+  "potions": [{"id": str, "price": int}, ...],                    # 3 槽
+  "remove_cost": int,
+}
+```
+> `price == -1` = 该槽已售/无货。id 命名同其余绑定(卡 `cardEnumStrings` / 遗物稳定 id / 药水显示名)。
 
 ### 卡组 / 遗物 读写
 
