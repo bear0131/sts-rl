@@ -13,6 +13,8 @@ import sys
 from env.core import spiremap
 from env.core import _BUILD  # noqa: F401
 import slaythespire as sts
+from env.core.game_env import SimGameEnv
+from env.core import game_actions as ga
 
 _IRONCLAD = None  # set in main once sts is importable
 
@@ -81,8 +83,93 @@ def test_map_spine(seeds=(42, 1, 7, 100, 999)):
     print(f"[ok] test_map_spine: {len(seeds)} seeds, RunMap matches gc landings")
 
 
+def _run_episode(seed, max_steps=2000, verbose=False):
+    """Drive one whole run with a random legal policy. Returns a summary dict.
+    Asserts the invariants that must hold at every decision point."""
+    env = SimGameEnv(ascension=0)
+    canon, info = env.reset(seed=seed)
+
+    import random
+    rnd = random.Random(seed)
+
+    saw_card_reward = False     # did a card-reward screen ever appear?
+    deck_before_pick = None     # deck size right before the first reward-card pick
+    deck_after_pick = None      # ... and right after that same pick
+    phases_seen = set()
+    steps = 0
+    while not env.is_over and steps < max_steps:
+        legal = env.legal_semantic_actions()
+        assert legal, f"seed {seed}: no legal actions at phase {env.phase()!r} " \
+                      f"floor {env.gc.floor_num} (not terminal)"
+        phases_seen.add(env.phase())
+
+        # Track that picking a reward card actually grows the deck.
+        if env.phase() == "combat_reward":
+            info_r = env.gc.get_reward_info()
+            if info_r["card_count"]:
+                saw_card_reward = True
+
+        action = rnd.choice(legal)
+        # Snapshot deck size around the FIRST reward-card pick (same action).
+        take_card = action[0] == ga.REWARD_CARD and deck_before_pick is None
+        if take_card:
+            deck_before_pick = len(env.gc.deck_ids())
+
+        canon, reward, terminated, info = env.step(action)
+        steps += 1
+
+        if take_card:
+            deck_after_pick = len(env.gc.deck_ids())
+
+        if verbose and steps % 20 == 0:
+            print(f"  seed {seed}: step {steps} floor {env.gc.floor_num} "
+                  f"phase {env.phase()} hp {env.gc.cur_hp}")
+
+    assert env.is_over or steps < max_steps, f"seed {seed}: hit step cap"
+    return {
+        "seed": seed,
+        "steps": steps,
+        "final_floor": env.gc.floor_num,
+        "final_act": env.gc.act,
+        "outcome": str(env.gc.outcome).split(".")[-1],
+        "hp": env.gc.cur_hp,
+        "saw_card_reward": saw_card_reward,
+        "deck_before_pick": deck_before_pick,
+        "deck_after_pick": deck_after_pick,
+        "phases": phases_seen,
+    }
+
+
+def test_full_run(seeds=(7, 42, 1, 100, 999, 2024)):
+    """Random legal policy must drive each run to a real terminal (player died,
+    or cleared act 1 into act 2) without stalling, and the deck must grow when a
+    reward card is taken (proves we can train cards beyond the starter deck)."""
+    any_grew = False
+    any_combat = False
+    for seed in seeds:
+        s = _run_episode(seed)
+        # terminal: either died (outcome != UNDECIDED) or advanced past act 1
+        assert s["outcome"] != "UNDECIDED" or s["final_act"] > 1, (
+            f"seed {seed}: ended non-terminal {s}")
+        assert "combat" in s["phases"], f"seed {seed}: never entered combat"
+        any_combat = True
+        if s["deck_before_pick"] is not None and s["deck_after_pick"] is not None:
+            assert s["deck_after_pick"] > s["deck_before_pick"], (
+                f"seed {seed}: deck did not grow on reward card "
+                f"({s['deck_before_pick']} -> {s['deck_after_pick']})")
+            any_grew = True
+        print(f"  seed {seed:>4}: {s['steps']:>4} steps -> floor {s['final_floor']:>2} "
+              f"act {s['final_act']} {s['outcome']} hp {s['hp']} "
+              f"phases={sorted(s['phases'])}")
+    assert any_combat, "no run ever fought"
+    assert any_grew, "no run ever grew its deck via a reward card"
+    print(f"[ok] test_full_run: {len(seeds)} runs to terminal, deck growth confirmed")
+
+
 def main():
     test_map_spine()
+    print()
+    test_full_run()
     print("\nall whole-run tests passed.")
 
 

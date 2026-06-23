@@ -85,7 +85,39 @@ def render_state(canon):
     return "\n".join(lines)
 
 
-# --------------------------- action render --------------------------
+# ------------------------- overworld render -------------------------
+
+def render_overworld(canon):
+    """canonical overworld dict (normalize_sim_overworld + env-filled options) ->
+    multi-line human-readable string. Branches on the semantic phase."""
+    phase = canon.get("phase", "?")
+    lines = [f"== {phase} " + "=" * 30]
+    lines.append(
+        f"floor {canon.get('floor')}  HP {canon['hp']}/{canon['max_hp']}  "
+        f"gold {canon['gold']}  deck {len(canon['deck'])}  relics {len(canon['relics'])}"
+    )
+    opts = canon.get("options", {}) or {}
+
+    if phase == "map":
+        nodes = opts.get("nodes", [])
+        shown = "  ".join(f"x={x}:{room}" for x, room in nodes) or "(none)"
+        lines.append(f"Map next: {shown}")
+    elif phase == "combat_reward":
+        bits = []
+        if opts.get("gold"):    bits.append(f"gold {opts['gold']}")
+        if opts.get("relics"):  bits.append(f"relics {opts['relics']}")
+        if opts.get("potions"): bits.append(f"potions {opts['potions']}")
+        if opts.get("card_count"): bits.append(f"card reward x{opts['card_count']}")
+        lines.append("Rewards: " + ("  ".join(bits) if bits else "(empty)"))
+    elif phase == "card_select":
+        cards = opts.get("cards", [])
+        shown = " ".join(f"[{k}]{cid}{'+' if up else ''}"
+                         for k, (cid, up) in enumerate(cards)) or "(none)"
+        lines.append(f"Choose: {shown}")
+    elif phase == "event":
+        lines.append(f"Event: {opts.get('event', '?')}")
+    return "\n".join(lines)
+
 
 def render_action(action_id, canon=None):
     """Abstract action id -> human-readable string.

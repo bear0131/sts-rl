@@ -242,7 +242,54 @@ def normalize_real_overworld(gs):
     }
 
 
+# sim screen_state_name suffix -> semantic phase string. The names look like
+# "ScreenState.REST_ROOM"; we key on the bare tail.
+_SCREEN2PHASE = {
+    "EVENT_SCREEN": "event",     # incl. Neow, distinguished by cur_event_name in env
+    "REWARDS": "combat_reward",
+    "BOSS_RELIC_REWARDS": "boss_relic",
+    "CARD_SELECT": "card_select",
+    "MAP_SCREEN": "map",
+    "TREASURE_ROOM": "chest",
+    "REST_ROOM": "rest",
+    "SHOP_ROOM": "shop",
+    "BATTLE": "combat",
+    "INVALID": "invalid",
+}
+
+
+def sim_phase(gc):
+    """Semantic phase for the gc's current screen (bare-name lookup)."""
+    tail = gc.screen_state_name.split(".")[-1]
+    return _SCREEN2PHASE.get(tail, tail.lower())
+
+
+def _sim_screen_options(gc, phase):
+    """The current screen's decision context, read from the gc itself (no map
+    reachability here — that needs the rebuilt SpireMap and is added by the env,
+    which keeps this schema backend-symmetric and free of an env dependency).
+
+    Only fields the screen actually owns are populated; callers branch on phase.
+    """
+    if phase == "combat_reward":
+        info = gc.get_reward_info()
+        return {
+            "gold": list(info["gold"]),
+            "relics": list(info["relics"]),
+            "potions": list(info["potions"]),
+            "card_count": info["card_count"],
+        }
+    if phase == "card_select":
+        return {"cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()]}
+    if phase == "event":
+        return {"event": gc.cur_event_name}
+    # map/rest/chest/boss_relic/shop options are enumerated by the env (map needs
+    # SpireMap; the rest are fixed-shape) -> nothing gc-readable to add here.
+    return {}
+
+
 def normalize_sim_overworld(gc):
+    phase = sim_phase(gc)
     return {
         "floor": gc.floor_num,
         "hp": gc.cur_hp,
@@ -250,6 +297,8 @@ def normalize_sim_overworld(gc):
         "gold": gc.gold,
         "deck": sorted((_sim_card_id(n), u) for n, u in gc.deck_ids()),
         "relics": sorted(gc.relic_ids()),
+        "phase": phase,
+        "options": _sim_screen_options(gc, phase),
     }
 
 

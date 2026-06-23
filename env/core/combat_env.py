@@ -38,6 +38,45 @@ _OUTCOME_VICTORY = 1
 _OUTCOME_LOSS = 2
 
 
+# ---- combat sts-glue, shared with SimGameEnv ----
+# These two are the only combat helpers that touch the sim. SimGameEnv holds its
+# own BattleContext mid-run and reuses them so the legal-action <-> 71-id mapping
+# (RNG-verified) has a single source of truth.
+
+def legal_mask(bc):
+    """Boolean mask over the fixed action space, built from the sim's own
+    legal_actions so abstract ids line up exactly with what bc.execute accepts."""
+    mask = np.zeros(actions.N_ACTIONS, dtype=bool)
+    for a in bc.legal_actions():
+        t = a.action_type
+        if t == sts.ActionType.END_TURN:
+            mask[actions.END_TURN] = True
+        elif t == sts.ActionType.CARD:
+            tgt = a.target_idx
+            # sim encodes "no target" as a sentinel; treat out-of-range as untargeted
+            tgt = tgt if 0 <= tgt < actions.MAX_MONSTERS else None
+            if a.source_idx < actions.HAND_SLOTS:
+                mask[actions.encode_play(a.source_idx, tgt)] = True
+        elif t == sts.ActionType.SINGLE_CARD_SELECT:
+            if a.source_idx < actions.SELECT_SLOTS:
+                mask[actions.encode_select(a.source_idx)] = True
+    return mask
+
+
+def to_sts_action(kind):
+    """Decoded abstract action tuple (from actions.decode) -> sts.Action."""
+    if kind[0] == actions.KIND_END:
+        return sts.Action(sts.ActionType.END_TURN)
+    if kind[0] == actions.KIND_PLAY:
+        _, h, t = kind
+        if t is None:
+            return sts.Action(sts.ActionType.CARD, h)
+        return sts.Action(sts.ActionType.CARD, h, t)
+    if kind[0] == actions.KIND_SELECT:
+        return sts.Action(sts.ActionType.SINGLE_CARD_SELECT, kind[1])
+    raise ValueError(kind)
+
+
 class SimCombatEnv(gym.Env):
     """One combat = one episode.
 
@@ -84,7 +123,7 @@ class SimCombatEnv(gym.Env):
         if not self.action_mask()[int(action_id)]:
             return self._obs(), -0.1, False, False, self._info()
 
-        self.bc.execute(self._to_sts_action(kind))
+        self.bc.execute(to_sts_action(kind))
 
         terminated = self.bc.is_battle_over
         raw = self.bc.to_dict()
@@ -119,33 +158,9 @@ class SimCombatEnv(gym.Env):
         return render.render_action(action_id, self._canon() if self.bc else None)
 
     def action_mask(self):
-        """Boolean mask over the fixed action space, built from the sim's own
-        legal_actions so abstract ids line up exactly with what bc.execute will
-        accept."""
-        mask = np.zeros(actions.N_ACTIONS, dtype=bool)
-        for a in self.bc.legal_actions():
-            t = a.action_type
-            if t == sts.ActionType.END_TURN:
-                mask[actions.END_TURN] = True
-            elif t == sts.ActionType.CARD:
-                tgt = a.target_idx
-                # sim encodes "no target" as a sentinel; treat out-of-range as untargeted
-                tgt = tgt if 0 <= tgt < actions.MAX_MONSTERS else None
-                if a.source_idx < actions.HAND_SLOTS:
-                    mask[actions.encode_play(a.source_idx, tgt)] = True
-            elif t == sts.ActionType.SINGLE_CARD_SELECT:
-                if a.source_idx < actions.SELECT_SLOTS:
-                    mask[actions.encode_select(a.source_idx)] = True
-        return mask
+        """Boolean mask over the fixed action space (shared helper; see
+        combat_env.legal_mask)."""
+        return legal_mask(self.bc)
 
     def _to_sts_action(self, kind):
-        if kind[0] == actions.KIND_END:
-            return sts.Action(sts.ActionType.END_TURN)
-        if kind[0] == actions.KIND_PLAY:
-            _, h, t = kind
-            if t is None:
-                return sts.Action(sts.ActionType.CARD, h)
-            return sts.Action(sts.ActionType.CARD, h, t)
-        if kind[0] == actions.KIND_SELECT:
-            return sts.Action(sts.ActionType.SINGLE_CARD_SELECT, kind[1])
-        raise ValueError(kind)
+        return to_sts_action(kind)

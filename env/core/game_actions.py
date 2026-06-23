@@ -1,0 +1,87 @@
+"""Semantic action protocol for whole-run play — backend-agnostic.
+
+A *semantic action* is a small tuple `(verb, *args)` describing a game-level
+decision in terms the player would recognize ("open map node x", "claim the
+relic", "pick reward card j"), NOT in terms of any backend's internals. Both
+SimGameEnv (sim) and a future RealGameEnv (bridge) speak this same vocabulary:
+each enumerates the currently-legal semantic actions and knows how to apply one
+against its own backend.
+
+Design split (see doc/plan_simgameenv.md):
+  - This module = the vocabulary + tiny builders + a human-readable label.
+  - SimGameEnv.apply() = the dispatch that turns a semantic action into sim calls
+    (it owns gc/bc). RealGameEnv.apply() would map the same tuples to CommMod
+    commands.
+  - Fixed-length action ids + a global mask are deliberately NOT defined here —
+    that compression is the thin SlayTheSpireEnv's job, so it can choose the
+    encoding without the backend locking it in. The thick layer only exposes
+    `legal_semantic_actions() -> list[tuple]` and `apply(action)`.
+
+The combat phase does not re-invent anything: a combat decision is
+`(COMBAT, combat_action_id)` where combat_action_id indexes the existing,
+RNG-verified 71-action space in actions.py.
+"""
+
+from . import actions
+
+# ---- verbs ----
+NEOW = "neow"               # (NEOW, option_idx)            0..3
+MAP = "map"                 # (MAP, x)                      next-row column to enter
+COMBAT = "combat"           # (COMBAT, action_id)           delegates to actions.py (0..N_ACTIONS)
+CLAIM = "claim"             # (CLAIM, kind, idx)            kind in {"gold","relic","potion"}
+REWARD_CARD = "reward_card" # (REWARD_CARD, j)              pick card j on a combat card-reward
+SKIP_CARDS = "skip_cards"   # (SKIP_CARDS,)                 skip the card reward
+SELECT = "select"           # (SELECT, k)                   pick k on a CARD_SELECT/grid screen
+CAMPFIRE = "campfire"       # (CAMPFIRE, option)            option in CAMPFIRE_OPTIONS
+EVENT = "event"             # (EVENT, i)                    event option i
+CHEST = "chest"             # (CHEST, open_bool)            open/skip a treasure chest
+BOSS_RELIC = "boss_relic"   # (BOSS_RELIC, i)               pick boss relic i
+PROCEED = "proceed"         # (PROCEED,)                    leave a reward/rest/chest screen
+SHOP_PROCEED = "shop_proceed"  # (SHOP_PROCEED,)            leave the shop (v1 shop is stub)
+
+# claimable kinds on a combat-reward screen
+CLAIM_GOLD = "gold"
+CLAIM_RELIC = "relic"
+CLAIM_POTION = "potion"
+
+# campfire options -> the sim's fixed chooseCampfireOption index (replay._CAMPFIRE)
+CAMPFIRE_OPTIONS = {"rest": 0, "smith": 1, "recall": 2, "lift": 3, "toke": 4, "dig": 5}
+
+
+# ---- builders (clarity at call sites; tuples are the canonical form) ----
+def neow(i):            return (NEOW, i)
+def map_node(x):        return (MAP, x)
+def combat(action_id):  return (COMBAT, int(action_id))
+def claim(kind, idx=0): return (CLAIM, kind, idx)
+def reward_card(j):     return (REWARD_CARD, j)
+def skip_cards():       return (SKIP_CARDS,)
+def select(k):          return (SELECT, k)
+def campfire(opt):      return (CAMPFIRE, opt)
+def event(i):           return (EVENT, i)
+def chest(open_):       return (CHEST, bool(open_))
+def boss_relic(i):      return (BOSS_RELIC, i)
+def proceed():          return (PROCEED,)
+def shop_proceed():     return (SHOP_PROCEED,)
+
+
+def describe(action, canon=None):
+    """Human-readable label for a semantic action. For COMBAT, defer to the
+    combat renderer if a canonical combat state is supplied."""
+    verb = action[0]
+    if verb == COMBAT:
+        from . import render
+        # canon here is the combat-phase canonical dict, if available
+        return f"combat: {render.render_action(action[1], canon)}"
+    if verb == NEOW:        return f"Neow option {action[1]}"
+    if verb == MAP:         return f"go to map node x={action[1]}"
+    if verb == CLAIM:       return f"claim {action[1]} #{action[2]}"
+    if verb == REWARD_CARD: return f"take reward card #{action[1]}"
+    if verb == SKIP_CARDS:  return "skip card reward"
+    if verb == SELECT:      return f"select card #{action[1]}"
+    if verb == CAMPFIRE:    return f"campfire: {action[1]}"
+    if verb == EVENT:       return f"event option {action[1]}"
+    if verb == CHEST:       return "open chest" if action[1] else "skip chest"
+    if verb == BOSS_RELIC:  return f"take boss relic #{action[1]}"
+    if verb == PROCEED:     return "proceed"
+    if verb == SHOP_PROCEED: return "leave shop"
+    return str(action)
