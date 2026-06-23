@@ -302,7 +302,20 @@ def _sim_screen_options(gc, phase):
         return {"cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()]}
     if phase == "event":
         return {"event": gc.cur_event_name}
-    # map/rest/chest/boss_relic/shop options are enumerated by the env (map needs
+    if phase == "shop":
+        # The shop shelf, POSITIONAL (slot i == the buy action's id, so obs slots
+        # line up with the action mask). Sold/empty slots have price -1 from the
+        # sim; the encoder maps those to PAD id + price 0 (a shop has no "originally
+        # empty" slot, so -1 unambiguously means "already bought"). Card ids are
+        # normalized like the deck; relic/potion ids are the sim's stable strings.
+        s = gc.shop_contents()
+        return {
+            "shop_cards": [(_sim_card_id(c["id"]), c["price"]) for c in s["cards"]],
+            "shop_relics": [(r["id"], r["price"]) for r in s["relics"]],
+            "shop_potions": [(p["id"], p["price"]) for p in s["potions"]],
+            "shop_remove_cost": s["remove_cost"],
+        }
+    # map/rest/chest/boss_relic options are enumerated by the env (map needs
     # SpireMap; the rest are fixed-shape) -> nothing gc-readable to add here.
     return {}
 

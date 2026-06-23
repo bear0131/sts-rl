@@ -1,4 +1,4 @@
-"""Observation encoder v2: canonical state dict -> structured Dict observation.
+"""Observation encoder v3: canonical state dict -> structured Dict observation.
 
 This module is the single source of truth for the obs layout and the RL model's
 input contract (see doc/day_0623/obs_design.md). It is a PURE function of the
@@ -44,8 +44,9 @@ from . import intents
 
 # Bump on any layout/order/scaling change (see module docstring). v1 was a flat
 # Box; v2 is the structured Dict below. v3 adds `arg_step` (the thin
-# SlayTheSpireEnv's autoregressive sub-step, action_design.md §1).
-OBS_VERSION = 3
+# SlayTheSpireEnv's autoregressive sub-step, action_design.md §1). v4 adds the
+# shop shelf groups (shop_*: card/relic/potion ids + prices + remove cost).
+OBS_VERSION = 4
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -56,6 +57,9 @@ P_MAX = 5                 # potion slots
 G_MAX = 12                # card-select grid candidate slots
 OFFER_SLOTS = 3           # combat card-reward choices
 MAP_EDGES = 3             # reachable next-row nodes (<=3 edges out of a node)
+SHOP_CARD_SLOTS = 7       # shop shelf: cards[7] (slot == buy action id)
+SHOP_RELIC_SLOTS = 3      # shop shelf: relics[3]
+SHOP_POTION_SLOTS = 3     # shop shelf: potions[3]
 
 # ---- normalization scales (divisors; keep scalars ~[0,1]) ----
 HP_SCALE = 200.0
@@ -131,6 +135,14 @@ def obs_space():
         "map_node_x": scal((MAP_EDGES,)),
         "boss_relic_ids": cat((OFFER_SLOTS,), V.RELIC_VOCAB_CAPACITY),
         "event_id": cat((1,), V.EVENT_VOCAB_CAPACITY),
+        # ---- shop shelf (phase-gated; slot i == buy action id; PAD otherwise) ----
+        "shop_card_ids": cat((SHOP_CARD_SLOTS,), N_CARDS),
+        "shop_card_prices": scal((SHOP_CARD_SLOTS,)),
+        "shop_relic_ids": cat((SHOP_RELIC_SLOTS,), V.RELIC_VOCAB_CAPACITY),
+        "shop_relic_prices": scal((SHOP_RELIC_SLOTS,)),
+        "shop_potion_ids": cat((SHOP_POTION_SLOTS,), V.POTION_VOCAB_CAPACITY),
+        "shop_potion_prices": scal((SHOP_POTION_SLOTS,)),
+        "shop_remove_cost": scal((1,)),
     })
 
 
@@ -176,6 +188,13 @@ def _empty():
         "map_node_x": np.zeros(MAP_EDGES, _SCALAR),
         "boss_relic_ids": np.zeros(OFFER_SLOTS, _CAT),
         "event_id": np.zeros(1, _CAT),
+        "shop_card_ids": np.zeros(SHOP_CARD_SLOTS, _CAT),
+        "shop_card_prices": np.zeros(SHOP_CARD_SLOTS, _SCALAR),
+        "shop_relic_ids": np.zeros(SHOP_RELIC_SLOTS, _CAT),
+        "shop_relic_prices": np.zeros(SHOP_RELIC_SLOTS, _SCALAR),
+        "shop_potion_ids": np.zeros(SHOP_POTION_SLOTS, _CAT),
+        "shop_potion_prices": np.zeros(SHOP_POTION_SLOTS, _SCALAR),
+        "shop_remove_cost": np.zeros(1, _SCALAR),
     }
 
 
@@ -287,6 +306,25 @@ def _encode_options(o, canon):
         g = canon.get("global") or {}
         # event id lives in the options (env reads gc.cur_event_name into it)
         o["event_id"][0] = _idx(V.EVENT_VOCAB_INDEX, opts.get("event", "PAD"))
+    elif phase == "shop":
+        # Positional shelf: slot i lines up with the SHOP_* buy action id. A sold
+        # slot has price -1 (shop_contents) -> PAD id + price 0 (decision: a shop
+        # has no "originally empty" slot, so -1 means "already bought").
+        for i, (cid, price) in enumerate(opts.get("shop_cards", [])[:SHOP_CARD_SLOTS]):
+            if price != -1:
+                o["shop_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+                o["shop_card_prices"][i] = price / GOLD_SCALE
+        for i, (rid, price) in enumerate(opts.get("shop_relics", [])[:SHOP_RELIC_SLOTS]):
+            if price != -1:
+                o["shop_relic_ids"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
+                o["shop_relic_prices"][i] = price / GOLD_SCALE
+        for i, (pid, price) in enumerate(opts.get("shop_potions", [])[:SHOP_POTION_SLOTS]):
+            if price != -1:
+                o["shop_potion_ids"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
+                o["shop_potion_prices"][i] = price / GOLD_SCALE
+        rc = opts.get("shop_remove_cost", -1)
+        if rc != -1:
+            o["shop_remove_cost"][0] = rc / GOLD_SCALE
 
     if phase == "boss_relic":
         g = canon.get("global") or {}
