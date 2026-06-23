@@ -107,8 +107,12 @@ def render_overworld(canon):
         if opts.get("gold"):    bits.append(f"gold {opts['gold']}")
         if opts.get("relics"):  bits.append(f"relics {opts['relics']}")
         if opts.get("potions"): bits.append(f"potions {opts['potions']}")
-        if opts.get("card_count"): bits.append(f"card reward x{opts['card_count']}")
-        lines.append("Rewards: " + ("  ".join(bits) if bits else "(empty)"))
+        lines.append("Rewards: " + ("  ".join(bits) if bits else "(none)"))
+        if opts.get("card_count"):
+            cards = opts.get("cards", [])
+            shown = " ".join(f"[{j}]{cid}{'+' if up else ''}"
+                             for j, (cid, up) in enumerate(cards)) or f"x{opts['card_count']}"
+            lines.append(f"Card reward: {shown}")
     elif phase == "card_select":
         cards = opts.get("cards", [])
         shown = " ".join(f"[{k}]{cid}{'+' if up else ''}"

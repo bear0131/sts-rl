@@ -66,7 +66,8 @@ def shop_proceed():     return (SHOP_PROCEED,)
 
 def describe(action, canon=None):
     """Human-readable label for a semantic action. For COMBAT, defer to the
-    combat renderer if a canonical combat state is supplied."""
+    combat renderer. For card-bearing overworld actions (reward_card / select)
+    look up the actual card from the overworld canonical's options when given."""
     verb = action[0]
     if verb == COMBAT:
         from . import render
@@ -75,9 +76,9 @@ def describe(action, canon=None):
     if verb == NEOW:        return f"Neow option {action[1]}"
     if verb == MAP:         return f"go to map node x={action[1]}"
     if verb == CLAIM:       return f"claim {action[1]} #{action[2]}"
-    if verb == REWARD_CARD: return f"take reward card #{action[1]}"
+    if verb == REWARD_CARD: return f"take card: {_card_at(canon, 'cards', action[1])}"
     if verb == SKIP_CARDS:  return "skip card reward"
-    if verb == SELECT:      return f"select card #{action[1]}"
+    if verb == SELECT:      return f"select: {_card_at(canon, 'cards', action[1])}"
     if verb == CAMPFIRE:    return f"campfire: {action[1]}"
     if verb == EVENT:       return f"event option {action[1]}"
     if verb == CHEST:       return "open chest" if action[1] else "skip chest"
@@ -85,3 +86,16 @@ def describe(action, canon=None):
     if verb == PROCEED:     return "proceed"
     if verb == SHOP_PROCEED: return "leave shop"
     return str(action)
+
+
+def _card_at(canon, key, idx):
+    """Look up the (id, up) card at options[key][idx] in an overworld canonical
+    and render it as 'Panacea' / 'Strike_R+'. Falls back to '#idx' if the canon
+    isn't available (e.g. labelling without state)."""
+    try:
+        cid, up = canon["options"][key][idx]
+    except (TypeError, KeyError, IndexError):
+        return f"#{idx}"
+    if not up:
+        return cid
+    return f"{cid}+" if up == 1 else f"{cid}+{up}"

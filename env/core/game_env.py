@@ -257,5 +257,5 @@ class SimGameEnv:
         return render.render_overworld(self._canonical())
 
     def describe_action(self, action):
-        canon = normalize_sim(self.bc.to_dict()) if self.bc is not None else None
+        canon = normalize_sim(self.bc.to_dict()) if self.bc is not None else self._canonical()
         return ga.describe(action, canon)

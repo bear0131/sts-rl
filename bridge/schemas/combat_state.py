@@ -278,6 +278,11 @@ def _sim_screen_options(gc, phase):
             "relics": list(info["relics"]),
             "potions": list(info["potions"]),
             "card_count": info["card_count"],
+            # the actual card choices, so the player/agent sees WHICH cards are on
+            # offer, not just how many. get_card_reward returns Card objects;
+            # str(card.id) is 'CardId.FLASH_OF_STEEL' -> take the bare enum name.
+            "cards": ([_card_reward_entry(c) for c in gc.get_card_reward()]
+                      if info["card_count"] else []),
         }
     if phase == "card_select":
         return {"cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()]}
@@ -286,6 +291,12 @@ def _sim_screen_options(gc, phase):
     # map/rest/chest/boss_relic/shop options are enumerated by the env (map needs
     # SpireMap; the rest are fixed-shape) -> nothing gc-readable to add here.
     return {}
+
+
+def _card_reward_entry(card):
+    """A Card object from get_card_reward() -> (canonical id, upgrade_count)."""
+    enum_name = str(card.id).split(".")[-1]
+    return (_sim_card_id(enum_name), card.upgrade_count)
 
 
 def normalize_sim_overworld(gc):
