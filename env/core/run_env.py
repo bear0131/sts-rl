@@ -75,9 +75,13 @@ class SlayTheSpireEnv(gym.Env):
         phase = self.thick.phase()
 
         # Illegal id: no-op + small penalty (the mask should prevent this; guard
-        # is defense in depth, mirroring SimCombatEnv).
+        # is defense in depth, mirroring SimCombatEnv). Flag it in info too: the
+        # -0.1 reward is ambiguous (a legit -20 hp turn yields the same value), so
+        # callers that need to detect the penalty must read info["illegal"].
         if aid not in set(A.legal_ids(legal, self._pending, phase)):
-            return self._obs(), -0.1, False, False, self._info()
+            info = self._info()
+            info["illegal"] = True
+            return self._obs(), -0.1, False, False, info
 
         semantic, self._pending = A.resolve(aid, legal, self._pending, phase)
 

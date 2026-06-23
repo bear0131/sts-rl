@@ -580,7 +580,13 @@ void MonsterGroup::doMonsterTurn(BattleContext &bc) {
         }
     }
 
-    if (extraRollMoveOnTurn.test(bc.monsterTurnIdx)) {
+    // A split during this monster's takeTurn (largeSlimeSplit) can advance
+    // monsterTurnIdx to 5 (placeIdx==2 -> idx2+1==5), past this bitset<5>. Guard
+    // the extra-roll bookkeeping so the still-unwinding turn doesn't index out of
+    // range; a slot beyond the array has no pending extra roll, and the caller's
+    // `monsterTurnIdx < monsterCount` check ends the monster phase right after.
+    if (bc.monsterTurnIdx < static_cast<int>(extraRollMoveOnTurn.size())
+        && extraRollMoveOnTurn.test(bc.monsterTurnIdx)) {
         bc.noOpRollMove();
         extraRollMoveOnTurn.set(bc.monsterTurnIdx, false);
     }

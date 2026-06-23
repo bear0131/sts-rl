@@ -16,8 +16,9 @@ Discrete space). The thin layer adds the gym surface + fixed-length id/mask. See
 doc/plan_simgameenv.md.
 
 v1 scope (narrow vertical slice): drives act 1 end to end. Shops are a stub
-(only "leave"); events allow option 0 only (see _EVENT_* notes). Both gaps are
-absorbed here, not leaked to the semantic action set's shape.
+(only "leave"). Events and campfires now enumerate their real legal options via
+the sim's own action enumerator (gc.legal_event_options / legal_campfire_options),
+so multi-phase events (Golden Idol, Cursed Tome) resolve instead of looping.
 """
 
 import numpy as np
@@ -42,11 +43,8 @@ _GC_UNDECIDED = sts.GameOutcome.UNDECIDED
 
 # campfire option name -> sim index (mirror of game_actions.CAMPFIRE_OPTIONS)
 _CAMPFIRE = ga.CAMPFIRE_OPTIONS
-
-# Events whose option count we don't yet read from the sim get option 0 only.
-# act-1 events are few; this keeps a run from stalling without a binding change.
-# TODO: export event option count from the sim, then enumerate real choices.
-_EVENT_MAX_OPTIONS = 1
+# inverse: sim campfire index -> option name (0..5; 6=skip handled as proceed)
+_CAMP_NAME_BY_IDX = {idx: name for name, idx in _CAMPFIRE.items()}
 
 
 def _tail(gc):
@@ -159,7 +157,13 @@ class SimGameEnv:
             # Neow is an event screen too; its options are the 4 Neow rewards.
             if self.gc.cur_event_name == "NEOW":
                 return [ga.neow(i) for i in range(4)]
-            return [ga.event(i) for i in range(_EVENT_MAX_OPTIONS)]
+            # The sim's own action enumerator gives the phase/relic/gold-aware
+            # valid option indices for THIS event (handles multi-phase events like
+            # Golden Idol / Cursed Tome that the old option-0 stub looped on). May
+            # be empty for unsupported events (MATCH_AND_KEEP / BONFIRE_SPIRITS);
+            # the thin layer then has no legal action and the run stalls there
+            # honestly rather than asserting in the sim.
+            return [ga.event(i) for i in self.gc.legal_event_options()]
         if phase == "map":
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
             return [ga.map_node(x2) for x2 in self.rmap.reachable(x, y)]
@@ -178,10 +182,17 @@ class SimGameEnv:
         if phase == "card_select":
             return [ga.select(k) for k in range(len(self.gc.get_select_cards()))]
         if phase == "rest":
-            # offer rest/smith always; the sim ignores options the campfire lacks,
-            # but to stay honest we only surface the two universal ones in v1.
-            # TODO: read available campfire options (recall/toke/dig relics).
-            return [ga.campfire("rest"), ga.campfire("smith"), ga.proceed()]
+            # The sim enumerates the campfire options actually available here,
+            # gated by relics/keys (rest/smith always; recall hidden once the ruby
+            # key is held; lift only with Girya; dig only with Shovel; etc.).
+            # Indices 0-5 are the named CAMPFIRE_OPTIONS; 6 (SKIP) == proceed.
+            acts = []
+            for i in self.gc.legal_campfire_options():
+                if i == 6:
+                    acts.append(ga.proceed())
+                else:
+                    acts.append(ga.campfire(_CAMP_NAME_BY_IDX[i]))
+            return acts
         if phase == "chest":
             return [ga.chest(True), ga.chest(False)]
         if phase == "boss_relic":

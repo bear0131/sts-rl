@@ -139,17 +139,28 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 
 调查记录（`sim/sts_lightspeed/include/...`，均为 POD 字段/枚举，绑定是纯加法零侵入）：
 
+> **进度（本批已落地，重编 .so 已验证）**：#7 事件 + 火堆 recall/lift/toke/dig 已绑。
+> 关键发现：sim 自带 `search::GameAction::getAllActionsInState(gc)` / `getValidEventSelectBits(gc)`——
+> 一套 relic/gold/phase 感知的**权威战外合法动作枚举器**（战斗侧 `search::Action` 的战外对偶），
+> 已正确处理多阶段事件（Golden Idol 二阶段返回 `0b11100` 而非只 option 0，正是旧死循环根因）。
+> 故不手抄各事件/火堆合法性（脆弱、复刻 sim 的 `assert(false)` 雷），而是绑定这一个原语，
+> 暴露 `gc.legal_event_options()` / `gc.legal_campfire_options()` 两个 getter，厚层直接消费。
+> 顺带修了一个被深局暴露的**既有战斗引擎 bug**：大史莱姆在 `placeIdx==2` 分裂时把
+> `monsterTurnIdx` 推到 5，`doMonsterTurn` 的 `extraRollMoveOnTurn.test(5)` 越界 `bitset<5>`
+> （`MonsterGroup.cpp:583` 加边界守卫修复）。
+> 仍待绑：#2/#3/#5 select_context、#6 shop 货架、#1 move_id 细粒度。
+
 | # | 项 | 位置 | 用途 | 词表 |
 |---|---|---|---|---|
 | 1 | **意图 move_id** | `monster.moveHistory[1]`（MonsterMoveId，197 项） | obs `monster_move` 细粒度招式身份 | `MOVE_VOCAB` |
 | 2 | **战内 select_context** | `bc.cardSelectInfo.cardSelectTask`（`CardSelectTask`，20 项：ARMAMENTS/EXHAUST_ONE/EXHAUST_MANY/GAMBLE/DUAL_WIELD/HEADBUTT/NIGHTMARE/SEEK/…） | obs `select_context`：这屏选牌干嘛 | `SELECT_TASK_VOCAB` |
 | 3 | **选几张** | `bc.cardSelectInfo.{pickCount, canPickZero, canPickAnyNumber}` | autoregressive 选牌还要选几张、能否选零/任意 | scalar/flag |
-| 4 | **战内输入态**（可选） | `bc.inputState`（`InputState`：CARD_SELECT/CHOOSE_DISCARD_CARDS/CHOOSE_GAMBLING_CARDS/SCRY/SELECT_CARD_IN_HAND_EXHAUST/…） | 粗粒度选择屏类型（可能与 #2 冗余，择一或都绑） | `INPUT_STATE_VOCAB` |
+| 4 | ✅ **火堆可用选项** | `gc.legal_campfire_options()`（绑 `getAllActionsInState`） | rest/smith/recall/lift/toke/dig/skip 的真实可用性（relic/key 门控） | — |
 | 5 | **战外 select_context** | `gc.info.selectScreenType`（`CardSelectScreenType`，6~8 项：TRANSFORM/UPGRADE/REMOVE/OBTAIN/BOTTLE/BONFIRE_SPIRITS） | obs `select_context`：商店/营火/事件选牌目的 | `SELECT_SCREEN_VOCAB` |
 | 6 | **商店货架** | `Shop`（`include/game/Shop.h`） | obs 货架卡/遗物/药水 + 价格；action SHOP 买卖段 | `CARD_/RELIC_/POTION_VOCAB` |
-| 7 | **事件选项数 + 语义** | `gc.info.eventData` / Event 表 | action `EVENT_OPT` 真实选项数（现 stub=1）；obs 选项描述 | — |
+| 7 | ✅ **事件选项数 + 语义** | `gc.legal_event_options()`（绑 `getValidEventSelectBits`） | action `EVENT_OPT` 真实合法选项（多阶段事件已解锁） | — |
 
-> #1 是战斗 obs 完整性的唯一硬依赖（obs_design D）；#2/#3/#5 是 autoregressive 选牌的关键（不绑就只能盲选）；#6/#7 解锁商店/事件这两个目前的 stub phase。
+> #1 是战斗 obs 完整性的唯一硬依赖（obs_design D）；#2/#3/#5 是 autoregressive 选牌的关键（不绑就只能盲选）；#6 解锁商店这个目前的 stub phase。**#4/#7 已完成。**
 
 ---
 
@@ -167,32 +178,28 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 | boss_relic | 3 个 boss 遗物 id | `BOSS_RELIC[i]` | ✅ | — |
 | chest | — | open/skip | ✅ | — |
 | card_select | grid 候选牌 id（**变长**，截 G_MAX=12） | `select(k)` | ⚠️ | **缺 `select_context`**：能选但不知为何选（升级/消耗/转化/复制…）→ C++ #2/#5；缺 `pickCount`（要选几张）→ #3 |
-| rest | — | rest/smith/proceed | ⚠️ | recall/lift/toke/dig 未暴露（见下「火堆」） |
-| event | event_id（事件身份齐） | `event(0)` only | ⚠️ | **`_EVENT_MAX_OPTIONS=1` 写死**——只能选第一项，等于不能玩事件 → C++ #7 |
+| rest | — | rest/smith/recall/lift/toke/dig/skip | ✅ | 选项可用性由 sim `legal_campfire_options()` 门控（relic/key 感知）；缺 toke/dig 后续选牌屏仍需 select_context（#2/#5） |
+| event | event_id（事件身份齐） | `event(i)` 真实合法选项 | ✅ | 由 sim `legal_event_options()` 枚举，多阶段事件已解锁；少数事件(MATCH_AND_KEEP/BONFIRE_SPIRITS)枚举器返回空，薄层无合法动作（不崩，老实停在该屏） |
 | shop | — | `shop_proceed()` only | ❌ | 货架完全未绑，只能离开 → C++ #6 |
 
 **可变长 offer 序列**：`combat_reward.cards`（`gc.get_card_reward()`）和 `card_select.cards`（`gc.get_select_cards()`）都是**变长**——canonical 给全长，encode 用定长槽（OFFER_SLOTS=3 / G_MAX=12）PAD/截断装入。其余 offer（map 节点 ≤3、boss 遗物 3、event 选项）也同此纪律。
 
 ### 卡点排序（按“离整局训练的阻塞程度”）
 
-1. **event 选项数（#7）** — 现状=只能选第一项，事件实质不可玩。整局里事件占楼层不少，最阻塞。
-2. **商店货架（#6）** — 完全 stub，整局缺一整类经济决策。
+1. ~~**event 选项数（#7）**~~ ✅ 已绑：sim `legal_event_options()` 枚举真实合法选项，多阶段事件解锁，旧死循环消除。
+2. **商店货架（#6）** — 完全 stub，整局缺一整类经济决策。**当前最高优先**（需新语义动词 + codec resolve 改动，跨层较大，单独一批）。
 3. **select_context + pickCount（#2/#3/#5）** — 选牌屏能选但模型瞎选（不知目的、不知选几张）。
-4. **火堆 recall/lift/toke/dig** — 见下，**半 C++**：
-   - `rest`(0)/`smith`(1) 已暴露，覆盖绝大多数火堆。
-   - `lift`/`toke`/`dig`(Girya/Peace Pipe/Shovel) 的可用性看遗物——`gc.relic_ids()` 已绑，**纯 Python 可判**。
-   - `recall`(2) 看红钥匙 `hasKey(RUBY_KEY)`——**未绑，需 C++**；`smith` 严格判“牌组有可升级牌”可遍历 `deck_ids()` 近似（纯 Python）。
-   - sim 无“查询可用火堆选项”的统一方法（`chooseCampfireOption` 是扁平 switch，可用性散落各处）；要么纯 Python 在厚层重建可用性逻辑（rest/smith/lift/toke/dig 可达，recall 待绑 hasKey），要么 C++ 加一个 `available_campfire_options()` getter（更干净，推荐并入绑定批）。
+4. ~~**火堆 recall/lift/toke/dig**~~ ✅ 已绑：sim `legal_campfire_options()` 给出 relic/key 门控后的真实可用选项（index 0–5 映射 CAMPFIRE_OPTIONS，6=skip→proceed）。
 5. **move_id 细粒度（#1）** — 不阻塞整局跑通，只是战斗 obs 精度；intent_cat 已顶上。
 
-> 1–3 + 火堆 recall 全在 §5 的同一批 C++ 绑定里，一次重编 .so 解锁。其余（map/combat_reward/boss_relic/chest）已 ✅，加上薄层 `SlayTheSpireEnv` 即可端到端跑“能打架+能选路+能拿奖励+能选牌(瞎选)”的整局，先做不完整版整局训练、再随绑定批逐项补全是可行路径。
+> ~~1–3 + 火堆 recall 全在 §5 的同一批 C++ 绑定里~~ → event + 火堆已落地（本批）。**剩 shop(#6) / select_context(#2/#3/#5) / move_id(#1)**。其余（map/combat_reward/boss_relic/chest/event/rest）已 ✅，整局已能端到端跑“能打架+能选路+能拿奖励+能选牌(瞎选)+能玩事件+能用火堆”，shop 仍只能离开。`--run` MaskablePPO 训练全程跑通（rollout→learn→eval→save 无崩）。
 
 ---
 
 ## 7. 已知 stub / 缺口（速查）
 
 - **shop**：厚层 `legal_semantic_actions` 仅 `shop_proceed()`（只能离开）。需 C++ #6。
-- **event**：`_EVENT_MAX_OPTIONS=1`，只能选 option 0。需 C++ #7。
-- **campfire**：厚层只暴露 rest/smith/proceed（recall/lift/toke/dig 见 §6）。
+- ~~**event**~~ ✅：`gc.legal_event_options()` 枚举真实合法选项（多阶段事件解锁）。
+- ~~**campfire**~~ ✅：`gc.legal_campfire_options()` 给 relic/key 门控后的 rest/smith/recall/lift/toke/dig/skip。
 - **potion 使用**：v1 动作面无“喝药”。§3 已规划 `USE_POTION` 段，落地随薄层重构。
 - **select_context / pickCount**：选牌屏缺“目的”和“选几张”，模型瞎选。需 C++ #2/#3/#5。

@@ -22,6 +22,7 @@
 #include <memory>
 #include "combat/BattleContext.h"
 #include "sim/search/Action.h"
+#include "sim/search/GameAction.h"
 #include "constants/MonsterStatusEffects.h"
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterIds.h"
@@ -252,6 +253,35 @@ void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
     }
 }
 
+// The sim's OWN out-of-combat action enumerator (search::GameAction) already
+// solves legality for every overworld screen -- events (incl. phase-dependent
+// ones like Golden Idol / Cursed Tome), campfires (relic/key-gated), shop,
+// rewards, card-select -- with the same relic/gold/deck awareness the search
+// agent uses. We expose just the option *indices* the model needs per screen,
+// keyed the same way the thick layer already dispatches (chooseEventOption(i),
+// chooseCampfireOption(i)). This is the out-of-combat analog of the bound
+// combat `legalCombatActions`, and the authoritative fix for the event stub.
+
+// valid event-option indices for the CURRENT event (getIdx1 of each action).
+py::list legalEventOptions(const sts::GameContext &gc) {
+    py::list out;
+    for (const auto &a : sts::search::GameAction::getAllActionsInState(gc)) {
+        out.append(a.getIdx1());
+    }
+    return out;
+}
+
+// valid campfire-option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,
+// 6=skip) for the current REST_ROOM, gated by relics/keys exactly as the sim's
+// own chooseCampfireOption expects.
+py::list legalCampfireOptions(const sts::GameContext &gc) {
+    py::list out;
+    for (const auto &a : sts::search::GameAction::getAllActionsInState(gc)) {
+        out.append(a.getIdx1());
+    }
+    return out;
+}
+
 // what is claimable on the current combat-reward screen
 py::dict rewardInfo(const sts::GameContext &gc) {
     const auto &r = gc.info.rewardsContainer;
@@ -344,6 +374,10 @@ PYBIND11_MODULE(slaythespire, m) {
         // decision dispatch (mirrors GameContext's own screen state machine)
         .def("choose_event_option", [](GameContext &gc, int i) { gc.chooseEventOption(i); })
         .def("choose_campfire_option", [](GameContext &gc, int i) { gc.chooseCampfireOption(i); })
+        .def("legal_event_options", &legalEventOptions,
+             "valid option indices for the current event (sim-authoritative, phase/relic aware)")
+        .def("legal_campfire_options", &legalCampfireOptions,
+             "valid campfire option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,6=skip)")
         .def("choose_select_card_option", [](GameContext &gc, int i) { gc.chooseSelectCardScreenOption(i); })
         .def("choose_treasure_room", [](GameContext &gc, bool open) { gc.chooseTreasureRoomOption(open); })
         .def("choose_boss_relic", [](GameContext &gc, int i) { gc.chooseBossRelic(i); })

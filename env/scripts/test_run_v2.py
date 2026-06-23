@@ -50,10 +50,10 @@ def run_episode(env, rng):
     arg_steps = Counter()
     steps = 0
     target_steps = 0
-    # Known limitation (action_design §7 / C++ batch #7): the thick layer only
-    # offers event option 0, so some events (e.g. Golden Idol) never advance and
-    # loop forever. That is a THICK-layer stub, not a thin-action-contract bug; we
-    # detect a non-progressing event screen and truncate, reporting it separately.
+    # Safety net: a few events are still unsupported by the enumerator
+    # (MATCH_AND_KEEP / BONFIRE_SPIRITS return no options), so the run could park
+    # on such a screen. Detect a non-progressing event screen and truncate,
+    # reporting it separately rather than spinning to the step cap.
     event_stall = 0
     while True:
         mask = env.action_masks()
@@ -79,8 +79,10 @@ def run_episode(env, rng):
         _check_obs(obs, env.observation_space)
         steps += 1
 
-        # the illegal-id penalty must never fire when we picked from the mask
-        assert r != -0.1 or term, f"masked action hit illegal penalty (id={a})"
+        # the illegal-id penalty must never fire when we picked from the mask.
+        # (check the explicit flag, not the -0.1 value: a legit -20 hp turn shares
+        # that reward.)
+        assert not info2.get("illegal"), f"masked action hit illegal penalty (id={a})"
 
         if info["phase"] == "event" and env.thick.phase() == "event" \
                 and env.thick.gc.floor_num == floor_before:
