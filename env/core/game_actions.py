@@ -37,12 +37,20 @@ EVENT = "event"             # (EVENT, i)                    event option i
 CHEST = "chest"             # (CHEST, open_bool)            open/skip a treasure chest
 BOSS_RELIC = "boss_relic"   # (BOSS_RELIC, i)               pick boss relic i
 PROCEED = "proceed"         # (PROCEED,)                    leave a reward/rest/chest screen
-SHOP_PROCEED = "shop_proceed"  # (SHOP_PROCEED,)            leave the shop (v1 shop is stub)
+SHOP_PROCEED = "shop_proceed"  # (SHOP_PROCEED,)            leave the shop
+SHOP_BUY = "shop_buy"       # (SHOP_BUY, kind, idx)         kind in {"card","relic","potion"}; idx = shelf slot
+SHOP_REMOVE = "shop_remove" # (SHOP_REMOVE,)                pay to remove a card (opens a card_select pick)
 
 # claimable kinds on a combat-reward screen
 CLAIM_GOLD = "gold"
 CLAIM_RELIC = "relic"
 CLAIM_POTION = "potion"
+
+# shop buy kinds (keyed to the sim's shop_buy_card/relic/potion + the
+# gc.legal_shop_options() "kind" strings)
+SHOP_CARD = "card"
+SHOP_RELIC = "relic"
+SHOP_POTION = "potion"
 
 # campfire options -> the sim's fixed chooseCampfireOption index (replay._CAMPFIRE)
 CAMPFIRE_OPTIONS = {"rest": 0, "smith": 1, "recall": 2, "lift": 3, "toke": 4, "dig": 5}
@@ -62,6 +70,8 @@ def chest(open_):       return (CHEST, bool(open_))
 def boss_relic(i):      return (BOSS_RELIC, i)
 def proceed():          return (PROCEED,)
 def shop_proceed():     return (SHOP_PROCEED,)
+def shop_buy(kind, idx): return (SHOP_BUY, kind, idx)
+def shop_remove():      return (SHOP_REMOVE,)
 
 
 def describe(action, canon=None):
@@ -85,6 +95,8 @@ def describe(action, canon=None):
     if verb == BOSS_RELIC:  return f"take boss relic #{action[1]}"
     if verb == PROCEED:     return "proceed"
     if verb == SHOP_PROCEED: return "leave shop"
+    if verb == SHOP_BUY:    return f"buy {action[1]} #{action[2]}"
+    if verb == SHOP_REMOVE: return "pay to remove a card"
     return str(action)
 
 

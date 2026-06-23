@@ -22,11 +22,13 @@ thick layer only once both are in. To the thick layer / sim it is opaque.
 sub-partitions for a specialist/HRL reading without renumbering. The mask zeros
 everything not legal in the current (phase, arg_step).
 
-Reserved-but-masked segments (USE_POTION, SHOP_*, the wide EVENT_OPT tail): the
-deferred C++ binding batch (action_design §5) will make these legal; reserving
-their ids NOW means turning them on later fills reserved width and does NOT bump
+Reserved-but-masked segments (USE_POTION, the wide EVENT_OPT tail): the deferred
+C++ binding batch (action_design §5) will make these legal; reserving their ids
+NOW means turning them on later fills reserved width and does NOT bump
 ACTION_VERSION. Until then the mask simply never sets them (the thick layer does
-not enumerate those semantic actions yet).
+not enumerate those semantic actions yet). The SHOP_* segments were reserved this
+way and are now LIVE (the thick layer enumerates real buys/removes) — filling
+reserved width, so ACTION_VERSION stayed at 2.
 """
 
 from . import actions
@@ -73,10 +75,10 @@ _SEGMENTS = [
     ("NEOW",          NEOW_W),
     ("CHEST",         CHEST_W),
     ("BOSS_RELIC",    BOSS_RELIC_W),
-    ("SHOP_CARD",     SHOP_CARD),       # reserved
-    ("SHOP_RELIC",    SHOP_RELIC),      # reserved
-    ("SHOP_POTION",   SHOP_POTION),     # reserved
-    ("SHOP_REMOVE",   1),               # reserved
+    ("SHOP_CARD",     SHOP_CARD),
+    ("SHOP_RELIC",    SHOP_RELIC),
+    ("SHOP_POTION",   SHOP_POTION),
+    ("SHOP_REMOVE",   1),
     ("PROCEED",       1),
 ]
 
@@ -105,7 +107,18 @@ _EVENT = _BASE["EVENT_OPT"]
 _NEOW = _BASE["NEOW"]
 _CHEST = _BASE["CHEST"]
 _BOSS = _BASE["BOSS_RELIC"]
+_SHOP_CARD = _BASE["SHOP_CARD"]
+_SHOP_RELIC = _BASE["SHOP_RELIC"]
+_SHOP_POTION = _BASE["SHOP_POTION"]
+_SHOP_REMOVE = _BASE["SHOP_REMOVE"]
 _PROCEED = _BASE["PROCEED"]
+
+# shop buy-kind -> its segment base (the thick layer keys buys on these strings).
+_SHOP_BASE_BY_KIND = {
+    ga.SHOP_CARD: _SHOP_CARD,
+    ga.SHOP_RELIC: _SHOP_RELIC,
+    ga.SHOP_POTION: _SHOP_POTION,
+}
 
 # campfire id offset <-> option name (the thick layer keys on names).
 _CAMP_NAME_BY_IDX = {idx: name for name, idx in ga.CAMPFIRE_OPTIONS.items()}
@@ -224,8 +237,12 @@ def legal_ids(legal_semantic, pending, phase):
             ids.add(_BOSS + a[1])
         elif verb in (ga.PROCEED, ga.SHOP_PROCEED):
             ids.add(_PROCEED)
-        # SHOP buy/remove + potion use are not enumerated by the thick layer yet
-        # (reserved segments); they simply never become legal here.
+        elif verb == ga.SHOP_BUY:
+            ids.add(_SHOP_BASE_BY_KIND[a[1]] + a[2])   # (kind, slot) -> segment id
+        elif verb == ga.SHOP_REMOVE:
+            ids.add(_SHOP_REMOVE)
+        # potion use is not enumerated by the thick layer yet (reserved segment);
+        # it simply never becomes legal here.
     return sorted(ids)
 
 
@@ -291,6 +308,14 @@ def resolve(chosen_id, legal_semantic, pending, phase):
         return ga.chest(cid == _CHEST), None      # _CHEST+0 = open, +1 = skip
     if _BOSS <= cid < _BOSS + BOSS_RELIC_W:
         return ga.boss_relic(cid - _BOSS), None
+    if _SHOP_CARD <= cid < _SHOP_CARD + SHOP_CARD:
+        return ga.shop_buy(ga.SHOP_CARD, cid - _SHOP_CARD), None
+    if _SHOP_RELIC <= cid < _SHOP_RELIC + SHOP_RELIC:
+        return ga.shop_buy(ga.SHOP_RELIC, cid - _SHOP_RELIC), None
+    if _SHOP_POTION <= cid < _SHOP_POTION + SHOP_POTION:
+        return ga.shop_buy(ga.SHOP_POTION, cid - _SHOP_POTION), None
+    if cid == _SHOP_REMOVE:
+        return ga.shop_remove(), None
     if cid == _PROCEED:
         # PROCEED leaves whatever screen we are on; pick the legal flavor.
         if any(a[0] == ga.SHOP_PROCEED for a in legal_semantic):

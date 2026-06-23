@@ -60,11 +60,31 @@ def legal_mask(bc):
         elif t == sts.ActionType.SINGLE_CARD_SELECT:
             if a.source_idx < actions.SELECT_SLOTS:
                 mask[actions.encode_select(a.source_idx)] = True
+        elif t == sts.ActionType.MULTI_CARD_SELECT:
+            # The sim's single forced action for EXHAUST_MANY / GAMBLE card-select
+            # tasks (it resolves the whole screen in one shot — no per-card choice
+            # is modeled). Surface it as select slot 0; to_sts_action() consults bc
+            # to emit MULTI rather than SINGLE for it.
+            mask[actions.encode_select(0)] = True
     return mask
 
 
-def to_sts_action(kind):
-    """Decoded abstract action tuple (from actions.decode) -> sts.Action."""
+def _is_multi_select(bc):
+    """True when the live card-select screen is the MULTI_CARD_SELECT catch-all
+    (EXHAUST_MANY / GAMBLE) — its only legal action is one MULTI_CARD_SELECT."""
+    if bc is None:
+        return False
+    return any(a.action_type == sts.ActionType.MULTI_CARD_SELECT
+               for a in bc.legal_actions())
+
+
+def to_sts_action(kind, bc=None):
+    """Decoded abstract action tuple (from actions.decode) -> sts.Action.
+
+    For KIND_SELECT the abstract id does not record whether the live screen is a
+    SINGLE or MULTI card-select (they share the select-slot ids), so the caller
+    passes the live `bc` and we read the screen type off it. Absent bc we default
+    to SINGLE (the common case; MULTI only arises on EXHAUST_MANY / GAMBLE)."""
     if kind[0] == actions.KIND_END:
         return sts.Action(sts.ActionType.END_TURN)
     if kind[0] == actions.KIND_PLAY:
@@ -73,6 +93,8 @@ def to_sts_action(kind):
             return sts.Action(sts.ActionType.CARD, h)
         return sts.Action(sts.ActionType.CARD, h, t)
     if kind[0] == actions.KIND_SELECT:
+        if _is_multi_select(bc):
+            return sts.Action(sts.ActionType.MULTI_CARD_SELECT, 0)
         return sts.Action(sts.ActionType.SINGLE_CARD_SELECT, kind[1])
     raise ValueError(kind)
 
@@ -121,7 +143,7 @@ class SimCombatEnv(gym.Env):
         if not self.action_mask()[int(action_id)]:
             return self._obs(), -0.1, False, False, self._info()
 
-        self.bc.execute(to_sts_action(kind))
+        self.bc.execute(to_sts_action(kind, self.bc))
 
         terminated = self.bc.is_battle_over
         raw = self.bc.to_dict()
@@ -170,4 +192,4 @@ class SimCombatEnv(gym.Env):
         return legal_mask(self.bc)
 
     def _to_sts_action(self, kind):
-        return to_sts_action(kind)
+        return to_sts_action(kind, self.bc)

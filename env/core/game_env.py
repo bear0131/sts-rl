@@ -15,10 +15,11 @@ NOT a gym.Env yet (actions are variable-length semantic tuples, not a fixed
 Discrete space). The thin layer adds the gym surface + fixed-length id/mask. See
 doc/plan_simgameenv.md.
 
-v1 scope (narrow vertical slice): drives act 1 end to end. Shops are a stub
-(only "leave"). Events and campfires now enumerate their real legal options via
-the sim's own action enumerator (gc.legal_event_options / legal_campfire_options),
-so multi-phase events (Golden Idol, Cursed Tome) resolve instead of looping.
+v1 scope (narrow vertical slice): drives act 1 end to end. Events, campfires and
+shops enumerate their real legal options via the sim's own action enumerator
+(gc.legal_event_options / legal_campfire_options / legal_shop_options), so
+multi-phase events (Golden Idol, Cursed Tome) resolve instead of looping and the
+shop supports real buys/removes (gold/sold-out gated by the sim).
 """
 
 import numpy as np
@@ -198,7 +199,18 @@ class SimGameEnv:
         if phase == "boss_relic":
             return [ga.boss_relic(i) for i in range(3)]
         if phase == "shop":
-            return [ga.shop_proceed()]  # v1 stub
+            # The sim enumerates the affordable, in-stock shop actions as
+            # (kind, idx) pairs (gold/sold-out gated). kind maps 1:1 to the
+            # semantic shop verbs; "skip" is leaving the shop.
+            acts = []
+            for kind, idx in self.gc.legal_shop_options():
+                if kind == "skip":
+                    acts.append(ga.shop_proceed())
+                elif kind == "remove":
+                    acts.append(ga.shop_remove())
+                else:  # "card" / "relic" / "potion"
+                    acts.append(ga.shop_buy(kind, idx))
+            return acts
         # unknown screen: nothing we can legally do
         return []
 
@@ -226,7 +238,7 @@ class SimGameEnv:
 
         if verb == ga.COMBAT:
             kind = actions.decode(action[1])
-            self.bc.execute(combat_env.to_sts_action(kind))
+            self.bc.execute(combat_env.to_sts_action(kind, self.bc))
             return
         if verb == ga.NEOW:
             gc.choose_neow_option(action[1]); return
@@ -234,8 +246,8 @@ class SimGameEnv:
             gc.choose_event_option(action[1]); return
         if verb == ga.MAP:
             gc.transition_to_map_node(action[1])
-            if _tail(gc) == "BATTLE":
-                self._start_battle()
+            # battle start is handled centrally in _settle (covers event combats
+            # too), so we don't branch on the destination room type here.
             return
         if verb == ga.CLAIM:
             kind, idx = action[1], action[2]
@@ -259,6 +271,15 @@ class SimGameEnv:
             gc.reward_proceed(); return
         if verb == ga.SHOP_PROCEED:
             gc.shop_proceed(); return
+        if verb == ga.SHOP_BUY:
+            kind, idx = action[1], action[2]
+            if kind == ga.SHOP_CARD:    gc.shop_buy_card(idx)
+            elif kind == ga.SHOP_RELIC: gc.shop_buy_relic(idx)
+            elif kind == ga.SHOP_POTION: gc.shop_buy_potion(idx)
+            else: raise ValueError(f"bad shop buy kind: {kind!r}")
+            return
+        if verb == ga.SHOP_REMOVE:
+            gc.shop_remove(); return
         raise ValueError(f"unhandled semantic action: {action!r}")
 
     def _start_battle(self):
@@ -270,8 +291,13 @@ class SimGameEnv:
 
     def _settle(self):
         """After an action, advance through states that don't need an agent
-        decision: end a finished combat (exit_battle opens rewards), and detect
-        an act transition to rebuild the map. Stops at the next real decision."""
+        decision: start any battle we transitioned into (from the map OR from a
+        combat event like Mushrooms / Dead Adventurer), end a finished combat
+        (exit_battle opens rewards), and detect an act transition to rebuild the
+        map. Stops at the next real decision."""
+        # entered a battle by any path (map node or event) -> create the bc.
+        if self.bc is None and _tail(self.gc) == "BATTLE":
+            self._start_battle()
         if self.bc is not None and self.bc.is_battle_over:
             self.bc.exit_battle(self.gc)
             self.bc = None
