@@ -297,6 +297,63 @@ py::dict rewardInfo(const sts::GameContext &gc) {
     return d;
 }
 
+// The current shop's shelf, read POSITIONALLY (slot index is the buy key the
+// shop_buy_* methods expect): cards[7], relics[3], potions[3]. A price of -1
+// marks a sold/empty slot (Shop::cardPrice etc. return -1 after a purchase).
+// Ids match the rest of the bindings: cardEnumStrings / relicIds / getPotionName.
+py::dict shopContents(const sts::GameContext &gc) {
+    const auto &s = gc.info.shop;
+    py::dict d;
+    py::list cards, relics, potions;
+    for (int i = 0; i < 7; ++i) {
+        py::dict c;
+        c["id"] = std::string(sts::cardEnumStrings[static_cast<int>(s.cards[i].getId())]);
+        c["upgrades"] = s.cards[i].getUpgraded();
+        c["price"] = s.cardPrice(i);
+        cards.append(c);
+    }
+    for (int i = 0; i < 3; ++i) {
+        py::dict r;
+        r["id"] = std::string(sts::relicIds[static_cast<int>(s.relics[i])]);
+        r["price"] = s.relicPrice(i);
+        relics.append(r);
+    }
+    for (int i = 0; i < 3; ++i) {
+        py::dict p;
+        p["id"] = std::string(sts::getPotionName(s.potions[i]));
+        p["price"] = s.potionPrice(i);
+        potions.append(p);
+    }
+    d["cards"] = cards;
+    d["relics"] = relics;
+    d["potions"] = potions;
+    d["remove_cost"] = s.removeCost;
+    return d;
+}
+
+// Authoritative legal shop options, from the sim's own getAllShopActions (gold-
+// and sold-out-gated). Unlike legalEventOptions, idx1 COLLIDES across kinds
+// (card#0 / relic#0 / potion#0 all have idx1==0), so we return (kind, idx)
+// pairs. kind is a stable string keyed to shop_buy_*/shop_remove/shop_proceed:
+// "card"/"relic"/"potion"/"remove"/"skip". "skip" always present.
+py::list legalShopOptions(const sts::GameContext &gc) {
+    using RAT = sts::search::GameAction::RewardsActionType;
+    py::list out;
+    for (const auto &a : sts::search::GameAction::getAllActionsInState(gc)) {
+        const char *kind;
+        switch (a.getRewardsActionType()) {
+            case RAT::CARD:        kind = "card";   break;
+            case RAT::RELIC:       kind = "relic";  break;
+            case RAT::POTION:      kind = "potion"; break;
+            case RAT::CARD_REMOVE: kind = "remove"; break;
+            case RAT::SKIP:        kind = "skip";   break;
+            default:               continue;
+        }
+        out.append(py::make_tuple(kind, a.getIdx1()));
+    }
+    return out;
+}
+
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
@@ -422,6 +479,12 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("shop_buy_potion", [](GameContext &gc, int idx) { gc.info.shop.buyPotion(gc, idx); })
         .def("shop_remove", [](GameContext &gc) { gc.info.shop.buyCardRemove(gc); })
         .def("shop_proceed", [](GameContext &gc) { gc.screenState = ScreenState::MAP_SCREEN; })
+        .def("shop_contents", &shopContents,
+             "the current shop shelf, positional: {cards:[{id,upgrades,price}x7], "
+             "relics:[{id,price}x3], potions:[{id,price}x3], remove_cost}. price -1 == sold/empty")
+        .def("legal_shop_options", &legalShopOptions,
+             "authoritative legal shop actions as (kind, idx) pairs; kind in "
+             "{card,relic,potion,remove,skip} (sim-gated by gold/sold-out)")
         // obs globals: character + ascension are construction-time, boss_relic_ids
         // are the 3 choices offered on a BOSS_RELIC_REWARDS screen (info.bossRelics).
         .def_property_readonly("character",
