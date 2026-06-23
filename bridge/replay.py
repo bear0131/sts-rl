@@ -18,9 +18,12 @@ import os
 import re
 import sys
 
-# ---- load the mingw-built sim module (dlls sit next to the .pyd) ----
-_BUILD = os.path.join(os.path.dirname(__file__), "..", "cpp", "sts_lightspeed", "build")
-os.add_dll_directory(os.path.abspath(_BUILD))
+# ---- load the sim module (built .so/.pyd lives in the build dir) ----
+_BUILD = os.path.join(os.path.dirname(__file__), "..", "sim", "sts_lightspeed", "build")
+# add_dll_directory is Windows-only (needed there to find the mingw runtime dlls
+# sitting next to the .pyd); on Linux/mac the .so resolves its deps normally.
+if hasattr(os, "add_dll_directory") and os.path.isdir(_BUILD):
+    os.add_dll_directory(os.path.abspath(_BUILD))
 sys.path.insert(0, os.path.abspath(_BUILD))
 sys.path.insert(0, os.path.dirname(__file__))  # for `schemas`
 import slaythespire as sts  # noqa: E402

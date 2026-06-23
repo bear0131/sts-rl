@@ -5,8 +5,8 @@ __pycache__/
 venv/
 
 # C++ build artifacts
-cpp/sts_lightspeed/build/
-cpp/sts_lightspeed/cmake-build-*/
+sim/sts_lightspeed/build/
+sim/sts_lightspeed/cmake-build-*/
 *.pyd
 *.so
 *.o
