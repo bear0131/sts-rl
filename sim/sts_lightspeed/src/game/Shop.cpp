@@ -205,14 +205,20 @@ int Shop::getNewCardPrice(GameContext &gc, CardRarity rarity, bool colorless) {
 }
 
 int Shop::getNewPrice(GameContext &gc, int basePrice) {
-    basePrice = static_cast<int>(std::round(gc.merchantRng.random(0.95f, 1.05f)));
+    // ShopScreen.getNewPrice (reference/cardcrawl): retVal = round(basePrice *
+    // merchantRng.random(0.95,1.05)), then the Courier/Membership discounts are
+    // applied as serial rounds (round(price*0.8), then round(price*0.5)). The
+    // old code overwrote basePrice with round(0.95~1.05)==1 and discarded the
+    // discount results, so every repriced item cost ~1; it did still consume one
+    // merchantRng step, so RNG alignment was never affected — purely a value bug.
+    int price = static_cast<int>(std::round(static_cast<float>(basePrice) * gc.merchantRng.random(0.95f, 1.05f)));
     if (gc.hasRelic(RelicId::THE_COURIER)) {
-        std::round(basePrice * COURIER_FACTOR);
+        price = static_cast<int>(std::round(static_cast<float>(price) * COURIER_FACTOR));
     }
     if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
-        std::round(basePrice * MEMBERSHIP_CARD_FACTOR);
+        price = static_cast<int>(std::round(static_cast<float>(price) * MEMBERSHIP_CARD_FACTOR));
     }
-    return basePrice;
+    return price;
 }
 
 int Shop::getRemoveCost(const GameContext &gc) {

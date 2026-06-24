@@ -1981,7 +1981,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
 
             if (asc17) {
                 if (roll < 40) {
-                    if (lastTwoMoves(MMID::ACID_SLIME_M_CORROSIVE_SPIT)) {
+                    if (lastTwoMoves(MMID::ACID_SLIME_L_CORROSIVE_SPIT)) {
                         if (bc.aiRng.randomBoolean(0.6F)) {
                             return (MMID::ACID_SLIME_L_TACKLE);
                         } else {
@@ -2260,16 +2260,16 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                     ++stabCount;
                     return (MMID::BOOK_OF_STABBING_MULTI_STAB);
                 } else {
-                    return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
                     if (asc18) {
                         ++stabCount;
                     }
+                    return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
                 }
             } else if (lastTwoMoves(MMID::BOOK_OF_STABBING_MULTI_STAB)) {
-                return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
                 if (asc18) {
                     ++stabCount;
                 }
+                return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
             } else {
                 ++stabCount;
                 return (MMID::BOOK_OF_STABBING_MULTI_STAB);
@@ -3339,36 +3339,79 @@ void Monster::stealGoldFromPlayer(BattleContext &bc, int amount) {
     }
 }
 
-void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType, const int placeIdx, const int hp) {
+void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType, int placeIdx, const int hp) {
 #ifdef sts_asserts
     assert(hp > 0);
     assert(bc.monsters.monstersAlive > 0);
 #endif
-    // The real game keeps the (now dead) large slime in the monster list and
-    // flanks it with the two medium children: [child, deadLarge, child]. The
-    // dead large slime stays at placeIdx+1 so monster indices stay aligned with
-    // the real run (mirrors SlimeBoss split, which keeps the boss at index 1).
+    auto &m = bc.monsters;
+
+    // The (now dead) large slime stays flanked by its two medium children:
+    // [child, deadLarge, child] (mirrors SlimeBoss split, which keeps the boss
+    // at index 1). The real game spawns the children with smart positioning,
+    // inserting them left/right of the parent and shifting the rest of the
+    // monster list along; here we shift the tail right by 2 to open up
+    // placeIdx+1/placeIdx+2 instead of blindly overwriting them. The old code
+    // assumed those two slots were free, which is only true when the large
+    // slime is the last monster. In the SlimeBoss fight the second large slime
+    // sits at placeIdx+2, so the old code clobbered it -> a live monster
+    // vanished while monstersAlive still counted it -> the victory counter
+    // never hit 0 and the battle span forever (the crash/log-spam in doc/day_0623).
+    //
+    // If shifting the tail would overrun the 5-slot array, first compact out the
+    // dead bodies that are already in arr[]. Dead/halfDead/escaping monsters are
+    // filtered out of every alive-only path (getRandomMonster, victory, AOE), so
+    // dropping their corpses does not change RNG targeting or the living
+    // monsters' relative order — it just reclaims slots for the double split.
+    if (m.monsterCount + 2 > static_cast<int>(m.arr.size())) {
+        std::array<Monster, 5> compacted;
+        int w = 0;
+        int newPlaceIdx = placeIdx;
+        for (int i = 0; i < m.monsterCount; ++i) {
+            // keep every living monster, plus the splitting slime itself (it is
+            // still alive at this point — it only dies as part of this split)
+            if (i == placeIdx || !m.arr[i].isDeadOrEscaped()) {
+                if (i == placeIdx) {
+                    newPlaceIdx = w;
+                }
+                compacted[w] = m.arr[i];
+                compacted[w].idx = w;
+                ++w;
+            }
+        }
+        m.arr = compacted;
+        m.monsterCount = w;
+        placeIdx = newPlaceIdx;
+    }
+
     const auto idx1 = placeIdx;
     const auto idx2 = placeIdx + 2;
     const auto deadIdx = placeIdx + 1;
 
-    bc.monsters.arr[deadIdx] = bc.monsters.arr[placeIdx];
-    bc.monsters.arr[deadIdx].idx = deadIdx;
-    bc.monsters.arr[deadIdx].curHp = 0; // the large slime dies when it splits
-
-    bc.monsters.arr[idx1] = Monster();
-    bc.monsters.arr[idx1].initSpawnedMonster(bc, mediumSlimeType, idx1, hp);
-
-    bc.monsters.arr[idx2] = Monster();
-    bc.monsters.arr[idx2].initSpawnedMonster(bc, mediumSlimeType, idx2, hp);
-
-    if (bc.player.hasRelic<R::PHILOSOPHERS_STONE>()) {
-        bc.monsters.arr[idx1].buff<MS::STRENGTH>(1);
-        bc.monsters.arr[idx2].buff<MS::STRENGTH>(1);
+    // shift the tail (everything after the splitting slime) right by 2
+    for (int i = m.monsterCount - 1; i > placeIdx; --i) {
+        m.arr[i + 2] = m.arr[i];
+        m.arr[i + 2].idx = i + 2;
     }
 
-    bc.monsters.monstersAlive++;
-    bc.monsters.monsterCount = std::min(bc.monsters.monsterCount+2, 5);
+    m.arr[deadIdx] = m.arr[placeIdx];
+    m.arr[deadIdx].idx = deadIdx;
+    m.arr[deadIdx].curHp = 0; // the large slime dies when it splits
+
+    m.arr[idx1] = Monster();
+    m.arr[idx1].initSpawnedMonster(bc, mediumSlimeType, idx1, hp);
+
+    m.arr[idx2] = Monster();
+    m.arr[idx2].initSpawnedMonster(bc, mediumSlimeType, idx2, hp);
+
+    if (bc.player.hasRelic<R::PHILOSOPHERS_STONE>()) {
+        m.arr[idx1].buff<MS::STRENGTH>(1);
+        m.arr[idx2].buff<MS::STRENGTH>(1);
+    }
+
+    // parent dies (-1), two children spawn (+2) => net +1 living monster
+    m.monstersAlive++;
+    m.monsterCount = std::min(m.monsterCount + 2, static_cast<int>(m.arr.size()));
 
     bc.monsterTurnIdx = idx2 + 1;
 }
@@ -3378,22 +3421,29 @@ void Monster::slimeBossSplit(BattleContext &bc, const int hp) {
     assert(hp > 0);
     assert(bc.monsters.monstersAlive > 0);
 #endif
-    const auto idx1 = 0;
-    const auto idx2 = 2;
+    auto &m = bc.monsters;
 
-    bc.monsters.arr[idx1] = Monster();
-    bc.monsters.arr[idx1].initSpawnedMonster(bc, MonsterId::SPIKE_SLIME_L, idx1, hp);
+    // SlimeBoss is alone at idx 0. It dies and is flanked by its two large
+    // children, matching the real game's [SpikeSlime_L, deadBoss, AcidSlime_L].
+    // Keep the boss corpse at idx 1 (the old code overwrote arr[0] outright,
+    // dropping the boss and leaving a default Monster at idx 1).
+    m.arr[1] = m.arr[0];
+    m.arr[1].idx = 1;
+    m.arr[1].curHp = 0;
 
-    bc.monsters.arr[idx2] = Monster();
-    bc.monsters.arr[idx2].initSpawnedMonster(bc, MonsterId::ACID_SLIME_L, idx2, hp);
+    m.arr[0] = Monster();
+    m.arr[0].initSpawnedMonster(bc, MonsterId::SPIKE_SLIME_L, 0, hp);
+
+    m.arr[2] = Monster();
+    m.arr[2].initSpawnedMonster(bc, MonsterId::ACID_SLIME_L, 2, hp);
 
     if (bc.player.hasRelic<R::PHILOSOPHERS_STONE>()) {
-        bc.monsters.arr[idx1].buff<MS::STRENGTH>(1);
-        bc.monsters.arr[idx2].buff<MS::STRENGTH>(1);
+        m.arr[0].buff<MS::STRENGTH>(1);
+        m.arr[2].buff<MS::STRENGTH>(1);
     }
 
-    bc.monsters.monsterCount = 3;
-    bc.monsters.monstersAlive = 2;
+    m.monsterCount = 3;
+    m.monstersAlive = 2;
     bc.monsterTurnIdx = 3;
 }
 

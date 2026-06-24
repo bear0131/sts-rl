@@ -1,0 +1,37 @@
+[project]
+# Local dev env for the STS RL workbench: run the sim viewer (rl/watch.py),
+# eval, and the bridge differential test on this laptop. Pinned to Python 3.11
+# to match the locally-built slaythespire.cp311 .pyd (see sim build recipe).
+# Remote training (autodl, py3.12) uses its own image + rl/requirements.txt; this
+# file is laptop-only.
+name = "sts-rl"
+version = "0.0.0"
+requires-python = "==3.11.*"
+dependencies = [
+    # torch is per-platform: N-card Win/Linux boxes get the CUDA cu132 build;
+    # macOS gets the default PyPI build (CPU/MPS, no +cuXXX wheels exist). Both
+    # markers are mutually exclusive so the universal lock carries one per platform.
+    "torch==2.12.0+cu132 ; sys_platform != 'darwin'",
+    "torch>=2.1 ; sys_platform == 'darwin'",
+    "gymnasium>=0.29",
+    "numpy",
+    "sb3-contrib>=2.3.0",   # MaskablePPO + ActionMasker; pulls stable-baselines3
+]
+
+[tool.uv]
+package = false
+
+# CUDA torch must be pinned to the cu132 index, else uv silently resolves the CPU
+# build. The source is gated to non-darwin so macOS falls through to default PyPI.
+# CUDA 13.2 on the N-card boxes -> cu132. Sanity check after sync (N-card machine):
+#   uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# expect: 2.12.0+cu132 True   (on macOS: a plain 2.x version, cuda False)
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu132", marker = "sys_platform != 'darwin'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true

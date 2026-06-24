@@ -697,11 +697,15 @@ void GameContext::populateFirstStrongEnemy(const MonsterEncounter monsters[], co
 void GameContext::transitionToAct(int targetAct) {
     act = targetAct;
 
-    if (cardRng.counter < 250) {
+    // AbstractDungeon.dungeonTransitionSetup uses strict open intervals, so
+    // counter==0 and the exact boundaries 250/500/750 are left untouched. The
+    // old `< 250 / < 500 / < 750` form over-advanced cardRng at counter
+    // {0,250,500} (e.g. counter==250 was bumped to 500), desyncing later rolls.
+    if (cardRng.counter > 0 && cardRng.counter < 250) {
         cardRng.setCounter(250);
-    } else if (cardRng.counter < 500) {
+    } else if (cardRng.counter > 250 && cardRng.counter < 500) {
         cardRng.setCounter(500);
-    } else if (cardRng.counter < 750) {
+    } else if (cardRng.counter > 500 && cardRng.counter < 750) {
         cardRng.setCounter(750);
     }
 
@@ -2045,7 +2049,10 @@ Event GameContext::getEvent(Random &eventRngCopy) {
     }
 
     if (tempLength == 0) {
-        return getShrine(eventRng);
+        // AbstractDungeon.getEvent: the empty-pool fallback rolls on the passed-in
+        // rng (a copy), not the member eventRng. Using the member here advanced it
+        // an extra step, permanently desyncing every later event roll.
+        return getShrine(eventRngCopy);
     }
 
     auto idx = eventRngCopy.random(tempLength-1);

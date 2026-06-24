@@ -31,6 +31,7 @@ from stable_baselines3.common.vec_env import (
 
 from env.core.run_env import SlayTheSpireEnv
 from rl.model import StSMLPExtractor, StSTransformerExtractor
+from rl.pointer_policy import StSPointerPolicy
 
 
 class StSMetricsCallback(BaseCallback):
@@ -137,11 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
 
     parser.add_argument(
-        "--encoder",
-        choices=["transformer", "mlp"],
-        default="transformer",
-        help="Feature extractor. transformer = per-entity token Transformer "
-             "encoder (default). mlp = legacy flat Linear extractor.",
+        "--arch",
+        choices=["mlp-flat", "transformer-flat", "transformer-pointer"],
+        default="transformer-flat",
+        help="Policy architecture, named <encoder>-<head>. The encoder maps obs to "
+             "token/feature reps; the head maps those to the 149 action logits. "
+             "mlp-flat = flat Linear extractor + flat head. transformer-flat = "
+             "per-entity Transformer encoder + flat head (default). "
+             "transformer-pointer = same Transformer encoder + per-entity POINTER "
+             "head (only the head differs from transformer-flat; for the head A/B). "
+             "New heads append as transformer-<head> (e.g. transformer-hier).",
     )
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--n-layers", type=int, default=4)
@@ -271,7 +277,19 @@ def main() -> None:
     # auto-detected from the observation space by the feature extractor — integer-
     # dtype Boxes are categorical, float Boxes are scalars (see model.py /
     # encode.obs_space()). No hand-maintained key list to drift out of sync.
-    if args.encoder == "transformer":
+    if args.arch == "transformer-pointer":
+        # Pointer action head. The core owns the network (transformer encoder +
+        # pointer/flat heads + value path), so no features_extractor/net_arch here
+        # — only the encoder geometry. Same encoder geometry as transformer-flat so
+        # the A/B isolates the action head.
+        policy = StSPointerPolicy
+        policy_kwargs = dict(
+            d_model=args.d_model,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+        )
+    elif args.arch == "transformer-flat":
+        policy = "MultiInputPolicy"
         policy_kwargs = dict(
             features_extractor_class=StSTransformerExtractor,
             features_extractor_kwargs=dict(
@@ -288,6 +306,7 @@ def main() -> None:
             ortho_init=False,
         )
     else:
+        policy = "MultiInputPolicy"
         policy_kwargs = dict(
             features_extractor_class=StSMLPExtractor,
             features_extractor_kwargs=dict(
@@ -302,7 +321,7 @@ def main() -> None:
         )
 
     model = MaskablePPO(
-        policy="MultiInputPolicy",
+        policy=policy,
         env=venv,
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,

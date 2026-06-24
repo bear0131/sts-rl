@@ -1,6 +1,24 @@
 # 史莱姆分裂 → monstersAlive 计数漂移 → 战斗不结束 + 日志刷屏
 
-**状态**：已加兜底/对账修复，可继续训练。字节对齐（bit-exact）回头拿到原版反编译源码再校。
+**状态**：✅ 根因已修（0624，见下「根因修复」）。兜底/对账三处保留作 defense-in-depth。
+远端（autodl）重编验证：1600 场随机对战（Slime Boss/Large Slime/Lots Of Slimes/Small Slimes ×400, A20）
+全部正常终结，0 hang / 0 crash / 0 诊断 stderr；**临时关掉对账兜底后**仍 0 hang、`RECONCILE_WOULD_FIRE` 计数为 0，
+证明 monstersAlive 已能靠正常 `die()` 路径归零，兜底不再 load-bearing。
+
+## 根因修复（0624）
+
+真正的病根不是"加减某一步多/漏"，而是 `largeSlimeSplit` 的**槽位冲突**：它把两个分裂子代写到
+`placeIdx` 和 `placeIdx+2`、死尸放 `placeIdx+1`，**假定这两格是空的**——只有当大史莱姆是数组里最后一只时才成立。
+SlimeBoss 战里两只大史莱姆位于 idx0 和 idx2（对照 `reference/cardcrawl` 的 drawX smart-positioning：
+[SpikeSlime_L@0, deadBoss@1, AcidSlime_L@2]）。左边那只先分裂时，`placeIdx+2=2` 直接**覆盖掉还活着的 AcidSlime_L**，
+于是真实存活数 -1 而 `monstersAlive++` 照加 → 计数卡在 >0 → 永不胜利 → 引擎对尸体派伤害刷屏/越界崩。
+
+修法（`MonsterSpecific.cpp`）：`largeSlimeSplit` 改为像真机 SpawnMonsterAction 一样**把尾部整体右移 2 格**腾出空间，
+不再覆盖活怪；若右移会超出 5 格定长数组，先**压实掉已有死尸**（死/halfDead/逃跑的怪在所有 alive-only 路径与
+`getRandomMonster` 里都被过滤，丢弃尸体不影响 RNG 选怪与活怪相对顺序）。`slimeBossSplit` 同步把 boss 尸体保留在 idx1
+（旧码直接 `arr[0]=Monster()` 把 boss 丢了）。net +1 的计数语义不变（父死 -1、两子 +2）。
+
+字节对齐（bit-exact）回头再细校；当前对 RNG 选怪/胜负计数已对齐。
 
 ## 现象
 SubprocVecEnv 多 worker 训练时，某场带史莱姆分裂的战斗：

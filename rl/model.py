@@ -283,6 +283,20 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         self.role_emb = nn.Embedding(n_roles, d_model)
         self.cls = nn.Parameter(torch.zeros(1, 1, d_model))
 
+        # token_pos: role -> (start, count) in the concatenated sequence. MUST
+        # mirror the add() order in forward()/encode_tokens() exactly. The pointer
+        # policy (pointer_policy.py) reads per-entity token slices by this map.
+        self.token_pos: dict[str, tuple[int, int]] = {}
+        _p = 0
+        for _role, _cnt in (
+            [("cls", 1), ("global", 1), ("pile", len(self.pile_keys)),
+             ("monster", self.n_monsters)]
+            + [(role, n_slots) for role, n_slots, *_ in self.generic]
+        ):
+            self.token_pos[_role] = (_p, _cnt)
+            _p += _cnt
+        self.n_tokens = _p
+
         layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=n_heads,
@@ -329,7 +343,16 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         return x + self.role_emb(rid).view(1, 1, self.d_model)
 
     # ---- forward -----------------------------------------------------------
-    def forward(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
+    def encode_tokens(
+        self, obs: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the tokenizer + Transformer and return the FULL per-token sequence.
+
+        Returns (out, pad_mask): out is (B, n_tokens, d_model) contextualized token
+        embeddings (token 0 is [CLS]; see token_pos for the rest), pad_mask is
+        (B, n_tokens) bool with True == PAD. `forward` reads out[:, 0]; the pointer
+        policy reads per-entity slices via token_pos.
+        """
         B = obs["phase"].shape[0]
         device = self.cls.device
 
@@ -384,6 +407,10 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         src = torch.cat(tokens, dim=1)
         pad_mask = torch.cat(masks, dim=1)
         out = self.transformer(src, src_key_padding_mask=pad_mask)
+        return out, pad_mask
+
+    def forward(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
+        out, _ = self.encode_tokens(obs)
         return self.readout(out[:, 0])  # [CLS]
 
 
