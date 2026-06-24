@@ -45,8 +45,11 @@ from . import intents
 # Bump on any layout/order/scaling change (see module docstring). v1 was a flat
 # Box; v2 is the structured Dict below. v3 adds `arg_step` (the thin
 # SlayTheSpireEnv's autoregressive sub-step, action_design.md §1). v4 adds the
-# shop shelf groups (shop_*: card/relic/potion ids + prices + remove cost).
-OBS_VERSION = 4
+# shop shelf groups (shop_*: card/relic/potion ids + prices + remove cost). v5
+# adds the card-select screen contract (obs_design §4.1): select_context /
+# pick_remaining / can_pick_zero / can_pick_any / selected_card_ids, and widens
+# select_card_ids G_MAX 12->64 (full-deck select screens).
+OBS_VERSION = 5
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -54,7 +57,11 @@ HAND_SLOTS = 10           # real hand cap
 N_CARDS = len(CARD_VOCAB)
 R_MAX = 30                # held-relic id slots (PAD); see decision B (id list)
 P_MAX = 5                 # potion slots
-G_MAX = 12                # card-select grid candidate slots
+G_MAX = 64                # card-select grid candidate slots (full deck: a Remove/
+                          # Transform/Smith grid is the whole deck, 30-40+ cards
+                          # mid/late run; 12 truncated it. 64 is the gen-1 cap.)
+SELECT_PICK_SLOTS = 3     # overworld grid's max simultaneous picks (sim's
+                          # haveSelectedCards is fixed_list<3>: Astrolabe=3 max)
 OFFER_SLOTS = 3           # combat card-reward choices
 MAP_EDGES = 3             # reachable next-row nodes (<=3 edges out of a node)
 SHOP_CARD_SLOTS = 7       # shop shelf: cards[7] (slot == buy action id)
@@ -75,6 +82,7 @@ ACT_SCALE = 4.0
 FLOOR_SCALE = 56.0
 GOLD_SCALE = 999.0
 MAP_X_SCALE = 6.0         # map columns 0..6
+PICK_SCALE = 10.0         # cards-remaining-to-pick (pickCount up to a handful)
 
 # ---- per-group scalar widths ----
 PLAYER_SCALARS = 6        # hp, max_hp, block, energy, turn, hp_frac
@@ -131,6 +139,18 @@ def obs_space():
         # ---- overworld decision context (phase-gated; PAD otherwise) ----
         "offer_card_ids": cat((OFFER_SLOTS,), N_CARDS),
         "select_card_ids": cat((G_MAX,), N_CARDS),
+        # card-select screen semantics + progress (obs_design §4.1). select_context
+        # says WHAT this screen is for (upgrade/exhaust/transform/remove/...) — the
+        # legal card set can be identical across two opposite-intent screens, so the
+        # purpose must enter obs, not just the mask. pick_remaining/can_pick_* tell
+        # the model how many more to pick and whether it may stop. selected_card_ids
+        # are the cards already picked THIS overworld grid (the sim moves a picked
+        # card out of the grid into here; combat never accumulates -> PAD there).
+        "select_context": cat((1,), V.SELECT_CONTEXT_VOCAB_CAPACITY),
+        "pick_remaining": scal((1,)),
+        "can_pick_zero": scal((1,)),
+        "can_pick_any": scal((1,)),
+        "selected_card_ids": cat((SELECT_PICK_SLOTS,), N_CARDS),
         "map_node_rooms": cat((MAP_EDGES,), len(V.ROOM_VOCAB)),
         "map_node_x": scal((MAP_EDGES,)),
         "boss_relic_ids": cat((OFFER_SLOTS,), V.RELIC_VOCAB_CAPACITY),
@@ -184,6 +204,11 @@ def _empty():
         "deck_counts": np.zeros(N_CARDS, _SCALAR),
         "offer_card_ids": np.zeros(OFFER_SLOTS, _CAT),
         "select_card_ids": np.zeros(G_MAX, _CAT),
+        "select_context": np.zeros(1, _CAT),
+        "pick_remaining": np.zeros(1, _SCALAR),
+        "can_pick_zero": np.zeros(1, _SCALAR),
+        "can_pick_any": np.zeros(1, _SCALAR),
+        "selected_card_ids": np.zeros(SELECT_PICK_SLOTS, _CAT),
         "map_node_rooms": np.zeros(MAP_EDGES, _CAT),
         "map_node_x": np.zeros(MAP_EDGES, _SCALAR),
         "boss_relic_ids": np.zeros(OFFER_SLOTS, _CAT),
@@ -341,4 +366,20 @@ def encode(canon):
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)
+    _encode_select(o, (canon.get("options") or {}).get("select"))
     return o
+
+
+def _encode_select(o, sel):
+    """Card-select screen semantics + progress (obs_design §4.1). Phase-agnostic:
+    the overworld card_select phase AND an in-combat card-select sub-screen (phase
+    stays 'combat') both carry options['select'], so this is driven by the block's
+    presence, not by phase. Absent -> everything stays PAD/zero (NONE context)."""
+    if not sel:
+        return
+    o["select_context"][0] = _idx(V.SELECT_CONTEXT_VOCAB_INDEX, sel.get("context", "PAD"))
+    o["pick_remaining"][0] = sel.get("pick_remaining", 0) / PICK_SCALE
+    o["can_pick_zero"][0] = 1.0 if sel.get("can_pick_zero") else 0.0
+    o["can_pick_any"][0] = 1.0 if sel.get("can_pick_any") else 0.0
+    for i, cid in enumerate(sel.get("selected", [])[:SELECT_PICK_SLOTS]):
+        o["selected_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])

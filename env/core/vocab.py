@@ -616,6 +616,38 @@ BOSS_VOCAB = [
     'MYSTERIOUS_SPHERE_EVENT',
 ]
 
+SELECT_CONTEXT_VOCAB = [
+    'PAD',
+    'ARMAMENTS',
+    'CODEX',
+    'DISCOVERY',
+    'DUAL_WIELD',
+    'EXHAUST_ONE',
+    'EXHAUST_MANY',
+    'EXHUME',
+    'FORETHOUGHT',
+    'GAMBLE',
+    'HEADBUTT',
+    'HOLOGRAM',
+    'LIQUID_MEMORIES_POTION',
+    'MEDITATE',
+    'NIGHTMARE',
+    'RECYCLE',
+    'SECRET_TECHNIQUE',
+    'SECRET_WEAPON',
+    'SEEK',
+    'SETUP',
+    'WARCRY',
+    'TRANSFORM',
+    'TRANSFORM_UPGRADE',
+    'UPGRADE',
+    'REMOVE',
+    'DUPLICATE',
+    'OBTAIN',
+    'BOTTLE',
+    'BONFIRE_SPIRITS',
+]
+
 PLAYER_BUFF_VOCAB = [
     'Strength',
     'Dexterity',
@@ -814,6 +846,7 @@ RELIC_VOCAB_CAPACITY = 208
 POTION_VOCAB_CAPACITY = 56
 EVENT_VOCAB_CAPACITY = 72
 BOSS_VOCAB_CAPACITY = 72
+SELECT_CONTEXT_VOCAB_CAPACITY = 40
 
 # ---- reserved dense buff-vector lengths ----
 PLAYER_BUFF_VEC = 110
@@ -826,6 +859,7 @@ RELIC_VOCAB_INDEX = {name: i for i, name in enumerate(RELIC_VOCAB)}
 POTION_VOCAB_INDEX = {name: i for i, name in enumerate(POTION_VOCAB)}
 EVENT_VOCAB_INDEX = {name: i for i, name in enumerate(EVENT_VOCAB)}
 BOSS_VOCAB_INDEX = {name: i for i, name in enumerate(BOSS_VOCAB)}
+SELECT_CONTEXT_VOCAB_INDEX = {name: i for i, name in enumerate(SELECT_CONTEXT_VOCAB)}
 PLAYER_BUFF_VOCAB_INDEX = {name: i for i, name in enumerate(PLAYER_BUFF_VOCAB)}
 MONSTER_BUFF_VOCAB_INDEX = {name: i for i, name in enumerate(MONSTER_BUFF_VOCAB)}
 ROOM_VOCAB_INDEX = {name: i for i, name in enumerate(ROOM_VOCAB)}

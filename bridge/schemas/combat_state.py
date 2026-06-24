@@ -299,7 +299,21 @@ def _sim_screen_options(gc, phase):
                       if info["card_count"] else []),
         }
     if phase == "card_select":
-        return {"cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()]}
+        # The grid candidates PLUS the select-screen semantics/progress
+        # (obs_design §4.1): WHAT this grid is for (context), how many to pick,
+        # and which cards are already picked THIS screen. The sim removes a picked
+        # card from the grid and into haveSelectedCards, so already-picked cards
+        # are NOT in get_select_cards() anymore -> we surface their ids in
+        # select["selected"] instead. Overworld grids require exactly pick_count
+        # picks (no pick-zero / pick-any), unlike some combat screens.
+        si = gc.select_screen_info()
+        return {
+            "cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()],
+            "select": _select_options(
+                si["context"], si["pick_count"], si["have_selected"],
+                [_sim_card_id(n) for n in si["selected"]],
+                can_pick_zero=False, can_pick_any=False),
+        }
     if phase == "event":
         return {"event": gc.cur_event_name}
     if phase == "shop":
@@ -318,6 +332,41 @@ def _sim_screen_options(gc, phase):
     # map/rest/chest/boss_relic options are enumerated by the env (map needs
     # SpireMap; the rest are fixed-shape) -> nothing gc-readable to add here.
     return {}
+
+
+def _select_options(context, pick_count, have_selected, selected_ids,
+                    can_pick_zero, can_pick_any):
+    """The card-select screen's semantics + progress, in one backend-symmetric
+    shape (obs_design §4.1). Shared by the overworld grid and the combat sub-
+    screen; the encoder reads it into select_context / pick_remaining /
+    can_pick_zero / can_pick_any / selected_card_ids.
+
+      context        : SELECT_CONTEXT_VOCAB name (CardSelectTask for combat or
+                       CardSelectScreenType for overworld); "INVALID" off-screen.
+      pick_remaining : how many MORE to pick = pick_count - have_selected.
+      selected       : canonical ids already picked THIS screen. The combat
+                       sub-screen never accumulates across env steps (SINGLE picks
+                       resolve in one action; MULTI is one-shot) -> always [].
+    """
+    return {
+        "context": context,
+        "pick_remaining": max(0, pick_count - have_selected),
+        "can_pick_zero": bool(can_pick_zero),
+        "can_pick_any": bool(can_pick_any),
+        "selected": selected_ids,
+    }
+
+
+def combat_select_options(select_info):
+    """Canonical 'select' block for an in-combat card-select sub-screen, from
+    bc.select_info() (context = CardSelectTask name, pick_count, can_pick_zero,
+    can_pick_any). The combat screen does not accumulate picks across env steps,
+    so 'selected' is always empty. Returned under options['select'] exactly like
+    the overworld grid, so the encoder treats both identically."""
+    return _select_options(
+        select_info["context"], select_info["pick_count"], 0, [],
+        can_pick_zero=select_info["can_pick_zero"],
+        can_pick_any=select_info["can_pick_any"])
 
 
 def _card_reward_entry(card):

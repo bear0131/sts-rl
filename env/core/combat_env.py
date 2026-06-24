@@ -19,7 +19,7 @@ from gymnasium import spaces
 # sys.path; that must run before importing slaythespire / schemas.
 from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
-from schemas.combat_state import normalize_sim, normalize_sim_global
+from schemas.combat_state import normalize_sim, normalize_sim_global, combat_select_options
 
 from . import encode
 from . import actions
@@ -166,6 +166,10 @@ class SimCombatEnv(gym.Env):
         d = self._canon()
         d["phase"] = "combat"
         d["global"] = normalize_sim_global(self.gc)
+        # in-combat card-select sub-screen -> carry the select block (obs_design
+        # §4.1) so select_context/pick_remaining reach the obs.
+        if self.bc.input_state == _CARD_SELECT:
+            d["options"] = {"select": combat_select_options(self.bc.select_info())}
         return d
 
     def _obs(self):

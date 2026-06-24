@@ -354,6 +354,61 @@ py::list legalShopOptions(const sts::GameContext &gc) {
     return out;
 }
 
+// The OVERWORLD card-select (grid) screen's semantics + progress, for the obs
+// select_context / pick_remaining / selected fields (obs_design §4.1). Read off
+// gc.info (ScreenStateInfo): selectScreenType says WHAT this grid is for
+// (TRANSFORM/UPGRADE/REMOVE/...), toSelectCount is how many must be picked, and
+// haveSelectedCards are the ones already picked THIS screen (the sim removes a
+// picked card from toSelectCards and pushes it here, so already-picked cards are
+// NOT in get_select_cards() anymore -- we surface their ids here instead).
+const char *selectScreenTypeStr(sts::CardSelectScreenType t) {
+    using T = sts::CardSelectScreenType;
+    switch (t) {
+        case T::TRANSFORM:         return "TRANSFORM";
+        case T::TRANSFORM_UPGRADE: return "TRANSFORM_UPGRADE";
+        case T::UPGRADE:           return "UPGRADE";
+        case T::REMOVE:            return "REMOVE";
+        case T::DUPLICATE:         return "DUPLICATE";
+        case T::OBTAIN:            return "OBTAIN";
+        case T::BOTTLE:            return "BOTTLE";
+        case T::BONFIRE_SPIRITS:   return "BONFIRE_SPIRITS";
+        case T::INVALID:
+        default:                   return "INVALID";
+    }
+}
+
+py::dict selectScreenInfo(const sts::GameContext &gc) {
+    const auto &info = gc.info;
+    py::dict d;
+    d["context"] = std::string(selectScreenTypeStr(info.selectScreenType));
+    d["pick_count"] = info.toSelectCount;
+    d["have_selected"] = static_cast<int>(info.haveSelectedCards.size());
+    py::list sel;
+    for (const auto &sc : info.haveSelectedCards) {
+        sel.append(std::string(sts::cardEnumStrings[static_cast<int>(sc.card.getId())]));
+    }
+    d["selected"] = sel;
+    return d;
+}
+
+// The COMBAT card-select sub-screen's semantics + progress (bc.cardSelectInfo),
+// for the same obs fields while in combat (Armaments/Headbutt/Gamble/...). Unlike
+// the overworld grid, the combat screen does NOT accumulate across env steps:
+// SINGLE picks resolve in one action and MULTI (Exhaust Many / Gamble) is a
+// one-shot bitset -- so there is no "already selected" list to expose here. We
+// give the task name + pickCount + canPickZero/canPickAnyNumber so the obs can
+// say WHAT the screen is for and how many it wants.
+py::dict combatSelectInfo(const sts::BattleContext &bc) {
+    const auto &csi = bc.cardSelectInfo;
+    py::dict d;
+    d["context"] = std::string(
+        sts::cardSelectTaskStrings[static_cast<int>(csi.cardSelectTask)]);
+    d["pick_count"] = csi.pickCount;
+    d["can_pick_zero"] = csi.canPickZero;
+    d["can_pick_any"] = csi.canPickAnyNumber;
+    return d;
+}
+
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
@@ -439,6 +494,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("choose_treasure_room", [](GameContext &gc, bool open) { gc.chooseTreasureRoomOption(open); })
         .def("choose_boss_relic", [](GameContext &gc, int i) { gc.chooseBossRelic(i); })
         .def("get_select_cards", &selectCards, "cards offered on the current CARD_SELECT/grid screen")
+        .def("select_screen_info", &selectScreenInfo,
+             "overworld card-select screen semantics+progress: {context (CardSelectScreenType "
+             "name), pick_count, have_selected, selected:[card ids already picked this screen]}")
         // combat-reward screen
         .def("get_reward_info", &rewardInfo, "claimable items on the current REWARDS screen")
         .def("claim_gold", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainGold(r.gold[idx]); r.removeGoldReward(idx); })
@@ -1288,6 +1346,9 @@ PYBIND11_MODULE(slaythespire, m) {
     pybind11::class_<BattleContext>(m, "BattleContext")
         .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
+        .def("select_info", &combatSelectInfo,
+             "combat card-select sub-screen semantics+progress: {context (CardSelectTask name), "
+             "pick_count, can_pick_zero, can_pick_any}")
         .def("execute", [](BattleContext &bc, const search::Action &a) { a.execute(bc); }, "apply an action and pump to the next input state")
         .def_property_readonly("turn", [](const BattleContext &bc) { return bc.turn; })
         .def_property_readonly("outcome", [](const BattleContext &bc) { return static_cast<int>(bc.outcome); })

@@ -93,6 +93,8 @@ def build():
     events = _read("Events.h")
     monsters = _read("MonsterIds.h")
     encounters = _read("MonsterEncounters.h")
+    cardselect = _read(os.path.join("..", "combat", "CardSelectInfo.h"))
+    gamecontext = _read(os.path.join("..", "game", "GameContext.h"))
 
     # --- relics: relicIds[] are already canonical stable ids; drop trailing INVALID.
     relic_ids = [r for r in _string_table(relics, "relicIds") if r != "INVALID"]
@@ -140,6 +142,18 @@ def build():
     boss_ids = [b for b in _enum_names(encounters, "MonsterEncounter")
                 if b != "INVALID"]
 
+    # --- select context: the WHAT-is-this-card-select-screen-for vocab (obs_design
+    # §4.1). One MERGED vocab over the combat CardSelectTask (Armaments/Exhaust/
+    # Gamble/Headbutt/...) and the overworld CardSelectScreenType (Transform/Upgrade/
+    # Remove/...). The two enums' names don't collide, so a single vocab keyed on
+    # the bare enum name serves both; the binding's select_info/combat select_info
+    # return these exact strings. NONE (slot 0) = not on a card-select screen.
+    select_tasks = [t for t in _string_table(cardselect, "cardSelectTaskStrings")
+                    if t != "INVALID"]
+    select_screens = [s for s in _enum_names(gamecontext, "CardSelectScreenType")
+                      if s != "INVALID"]
+    select_context = _dedup_keep_order(select_tasks + select_screens)
+
     return {
         "RELIC_VOCAB": relic_ids,
         "MOVE_VOCAB": move_ids,
@@ -149,6 +163,7 @@ def build():
         "EVENT_VOCAB": event_ids,
         "MONSTER_VOCAB": monster_ids,
         "BOSS_VOCAB": boss_ids,
+        "SELECT_CONTEXT_VOCAB": select_context,
     }
 
 
@@ -211,6 +226,7 @@ def main():
     capacities = {
         "MONSTER_VOCAB": 96, "MOVE_VOCAB": 224, "RELIC_VOCAB": 208,
         "POTION_VOCAB": 56, "EVENT_VOCAB": 72, "BOSS_VOCAB": 72,
+        "SELECT_CONTEXT_VOCAB": 40,
     }
     # reserved dense buff-vector lengths (must exceed current vocab len), §2.1/§2.2.
     buff_vecs = {"PLAYER_BUFF_VEC": 110, "MONSTER_BUFF_VEC": 50}
@@ -219,7 +235,7 @@ def main():
     # id vocabs: PREPEND a PAD sentinel at index 0 (an absent / out-of-vocab id
     # encodes as 0), mirroring CARD_VOCAB's EMPTY-at-0 convention.
     id_order = ["MONSTER_VOCAB", "MOVE_VOCAB", "RELIC_VOCAB", "POTION_VOCAB",
-                "EVENT_VOCAB", "BOSS_VOCAB"]
+                "EVENT_VOCAB", "BOSS_VOCAB", "SELECT_CONTEXT_VOCAB"]
     for name in id_order:
         parts.append(_fmt_list(name, ["PAD"] + vocabs[name]))
     # buff vocabs: dense amount-vectors keyed by buff; NO sentinel (absence = 0

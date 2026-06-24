@@ -28,21 +28,31 @@ on later fills reserved width and does NOT bump ACTION_VERSION. Until then the
 mask simply never sets them (the thick layer does not enumerate a potion verb
 yet). EVENT_OPT is live for the low option ids (the thick layer enumerates real
 event options) with a reserved wide tail; SHOP_* likewise went LIVE this way (the
-thick layer enumerates real buys/removes) — both filling reserved width, so
-ACTION_VERSION stayed at 2.
+thick layer enumerates real buys/removes) — both filling reserved width.
+
+ACTION_VERSION 3 (was 2): the PICK_CARD segment widened G_MAX 12->64 to fit a
+full-deck card-select grid (Remove/Transform/Smith candidates = the whole deck).
+That renumbers every segment after PICK_CARD, so it is a real version bump — but
+it lands in the same change as OBS_VERSION 4->5 (the select-screen contract,
+obs_design §4.1), which already invalidates old checkpoints, so renumbering costs
+nothing extra here. The old G_MAX=12 was also a latent bug: a pick idx >=12
+overflowed PICK_CARD into the MAP_NODE segment.
 """
 
 from . import actions
 from . import game_actions as ga
 from . import vocab as V
 
-ACTION_VERSION = 2
+ACTION_VERSION = 3
 
 # ---- capacities (must match encode.py slot counts) ----
 HAND_SLOTS = actions.HAND_SLOTS        # 10  (combat hand; play slot == hand idx)
 MAX_MONSTERS = actions.MAX_MONSTERS    # 5   (target slot == monster slot in obs)
 P_MAX = 5                              # potion slots (reserved segment)
-G_MAX = 12                             # card-select / grid pick slots
+G_MAX = 64                             # card-select / grid pick slots (full deck;
+                                       # must equal encode.G_MAX — a Remove/Transform
+                                       # grid is the whole deck. Was 12: a >12 pick
+                                       # idx overflowed PICK_CARD into MAP_NODE.)
 N_COLS = 7                             # map columns 0..6
 REWARD_GOLD = 2                        # Rewards.gold is array<int,2>
 REWARD_RELIC = 3                       # Rewards.relics is array<,3>

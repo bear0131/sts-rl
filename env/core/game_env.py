@@ -28,6 +28,7 @@ from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
 from schemas.combat_state import (
     normalize_sim, normalize_sim_overworld, normalize_sim_global, sim_phase,
+    combat_select_options,
 )
 
 from . import actions
@@ -46,6 +47,11 @@ _GC_UNDECIDED = sts.GameOutcome.UNDECIDED
 _CAMPFIRE = ga.CAMPFIRE_OPTIONS
 # inverse: sim campfire index -> option name (0..5; 6=skip handled as proceed)
 _CAMP_NAME_BY_IDX = {idx: name for name, idx in _CAMPFIRE.items()}
+
+# sim InputState int for an in-combat card-select sub-screen (Armaments/Headbutt/
+# Gamble/...). When the live bc is in this state, the combat canonical carries the
+# select block so the obs exposes select_context/pick_remaining (obs_design §4.1).
+_CARD_SELECT_INPUT = 2
 
 
 def _tail(gc):
@@ -103,6 +109,12 @@ class SimGameEnv:
         if self.bc is not None:
             d = normalize_sim(self.bc.to_dict())
             d["phase"] = "combat"
+            # an in-combat card-select sub-screen (Armaments/Headbutt/Gamble/...)
+            # carries the select block so the obs can say WHAT it is for and how
+            # many to pick (obs_design §4.1). Combat never accumulates picks, so
+            # 'selected' is empty; the screen stays phase 'combat'.
+            if self.bc.input_state == _CARD_SELECT_INPUT:
+                d["options"] = {"select": combat_select_options(self.bc.select_info())}
             return d
         d = normalize_sim_overworld(self.gc)
         if d["phase"] == "map":
