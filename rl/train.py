@@ -30,7 +30,7 @@ from stable_baselines3.common.vec_env import (
 )
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.model import StSFeatureExtractor
+from rl.model import StSMLPExtractor, StSTransformerExtractor
 
 
 class StSMetricsCallback(BaseCallback):
@@ -135,6 +135,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
+
+    parser.add_argument(
+        "--encoder",
+        choices=["transformer", "mlp"],
+        default="transformer",
+        help="Feature extractor. transformer = per-entity token Transformer "
+             "encoder (default). mlp = legacy flat Linear extractor.",
+    )
+    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument("--n-heads", type=int, default=8)
 
     parser.add_argument(
         "--out",
@@ -257,21 +268,38 @@ def main() -> None:
     )
 
     # Categorical id groups (card/monster/move/relic/... vocab indices) are
-    # auto-detected from the observation space by StSFeatureExtractor — integer-
+    # auto-detected from the observation space by the feature extractor — integer-
     # dtype Boxes are categorical, float Boxes are scalars (see model.py /
     # encode.obs_space()). No hand-maintained key list to drift out of sync.
-    policy_kwargs = dict(
-        features_extractor_class=StSFeatureExtractor,
-        features_extractor_kwargs=dict(
-            features_dim=256,
-        ),
-        activation_fn=nn.GELU,
-        net_arch=dict(
-            pi=[256, 128],
-            vf=[512, 256],
-        ),
-        ortho_init=False,
-    )
+    if args.encoder == "transformer":
+        policy_kwargs = dict(
+            features_extractor_class=StSTransformerExtractor,
+            features_extractor_kwargs=dict(
+                features_dim=256,
+                d_model=args.d_model,
+                n_layers=args.n_layers,
+                n_heads=args.n_heads,
+            ),
+            activation_fn=nn.GELU,
+            net_arch=dict(
+                pi=[256, 128],
+                vf=[512, 256],
+            ),
+            ortho_init=False,
+        )
+    else:
+        policy_kwargs = dict(
+            features_extractor_class=StSMLPExtractor,
+            features_extractor_kwargs=dict(
+                features_dim=256,
+            ),
+            activation_fn=nn.GELU,
+            net_arch=dict(
+                pi=[256, 128],
+                vf=[512, 256],
+            ),
+            ortho_init=False,
+        )
 
     model = MaskablePPO(
         policy="MultiInputPolicy",

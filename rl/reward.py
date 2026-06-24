@@ -7,7 +7,7 @@ import gymnasium as gym
 class RewardConfig:
     floor: float = 1.0
     act_boss: float = 100.0
-    death: float = -100.0
+    death: float = 0.0
     hp_delta: float = 0.0
     target_act: int = 1
 
