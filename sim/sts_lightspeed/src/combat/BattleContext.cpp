@@ -732,9 +732,17 @@ void BattleContext::executeActions() {
                 break;
             }
 
+            // Dump the broken state for diagnosis (this is how the slime-split
+            // bug was tracked down). The old code then assert(false)'d, which is
+            // a no-op under NDEBUG and — crucially — did NOT break, so the loop
+            // re-entered this branch every iteration and dumped the whole
+            // BattleContext a million times (the log spam). Keep the dump, but
+            // fail closed: record the loss and break so it prints exactly once.
             std::cerr << seed << std::endl;
             std::cout << *this << '\n';
             assert(false);
+            outcome = Outcome::PLAYER_LOSS;
+            break;
         }
 
         if (inputState != InputState::EXECUTING_ACTIONS) {
@@ -779,6 +787,34 @@ void BattleContext::executeActions() {
 
         if (outcome != Outcome::UNDECIDED) {
             break;
+        }
+
+        // SAFETY RECONCILE (temporary; see doc/day_0623): monstersAlive is the
+        // authoritative victory counter (die() decrements it and declares
+        // PLAYER_VICTORY at 0). A slime split can leave it out of sync with the
+        // real alive count in arr[] — it sticks above 0 while every monster is
+        // actually dead, so victory never fires and the engine spins forever
+        // damaging corpses (-> "was dead when damaged" dump spam -> a worker
+        // segfault that deadlocks SubprocVecEnv). When the queues are idle and
+        // NOTHING in arr[] is still in play, declare the win we missed. A
+        // monster counts as "in play" if it still has HP, or is halfDead and so
+        // pending a rebirth (Awakened One stage 1 / Darkling REGROW) — we must
+        // NOT steal victory during that window. In a healthy combat this is
+        // unreachable (die() would already have ended it), so the normal path —
+        // and its RNG stream — is untouched.
+        {
+            bool anyInPlay = false;
+            for (int i = 0; i < monsters.monsterCount; ++i) {
+                if (monsters.arr[i].isAlive() || monsters.arr[i].isHalfDead()) {
+                    anyInPlay = true;
+                    break;
+                }
+            }
+            if (!anyInPlay) {
+                monsters.monstersAlive = 0;
+                outcome = Outcome::PLAYER_VICTORY;
+                break;
+            }
         }
 
         if (monsterTurnIdx < monsters.monsterCount) {

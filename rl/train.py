@@ -1,199 +1,324 @@
-"""Minimal MaskablePPO training loop on SimCombatEnv.
+"""Train MaskablePPO on the whole-run SlayTheSpireEnv.
 
-Purpose right now: a trainability sanity check, not a strong agent. Two modes:
+Run from repo root:
 
-  --overfit   (default) hammer ONE fixed normal combat. A random policy on the
-              starter deck wins this sometimes; a learning policy should drive
-              episode reward up to a stable near-+1 and win-rate toward 1.0.
-              If that doesn't happen, the obs/mask/reward wiring is wrong, not
-              the hyperparameters.
-
-  --pool P    train on the random act-1 P pool ("normal"/"elite"/"boss"). Real
-              training target; convergence here is a bonus, not the gate.
-
-Why MaskablePPO: only a subset of the 71-action space is legal each step, and
-the legal set shifts as the abstraction grows. We bridge SimCombatEnv.action_mask()
-to sb3-contrib via ActionMasker so the env stays masking-library-agnostic.
-
-Run from repo root (so `env` + the sim build dir resolve):
-    python -m rl.train                       # overfit one combat
-    python -m rl.train --steps 200000
-    python -m rl.train --pool normal --steps 1000000
-    python -m rl.train --eval runs/overfit/final.zip --episodes 200
+    python -m rl.train
+    python -m rl.train --steps 1000000 --n-envs 8
+    python -m rl.train --tensorboard
 """
 
+from __future__ import annotations
+
 import argparse
-import os
+import time
+from collections import deque
+from datetime import datetime
+from pathlib import Path
 
-import numpy as np
+import torch.nn as nn
 
-from env.core.combat_env import SimCombatEnv
-from env.core import factories
+from sb3_contrib import MaskablePPO
+from stable_baselines3.common.callbacks import (
+    BaseCallback,
+    CallbackList,
+    CheckpointCallback,
+)
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv,
+    SubprocVecEnv,
+    VecMonitor,
+)
 
-# sb3 imports are deferred into main so `--help` and import of this module work
-# on a box without torch/sb3 installed (e.g. the sim-less laptop).
-
-
-# A fixed normal combat that the starter deck can plausibly win — the overfit
-# target. Jaw Worm: single foe, no summons, no nasty gimmicks. seed arbitrary.
-_OVERFIT_SEED = 42
-_OVERFIT_ENCOUNTER = "Jaw Worm"
-
-
-def _mask_fn(env):
-    """ActionMasker callback: sb3-contrib calls this to get the legal mask.
-
-    env is the (possibly wrapped) instance. SimCombatEnv exposes action_mask()
-    (single combat); the whole-run SlayTheSpireEnv exposes action_masks() (the
-    phase-gated autoregressive mask). Support both."""
-    u = env.unwrapped
-    if hasattr(u, "action_masks"):
-        return u.action_masks()
-    return u.action_mask()
+from env.core.run_env import SlayTheSpireEnv
+from rl.model import StSFeatureExtractor
 
 
-def make_run_env(ascension=0, render_mode=None):
-    """Build a masked whole-run SlayTheSpireEnv (action v2). Returns a thunk."""
-    from sb3_contrib.common.wrappers import ActionMasker
-    from env.core.run_env import SlayTheSpireEnv
+class StSMetricsCallback(BaseCallback):
+    """Log run-level metrics over a rolling window of finished episodes.
+
+    Reads each episode boundary from the `info` dict: VecMonitor injects
+    `info["episode"]` (reward `r`, length `l`) on episode end, and our env
+    surfaces ground-truth game state in `info["run_stats"]` (see
+    run_env.SlayTheSpireEnv._info). Emits under:
+
+      rollout/  ep_rew_mean, ep_len_mean   (generic: reward + steps/episode)
+      game/     win_rate, floor_mean, act_mean, deck_size_mean
+      time/     elapsed_seconds            (GLOBAL wall-clock since learn(),
+                                            not a per-episode delta)
+    """
+
+    def __init__(self, window: int = 100, verbose: int = 0):
+        super().__init__(verbose)
+        self._rew = deque(maxlen=window)
+        self._len = deque(maxlen=window)
+        self._win = deque(maxlen=window)
+        self._floor = deque(maxlen=window)
+        self._act = deque(maxlen=window)
+        self._deck = deque(maxlen=window)
+        self._n_episodes = 0
+        self._t0 = None
+
+    def _on_training_start(self) -> None:
+        self._t0 = time.monotonic()
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            ep = info.get("episode")
+            if ep is None:
+                continue  # not an episode boundary for this sub-env
+            self._n_episodes += 1
+            self._rew.append(ep["r"])
+            self._len.append(ep["l"])
+
+            stats = info.get("run_stats")
+            if stats is not None:
+                won = stats["outcome"] == "PLAYER_VICTORY"
+                self._win.append(1.0 if won else 0.0)
+                self._floor.append(stats["floor"])
+                self._act.append(stats["act"])
+                self._deck.append(stats["deck_size"])
+        return True
+
+    def _on_rollout_end(self) -> None:
+        # Record once per rollout (not per step) — these are rolling means, so
+        # there is no value in re-logging the same window every transition.
+        def mean(buf):
+            return sum(buf) / len(buf) if buf else 0.0
+
+        if self._rew:
+            self.logger.record("rollout/ep_rew_mean", mean(self._rew))
+            self.logger.record("rollout/ep_len_mean", mean(self._len))
+        if self._win:
+            self.logger.record("game/win_rate", mean(self._win))
+            self.logger.record("game/floor_mean", mean(self._floor))
+            self.logger.record("game/act_mean", mean(self._act))
+        if self._deck:
+            self.logger.record("game/deck_size_mean", mean(self._deck))
+        self.logger.record("game/episodes_total", self._n_episodes)
+        if self._t0 is not None:
+            self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
+
+
+def make_env(*, ascension: int):
+    """Return one shaped whole-run environment for DummyVecEnv."""
+
+    from rl.reward import ShapedRewardWrapper
 
     def _thunk():
-        env = SlayTheSpireEnv(ascension=ascension, render_mode=render_mode)
-        return ActionMasker(env, _mask_fn)
+        env = SlayTheSpireEnv(ascension=ascension)
+        env = ShapedRewardWrapper(env)
+        return env
 
     return _thunk
 
 
-def make_env(pool="normal", overfit=False, ascension=0, render_mode=None):
-    """Build a masked SimCombatEnv. Returns a thunk for SB3's vec env makers."""
-    from sb3_contrib.common.wrappers import ActionMasker
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Train MaskablePPO on whole-run SlayTheSpireEnv."
+    )
 
-    def _thunk():
-        if overfit:
-            gc_factory = factories.fixed_factory(
-                _OVERFIT_SEED, _OVERFIT_ENCOUNTER, floor=1, ascension=ascension
-            )
-            env = SimCombatEnv(gc_factory=gc_factory, render_mode=render_mode)
-        else:
-            env = SimCombatEnv(pool=pool, ascension=ascension, render_mode=render_mode)
-        return ActionMasker(env, _mask_fn)
+    parser.add_argument("--steps", type=int, default=100_000)
+    parser.add_argument("--n-envs", type=int, default=8)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--n-steps", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=512)
 
-    return _thunk
+    parser.add_argument(
+        "--vec",
+        choices=["subproc", "dummy"],
+        default="subproc",
+        help="VecEnv backend. subproc = one process per env (true multi-core "
+             "sampling; default). dummy = all envs in this process, serial "
+             "(single core — use only for debugging).",
+    )
+
+    parser.add_argument("--ascension", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default="auto")
+
+    parser.add_argument(
+        "--out",
+        default="rl/runs/whole-run",
+        help="Base directory; each run lands in <out>/<timestamp>/ "
+             "(checkpoints, final model, optional TensorBoard logs).",
+    )
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=100_000,
+        help="Save a checkpoint about every N environment transitions.",
+    )
+    parser.add_argument("--tensorboard", action="store_true")
+
+    parser.add_argument(
+        "--metrics-window",
+        type=int,
+        default=100,
+        help="Rolling window (episodes) for game/* and rollout/* metrics.",
+    )
+
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", default="sts-rl")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--wandb-grad-freq", type=int, default=0)
+    parser.add_argument("--wandb-save-freq", type=int, default=50_000)
+
+    return parser
 
 
-def train(args):
-    from sb3_contrib import MaskablePPO
-    from sb3_contrib.common.maskable.evaluation import evaluate_policy
-    from stable_baselines3.common.vec_env import DummyVecEnv
+def main() -> None:
+    args = build_parser().parse_args()
 
-    os.makedirs(args.out, exist_ok=True)
-    if args.run:
-        env_makers = [make_run_env(ascension=args.ascension) for _ in range(args.n_envs)]
+    if args.n_envs < 1:
+        raise ValueError("--n-envs must be at least 1")
+    if args.n_steps < 1:
+        raise ValueError("--n-steps must be at least 1")
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be at least 1")
+
+    rollout_size = args.n_envs * args.n_steps
+    if rollout_size % args.batch_size != 0:
+        raise ValueError(
+            "batch_size must divide n_envs * n_steps: "
+            f"{args.batch_size} does not divide {rollout_size}"
+        )
+
+    # Unique run id (start timestamp) so each run gets its own out_dir and
+    # wandb name — concurrent/repeated runs never clobber each other's
+    # checkpoints, monitor.csv, or TensorBoard logs.
+    run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    out_dir = Path(args.out) / run_id
+    checkpoint_dir = out_dir / "checkpoints"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    env_fns = [
+        make_env(ascension=args.ascension)
+        for _ in range(args.n_envs)
+    ]
+    if args.vec == "subproc":
+        # forkserver, not the default fork: forking a process that already
+        # imported the native sts module + torch (threads, CUDA context) into a
+        # child can deadlock. forkserver starts each worker from a clean-ish
+        # process. spawn would also work but is slower to start.
+        venv = SubprocVecEnv(env_fns, start_method="forkserver")
     else:
-        env_makers = [make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)
-                      for _ in range(args.n_envs)]
-    venv = DummyVecEnv(env_makers)
+        venv = DummyVecEnv(env_fns)
+    venv = VecMonitor(venv, filename=str(out_dir / "monitor.csv"))
+    venv.seed(args.seed)
+
+    # Callback runs once per vectorized step, so adjust for n_envs.
+    checkpoint_callback = CheckpointCallback(
+        save_freq=max(args.save_every // args.n_envs, 1),
+        save_path=str(checkpoint_dir),
+        name_prefix="maskable_ppo",
+    )
+
+    tag = f"whole-run-asc{args.ascension}-s{args.seed}-{run_id}"
+
+    callbacks = [checkpoint_callback, StSMetricsCallback(window=args.metrics_window)]
+    wandb_run = None
+
+    if args.wandb:
+        import wandb
+        from wandb.integration.sb3 import WandbCallback
+
+        config = vars(args).copy()
+        config["tag"] = tag
+
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_name or tag,
+            config=config,
+            sync_tensorboard=True,
+            save_code=True,
+        )
+
+        callbacks.append(
+            WandbCallback(
+                gradient_save_freq=args.wandb_grad_freq,
+                model_save_path=str(out_dir / "wandb_models" / wandb_run.id),
+                model_save_freq=args.wandb_save_freq,
+                verbose=2,
+            )
+        )
+
+    callback = CallbackList(callbacks)
+
+    # sync_tensorboard needs SB3 to actually emit TensorBoard logs, so enable
+    # the TensorBoard sink whenever either --tensorboard or --wandb is set.
+    tensorboard_log = (
+        str(out_dir / "tensorboard")
+        if (args.tensorboard or args.wandb)
+        else None
+    )
+
+    # Categorical id groups (card/monster/move/relic/... vocab indices) are
+    # auto-detected from the observation space by StSFeatureExtractor — integer-
+    # dtype Boxes are categorical, float Boxes are scalars (see model.py /
+    # encode.obs_space()). No hand-maintained key list to drift out of sync.
+    policy_kwargs = dict(
+        features_extractor_class=StSFeatureExtractor,
+        features_extractor_kwargs=dict(
+            features_dim=256,
+        ),
+        activation_fn=nn.GELU,
+        net_arch=dict(
+            pi=[256, 128],
+            vf=[512, 256],
+        ),
+        ortho_init=False,
+    )
 
     model = MaskablePPO(
-        # obs is a gymnasium Dict (typed categorical + scalar groups, see
-        # env/core/encode.py) -> MultiInputPolicy. NOTE: the default extractor
-        # treats every Box as continuous; the categorical id groups (card/monster/
-        # move/... indices) really want an embedding layer. A custom
-        # features-extractor that embeds the id groups is the next model-side step
-        # (decision C in obs_design.md) — MlpPolicy on a flat vector is gone.
-        "MultiInputPolicy",
-        venv,
+        policy="MultiInputPolicy",
+        env=venv,
+        learning_rate=args.learning_rate,
         n_steps=args.n_steps,
         batch_size=args.batch_size,
         gamma=0.99,
         gae_lambda=0.95,
         ent_coef=0.01,
-        learning_rate=3e-4,
         seed=args.seed,
+        device=args.device,
         verbose=1,
-        tensorboard_log=args.out if args.tensorboard else None,
+        tensorboard_log=tensorboard_log,
+        policy_kwargs=policy_kwargs,
     )
 
-    tag = "whole-run" if args.run else ("overfit" if args.overfit else f"pool-{args.pool}")
-    print(f"[train] {tag}: {args.steps} steps, {args.n_envs} env(s)")
-    model.learn(total_timesteps=args.steps, progress_bar=False)
-
-    final = os.path.join(args.out, "final.zip")
-    model.save(final)
-    print(f"[train] saved {final}")
-
-    # quick deterministic eval right after training so the sanity signal is
-    # visible without a separate command.
-    eval_env = (make_run_env(ascension=args.ascension)() if args.run
-                else make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)())
-    mean_r, std_r = evaluate_policy(
-        model, eval_env, n_eval_episodes=args.eval_episodes,
-        deterministic=True, use_masking=True,
+    print(
+        "[train] whole-run "
+        f"steps={args.steps} "
+        f"n_envs={args.n_envs} "
+        f"vec={args.vec} "
+        f"rollout={rollout_size} "
+        f"ascension={args.ascension}"
     )
-    print(f"[eval] {args.eval_episodes} eps: mean_reward={mean_r:.3f} +/- {std_r:.3f}")
-    return model
 
+    try:
+        model.learn(
+            total_timesteps=args.steps,
+            callback=callback,
+            progress_bar=False,
+            tb_log_name=tag,
+        )
 
-def evaluate(args):
-    from sb3_contrib import MaskablePPO
-
-    model = MaskablePPO.load(args.eval)
-    env = make_env(pool=args.pool, overfit=args.overfit, ascension=args.ascension)()
-    wins = 0
-    rewards = []
-    for ep in range(args.episodes):
-        obs, info = env.reset()
-        done = False
-        total = 0.0
-        while not done:
-            mask = env.unwrapped.action_mask()
-            action, _ = model.predict(obs, action_masks=mask, deterministic=True)
-            obs, r, term, trunc, info = env.step(int(action))
-            total += r
-            done = term or trunc
-        rewards.append(total)
-        # terminal reward sign is the clean win/loss signal (see combat_env)
-        if total > 0:
-            wins += 1
-    rewards = np.asarray(rewards)
-    print(f"[eval] {args.episodes} eps: win_rate={wins/args.episodes:.3f} "
-          f"mean_reward={rewards.mean():.3f} +/- {rewards.std():.3f}")
-
-
-def build_parser():
-    p = argparse.ArgumentParser(description="MaskablePPO on SimCombatEnv")
-    p.add_argument("--overfit", action="store_true", default=True,
-                   help="train on one fixed combat (default; trainability check)")
-    p.add_argument("--run", action="store_true", default=False,
-                   help="train on the whole-run SlayTheSpireEnv (action v2) instead "
-                        "of single combats")
-    p.add_argument("--pool", default="normal", choices=["normal", "elite", "boss"],
-                   help="encounter pool when not overfitting")
-    p.add_argument("--no-overfit", dest="overfit", action="store_false",
-                   help="train on the random --pool distribution instead")
-    p.add_argument("--steps", type=int, default=100_000, help="total timesteps")
-    p.add_argument("--n-envs", type=int, default=8)
-    p.add_argument("--n-steps", type=int, default=512, help="rollout length per env")
-    p.add_argument("--batch-size", type=int, default=512)
-    p.add_argument("--ascension", type=int, default=0)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--out", default="rl/runs/overfit", help="checkpoint/log dir")
-    p.add_argument("--tensorboard", action="store_true")
-    p.add_argument("--eval-episodes", type=int, default=50,
-                   help="post-train eval episode count")
-    # eval-only mode
-    p.add_argument("--eval", metavar="CKPT", default=None,
-                   help="skip training; load CKPT and report win-rate")
-    p.add_argument("--episodes", type=int, default=200, help="--eval episode count")
-    return p
-
-
-def main():
-    args = build_parser().parse_args()
-    if args.eval:
-        evaluate(args)
-    else:
-        train(args)
+        final_path = out_dir / "final"
+        model.save(str(final_path))
+        print(f"[train] saved {final_path}.zip")
+    except KeyboardInterrupt:
+        # Ctrl+C: model.learn() bails out here. Save what we have — otherwise
+        # we'd lose everything since the last periodic checkpoint.
+        interrupted_path = out_dir / "interrupted"
+        model.save(str(interrupted_path))
+        print(f"[train] interrupted — saved {interrupted_path}.zip")
+    finally:
+        venv.close()
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":

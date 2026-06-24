@@ -186,7 +186,7 @@ class SlayTheSpireEnv(gym.Env):
         return mask
 
     def _info(self):
-        return {
+        info = {
             "action_mask": self.action_masks(),
             "phase": self.thick.phase(),
             "arg_step": self._arg_step(),
@@ -194,6 +194,10 @@ class SlayTheSpireEnv(gym.Env):
             "multi_selected": (sorted(self._multi)
                                if self._multi is not None else None),
         }
+        run_stats = getattr(self.thick, "run_stats", None)
+        if run_stats is not None:
+            info["run_stats"] = run_stats()
+        return info
 
     # ---------------------------------------------------------------- render
     def render(self):

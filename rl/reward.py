@@ -1,0 +1,81 @@
+from dataclasses import dataclass
+
+import gymnasium as gym
+
+
+@dataclass(frozen=True)
+class RewardConfig:
+    floor: float = 1.0
+    act_boss: float = 100.0
+    death: float = -100.0
+    hp_delta: float = 0.0
+    target_act: int = 1
+
+
+@dataclass(frozen=True)
+class RewardState:
+    hp: int
+    act: int
+    floor: int
+    outcome: str   # "UNDECIDED" / "PLAYER_VICTORY" / "PLAYER_LOSS"
+
+
+class RewardCalculator:
+    def __init__(self, cfg=None):
+        self.cfg = cfg or RewardConfig()
+
+    def compute(self, prev: RewardState, now: RewardState, terminated: bool) -> float:
+        cfg = self.cfg
+        r = 0.0
+
+        r += cfg.floor * max(0, now.floor - prev.floor)
+        r += cfg.hp_delta * (now.hp - prev.hp)
+
+        if now.outcome == "PLAYER_LOSS":
+            r += cfg.death
+
+        cleared_target_act = (
+            prev.act <= cfg.target_act
+            and now.act > cfg.target_act
+        )
+        won_full_run = now.outcome == "PLAYER_VICTORY"
+
+        if cleared_target_act or won_full_run:
+            r += cfg.act_boss
+
+        return float(r)
+
+
+def _gc_state(gc) -> RewardState:
+    return RewardState(
+        hp=gc.cur_hp,
+        act=gc.act,
+        floor=gc.floor_num,
+        outcome=gc.outcome.name,
+    )
+
+
+class ShapedRewardWrapper(gym.Wrapper):
+    """Replace env reward with shaped reward from RewardCalculator.
+
+    Wraps SlayTheSpireEnv (or any env whose .thick.gc exposes cur_hp/act/
+    floor_num/outcome). Stores the raw env reward in info["env_reward"].
+    """
+
+    def __init__(self, env, cfg=None):
+        super().__init__(env)
+        self._calc = RewardCalculator(cfg)
+        self._prev: RewardState | None = None
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._prev = _gc_state(self.env.thick.gc)
+        return obs, info
+
+    def step(self, action):
+        obs, env_reward, terminated, truncated, info = self.env.step(action)
+        now = _gc_state(self.env.thick.gc)
+        shaped = self._calc.compute(self._prev, now, terminated)
+        self._prev = now
+        info["env_reward"] = env_reward
+        return obs, shaped, terminated, truncated, info

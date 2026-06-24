@@ -57,6 +57,25 @@ int MonsterGroup::getRandomMonsterIdx(Random &rng, bool aliveOnly) const {
                     assert(false);
                 }
 #endif
+                // SAFETY GUARD (do NOT remove without the root-cause fix):
+                // monstersAlive can disagree with the actual alive count in arr[]
+                // after a slime split (largeSlimeSplit / slimeBossSplit bump
+                // monstersAlive but the dead parent lingers in arr[]). When that
+                // happens this loop never finds the aliveIdx-th alive monster and
+                // i runs past monsterCount, reading garbage past arr[] -> the
+                // worker segfaults and (under SubprocVecEnv) deadlocks the whole
+                // run. Falling back to the last real slot keeps us in bounds. This
+                // does NOT touch rng (the random() call above already happened), so
+                // the normal path stays bit-exact with the real game. Tracked in
+                // doc/day_0623 — remove once monstersAlive bookkeeping is fixed.
+                if (i >= monsterCount) {
+                    for (int j = monsterCount - 1; j >= 0; --j) {
+                        if (!arr[j].isDeadOrEscaped()) {
+                            return j;
+                        }
+                    }
+                    return monsterCount - 1;
+                }
                 if (!arr[i].isDeadOrEscaped()) {
                     if (aliveEncountered == aliveIdx) {
                         return i;

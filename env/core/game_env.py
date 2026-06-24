@@ -167,6 +167,20 @@ class SimGameEnv:
             return True
         return self.gc.act > 1
 
+    def run_stats(self):
+        """Ground-truth run-level diagnostics for logging (NOT obs/reward): the
+        game owns these, so they ride in info rather than being decoded back out
+        of the scaled observation. outcome is the module-level GameOutcome name
+        (UNDECIDED / PLAYER_VICTORY / PLAYER_LOSS)."""
+        return {
+            "outcome": self.gc.outcome.name,
+            "act": self.gc.act,
+            "floor": self.gc.floor_num,
+            "hp": self.gc.cur_hp,
+            "deck_size": len(self.gc.deck_ids()),
+        }
+
+
     # --------------------------------------------------- legal semantic actions
     def legal_semantic_actions(self):
         if self.is_over:
@@ -245,12 +259,12 @@ class SimGameEnv:
         self._settle()  # pump through any auto-resolving screens to next decision
 
         terminated = self.is_over
-        hp = self.gc.cur_hp
-        reward = float(hp - self._prev_hp) / 200.0  # hp-delta shaping (placeholder)
-        self._prev_hp = hp
+        self._prev_hp = self.gc.cur_hp
+        reward = 0.0
         if terminated:
-            # +1 cleared act 1, -1 died (v1 terminal signal; refine later)
-            reward += 1.0 if self.gc.outcome == _GC_UNDECIDED and self.gc.act > 1 else -1.0
+            cleared_act1 = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 1
+            won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
+            reward = 1.0 if (cleared_act1 or won) else -1.0
         return self._canonical(), reward, terminated, self._info()
 
     def _apply(self, action):
