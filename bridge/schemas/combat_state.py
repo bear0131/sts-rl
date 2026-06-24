@@ -149,22 +149,40 @@ def real_to_sim_card_enum(real_id):
 # (a missing entry should be loud, not a silent wrong compare).
 _SIM_MONSTER_INVALID = "INVALID = 0"  # empty/not-yet-activated slot (cf. monsterIdStrings[0])
 _MONSTER_SIM2REAL = {
+    # act 1
     "ACID_SLIME_S": "AcidSlime_S", "ACID_SLIME_M": "AcidSlime_M", "ACID_SLIME_L": "AcidSlime_L",
     "SPIKE_SLIME_S": "SpikeSlime_S", "SPIKE_SLIME_M": "SpikeSlime_M", "SPIKE_SLIME_L": "SpikeSlime_L",
     "CULTIST": "Cultist", "JAW_WORM": "JawWorm",
     "GREEN_LOUSE": "FuzzyLouseNormal", "RED_LOUSE": "FuzzyLouseDefensive",
     "GREMLIN_NOB": "GremlinNob", "HEXAGHOST": "Hexaghost",
-    "LOOTER": "Looter", "MUGGER": "Mugger", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
+    "LOOTER": "Looter", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
     "THE_GUARDIAN": "TheGuardian", "SLIME_BOSS": "SlimeBoss",
     "RED_SLAVER": "SlaverRed", "BLUE_SLAVER": "SlaverBlue",
     "FUNGI_BEAST": "FungiBeast",
-    "SPIKER": "Spiker", "BYRD": "Byrd", "CENTURION": "Centurion", "CHOSEN": "Chosen",
-    "MYSTIC": "Healer", "SHELLED_PARASITE": "Shelled Parasite", "SNAKE_PLANT": "Snake Plant",
-    "SNECKO": "Snecko", "SPHERIC_GUARDIAN": "SphericGuardian", "REPULSOR": "Repulsor",
-    "POINTY": "Repulsor", "EXPLODER": "Exploder", "TASKMASTER": "SlaverBoss",
     "FAT_GREMLIN": "GremlinFat", "MAD_GREMLIN": "GremlinWarrior",
     "SHIELD_GREMLIN": "GremlinTsundere", "SNEAKY_GREMLIN": "GremlinThief",
-    "GREMLIN_WIZARD": "GremlinWizard", "TORCH_HEAD": "TorchHead",
+    "GREMLIN_WIZARD": "GremlinWizard",
+    # act 2
+    "BYRD": "Byrd", "CENTURION": "Centurion", "CHOSEN": "Chosen",
+    "MYSTIC": "Healer", "SHELLED_PARASITE": "Shelled Parasite", "SNAKE_PLANT": "SnakePlant",
+    "SNECKO": "Snecko", "SPHERIC_GUARDIAN": "SphericGuardian",
+    "MUGGER": "Mugger", "EXPLODER": "Exploder", "REPULSOR": "Repulsor", "SPIKER": "Spiker",
+    "GREMLIN_LEADER": "GremlinLeader", "TASKMASTER": "SlaverBoss",
+    "BOOK_OF_STABBING": "BookOfStabbing", "THE_CHAMP": "Champ",
+    "BRONZE_AUTOMATON": "BronzeAutomaton", "BRONZE_ORB": "BronzeOrb",
+    "THE_COLLECTOR": "TheCollector", "TORCH_HEAD": "TorchHead",
+    # masked-bandits event (sim names POINTY/ROMEO/BEAR -> real Bandit* ids)
+    "POINTY": "BanditChild", "ROMEO": "BanditLeader", "BEAR": "BanditBear",
+    # act 3
+    "DARKLING": "Darkling", "ORB_WALKER": "Orb Walker", "SPIRE_GROWTH": "SpireGrowth",
+    "TRANSIENT": "Transient", "WRITHING_MASS": "WrithingMass", "THE_MAW": "Maw",
+    "REPTOMANCER": "Reptomancer", "DAGGER": "Dagger",
+    "GIANT_HEAD": "GiantHead", "NEMESIS": "Nemesis",
+    "AWAKENED_ONE": "AwakenedOne", "TIME_EATER": "TimeEater",
+    "DECA": "Deca", "DONU": "Donu",
+    # act 4
+    "SPIRE_SHIELD": "SpireShield", "SPIRE_SPEAR": "SpireSpear",
+    "CORRUPT_HEART": "CorruptHeart",
 }
 
 

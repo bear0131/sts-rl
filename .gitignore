@@ -18,6 +18,9 @@ bridge/client/logs/
 # RL training artifacts (checkpoints, tensorboard logs)
 rl/runs/
 
+# bughunt crash captures (local crash-hunt output)
+rl/bughunt_out/
+
 # editor / OS
 .idea/
 .vscode/

@@ -267,7 +267,7 @@ def main():
     )
     parts.append("# ---- name -> index maps ----\n" + idx_lines + "\n")
 
-    with open(_OUT, "w", encoding="utf-8") as f:
+    with open(_OUT, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(parts))
 
     # report
