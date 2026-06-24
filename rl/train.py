@@ -43,7 +43,8 @@ class StSMetricsCallback(BaseCallback):
     run_env.SlayTheSpireEnv._info). Emits under:
 
       rollout/  ep_rew_mean, ep_len_mean   (generic: reward + steps/episode)
-      game/     win_rate, floor_mean, act_mean, deck_size_mean
+      game/     win_rate, floor_mean, act_mean, deck_size_mean,
+                floor_{5,10,...,50}_win_mean (pass-rate past floor x)
       time/     elapsed_seconds            (GLOBAL wall-clock since learn(),
                                             not a per-episode delta)
     """
@@ -73,7 +74,11 @@ class StSMetricsCallback(BaseCallback):
 
             stats = info.get("run_stats")
             if stats is not None:
-                won = stats["outcome"] == "PLAYER_VICTORY"
+                # A win = cleared the run (act 3 boss bumps act to 4, leaving
+                # outcome UNDECIDED), mirroring SimGameEnv.is_over (act > 3).
+                # PLAYER_VICTORY only fires at the act-4 heart, which we never
+                # reach — so testing it alone made win_rate stay 0.
+                won = stats["act"] > 3 or stats["outcome"] == "PLAYER_VICTORY"
                 self._win.append(1.0 if won else 0.0)
                 self._floor.append(stats["floor"])
                 self._act.append(stats["act"])
@@ -93,6 +98,13 @@ class StSMetricsCallback(BaseCallback):
             self.logger.record("game/win_rate", mean(self._win))
             self.logger.record("game/floor_mean", mean(self._floor))
             self.logger.record("game/act_mean", mean(self._act))
+            # Pass-rate curve: fraction of episodes that got past floor x (final
+            # floor > x), one checkpoint every 5 floors across the 3-act run.
+            for t in range(5, 55, 5):
+                self.logger.record(
+                    f"game/floor_{t}_win_mean",
+                    mean([1.0 if f > t else 0.0 for f in self._floor]),
+                )
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
