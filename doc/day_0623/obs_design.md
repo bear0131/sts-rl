@@ -1,9 +1,10 @@
-# Observation 设计文档（v4，完整版）
+# Observation 设计文档（v5，完整版）
 
-> 状态：**已实现并落地**（`env/core/encode.py`，`OBS_VERSION=4`，`spaces.Dict`）。本文档是 RL 模型输入的**契约**，与 `encode.py` 的真实 layout 一一对应；改 encode.py 必须同步改本文档。
+> 状态：**已实现并落地**（`env/core/encode.py`，`OBS_VERSION=5`，`spaces.Dict`）。本文档是 RL 模型输入的**契约**，与 `encode.py` 的真实 layout 一一对应；改 encode.py 必须同步改本文档。
 >
 > v3 相对 v2：新增 `arg_step` 键（薄层 `SlayTheSpireEnv` 的 autoregressive 子步，见 `action_design.md` §1）。
-> v4 相对 v3：新增商店货架组 `shop_*`（卡/遗物/药水 id + 价格 + 移牌价），与 SHOP_* 动作段 positional 对位。其余不变。
+> v4 相对 v3：新增商店货架组 `shop_*`（卡/遗物/药水 id + 价格 + 移牌价），与 SHOP_* 动作段 positional 对位。
+> v5 相对 v4：新增选牌屏契约组（`select_context`/`pick_remaining`/`can_pick_zero`/`can_pick_any`/`selected_card_ids`，§4.1），`select_card_ids` 的 `G_MAX` 12→64（全卡组选牌屏）。其余不变。
 >
 > 关联：`env/core/encode.py`（实现）、`env/core/vocab.py`（词表）、`doc/day_0623/action_design.md`（动作面，姊妹文档）、`bridge/schemas/combat_state.py`（canonical 生产）。
 >
@@ -164,24 +165,24 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 
 > 这些“选项 obs”与**动作 mask** 配套：模型在 card_reward 看到三张牌 id + 用 mask 限定只能 take#0/1/2/skip/proceed。动作侧编码（变长语义动作→定长 id+mask）是薄层 SlayTheSpireEnv 的另一份契约，单独文档。
 
-### 4.1 选牌屏的语义 + 进度（select_context / pickCount / selected）—— 待落地
+### 4.1 选牌屏的语义 + 进度（select_context / pick_remaining / selected_card_ids）—— ✅ 已落地
 
-`select_card_ids` 只给了“候选是哪些牌”，但模型还缺三类信息才能在选牌屏正确决策。三个量各按其类型编码（§0.1）：
+`select_card_ids` 只给了“候选是哪些牌”，但模型还缺几类信息才能在选牌屏正确决策。各按其类型编码（§0.1），现已全部进 obs v5：
 
 | 键 | 类型 | 形状 | 内容 / 来源 |
 |---|---|---|---|
-| `select_context` | **categorical** | (1,) | 这屏选牌**干嘛的**——升级/消耗/复制/转化/移除/从弃牌堆拿回/检索…。一张合并词表 `SELECT_CONTEXT_VOCAB`（战内 `CardSelectTask` 20 项 + 战外 `CardSelectScreenType` 6~8 项，index 0=NONE）。**需 C++**（`bc.cardSelectInfo.cardSelectTask` / `gc.info.selectScreenType`，见 action_design §5 #2/#5）。为何不能只靠 mask：升级一张 vs 移除一张，**可点的牌集合可能完全相同**，目的却相反（升级挑最值钱、移除挑最废）——语义不进 obs，模型在信息上无法区分这两屏。 |
-| `pick_remaining` | scalar | (1,) | **还要选几张** = `pickCount − 已选数`，/某 scale。给“还差几张”比给绝对 pickCount 有用。**需 C++**（`bc.cardSelectInfo.pickCount`，§5 #3）。 |
-| `can_pick_zero` / `can_pick_any` | flag scalar | (1,)×2 | 能否合法停手 / 是否任意张。决定模型何时该选“确认/结束选择”。**需 C++**（同 #3）。 |
-| `selected` | flag | (G_MAX,) | **本轮已点的槽**（0/1），与 `select_card_ids` **positional 平行对齐**：槽 k 是什么牌看 `select_card_ids[k]`，点没点过看 `selected[k]`。**纯 Python**：薄层 `_pending` 攒着已选槽，投影成 flag 注入 obs（同 `arg_step` 路径）。 |
+| `select_context` | **categorical** | (1,) | 这屏选牌**干嘛的**——升级/消耗/复制/转化/移除/从弃牌堆拿回/检索…。一张合并词表 `SELECT_CONTEXT_VOCAB`（战内 `CardSelectTask` 20 项 + 战外 `CardSelectScreenType` 8 项，index 0=PAD，共 29）。✅ **已绑 C++**（`bc.select_info()['context']` / `gc.select_screen_info()['context']`）。为何不能只靠 mask：升级一张 vs 移除一张，**可点的牌集合可能完全相同**，目的却相反（升级挑最值钱、移除挑最废）——语义不进 obs，模型在信息上无法区分这两屏。 |
+| `pick_remaining` | scalar | (1,) | **还要选几张** = `pickCount − 已选数`，`/PICK_SCALE=10`。✅ **已绑 C++**。⚠️ 仅**战外有效**：sim 的 `cardSelectInfo.pickCount` 只对战内 MULTI 任务（Gamble/Exhaust-Many）有意义，战内单选任务（Armaments/Dual Wield…）pickCount 留 0（选一张即结束屏，不需进度量）——故战内此字段恒 0，靠 `select_context` 区分屏即可。 |
+| `can_pick_zero` / `can_pick_any` | flag scalar | (1,)×2 | 能否合法停手 / 是否任意张。✅ **已绑 C++**（`bc.select_info()`）。主要服务战内多选（下一批的 Gamble/Exhaust-Many accumulate+confirm）；战外恒 False（必须选满 pick_count）。 |
+| `selected_card_ids` | **categorical** | (3,) | **本屏已选牌的 id**（CARD_VOCAB index，PAD 到 3）。✅ **纯 Python + C++**：战外读 `gc.select_screen_info()['selected']`，战内恒空。 |
 
-> **`selected` 为何是对齐 grid 的 (G_MAX,) flag，而非“已选牌 id 的可变长列表”**：
-> 1. gym `spaces` 不吃可变长——要么 PAD 成定长 id 列表，要么用这个对齐的定长 flag，后者更省且天然和动作槽 `PICK_CARD[k]` 对位。
-> 2. id 列表遇**重复牌歧义**：grid 里 slot3、slot7 都是 Strike，你点了 slot3，一串 `selected_ids=[Strike]` 无法表达“是第 3 张那个”；位置 flag `selected[3]=1` 无歧义。**位置是唯一稳定的把手，牌面 id 不是。**
+> **关键实现纪律（与文档草案的偏离，已在落地时拍板）**：草案设想 `selected` 是对齐 grid 的 `(G_MAX,) flag`，前提“多选途中候选网格不重排”。**绑定时发现该前提对战外不成立**：sim 的 `chooseSelectCardScreenOption(idx)`（`GameContext.cpp:3641`）每选一张就 `toSelectCards.remove(idx)`——**把已选牌从候选网格删除并重排**，自己在 `haveSelectedCards`（`fixed_list<SelectScreenCard,3>`）里跨 env step 累积。
 >
-> **前提**：多选过程中候选网格**不重排**（槽 k 在本轮 pending 期间一直指同一张牌）。StS 选 k 张任务候选集在一次选择内通常固定，符合；C++ 绑定批顺手确认 `cardSelectInfo.cards` 多选途中不洗牌。若某屏真会动态变，则退回“每步重读 grid + flag 按当前 grid 位置重算”。
+> 推论：① grid-aligned flag 在自剪枝网格上**恒为 0**（已选牌已不在网格里），是死字段；② “网格在缩小”本身已是前馈模型的记忆载体（配合 `pick_remaining`，满足 §0.5）；③ 故 `selected` 改为**直接读 `haveSelectedCards` 的已选牌 id**（`selected_card_ids(3)`，上限 3 = 该 `fixed_list` 容量，正好覆盖最大战外多选 Astrolabe=3）。重复牌歧义不再是问题——已选牌根本不在候选里，无需 positional 对齐。
 >
-> 这套与 §0.5 呼应：**mask 把已选槽设非法（防重选），`selected`/`pick_remaining` 进 obs（让前馈模型看见自己选了啥、还差几张、能否收手）**——两条通道各管一半。
+> **战内为何不累积**：战内单选（SINGLE_CARD_SELECT）一步选完；战内多选（Gamble/Exhaust-Many 的 MULTI_CARD_SELECT）是**一次性 bitset** 催收整屏，sim 不走 `haveSelectedCards`。故战内 `selected_card_ids` 恒空、`pick_remaining` 恒 0。战内多选“选哪几张”（薄层 accumulate+confirm 子状态机 + CONFIRM 动作 id + C++ MULTI bitset 执行）是**下一批**，不在本契约内。
+>
+> 这套与 §0.5 呼应：**mask 把已选/非法牌设非法（防重选/防越界），`selected_card_ids`/`pick_remaining`/`select_context` 进 obs（让前馈模型看见自己选了啥、还差几张、这屏干嘛）**——两条通道各管一半。
 
 ---
 
@@ -208,8 +209,9 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
    - 更新 `SimCombatEnv` / `SimGameEnv` 的 observation_space 为 `spaces.Dict`。
 2. **C++ 绑定补丁清单**（碰 sim，重建 .so）：
    - ✅ **意图**：已导出 `monster.moveHistory[0]`（当前 MonsterMoveId，草案误写 `[1]`）→ `MOVE_VOCAB` + 派生 `INTENT_CATEGORY`（obs_v2_landing §2，已落地）。
-   - 商店货架内容（卡/遗物/药水 + 价格）list getter。
-   - 事件合法选项数。
+   - ✅ 商店货架内容（卡/遗物/药水 + 价格）list getter（`gc.shop_contents()`，obs v4）。
+   - ✅ 事件合法选项数（`gc.legal_event_options()`）。
+   - ✅ 选牌屏语义/进度（`bc.select_info()` / `gc.select_screen_info()` → select_context/pick_remaining/selected，obs v5，§4.1）。
    - （可选）战斗内遗物计数器 `Relic.data`。
 
 ---
@@ -230,7 +232,7 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 
 ## 8. 实现对照（`encode.py` 键 → 本文档）
 
-obs 是单层 `spaces.Dict`（无嵌套），共 36 个键。下表是 `obs_space()` 的权威清单，便于审计 layout 漂移：
+obs 是单层 `spaces.Dict`（无嵌套），共 41 个键。下表是 `obs_space()` 的权威清单，便于审计 layout 漂移：
 
 | 键 | kind | 形状 | 词表/scale | 文档 |
 |---|---|---|---|---|
@@ -253,7 +255,11 @@ obs 是单层 `spaces.Dict`（无嵌套），共 36 个键。下表是 `obs_spac
 | `potions` | cat | (5,) | POTION_VOCAB | §3 |
 | `deck_counts` | scalar | (N_CARDS,) | 计数 | §3 |
 | `offer_card_ids` | cat | (3,) | CARD_VOCAB | §4 |
-| `select_card_ids` | cat | (G_MAX=12,) | CARD_VOCAB | §4 |
+| `select_card_ids` | cat | (G_MAX=64,) | CARD_VOCAB | §4 |
+| `select_context` | cat | (1,) | SELECT_CONTEXT_VOCAB | §4.1 |
+| `pick_remaining` | scalar | (1,) | /PICK_SCALE=10（战外有效） | §4.1 |
+| `can_pick_zero`/`can_pick_any` | flag | (1,)×2 | 0/1 | §4.1 |
+| `selected_card_ids` | cat | (3,) | CARD_VOCAB（已选牌，战外） | §4.1 |
 | `map_node_rooms` | cat | (3,) | ROOM_VOCAB | §4 |
 | `map_node_x` | scalar | (3,) | /6 | §4 |
 | `boss_relic_ids` | cat | (3,) | RELIC_VOCAB | §4 |
@@ -266,4 +272,4 @@ obs 是单层 `spaces.Dict`（无嵌套），共 36 个键。下表是 `obs_spac
 | `shop_potion_prices` | scalar | (3,) | /999 | §4 |
 | `shop_remove_cost` | scalar | (1,) | /999 | §4 |
 
-> **缺口（与动作面共享，详见 action_design）**：(1) `select_card_ids` 现填了 grid 候选牌，但缺一个 **`select_context`**（这屏选牌是干嘛的——升级/消耗/复制/转化…）——属 C++ 批，见 action_design §C++。(2) `shop_*` 货架已绑定并进 obs（v4），但商店牌的**升级态**未编码（与 `offer_card_ids` 一致地省略，留后续版本）。(3) `event` 只有 id，选项数/选项语义未绑定。
+> **缺口（与动作面共享，详见 action_design）**：(1) ~~`select_context` 缺~~ ✅ 已落地（v5，§4.1）：选牌屏语义/进度（select_context/pick_remaining/can_pick_*/selected_card_ids）全部进 obs，战内单选 + 战外多选覆盖。**仅剩战内多选（Gamble/Exhaust-Many）“选哪几张”** —— 一次性 bitset，需薄层 accumulate+confirm 子状态机 + CONFIRM 动作 id + C++ MULTI bitset 执行，是下一批（动 ACTION_VERSION）。(2) `shop_*` 货架已绑定并进 obs（v4），但商店牌的**升级态**未编码（与 `offer_card_ids` 一致地省略，留后续版本）。(3) `event` 只有 id，选项数/选项语义未绑定。
