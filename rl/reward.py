@@ -6,6 +6,7 @@ import gymnasium as gym
 @dataclass(frozen=True)
 class RewardConfig:
     floor: float = 1.0
+    floor_base: float = 1.03  # each floor f pays floor * floor_base**f (depth premium)
     boss_rewards: tuple = (25.0, 45.0, 80.0)  # per-act boss clear (act1, act2, act3)
     death: float = 0.0
     hp_delta: float = 0.0
@@ -27,7 +28,11 @@ class RewardCalculator:
         cfg = self.cfg
         r = 0.0
 
-        r += cfg.floor * max(0, now.floor - prev.floor)
+        # Each newly reached floor f pays floor_base**f: an exponential depth
+        # premium that offsets gamma's per-floor discount and then mildly
+        # over-weights deep floors (1.03 * 0.999**~20steps ~= 1.009 net/floor).
+        for f in range(prev.floor + 1, now.floor + 1):
+            r += cfg.floor * (cfg.floor_base ** f)
         r += cfg.hp_delta * (now.hp - prev.hp)
 
         if now.outcome == "PLAYER_LOSS":

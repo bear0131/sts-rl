@@ -43,8 +43,8 @@ class StSMetricsCallback(BaseCallback):
     run_env.SlayTheSpireEnv._info). Emits under:
 
       rollout/  ep_rew_mean, ep_len_mean   (generic: reward + steps/episode)
-      game/     win_rate, floor_mean, act_mean, deck_size_mean,
-                floor_{5,10,...,50}_win_mean (pass-rate past floor x)
+      game/     win_rate, floor_mean, act_{1,2,3}_won_mean, deck_size_mean
+      game/floor_won/  {05,10,...,50}: pass-rate past floor x (detail section)
       time/     elapsed_seconds            (GLOBAL wall-clock since learn(),
                                             not a per-episode delta)
     """
@@ -97,17 +97,25 @@ class StSMetricsCallback(BaseCallback):
         if self._win:
             self.logger.record("game/win_rate", mean(self._win))
             self.logger.record("game/floor_mean", mean(self._floor))
-            self.logger.record("game/act_mean", mean(self._act))
-            # Pass-rate curve: fraction of episodes that got past floor x (final
-            # floor > x), one checkpoint every 5 floors across the 3-act run.
-            for t in range(5, 55, 5):
+            # Per-act clear rate: clearing act x bumps act to x+1, so "won act x"
+            # == final act > x. act_3 ~= win_rate; the ladder shows where runs die.
+            for x in (1, 2, 3):
                 self.logger.record(
-                    f"game/floor_{t}_win_mean",
-                    mean([1.0 if f > t else 0.0 for f in self._floor]),
+                    f"game/act_{x}_won_mean",
+                    mean([1.0 if a > x else 0.0 for a in self._act]),
                 )
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
+        # Per-5-floor pass-rate detail (fraction that got past floor x, final
+        # floor > x). Kept under its own game/floor_won/ sub-section so the ten
+        # curves cluster at the end instead of interleaving the headline metrics.
+        if self._floor:
+            for t in range(5, 55, 5):
+                self.logger.record(
+                    f"game/floor_won/{t:02d}",
+                    mean([1.0 if f > t else 0.0 for f in self._floor]),
+                )
         if self._t0 is not None:
             self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
 
@@ -338,7 +346,9 @@ def main() -> None:
         learning_rate=args.learning_rate,
         n_steps=args.n_steps,
         batch_size=args.batch_size,
-        gamma=0.99,
+        gamma=0.999,   # <1 so non-terminating infinite combos (0 per-step reward)
+                       # discount to value 0; 0.999 still keeps act1-boss credit
+                       # ~0.71 (~20 steps/floor), reward.floor_base then re-weights
         gae_lambda=0.95,
         ent_coef=0.01,
         seed=args.seed,
