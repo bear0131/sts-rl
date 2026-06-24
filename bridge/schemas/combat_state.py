@@ -335,7 +335,8 @@ def _sim_screen_options(gc, phase):
 
 
 def _select_options(context, pick_count, have_selected, selected_ids,
-                    can_pick_zero, can_pick_any):
+                    can_pick_zero, can_pick_any, multi=False, pick_max=0,
+                    cards_in_hand=0):
     """The card-select screen's semantics + progress, in one backend-symmetric
     shape (obs_design §4.1). Shared by the overworld grid and the combat sub-
     screen; the encoder reads it into select_context / pick_remaining /
@@ -345,8 +346,15 @@ def _select_options(context, pick_count, have_selected, selected_ids,
                        CardSelectScreenType for overworld); "INVALID" off-screen.
       pick_remaining : how many MORE to pick = pick_count - have_selected.
       selected       : canonical ids already picked THIS screen. The combat
-                       sub-screen never accumulates across env steps (SINGLE picks
-                       resolve in one action; MULTI is one-shot) -> always [].
+                       SINGLE sub-screen never accumulates across env steps (one
+                       pick resolves) -> []. The combat MULTI screen (Exhaust
+                       Many / Gamble) DOES accumulate, but in the THIN layer's
+                       own toggle set (the sim is told the whole bitset at once on
+                       confirm) -> the bridge leaves it [] and the thin layer
+                       patches pick_remaining/selected from its accumulator.
+      multi          : True for Exhaust Many / Gamble — the thin layer drives a
+                       toggle+confirm machine over `cards_in_hand` hand indices,
+                       capped at `pick_max` (obs_design §4.2). False otherwise.
     """
     return {
         "context": context,
@@ -354,19 +362,34 @@ def _select_options(context, pick_count, have_selected, selected_ids,
         "can_pick_zero": bool(can_pick_zero),
         "can_pick_any": bool(can_pick_any),
         "selected": selected_ids,
+        "multi": bool(multi),
+        "pick_max": int(pick_max),
+        "cards_in_hand": int(cards_in_hand),
     }
 
 
 def combat_select_options(select_info):
     """Canonical 'select' block for an in-combat card-select sub-screen, from
     bc.select_info() (context = CardSelectTask name, pick_count, can_pick_zero,
-    can_pick_any). The combat screen does not accumulate picks across env steps,
-    so 'selected' is always empty. Returned under options['select'] exactly like
-    the overworld grid, so the encoder treats both identically."""
+    can_pick_any, multi, pick_max, cards_in_hand).
+
+    SINGLE screens: one pick resolves, no accumulation -> 'selected' is empty and
+    the thin layer maps each candidate to a PICK_CARD id directly.
+
+    MULTI screens (Exhaust Many / Gamble): the sim resolves the whole screen with
+    one bitset Action, so the thin layer toggles hand indices and confirms. The
+    sim leaves canPickZero/canPickAnyNumber false for these, but a MULTI screen
+    can ALWAYS confirm zero (chooseExhaust/GambleCards early-return on empty) and
+    Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any
+    from pick_max being the whole hand (Gamble) vs a fixed cap (Exhaust Many)."""
+    multi = bool(select_info.get("multi"))
     return _select_options(
         select_info["context"], select_info["pick_count"], 0, [],
-        can_pick_zero=select_info["can_pick_zero"],
-        can_pick_any=select_info["can_pick_any"])
+        can_pick_zero=select_info["can_pick_zero"] or multi,
+        can_pick_any=select_info["can_pick_any"],
+        multi=multi,
+        pick_max=select_info.get("pick_max", 0),
+        cards_in_hand=select_info.get("cards_in_hand", 0))
 
 
 def _card_reward_entry(card):

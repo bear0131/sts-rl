@@ -48,8 +48,11 @@ from . import intents
 # shop shelf groups (shop_*: card/relic/potion ids + prices + remove cost). v5
 # adds the card-select screen contract (obs_design §4.1): select_context /
 # pick_remaining / can_pick_zero / can_pick_any / selected_card_ids, and widens
-# select_card_ids G_MAX 12->64 (full-deck select screens).
-OBS_VERSION = 5
+# select_card_ids G_MAX 12->64 (full-deck select screens). v6 adds
+# select_hand_mask (obs_design §4.2): a hand-aligned 0/1 vector of the cards the
+# thin env has TOGGLED on a combat MULTI screen (Exhaust Many / Gamble), so the
+# feed-forward policy sees its own pending pick (mask != obs, §0.5).
+OBS_VERSION = 6
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -151,6 +154,10 @@ def obs_space():
         "can_pick_zero": scal((1,)),
         "can_pick_any": scal((1,)),
         "selected_card_ids": cat((SELECT_PICK_SLOTS,), N_CARDS),
+        # combat MULTI screen (Exhaust Many / Gamble): hand-aligned 0/1 vector of
+        # the cards the thin env has toggled so far (obs_design §4.2). slot h == the
+        # PICK_CARD[h] toggle id == hand slot h. PAD (all 0) off a MULTI screen.
+        "select_hand_mask": scal((HAND_SLOTS,)),
         "map_node_rooms": cat((MAP_EDGES,), len(V.ROOM_VOCAB)),
         "map_node_x": scal((MAP_EDGES,)),
         "boss_relic_ids": cat((OFFER_SLOTS,), V.RELIC_VOCAB_CAPACITY),
@@ -209,6 +216,7 @@ def _empty():
         "can_pick_zero": np.zeros(1, _SCALAR),
         "can_pick_any": np.zeros(1, _SCALAR),
         "selected_card_ids": np.zeros(SELECT_PICK_SLOTS, _CAT),
+        "select_hand_mask": np.zeros(HAND_SLOTS, _SCALAR),
         "map_node_rooms": np.zeros(MAP_EDGES, _CAT),
         "map_node_x": np.zeros(MAP_EDGES, _SCALAR),
         "boss_relic_ids": np.zeros(OFFER_SLOTS, _CAT),
@@ -383,3 +391,7 @@ def _encode_select(o, sel):
     o["can_pick_any"][0] = 1.0 if sel.get("can_pick_any") else 0.0
     for i, cid in enumerate(sel.get("selected", [])[:SELECT_PICK_SLOTS]):
         o["selected_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+    # combat MULTI screen: thin-env toggled hand indices -> hand-aligned 0/1.
+    for h in sel.get("hand_selected", []):
+        if 0 <= h < HAND_SLOTS:
+            o["select_hand_mask"][h] = 1.0

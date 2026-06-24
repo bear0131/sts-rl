@@ -129,6 +129,17 @@ class SimGameEnv:
     def _info(self):
         return {"phase": self.phase(), "legal": self.legal_semantic_actions()}
 
+    def select_descriptor(self):
+        """The live combat card-select 'select' block (context/pick_max/multi/
+        cards_in_hand), or None when not on a combat card-select sub-screen. The
+        thin layer reads this to drive the MULTI (Exhaust Many / Gamble) toggle+
+        confirm machine — a RealGameEnv would expose the same. Overworld grids
+        accumulate in the sim itself and are NOT reported here (they go through
+        the SELECT verb / get_select_cards path)."""
+        if self.bc is not None and self.bc.input_state == _CARD_SELECT_INPUT:
+            return combat_select_options(self.bc.select_info())
+        return None
+
     # --------------------------------------------------------------- obs
     def obs_canonical(self):
         """The assembled OBS canonical: the combat-or-overworld block from
@@ -273,6 +284,18 @@ class SimGameEnv:
             gc.skip_reward_cards(); return
         if verb == ga.SELECT:
             gc.choose_select_card_option(action[1]); return
+        if verb == ga.MULTI_SELECT:
+            # combat-only: resolve an Exhaust Many / Gamble screen in one shot. The
+            # sim reads the low 10 bits of the Action as a hand-index bitset
+            # (getSelectedIdxs() -> chooseExhaust/GambleCards), so we OR the chosen
+            # hand indices into a mask. An empty pick (mask 0) is valid and just
+            # dismisses the screen. The thick layer never accumulates: the thin
+            # layer hands over the complete index set on confirm.
+            mask = 0
+            for h in action[1]:
+                mask |= (1 << int(h))
+            self.bc.execute(sts.Action(sts.ActionType.MULTI_CARD_SELECT, mask))
+            return
         if verb == ga.CAMPFIRE:
             gc.choose_campfire_option(_CAMPFIRE[action[1]]); return
         if verb == ga.CHEST:

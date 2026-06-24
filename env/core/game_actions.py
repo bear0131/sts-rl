@@ -32,6 +32,9 @@ CLAIM = "claim"             # (CLAIM, kind, idx)            kind in {"gold","rel
 REWARD_CARD = "reward_card" # (REWARD_CARD, j)              pick card j on a combat card-reward
 SKIP_CARDS = "skip_cards"   # (SKIP_CARDS,)                 skip the card reward
 SELECT = "select"           # (SELECT, k)                   pick k on a CARD_SELECT/grid screen
+MULTI_SELECT = "multi_select"  # (MULTI_SELECT, (h0,h1,...)) resolve a combat MULTI screen
+                            #                               (Exhaust Many / Gamble) with the
+                            #                               chosen hand indices in one shot
 CAMPFIRE = "campfire"       # (CAMPFIRE, option)            option in CAMPFIRE_OPTIONS
 EVENT = "event"             # (EVENT, i)                    event option i
 CHEST = "chest"             # (CHEST, open_bool)            open/skip a treasure chest
@@ -64,6 +67,7 @@ def claim(kind, idx=0): return (CLAIM, kind, idx)
 def reward_card(j):     return (REWARD_CARD, j)
 def skip_cards():       return (SKIP_CARDS,)
 def select(k):          return (SELECT, k)
+def multi_select(idxs): return (MULTI_SELECT, tuple(int(h) for h in idxs))
 def campfire(opt):      return (CAMPFIRE, opt)
 def event(i):           return (EVENT, i)
 def chest(open_):       return (CHEST, bool(open_))
@@ -89,6 +93,11 @@ def describe(action, canon=None):
     if verb == REWARD_CARD: return f"take card: {_card_at(canon, 'cards', action[1])}"
     if verb == SKIP_CARDS:  return "skip card reward"
     if verb == SELECT:      return f"select: {_card_at(canon, 'cards', action[1])}"
+    if verb == MULTI_SELECT:
+        idxs = action[1]
+        if not idxs:
+            return "confirm select: none"
+        return "confirm select: hand " + ",".join(f"#{h}" for h in idxs)
     if verb == CAMPFIRE:    return f"campfire: {action[1]}"
     if verb == EVENT:       return f"event option {action[1]}"
     if verb == CHEST:       return "open chest" if action[1] else "skip chest"

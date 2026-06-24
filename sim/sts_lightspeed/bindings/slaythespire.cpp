@@ -392,20 +392,41 @@ py::dict selectScreenInfo(const sts::GameContext &gc) {
 }
 
 // The COMBAT card-select sub-screen's semantics + progress (bc.cardSelectInfo),
-// for the same obs fields while in combat (Armaments/Headbutt/Gamble/...). Unlike
-// the overworld grid, the combat screen does NOT accumulate across env steps:
-// SINGLE picks resolve in one action and MULTI (Exhaust Many / Gamble) is a
-// one-shot bitset -- so there is no "already selected" list to expose here. We
-// give the task name + pickCount + canPickZero/canPickAnyNumber so the obs can
-// say WHAT the screen is for and how many it wants.
+// for the same obs fields while in combat (Armaments/Headbutt/Gamble/...).
+//
+// Two structurally different combat card-selects exist:
+//   * SINGLE (Armaments/Headbutt/...) -- one pick resolves the screen in one
+//     action; the thin layer maps each candidate to a PICK_CARD id.
+//   * MULTI  (Exhaust Many / Gamble)  -- the sim resolves the WHOLE screen with
+//     one Action whose low 10 bits are a hand-index bitset (getSelectedIdxs() ->
+//     chooseExhaustCards/chooseGambleCards). The thin layer therefore TOGGLES
+//     hand indices across env steps and CONFIRMs once, building that bitset.
+// `multi` lets the thin layer pick which machine to drive. For a MULTI screen we
+// also expose `cards_in_hand` (the toggleable indices 0..n-1) and `pick_max`
+// (the cap: Exhaust Many = pickCount limit; Gamble = the whole hand). pickCount
+// is only meaningful for MULTI -- SINGLE tasks leave it 0 (see CardSelectInfo).
 py::dict combatSelectInfo(const sts::BattleContext &bc) {
     const auto &csi = bc.cardSelectInfo;
+    const auto task = csi.cardSelectTask;
+    const bool multi = task == sts::CardSelectTask::EXHAUST_MANY ||
+                       task == sts::CardSelectTask::GAMBLE;
     py::dict d;
     d["context"] = std::string(
-        sts::cardSelectTaskStrings[static_cast<int>(csi.cardSelectTask)]);
+        sts::cardSelectTaskStrings[static_cast<int>(task)]);
     d["pick_count"] = csi.pickCount;
     d["can_pick_zero"] = csi.canPickZero;
     d["can_pick_any"] = csi.canPickAnyNumber;
+    d["multi"] = multi;
+    d["cards_in_hand"] = bc.cards.cardsInHand;
+    // pick_max: hand indices a MULTI screen may toggle. Exhaust Many caps at its
+    // limit (pickCount); Gamble has no limit beyond the hand. 0 for SINGLE.
+    int pickMax = 0;
+    if (task == sts::CardSelectTask::EXHAUST_MANY) {
+        pickMax = csi.pickCount;
+    } else if (task == sts::CardSelectTask::GAMBLE) {
+        pickMax = bc.cards.cardsInHand;
+    }
+    d["pick_max"] = pickMax;
     return d;
 }
 
