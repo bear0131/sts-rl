@@ -15,7 +15,7 @@ NOT a gym.Env yet (actions are variable-length semantic tuples, not a fixed
 Discrete space). The thin layer adds the gym surface + fixed-length id/mask. See
 doc/plan_simgameenv.md.
 
-v1 scope (narrow vertical slice): drives act 1 end to end. Events, campfires and
+Scope: drives acts 1-3 end to end (stops before the act-4 heart). Events, campfires and
 shops enumerate their real legal options via the sim's own action enumerator
 (gc.legal_event_options / legal_campfire_options / legal_shop_options), so
 multi-phase events (Golden Idol, Cursed Tome) resolve instead of looping and the
@@ -161,11 +161,11 @@ class SimGameEnv:
     # --------------------------------------------------------------- terminal
     @property
     def is_over(self):
-        """Run ended: player died, or we cleared the act-1 boss into act 2 (v1
-        stops at the end of act 1)."""
+        """Run ended: player died, or we cleared the act-3 boss into act 4 (we
+        stop at the end of act 3, before the act-4 heart)."""
         if self.gc.outcome != _GC_UNDECIDED:
             return True
-        return self.gc.act > 1
+        return self.gc.act > 3
 
     def run_stats(self):
         """Ground-truth run-level diagnostics for logging (NOT obs/reward): the
@@ -262,9 +262,9 @@ class SimGameEnv:
         self._prev_hp = self.gc.cur_hp
         reward = 0.0
         if terminated:
-            cleared_act1 = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 1
+            cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
-            reward = 1.0 if (cleared_act1 or won) else -1.0
+            reward = 1.0 if (cleared_run or won) else -1.0
         return self._canonical(), reward, terminated, self._info()
 
     def _apply(self, action):

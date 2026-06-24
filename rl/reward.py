@@ -6,10 +6,9 @@ import gymnasium as gym
 @dataclass(frozen=True)
 class RewardConfig:
     floor: float = 1.0
-    act_boss: float = 100.0
+    boss_rewards: tuple = (25.0, 45.0, 80.0)  # per-act boss clear (act1, act2, act3)
     death: float = 0.0
     hp_delta: float = 0.0
-    target_act: int = 1
 
 
 @dataclass(frozen=True)
@@ -34,14 +33,11 @@ class RewardCalculator:
         if now.outcome == "PLAYER_LOSS":
             r += cfg.death
 
-        cleared_target_act = (
-            prev.act <= cfg.target_act
-            and now.act > cfg.target_act
-        )
-        won_full_run = now.outcome == "PLAYER_VICTORY"
-
-        if cleared_target_act or won_full_run:
-            r += cfg.act_boss
+        # Crossing an act boundary (act N -> N+1) means we just cleared act N's
+        # boss; award boss_rewards[N-1] for each boundary crossed this step.
+        for act in range(prev.act, now.act):
+            if 1 <= act <= len(cfg.boss_rewards):
+                r += cfg.boss_rewards[act - 1]
 
         return float(r)
 
