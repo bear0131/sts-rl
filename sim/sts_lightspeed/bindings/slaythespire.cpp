@@ -163,6 +163,93 @@ std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc
     return out;
 }
 
+// Authoritative legal IN-COMBAT potion actions, from the sim's own per-Action
+// validator (search::Action::isValidAction -> isValidPotionAction). We don't
+// hand-roll potion legality: we probe each held slot with the exact POTION
+// Action the env would later execute and keep only the ones the sim accepts.
+// Returns a list of {slot, requires_target, targets} dicts:
+//   * requires_target == false -> drink in one step (drink_potion(slot)); targets
+//     is empty.
+//   * requires_target == true  -> the potion needs a monster target (Fire/Fear/
+//     Poison/Weak); targets lists the monster indices the sim accepts (each probed
+//     with the real POTION Action, so it already excludes dead/untargetable foes).
+//     The thin layer runs its PICK_TARGET substep over exactly these, then calls
+//     drink_potion(slot, target). potionRequiresTarget() (Potions.h) is the sim's
+//     own notion of targeting, so we surface it rather than re-deriving it.
+// Discard-only potions (Fairy etc., or a no-effect drink) are intentionally NOT
+// offered: in combat the only valid drink is what isValidPotionAction accepts.
+py::list legalCombatPotions(const sts::BattleContext &bc) {
+    using SA = sts::search::Action;
+    using AT = sts::search::ActionType;
+    py::list out;
+    if (bc.outcome != sts::Outcome::UNDECIDED ||
+        bc.inputState != sts::InputState::PLAYER_NORMAL) {
+        return out;
+    }
+    for (int slot = 0; slot < bc.potionCapacity; ++slot) {
+        const auto p = bc.potions[slot];
+        if (p == sts::Potion::INVALID || p == sts::Potion::EMPTY_POTION_SLOT) {
+            continue;
+        }
+        const bool needsTarget = sts::potionRequiresTarget(p);
+        py::list targets;
+        if (needsTarget) {
+            // a targeted potion (Fire/Fear/Poison/Weak): the env enumerates one
+            // action per accepted monster, mirroring the targeted card-play path,
+            // so we list exactly the monster indices the sim's validator accepts.
+            for (int t = 0; t < bc.monsters.monsterCount; ++t) {
+                if (SA(AT::POTION, slot, t).isValidAction(bc)) {
+                    targets.append(t);
+                }
+            }
+            if (py::len(targets) == 0) continue;   // no legal target -> not usable
+        } else if (!SA(AT::POTION, slot, 0).isValidAction(bc)) {
+            // untargeted but the sim rejects drinking it (e.g. Fairy in Battle,
+            // or a potion with no in-combat drink effect) -> not offered.
+            continue;
+        }
+        py::dict d;
+        d["slot"] = slot;
+        d["requires_target"] = needsTarget;
+        d["targets"] = targets;
+        out.append(d);
+    }
+    return out;
+}
+
+// Authoritative legal OUT-OF-COMBAT (overworld) potion actions, from the sim's
+// own GameAction potion validator (isValidPotionAction). Only a handful of
+// potions do anything outside combat (Blood/Entropic Brew/Fruit Juice drink;
+// the rest are discard-only and we do NOT surface a discard verb to the agent).
+// A targeted potion never applies out of combat (no monsters), so every
+// overworld entry is single-step (requires_target is always false here). We
+// construct the GameAction with the potion bit set (0x80000000) so isValidAction
+// routes to isValidPotionAction; the discard bit (0x40000000) is left clear so we
+// probe the DRINK path specifically.
+py::list legalOverworldPotions(const sts::GameContext &gc) {
+    py::list out;
+    if (gc.outcome != sts::GameOutcome::UNDECIDED) {
+        return out;
+    }
+    for (int slot = 0; slot < gc.potionCapacity; ++slot) {
+        const auto p = gc.potions[slot];
+        if (p == sts::Potion::INVALID || p == sts::Potion::EMPTY_POTION_SLOT) {
+            continue;
+        }
+        // bits: potion-action flag | idx1=slot. discard bit clear == DRINK probe.
+        sts::search::GameAction a(0x80000000U | (slot & 0xFF));
+        if (!a.isValidAction(gc)) {
+            continue;
+        }
+        py::dict d;
+        d["slot"] = slot;
+        d["requires_target"] = false;   // no targets exist out of combat
+        d["targets"] = py::list();
+        out.append(d);
+    }
+    return out;
+}
+
 std::unique_ptr<sts::BattleContext> createBattle(const sts::GameContext &gc, const std::string &encounterName) {
     auto enc = sts::MonsterEncounter::INVALID;
     constexpr int n = sizeof(sts::monsterEncounterStrings) / sizeof(sts::monsterEncounterStrings[0]);
@@ -546,6 +633,14 @@ PYBIND11_MODULE(slaythespire, m) {
                 --gc.potionCount;
             }
         }, "discard the held potion in slot idx (0-based), out of combat")
+        .def("drink_potion", [](GameContext &gc, int slot) { gc.drinkPotionAtIdx(slot); },
+             pybind11::arg("idx"),
+             "drink the held potion in slot idx (0-based) OUT OF COMBAT (Blood/Entropic "
+             "Brew/Fruit Juice etc.); use BattleContext.drink_potion in combat")
+        .def("legal_overworld_potions", &legalOverworldPotions,
+             "authoritative legal out-of-combat potion DRINKS as [{slot, requires_target}]; "
+             "requires_target is always false out of combat (no targets). sim-gated by "
+             "GameAction::isValidPotionAction (only a few potions drink outside combat)")
         .def_property_readonly("overworld_potions", [](const GameContext &gc) {
             pybind11::list lst;
             for (int i = 0; i < gc.potionCapacity; ++i) lst.append(std::string(sts::getPotionName(gc.potions[i])));
@@ -1367,6 +1462,11 @@ PYBIND11_MODULE(slaythespire, m) {
     pybind11::class_<BattleContext>(m, "BattleContext")
         .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
+        .def("legal_potions", &legalCombatPotions,
+             "authoritative legal in-combat potion uses as [{slot, requires_target, targets}]; "
+             "requires_target true == needs a monster target (Fire/Fear/Poison/Weak) and targets "
+             "lists the accepted monster idxs (drink via drink_potion(slot, target)); false == "
+             "drink in one step (targets empty). sim-gated by search::Action::isValidPotionAction")
         .def("select_info", &combatSelectInfo,
              "combat card-select sub-screen semantics+progress: {context (CardSelectTask name), "
              "pick_count, can_pick_zero, can_pick_any}")

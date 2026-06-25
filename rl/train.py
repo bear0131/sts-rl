@@ -17,6 +17,7 @@ from pathlib import Path
 
 import torch.nn as nn
 
+from gymnasium.wrappers import TimeLimit
 from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import (
     BaseCallback,
@@ -120,14 +121,32 @@ class StSMetricsCallback(BaseCallback):
             self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
 
 
+# Hard per-episode step cap (safety net for bug #1's infinite-combat / pathological
+# loops). A legitimate full 3-act run is on the order of low-thousands of THIN-env
+# steps — each targeted card play is 2 steps and each combat MULTI toggle is its own
+# step — so test_game uses a 2000-step cap on the THICK (one-step-per-decision)
+# layer and test_run_v2 a 5000-step "did not terminate" tripwire on the THIN layer.
+# 6000 sits just above that thin-layer tripwire with comfortable headroom: a genuine
+# win never reaches it, but no episode (infinite 0-reward combat combo, etc.) can run
+# forever and poison the rollout buffer with one dead sub-env. TimeLimit sets
+# truncated=True; VecMonitor's autoreset then resets the sub-env on the next step. It
+# wraps OUTSIDE the env (and OUTSIDE ShapedRewardWrapper is fine — TimeLimit counts
+# step() calls, which are exactly the steps the policy takes).
+_MAX_EPISODE_STEPS = 6000
+
+
 def make_env(*, ascension: int):
-    """Return one shaped whole-run environment for DummyVecEnv."""
+    """Return one shaped, step-capped whole-run environment for the VecEnv."""
 
     from rl.reward import ShapedRewardWrapper
 
     def _thunk():
         env = SlayTheSpireEnv(ascension=ascension)
         env = ShapedRewardWrapper(env)
+        # TimeLimit last so it sees the same steps the policy takes and its
+        # truncated=True passes straight through ShapedRewardWrapper.step (which
+        # forwards truncated untouched).
+        env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
         return env
 
     return _thunk

@@ -100,8 +100,66 @@ class SlayTheSpireEnv(gym.Env):
         self._multi = None
         return None
 
+    def _no_legal_action(self):
+        """True when the live backend screen exposes ZERO legal thin actions and
+        is not a combat MULTI select screen — a "dead screen" the policy cannot
+        act on. The known cause is an event the sim's own enumerator does not
+        support yet (MATCH_AND_KEEP / BONFIRE_SPIRITS -> legal_event_options
+        returns []), so SimGameEnv.legal_semantic_actions() yields [] and the run
+        would otherwise park there forever with an all-False mask (game_env's
+        comment: "the run stalls there honestly"). Computed fresh from the live
+        backend so it reflects whatever screen we are on right now.
+
+        NOTE: only meaningful while the run is NOT over — a genuinely terminal run
+        also has no legal action, but that is a `terminated`, not a dead screen."""
+        if self._multi_desc() is not None:
+            return False
+        legal = self.thick.legal_semantic_actions()
+        return len(A.legal_ids(legal, self._pending, self.thick.phase())) == 0
+
+    def _truncate_dead(self):
+        """The clean 5-tuple for truncating on a dead screen: a valid (current)
+        obs, reward 0.0, terminated=False, truncated=True, with info["dead_screen"]
+        set (mirrors the info["illegal"] convention) so callers can tell a dead-
+        screen truncation apart from a step-cap (TimeLimit) truncation."""
+        info = self._info()
+        info["dead_screen"] = True
+        return self._obs(), 0.0, False, True, info
+
+    def _post_step(self, reward, terminated):
+        """Assemble the 5-tuple AFTER a backend transition. If the run did not end
+        but we LANDED on a dead screen (see _no_legal_action), truncate cleanly
+        instead of returning a normal frame whose mask would be all-False.
+
+        Ordering argument (why the policy never sees an all-False mask): the policy
+        queries action_masks() to pick an action and THEN calls step(); so the
+        dangerous moment is a sub-env that has *just transitioned into* a dead
+        screen, which would be asked for a mask before its next step. By truncating
+        ON the step that causes the dead landing, that step returns done=True; with
+        VecMonitor autoreset the sub-env is reset before the next action_masks()
+        query, so PPO's next mask is for the fresh run, never the dead screen. Non-
+        vector consumers (eval/watch/test) loop `while not (terminated or
+        truncated)` and break here too — so action_masks() is never handed to a
+        policy as an all-False array for any consumer."""
+        self._pending = None
+        if not terminated and self._no_legal_action():
+            return self._truncate_dead()
+        return self._obs(), reward, terminated, False, self._info()
+
     def step(self, action_id):
         aid = int(action_id)
+
+        # Dead-screen guard at the TOP of step (defense in depth): if we are parked
+        # on a screen with no legal action, do NOT enter the illegal-id penalty loop
+        # (the original bug: -0.1 forever, env never resets, NaN GAE). Truncate
+        # cleanly. This also covers the pathological case where an all-False mask
+        # somehow reached the policy and it sampled a garbage id. (In practice the
+        # _post_step truncation below means we never re-enter step on a dead screen,
+        # but reset() landing on one — Neow always offers 4 options, so it does not —
+        # would be caught here on the first step.)
+        if not self.thick.is_over and self._no_legal_action():
+            return self._truncate_dead()
+
         legal = self.thick.legal_semantic_actions()
         phase = self.thick.phase()
         desc = self._multi_desc()
@@ -118,7 +176,7 @@ class SlayTheSpireEnv(gym.Env):
                 return self._obs(), 0.0, False, False, self._info()
             _canon, reward, terminated, _tinfo = self.thick.step(ga.multi_select(commit))
             self._multi = None
-            return self._obs(), reward, terminated, False, self._info()
+            return self._post_step(reward, terminated)
 
         # Illegal id: no-op + small penalty (the mask should prevent this; guard
         # is defense in depth, mirroring SimCombatEnv). Flag it in info too: the
@@ -138,8 +196,7 @@ class SlayTheSpireEnv(gym.Env):
 
         # Complete semantic action -> drive the thick backend one decision.
         _canon, reward, terminated, _tinfo = self.thick.step(semantic)
-        self._pending = None
-        return self._obs(), reward, terminated, False, self._info()
+        return self._post_step(reward, terminated)
 
     # ---------------------------------------------------------------- obs/mask
     def _arg_step(self):
@@ -206,6 +263,8 @@ class SlayTheSpireEnv(gym.Env):
         out = self.thick.render()
         if self._pending is not None and self._pending[0] == "play":
             out += f"\n[awaiting target for hand card #{self._pending[1]}]"
+        if self._pending is not None and self._pending[0] == "potion":
+            out += f"\n[awaiting target for potion slot #{self._pending[1]}]"
         if self._multi is not None:
             out += f"\n[multi-select: picked hand {sorted(self._multi)}; CONFIRM to commit]"
         return out
@@ -225,8 +284,9 @@ class SlayTheSpireEnv(gym.Env):
             verb = "deselect" if off in self._multi else "select"
             return f"{verb} {_card_label(self._combat_canon(), off)} (hand #{off})"
 
-        # parameter step: a target pick
-        if self._pending is not None and self._pending[0] == "play":
+        # parameter step: a target pick (shared by a pending card play AND a
+        # pending targeted potion — both fill a PICK_TARGET monster id).
+        if self._pending is not None and self._pending[0] in ("play", "potion"):
             seg, off = A.segment_of(aid)
             return f"target monster #{off}"
 
@@ -236,9 +296,12 @@ class SlayTheSpireEnv(gym.Env):
             semantic, pend = A.resolve(aid, legal, self._pending, phase)
         except ValueError:
             return f"{seg}[{off}]"
-        if semantic is None:                       # targeted play (root half)
-            h = pend[1]                            # pend == ('play', hand_idx)
-            return f"play {_card_label(self._combat_canon(), h)} (choose target next)"
+        if semantic is None:                       # targeted action (root half)
+            if pend[0] == "play":
+                h = pend[1]                        # pend == ('play', hand_idx)
+                return f"play {_card_label(self._combat_canon(), h)} (choose target next)"
+            # pend == ('potion', slot): targeted potion, target chosen next step.
+            return f"use potion (slot #{pend[1]}) (choose target next)"
         return self.thick.describe_action(semantic)
 
     def _combat_canon(self):

@@ -43,6 +43,13 @@ PROCEED = "proceed"         # (PROCEED,)                    leave a reward/rest/
 SHOP_PROCEED = "shop_proceed"  # (SHOP_PROCEED,)            leave the shop
 SHOP_BUY = "shop_buy"       # (SHOP_BUY, kind, idx)         kind in {"card","relic","potion"}; idx = shelf slot
 SHOP_REMOVE = "shop_remove" # (SHOP_REMOVE,)                pay to remove a card (opens a card_select pick)
+USE_POTION = "use_potion"   # (USE_POTION, slot, target)    drink the held potion in slot (0-based);
+                            #                               target is a monster idx for a targeted
+                            #                               potion (Fire/Fear/Poison/Weak) or None for
+                            #                               an untargeted/overworld one. Mirrors COMBAT's
+                            #                               targeted-vs-untargeted split so the thin
+                            #                               layer's autoregressive PICK_TARGET substep is
+                            #                               shared with card plays (see action_space.py).
 
 # claimable kinds on a combat-reward screen
 CLAIM_GOLD = "gold"
@@ -76,6 +83,10 @@ def proceed():          return (PROCEED,)
 def shop_proceed():     return (SHOP_PROCEED,)
 def shop_buy(kind, idx): return (SHOP_BUY, kind, idx)
 def shop_remove():      return (SHOP_REMOVE,)
+def use_potion(slot, target=None):
+    # target is a monster idx (targeted potion in combat) or None (untargeted /
+    # overworld). int(slot) keeps the tuple hashable + backend-symmetric.
+    return (USE_POTION, int(slot), None if target is None else int(target))
 
 
 def describe(action, canon=None):
@@ -106,6 +117,11 @@ def describe(action, canon=None):
     if verb == SHOP_PROCEED: return "leave shop"
     if verb == SHOP_BUY:    return f"buy {action[1]} #{action[2]}"
     if verb == SHOP_REMOVE: return "pay to remove a card"
+    if verb == USE_POTION:
+        slot, tgt = action[1], action[2]
+        name = _potion_at(canon, slot)
+        return (f"use potion {name} (slot #{slot})" if tgt is None
+                else f"use potion {name} (slot #{slot}) on monster #{tgt}")
     return str(action)
 
 
@@ -120,3 +136,15 @@ def _card_at(canon, key, idx):
     if not up:
         return cid
     return f"{cid}+" if up == 1 else f"{cid}+{up}"
+
+
+def _potion_at(canon, slot):
+    """The held-potion name in `slot`, read from the canonical's global block
+    (normalize_sim_global's 'potions' list, slot-aligned with the sim). Combat and
+    overworld canonicals both carry it under 'global'; fall back to '#slot' when
+    labelling without state."""
+    try:
+        return canon["global"]["potions"][slot]
+    except (TypeError, KeyError, IndexError):
+        return f"#{slot}"
+

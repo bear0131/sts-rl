@@ -197,23 +197,54 @@ class SimGameEnv:
         if self.bc is not None:
             # combat: reuse the verified 71-id mask, wrap each set id as COMBAT.
             mask = combat_env.legal_mask(self.bc)
-            return [ga.combat(i) for i in np.flatnonzero(mask)]
+            acts = [ga.combat(i) for i in np.flatnonzero(mask)]
+            # Potions are NOT part of the 71-id combat space (the sim's
+            # legal_actions omits them); they ride the dedicated USE_POTION verb so
+            # the thin layer can give them their own reserved id segment. The sim's
+            # own legal_potions() is the authority on which held slots are drinkable
+            # now and whether each needs a target (Fire/Fear/Poison/Weak). For a
+            # targeted potion we enumerate ONE action per targetable monster, exactly
+            # like the targeted card-play path (_play_targeting in action_space.py),
+            # so the autoregressive PICK_TARGET substep is uniform across cards and
+            # potions. An untargeted potion is a single (slot, None) action.
+            for pot in self.bc.legal_potions():
+                slot = pot["slot"]
+                if pot["requires_target"]:
+                    # one action per sim-accepted target (already excludes dead/
+                    # untargetable monsters), exactly like a targeted card play.
+                    for t in pot["targets"]:
+                        acts.append(ga.use_potion(slot, t))
+                else:
+                    acts.append(ga.use_potion(slot, None))
+            return acts
 
         phase = sim_phase(self.gc)
+        # Held potions are usable in MOST overworld phases too (Blood/Entropic
+        # Brew/Fruit Juice drink out of combat). The sim's own validator
+        # (legal_overworld_potions -> GameAction::isValidPotionAction) is the
+        # authority on which slots are drinkable now — it gates on the potion type
+        # (and blocks the WE_MEET_AGAIN event), NOT on the specific screen, so we
+        # offer the same potion actions on every overworld screen and let the sim
+        # decide. Overworld potions never need a target (no monsters), so they are
+        # always single-step (target None). We PREPEND so a phase that returns []
+        # (unknown/blocked screen) still surfaces the potion if the sim allows it.
+        pots = [ga.use_potion(p["slot"], None)
+                for p in self.gc.legal_overworld_potions()]
+
         if phase == "event":
             # Neow is an event screen too; its options are the 4 Neow rewards.
             if self.gc.cur_event_name == "NEOW":
-                return [ga.neow(i) for i in range(4)]
+                return [ga.neow(i) for i in range(4)] + pots
             # The sim's own action enumerator gives the phase/relic/gold-aware
             # valid option indices for THIS event (handles multi-phase events like
             # Golden Idol / Cursed Tome that the old option-0 stub looped on). May
             # be empty for unsupported events (MATCH_AND_KEEP / BONFIRE_SPIRITS);
             # the thin layer then has no legal action and the run stalls there
             # honestly rather than asserting in the sim.
-            return [ga.event(i) for i in self.gc.legal_event_options()]
+            return [ga.event(i) for i in self.gc.legal_event_options()] + pots
         if phase == "map":
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
-            return [ga.map_node(x2) for x2 in self.rmap.reachable(x, y)]
+            return [ga.map_node(x2) for x2 in self.rmap.reachable(x, y)] + pots
         if phase == "combat_reward":
             info = self.gc.get_reward_info()
             acts = []
@@ -225,9 +256,9 @@ class SimGameEnv:
                 acts += [ga.reward_card(j) for j in range(n)]
                 acts.append(ga.skip_cards())
             acts.append(ga.proceed())
-            return acts
+            return acts + pots
         if phase == "card_select":
-            return [ga.select(k) for k in range(len(self.gc.get_select_cards()))]
+            return [ga.select(k) for k in range(len(self.gc.get_select_cards()))] + pots
         if phase == "rest":
             # The sim enumerates the campfire options actually available here,
             # gated by relics/keys (rest/smith always; recall hidden once the ruby
@@ -239,11 +270,11 @@ class SimGameEnv:
                     acts.append(ga.proceed())
                 else:
                     acts.append(ga.campfire(_CAMP_NAME_BY_IDX[i]))
-            return acts
+            return acts + pots
         if phase == "chest":
-            return [ga.chest(True), ga.chest(False)]
+            return [ga.chest(True), ga.chest(False)] + pots
         if phase == "boss_relic":
-            return [ga.boss_relic(i) for i in range(3)]
+            return [ga.boss_relic(i) for i in range(3)] + pots
         if phase == "shop":
             # The sim enumerates the affordable, in-stock shop actions as
             # (kind, idx) pairs (gold/sold-out gated). kind maps 1:1 to the
@@ -256,9 +287,9 @@ class SimGameEnv:
                     acts.append(ga.shop_remove())
                 else:  # "card" / "relic" / "potion"
                     acts.append(ga.shop_buy(kind, idx))
-            return acts
-        # unknown screen: nothing we can legally do
-        return []
+            return acts + pots
+        # unknown screen: nothing we can legally do EXCEPT maybe drink a potion.
+        return pots
 
     # ------------------------------------------------------------------- step
     def step(self, action):
@@ -338,6 +369,23 @@ class SimGameEnv:
             return
         if verb == ga.SHOP_REMOVE:
             gc.shop_remove(); return
+        if verb == ga.USE_POTION:
+            # (USE_POTION, slot, target). In combat we go through the SAME
+            # bc.execute(Action) path as card plays so the action queue is pumped
+            # (executeActions) and the input state transitions correctly — calling
+            # bc.drinkPotion directly would enqueue the effect but never run it. A
+            # POTION Action's targetIdx is the monster for a targeted potion
+            # (Fire/Fear/Poison/Weak, resolved by the thin layer's PICK_TARGET
+            # substep); untargeted potions ignore it, so we pass 0. Out of combat
+            # the gc owns the belt and nothing is targeted, so we drink by slot via
+            # the sim's GameContext::drinkPotionAtIdx (bound as gc.drink_potion).
+            slot, target = action[1], action[2]
+            if self.bc is not None:
+                t = 0 if target is None else target
+                self.bc.execute(sts.Action(sts.ActionType.POTION, slot, t))
+            else:
+                gc.drink_potion(slot)
+            return
         raise ValueError(f"unhandled semantic action: {action!r}")
 
     def _start_battle(self):

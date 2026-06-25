@@ -22,13 +22,16 @@ thick layer only once both are in. To the thick layer / sim it is opaque.
 sub-partitions for a specialist/HRL reading without renumbering. The mask zeros
 everything not legal in the current (phase, arg_step).
 
-Reserved-but-masked segment (USE_POTION): the deferred C++ binding batch
-(action_design §5) will make it legal; reserving its ids NOW means turning them
-on later fills reserved width and does NOT bump ACTION_VERSION. Until then the
-mask simply never sets them (the thick layer does not enumerate a potion verb
-yet). EVENT_OPT is live for the low option ids (the thick layer enumerates real
-event options) with a reserved wide tail; SHOP_* likewise went LIVE this way (the
-thick layer enumerates real buys/removes) — both filling reserved width.
+Reserved-but-masked -> LIVE (USE_POTION): the deferred C++ binding batch
+(action_design §5) is now wired, so this segment is LIVE. Turning it on filled
+reserved width and did NOT bump ACTION_VERSION (the segment was already part of
+N_ACTIONS). The thick layer enumerates real potion uses (game_env.legal_potions /
+legal_overworld_potions, sim-gated by search::Action::isValidPotionAction); a
+targeted potion (Fire/Fear/Poison/Weak) reuses the PICK_TARGET substep exactly
+like a targeted card play, so the autoregressive machine stays uniform. EVENT_OPT
+is live for the low option ids (the thick layer enumerates real event options)
+with a reserved wide tail; SHOP_* likewise went LIVE this way (the thick layer
+enumerates real buys/removes) — both filling reserved width.
 
 ACTION_VERSION 4 (was 3): appended a CONFIRM_SELECT segment (1 id) at the END of
 the table for the combat MULTI card-select screens (Exhaust Many / Gamble,
@@ -82,7 +85,7 @@ SHOP_POTION = 3                        # Shop.potions[3] (live)
 _SEGMENTS = [
     ("END_TURN",      1),
     ("PLAY_CARD",     HAND_SLOTS),
-    ("USE_POTION",    P_MAX),          # reserved (no thick potion verb yet)
+    ("USE_POTION",    P_MAX),          # LIVE (thick enumerates real potion uses)
     ("PICK_TARGET",   MAX_MONSTERS),
     ("PICK_CARD",     G_MAX),
     ("MAP_NODE",      N_COLS),
@@ -179,6 +182,25 @@ def _play_targeting(legal_semantic):
     return untargeted, targets
 
 
+def _potion_targeting(legal_semantic):
+    """From the legal semantic actions, classify each held potion SLOT's use:
+    returns (untargeted: set[slot], targets: dict[slot -> set[t]]). Mirrors
+    _play_targeting exactly so the autoregressive PICK_TARGET substep is shared
+    between targeted card plays and targeted potions (Fire/Fear/Poison/Weak): a
+    potion is either single-step (untargeted) or needs a target, never both, and
+    the thick layer already enumerated one (USE_POTION, slot, t) per legal target."""
+    untargeted, targets = set(), {}
+    for a in legal_semantic:
+        if a[0] != ga.USE_POTION:
+            continue
+        slot, t = a[1], a[2]
+        if t is None:
+            untargeted.add(slot)
+        else:
+            targets.setdefault(slot, set()).add(t)
+    return untargeted, targets
+
+
 def _combat_select_only(legal_semantic, phase):
     """True when the only combat decisions on offer are SINGLE_CARD_SELECT picks
     (the sim opened an in-combat card-select sub-screen, e.g. Armaments/Headbutt).
@@ -196,9 +218,11 @@ def arg_step_name(pending, legal_semantic, phase):
     """Which autoregressive sub-step the thin env is on (vocab.ARG_STEP_VOCAB).
 
     pending is None at ROOT, or ('play', hand_idx) once a targeted card has been
-    chosen and we await its target. A card-select screen (combat sub-screen OR
-    overworld grid) is a forced single pick -> pick_card."""
-    if pending is not None and pending[0] == "play":
+    chosen and we await its target, or ('potion', slot) once a targeted potion has
+    been chosen and we await its target. Both targeted cases share the PICK_TARGET
+    substep (a monster pick). A card-select screen (combat sub-screen OR overworld
+    grid) is a forced single pick -> pick_card."""
+    if pending is not None and pending[0] in ("play", "potion"):
         return PICK_TARGET
     if phase == "card_select":
         return PICK_CARD
@@ -214,6 +238,9 @@ def legal_ids(legal_semantic, pending, phase):
     caller flips True in the bool mask). Branches on the sub-step:
 
       - pending=('play',h): only PICK_TARGET[t] for targets legal for card h.
+      - pending=('potion',slot): only PICK_TARGET[t] for targets legal for that
+        potion — the SAME PICK_TARGET segment as a card play, so the target-pick
+        obs/mask path is shared (a potion's target is just a monster, like a card's).
       - otherwise (ROOT or a card-select screen): every main action on offer,
         each mapped to its segment id.
     """
@@ -223,6 +250,13 @@ def legal_ids(legal_semantic, pending, phase):
         h = pending[1]
         _, targets = _play_targeting(legal_semantic)
         for t in targets.get(h, ()):
+            ids.add(_TARGET + t)
+        return sorted(ids)
+
+    if pending is not None and pending[0] == "potion":
+        slot = pending[1]
+        _, targets = _potion_targeting(legal_semantic)
+        for t in targets.get(slot, ()):
             ids.add(_TARGET + t)
         return sorted(ids)
 
@@ -266,8 +300,15 @@ def legal_ids(legal_semantic, pending, phase):
             ids.add(_SHOP_BASE_BY_KIND[a[1]] + a[2])   # (kind, slot) -> segment id
         elif verb == ga.SHOP_REMOVE:
             ids.add(_SHOP_REMOVE)
-        # potion use is not enumerated by the thick layer yet (reserved segment);
-        # it simply never becomes legal here.
+        elif verb == ga.USE_POTION:
+            # One ROOT id per potion SLOT (USE_POTION segment), regardless of
+            # whether it is targeted: a targeted potion picks its monster in the
+            # PICK_TARGET substep (see resolve), exactly like a targeted card play
+            # emits one PLAY_CARD[h] root id and defers the target. The thick layer
+            # may list several (slot, t) actions for one targeted slot; they all
+            # collapse to the single _POTION+slot root id here (the set dedupes).
+            ids.add(_POTION + a[1])
+        # all enumerated verbs are now handled above.
     return sorted(ids)
 
 
@@ -280,7 +321,8 @@ def resolve(chosen_id, legal_semantic, pending, phase):
       - a semantic-action tuple (game_actions) to hand the thick layer + the new
         pending (usually None), OR
       - (None, ('play', h)) when the chosen id only PARTIALLY specifies an action
-        (a targeted card was picked; we now await PICK_TARGET) — the thin env must
+        (a targeted card was picked; we now await PICK_TARGET), OR
+      - (None, ('potion', slot)) likewise for a targeted potion — the thin env must
         NOT call the backend this step.
 
     Raises ValueError on an id that does not correspond to any reachable action
@@ -294,6 +336,15 @@ def resolve(chosen_id, legal_semantic, pending, phase):
             return ga.combat(actions.encode_play(pending[1], t)), None
         raise ValueError(f"expected PICK_TARGET id, got {cid}")
 
+    # ---- parameter step: filling the target of a pending potion use ----
+    # Same PICK_TARGET segment as a card play; we just route the chosen monster
+    # into a USE_POTION semantic action instead of a COMBAT play.
+    if pending is not None and pending[0] == "potion":
+        if _TARGET <= cid < _TARGET + MAX_MONSTERS:
+            t = cid - _TARGET
+            return ga.use_potion(pending[1], t), None
+        raise ValueError(f"expected PICK_TARGET id, got {cid}")
+
     # ---- root / card-select step ----
     if cid == END_TURN:
         return ga.combat(actions.END_TURN), None
@@ -304,6 +355,13 @@ def resolve(chosen_id, legal_semantic, pending, phase):
         if h in targets and h not in untargeted:
             return None, ("play", h)              # need a target -> step 2
         return ga.combat(actions.encode_play(h, None)), None
+
+    if _POTION <= cid < _POTION + P_MAX:
+        slot = cid - _POTION
+        untargeted, targets = _potion_targeting(legal_semantic)
+        if slot in targets and slot not in untargeted:
+            return None, ("potion", slot)         # targeted potion -> await target
+        return ga.use_potion(slot, None), None    # untargeted: resolves in one step
 
     if _PICK <= cid < _PICK + G_MAX:
         k = cid - _PICK
