@@ -138,7 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Train MaskablePPO on whole-run SlayTheSpireEnv."
     )
 
-    parser.add_argument("--steps", type=int, default=100_000)
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=100_000,
+        help="Absolute total-steps target: training runs until num_timesteps "
+             "reaches this. On --resume, the already-trained steps count toward "
+             "it (so resuming a 5M ckpt with --steps 10000000 trains 5M more).",
+    )
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=512)
@@ -186,6 +193,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save a checkpoint about every N environment transitions.",
     )
     parser.add_argument("--tensorboard", action="store_true")
+
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Path to a .zip checkpoint to continue training from. Network "
+             "geometry (--arch/--d-model/--n-layers/--n-heads) is restored from "
+             "the checkpoint and must not be changed; --learning-rate still "
+             "applies. num_timesteps/TensorBoard step/checkpoint counters "
+             "continue from where the checkpoint left off.",
+    )
 
     parser.add_argument(
         "--metrics-window",
@@ -356,7 +373,23 @@ def main() -> None:
         verbose=1,
         tensorboard_log=tensorboard_log,
         policy_kwargs=policy_kwargs,
+    ) if not args.resume else MaskablePPO.load(
+        # Resume: restore weights + optimizer state (continuous Adam momentum /
+        # lr schedule) from the checkpoint. Network geometry and most hyper-
+        # params come from the zip; only env + device + tensorboard sink are
+        # rebound here, and --learning-rate is allowed to override via
+        # custom_objects (everything else in the .zip wins).
+        args.resume,
+        env=venv,
+        device=args.device,
+        tensorboard_log=tensorboard_log,
+        custom_objects={"learning_rate": args.learning_rate},
     )
+    if args.resume:
+        print(
+            f"[train] resumed from {args.resume} "
+            f"@ {model.num_timesteps} steps"
+        )
 
     print(
         "[train] whole-run "
@@ -368,11 +401,30 @@ def main() -> None:
     )
 
     try:
+        # --steps is always the ABSOLUTE total-steps target (run until
+        # num_timesteps reaches it), in both fresh and resume runs. SB3's
+        # learn(total_timesteps=N) with reset_num_timesteps=False treats N as
+        # "additional steps" and adds num_timesteps internally, so on resume we
+        # subtract what's already been trained to keep --steps absolute.
+        if args.resume:
+            remaining = args.steps - model.num_timesteps
+            if remaining <= 0:
+                raise ValueError(
+                    f"--steps {args.steps} <= checkpoint's {model.num_timesteps} "
+                    f"already-trained steps; nothing to do. Pass a larger --steps."
+                )
+        else:
+            remaining = args.steps
+
         model.learn(
-            total_timesteps=args.steps,
+            total_timesteps=remaining,
             callback=callback,
             progress_bar=False,
             tb_log_name=tag,
+            # Continue the global step counter on resume so TensorBoard/wandb
+            # curves and the checkpoint cadence pick up where the ckpt stopped
+            # instead of restarting at 0.
+            reset_num_timesteps=not bool(args.resume),
         )
 
         final_path = out_dir / "final"
