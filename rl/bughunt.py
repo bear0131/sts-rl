@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=200,
         help="print a running summary every N episodes.",
     )
+    p.add_argument(
+        "--stop-on-crash",
+        action="store_true",
+        help="exit as soon as the first crash is caught (fast triage of a new bug).",
+    )
     return p
 
 
@@ -216,6 +221,14 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001 — the whole point is to catch all
             stats["crashes"] += 1
             log_crash("step", seed, ep, step, last_action, floor, act, exc)
+            if args.stop_on_crash:
+                stats["episodes"] += 1
+                print_progress()
+                write_summary()
+                crashes_file.close()
+                env.close()
+                print(f"\n[bughunt] stop-on-crash hit. summary -> {summary_path}")
+                return
         else:
             # episode finished cleanly (or stalled); tally outcome
             try:

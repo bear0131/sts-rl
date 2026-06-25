@@ -54,6 +54,15 @@ _CAMP_NAME_BY_IDX = {idx: name for name, idx in _CAMPFIRE.items()}
 _CARD_SELECT_INPUT = 2
 
 
+# The exact encounter-name strings create_battle accepts. Most are the title-
+# cased enum tail ("THREE_SENTRIES" -> "Three Sentries"), but the event-combat
+# encounters (MASKED_BANDITS_EVENT, MUSHROOMS_EVENT, MYSTERIOUS_SPHERE_EVENT,
+# LAGAVULIN_EVENT, COLOSSEUM_EVENT_*) are accepted ONLY in raw enum form. We
+# resolve against this set so an unmatched name never silently builds an INVALID
+# monster group (createMonsters' `case INVALID: assert(false)` -> native abort).
+_ENCOUNTER_NAMES = frozenset(sts.encounter_names())
+
+
 def _tail(gc):
     return gc.screen_state_name.split(".")[-1]
 
@@ -332,11 +341,27 @@ class SimGameEnv:
         raise ValueError(f"unhandled semantic action: {action!r}")
 
     def _start_battle(self):
-        self.bc = sts.create_battle(self.gc, self._encounter_name())
+        # An unresolved encounter name makes create_battle build an INVALID
+        # monster group, hitting createMonsters' `case INVALID: assert(false)` --
+        # a NATIVE abort that kills the whole process (uncatchable in Python ->
+        # takes down a vec-env worker in training). Validate first and surface a
+        # descriptive, catchable Python error instead.
+        name = self._encounter_name()
+        if name not in _ENCOUNTER_NAMES:
+            raise RuntimeError(
+                f"unresolved encounter {name!r} (gc.encounter={self.gc.encounter}) "
+                f"at floor={self.gc.floor_num} act={self.gc.act} "
+                f"room={self.gc.cur_room}; create_battle would abort."
+            )
+        self.bc = sts.create_battle(self.gc, name)
 
     def _encounter_name(self):
+        # Title-case the enum tail ("THREE_SENTRIES" -> "Three Sentries"); the
+        # event-combat encounters are accepted only in raw enum form, so fall
+        # back to the raw tail when the title-cased name isn't a known encounter.
         tail = str(self.gc.encounter).split(".")[-1]
-        return " ".join(w.capitalize() for w in tail.split("_"))
+        name = " ".join(w.capitalize() for w in tail.split("_"))
+        return name if name in _ENCOUNTER_NAMES else tail
 
     def _settle(self):
         """After an action, advance through states that don't need an agent
