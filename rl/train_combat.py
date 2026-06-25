@@ -1,10 +1,12 @@
-"""Pretrain the combat head on isolated random combats (SimCombatEnv).
+"""Pretrain the combat head on a random-combat GAUNTLET (SimCombatBackend).
 
 Stage 1 of the combat-pretrain plan (doc/night_0625/combat_pretrain_decision.md):
-each episode is ONE combat with a randomized loadout (random Ironclad deck, relics,
-starting HP) versus a random encounter. Reward is HP-delta + win bonus + a large
-death penalty (CombatRewardWrapper). The network is the SAME StSPointerPolicy used
-by the whole-run train.py, on the SAME obs/action space — so the resulting weights
+each episode is ONE random loadout (random Ironclad deck, relics, starting HP)
+fighting an ENDLESS stream of random encounters; HP carries over with no healing,
+so the episode ends on death. Reward is +1 per fight cleared, nothing else
+(CombatGauntletRewardWrapper) — dying's cost is the future clears it forfeits, so
+HP value is learned implicitly. The network is the SAME StSPointerPolicy used by
+the whole-run train.py, on the SAME obs/action space — so the resulting weights
 warm-start global training via `python -m rl.train --init-from <combat>.zip
 --freeze-encoder`.
 
@@ -38,26 +40,33 @@ from stable_baselines3.common.vec_env import (
 from env.core import factories
 from env.core.run_env import SlayTheSpireEnv
 from env.core.combat_backend import SimCombatBackend
-from rl.reward import CombatRewardWrapper
+from rl.reward import CombatGauntletRewardWrapper
 from rl.pointer_policy import StSPointerPolicy
 
 
-# A single combat is short; this cap only guards pathological non-terminating
-# loops (0-reward infinite combos), like train._MAX_EPISODE_STEPS but tighter
-# since there is no overworld here.
-_MAX_EPISODE_STEPS = 1000
+# A gauntlet episode spans MANY fights (HP attrition with no healing ends it by
+# death well before this), so this cap is loose — it only guards a pathological
+# non-terminating single-combat combo loop (0-reward infinite combo).
+_MAX_EPISODE_STEPS = 4000
+
+
+# Survival-curve thresholds: fraction of episodes that cleared at least x fights.
+# Guesses for now (we don't yet know the mean) — bump if it routinely exceeds 18.
+_CLEAR_THRESHOLDS = (3, 6, 9, 12, 15, 18)
 
 
 class CombatMetricsCallback(BaseCallback):
-    """Win-rate + reward over a rolling window of finished combats. Reads
-    info["combat_won"] (set by CombatRewardWrapper on a terminal fight) and
-    VecMonitor's info["episode"]."""
+    """Combats-cleared-per-episode + reward over a rolling window of finished
+    gauntlet episodes. Reads info["combats_won"] / info["combat_act"] (set by
+    CombatGauntletRewardWrapper when an episode ends) and VecMonitor's
+    info["episode"]. Also logs per-act mean clears and a P(cleared >= x) curve."""
 
     def __init__(self, window: int = 200, verbose: int = 0):
         super().__init__(verbose)
         self._rew = deque(maxlen=window)
         self._len = deque(maxlen=window)
-        self._win = deque(maxlen=window)
+        self._cleared = deque(maxlen=window)
+        self._cleared_act = {a: deque(maxlen=window) for a in (1, 2, 3)}
         self._n = 0
         self._t0 = None
 
@@ -72,8 +81,11 @@ class CombatMetricsCallback(BaseCallback):
             self._n += 1
             self._rew.append(ep["r"])
             self._len.append(ep["l"])
-            # combat_won is absent on a truncated (timed-out) combat -> count as loss.
-            self._win.append(1.0 if info.get("combat_won") else 0.0)
+            won = float(info.get("combats_won", 0))
+            self._cleared.append(won)
+            act = info.get("combat_act")
+            if act in self._cleared_act:
+                self._cleared_act[act].append(won)
         return True
 
     def _on_rollout_end(self) -> None:
@@ -83,25 +95,38 @@ class CombatMetricsCallback(BaseCallback):
         if self._rew:
             self.logger.record("rollout/ep_rew_mean", mean(self._rew))
             self.logger.record("rollout/ep_len_mean", mean(self._len))
-            self.logger.record("combat/win_rate", mean(self._win))
+            self.logger.record("combat/cleared_per_episode", mean(self._cleared))
+            # mean clears split by the act of the episode's level L.
+            for act, buf in self._cleared_act.items():
+                if buf:
+                    self.logger.record(f"combat/cleared_act{act}", mean(buf))
+            # survival curve: fraction of episodes that cleared at least x fights.
+            n = len(self._cleared)
+            for x in _CLEAR_THRESHOLDS:
+                self.logger.record(
+                    f"combat/clear_ge_{x}",
+                    sum(1 for c in self._cleared if c >= x) / n,
+                )
         self.logger.record("combat/episodes_total", self._n)
         if self._t0 is not None:
             self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
 
 
-def make_env(*, pool: str, ascension: int):
-    """Return one randomized-combat env for the VecEnv: the whole-run thin
+def make_env(*, floor_lo: int, floor_hi: int, ascension: int):
+    """Return one randomized combat-gauntlet env for the VecEnv: the whole-run thin
     SlayTheSpireEnv on a SimCombatBackend (so it speaks the SAME 149-action space
-    as rl.train), reward-shaped for combat, step-capped."""
+    as rl.train), +1-per-clear reward, step-capped."""
 
     def _builder(np_random):
-        return factories.random_combat_factory(np_random, pool=pool, ascension=ascension)
+        return factories.random_gauntlet_factory(
+            np_random, ascension=ascension, floor_range=(floor_lo, floor_hi)
+        )
 
     def _thunk():
         env = SlayTheSpireEnv(
             backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension)
         )
-        env = CombatRewardWrapper(env)
+        env = CombatGauntletRewardWrapper(env)
         env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
         return env
 
@@ -116,7 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-steps", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--vec", choices=["subproc", "dummy"], default="subproc")
-    parser.add_argument("--pool", choices=["normal", "elite", "boss"], default="normal")
+    parser.add_argument("--floor-lo", type=int, default=1)
+    parser.add_argument("--floor-hi", type=int, default=50)
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
@@ -152,7 +178,8 @@ def main() -> None:
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     env_fns = [
-        make_env(pool=args.pool, ascension=args.ascension)
+        make_env(floor_lo=args.floor_lo, floor_hi=args.floor_hi,
+                 ascension=args.ascension)
         for _ in range(args.n_envs)
     ]
     if args.vec == "subproc":
@@ -168,7 +195,7 @@ def main() -> None:
         name_prefix="combat_ppo",
     )
 
-    tag = f"combat-{args.pool}-asc{args.ascension}-s{args.seed}-{run_id}"
+    tag = f"combat-f{args.floor_lo}-{args.floor_hi}-asc{args.ascension}-s{args.seed}-{run_id}"
     callbacks = [checkpoint_callback, CombatMetricsCallback(window=args.metrics_window)]
     wandb_run = None
 
@@ -221,7 +248,8 @@ def main() -> None:
 
     print(
         f"[train_combat] steps={args.steps} n_envs={args.n_envs} vec={args.vec} "
-        f"rollout={rollout_size} pool={args.pool} ascension={args.ascension}"
+        f"rollout={rollout_size} floors={args.floor_lo}-{args.floor_hi} "
+        f"ascension={args.ascension}"
     )
 
     try:

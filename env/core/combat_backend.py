@@ -1,5 +1,12 @@
-"""SimCombatBackend: a SimGameEnv scoped to a single random combat, for combat-
+"""SimCombatBackend: a SimGameEnv scoped to a random-combat GAUNTLET, for combat-
 head pretraining (doc/night_0625/combat_pretrain_decision.md).
+
+One episode = ONE random loadout (deck/relics/starting HP) fighting an ENDLESS
+stream of random encounters. HP carries over between fights and there is no
+healing, so a fight cleared is worth +1 (CombatGauntletRewardWrapper) but each
+fight spends HP; the episode ends only when the player DIES. Surviving more fights
+is the whole objective, so "spend HP wisely / block when it matters" is learned
+implicitly from the structure — no explicit HP-delta or death-penalty reward term.
 
 It REUSES the whole-run thick backend's combat handling verbatim — same
 legal_semantic_actions / step / obs as SimGameEnv — so the thin SlayTheSpireEnv
@@ -8,9 +15,11 @@ and combat-pretrained weights transfer to `rl.train --init-from` with no
 remapping. (The standalone SimCombatEnv speaks the narrower 71-id combat space and
 does NOT line up with the policy head; that is why pretraining goes through here.)
 
-Only two things differ from SimGameEnv:
+Differences from SimGameEnv:
   - reset() drops straight into a randomized combat (no Neow / map / Spire run),
-  - the episode ends when that combat ends (no reward screen / run continuation).
+  - on a WON fight _settle() rolls the next random encounter on the same loadout
+    (HP carried), instead of opening the reward screen and marching the run on,
+  - is_over (episode terminal) is the player's DEATH, not a single fight ending.
 """
 
 import numpy as np
@@ -20,50 +29,69 @@ import slaythespire as sts
 
 from .game_env import SimGameEnv, _GC_UNDECIDED
 
+# BattleContext.to_dict()["outcome"] uses the combat-side Outcome enum:
+# UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2 (see combat_env._OUTCOME_*).
+_OUTCOME_LOSS = 2
+
 
 class SimCombatBackend(SimGameEnv):
-    """One random combat = one episode, in the whole-run 149-action space.
+    """A random-loadout combat gauntlet = one episode, in the whole-run 149-action
+    space.
 
-    factory_builder(np_random) -> a gc_factory() -> (GameContext, encounter_name)
-    (see factories.random_combat_factory). The backend builds the factory once off
-    its seeded np_random so the loadout stream is reproducible per seed."""
+    factory_builder(np_random) -> (make_gc, next_encounter)
+    (see factories.random_gauntlet_factory). The backend builds these once off its
+    seeded np_random so the loadout/encounter stream is reproducible per seed."""
 
     def __init__(self, factory_builder, ascension=0):
         super().__init__(ascension=ascension)
         self._factory_builder = factory_builder
-        self._factory = None
+        self._make_gc = None
+        self._next_encounter = None
+        self.combats_won = 0
 
     def reset(self, *, seed=None):
         if seed is None and self._np_random is None:
             self._np_random = np.random.default_rng()
         elif seed is not None:
             self._np_random = np.random.default_rng(seed)
-        if self._factory is None:
-            self._factory = self._factory_builder(self._np_random)
-        self.gc, encounter = self._factory()
-        self.rmap = None  # no map in an isolated combat
-        self.bc = sts.create_battle(self.gc, encounter)
+        if self._make_gc is None:
+            self._make_gc, self._next_encounter = self._factory_builder(self._np_random)
+        self.gc = self._make_gc()
+        self.rmap = None  # no map in an isolated gauntlet
+        self.combats_won = 0
+        self.bc = sts.create_battle(self.gc, self._next_encounter(self.gc))
         self._prev_hp = self.gc.cur_hp
         return self._canonical(), self._info()
 
     @property
     def is_over(self):
-        # Combat-scoped terminal: the fight ended (victory or death). gc.outcome
-        # stays UNDECIDED until exit_battle (which we never call), so the live bc
-        # is the authority on whether the combat is done.
+        # Gauntlet terminal = the player is DEAD. A won fight does NOT end the
+        # episode (_settle rolls the next one), and gc.outcome stays UNDECIDED
+        # throughout (we never exit_battle), so the live bc is the authority — and
+        # is_battle_over short-circuits, so mid-fight this never calls to_dict().
         if self.gc.outcome != _GC_UNDECIDED:
             return True
-        return self.bc is None or self.bc.is_battle_over
+        return self.bc is not None and self.bc.is_battle_over and self._lost()
+
+    def _lost(self):
+        return self.bc.to_dict()["outcome"] == _OUTCOME_LOSS
 
     def _settle(self):
-        # Intentionally a no-op: SimGameEnv._settle would exit_battle into the
-        # reward screen and march the run on. Here the episode IS the one combat,
-        # so we leave the finished bc in place for the terminal obs/reward.
-        pass
+        # After a step: if the current fight just ended in VICTORY (player alive),
+        # carry HP onto the gc and roll the NEXT random encounter on the same
+        # loadout. On a loss we leave the finished bc in place so is_over -> True
+        # and the terminal obs/reward read the death.
+        if self.bc is None or not self.bc.is_battle_over or self._lost():
+            return
+        self.combats_won += 1
+        # gc.cur_hp is stale mid-run; the bc owns the player's HP. Carry the live
+        # post-fight HP onto the gc so create_battle starts the next fight there.
+        self.gc.cur_hp = self.bc.to_dict()["player"]["hp"]
+        self.bc = sts.create_battle(self.gc, self._next_encounter(self.gc))
+        self._prev_hp = self.gc.cur_hp
 
     def combat_state(self):
-        """(player_hp, outcome_int) off the live BattleContext, for
-        CombatRewardWrapper. outcome: 0 undecided / 1 victory / 2 loss (the
-        combat-side Outcome enum; see combat_env._OUTCOME_*)."""
+        """(player_hp, outcome_int) off the live BattleContext. outcome: 0 undecided
+        / 1 victory / 2 loss (combat-side Outcome enum; see combat_env._OUTCOME_*)."""
         raw = self.bc.to_dict()
         return raw["player"]["hp"], raw["outcome"]

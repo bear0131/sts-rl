@@ -2,8 +2,6 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 
-from env.core.encode import HP_SCALE
-
 
 @dataclass(frozen=True)
 class RewardConfig:
@@ -84,49 +82,37 @@ class ShapedRewardWrapper(gym.Wrapper):
         return obs, shaped, terminated, truncated, info
 
 
-# BattleContext.to_dict()["outcome"]: UNDECIDED=0, PLAYER_VICTORY=1, LOSS=2
-# (combat-side Outcome enum; see combat_env._OUTCOME_*).
-_OUTCOME_VICTORY = 1
+class CombatGauntletRewardWrapper(gym.Wrapper):
+    """Reward for the combat-gauntlet pretraining (doc/night_0625/
+    combat_pretrain_decision.md): +`win` each time a fight is cleared, nothing else.
+    The episode ends on death (terminated), which pays NO penalty — the cost of
+    dying is implicit: the discounted stream of future +1's that death cuts off. So
+    HP value is learned from the episode structure, with no HP-delta/death term.
 
-
-@dataclass(frozen=True)
-class CombatRewardConfig:
-    hp_delta: float = 1.0   # reward per HP gained/lost, normalized by HP_SCALE
-    win: float = 1.0        # terminal bonus on winning the fight
-    death: float = -5.0     # terminal penalty on losing (dying) — big negative
-
-
-class CombatRewardWrapper(gym.Wrapper):
-    """Replace the whole-run env reward for combat-head pretraining: normalized HP
-    delta each step, +win on victory, a large negative on death (see
-    doc/night_0625/combat_pretrain_decision.md).
-
-    Wraps a SlayTheSpireEnv whose backend is a SimCombatBackend — it reads HP /
-    outcome off the live BattleContext via backend.combat_state() (gc.cur_hp is
-    stale mid-combat; the bc owns the player's HP). Mirrors ShapedRewardWrapper:
-    the env's own reward is ignored and stashed in info["env_reward"].
+    Wraps a SlayTheSpireEnv whose backend is a SimCombatBackend; it reads the
+    backend's cumulative `combats_won` counter and pays for each new clear. Mirrors
+    ShapedRewardWrapper: the env's own reward is ignored and stashed in
+    info["env_reward"].
     """
 
-    def __init__(self, env, cfg=None):
+    def __init__(self, env, win: float = 1.0):
         super().__init__(env)
-        self.cfg = cfg or CombatRewardConfig()
-        self._prev_hp: int | None = None
+        self.win = win
+        self._prev_won = 0
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self._prev_hp = self.env.unwrapped.thick.combat_state()[0]
+        self._prev_won = self.env.unwrapped.thick.combats_won
         return obs, info
 
     def step(self, action):
         obs, env_reward, terminated, truncated, info = self.env.step(action)
-        hp, outcome = self.env.unwrapped.thick.combat_state()
-        r = self.cfg.hp_delta * (hp - self._prev_hp) / HP_SCALE
-        self._prev_hp = hp
-        # terminated => the fight ended (victory or death). A TimeLimit timeout is
-        # truncated (terminated=False) and pays no win/death term — not a death.
-        if terminated:
-            won = outcome == _OUTCOME_VICTORY
-            r += self.cfg.win if won else self.cfg.death
-            info["combat_won"] = won
+        won_now = self.env.unwrapped.thick.combats_won
+        r = self.win * (won_now - self._prev_won)
+        self._prev_won = won_now
+        if terminated or truncated:
+            info["combats_won"] = won_now
+            # the episode's act (= act of the fixed level L), for per-act metrics.
+            info["combat_act"] = self.env.unwrapped.thick.gc.act
         info["env_reward"] = env_reward
         return obs, r, terminated, truncated, info

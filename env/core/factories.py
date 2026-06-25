@@ -18,6 +18,8 @@ distribution, and the in-combat RNG stays the aligned real value.
 
 # `import env.core` runs the package __init__ which puts the sim build dir on
 # sys.path; that must happen before `import slaythespire`.
+import math
+
 from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
 
@@ -72,6 +74,14 @@ _IRONCLAD_CARDS = [
 # Ironclad starter deck in sim enum strings: 5x Strike, 4x Defend, 1x Bash.
 _STARTER_DECK = ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4 + ["BASH"]
 
+# The "common" obtainable curses (events / Cursed Key). Excludes the special ones
+# tied to ascension/relics/card-gen (Ascender's Bane, Curse of the Bell,
+# Necronomicurse, Pride). A real run sometimes carries one, so we sprinkle them in.
+_CURSE_POOL = [
+    "CLUMSY", "DECAY", "DOUBT", "INJURY", "NORMALITY",
+    "PAIN", "PARASITE", "REGRET", "SHAME", "WRITHE",
+]
+
 # Curated combat-relevant relic pool (stable ids from relicIds[]). Kept to relics
 # whose effect is read at battle start / during combat and is mechanically simple
 # — coverage for the obs's relic slots without out-of-combat-only or save-state
@@ -84,55 +94,182 @@ _RELIC_POOL = [
     "StrikeDummy", "Gremlin Horn", "Nunchaku",
 ]
 
+# Boss relics whose effect is read at battle START / DURING combat (no at-pickup
+# deck transform like Pandora's Box / Astrolabe, no purely out-of-combat effect),
+# so they can be attached to a sandbox combat via set_relics without us running any
+# pickup logic. Used to make the gauntlet loadout a bit more in-domain (deeper
+# floors carry boss relics; ~10% of runs swap Burning Blood for one).
+_BOSS_RELIC_POOL = [
+    "Snecko Eye", "Runic Pyramid", "Velvet Choker", "Mark of Pain",
+    "Coffee Dripper", "Fusion Hammer", "Runic Dome", "Sozu", "Cursed Key",
+    "Ice Cream", "Busted Crown", "Philosopher's Stone", "Runic Cube",
+    "SlaversCollar", "Gambling Chip",
+]
 
-def random_combat_factory(np_random, pool="normal", ascension=0,
-                          extra_cards=(0, 25), n_relics=(0, 5),
-                          hp_frac=(0.2, 1.0)):
-    """Return a gc_factory that samples a random combat loadout each call, for
-    combat-head pretraining (see doc/night_0625/combat_pretrain_decision.md).
 
-    Each call randomizes, on top of a fresh Ironclad GameContext:
+def _act_of(floor):
+    """The act a floor belongs to: 1 (<=16), 2 (17-33), 3 (>=34)."""
+    return 1 if floor <= 16 else 2 if floor <= 33 else 3
+
+
+def _mean_added(floor):
+    """Mean total cards added to the deck BY this floor. Saturating curve: early
+    slope ~0.85/floor (you open a run grabbing lots of cards), flattening to a
+    total mean ~15 by floor 50 (by act 3 you barely add). 15*(1-e^-0.06f)."""
+    return 15.0 * (1.0 - math.exp(-0.06 * floor))
+
+
+def _around(np_random, mean, hi=None):
+    """A heavily-randomized non-negative count whose mean is ~`mean`: a uniform
+    integer in [0, round(2*mean)], optionally capped at `hi`. Wide on purpose —
+    the spread (weak decks deep / strong decks shallow) is what lets the value head
+    disentangle floor-effect from deck-effect when it learns combat-power."""
+    top = int(round(2.0 * mean))
+    if hi is not None:
+        top = min(top, hi)
+    return int(np_random.integers(0, top + 1)) if top > 0 else 0
+
+
+def _build_loadout_gc(np_random, ascension, extra_cards, n_relics, hp_frac):
+    """A fresh Ironclad GameContext with a random deck/relics/starting-HP loadout,
+    no floor/encounter set. Shared by the single-combat and gauntlet factories.
+
       - deck: starter + a random number of random Ironclad cards (random upgrade),
       - relics: Burning Blood + a random subset of _RELIC_POOL,
       - starting HP: a random fraction of max_hp (so the model learns to read its
-        own HP bar; dying then pays the death penalty in CombatRewardWrapper),
-      - encounter: a random combat from `pool` (as in random_act1_factory).
+        own HP bar).
 
     Ranges are (lo, hi) inclusive. This is a "card literacy" distribution (random
     legal cards), NOT a realistic-synergy distribution — by design for stage 1.
     """
+    seed = int(np_random.integers(0, _SEED_HI))
+    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, ascension)
+
+    # deck = starter + N random Ironclad cards (each unupgraded or +1).
+    deck = [(c, 0) for c in _STARTER_DECK]
+    n_extra = int(np_random.integers(extra_cards[0], extra_cards[1] + 1))
+    for _ in range(n_extra):
+        card = _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))]
+        deck.append((card, int(np_random.integers(0, 2))))
+    gc.set_deck(deck)
+
+    # relics = Burning Blood + a random subset of the curated pool.
+    k = int(np_random.integers(n_relics[0], n_relics[1] + 1))
+    extra_relics = []
+    if k:
+        idx = np_random.choice(len(_RELIC_POOL), size=k, replace=False)
+        extra_relics = [_RELIC_POOL[int(i)] for i in idx]
+    gc.set_relics(["Burning Blood"] + extra_relics)
+
+    # starting HP = a random fraction of max_hp (>=1 so we never start dead).
+    frac = float(np_random.uniform(hp_frac[0], hp_frac[1]))
+    gc.cur_hp = max(1, int(round(gc.max_hp * frac)))
+    return gc
+
+
+def random_combat_factory(np_random, pool="normal", ascension=0,
+                          extra_cards=(0, 25), n_relics=(0, 5),
+                          hp_frac=(0.2, 1.0)):
+    """Return a gc_factory that samples a random combat loadout + a random `pool`
+    encounter each call (one combat = one episode)."""
     names, (flo, fhi) = encounters.POOLS[pool]
 
     def factory():
-        seed = int(np_random.integers(0, _SEED_HI))
-        floor = int(np_random.integers(flo, fhi + 1))
-        name = names[int(np_random.integers(0, len(names)))]
-        gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, ascension)
-        gc.floor_num = floor
-
-        # deck = starter + N random Ironclad cards (each unupgraded or +1).
-        deck = [(c, 0) for c in _STARTER_DECK]
-        n_extra = int(np_random.integers(extra_cards[0], extra_cards[1] + 1))
-        for _ in range(n_extra):
-            card = _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))]
-            deck.append((card, int(np_random.integers(0, 2))))
-        gc.set_deck(deck)
-
-        # relics = Burning Blood + a random subset of the curated pool.
-        k = int(np_random.integers(n_relics[0], n_relics[1] + 1))
-        extra_relics = []
-        if k:
-            idx = np_random.choice(len(_RELIC_POOL), size=k, replace=False)
-            extra_relics = [_RELIC_POOL[int(i)] for i in idx]
-        gc.set_relics(["Burning Blood"] + extra_relics)
-
-        # starting HP = a random fraction of max_hp (>=1 so we never start dead).
-        frac = float(np_random.uniform(hp_frac[0], hp_frac[1]))
-        gc.cur_hp = max(1, int(round(gc.max_hp * frac)))
-
-        return gc, name
+        gc = _build_loadout_gc(np_random, ascension, extra_cards, n_relics, hp_frac)
+        gc.floor_num = int(np_random.integers(flo, fhi + 1))
+        return gc, names[int(np_random.integers(0, len(names)))]
 
     return factory
+
+
+def _build_gauntlet_gc(np_random, floor, ascension, hp_frac):
+    """A GameContext for a gauntlet episode, anchored on `floor` (= level L): the
+    act, encounter pool, and loadout richness all derive from it, so the loadout is
+    a plausible (if randomized) snapshot of a real run AT that floor — in-domain but
+    with wide spread. Floor is FIXED for the whole episode (stable obs feature).
+
+      - deck: starter minus random Strike/Defend removals (mean 0.10*L, kept Bash),
+        plus random Ironclad cards (mean _mean_added(L), saturating to ~15 by f50),
+      - relics: a common subset (mean 0.20*L) + one boss relic per act-boss passed
+        (act-1), and ~10% of runs swap Burning Blood for an extra boss relic,
+      - starting HP: a random fraction of max_hp (carries across the gauntlet).
+    """
+    act = _act_of(floor)
+    seed = int(np_random.integers(0, _SEED_HI))
+    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, ascension)
+    gc.floor_num = floor
+    gc.act = act
+
+    # deck = (starter Strikes/Defends minus random removals) + Bash + random adds.
+    starters = ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4
+    n_remove = _around(np_random, 0.10 * floor, hi=len(starters))
+    if n_remove:
+        drop = set(np_random.choice(len(starters), size=n_remove, replace=False).tolist())
+        starters = [c for i, c in enumerate(starters) if i not in drop]
+    deck = [(c, 0) for c in starters] + [("BASH", 0)]
+    n_add = _around(np_random, _mean_added(floor))
+    for _ in range(n_add):
+        card = _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))]
+        deck.append((card, int(np_random.integers(0, 2))))
+    # ~5% of runs carry a random curse (events / Cursed Key in a real run).
+    if float(np_random.uniform(0.0, 1.0)) < 0.05:
+        deck.append((_CURSE_POOL[int(np_random.integers(0, len(_CURSE_POOL)))], 0))
+    gc.set_deck(deck)
+
+    # relics: Burning Blood (90%) + common subset + boss relics (one per boss passed,
+    # plus one more in lieu of Burning Blood on the 10% swap).
+    keep_burning = float(np_random.uniform(0.0, 1.0)) >= 0.10
+    relics = ["Burning Blood"] if keep_burning else []
+    n_common = _around(np_random, 0.20 * floor, hi=len(_RELIC_POOL))
+    if n_common:
+        idx = np_random.choice(len(_RELIC_POOL), size=n_common, replace=False)
+        relics += [_RELIC_POOL[int(i)] for i in idx]
+    n_boss = min((act - 1) + (0 if keep_burning else 1), len(_BOSS_RELIC_POOL))
+    if n_boss:
+        idx = np_random.choice(len(_BOSS_RELIC_POOL), size=n_boss, replace=False)
+        relics += [_BOSS_RELIC_POOL[int(i)] for i in idx]
+    gc.set_relics(relics)
+
+    frac = float(np_random.uniform(hp_frac[0], hp_frac[1]))
+    gc.cur_hp = max(1, int(round(gc.max_hp * frac)))
+    return gc
+
+
+def random_gauntlet_factory(np_random, ascension=0, hp_frac=(0.2, 1.0),
+                            floor_range=(1, 50),
+                            type_probs=(("normal", 0.75), ("elite", 0.20),
+                                        ("boss", 0.05))):
+    """For the combat GAUNTLET (SimCombatBackend): ONE random loadout fights an
+    endless stream of random encounters until it dies (HP carries over, no heal).
+
+    Each episode samples a level L in `floor_range`; the loadout (_build_gauntlet_gc)
+    and the encounter pool both derive from L, and L stays FIXED for the episode.
+    Each fight independently rolls an encounter TYPE per `type_probs` and draws a
+    random encounter from act(L)'s pool of that type.
+
+    Returns (make_gc, next_encounter):
+      - make_gc() -> the per-episode loadout GameContext (samples L internally),
+      - next_encounter(gc) -> the next fight's encounter name (reads gc's fixed L).
+
+    Reward is "+1 per fight cleared, episode ends on death" — surviving longer (i.e.
+    spending HP wisely) is what pays off, so HP value is learned implicitly with no
+    explicit HP/death reward term (see doc/night_0625/combat_pretrain_decision.md).
+    """
+    flo, fhi = floor_range
+    types = [t for t, _ in type_probs]
+    probs = [float(p) for _, p in type_probs]
+
+    def make_gc():
+        floor = int(np_random.integers(flo, fhi + 1))
+        return _build_gauntlet_gc(np_random, floor, ascension, hp_frac)
+
+    def next_encounter(gc):
+        pool = encounters.ACT_POOLS[_act_of(gc.floor_num)][
+            types[int(np_random.choice(len(types), p=probs))]
+        ]
+        return pool[int(np_random.integers(0, len(pool)))]
+
+    return make_gc, next_encounter
 
 
 def fixed_factory(seed, encounter, floor=1, ascension=0):

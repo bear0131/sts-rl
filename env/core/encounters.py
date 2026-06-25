@@ -8,9 +8,9 @@ to INVALID and spawns ZERO monsters (an unwinnable, non-terminating combat), so
 these MUST stay verbatim from monsterEncounterStrings. encounter_names() returns
 this same list — treat it as the source of truth.
 
-Scope is act-1 only for now: the combat RNG (Random(seed+floor)) is the only
-RNG verified aligned with the real game, and act-1 is where our differential
-testing lives. Extend per-act when later acts are validated.
+Scope covers acts 1-3: each act has its own normal/elite/boss pools, exposed
+via ACT_POOLS below. The combat RNG (Random(seed+floor)) drives the encounter
+seed; the floor only perturbs RNG and does not change the forced encounter.
 """
 
 # Normal combats (the game's "weak" + "strong" act-1 pools). create_battle
@@ -56,4 +56,74 @@ POOLS = {
     "normal": (ACT1_NORMAL, ACT1_NORMAL_FLOORS),
     "elite": (ACT1_ELITE, ACT1_ELITE_FLOORS),
     "boss": (ACT1_BOSS, ACT1_BOSS_FLOORS),
+}
+
+# --- Act 2 -------------------------------------------------------------------
+# Normal combats: the game's act-2 "weak" + "strong" monster pools, excluding
+# elites and bosses (separate pools below).
+ACT2_NORMAL = [
+    # weak
+    "Spheric Guardian",
+    "Chosen",
+    "Shell Parasite",
+    "Three Byrds",
+    "Two Thieves",
+    # strong
+    "Chosen And Byrds",
+    "Sentry And Sphere",
+    "Cultist And Chosen",
+    "Three Cultist",
+    "Shelled Parasite And Fungi",
+    "Snecko",
+    "Snake Plant",
+    "Centurion And Healer",
+]
+
+ACT2_ELITE = [
+    "Gremlin Leader",
+    "Slavers",
+    "Book Of Stabbing",
+]
+
+ACT2_BOSS = [
+    "Automaton",
+    "Collector",
+    "Champ",
+]
+
+# --- Act 3 -------------------------------------------------------------------
+# Normal combats: the game's act-3 "weak" + "strong" monster pools, excluding
+# elites and bosses. ("Three Darklings" appears in both weak and strong pools
+# in the sim; listed once here.)
+ACT3_NORMAL = [
+    # weak
+    "Three Darklings",
+    "Orb Walker",
+    "Three Shapes",
+    # strong
+    "Spire Growth",
+    "Transient",
+    "Four Shapes",
+    "Maw",
+    "Sphere And Two Shapes",
+    "Jaw Worm Horde",
+    "Writhing Mass",
+]
+
+ACT3_ELITE = [
+    "Giant Head",
+    "Nemesis",
+    "Reptomancer",
+]
+
+ACT3_BOSS = [
+    "Awakened One",
+    "Time Eater",
+    "Donu And Deca",
+]
+
+ACT_POOLS = {
+    1: {"normal": ACT1_NORMAL, "elite": ACT1_ELITE, "boss": ACT1_BOSS},
+    2: {"normal": ACT2_NORMAL, "elite": ACT2_ELITE, "boss": ACT2_BOSS},
+    3: {"normal": ACT3_NORMAL, "elite": ACT3_ELITE, "boss": ACT3_BOSS},
 }
