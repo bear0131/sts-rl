@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 import gymnasium as gym
 
+from env.core.encode import HP_SCALE
+
 
 @dataclass(frozen=True)
 class RewardConfig:
@@ -80,3 +82,51 @@ class ShapedRewardWrapper(gym.Wrapper):
         self._prev = now
         info["env_reward"] = env_reward
         return obs, shaped, terminated, truncated, info
+
+
+# BattleContext.to_dict()["outcome"]: UNDECIDED=0, PLAYER_VICTORY=1, LOSS=2
+# (combat-side Outcome enum; see combat_env._OUTCOME_*).
+_OUTCOME_VICTORY = 1
+
+
+@dataclass(frozen=True)
+class CombatRewardConfig:
+    hp_delta: float = 1.0   # reward per HP gained/lost, normalized by HP_SCALE
+    win: float = 1.0        # terminal bonus on winning the fight
+    death: float = -5.0     # terminal penalty on losing (dying) — big negative
+
+
+class CombatRewardWrapper(gym.Wrapper):
+    """Replace the whole-run env reward for combat-head pretraining: normalized HP
+    delta each step, +win on victory, a large negative on death (see
+    doc/night_0625/combat_pretrain_decision.md).
+
+    Wraps a SlayTheSpireEnv whose backend is a SimCombatBackend — it reads HP /
+    outcome off the live BattleContext via backend.combat_state() (gc.cur_hp is
+    stale mid-combat; the bc owns the player's HP). Mirrors ShapedRewardWrapper:
+    the env's own reward is ignored and stashed in info["env_reward"].
+    """
+
+    def __init__(self, env, cfg=None):
+        super().__init__(env)
+        self.cfg = cfg or CombatRewardConfig()
+        self._prev_hp: int | None = None
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._prev_hp = self.env.unwrapped.thick.combat_state()[0]
+        return obs, info
+
+    def step(self, action):
+        obs, env_reward, terminated, truncated, info = self.env.step(action)
+        hp, outcome = self.env.unwrapped.thick.combat_state()
+        r = self.cfg.hp_delta * (hp - self._prev_hp) / HP_SCALE
+        self._prev_hp = hp
+        # terminated => the fight ended (victory or death). A TimeLimit timeout is
+        # truncated (terminated=False) and pays no win/death term — not a death.
+        if terminated:
+            won = outcome == _OUTCOME_VICTORY
+            r += self.cfg.win if won else self.cfg.death
+            info["combat_won"] = won
+        info["env_reward"] = env_reward
+        return obs, r, terminated, truncated, info

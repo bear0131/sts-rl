@@ -224,6 +224,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--init-from",
+        default=None,
+        help="Path to a .zip checkpoint to warm-start the POLICY WEIGHTS from "
+             "(e.g. a rl.train_combat combat-pretrained model) WITHOUT inheriting "
+             "its step counter or optimizer state. The arch must match. Unlike "
+             "--resume, training starts fresh at step 0. Combat pretraining and "
+             "whole-run share the same obs/action space + StSPointerPolicy, so the "
+             "encoder + heads load cleanly.",
+    )
+    parser.add_argument(
+        "--freeze-encoder",
+        action="store_true",
+        help="Freeze the shared Transformer encoder (core.encoder) — only the "
+             "policy/value heads train. Intended with --init-from to hand a "
+             "combat-pretrained trunk to whole-run training without it being "
+             "pulled away by meta-game gradients (the deliberately myopic-trunk "
+             "tradeoff; see doc/night_0625/combat_pretrain_decision.md).",
+    )
+
+    parser.add_argument(
         "--metrics-window",
         type=int,
         default=100,
@@ -409,6 +429,30 @@ def main() -> None:
             f"[train] resumed from {args.resume} "
             f"@ {model.num_timesteps} steps"
         )
+
+    if args.init_from:
+        if args.resume:
+            raise ValueError("--init-from and --resume are mutually exclusive: "
+                             "--resume already restores weights + step counter.")
+        # Copy only the policy weights (encoder + heads) from the pretrained
+        # checkpoint; the freshly built model keeps its step-0 counter and fresh
+        # optimizer state. Same obs/action space + arch => strict load.
+        pretrained = MaskablePPO.load(args.init_from, device=args.device)
+        model.policy.load_state_dict(pretrained.policy.state_dict())
+        del pretrained
+        print(f"[train] warm-started policy weights from {args.init_from}")
+
+    if args.freeze_encoder:
+        core = getattr(model.policy, "core", None)
+        if core is None or not hasattr(core, "encoder"):
+            raise ValueError("--freeze-encoder requires the transformer-pointer "
+                             "policy (no core.encoder to freeze on this arch).")
+        n = 0
+        for p in core.encoder.parameters():
+            p.requires_grad = False
+            n += 1
+        # Params stay in the optimizer but get no grad, so Adam skips them.
+        print(f"[train] froze encoder ({n} param tensors) — only heads train")
 
     print(
         "[train] whole-run "
