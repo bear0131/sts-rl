@@ -135,7 +135,14 @@ def make_env(*, floor_lo: int, floor_hi: int, ascension: int):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Pretrain combat head on SimCombatEnv.")
-    parser.add_argument("--steps", type=int, default=2_000_000)
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=2_000_000,
+        help="Absolute total-steps target: training runs until num_timesteps "
+             "reaches this. On --resume, the already-trained steps count toward "
+             "it (so resuming a 5M ckpt with --steps 10000000 trains 5M more).",
+    )
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--n-steps", type=int, default=512)
@@ -150,6 +157,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=8)
     parser.add_argument("--out", default="rl/runs/combat")
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help="Path to a .zip checkpoint to continue training from. Network "
+             "geometry (--d-model/--n-layers/--n-heads) is restored from the "
+             "checkpoint and must not be changed; --learning-rate still applies. "
+             "num_timesteps/TensorBoard step/checkpoint counters continue from "
+             "where the checkpoint left off.",
+    )
     parser.add_argument("--save-every", type=int, default=100_000)
     parser.add_argument("--tensorboard", action="store_true")
     parser.add_argument("--metrics-window", type=int, default=200)
@@ -244,7 +260,20 @@ def main() -> None:
             n_layers=args.n_layers,
             n_heads=args.n_heads,
         ),
+    ) if not args.resume else MaskablePPO.load(
+        # Resume: restore weights + optimizer state (continuous Adam momentum /
+        # lr schedule) from the checkpoint. Network geometry and most hyper-
+        # params come from the zip; only env + device + tensorboard sink are
+        # rebound here, and --learning-rate is allowed to override via
+        # custom_objects (everything else in the .zip wins).
+        args.resume,
+        env=venv,
+        device=args.device,
+        tensorboard_log=tensorboard_log,
+        custom_objects={"learning_rate": args.learning_rate},
     )
+    if args.resume:
+        print(f"[train_combat] resumed from {args.resume} @ {model.num_timesteps} steps")
 
     print(
         f"[train_combat] steps={args.steps} n_envs={args.n_envs} vec={args.vec} "
@@ -253,11 +282,26 @@ def main() -> None:
     )
 
     try:
+        # --steps is always the ABSOLUTE total-steps target. SB3's
+        # learn(total_timesteps=N) with reset_num_timesteps=False treats N as
+        # "additional steps" and adds num_timesteps internally, so on resume we
+        # subtract what's already been trained to keep --steps absolute.
+        if args.resume:
+            remaining = args.steps - model.num_timesteps
+            if remaining <= 0:
+                raise ValueError(
+                    f"--steps {args.steps} <= checkpoint's {model.num_timesteps} "
+                    f"already-trained steps; nothing to do. Pass a larger --steps."
+                )
+        else:
+            remaining = args.steps
+
         model.learn(
-            total_timesteps=args.steps,
+            total_timesteps=remaining,
             callback=callback,
             progress_bar=False,
             tb_log_name=tag,
+            reset_num_timesteps=not bool(args.resume),
         )
         final_path = out_dir / "final"
         model.save(str(final_path))
