@@ -1,0 +1,144 @@
+"""Combat-gauntlet pretraining task.
+
+Stage 1 of the combat-pretrain plan (doc/night_0625/combat_pretrain_decision.md):
+each episode is ONE random loadout (random Ironclad deck, relics, starting HP)
+fighting an ENDLESS stream of random encounters; HP carries over with no healing,
+so the episode ends on death. Reward is +1 per fight cleared, nothing else
+(CombatGauntletRewardWrapper) — dying's cost is the future clears it forfeits, so
+HP value is learned implicitly. The network is the SAME StSPointerPolicy used by
+the whole-run task, on the SAME obs/action space — so the resulting weights
+warm-start global training via
+``python -m rl.trainer --task wholerun --init-from <combat>.zip --freeze-encoder``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import time
+from collections import deque
+
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3.common.callbacks import BaseCallback
+
+from env.core import factories
+from env.core.run_env import SlayTheSpireEnv
+from env.core.combat_backend import SimCombatBackend
+from rl.reward import CombatGauntletRewardWrapper
+from rl.pointer_policy import StSPointerPolicy
+from rl.tasks.base import Task
+
+
+# A gauntlet episode spans MANY fights (HP attrition with no healing ends it by
+# death well before this), so this cap is loose — it only guards a pathological
+# non-terminating single-combat combo loop (0-reward infinite combo).
+_MAX_EPISODE_STEPS = 4000
+
+
+# Survival-curve thresholds: fraction of episodes that cleared at least x fights.
+# Guesses for now (we don't yet know the mean) — bump if it routinely exceeds 18.
+_CLEAR_THRESHOLDS = (3, 6, 9, 12, 15, 18)
+
+
+class CombatMetricsCallback(BaseCallback):
+    """Combats-cleared-per-episode + reward over a rolling window of finished
+    gauntlet episodes. Reads info["combats_won"] / info["combat_act"] (set by
+    CombatGauntletRewardWrapper when an episode ends) and VecMonitor's
+    info["episode"]. Also logs per-act mean clears and a P(cleared >= x) curve."""
+
+    def __init__(self, window: int = 200, verbose: int = 0):
+        super().__init__(verbose)
+        self._rew = deque(maxlen=window)
+        self._len = deque(maxlen=window)
+        self._cleared = deque(maxlen=window)
+        self._cleared_act = {a: deque(maxlen=window) for a in (1, 2, 3)}
+        self._n = 0
+        self._t0 = None
+
+    def _on_training_start(self) -> None:
+        self._t0 = time.monotonic()
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            ep = info.get("episode")
+            if ep is None:
+                continue
+            self._n += 1
+            self._rew.append(ep["r"])
+            self._len.append(ep["l"])
+            won = float(info.get("combats_won", 0))
+            self._cleared.append(won)
+            act = info.get("combat_act")
+            if act in self._cleared_act:
+                self._cleared_act[act].append(won)
+        return True
+
+    def _on_rollout_end(self) -> None:
+        def mean(buf):
+            return sum(buf) / len(buf) if buf else 0.0
+
+        if self._rew:
+            self.logger.record("rollout/ep_rew_mean", mean(self._rew))
+            self.logger.record("rollout/ep_len_mean", mean(self._len))
+            self.logger.record("combat/cleared_per_episode", mean(self._cleared))
+            # mean clears split by the act of the episode's level L.
+            for act, buf in self._cleared_act.items():
+                if buf:
+                    self.logger.record(f"combat/cleared_act{act}", mean(buf))
+            # survival curve: fraction of episodes that cleared at least x fights.
+            n = len(self._cleared)
+            for x in _CLEAR_THRESHOLDS:
+                self.logger.record(
+                    f"combat/clear_ge_{x}",
+                    sum(1 for c in self._cleared if c >= x) / n,
+                )
+        self.logger.record("combat/episodes_total", self._n)
+        if self._t0 is not None:
+            self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
+
+
+class CombatTask(Task):
+    name = "combat"
+    ckpt_prefix = "combat_ppo"
+    defaults = {
+        "steps": 2_000_000,
+        "metrics_window": 200,
+        "out": "rl/runs/combat",
+    }
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--floor-lo", type=int, default=1)
+        parser.add_argument("--floor-hi", type=int, default=50)
+
+    def make_env_fn(self, args):
+        floor_lo, floor_hi, ascension = args.floor_lo, args.floor_hi, args.ascension
+
+        def _builder(np_random):
+            return factories.random_gauntlet_factory(
+                np_random, ascension=ascension, floor_range=(floor_lo, floor_hi)
+            )
+
+        def _thunk():
+            env = SlayTheSpireEnv(
+                backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension)
+            )
+            env = CombatGauntletRewardWrapper(env)
+            env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
+            return env
+
+        return _thunk
+
+    def metrics_callback(self, args):
+        return CombatMetricsCallback(window=args.metrics_window)
+
+    def build_policy(self, args):
+        return StSPointerPolicy, dict(
+            d_model=args.d_model,
+            n_layers=args.n_layers,
+            n_heads=args.n_heads,
+        )
+
+    def tag(self, args, run_id):
+        return (
+            f"combat-f{args.floor_lo}-{args.floor_hi}-asc{args.ascension}"
+            f"-s{args.seed}-{run_id}"
+        )

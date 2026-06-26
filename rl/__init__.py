@@ -8,5 +8,6 @@ abstraction grows (out-of-combat, map, events) the legal set keeps shifting,
 so action masking is load-bearing, not a convenience. Build it in from day one.
 
 Run from the repo root as a module so `env` and the sim path resolve:
-    python -m rl.train --help
+    python -m rl.trainer --task wholerun --help
+    python -m rl.trainer --task combat --help
 """
