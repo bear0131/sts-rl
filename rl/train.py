@@ -195,7 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
              "head (only the head differs from transformer-flat; for the head A/B). "
              "New heads append as transformer-<head> (e.g. transformer-hier).",
     )
-    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=8)
 

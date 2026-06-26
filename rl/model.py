@@ -177,7 +177,7 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         observation_space: spaces.Dict,
         *,
         features_dim: int = 256,
-        d_model: int = 128,
+        d_model: int = 256,
         n_layers: int = 4,
         n_heads: int = 8,
         dim_feedforward: int | None = None,

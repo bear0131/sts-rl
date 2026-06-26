@@ -153,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=8)
     parser.add_argument("--out", default="rl/runs/combat")
