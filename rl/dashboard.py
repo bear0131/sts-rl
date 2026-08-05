@@ -1,0 +1,444 @@
+"""Local browser workbench for inspecting and evaluating sts-rl checkpoints."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import mimetypes
+import re
+import threading
+import time
+import uuid
+import zipfile
+from collections import Counter
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+
+import numpy as np
+from sb3_contrib import MaskablePPO
+
+from env.core.run_env import SlayTheSpireEnv
+from rl.eval import is_win
+from rl.visualize_card_vectors import extract_state_dict_vectors, pca_project
+from rl.watch import _action_dist
+from env.core.cards_vocab import CARD_INDEX
+from env.core.ironclad_cards import card_numbers
+
+# Register custom policy classes before checkpoint loading.
+from . import model as _model  # noqa: F401
+from . import pointer_policy as _pointer_policy  # noqa: F401
+
+
+STATIC_DIR = Path(__file__).with_name("dashboard_static")
+UPLOAD_DIR = Path("rl/runs/dashboard/uploads")
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+COMMON_CARDS = [
+    "Anger", "Armaments", "Body Slam", "Clash", "Cleave", "Clothesline",
+    "Flex", "Havoc", "Headbutt", "Heavy Blade", "Iron Wave",
+    "Perfected Strike", "Pommel Strike", "Shrug It Off", "Sword Boomerang",
+    "Thunderclap", "True Grit", "Twin Strike", "Warcry", "Wild Strike",
+]
+COMMON_ZH = {
+    "Anger": "愤怒", "Armaments": "武装", "Body Slam": "全身撞击",
+    "Clash": "交锋", "Cleave": "顺劈斩", "Clothesline": "金刚臂",
+    "Flex": "活动肌肉", "Havoc": "破灭", "Headbutt": "头槌",
+    "Heavy Blade": "重刃", "Iron Wave": "铁斩波",
+    "Perfected Strike": "完美打击", "Pommel Strike": "剑柄打击",
+    "Shrug It Off": "耸肩无视", "Sword Boomerang": "飞剑回旋镖",
+    "Thunderclap": "闪电霹雳", "True Grit": "坚毅",
+    "Twin Strike": "双重打击", "Warcry": "战吼",
+    "Wild Strike": "狂野打击",
+}
+
+
+def _jsonable(value):
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+class WatchSession:
+    def __init__(self, model: MaskablePPO, model_lock: threading.Lock, seed: int = 0):
+        self.model = model
+        self.model_lock = model_lock
+        self.env = SlayTheSpireEnv()
+        self.seed = seed
+        self.history: list[int] = []
+        self.obs = None
+        self.info = None
+        self.terminated = False
+        self.truncated = False
+        self.total_reward = 0.0
+        self.last_action = None
+        self.last_reward = 0.0
+        self.decision = None
+        self.reset(seed)
+
+    def close(self):
+        self.env.close()
+
+    def reset(self, seed: int):
+        self.seed = int(seed)
+        self.history = []
+        self.obs, self.info = self.env.reset(seed=self.seed)
+        self.terminated = self.truncated = False
+        self.total_reward = 0.0
+        self.last_action = None
+        self.last_reward = 0.0
+        self._prepare_decision()
+        return self.snapshot()
+
+    def _prepare_decision(self):
+        if self.terminated or self.truncated:
+            self.decision = None
+            return
+        mask = self.env.action_masks()
+        with self.model_lock:
+            probs, value = _action_dist(self.model, self.obs, mask)
+        legal = np.flatnonzero(mask)
+        if probs is None:
+            chosen = int(legal[0])
+            ranked = [(chosen, None)]
+        else:
+            chosen = int(max(legal, key=lambda i: probs[i]))
+            ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[:6]
+            ranked = [(int(i), float(probs[i])) for i in ranked]
+        self.decision = {
+            "action": chosen,
+            "label": self.env.describe_action(chosen),
+            "value": value,
+            "top_actions": [
+                {"action": aid, "label": self.env.describe_action(aid), "prob": prob}
+                for aid, prob in ranked
+            ],
+        }
+
+    def step(self):
+        if self.decision is None:
+            return self.snapshot()
+        action = int(self.decision["action"])
+        label = self.decision["label"]
+        self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+        self.history.append(action)
+        self.last_action = {"action": action, "label": label}
+        self.last_reward = float(reward)
+        self.total_reward += float(reward)
+        self._prepare_decision()
+        return self.snapshot()
+
+    def undo(self):
+        if not self.history:
+            return self.snapshot()
+        replay = self.history[:-1]
+        self.obs, self.info = self.env.reset(seed=self.seed)
+        self.terminated = self.truncated = False
+        self.total_reward = 0.0
+        self.last_action = None
+        self.last_reward = 0.0
+        self.history = []
+        for action in replay:
+            self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+            self.history.append(action)
+            self.total_reward += float(reward)
+            if self.terminated or self.truncated:
+                break
+        self._prepare_decision()
+        return self.snapshot()
+
+    def snapshot(self):
+        canon = self.env.unwrapped.thick.obs_canonical()
+        stats = self.info.get("run_stats", {}) if self.info else {}
+        return _jsonable({
+            "seed": self.seed,
+            "step": len(self.history),
+            "can_undo": bool(self.history),
+            "done": self.terminated or self.truncated,
+            "terminated": self.terminated,
+            "truncated": self.truncated,
+            "won": is_win(self.env) if self.terminated else False,
+            "total_reward": self.total_reward,
+            "last_reward": self.last_reward,
+            "last_action": self.last_action,
+            "decision": self.decision,
+            "phase": self.info.get("phase") if self.info else None,
+            "stats": stats,
+            "canon": canon,
+        })
+
+
+class DashboardState:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.model_lock = threading.Lock()
+        self.checkpoint: Path | None = None
+        self.model: MaskablePPO | None = None
+        self.embedding: dict | None = None
+        self.watch: WatchSession | None = None
+        self.eval_status: dict = {"state": "idle"}
+        self.eval_token = ""
+        self.error: str | None = None
+
+    def public_state(self):
+        with self.lock:
+            return {
+                "checkpoint": self.checkpoint.name if self.checkpoint else None,
+                "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
+                "embedding": self.embedding,
+                "watch": self.watch.snapshot() if self.watch else None,
+                "evaluation": self.eval_status,
+                "error": self.error,
+            }
+
+    def load_checkpoint(self, path: Path, episodes: int):
+        model = MaskablePPO.load(path, device="auto")
+        model.set_random_seed(0)
+        embedding = self._embedding(model)
+        watch = WatchSession(model, self.model_lock, seed=0)
+        with self.lock:
+            old_watch = self.watch
+            self.checkpoint = path
+            self.model = model
+            self.embedding = embedding
+            self.watch = watch
+            self.error = None
+        if old_watch:
+            old_watch.close()
+        self.start_evaluation(episodes=episodes, seed=0)
+
+    def _embedding(self, model: MaskablePPO):
+        state = model.policy.state_dict()
+        base, description = extract_state_dict_vectors(state, "hand", upgrades=0)
+        upgraded, _ = extract_state_dict_vectors(state, "hand", upgrades=1)
+        indices = np.asarray([CARD_INDEX[name] for name in COMMON_CARDS])
+        vectors = np.concatenate([base[indices], upgraded[indices]], axis=0)
+        coords, ratio, norms = pca_project(vectors, dim=2, normalize=False)
+        points = []
+        for variant in (0, 1):
+            for i, card_id in enumerate(COMMON_CARDS):
+                row = variant * len(COMMON_CARDS) + i
+                cost, damage, block = card_numbers(card_id, variant)
+                points.append({
+                    "card_id": card_id,
+                    "name": COMMON_ZH[card_id] + ("+" if variant else ""),
+                    "upgrade": variant,
+                    "x": float(coords[row, 0]),
+                    "y": float(coords[row, 1]),
+                    "norm": float(norms[row]),
+                    "cost": cost,
+                    "damage": damage,
+                    "block": block,
+                })
+        return {
+            "points": points,
+            "explained_ratio": ratio.tolist(),
+            "description": description,
+        }
+
+    def start_evaluation(self, episodes: int, seed: int):
+        episodes = max(1, min(int(episodes), 10_000))
+        token = uuid.uuid4().hex
+        with self.lock:
+            if self.model is None:
+                raise RuntimeError("no checkpoint loaded")
+            model = self.model
+            self.eval_token = token
+            self.eval_status = {
+                "state": "running", "episodes": episodes, "completed": 0,
+                "seed": seed, "started_at": time.time(), "death_floors": {},
+            }
+        threading.Thread(
+            target=self._evaluate,
+            args=(token, model, episodes, int(seed)),
+            daemon=True,
+            name="dashboard-eval",
+        ).start()
+
+    def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
+        env = SlayTheSpireEnv()
+        death_floors: Counter[int] = Counter()
+        result_counts: Counter[str] = Counter()
+        floors: list[int] = []
+        lengths: list[int] = []
+        try:
+            for episode in range(episodes):
+                obs, info = env.reset(seed=seed + episode)
+                terminated = truncated = False
+                steps = 0
+                while not (terminated or truncated):
+                    with self.lock:
+                        if token != self.eval_token:
+                            return
+                    mask = env.action_masks()
+                    with self.model_lock:
+                        action, _ = model.predict(obs, action_masks=mask, deterministic=True)
+                    obs, _reward, terminated, truncated, info = env.step(
+                        int(np.asarray(action).item())
+                    )
+                    steps += 1
+                stats = env.unwrapped.thick.run_stats()
+                floor = int(stats["floor"])
+                if is_win(env):
+                    result = "win"
+                elif truncated and info.get("dead_screen"):
+                    result = "dead_screen"
+                elif truncated:
+                    result = "other_truncation"
+                else:
+                    result = "death"
+                    death_floors[floor] += 1
+                result_counts[result] += 1
+                floors.append(floor)
+                lengths.append(steps)
+                elapsed = time.time() - self.eval_status["started_at"]
+                done = episode + 1
+                with self.lock:
+                    if token != self.eval_token:
+                        return
+                    self.eval_status.update({
+                        "completed": done,
+                        "death_floors": dict(sorted(death_floors.items())),
+                        "results": dict(result_counts),
+                        "floor_mean": float(np.mean(floors)),
+                        "floor_median": float(np.median(floors)),
+                        "steps_mean": float(np.mean(lengths)),
+                        "elapsed_seconds": elapsed,
+                        "eta_seconds": elapsed / done * (episodes - done),
+                    })
+            with self.lock:
+                if token == self.eval_token:
+                    self.eval_status["state"] = "complete"
+        except Exception as exc:
+            with self.lock:
+                if token == self.eval_token:
+                    self.eval_status.update({"state": "error", "error": str(exc)})
+        finally:
+            env.close()
+
+
+APP = DashboardState()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "StSRLWorkbench/1.0"
+
+    def log_message(self, fmt, *args):
+        print(f"[dashboard] {self.address_string()} {fmt % args}")
+
+    def _send_json(self, payload, status=HTTPStatus.OK):
+        data = json.dumps(_jsonable(payload), ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/state":
+            self._send_json(APP.public_state())
+            return
+        relative = "index.html" if path == "/" else path.lstrip("/")
+        target = (STATIC_DIR / relative).resolve()
+        if STATIC_DIR.resolve() not in target.parents and target != STATIC_DIR.resolve():
+            self.send_error(HTTPStatus.FORBIDDEN)
+            return
+        if not target.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        data = target.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/upload":
+                self._upload()
+            elif path == "/api/watch/reset":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.reset(int(body.get("seed", 0)))
+                self._send_json(result)
+            elif path == "/api/watch/step":
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.step()
+                self._send_json(result)
+            elif path == "/api/watch/undo":
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.undo()
+                self._send_json(result)
+            elif path == "/api/eval/start":
+                body = self._read_json()
+                APP.start_evaluation(body.get("episodes", 50), body.get("seed", 0))
+                self._send_json(APP.public_state()["evaluation"])
+            else:
+                self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _upload(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > MAX_UPLOAD_BYTES:
+            raise ValueError("upload must be a non-empty file smaller than 512 MB")
+        original = self.headers.get("X-Filename", "checkpoint.zip")
+        filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(original).name)
+        if not filename.lower().endswith(".zip"):
+            raise ValueError("only .zip checkpoints are accepted")
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        target = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
+        target.write_bytes(self.rfile.read(length))
+        try:
+            with zipfile.ZipFile(target) as archive:
+                if archive.testzip() is not None:
+                    raise ValueError("checkpoint ZIP failed integrity validation")
+            episodes = int(self.headers.get("X-Eval-Episodes", "50"))
+            APP.load_checkpoint(target, episodes)
+        except Exception:
+            target.unlink(missing_ok=True)
+            raise
+        self._send_json(APP.public_state(), HTTPStatus.CREATED)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run the local sts-rl test dashboard.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--checkpoint", type=Path, default=None)
+    parser.add_argument("--eval-episodes", type=int, default=50)
+    args = parser.parse_args()
+    if args.checkpoint:
+        APP.load_checkpoint(args.checkpoint, args.eval_episodes)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"[dashboard] http://{args.host}:{args.port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

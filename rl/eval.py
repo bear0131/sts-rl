@@ -1,15 +1,23 @@
-"""Evaluate a MaskablePPO checkpoint on whole-run SlayTheSpireEnv.
+"""Evaluate a MaskablePPO checkpoint on complete simulated runs.
+
+Every episode starts on floor 1 with the normal Ironclad starter state and then
+plays the complete map, carrying HP, deck, relics, and potions between floors.
+There is deliberately no step-count TimeLimit in this evaluator.
 
 Examples:
 
     python -m rl.eval rl/runs/whole-run/final.zip
-    python -m rl.eval rl/runs/whole-run/final.zip --episodes 200
-    python -m rl.eval rl/runs/whole-run/final.zip --episodes 50 --stochastic
+    python -m rl.eval checkpoint.zip --episodes 200 --output-csv runs.csv
+    python -m rl.eval checkpoint.zip --episodes 50 --stochastic
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import time
+from collections import Counter
+from pathlib import Path
 
 import numpy as np
 
@@ -17,18 +25,21 @@ from env.core.run_env import SlayTheSpireEnv
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 
-# Important: import custom model code before loading a checkpoint.
-# This keeps custom extractor classes available to Python / cloudpickle.
+# Register both custom policy families before SB3 unpickles a checkpoint.
 from . import model as _model  # noqa: F401
+from . import pointer_policy as _pointer_policy  # noqa: F401
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Evaluate MaskablePPO on whole-run SlayTheSpireEnv."
+        description=(
+            "Evaluate MaskablePPO from floor 1 on complete SlayTheSpireEnv runs "
+            "and report the death-floor distribution."
+        )
     )
-
     parser.add_argument(
         "checkpoint",
+        type=Path,
         help="Path to a MaskablePPO .zip checkpoint.",
     )
     parser.add_argument("--episodes", type=int, default=100)
@@ -40,92 +51,203 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Sample actions instead of using deterministic argmax actions.",
     )
-
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=1,
+        help="Print progress every N completed runs; use 0 to disable.",
+    )
+    parser.add_argument(
+        "--heartbeat-seconds",
+        type=float,
+        default=30.0,
+        help="Print current floor/step after this long without output; 0 disables.",
+    )
+    parser.add_argument(
+        "--output-csv",
+        type=Path,
+        default=None,
+        help="Optionally save one row per run for seed-level analysis.",
+    )
     return parser
 
 
-def is_win(env) -> bool:
-    """Read the terminal win signal straight off the sim, mirroring SimGameEnv's
-    own terminal logic (game_env.step): a full-run victory is
-    outcome == PLAYER_VICTORY, and the v1 act-1 target is "cleared into act 2"
-    (outcome stays UNDECIDED on a boss clear; act > 1 is the real signal). Never
-    infer the win from the shaped return."""
-    import slaythespire as sts
+def _run_stats(env: SlayTheSpireEnv) -> dict:
+    return env.unwrapped.thick.run_stats()
 
-    gc = env.unwrapped.thick.gc
-    if gc.outcome == sts.GameOutcome.PLAYER_VICTORY:
-        return True
-    return gc.outcome == sts.GameOutcome.UNDECIDED and gc.act > 1
+
+def is_win(env: SlayTheSpireEnv) -> bool:
+    """A normal three-act clear advances to act 4 with outcome UNDECIDED."""
+    stats = _run_stats(env)
+    return stats["act"] > 3 or stats["outcome"] == "PLAYER_VICTORY"
+
+
+def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"[eval] CSV written to {path.resolve()}", flush=True)
 
 
 def main() -> None:
     args = build_parser().parse_args()
-
     if args.episodes < 1:
         raise ValueError("--episodes must be at least 1")
+    if args.progress_every < 0:
+        raise ValueError("--progress-every must be non-negative")
+    if args.heartbeat_seconds < 0:
+        raise ValueError("--heartbeat-seconds must be non-negative")
+    if not args.checkpoint.is_file():
+        raise FileNotFoundError(f"checkpoint not found: {args.checkpoint}")
 
+    load_started = time.monotonic()
+    print(f"[eval] loading checkpoint: {args.checkpoint}", flush=True)
     env = SlayTheSpireEnv(ascension=args.ascension)
     model = MaskablePPO.load(args.checkpoint, device=args.device)
+    model.set_random_seed(args.seed)
+    print(
+        f"[eval] loaded {args.checkpoint.name} in "
+        f"{time.monotonic() - load_started:.1f}s; starting {args.episodes} "
+        "full runs from floor 1 (no step limit)",
+        flush=True,
+    )
 
+    rows: list[dict[str, object]] = []
+    death_floors: Counter[int] = Counter()
+    dead_screen_floors: Counter[int] = Counter()
     returns: list[float] = []
     lengths: list[int] = []
-    wins = 0
-    truncations = 0
+    started = time.monotonic()
+    last_report = started
 
-    for episode_index in range(args.episodes):
-        obs, info = env.reset(seed=args.seed + episode_index)
+    try:
+        for episode_index in range(args.episodes):
+            episode_seed = args.seed + episode_index
+            obs, info = env.reset(seed=episode_seed)
+            terminated = truncated = False
+            episode_return = 0.0
+            episode_length = 0
 
-        terminated = False
-        truncated = False
-        episode_return = 0.0
-        episode_length = 0
+            while not (terminated or truncated):
+                action_masks = get_action_masks(env)
+                action, _ = model.predict(
+                    obs,
+                    action_masks=action_masks,
+                    deterministic=not args.stochastic,
+                )
+                obs, reward, terminated, truncated, info = env.step(
+                    int(np.asarray(action).item())
+                )
+                episode_return += float(reward)
+                episode_length += 1
 
-        while not (terminated or truncated):
-            action_masks = get_action_masks(env)
+                now = time.monotonic()
+                if (
+                    args.heartbeat_seconds > 0
+                    and now - last_report >= args.heartbeat_seconds
+                ):
+                    stats = _run_stats(env)
+                    print(
+                        f"[eval] run {episode_index + 1}/{args.episodes}: "
+                        f"floor={stats['floor']} act={stats['act']} "
+                        f"step={episode_length} in progress (no step limit)",
+                        flush=True,
+                    )
+                    last_report = now
 
-            action, _ = model.predict(
-                obs,
-                action_masks=action_masks,
-                deterministic=not args.stochastic,
+            stats = _run_stats(env)
+            floor = int(stats["floor"])
+            act = int(stats["act"])
+            if is_win(env):
+                result = "win"
+            elif truncated and info.get("dead_screen"):
+                result = "dead_screen"
+                dead_screen_floors[floor] += 1
+            elif truncated:
+                # SlayTheSpireEnv currently only truncates unsupported screens;
+                # retain this category so a future truncation cannot become a death.
+                result = "other_truncation"
+            else:
+                result = "death"
+                death_floors[floor] += 1
+
+            returns.append(episode_return)
+            lengths.append(episode_length)
+            rows.append(
+                {
+                    "episode": episode_index + 1,
+                    "seed": episode_seed,
+                    "result": result,
+                    "death_floor": floor if result == "death" else "",
+                    "final_floor": floor,
+                    "final_act": act,
+                    "steps": episode_length,
+                    "raw_return": episode_return,
+                    "outcome": stats["outcome"],
+                }
             )
 
-            action = int(np.asarray(action).item())
+            done = episode_index + 1
+            if args.progress_every > 0 and done % args.progress_every == 0:
+                elapsed = time.monotonic() - started
+                remaining = elapsed / done * (args.episodes - done)
+                print(
+                    f"[eval] {done}/{args.episodes}: seed={episode_seed} "
+                    f"result={result} floor={floor} steps={episode_length} "
+                    f"ETA={remaining / 60:.1f} min",
+                    flush=True,
+                )
+                last_report = time.monotonic()
+    finally:
+        env.close()
 
-            obs, reward, terminated, truncated, info = env.step(action)
+    result_counts = Counter(str(row["result"]) for row in rows)
+    wins = result_counts["win"]
+    deaths = result_counts["death"]
+    elapsed = time.monotonic() - started
+    final_floors = np.asarray([int(row["final_floor"]) for row in rows])
 
-            episode_return += float(reward)
-            episode_length += 1
-
-        returns.append(episode_return)
-        lengths.append(episode_length)
-        wins += int(is_win(env))
-        truncations += int(truncated)
-
-    returns_array = np.asarray(returns, dtype=np.float64)
-    lengths_array = np.asarray(lengths, dtype=np.float64)
-
+    print()
     print(
-        f"[eval] episodes={args.episodes} "
-        f"ascension={args.ascension} "
-        f"deterministic={not args.stochastic}"
+        f"[eval] episodes={args.episodes} ascension={args.ascension} "
+        f"deterministic={not args.stochastic} no_step_limit=True"
+    )
+    print(f"[eval] wins={wins}/{args.episodes} win_rate={wins / args.episodes:.4f}")
+    print(
+        f"[eval] deaths={deaths} dead_screens={result_counts['dead_screen']} "
+        f"other_truncations={result_counts['other_truncation']}"
     )
     print(
-        f"[eval] win_rate={wins / args.episodes:.3f} "
-        f"wins={wins}/{args.episodes}"
+        f"[eval] final_floor_mean={final_floors.mean():.2f} "
+        f"median={np.median(final_floors):.1f}"
+    )
+    print("[eval] death_floor_distribution:")
+    if deaths == 0:
+        print("  (no deaths)")
+    else:
+        for floor in sorted(death_floors):
+            count = death_floors[floor]
+            print(
+                f"  floor={floor:02d} count={count:4d} "
+                f"pct_of_deaths={count / deaths:7.2%} "
+                f"pct_of_all_runs={count / args.episodes:7.2%}"
+            )
+    if dead_screen_floors:
+        print("[eval] dead_screen_floor_distribution (excluded from deaths):")
+        for floor in sorted(dead_screen_floors):
+            print(f"  floor={floor:02d} count={dead_screen_floors[floor]:4d}")
+    print(
+        f"[eval] raw_return={np.mean(returns):.3f} +/- {np.std(returns):.3f}"
     )
     print(
-        f"[eval] raw_return="
-        f"{returns_array.mean():.3f} +/- {returns_array.std():.3f}"
-    )
-    print(
-        f"[eval] episode_length="
-        f"{lengths_array.mean():.1f} +/- {lengths_array.std():.1f}"
+        f"[eval] episode_length={np.mean(lengths):.1f} +/- "
+        f"{np.std(lengths):.1f} elapsed={elapsed:.1f}s"
     )
 
-    if truncations:
-        print(f"[eval] truncated={truncations}/{args.episodes}")
-
-    env.close()
+    if args.output_csv is not None:
+        _write_csv(args.output_csv, rows)
 
 
 if __name__ == "__main__":

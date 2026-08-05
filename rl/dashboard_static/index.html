@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STS-RL 参数检验台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark">S</div>
+    <div class="brand-copy"><strong>STS-RL</strong><span>参数检验台</span></div>
+    <nav class="tabs" aria-label="工作区">
+      <button class="tab active" data-tab="watch">战局回放</button>
+      <button class="tab" data-tab="embedding">白卡向量</button>
+      <button class="tab" data-tab="evaluation">爬塔评测</button>
+    </nav>
+    <div id="checkpointPill" class="checkpoint-pill">未载入参数</div>
+    <button id="replaceButton" class="icon-button" title="载入其他 checkpoint">＋</button>
+  </header>
+
+  <main>
+    <section id="watchView" class="view active">
+      <div class="watch-toolbar">
+        <label>Seed <input id="watchSeed" type="number" value="0"></label>
+        <button id="resetButton">重开</button>
+        <button id="undoButton" class="icon-command" title="撤销上一步"><span>↶</span>撤销</button>
+        <button id="stepButton" class="primary">单步</button>
+        <button id="playButton" class="icon-command"><span id="playIcon">▶</span><span id="playText">自动</span></button>
+        <label>速度
+          <select id="speedSelect">
+            <option value="1200">慢</option><option value="500" selected>正常</option><option value="120">快</option>
+          </select>
+        </label>
+        <span id="watchMeta" class="toolbar-meta"></span>
+      </div>
+
+      <div class="battle-layout">
+        <section id="arena" class="arena" aria-label="模拟战斗场景">
+          <div class="run-hud">
+            <span id="floorStat">第 1 层</span><span id="actStat">Act 1</span>
+            <span id="goldStat">0 金币</span><span id="deckStat">10 张牌</span>
+          </div>
+          <div id="phaseBanner" class="phase-banner">等待 checkpoint</div>
+          <div id="monsters" class="monsters"></div>
+          <div id="overworld" class="overworld-state"></div>
+          <div id="player" class="player-zone"></div>
+          <div id="hand" class="hand"></div>
+          <div id="piles" class="piles"></div>
+        </section>
+
+        <aside class="decision-panel">
+          <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
+          <div id="chosenAction" class="chosen-action">等待模型</div>
+          <div id="actionList" class="action-list"></div>
+          <div class="last-action">
+            <span>上一步</span><strong id="lastAction">—</strong><em id="lastReward">0.000</em>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="embeddingView" class="view">
+      <div class="section-heading">
+        <div><h1>战士白卡向量</h1><p>完整手牌 token，基础版与升级版共同进行 PCA</p></div>
+        <div class="legend"><span><i class="dot base"></i>基础</span><span><i class="dot upgraded"></i>升级</span></div>
+      </div>
+      <div class="plot-shell">
+        <canvas id="embeddingCanvas"></canvas>
+        <div id="plotTooltip" class="plot-tooltip"></div>
+        <div id="variance" class="variance"></div>
+      </div>
+    </section>
+
+    <section id="evaluationView" class="view">
+      <div class="section-heading eval-heading">
+        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，确定性策略，不设置步数上限</p></div>
+        <div class="eval-controls">
+          <label>局数 <input id="evalEpisodes" type="number" min="1" max="10000" value="50"></label>
+          <label>Seed <input id="evalSeed" type="number" value="0"></label>
+          <button id="evalButton">重新评测</button>
+        </div>
+      </div>
+      <div class="metric-strip">
+        <div><span>进度</span><strong id="evalProgress">0 / 0</strong></div>
+        <div><span>平均终止楼层</span><strong id="meanFloor">—</strong></div>
+        <div><span>胜率</span><strong id="winRate">—</strong></div>
+        <div><span>平均步数</span><strong id="meanSteps">—</strong></div>
+        <div><span>预计剩余</span><strong id="evalEta">—</strong></div>
+      </div>
+      <div class="progress-track"><div id="evalProgressBar"></div></div>
+      <div class="distribution-shell">
+        <div class="distribution-title"><h2>死亡楼层分布</h2><span id="evalStatus">等待参数</span></div>
+        <canvas id="distributionCanvas"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <div id="uploadOverlay" class="upload-overlay">
+    <div class="upload-dialog">
+      <button id="closeUploadButton" class="close-upload" title="关闭上传窗口">×</button>
+      <div class="upload-title"><span class="brand-mark large">S</span><div><h1>载入模型参数</h1><p>上传后自动准备三项测试</p></div></div>
+      <label id="dropzone" class="dropzone">
+        <input id="fileInput" type="file" accept=".zip" hidden>
+        <span class="upload-symbol">⇧</span>
+        <strong>拖入 MaskablePPO .zip</strong>
+        <span>或点击选择 checkpoint</span>
+      </label>
+      <label class="upload-option">自动评测局数 <input id="uploadEpisodes" type="number" min="1" max="10000" value="50"></label>
+      <div id="uploadStatus" class="upload-status">文件只保存在本机 rl/runs/dashboard/uploads</div>
+    </div>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
