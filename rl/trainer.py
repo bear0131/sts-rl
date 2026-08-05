@@ -19,7 +19,6 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import (
     CallbackList,
     CheckpointCallback,
@@ -31,6 +30,7 @@ from stable_baselines3.common.vec_env import (
 )
 
 from rl.tasks import TASKS
+from rl.accumulating_ppo import AccumulatingMaskablePPO
 
 
 def build_parser(task) -> argparse.ArgumentParser:
@@ -57,6 +57,14 @@ def build_parser(task) -> argparse.ArgumentParser:
     parser.add_argument("--n-envs", type=int, default=8)
     parser.add_argument("--n-steps", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Number of PPO micro-batches to average before one optimizer "
+             "step. Effective batch size is --batch-size times this value; "
+             "GPU peak memory is governed by --batch-size.",
+    )
     parser.add_argument(
         "--vec",
         choices=["subproc", "dummy"],
@@ -168,12 +176,22 @@ def main() -> None:
         raise ValueError("--n-steps must be at least 1")
     if args.batch_size < 1:
         raise ValueError("--batch-size must be at least 1")
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError("--gradient-accumulation-steps must be at least 1")
 
     rollout_size = args.n_envs * args.n_steps
     if rollout_size % args.batch_size != 0:
         raise ValueError(
             "batch_size must divide n_envs * n_steps: "
             f"{args.batch_size} does not divide {rollout_size}"
+        )
+    micro_batches = rollout_size // args.batch_size
+    if micro_batches % args.gradient_accumulation_steps != 0:
+        raise ValueError(
+            "n_envs * n_steps / batch_size must be divisible by "
+            "gradient_accumulation_steps: "
+            f"{micro_batches} micro-batches do not divide into groups of "
+            f"{args.gradient_accumulation_steps}"
         )
 
     # Unique run id (start timestamp) so each run gets its own out_dir and wandb
@@ -240,12 +258,13 @@ def main() -> None:
 
     if not args.resume:
         policy, policy_kwargs = task.build_policy(args)
-        model = MaskablePPO(
+        model = AccumulatingMaskablePPO(
             policy=policy,
             env=venv,
             learning_rate=args.learning_rate,
             n_steps=args.n_steps,
             batch_size=args.batch_size,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
@@ -264,7 +283,7 @@ def main() -> None:
         # params come from the zip; env + device + tensorboard sink are rebound
         # here, and the CLI-tunable PPO knobs override via custom_objects
         # (everything else in the .zip wins).
-        model = MaskablePPO.load(
+        model = AccumulatingMaskablePPO.load(
             args.resume,
             env=venv,
             device=args.device,
@@ -277,6 +296,10 @@ def main() -> None:
                 "gae_lambda": args.gae_lambda,
                 "vf_coef": args.vf_coef,
                 "n_epochs": args.n_epochs,
+                "batch_size": args.batch_size,
+                "gradient_accumulation_steps": (
+                    args.gradient_accumulation_steps
+                ),
             },
         )
         print(f"[trainer] resumed from {args.resume} @ {model.num_timesteps} steps")
@@ -288,7 +311,9 @@ def main() -> None:
         # Copy only the policy weights (encoder + heads) from the pretrained
         # checkpoint; the freshly built model keeps its step-0 counter and fresh
         # optimizer state. Same obs/action space + arch => strict load.
-        pretrained = MaskablePPO.load(args.init_from, device=args.device)
+        pretrained = AccumulatingMaskablePPO.load(
+            args.init_from, device=args.device
+        )
         model.policy.load_state_dict(pretrained.policy.state_dict())
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")
@@ -308,6 +333,9 @@ def main() -> None:
     print(
         f"[trainer] task={task.name} steps={args.steps} n_envs={args.n_envs} "
         f"vec={args.vec} rollout={rollout_size} ascension={args.ascension} "
+        f"micro_batch={args.batch_size} "
+        f"grad_accum={args.gradient_accumulation_steps} "
+        f"effective_batch={args.batch_size * args.gradient_accumulation_steps} "
         f"ent_coef={args.ent_coef} lr={args.learning_rate}"
     )
 
