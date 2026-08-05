@@ -2,6 +2,7 @@
 // Created by keega on 9/27/2021.
 //
 
+#include <algorithm>
 #include <sim/search/SimpleAgent.h>
 #include <game/Game.h>
 #include "sim/PrintHelpers.h"

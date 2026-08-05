@@ -2,6 +2,7 @@
 // Created by gamerpuppy on 8/21/2021.
 //
 
+#include <algorithm>
 #include "combat/Monster.h"
 #include "game/Random.h"
 #include "combat/BattleContext.h"

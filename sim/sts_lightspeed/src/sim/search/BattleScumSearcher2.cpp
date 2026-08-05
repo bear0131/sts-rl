@@ -2,6 +2,7 @@
 // Created by keega on 9/18/2021.
 //
 
+#include <algorithm>
 #include "sim/search/BattleScumSearcher2.h"
 #include "sim/search/ExpertKnowledge.h"
 

@@ -31,6 +31,17 @@ torch = [
     { index = "pytorch-cu132", marker = "sys_platform != 'darwin'" },
 ]
 
+[dependency-groups]
+dev = [
+    "plotly>=6.9.0",
+    "tensorboard>=2.21.0",
+    "wandb>=0.28.1",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
 [[tool.uv.index]]
 name = "pytorch-cu132"
 url = "https://download.pytorch.org/whl/cu132"

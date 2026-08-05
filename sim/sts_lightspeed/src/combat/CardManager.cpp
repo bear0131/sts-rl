@@ -2,6 +2,7 @@
 // Created by gamerpuppy on 7/24/2021.
 //
 
+#include <algorithm>
 #include "combat/CardManager.h"
 #include "combat/BattleContext.h"
 

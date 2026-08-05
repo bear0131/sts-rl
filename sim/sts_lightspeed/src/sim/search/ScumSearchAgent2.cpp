@@ -2,6 +2,7 @@
 // Created by keega on 9/19/2021.
 //
 
+#include <algorithm>
 #include "sim/search/ScumSearchAgent2.h"
 
 #include <sim/search/ExpertKnowledge.h>

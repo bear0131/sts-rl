@@ -115,7 +115,12 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     py::list hand;
     for (int i = 0; i < bc.cards.cardsInHand; ++i) {
         const auto &c = bc.cards.hand[i];
-        hand.append(py::make_tuple(sts::cardEnumStrings[static_cast<int>(c.getId())], c.getUpgradeCount()));
+        const int currentCost = c.freeToPlayOnce ? 0 : c.costForTurn;
+        hand.append(py::make_tuple(
+            sts::cardEnumStrings[static_cast<int>(c.getId())],
+            c.getUpgradeCount(),
+            currentCost
+        ));
     }
     d["hand"] = hand;
     d["draw"] = cardPileToList(bc.cards.drawPile);

@@ -14,7 +14,8 @@ localized `name` field, which is GBK-localized and unstable):
     "monsters": [
       {"id", "hp", "max_hp", "block", "gone", "base_damage", "hits",
        "powers": {power_id: amount}}, ...],   # real side also carries intent/move_id (diff ignores)
-    "hand"/"draw"/"discard"/"exhaust": [{"id", "up"}, ...],
+    "hand": [{"id", "up", "cost"}, ...],
+    "draw"/"discard"/"exhaust": [{"id", "up"}, ...],
   }
 
 - normalize_real(game_state): from a CommunicationMod frame.
@@ -42,13 +43,24 @@ def _powers_real(power_list):
 # The cards behave identically either way, so canonicalize the upgrade to 0.
 _NO_UPGRADE = {"Dazed", "Wound", "Slimed", "Void"}  # Burn excluded (Burn+ exists)
 
+# The generated model vocabulary title-cases enum words. Normalize the one
+# CommunicationMod id whose preposition casing differs from that convention.
+_CARD_CANON_ID = {"Blood for Blood": "Blood For Blood"}
 
-def _card(card_id, up):
-    return {"id": card_id, "up": 0 if card_id in _NO_UPGRADE else up}
+
+def _card(card_id, up, cost=None):
+    card_id = _CARD_CANON_ID.get(card_id, card_id)
+    card = {"id": card_id, "up": 0 if card_id in _NO_UPGRADE else up}
+    if cost is not None:
+        card["cost"] = cost
+    return card
 
 
-def _cards_real(pile):
-    return [_card(c["id"], c["upgrades"]) for c in pile]
+def _cards_real(pile, *, include_cost=False):
+    return [
+        _card(c["id"], c["upgrades"], c.get("cost") if include_cost else None)
+        for c in pile
+    ]
 
 
 def _attack(base, hits):
@@ -104,7 +116,7 @@ def normalize_real(game_state):
             "powers": _powers_real(p["powers"]),
         },
         "monsters": [_monster_real(m) for m in cs["monsters"]],
-        "hand": _cards_real(cs["hand"]),
+        "hand": _cards_real(cs["hand"], include_cost=True),
         "draw": _cards_real(cs["draw_pile"]),
         "discard": _cards_real(cs["discard_pile"]),
         "exhaust": _cards_real(cs["exhaust_pile"]),
@@ -251,7 +263,7 @@ def normalize_sim(raw):
             _norm_sim_monster(m) for m in raw["monsters"]
             if m["id"] != _SIM_MONSTER_INVALID
         ],
-        "hand": [_card(_sim_card_id(n), u) for n, u in raw["hand"]],
+        "hand": [_card(_sim_card_id(n), u, cost) for n, u, cost in raw["hand"]],
         "draw": [_card(_sim_card_id(n), u) for n, u in raw["draw"]],
         "discard": [_card(_sim_card_id(n), u) for n, u in raw["discard"]],
         "exhaust": [_card(_sim_card_id(n), u) for n, u in raw["exhaust"]],

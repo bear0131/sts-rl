@@ -2,6 +2,7 @@
 // Created by gamerpuppy on 7/4/2021.
 //
 
+#include <algorithm>
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "game/Game.h"
@@ -1315,7 +1316,7 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::DISARM:
-            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, -2, false) );
+            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -3 : -2, false) );
             break;
 
         case CardId::DISCOVERY:

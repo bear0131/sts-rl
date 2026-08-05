@@ -16,6 +16,7 @@ from env.core import actions
 from env.core import render
 from env.core import intents
 from env.core import vocab as V
+from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 
 
 # ------------------------------ fixtures ------------------------------
@@ -37,8 +38,9 @@ def _fake_combat():
              "base_damage": 0, "hits": 0, "powers": {},
              "move": "INVALID", "move_id": 0},
         ],
-        "hand": [{"id": "Strike_R", "up": 0}, {"id": "Bash", "up": 0},
-                 {"id": "Defend_R", "up": 1}],
+        "hand": [{"id": "Strike_R", "up": 0, "cost": 0},
+                 {"id": "Bash", "up": 0, "cost": 2},
+                 {"id": "Defend_R", "up": 1, "cost": 1}],
         "draw": [{"id": "Strike_R", "up": 0}, {"id": "Strike_R", "up": 0}],
         "discard": [{"id": "Defend_R", "up": 0}],
         "exhaust": [],
@@ -89,6 +91,20 @@ def test_vocab_invariants():
           f"M{len(V.MONSTER_BUFF_VOCAB)}")
 
 
+# ------------------------------ card table ------------------------------
+
+def test_ironclad_card_table():
+    from env.core.cards_vocab import CARD_INDEX
+
+    assert len(IRONCLAD_CARDS) == 75
+    assert all(card_id in CARD_INDEX for card_id in IRONCLAD_CARDS)
+    assert all(info.effect_en and info.effect_zh for info in IRONCLAD_CARDS.values())
+    assert card_numbers("Disarm", 1) == (1, 0, 0)
+    assert card_numbers("Infernal Blade", 1) == (0, 0, 0)
+    assert card_numbers("Searing Blow", 10) == (2, 97, 0)
+    print("Ironclad card table OK (75 bilingual wiki-backed entries)")
+
+
 # ------------------------------ intents ------------------------------
 
 def test_intent_derivation():
@@ -133,6 +149,9 @@ def test_combat_fields_land():
     assert o["monster_move"][0] == 87
     assert o["monster_intent_cat"][0] == V.INTENT_CATEGORY_INDEX["attack"]
     assert o["hand_ids"][1] == CARD_INDEX["Bash"]
+    assert o["hand_costs"][0] == 0.0  # current cost overrides printed cost
+    assert abs(o["hand_damage"][0] - 6 / encode.DMG_SCALE) < 1e-6
+    assert abs(o["hand_block"][2] - 8 / encode.BLOCK_SCALE) < 1e-6
     assert o["draw_counts"][CARD_INDEX["Strike_R"]] == 2.0
     print("combat fields land OK")
 
@@ -193,6 +212,7 @@ def test_render():
 
 if __name__ == "__main__":
     test_vocab_invariants()
+    test_ironclad_card_table()
     test_intent_derivation()
     test_obs_matches_space()
     test_combat_fields_land()

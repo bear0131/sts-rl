@@ -30,7 +30,8 @@ overworld-only canonical both encode):
     turn      : combat turn (int)
     player    : {hp,max_hp,block,energy,powers}
     monsters  : [{id,hp,max_hp,block,gone,base_damage,hits,powers,move,move_id}]
-    hand/draw/discard/exhaust : [{id,up}, ...]
+    hand      : [{id,up,cost}, ...] (cost is current cost for this turn)
+    draw/discard/exhaust : [{id,up}, ...]
     global    : {character,ascension,act,floor,boss,relics,potions,gold,deck,boss_relics}
     options   : phase-specific decision context (map nodes / card offers / ...)
 """
@@ -39,6 +40,7 @@ import numpy as np
 from gymnasium import spaces
 
 from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
+from .ironclad_cards import card_numbers
 from . import vocab as V
 from . import intents
 
@@ -52,7 +54,7 @@ from . import intents
 # select_hand_mask (obs_design §4.2): a hand-aligned 0/1 vector of the cards the
 # thin env has TOGGLED on a combat MULTI screen (Exhaust Many / Gamble), so the
 # feed-forward policy sees its own pending pick (mask != obs, §0.5).
-OBS_VERSION = 6
+OBS_VERSION = 7
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -121,6 +123,9 @@ def obs_space():
         # ---- combat piles ----
         "hand_ids": cat((HAND_SLOTS,), N_CARDS),
         "hand_upgrades": scal((HAND_SLOTS,)),
+        "hand_costs": scal((HAND_SLOTS,)),
+        "hand_damage": scal((HAND_SLOTS,)),
+        "hand_block": scal((HAND_SLOTS,)),
         "draw_counts": scal((N_CARDS,)),
         "discard_counts": scal((N_CARDS,)),
         "exhaust_counts": scal((N_CARDS,)),
@@ -195,6 +200,9 @@ def _empty():
         "monster_buffs": np.zeros((MAX_MONSTERS, V.MONSTER_BUFF_VEC), _SCALAR),
         "hand_ids": np.zeros(HAND_SLOTS, _CAT),
         "hand_upgrades": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_costs": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_damage": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_block": np.zeros(HAND_SLOTS, _SCALAR),
         "draw_counts": np.zeros(N_CARDS, _SCALAR),
         "discard_counts": np.zeros(N_CARDS, _SCALAR),
         "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
@@ -286,7 +294,16 @@ def _encode_combat(o, canon):
     for i in range(HAND_SLOTS):
         if i < len(hand):
             o["hand_ids"][i] = _card_idx(hand[i])
-            o["hand_upgrades"][i] = hand[i].get("up", 0) / UPGRADE_SCALE
+            upgrades = hand[i].get("up", 0)
+            o["hand_upgrades"][i] = upgrades / UPGRADE_SCALE
+            numbers = card_numbers(hand[i]["id"], upgrades)
+            if numbers is not None:
+                printed_cost, damage, block = numbers
+                o["hand_costs"][i] = hand[i].get("cost", printed_cost) / ENERGY_SCALE
+                o["hand_damage"][i] = damage / DMG_SCALE
+                o["hand_block"][i] = block / BLOCK_SCALE
+            elif "cost" in hand[i]:
+                o["hand_costs"][i] = hand[i]["cost"] / ENERGY_SCALE
     for pile, key in (("draw", "draw_counts"), ("discard", "discard_counts"),
                       ("exhaust", "exhaust_counts")):
         for c in canon.get(pile, []):

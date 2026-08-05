@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from env.core.combat_env import SimCombatEnv
 from env.core import actions
+import slaythespire as sts
 
 
 def _check_obs(env, obs):
@@ -82,8 +83,39 @@ def _check_all_encounters_spawn():
     print("OK — all act-1 encounter names resolve to >=1 monster.")
 
 
+def _check_wiki_card_corrections():
+    def battle(card, upgraded):
+        gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 42, 0)
+        gc.floor_num = 1
+        gc.set_deck([(card, upgraded)] * 10)
+        return sts.create_battle(gc, "Cultist")
+
+    def play_first(bc):
+        action = next(
+            a for a in bc.legal_actions()
+            if a.action_type == sts.ActionType.CARD and a.source_idx == 0
+        )
+        bc.execute(action)
+
+    bc = battle("INFERNAL_BLADE", 1)
+    assert all(cost == 0 for _, _, cost in bc.to_dict()["hand"])
+
+    bc = battle("SEEING_RED", 0)
+    play_first(bc)
+    state = bc.to_dict()
+    assert state["player"]["energy"] == 4
+    assert any(card[0] == "SEEING_RED" for card in state["exhaust"])
+
+    bc = battle("DISARM", 1)
+    play_first(bc)
+    powers = dict(bc.to_dict()["monsters"][0]["powers"])
+    assert powers.get("Strength") == -3
+    print("OK - wiki corrections: Infernal Blade+, Seeing Red, Disarm+.")
+
+
 def main():
     _check_all_encounters_spawn()
+    _check_wiki_card_corrections()
     rng = np.random.default_rng(0)
     n_per_pool = 5
     for pool in ("normal", "elite", "boss"):

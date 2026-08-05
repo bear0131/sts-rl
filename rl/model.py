@@ -221,7 +221,9 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         # (role, n_slots, id_key, shared_emb, [(scalar_key, width), ...])
         self.generic = [
             ("hand",        self._n("hand_ids"),        "hand_ids",        "card",
-                [("hand_upgrades", 1), ("select_hand_mask", 1)]),
+                [("hand_upgrades", 1), ("hand_costs", 1),
+                 ("hand_damage", 1), ("hand_block", 1),
+                 ("select_hand_mask", 1)]),
             ("offer",       self._n("offer_card_ids"),  "offer_card_ids",  "card", []),
             ("select",      self._n("select_card_ids"), "select_card_ids", "card", []),
             ("selected",    self._n("selected_card_ids"),"selected_card_ids","card", []),
