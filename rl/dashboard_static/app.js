@@ -4,7 +4,9 @@ let playing = false;
 let stepping = false;
 let plotPoints = [];
 let plotScreenPoints = [];
+let distributionBars = [];
 let uploadManuallyOpen = false;
+let watchSeedDirty = false;
 
 const zhCards = {
   Strike_R: "打击", Defend_R: "防御", Bash: "痛击", Anger: "愤怒",
@@ -42,7 +44,15 @@ document.querySelectorAll(".tab").forEach(button => button.addEventListener("cli
 const dropzone = $("dropzone");
 ["dragenter", "dragover"].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.add("drag"); }));
 ["dragleave", "drop"].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.remove("drag"); }));
-dropzone.addEventListener("drop", event => uploadFile(event.dataTransfer.files[0]));
+dropzone.addEventListener("drop", event => {
+  const files = [...event.dataTransfer.files];
+  if (files.length !== 1) {
+    $("uploadStatus").classList.add("error");
+    $("uploadStatus").textContent = "请只拖入一个 .zip checkpoint 文件";
+    return;
+  }
+  uploadFile(files[0]);
+});
 $("fileInput").addEventListener("change", event => uploadFile(event.target.files[0]));
 $("replaceButton").addEventListener("click", () => {
   uploadManuallyOpen = true;
@@ -56,7 +66,22 @@ $("closeUploadButton").addEventListener("click", () => {
 
 async function uploadFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".zip")) { $("uploadStatus").textContent = "请选择 .zip checkpoint"; return; }
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    $("uploadStatus").classList.add("error");
+    $("uploadStatus").textContent = "请选择 .zip checkpoint";
+    return;
+  }
+  const signature = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const zipSignature = signature.length === 4 && signature[0] === 0x50 && signature[1] === 0x4b && (
+    (signature[2] === 0x03 && signature[3] === 0x04) ||
+    (signature[2] === 0x05 && signature[3] === 0x06) ||
+    (signature[2] === 0x07 && signature[3] === 0x08)
+  );
+  if (!zipSignature) {
+    $("uploadStatus").classList.add("error");
+    $("uploadStatus").textContent = "文件扩展名是 .zip，但内容不是 ZIP；请重新下载 checkpoint";
+    return;
+  }
   $("uploadStatus").classList.remove("error");
   $("uploadStatus").textContent = `正在上传并加载 ${file.name}…`;
   dropzone.style.pointerEvents = "none";
@@ -77,8 +102,16 @@ async function uploadFile(file) {
 
 $("resetButton").addEventListener("click", async () => {
   pause();
-  try { appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed: Number($("watchSeed").value)}), headers:{"Content-Type":"application/json"}}); renderWatch(); }
+  try {
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed: Number($("watchSeed").value)}), headers:{"Content-Type":"application/json"}});
+    watchSeedDirty = false;
+    renderWatch();
+  }
   catch (e) { toast(e.message); }
+});
+$("watchSeed").addEventListener("input", () => { watchSeedDirty = true; });
+$("watchSeed").addEventListener("keydown", event => {
+  if (event.key === "Enter") $("resetButton").click();
 });
 $("undoButton").addEventListener("click", async () => {
   pause();
@@ -90,7 +123,16 @@ $("playButton").addEventListener("click", () => { playing ? pause() : play(); })
 async function stepOnce() {
   if (stepping || !appState?.watch || appState.watch.done) return;
   stepping = true; $("stepButton").disabled = true;
-  try { appState.watch = await api("/api/watch/step", {method:"POST"}); renderWatch(); }
+  const transition = captureCombatTransition(appState.watch);
+  try {
+    const [nextWatch] = await Promise.all([
+      api("/api/watch/step", {method:"POST"}),
+      animateSelectedCard(transition.animation)
+    ]);
+    appState.watch = nextWatch;
+    renderWatch();
+    playCombatOutcome(transition, nextWatch);
+  }
   catch (e) { pause(); toast(e.message); }
   finally { stepping = false; $("stepButton").disabled = false; }
 }
@@ -127,10 +169,85 @@ function intentLabel(monster) {
   return "技能意图";
 }
 
+function captureCombatTransition(w) {
+  const canon = w?.canon || {}, animation = w?.decision?.animation || null;
+  const target = animation?.kind === "target"
+    ? document.querySelector(`.monster[data-slot="${animation.slot}"]`)
+    : null;
+  const targetRect = target?.getBoundingClientRect();
+  return {
+    animation,
+    playerHp: canon.player?.hp,
+    enemyAttackExpected: (canon.monsters || []).reduce((total, monster) => total + (
+      monster.gone ? 0 : Math.max(0, monster.base_damage || 0) * Math.max(1, monster.hits || 1)
+    ), 0),
+    monsters: (canon.monsters || []).map(monster => ({hp: monster.hp, block: monster.block, gone: monster.gone})),
+    targetPoint: targetRect ? {x: targetRect.left + targetRect.width / 2, y: targetRect.top + targetRect.height / 2} : null
+  };
+}
+
+function animateSelectedCard(animation) {
+  if (animation?.kind !== "play_card") return Promise.resolve();
+  const card = document.querySelector(`.game-card[data-slot="${animation.slot}"]`);
+  if (!card) return Promise.resolve();
+  const rect = card.getBoundingClientRect(), clone = card.cloneNode(true);
+  clone.classList.add("card-flight");
+  Object.assign(clone.style, {left:`${rect.left}px`, top:`${rect.top}px`, width:`${rect.width}px`, height:`${rect.height}px`});
+  document.body.appendChild(clone);
+  card.classList.add("card-playing");
+  requestAnimationFrame(() => clone.classList.add("active"));
+  return new Promise(resolve => setTimeout(() => { clone.remove(); resolve(); }, 340));
+}
+
+function combatText(text, point, className = "") {
+  if (!point) return;
+  const arena = $("arena"), rect = arena.getBoundingClientRect(), node = document.createElement("div");
+  node.className = `combat-text ${className}`;
+  node.textContent = text;
+  node.style.left = `${point.x - rect.left}px`;
+  node.style.top = `${point.y - rect.top}px`;
+  arena.appendChild(node);
+  setTimeout(() => node.remove(), 850);
+}
+
+function playCombatOutcome(before, after) {
+  const canon = after?.canon || {}, nextMonsters = canon.monsters || [];
+  if (before.playerHp != null && canon.player?.hp != null) {
+    const lost = Math.max(0, before.playerHp - canon.player.hp);
+    const attacked = before.animation?.kind === "end_turn" && before.enemyAttackExpected > 0;
+    if (lost > 0 || attacked) {
+      const player = document.querySelector(".player-avatar"), figure = document.querySelector(".player-figure");
+      const hitClass = lost > 0 ? "player-hit" : "player-blocked";
+      player?.classList.add(hitClass);
+      setTimeout(() => player?.classList.remove(hitClass), 430);
+      const rect = figure?.getBoundingClientRect();
+      if (lost > 0) combatText(`-${lost}`, rect ? {x:rect.left + rect.width/2, y:rect.top} : null, "player-damage");
+    }
+  }
+  before.monsters.forEach((monster, slot) => {
+    const next = nextMonsters[slot];
+    if (!next) return;
+    const hpLost = Math.max(0, monster.hp - next.hp);
+    const blockLost = Math.max(0, monster.block - next.block);
+    const wasTargeted = before.animation?.kind === "target" && before.animation.slot === slot;
+    if (!hpLost && !blockLost && !wasTargeted) return;
+    const target = document.querySelector(`.monster[data-slot="${slot}"]`);
+    target?.classList.add("monster-hit");
+    setTimeout(() => target?.classList.remove("monster-hit"), 430);
+    const rect = target?.getBoundingClientRect();
+    const point = rect
+      ? {x:rect.left + rect.width/2, y:rect.top + rect.height/2}
+      : (wasTargeted ? before.targetPoint : null);
+    if (hpLost > 0) combatText(`-${hpLost}`, point, "monster-damage");
+  });
+}
+
 function renderWatch() {
   const w = appState?.watch;
   if (!w) return;
-  $("watchSeed").value = w.seed;
+  if (!watchSeedDirty && document.activeElement !== $("watchSeed")) {
+    $("watchSeed").value = w.seed;
+  }
   $("watchMeta").textContent = `step ${w.step} · return ${Number(w.total_reward).toFixed(2)}`;
   $("undoButton").disabled = !w.can_undo;
   $("stepButton").disabled = w.done;
@@ -141,15 +258,20 @@ function renderWatch() {
   $("deckStat").textContent = `${(global.deck || canon.deck || []).length} 张牌`;
   $("phaseBanner").textContent = w.done ? (w.won ? "胜利" : "本局结束") : (phaseNames[w.phase] || w.phase || "等待");
   const combat = w.phase === "combat" && canon.player;
-  $("monsters").innerHTML = combat ? (canon.monsters || []).filter(m => !m.gone).map((m, i) => {
+  $("monsters").innerHTML = combat ? (canon.monsters || []).map((m, slot) => ({m, slot})).filter(({m}) => !m.gone).map(({m, slot}) => {
     const hp = Math.max(0, Math.min(100, 100 * m.hp / Math.max(1, m.max_hp)));
     const intent = intentLabel(m);
-    return `<div class="monster"><div class="intent">${escapeHtml(intent)}</div><div class="monster-figure">${i + 1}</div><div class="monster-name">${escapeHtml(m.id)}</div><div class="hpbar"><i style="width:${hp}%"></i></div><div class="monster-stats">${m.hp}/${m.max_hp} HP · ${m.block} 格挡</div><div class="power-row">${escapeHtml(powersText(m.powers))}</div></div>`;
+    return `<div class="monster" data-slot="${slot}"><div class="intent">${escapeHtml(intent)}</div><div class="monster-figure">${slot + 1}</div><div class="monster-name">${escapeHtml(m.id)}</div><div class="hpbar"><i style="width:${hp}%"></i></div><div class="monster-stats">${m.hp}/${m.max_hp} HP · ${m.block} 格挡</div><div class="power-row">${escapeHtml(powersText(m.powers))}</div></div>`;
   }).join("") : "";
-  $("player").innerHTML = combat ? `<div class="player-avatar"><div class="player-figure">战</div><div class="player-copy"><strong>铁甲战士</strong><div>${canon.player.hp}/${canon.player.max_hp} HP · ${canon.player.block} 格挡</div><div class="energy">${canon.player.energy} 能量 · 回合 ${canon.turn}</div><div class="power-row">${escapeHtml(powersText(canon.player.powers))}</div></div></div>` : "";
-  $("hand").innerHTML = combat ? (canon.hand || []).map(card => {
+  if (combat) {
+    const hpPct = Math.max(0, Math.min(100, 100 * canon.player.hp / Math.max(1, canon.player.max_hp)));
+    const blockPct = Math.max(0, Math.min(100, 100 * canon.player.block / 20));
+    $("player").innerHTML = `<div class="player-avatar"><div class="energy-orb" title="当前能量"><strong>${canon.player.energy}</strong><span>能量</span></div><div class="player-core"><div class="player-figure">战</div><div class="resource-block hp-resource"><div><span>生命</span><b>${canon.player.hp}/${canon.player.max_hp}</b></div><div class="resource-track"><i style="width:${hpPct}%"></i></div></div><div class="resource-block block-resource"><div><span>格挡</span><b>${canon.player.block}</b></div><div class="resource-track"><i style="width:${blockPct}%"></i></div></div></div><div class="player-copy"><strong>铁甲战士</strong><div>回合 ${canon.turn}</div><div class="power-row">${escapeHtml(powersText(canon.player.powers))}</div></div></div>`;
+  } else $("player").innerHTML = "";
+  $("hand").innerHTML = combat ? (canon.hand || []).map((card, slot) => {
     const cost = card.cost ?? "?"; const id = card.id; const cls = ["Defend_R","Armaments","Flex","Havoc","Shrug It Off","True Grit","Warcry"].includes(id) ? "skill" : "";
-    return `<div class="game-card ${cls}"><span class="cost">${cost}</span><strong>${escapeHtml(cardName(card))}</strong><small>${escapeHtml(id)}</small></div>`;
+    const committed = w.pending_card_slot === slot ? "card-committed" : "";
+    return `<div class="game-card ${cls} ${committed}" data-slot="${slot}"><span class="cost">${cost}</span><strong>${escapeHtml(cardName(card))}</strong><small>${escapeHtml(id)}</small></div>`;
   }).join("") : "";
   $("piles").textContent = combat ? `抽牌 ${canon.draw?.length || 0}　弃牌 ${canon.discard?.length || 0}　消耗 ${canon.exhaust?.length || 0}` : "";
   $("overworld").classList.toggle("visible", !combat);
@@ -214,12 +336,21 @@ function renderEvaluation() {
   drawDistribution();
 }
 function drawDistribution() {
-  const canvas=$("distributionCanvas"); if(!canvas.offsetParent)return; const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h);
-  const data=appState?.evaluation?.death_floors||{}, floors=Object.keys(data).map(Number).sort((a,b)=>a-b); if(!floors.length){ctx.fillStyle="#8f9993";ctx.fillText("评测完成后显示死亡楼层",30,45);return;}
+  const canvas=$("distributionCanvas"); if(!canvas.offsetParent)return; const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h); distributionBars=[];
+  const data=appState?.evaluation?.death_floors||{}, floors=Object.keys(data).map(Number).sort((a,b)=>a-b); if(!floors.length){ctx.fillStyle="#8f9993";ctx.fillText("评测完成后显示死亡楼层",30,45);$("distributionTooltip").style.display="none";return;}
   const max=Math.max(...floors.map(f=>data[f])), left=42,bottom=35,top=20,barW=(w-left-20)/floors.length;
   ctx.strokeStyle="#46514b";ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(left,h-bottom);ctx.lineTo(w-15,h-bottom);ctx.stroke();ctx.textAlign="center";ctx.font="11px Segoe UI";
-  floors.forEach((f,i)=>{const bh=(h-bottom-top)*data[f]/max,x=left+i*barW+2;ctx.fillStyle=f===16?"#d0a94f":"#be4c43";ctx.fillRect(x,h-bottom-bh,Math.max(3,barW-4),bh);ctx.fillStyle="#aeb5b0";if(floors.length<25||i%2===0)ctx.fillText(f,x+(barW-4)/2,h-16);if(barW>24)ctx.fillText(data[f],x+(barW-4)/2,h-bottom-bh-5);});
+  floors.forEach((f,i)=>{const bh=(h-bottom-top)*data[f]/max,x=left+i*barW+2,bw=Math.max(3,barW-4),y=h-bottom-bh;distributionBars.push({floor:f,count:data[f],x,y,w:bw,h:bh});ctx.fillStyle=f===16?"#d0a94f":"#be4c43";ctx.fillRect(x,y,bw,bh);ctx.fillStyle="#aeb5b0";if(floors.length<25||i%2===0)ctx.fillText(f,x+bw/2,h-16);if(barW>24)ctx.fillText(data[f],x+bw/2,y-5);});
 }
+$("distributionCanvas").addEventListener("mousemove", event => {
+  const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;
+  const bar=distributionBars.find(item=>x>=item.x&&x<=item.x+item.w&&y>=item.y&&y<=item.y+item.h),tip=$("distributionTooltip");
+  if(!bar){tip.style.display="none";return;}
+  const seeds=appState?.evaluation?.death_seeds?.[bar.floor]||[],shown=seeds.slice(0,12),more=Math.max(0,seeds.length-shown.length);
+  tip.innerHTML=`<strong>第 ${bar.floor} 层 · ${bar.count} 次死亡</strong><br>Seeds：${shown.map(escapeHtml).join("、")}${more?`<br>另有 ${more} 个 seed`:""}`;
+  tip.style.display="block";tip.style.left=`${Math.min(canvas.offsetLeft+x+14,canvas.parentElement.clientWidth-260)}px`;tip.style.top=`${Math.max(48,canvas.offsetTop+y-58)}px`;
+});
+$("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
   try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.evaluation=fresh.evaluation;} renderAll(); }

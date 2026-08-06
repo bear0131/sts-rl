@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import mimetypes
+import os
 import re
 import threading
 import time
@@ -20,6 +21,7 @@ from urllib.parse import urlparse
 import numpy as np
 from sb3_contrib import MaskablePPO
 
+from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.eval import is_win
 from rl.visualize_card_vectors import extract_state_dict_vectors, pca_project
@@ -115,20 +117,37 @@ class WatchSession:
             "action": chosen,
             "label": self.env.describe_action(chosen),
             "value": value,
+            "animation": self._action_animation(chosen),
             "top_actions": [
                 {"action": aid, "label": self.env.describe_action(aid), "prob": prob}
                 for aid, prob in ranked
             ],
         }
 
+    def _action_animation(self, action: int):
+        play_base = A.seg_base("PLAY_CARD")
+        target_base = A.seg_base("PICK_TARGET")
+        if play_base <= action < play_base + A.HAND_SLOTS:
+            return {"kind": "play_card", "slot": action - play_base}
+        if target_base <= action < target_base + A.MAX_MONSTERS:
+            return {"kind": "target", "slot": action - target_base}
+        if action == A.seg_base("END_TURN"):
+            return {"kind": "end_turn"}
+        return None
+
     def step(self):
         if self.decision is None:
             return self.snapshot()
         action = int(self.decision["action"])
         label = self.decision["label"]
+        animation = self.decision.get("animation")
         self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
         self.history.append(action)
-        self.last_action = {"action": action, "label": label}
+        self.last_action = {
+            "action": action,
+            "label": label,
+            "animation": animation,
+        }
         self.last_reward = float(reward)
         self.total_reward += float(reward)
         self._prepare_decision()
@@ -156,6 +175,12 @@ class WatchSession:
     def snapshot(self):
         canon = self.env.unwrapped.thick.obs_canonical()
         stats = self.info.get("run_stats", {}) if self.info else {}
+        pending = self.env._pending
+        pending_card_slot = (
+            int(pending[1])
+            if pending is not None and pending[0] == "play"
+            else None
+        )
         return _jsonable({
             "seed": self.seed,
             "step": len(self.history),
@@ -169,6 +194,7 @@ class WatchSession:
             "last_action": self.last_action,
             "decision": self.decision,
             "phase": self.info.get("phase") if self.info else None,
+            "pending_card_slot": pending_card_slot,
             "stats": stats,
             "canon": canon,
         })
@@ -253,6 +279,7 @@ class DashboardState:
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
                 "seed": seed, "started_at": time.time(), "death_floors": {},
+                "death_seeds": {},
             }
         threading.Thread(
             target=self._evaluate,
@@ -264,6 +291,7 @@ class DashboardState:
     def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
         env = SlayTheSpireEnv()
         death_floors: Counter[int] = Counter()
+        death_seeds: dict[int, list[int]] = {}
         result_counts: Counter[str] = Counter()
         floors: list[int] = []
         lengths: list[int] = []
@@ -294,6 +322,7 @@ class DashboardState:
                 else:
                     result = "death"
                     death_floors[floor] += 1
+                    death_seeds.setdefault(floor, []).append(seed + episode)
                 result_counts[result] += 1
                 floors.append(floor)
                 lengths.append(steps)
@@ -305,6 +334,10 @@ class DashboardState:
                     self.eval_status.update({
                         "completed": done,
                         "death_floors": dict(sorted(death_floors.items())),
+                        "death_seeds": {
+                            floor: seeds
+                            for floor, seeds in sorted(death_seeds.items())
+                        },
                         "results": dict(result_counts),
                         "floor_mean": float(np.mean(floors)),
                         "floor_median": float(np.median(floors)),
@@ -408,14 +441,34 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("only .zip checkpoints are accepted")
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         target = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
-        target.write_bytes(self.rfile.read(length))
+        partial = target.with_suffix(target.suffix + ".part")
         try:
+            remaining = length
+            with partial.open("wb") as stream:
+                while remaining:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        raise ValueError(
+                            f"upload ended early: received {length - remaining} "
+                            f"of {length} bytes"
+                        )
+                    stream.write(chunk)
+                    remaining -= len(chunk)
+            with partial.open("rb") as stream:
+                signature = stream.read(4)
+            if signature not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+                raise ValueError(
+                    "uploaded file does not have a ZIP signature; re-download "
+                    "the checkpoint and drag the .zip file itself"
+                )
+            os.replace(partial, target)
             with zipfile.ZipFile(target) as archive:
                 if archive.testzip() is not None:
                     raise ValueError("checkpoint ZIP failed integrity validation")
             episodes = int(self.headers.get("X-Eval-Episodes", "50"))
             APP.load_checkpoint(target, episodes)
         except Exception:
+            partial.unlink(missing_ok=True)
             target.unlink(missing_ok=True)
             raise
         self._send_json(APP.public_state(), HTTPStatus.CREATED)

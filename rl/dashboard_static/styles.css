@@ -57,17 +57,43 @@ main { min-height: calc(100vh - 58px); }
 .intent { margin: 6px auto; min-height: 25px; color: #fff; font-weight: 700; }
 .intent { overflow-wrap: anywhere; }
 .power-row { margin-top: 5px; color: #e6c875; overflow-wrap: anywhere; }
-.player-zone { position: absolute; z-index: 3; left: 5%; bottom: 185px; width: 260px; }
-.player-avatar { display: flex; align-items: end; gap: 14px; }
+.player-zone { position: absolute; z-index: 3; left: 4%; bottom: 180px; width: 410px; }
+.player-avatar { display: flex; align-items: end; gap: 13px; transform-origin: center bottom; }
+.player-core { width: 122px; flex: 0 0 122px; }
 .player-figure { width: 76px; height: 108px; display: grid; place-items: center; background: #7f302b; border: 2px solid #d38975; font: 800 35px Georgia, serif; clip-path: polygon(20% 0, 80% 0, 100% 24%, 86% 100%, 14% 100%, 0 24%); }
+.player-core .player-figure { margin: 0 auto 8px; }
 .player-copy strong { display: block; font-size: 18px; }
-.energy { color: #ffdf72; }
+.player-copy { min-width: 92px; padding-bottom: 8px; color: #cbd0cc; font-size: 13px; }
+.energy-orb { width: 72px; height: 72px; flex: 0 0 72px; margin-bottom: 38px; border-radius: 50%; display: grid; place-content: center; text-align: center; color: #fff4a9; background: #1e6f9b; border: 4px solid #93d6ee; box-shadow: inset 0 0 0 4px #16445e, 0 4px 12px rgba(0,0,0,.45); }
+.energy-orb strong { font: 800 34px/30px Georgia, serif; }
+.energy-orb span { margin-top: 5px; color: #d5f3ff; font-size: 10px; }
+.resource-block { margin-top: 5px; font-size: 10px; }
+.resource-block > div:first-child { display: flex; justify-content: space-between; align-items: baseline; color: #cdd2ce; }
+.resource-block b { font-size: 11px; font-variant-numeric: tabular-nums; }
+.resource-track { height: 9px; margin-top: 2px; overflow: hidden; background: #111613; border: 1px solid #69716c; }
+.resource-track i { display: block; height: 100%; transition: width .25s ease; }
+.hp-resource .resource-track i { background: var(--red); }
+.block-resource .resource-track i { background: #4e91c5; }
 .hand { position: absolute; z-index: 5; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; justify-content: center; align-items: end; width: calc(100% - 150px); gap: 5px; }
 .game-card { position: relative; width: clamp(74px, 8.2vw, 112px); height: 148px; flex: 0 1 112px; background: #d8d0b9; color: #1e211f; border: 3px solid #8e2f29; border-radius: 7px; padding: 27px 7px 8px; box-shadow: 0 5px 0 rgba(0,0,0,.45); text-align: center; overflow: hidden; }
 .game-card.skill { border-color: #58778e; }
 .game-card .cost { position: absolute; top: 4px; left: 5px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: white; background: #3979a9; border: 1px solid #cbe7fa; font-weight: 800; }
 .game-card strong { font-size: 12px; line-height: 1.15; display: block; overflow-wrap: anywhere; }
 .game-card small { display: block; margin-top: 8px; color: #505550; }
+.game-card.card-committed { opacity: .38; transform: translateY(-18px); }
+.game-card.card-playing { opacity: .18; }
+.card-flight { position: fixed; z-index: 100; pointer-events: none; margin: 0; transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .32s ease, filter .2s ease; }
+.card-flight.active { transform: translateY(-145px) scale(1.1) rotate(-2deg); opacity: 0; filter: brightness(1.35); }
+.monster-hit { animation: monster-hit .4s ease; }
+.player-hit { animation: player-hit .4s ease; }
+.player-blocked { animation: player-blocked .4s ease; }
+.combat-text { position: absolute; z-index: 12; pointer-events: none; transform: translate(-50%, -50%); color: #fff; font: 900 30px/1 Georgia, serif; text-shadow: 0 2px 0 #4d0e0a, 0 0 8px #ff6b55; animation: damage-rise .8s ease-out forwards; }
+.combat-text.player-damage { font-size: 34px; color: #ff7768; }
+.combat-text.monster-damage { color: #ffe6d1; }
+@keyframes monster-hit { 0%,100% { transform: translateX(0); filter: none; } 20% { transform: translateX(-10px); filter: brightness(2); } 45% { transform: translateX(8px); } 70% { transform: translateX(-4px); } }
+@keyframes player-hit { 0%,100% { transform: translateX(0); filter: none; } 20% { transform: translateX(-8px); filter: brightness(1.8) saturate(1.5); } 45% { transform: translateX(7px); } 70% { transform: translateX(-3px); } }
+@keyframes player-blocked { 0%,100% { transform: translateX(0); filter: none; } 25% { transform: translateX(-5px); filter: drop-shadow(0 0 12px #62b8ee) brightness(1.35); } 55% { transform: translateX(4px); } }
+@keyframes damage-rise { 0% { opacity: 0; transform: translate(-50%, -10%) scale(.75); } 20% { opacity: 1; transform: translate(-50%, -55%) scale(1.15); } 100% { opacity: 0; transform: translate(-50%, -150%) scale(1); } }
 .piles { position: absolute; z-index: 4; right: 18px; bottom: 155px; color: #b9bfbb; font-size: 12px; text-align: right; }
 .overworld-state { position: absolute; z-index: 4; inset: 125px 8% 145px; display: none; align-items: center; justify-content: center; }
 .overworld-state.visible { display: flex; }
@@ -97,6 +123,7 @@ main { min-height: calc(100vh - 58px); }
 .plot-shell, .distribution-shell { position: relative; margin: 0 28px 28px; min-height: 560px; border: 1px solid var(--line); background: #171d1a; }
 #embeddingCanvas { display: block; width: 100%; height: 620px; }
 .plot-tooltip { position: absolute; pointer-events: none; display: none; background: #090c0a; border: 1px solid #707a74; padding: 9px 11px; font-size: 12px; line-height: 1.5; z-index: 4; }
+.distribution-tooltip { max-width: 250px; overflow-wrap: anywhere; }
 .variance { position: absolute; right: 14px; bottom: 12px; color: var(--muted); font-size: 12px; }
 .eval-heading { align-items: center; }
 .eval-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -159,4 +186,8 @@ main { min-height: calc(100vh - 58px); }
   .section-heading { padding: 18px 14px; align-items: flex-start; flex-direction: column; }
   .plot-shell, .distribution-shell, .metric-strip { margin-left: 14px; margin-right: 14px; }
   #embeddingCanvas { height: 520px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-flight, .resource-track i { transition-duration: .01ms; }
+  .monster-hit, .player-hit, .player-blocked, .combat-text { animation-duration: .01ms; }
 }

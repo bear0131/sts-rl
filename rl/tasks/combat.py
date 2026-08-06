@@ -3,9 +3,9 @@
 Stage 1 of the combat-pretrain plan (doc/night_0625/combat_pretrain_decision.md):
 each episode is ONE random loadout (random Ironclad deck, relics, starting HP)
 fighting an ENDLESS stream of random encounters; HP carries over with no healing,
-so the episode ends on death. Reward is +1 per fight cleared, nothing else
-(CombatGauntletRewardWrapper) — dying's cost is the future clears it forfeits, so
-HP value is learned implicitly. The network is the SAME StSPointerPolicy used by
+so the episode ends on death. Reward is +1 per fight cleared by default;
+``--combat-hp-loss-coef`` optionally subtracts a net-HP-loss penalty when each
+fight ends. The network is the SAME StSPointerPolicy used by
 the whole-run task, on the SAME obs/action space — so the resulting weights
 warm-start global training via
 ``python -m rl.trainer --task wholerun --init-from <combat>.zip --freeze-encoder``.
@@ -51,6 +51,8 @@ class CombatMetricsCallback(BaseCallback):
         self._len = deque(maxlen=window)
         self._cleared = deque(maxlen=window)
         self._cleared_act = {a: deque(maxlen=window) for a in (1, 2, 3)}
+        self._hp_lost = deque(maxlen=window)
+        self._hp_penalty = deque(maxlen=window)
         self._n = 0
         self._t0 = None
 
@@ -59,6 +61,9 @@ class CombatMetricsCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
+            if "combat_hp_lost" in info:
+                self._hp_lost.append(float(info["combat_hp_lost"]))
+                self._hp_penalty.append(float(info["combat_hp_penalty"]))
             ep = info.get("episode")
             if ep is None:
                 continue
@@ -91,6 +96,12 @@ class CombatMetricsCallback(BaseCallback):
                     f"combat/clear_ge_{x}",
                     sum(1 for c in self._cleared if c >= x) / n,
                 )
+        if self._hp_lost:
+            self.logger.record("combat/hp_lost_per_combat", mean(self._hp_lost))
+            self.logger.record(
+                "combat/hp_penalty_per_combat",
+                mean(self._hp_penalty),
+            )
         self.logger.record("combat/episodes_total", self._n)
         if self._t0 is not None:
             self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
@@ -108,9 +119,21 @@ class CombatTask(Task):
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--floor-lo", type=int, default=1)
         parser.add_argument("--floor-hi", type=int, default=50)
+        parser.add_argument(
+            "--combat-hp-loss-coef",
+            type=float,
+            nargs="?",
+            const=0.02,
+            default=0.0,
+            help="Subtract coefficient * net HP lost when each combat ends. "
+            "Passing the flag without a value uses the recommended 0.02; "
+            "default 0 keeps the original +1-per-win reward.",
+        )
 
     def make_env_fn(self, args):
         floor_lo, floor_hi, ascension = args.floor_lo, args.floor_hi, args.ascension
+        if args.combat_hp_loss_coef < 0:
+            raise ValueError("--combat-hp-loss-coef must be non-negative")
 
         def _builder(np_random):
             return factories.random_gauntlet_factory(
@@ -121,7 +144,10 @@ class CombatTask(Task):
             env = SlayTheSpireEnv(
                 backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension)
             )
-            env = CombatGauntletRewardWrapper(env)
+            env = CombatGauntletRewardWrapper(
+                env,
+                hp_loss_coef=args.combat_hp_loss_coef,
+            )
             env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
             return env
 
@@ -138,7 +164,10 @@ class CombatTask(Task):
         )
 
     def tag(self, args, run_id):
-        return (
+        tag = (
             f"combat-f{args.floor_lo}-{args.floor_hi}-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )
+        if args.combat_hp_loss_coef:
+            tag += f"-hploss{args.combat_hp_loss_coef:g}"
+        return tag

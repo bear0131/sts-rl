@@ -84,10 +84,10 @@ class ShapedRewardWrapper(gym.Wrapper):
 
 class CombatGauntletRewardWrapper(gym.Wrapper):
     """Reward for the combat-gauntlet pretraining (doc/night_0625/
-    combat_pretrain_decision.md): +`win` each time a fight is cleared, nothing else.
-    The episode ends on death (terminated), which pays NO penalty — the cost of
-    dying is implicit: the discounted stream of future +1's that death cuts off. So
-    HP value is learned from the episode structure, with no HP-delta/death term.
+    combat_pretrain_decision.md): +`win` each time a fight is cleared. An optional
+    end-of-combat penalty subtracts ``hp_loss_coef * net HP lost`` for both wins
+    and the terminal loss. With the default coefficient 0, the original reward is
+    unchanged and HP value is learned only from the future wins death cuts off.
 
     Wraps a SlayTheSpireEnv whose backend is a SimCombatBackend; it reads the
     backend's cumulative `combats_won` counter and pays for each new clear. Mirrors
@@ -95,20 +95,36 @@ class CombatGauntletRewardWrapper(gym.Wrapper):
     info["env_reward"].
     """
 
-    def __init__(self, env, win: float = 1.0):
+    def __init__(self, env, win: float = 1.0, hp_loss_coef: float = 0.0):
         super().__init__(env)
+        if hp_loss_coef < 0:
+            raise ValueError("hp_loss_coef must be non-negative")
         self.win = win
+        self.hp_loss_coef = hp_loss_coef
         self._prev_won = 0
+        self._combat_start_hp = 0
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self._prev_won = self.env.unwrapped.thick.combats_won
+        backend = self.env.unwrapped.thick
+        self._prev_won = backend.combats_won
+        self._combat_start_hp = backend.combat_state()[0]
         return obs, info
 
     def step(self, action):
         obs, env_reward, terminated, truncated, info = self.env.step(action)
-        won_now = self.env.unwrapped.thick.combats_won
+        backend = self.env.unwrapped.thick
+        won_now = backend.combats_won
         r = self.win * (won_now - self._prev_won)
+        combat_finished = won_now > self._prev_won or terminated
+        if combat_finished:
+            combat_end_hp = backend.combat_state()[0]
+            hp_lost = max(0, self._combat_start_hp - combat_end_hp)
+            hp_penalty = self.hp_loss_coef * hp_lost
+            r -= hp_penalty
+            info["combat_hp_lost"] = hp_lost
+            info["combat_hp_penalty"] = hp_penalty
+            self._combat_start_hp = combat_end_hp
         self._prev_won = won_now
         if terminated or truncated:
             info["combats_won"] = won_now
