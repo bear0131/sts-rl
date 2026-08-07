@@ -85,6 +85,7 @@ class BasicWholeRunTask(WholeRunTask):
                     global_map_view=args.global_map_view,
                 ),
                 global_map_view=args.global_map_view,
+                card_language=args.card_language,
                 combat_language=args.combat_language,
             )
             env = ShapedRewardWrapper(env)

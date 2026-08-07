@@ -4,6 +4,9 @@ let playing = false;
 let stepping = false;
 let plotPoints = [];
 let plotScreenPoints = [];
+let tokenSource = "card";
+let tokenPlotPoints = [];
+let tokenScreenPoints = [];
 let distributionBars = [];
 let uploadManuallyOpen = false;
 let watchSeedDirty = false;
@@ -38,6 +41,7 @@ document.querySelectorAll(".tab").forEach(button => button.addEventListener("cli
   document.querySelectorAll(".view").forEach(x => x.classList.remove("active"));
   $(`${button.dataset.tab}View`).classList.add("active");
   if (button.dataset.tab === "embedding") drawEmbedding();
+  if (button.dataset.tab === "tokens") drawTokens();
   if (button.dataset.tab === "evaluation") drawDistribution();
 }));
 
@@ -94,7 +98,7 @@ async function uploadFile(file) {
     uploadManuallyOpen = false;
     $("uploadOverlay").classList.add("hidden");
     renderAll();
-    toast("参数已载入，三项测试已启动");
+    toast("参数已载入，四项测试已启动");
   } catch (error) {
     $("uploadStatus").classList.add("error"); $("uploadStatus").textContent = error.message;
   } finally { dropzone.style.pointerEvents = ""; }
@@ -155,7 +159,7 @@ $("evalButton").addEventListener("click", async () => {
 function renderAll() {
   $("checkpointPill").textContent = appState?.checkpoint || "未载入参数";
   if (appState?.checkpoint && !uploadManuallyOpen) $("uploadOverlay").classList.add("hidden");
-  renderWatch(); renderEmbedding(); renderEvaluation();
+  renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation();
 }
 function powersText(powers) { return Object.entries(powers || {}).filter(([,v]) => v !== 0).map(([k,v]) => `${k} ${v}`).join(" · "); }
 function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${zhCards[id] || id}${up ? "+" : ""}`; }
@@ -327,6 +331,34 @@ $("embeddingCanvas").addEventListener("mousemove", event => {
 });
 $("embeddingCanvas").addEventListener("mouseleave",()=>$("plotTooltip").style.display="none");
 
+const tokenColors = {structure:"#84918a", operator:"#e46b5f", metadata:"#d0a94f", number:"#5d83a8", semantic:"#5a9a72"};
+function renderTokens() {
+  const sources = appState?.token_embeddings || {}, keys = ["card", "combat"].filter(key => sources[key]);
+  if (!keys.includes(tokenSource)) tokenSource = keys[0] || "card";
+  $("tokenSourceSwitch").innerHTML = keys.map(key => `<button data-source="${key}" class="${key===tokenSource?"active":""}">${escapeHtml(sources[key].label)} · ${sources[key].points.length}</button>`).join("");
+  $("tokenSourceSwitch").querySelectorAll("button").forEach(button => button.addEventListener("click", () => {tokenSource=button.dataset.source;renderTokens();}));
+  const data = sources[tokenSource];
+  tokenPlotPoints = data?.points || [];
+  const ratio = data?.explained_ratio || [];
+  $("tokenPlotMeta").textContent = data ? `${data.label} · ${tokenPlotPoints.length} tokens` : "当前 checkpoint 没有语言 token embedding";
+  $("tokenVariance").textContent = ratio.length ? `PC1 ${(ratio[0]*100).toFixed(1)}% · PC2 ${(ratio[1]*100).toFixed(1)}%` : "等待参数";
+  drawTokens();
+}
+function drawTokens() {
+  const canvas=$("tokenCanvas"); if(!canvas.offsetParent)return;
+  const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle="#37423c";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(55,h-45);ctx.lineTo(w-25,h-45);ctx.moveTo(55,25);ctx.lineTo(55,h-45);ctx.stroke();
+  if(!tokenPlotPoints.length){ctx.fillStyle="#8f9993";ctx.font='13px "Microsoft YaHei", sans-serif';ctx.fillText("载入带语言层的 checkpoint 后显示 Token 向量",75,70);tokenScreenPoints=[];return;}
+  const xs=tokenPlotPoints.map(p=>p.x),ys=tokenPlotPoints.map(p=>p.y),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+  const sx=x=>55+(x-minX)/(maxX-minX||1)*(w-90),sy=y=>h-45-(y-minY)/(maxY-minY||1)*(h-80),query=$("tokenSearch").value.trim().toLowerCase();
+  tokenScreenPoints=tokenPlotPoints.map(p=>({...p,sx:sx(p.x),sy:sy(p.y),match:!query||p.token.toLowerCase().includes(query)}));
+  ctx.font='11px "Segoe UI", sans-serif';ctx.textAlign="center";
+  tokenScreenPoints.forEach(p=>{ctx.globalAlpha=p.match?1:(query ? .16 : 1);ctx.fillStyle=tokenColors[p.group]||tokenColors.semantic;ctx.beginPath();ctx.arc(p.sx,p.sy,p.match&&query?6:4,0,Math.PI*2);ctx.fill();if(query&&p.match){ctx.fillStyle="#e9e7df";ctx.fillText(p.token,p.sx,p.sy-10);}});ctx.globalAlpha=1;
+}
+$("tokenSearch").addEventListener("input",drawTokens);
+$("tokenCanvas").addEventListener("mousemove",event=>{const rect=event.target.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;tokenScreenPoints.forEach(p=>{const d=Math.hypot(p.sx-x,p.sy-y);if(d<dist){dist=d;best=p;}});const tip=$("tokenTooltip");if(!best||dist>14){tip.style.display="none";return;}tip.innerHTML=`<strong>${escapeHtml(best.token)}</strong> <span>#${best.index}</span><br>${escapeHtml(best.group)} · norm ${Number(best.norm).toFixed(4)}${best.description_en?`<br>${escapeHtml(best.description_en)}`:""}${best.description_zh?`<br>${escapeHtml(best.description_zh)}`:""}`;tip.style.display="block";tip.style.left=`${Math.max(8,Math.min(x+14,rect.width-340))}px`;tip.style.top=`${Math.max(8,y-70)}px`;});
+$("tokenCanvas").addEventListener("mouseleave",()=>$("tokenTooltip").style.display="none");
+
 function renderEvaluation() {
   const e=appState?.evaluation || {}, done=e.completed||0, total=e.episodes||0, results=e.results||{};
   $("evalProgress").textContent=`${done} / ${total}`; $("meanFloor").textContent=e.floor_mean==null?"—":Number(e.floor_mean).toFixed(2);
@@ -353,14 +385,14 @@ $("distributionCanvas").addEventListener("mousemove", event => {
 $("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
-  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.evaluation=fresh.evaluation;} renderAll(); }
+  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.evaluation=fresh.evaluation;} renderAll(); }
   catch (_) {}
   setTimeout(poll, appState?.evaluation?.state==="running"?1000:3000);
 }
-window.addEventListener("resize",()=>{drawEmbedding();drawDistribution();});
+window.addEventListener("resize",()=>{drawEmbedding();drawTokens();drawDistribution();});
 const initialParams = new URLSearchParams(location.search);
 const initialView = initialParams.get("view");
-if (["watch", "embedding", "evaluation"].includes(initialView)) {
+if (["watch", "embedding", "tokens", "evaluation"].includes(initialView)) {
   document.querySelector(`.tab[data-tab="${initialView}"]`).click();
 }
 if (initialParams.get("upload") === "1") {

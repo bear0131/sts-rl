@@ -25,6 +25,7 @@ import numpy as np
 from env.core import factories
 from env.core.run_env import SlayTheSpireEnv
 from env.core.combat_backend import SimCombatBackend
+from . import model as _model
 
 
 def _menu(env):
@@ -75,7 +76,13 @@ def main(argv=None):
         )
 
     env = SlayTheSpireEnv(
-        backend_factory=lambda: SimCombatBackend(_builder, ascension=args.ascension)
+        backend_factory=lambda: SimCombatBackend(_builder, ascension=args.ascension),
+        card_language=(
+            _model.uses_card_language(model) if model is not None else False
+        ),
+        combat_language=(
+            _model.uses_combat_language(model) if model is not None else False
+        ),
     )
     obs, _ = env.reset(seed=args.seed)
     # The episode's fixed level L (gauntlet has no map; gc.floor_num is L) sets the

@@ -549,6 +549,11 @@ TOKEN_INDEX = {token: idx for idx, token in enumerate(TOKEN_VOCAB)}
 MAX_PROGRAM_TOKENS = max(
     len(combined_card_program(card_id)) for card_id in LANGUAGE_CARDS
 )
+MAX_VERSION_PROGRAM_TOKENS = max(
+    len(card_program(card_id, upgraded))
+    for card_id in LANGUAGE_CARDS
+    for upgraded in (False, True)
+)
 
 
 def encoded_card_programs() -> tuple[tuple[int, ...], ...]:
@@ -558,6 +563,21 @@ def encoded_card_programs() -> tuple[tuple[int, ...], ...]:
         tokens = combined_card_program(card_id) if card_id in LANGUAGE_CARDS else ()
         ids = tuple(TOKEN_INDEX[token] for token in tokens)
         rows.append(ids + (0,) * (MAX_PROGRAM_TOKENS - len(ids)))
+    return tuple(rows)
+
+
+def encoded_card_version_programs() -> tuple[tuple[tuple[int, ...], ...], ...]:
+    """PAD-padded base/upgraded programs for every global card-vocab row."""
+    rows = []
+    for card_id in CARD_VOCAB:
+        versions = []
+        for upgraded in (False, True):
+            tokens = card_program(card_id, upgraded) if card_id in LANGUAGE_CARDS else ()
+            ids = tuple(TOKEN_INDEX[token] for token in tokens)
+            versions.append(
+                ids + (0,) * (MAX_VERSION_PROGRAM_TOKENS - len(ids))
+            )
+        rows.append(tuple(versions))
     return tuple(rows)
 
 
@@ -587,15 +607,18 @@ def render_markdown() -> str:
         "",
         "Enable with `--card-language`. The model keeps the learned card-ID "
         "embedding and adds an effect-language vector produced by token embedding, "
-        "a local order-sensitive 1-D encoder, and masked pooling. The same effective "
+        "explicit token positions, a local order-sensitive 1-D encoder, and masked "
+        "pooling. Draw, discard, and full-deck cards are connected again as ordered "
+        "card-language sequences. The same effective "
         "card vectors are used for hand, reward, selection, shop, draw, discard, "
         "exhaust, and full-deck observations.",
         "",
         "使用 `--card-language` 开启。模型保留原有卡牌 ID embedding，并叠加由 "
-        "token embedding、保持局部顺序的一维编码器和掩码池化得到的效果语言向量。"
-        "手牌、奖励、选牌、商店、抽牌堆、弃牌堆、消耗堆和完整牌组共用同一语义卡表。",
+        "token embedding、显式 token 位置编码、保持局部顺序的一维编码器和掩码池化"
+        "得到的效果语言向量。抽牌堆、弃牌堆和完整牌组中的卡牌语言会按牌序再次连接。"
+        "手牌、奖励、选牌、商店和各牌堆共用同一语义卡表。",
         "",
-        f"Language version / 语言版本: `3`; vocabulary / 词表大小: "
+        f"Language version / 语言版本: `4`; vocabulary / 词表大小: "
         f"`{len(TOKEN_VOCAB)}`; maximum combined program length / 最长组合程序: "
         f"`{MAX_PROGRAM_TOKENS}`.",
         "",

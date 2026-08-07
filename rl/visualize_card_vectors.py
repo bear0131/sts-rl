@@ -201,11 +201,18 @@ def extract_vectors(
         language_layer = getattr(encoder, "pile_card_language", None)
         card_embedding = getattr(getattr(encoder, "shared", {}), "card", None)
         if language_layer is not None and hasattr(card_embedding, "effective_weight"):
-            semantic = card_embedding.effective_weight()
-            language_contrib = semantic @ language_layer.weight.T
+            if hasattr(language_layer, "singleton_vectors"):
+                language_contrib = language_layer.singleton_vectors(
+                    card_embedding, upgrades=upgrades
+                )
+                language_description = "connected card-language pile encoder"
+            else:
+                semantic = card_embedding.effective_weight()
+                language_contrib = semantic @ language_layer.weight.T
+                language_description = "linear effect-language pile contribution"
             vectors = vectors + language_contrib.detach().float().cpu().numpy()
             description = (
-                'encoder.tok["pile"] columns + effect-language pile contribution'
+                f'encoder.tok["pile"] columns + {language_description}'
             )
         else:
             description = (

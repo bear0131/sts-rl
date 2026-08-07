@@ -62,7 +62,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def __init__(self, backend_factory=None, character=None, ascension=0,
                  render_mode=None, global_map_view=False,
-                 combat_language=False):
+                 card_language=False, combat_language=False):
         super().__init__()
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
@@ -72,6 +72,7 @@ class SlayTheSpireEnv(gym.Env):
             )
         )
         self._global_map_view = global_map_view
+        self._card_language = card_language
         self._combat_language = combat_language
         self.render_mode = render_mode
         self.thick = None
@@ -85,6 +86,7 @@ class SlayTheSpireEnv(gym.Env):
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
+            card_language=card_language,
             combat_language=combat_language,
         )
         self.action_space = spaces.Discrete(A.N_ACTIONS)
@@ -239,6 +241,7 @@ class SlayTheSpireEnv(gym.Env):
         return encode.encode(
             canon,
             global_map_view=self._global_map_view,
+            card_language=self._card_language,
             combat_language=self._combat_language,
         )
 

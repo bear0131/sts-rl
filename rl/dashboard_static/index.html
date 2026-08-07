@@ -13,6 +13,7 @@
     <nav class="tabs" aria-label="工作区">
       <button class="tab active" data-tab="watch">战局回放</button>
       <button class="tab" data-tab="embedding">白卡向量</button>
+      <button class="tab" data-tab="tokens">Token 向量</button>
       <button class="tab" data-tab="evaluation">爬塔评测</button>
     </nav>
     <div id="checkpointPill" class="checkpoint-pill">未载入参数</div>
@@ -72,6 +73,28 @@
       </div>
     </section>
 
+    <section id="tokensView" class="view">
+      <div class="section-heading token-heading">
+        <div><h1>语言 Token 向量</h1><p id="tokenPlotMeta">等待带语言层的 checkpoint</p></div>
+        <div class="token-controls">
+          <div id="tokenSourceSwitch" class="segmented" aria-label="Token 语言"></div>
+          <input id="tokenSearch" type="search" placeholder="搜索 token" aria-label="搜索 token">
+        </div>
+      </div>
+      <div class="token-legend">
+        <span><i class="token-swatch structure"></i>结构</span>
+        <span><i class="token-swatch operator"></i>操作符</span>
+        <span><i class="token-swatch metadata"></i>元数据</span>
+        <span><i class="token-swatch number"></i>数字</span>
+        <span><i class="token-swatch semantic"></i>语义</span>
+      </div>
+      <div class="plot-shell token-plot-shell">
+        <canvas id="tokenCanvas"></canvas>
+        <div id="tokenTooltip" class="plot-tooltip token-tooltip"></div>
+        <div id="tokenVariance" class="variance"></div>
+      </div>
+    </section>
+
     <section id="evaluationView" class="view">
       <div class="section-heading eval-heading">
         <div><h1>完整爬塔评测</h1><p>从第 1 层开始，确定性策略，不设置步数上限</p></div>
@@ -100,7 +123,7 @@
   <div id="uploadOverlay" class="upload-overlay">
     <div class="upload-dialog">
       <button id="closeUploadButton" class="close-upload" title="关闭上传窗口">×</button>
-      <div class="upload-title"><span class="brand-mark large">S</span><div><h1>载入模型参数</h1><p>上传后自动准备三项测试</p></div></div>
+      <div class="upload-title"><span class="brand-mark large">S</span><div><h1>载入模型参数</h1><p>上传后自动准备四项测试</p></div></div>
       <label id="dropzone" class="dropzone">
         <input id="fileInput" type="file" accept=".zip" hidden>
         <span class="upload-symbol">⇧</span>

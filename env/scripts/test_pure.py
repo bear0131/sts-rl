@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 import numpy as np
 from env.core import encode
+from env.core.cards_vocab import CARD_INDEX
 from env.core import actions
 from env.core import render
 from env.core import intents
@@ -173,13 +174,13 @@ def test_status_card_language_model_paths():
     canon = _fake_combat()
     canon["hand"][0] = {"id": "Burn", "up": 0, "cost": -1}
     canon["draw"] = [{"id": "Void", "up": 0}]
-    obs_np = encode.encode(canon)
+    obs_np = encode.encode(canon, card_language=True)
     obs = {
         key: torch.as_tensor(value).unsqueeze(0)
         for key, value in obs_np.items()
     }
     encoder = StSTransformerExtractor(
-        encode.obs_space(), features_dim=32, d_model=64,
+        encode.obs_space(card_language=True), features_dim=32, d_model=64,
         n_layers=1, n_heads=4, card_language=True,
     )
     seen_inputs = []
@@ -194,18 +195,32 @@ def test_status_card_language_model_paths():
     assert any(x.shape == obs["hand_ids"].shape and (x == burn_id).any()
                for x in seen_inputs)
 
+    assert obs["draw_card_ids"][0, 0] == CARD_INDEX["Void"]
     card_layer = encoder.shared["card"]
-    ids = torch.arange(len(CARD_VOCAB))
-    semantic_delta_table = (
-        card_layer.effective_weight()
-        - torch.nn.Embedding.forward(card_layer, ids)
+    program = card_layer.program_ids[burn_id]
+    used = program[program != 0]
+    reversed_program = torch.zeros_like(program)
+    reversed_program[:used.numel()] = used.flip(0)
+    ordered = card_layer._encode_programs(program.unsqueeze(0))
+    reversed_vector = card_layer._encode_programs(reversed_program.unsqueeze(0))
+    assert not torch.allclose(ordered, reversed_vector)
+    assert card_layer.program_position.shape[0] == MAX_PROGRAM_TOKENS
+
+    ids = torch.tensor([[
+        CARD_INDEX["Strike_R"], CARD_INDEX["Bash"], CARD_INDEX["Defend_R"]
+    ]])
+    upgrades = torch.tensor([[0.0, 0.2, 0.0]])
+    counts = torch.ones_like(upgrades)
+    upgraded_counts = torch.tensor([[0.0, 1.0, 0.0]])
+    pile_ordered = encoder.pile_card_language(
+        ids, upgrades, counts, upgraded_counts, card_layer
     )
-    void_counts = torch.zeros(1, len(CARD_VOCAB))
-    void_counts[0, CARD_INDEX["Void"]] = 1
-    pile_language_delta = encoder.pile_card_language(
-        void_counts @ semantic_delta_table
+    pile_reversed = encoder.pile_card_language(
+        ids.flip(1), upgrades.flip(1), counts.flip(1),
+        upgraded_counts.flip(1), card_layer
     )
-    assert pile_language_delta.norm() > 0
+    assert pile_ordered.norm() > 0
+    assert not torch.allclose(pile_ordered, pile_reversed)
     print("Status language reaches model hand and pile encoding paths")
 
 
@@ -239,6 +254,20 @@ def test_obs_matches_space():
             assert sub.contains(v), f"{k} out of declared bounds"
     print(f"obs matches space (OBS_VERSION={encode.OBS_VERSION}); "
           f"{len(space.spaces)} groups")
+
+    language_space = encode.obs_space(card_language=True)
+    language_obs = encode.encode(_fake_combat(), card_language=True)
+    assert set(language_obs) == set(language_space.spaces)
+    assert language_space.contains(language_obs)
+    assert language_obs["draw_card_ids"][0] == CARD_INDEX["Strike_R"]
+    assert language_obs["draw_card_counts"][0] == 2
+    assert language_obs["deck_card_ids"][0] == CARD_INDEX["Strike_R"]
+    defend_slot = next(
+        i for i, card_id in enumerate(language_obs["deck_card_ids"])
+        if card_id == CARD_INDEX["Defend_R"]
+    )
+    assert language_obs["deck_card_upgrades"][defend_slot] > 0
+    print("card-language pile sequences preserve ids, order, and upgrades")
 
 
 def test_combat_fields_land():

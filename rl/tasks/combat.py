@@ -143,6 +143,7 @@ class CombatTask(Task):
         def _thunk():
             env = SlayTheSpireEnv(
                 backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension),
+                card_language=args.card_language,
                 combat_language=args.combat_language,
             )
             env = CombatGauntletRewardWrapper(

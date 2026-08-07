@@ -42,6 +42,7 @@ from gymnasium import spaces
 
 from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 from .ironclad_cards import card_numbers
+from .card_language import LANGUAGE_CARDS
 from . import vocab as V
 from . import intents
 from . import combat_language as CL
@@ -58,9 +59,12 @@ from . import combat_language as CL
 # feed-forward policy sees its own pending pick (mask != obs, §0.5).
 # The optional global-map layout is version 8: it appends the full 15x7 map DAG
 # only when ``global_map_view=True``. The default v7 layout stays compatible
-# with existing combat and whole-run checkpoints.
+# with existing combat and whole-run checkpoints. The optional card-language
+# layout is version 9: it appends compact, upgrade-aware language-card sequences
+# for draw/discard/deck while retaining the complete count vectors.
 OBS_VERSION = 7
 GLOBAL_MAP_OBS_VERSION = 8
+CARD_LANGUAGE_OBS_VERSION = 9
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -82,6 +86,7 @@ MAP_FULL_FEATURES = 12    # x, y, current, choice, reachable, 7 outgoing edges
 SHOP_CARD_SLOTS = 7       # shop shelf: cards[7] (slot == buy action id)
 SHOP_RELIC_SLOTS = 3      # shop shelf: relics[3]
 SHOP_POTION_SLOTS = 3     # shop shelf: potions[3]
+PILE_LANGUAGE_SLOTS = len(LANGUAGE_CARDS)  # one slot per language-covered card id
 
 # ---- normalization scales (divisors; keep scalars ~[0,1]) ----
 HP_SCALE = 200.0
@@ -110,7 +115,7 @@ _SCALAR = np.float32
 
 # ============================ observation space ============================
 
-def obs_space(*, global_map_view=False, combat_language=False):
+def obs_space(*, global_map_view=False, card_language=False, combat_language=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -193,6 +198,14 @@ def obs_space(*, global_map_view=False, combat_language=False):
                 (MAP_FULL_SLOTS, MAP_FULL_FEATURES), high=1.0
             ),
         })
+    if card_language:
+        for pile in ("draw", "discard", "deck"):
+            groups[f"{pile}_card_ids"] = cat((PILE_LANGUAGE_SLOTS,), N_CARDS)
+            groups[f"{pile}_card_upgrades"] = scal((PILE_LANGUAGE_SLOTS,))
+            groups[f"{pile}_card_counts"] = scal((PILE_LANGUAGE_SLOTS,))
+            groups[f"{pile}_card_upgraded_counts"] = scal(
+                (PILE_LANGUAGE_SLOTS,)
+            )
     if combat_language:
         groups.update({
             "player_status_language": cat(
@@ -220,7 +233,34 @@ def _idx(index_map, key):
     return index_map.get(key, 0)            # 0 == PAD for every id vocabulary
 
 
-def _empty(*, global_map_view=False, combat_language=False):
+def _encode_card_sequence(o, pile, cards):
+    """Compact every language-covered card ID without truncating duplicates."""
+    ids_key = f"{pile}_card_ids"
+    if ids_key not in o:
+        return
+    grouped = {}
+    for card in cards:
+        if isinstance(card, dict):
+            card_id, upgrades = card["id"], card.get("up", 0)
+        else:
+            card_id, upgrades = card
+        if card_id not in LANGUAGE_CARDS:
+            continue
+        stats = grouped.setdefault(card_id, [0, 0, 0])
+        stats[0] += 1
+        stats[1] += int(upgrades > 0)
+        stats[2] += upgrades
+    assert len(grouped) <= PILE_LANGUAGE_SLOTS
+    for i, (card_id, (count, upgraded_count, upgrade_sum)) in enumerate(
+        grouped.items()
+    ):
+        o[ids_key][i] = CARD_INDEX.get(card_id, CARD_INDEX[EMPTY])
+        o[f"{pile}_card_counts"][i] = count
+        o[f"{pile}_card_upgraded_counts"][i] = upgraded_count
+        o[f"{pile}_card_upgrades"][i] = upgrade_sum / UPGRADE_SCALE
+
+
+def _empty(*, global_map_view=False, card_language=False, combat_language=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -274,6 +314,18 @@ def _empty(*, global_map_view=False, combat_language=False):
         o["map_full_features"] = np.zeros(
             (MAP_FULL_SLOTS, MAP_FULL_FEATURES), _SCALAR
         )
+    if card_language:
+        for pile in ("draw", "discard", "deck"):
+            o[f"{pile}_card_ids"] = np.zeros(PILE_LANGUAGE_SLOTS, _CAT)
+            o[f"{pile}_card_upgrades"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
+            o[f"{pile}_card_counts"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
+            o[f"{pile}_card_upgraded_counts"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
     if combat_language:
         o["player_status_language"] = np.zeros(
             CL.MAX_PLAYER_STATUS_TOKENS, _CAT
@@ -376,6 +428,8 @@ def _encode_combat(o, canon):
                       ("exhaust", "exhaust_counts")):
         for c in canon.get(pile, []):
             o[key][_card_idx(c)] += 1.0
+    _encode_card_sequence(o, "draw", canon.get("draw", []))
+    _encode_card_sequence(o, "discard", canon.get("discard", []))
 
 
 def _encode_global(o, canon):
@@ -401,6 +455,7 @@ def _encode_global(o, canon):
         o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
     for cid, _up in g.get("deck", []):
         o["deck_counts"][CARD_INDEX.get(cid, CARD_INDEX[EMPTY])] += 1.0
+    _encode_card_sequence(o, "deck", g.get("deck", []))
 
 
 def _encode_options(o, canon):
@@ -470,13 +525,17 @@ def _encode_options(o, canon):
             o["boss_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
 
 
-def encode(canon, *, global_map_view=False, combat_language=False):
+def encode(
+    canon, *, global_map_view=False, card_language=False,
+    combat_language=False,
+):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
     `canon` may carry only the combat block (a normalize_sim result), only the
     overworld block, or the full assembled dict — absent groups encode to PAD."""
     o = _empty(
         global_map_view=global_map_view,
+        card_language=card_language,
         combat_language=combat_language,
     )
     _encode_combat(o, canon)

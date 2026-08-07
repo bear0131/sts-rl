@@ -121,7 +121,23 @@ main { min-height: calc(100vh - 58px); }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--blue); }
 .dot.upgraded { border-radius: 1px; transform: rotate(45deg); background: var(--gold); }
 .plot-shell, .distribution-shell { position: relative; margin: 0 28px 28px; min-height: 560px; border: 1px solid var(--line); background: #171d1a; }
-#embeddingCanvas { display: block; width: 100%; height: 620px; }
+#embeddingCanvas, #tokenCanvas { display: block; width: 100%; height: 620px; }
+.token-heading { align-items: center; }
+.token-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.token-controls input { width: 190px; }
+.segmented { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.segmented button { border: 0; border-right: 1px solid var(--line); border-radius: 0; min-height: 32px; }
+.segmented button:last-child { border-right: 0; }
+.segmented button.active { color: #111614; background: var(--gold); font-weight: 700; }
+.token-legend { display: flex; flex-wrap: wrap; gap: 18px; margin: 0 28px 12px; color: var(--muted); font-size: 12px; }
+.token-legend span { display: flex; align-items: center; gap: 6px; }
+.token-swatch { width: 9px; height: 9px; display: inline-block; border-radius: 50%; }
+.token-swatch.structure { background: #84918a; }
+.token-swatch.operator { background: #e46b5f; }
+.token-swatch.metadata { background: #d0a94f; }
+.token-swatch.number { background: #5d83a8; }
+.token-swatch.semantic { background: #5a9a72; }
+.token-tooltip { max-width: 330px; overflow-wrap: anywhere; }
 .plot-tooltip { position: absolute; pointer-events: none; display: none; background: #090c0a; border: 1px solid #707a74; padding: 9px 11px; font-size: 12px; line-height: 1.5; z-index: 4; }
 .distribution-tooltip { max-width: 250px; overflow-wrap: anywhere; }
 .variance { position: absolute; right: 14px; bottom: 12px; color: var(--muted); font-size: 12px; }
@@ -185,7 +201,8 @@ main { min-height: calc(100vh - 58px); }
   .game-card { width: 70px; min-width: 70px; height: 132px; }
   .section-heading { padding: 18px 14px; align-items: flex-start; flex-direction: column; }
   .plot-shell, .distribution-shell, .metric-strip { margin-left: 14px; margin-right: 14px; }
-  #embeddingCanvas { height: 520px; }
+  #embeddingCanvas, #tokenCanvas { height: 520px; }
+  .token-controls { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
   .card-flight, .resource-track i { transition-duration: .01ms; }

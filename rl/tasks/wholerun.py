@@ -160,6 +160,7 @@ class WholeRunTask(Task):
             env = SlayTheSpireEnv(
                 ascension=ascension,
                 global_map_view=args.global_map_view,
+                card_language=args.card_language,
                 combat_language=args.combat_language,
             )
             env = ShapedRewardWrapper(env)

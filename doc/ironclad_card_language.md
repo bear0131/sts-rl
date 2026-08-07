@@ -18,11 +18,11 @@ value     := NUM_BEGIN DIGIT_0...DIGIT_9+ NUM_END
 
 ## Model Encoding / 模型编码
 
-Enable with `--card-language`. The model keeps the learned card-ID embedding and adds an effect-language vector produced by token embedding, a local order-sensitive 1-D encoder, and masked pooling. The same effective card vectors are used for hand, reward, selection, shop, draw, discard, exhaust, and full-deck observations.
+Enable with `--card-language`. The model keeps the learned card-ID embedding and adds an effect-language vector produced by token embedding, explicit token positions, a local order-sensitive 1-D encoder, and masked pooling. Draw, discard, and full-deck cards are connected again as ordered card-language sequences. The same effective card vectors are used for hand, reward, selection, shop, draw, discard, exhaust, and full-deck observations.
 
-使用 `--card-language` 开启。模型保留原有卡牌 ID embedding，并叠加由 token embedding、保持局部顺序的一维编码器和掩码池化得到的效果语言向量。手牌、奖励、选牌、商店、抽牌堆、弃牌堆、消耗堆和完整牌组共用同一语义卡表。
+使用 `--card-language` 开启。模型保留原有卡牌 ID embedding，并叠加由 token embedding、显式 token 位置编码、保持局部顺序的一维编码器和掩码池化得到的效果语言向量。抽牌堆、弃牌堆和完整牌组中的卡牌语言会按牌序再次连接。手牌、奖励、选牌、商店和各牌堆共用同一语义卡表。
 
-Language version / 语言版本: `3`; vocabulary / 词表大小: `134`; maximum combined program length / 最长组合程序: `68`.
+Language version / 语言版本: `4`; vocabulary / 词表大小: `134`; maximum combined program length / 最长组合程序: `68`.
 
 ## Token Dictionary / Token 词典
 

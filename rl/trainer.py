@@ -100,8 +100,10 @@ def _warm_start_policy(
         is_card_language = any(marker in key for marker in (
             ".shared.card.token_embedding.",
             ".shared.card.local_encoder.",
+            ".shared.card.program_position",
             ".shared.card.effect_scale",
             ".pile_card_language.",
+            ".exhaust_card_language.",
         ))
         is_combat_language = ".combat_language" in key
         if (
@@ -320,14 +322,18 @@ def main() -> None:
             args.combat_language = True
             print(f"[trainer] enabled --combat-language from {args.init_from}")
 
-    if args.resume and not args.combat_language:
+    if args.resume and (not args.card_language or not args.combat_language):
         from stable_baselines3.common.save_util import load_from_zip_file
-        from rl.model import uses_combat_language
+        from rl.model import uses_card_language, uses_combat_language
 
         resume_data, _params, _pytorch_variables = load_from_zip_file(
             args.resume, device="cpu"
         )
-        if uses_combat_language(resume_data["observation_space"]):
+        resume_space = resume_data["observation_space"]
+        if uses_card_language(resume_space) and not args.card_language:
+            args.card_language = True
+            print(f"[trainer] enabled --card-language from {args.resume}")
+        if uses_combat_language(resume_space) and not args.combat_language:
             args.combat_language = True
             print(f"[trainer] enabled --combat-language from {args.resume}")
         del resume_data, _params, _pytorch_variables
@@ -535,17 +541,23 @@ def main() -> None:
                 for p in getattr(card_embedding, name).parameters():
                     p.requires_grad = True
                     trainable_extensions += 1
+            card_embedding.program_position.requires_grad = True
+            trainable_extensions += 1
             card_embedding.effect_scale.requires_grad = True
             trainable_extensions += 1
+            for module in (
+                core.encoder.pile_card_language,
+                core.encoder.exhaust_card_language,
+            ):
+                for p in module.parameters():
+                    p.requires_grad = True
+                    trainable_extensions += 1
         if args.combat_language:
             for p in core.encoder.combat_language.parameters():
                 p.requires_grad = True
                 trainable_extensions += 1
             core.encoder.combat_language_scale.requires_grad = True
             trainable_extensions += 1
-            for p in core.encoder.pile_card_language.parameters():
-                p.requires_grad = True
-                trainable_extensions += 1
         # Params stay in the optimizer but get no grad, so Adam skips them.
         if trainable_extensions:
             print(

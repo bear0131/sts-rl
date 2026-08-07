@@ -9,7 +9,12 @@ from gymnasium import spaces
 from torch import nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
-from env.core.card_language import TOKEN_VOCAB, encoded_card_programs
+from env.core.card_language import (
+    MAX_PROGRAM_TOKENS,
+    TOKEN_VOCAB,
+    encoded_card_programs,
+    encoded_card_version_programs,
+)
 from env.core.combat_language import TOKEN_VOCAB as COMBAT_TOKEN_VOCAB
 
 
@@ -27,6 +32,9 @@ def uses_combat_language(model_or_space) -> bool:
 
 def uses_card_language(model) -> bool:
     """Whether a loaded policy uses semantic card-effect programs."""
+    space = getattr(model, "observation_space", model)
+    if "draw_card_ids" in getattr(space, "spaces", {}):
+        return True
     policy = getattr(model, "policy", model)
     core = getattr(policy, "core", None)
     encoder = getattr(core, "encoder", None)
@@ -201,7 +209,7 @@ class CardLanguageEmbedding(nn.Embedding):
     therefore retain the plain ID embedding behavior.
     """
 
-    LANGUAGE_VERSION = 3
+    LANGUAGE_VERSION = 4
 
     def __init__(self, num_embeddings: int, embedding_dim: int) -> None:
         super().__init__(num_embeddings, embedding_dim, padding_idx=0)
@@ -212,6 +220,12 @@ class CardLanguageEmbedding(nn.Embedding):
                 f"{num_embeddings}"
             )
         self.register_buffer("program_ids", programs, persistent=False)
+        version_programs = torch.as_tensor(
+            encoded_card_version_programs(), dtype=torch.long
+        )
+        self.register_buffer(
+            "version_program_ids", version_programs, persistent=False
+        )
         token_dim = 32
         self.token_embedding = nn.Embedding(
             len(TOKEN_VOCAB), token_dim, padding_idx=0
@@ -219,18 +233,33 @@ class CardLanguageEmbedding(nn.Embedding):
         self.local_encoder = nn.Conv1d(
             token_dim, embedding_dim, kernel_size=3, padding=1
         )
+        self.program_position = nn.Parameter(
+            torch.empty(MAX_PROGRAM_TOKENS, token_dim)
+        )
+        nn.init.normal_(self.program_position, std=0.02)
         self.effect_scale = nn.Parameter(torch.tensor(0.1))
 
-    def effect_vectors(self, ids: torch.Tensor) -> torch.Tensor:
-        programs = self.program_ids[ids.long()]
+    def _encode_programs(self, programs: torch.Tensor) -> torch.Tensor:
         shape = programs.shape
         flat = programs.reshape(-1, shape[-1])
         mask = flat != 0
-        tokens = self.token_embedding(flat).transpose(1, 2)
+        positions = self.program_position[:shape[-1]].unsqueeze(0)
+        tokens = self.token_embedding(flat) + positions
+        tokens = (tokens * mask.unsqueeze(-1)).transpose(1, 2)
         encoded = torch.nn.functional.gelu(self.local_encoder(tokens)).transpose(1, 2)
         encoded = encoded * mask.unsqueeze(-1)
         pooled = encoded.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp_min(1)
         return pooled.reshape(*shape[:-1], self.embedding_dim)
+
+    def effect_vectors(self, ids: torch.Tensor) -> torch.Tensor:
+        return self._encode_programs(self.program_ids[ids.long()])
+
+    def version_effect_vectors(
+        self, ids: torch.Tensor, upgrades: torch.Tensor
+    ) -> torch.Tensor:
+        versions = upgrades.long().clamp(0, 1)
+        programs = self.version_program_ids[ids.long(), versions]
+        return self._encode_programs(programs)
 
     def forward(self, ids: torch.Tensor) -> torch.Tensor:
         return super().forward(ids) + self.effect_scale * self.effect_vectors(ids)
@@ -238,6 +267,70 @@ class CardLanguageEmbedding(nn.Embedding):
     def effective_weight(self) -> torch.Tensor:
         ids = torch.arange(self.num_embeddings, device=self.weight.device)
         return self(ids)
+
+
+class PileCardLanguageEncoder(nn.Module):
+    """Connect per-card DSL vectors into an ordered pile-level representation."""
+
+    def __init__(self, card_dim: int, output_dim: int, max_cards: int) -> None:
+        super().__init__()
+        self.max_cards = max_cards
+        self.card_position = nn.Parameter(torch.empty(max_cards, card_dim))
+        nn.init.normal_(self.card_position, std=0.02)
+        self.upgrade_projection = nn.Linear(1, card_dim)
+        self.count_projection = nn.Linear(1, card_dim)
+        self.connect = nn.Sequential(
+            nn.Conv1d(card_dim, card_dim, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Conv1d(card_dim, card_dim, kernel_size=3, padding=1),
+            nn.GELU(),
+        )
+        self.output = nn.Linear(card_dim, output_dim)
+
+    def forward(
+        self,
+        card_ids: torch.Tensor,
+        upgrade_sums: torch.Tensor,
+        counts: torch.Tensor,
+        upgraded_counts: torch.Tensor,
+        card_embedding: CardLanguageEmbedding,
+    ) -> torch.Tensor:
+        mask = card_ids.long() != 0
+        base_vectors = card_embedding.version_effect_vectors(
+            card_ids, torch.zeros_like(card_ids)
+        )
+        upgraded_vectors = card_embedding.version_effect_vectors(
+            card_ids, torch.ones_like(card_ids)
+        )
+        base_counts = (counts - upgraded_counts).clamp_min(0)
+        version_vectors = (
+            base_vectors * base_counts.unsqueeze(-1)
+            + upgraded_vectors * upgraded_counts.unsqueeze(-1)
+        ) / counts.unsqueeze(-1).clamp_min(1)
+        x = (
+            version_vectors
+            + self.upgrade_projection(upgrade_sums.float().unsqueeze(-1))
+            + self.count_projection(torch.log1p(counts.float()).unsqueeze(-1))
+            + self.card_position[:card_ids.shape[-1]].unsqueeze(0)
+        )
+        x = x * mask.unsqueeze(-1)
+        x = self.connect(x.transpose(1, 2)).transpose(1, 2)
+        x = x * mask.unsqueeze(-1)
+        pooled = x.sum(1) / mask.sum(1, keepdim=True).clamp_min(1)
+        return self.output(pooled)
+
+    def singleton_vectors(
+        self, card_embedding: CardLanguageEmbedding, upgrades: int = 0
+    ) -> torch.Tensor:
+        ids = torch.arange(
+            card_embedding.num_embeddings, device=card_embedding.weight.device
+        ).unsqueeze(1)
+        upgrade_sums = torch.full_like(ids, upgrades / 5, dtype=torch.float32)
+        counts = torch.ones_like(ids, dtype=torch.float32)
+        upgraded_counts = torch.full_like(ids, int(upgrades > 0), dtype=torch.float32)
+        return self(
+            ids, upgrade_sums, counts, upgraded_counts, card_embedding
+        )
 
 
 class CombatProgramEncoder(nn.Module):
@@ -296,6 +389,14 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         if combat_language != ("player_status_language" in observation_space.spaces):
             raise ValueError(
                 "combat_language must match the environment observation layout"
+            )
+        pile_language_fields = all(
+            f"{pile}_card_ids" in observation_space.spaces
+            for pile in ("draw", "discard", "deck")
+        )
+        if card_language != pile_language_fields:
+            raise ValueError(
+                "card_language must match the environment observation layout"
             )
         self.combat_language = (
             CombatProgramEncoder(d_model) if combat_language else None
@@ -401,6 +502,13 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         self.tok["pile"] = nn.Linear(self._n("draw_counts"), d_model)
         self.pos["pile"] = nn.Parameter(torch.zeros(len(self.pile_keys), d_model))
         self.pile_card_language = (
+            PileCardLanguageEncoder(
+                d_card, d_model,
+                observation_space["draw_card_ids"].shape[0],
+            )
+            if card_language else None
+        )
+        self.exhaust_card_language = (
             nn.Linear(d_card, d_model, bias=False) if card_language else None
         )
 
@@ -513,14 +621,23 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
 
         # pile tokens — always present
         pile_toks = []
-        card_table = None
-        if self.pile_card_language is not None:
-            card_table = self.shared["card"].effective_weight()
         for i, k in enumerate(self.pile_keys):
             t = self.tok["pile"](obs[k].float()) + self.pos["pile"][i]
-            if card_table is not None:
-                semantic_counts = obs[k].float() @ card_table
-                t = t + self.pile_card_language(semantic_counts)
+            if self.pile_card_language is not None:
+                pile = k.removesuffix("_counts")
+                ids_key = f"{pile}_card_ids"
+                if ids_key in obs:
+                    t = t + self.pile_card_language(
+                        obs[ids_key].long(),
+                        obs[f"{pile}_card_upgrades"].float(),
+                        obs[f"{pile}_card_counts"].float(),
+                        obs[f"{pile}_card_upgraded_counts"].float(),
+                        self.shared["card"],
+                    )
+                else:
+                    card_table = self.shared["card"].effective_weight()
+                    semantic_counts = obs[k].float() @ card_table
+                    t = t + self.exhaust_card_language(semantic_counts)
             pile_toks.append(t)
         pile = torch.stack(pile_toks, dim=1)
         add(self._role(pile, "pile"),

@@ -32,6 +32,11 @@ from rl.visualize_card_vectors import (
 )
 from rl.watch import _action_dist
 from env.core.cards_vocab import CARD_INDEX
+from env.core.card_language import (
+    TOKEN_DOC as CARD_LANGUAGE_DOC,
+    TOKEN_VOCAB as CARD_LANGUAGE_TOKENS,
+)
+from env.core.combat_language import TOKEN_VOCAB as COMBAT_LANGUAGE_TOKENS
 from env.core.ironclad_cards import card_numbers
 
 # Register custom policy classes before checkpoint loading.
@@ -78,6 +83,7 @@ class WatchSession:
         self.model_lock = model_lock
         self.env = SlayTheSpireEnv(
             global_map_view=_model.uses_global_map_observation(model),
+            card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
         )
         self.seed = seed
@@ -215,6 +221,7 @@ class DashboardState:
         self.checkpoint: Path | None = None
         self.model: MaskablePPO | None = None
         self.embedding: dict | None = None
+        self.token_embeddings: dict = {}
         self.watch: WatchSession | None = None
         self.eval_status: dict = {"state": "idle"}
         self.eval_token = ""
@@ -226,6 +233,7 @@ class DashboardState:
                 "checkpoint": self.checkpoint.name if self.checkpoint else None,
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
                 "embedding": self.embedding,
+                "token_embeddings": self.token_embeddings,
                 "watch": self.watch.snapshot() if self.watch else None,
                 "evaluation": self.eval_status,
                 "error": self.error,
@@ -235,12 +243,14 @@ class DashboardState:
         model = MaskablePPO.load(path, device="auto")
         model.set_random_seed(0)
         embedding = self._embedding(model)
+        token_embeddings = self._token_embeddings(model)
         watch = WatchSession(model, self.model_lock, seed=0)
         with self.lock:
             old_watch = self.watch
             self.checkpoint = path
             self.model = model
             self.embedding = embedding
+            self.token_embeddings = token_embeddings
             self.watch = watch
             self.error = None
         if old_watch:
@@ -287,6 +297,67 @@ class DashboardState:
             "description": description,
         }
 
+    @staticmethod
+    def _token_group(token: str) -> str:
+        if token == "PAD" or token.endswith(("_BEGIN", "_END")):
+            return "structure"
+        if token.startswith(("DIGIT_", "NUM_", "VALUE_")):
+            return "number"
+        if token.startswith(("TYPE_", "RARITY_")) or token == "COST":
+            return "metadata"
+        if token in {"DO", "TRIGGER", "IF", "TRAIT"}:
+            return "operator"
+        return "semantic"
+
+    def _token_embeddings(self, model: MaskablePPO):
+        """Project each learned DSL token table in its own parameter space."""
+        try:
+            encoder = resolve_encoder(model)
+        except RuntimeError:
+            return {}
+
+        sources = []
+        card = getattr(getattr(encoder, "shared", {}), "card", None)
+        card_tokens = getattr(card, "token_embedding", None)
+        if card_tokens is not None:
+            sources.append((
+                "card", "卡牌语言", CARD_LANGUAGE_TOKENS,
+                CARD_LANGUAGE_DOC, card_tokens.weight,
+            ))
+        combat = getattr(encoder, "combat_language", None)
+        combat_tokens = getattr(combat, "token_embedding", None)
+        if combat_tokens is not None:
+            sources.append((
+                "combat", "战斗语言", COMBAT_LANGUAGE_TOKENS,
+                {}, combat_tokens.weight,
+            ))
+
+        result = {}
+        for source, label, vocabulary, docs, weight in sources:
+            vectors = weight.detach().float().cpu().numpy()
+            if vectors.shape[0] != len(vocabulary):
+                continue
+            coords, ratio, norms = pca_project(vectors, dim=2, normalize=False)
+            points = []
+            for index, token in enumerate(vocabulary):
+                doc = docs.get(token)
+                points.append({
+                    "index": index,
+                    "token": token,
+                    "group": self._token_group(token),
+                    "x": float(coords[index, 0]),
+                    "y": float(coords[index, 1]),
+                    "norm": float(norms[index]),
+                    "description_en": doc[0] if doc else None,
+                    "description_zh": doc[1] if doc else None,
+                })
+            result[source] = {
+                "label": label,
+                "points": points,
+                "explained_ratio": ratio.tolist(),
+            }
+        return result
+
     def start_evaluation(self, episodes: int, seed: int):
         episodes = max(1, min(int(episodes), 10_000))
         token = uuid.uuid4().hex
@@ -310,6 +381,7 @@ class DashboardState:
     def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
         env = SlayTheSpireEnv(
             global_map_view=_model.uses_global_map_observation(model),
+            card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
         )
         death_floors: Counter[int] = Counter()
