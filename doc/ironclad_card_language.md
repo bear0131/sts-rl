@@ -1,4 +1,4 @@
-# Ironclad Card Effect Language / 战士卡牌效果语言
+# Ironclad and Status Card Effect Language / 战士与状态牌效果语言
 
 This document is generated from `env/core/card_language.py`. Each card is compiled independently for its base and upgraded versions.
 
@@ -22,7 +22,7 @@ Enable with `--card-language`. The model keeps the learned card-ID embedding and
 
 使用 `--card-language` 开启。模型保留原有卡牌 ID embedding，并叠加由 token embedding、保持局部顺序的一维编码器和掩码池化得到的效果语言向量。手牌、奖励、选牌、商店、抽牌堆、弃牌堆、消耗堆和完整牌组共用同一语义卡表。
 
-Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum combined program length / 最长组合程序: `68`.
+Language version / 语言版本: `3`; vocabulary / 词表大小: `134`; maximum combined program length / 最长组合程序: `68`.
 
 ## Token Dictionary / Token 词典
 
@@ -71,11 +71,13 @@ Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum 
 | `DRAW` | Draw cards. | 抽牌。 |
 | `DRAW_PILE` | Draw pile. | 抽牌堆。 |
 | `END_TURN` | At end of turn. | 回合结束。 |
+| `END_TURN_IN_HAND` | At end of turn while this card is in hand. | 此牌在手中时的回合结束。 |
 | `ETHEREAL` | Ethereal. | 虚无。 |
 | `EXHAUST` | Exhaust after use. | 使用后消耗。 |
 | `EXHAUSTED_CARD` | Each card exhausted by this effect. | 被本效果消耗的每张牌。 |
 | `EXHAUST_CARD` | Exhaust matching cards. | 消耗匹配卡牌。 |
 | `EXHAUST_PILE` | Exhaust pile. | 消耗堆。 |
+| `EXHAUST_WITH_MEDICAL_KIT` | Exhausts when played with Medical Kit. | 通过医疗箱打出时消耗。 |
 | `FATAL` | If this damage kills the target. | 若此次伤害击杀目标。 |
 | `GAIN` | Gain a stat. | 获得属性。 |
 | `GAIN_BLOCK` | Gain Block. | 获得格挡。 |
@@ -89,16 +91,19 @@ Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum 
 | `INNATE` | Innate. | 固有。 |
 | `KEEP_BLOCK_BETWEEN_TURNS` | Block is retained between turns. | 回合间保留格挡。 |
 | `LOSE` | Lose a stat. | 失去属性。 |
+| `LOSE_ENERGY` | Lose Energy. | 失去能量。 |
 | `LOSE_HP` | Lose HP directly. | 直接失去生命。 |
 | `MAX_HP` | Maximum HP. | 最大生命。 |
 | `MOVE_CARD` | Move a card between zones. | 在区域间移动卡牌。 |
 | `NEXT_ATTACKS` | Upcoming Attack cards. | 接下来攻击牌。 |
+| `NOT_APPLICABLE` | No printed energy cost. | 无印刷能量费用。 |
 | `NO_DRAW` | No Draw. | 无法抽牌。 |
 | `NUM_BEGIN` | Start of a numeric literal. | 一个数值字面量的开始。 |
 | `NUM_END` | End of a numeric literal. | 一个数值字面量的结束。 |
 | `ON_ANY_CARD_EXHAUSTED` | Whenever any card is exhausted. | 任意牌被消耗时。 |
 | `ON_ATTACKED_THIS_TURN` | Whenever attacked this turn. | 本回合每次受到攻击。 |
 | `ON_CARD_HP_LOSS` | When a card causes HP loss. | 卡牌导致生命损失时。 |
+| `ON_DRAW` | When this card is drawn. | 抽到此牌时。 |
 | `ON_DRAW_STATUS` | When a Status is drawn. | 抽到状态牌时。 |
 | `ON_DRAW_STATUS_OR_CURSE` | When a Status or Curse is drawn. | 抽到状态或诅咒时。 |
 | `ON_GAIN_BLOCK` | Whenever Block is gained. | 每次获得格挡。 |
@@ -108,6 +113,7 @@ Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum 
 | `ON_THIS_CARD_EXHAUSTED` | When this card is exhausted. | 本牌被消耗时。 |
 | `PER` | For each. | 每个。 |
 | `PLAYABLE_IF_ALL_HAND_ATTACK` | Playable only if all hand cards are Attacks. | 仅当全部手牌为攻击牌时可打出。 |
+| `PLAYABLE_WITH_MEDICAL_KIT` | Can be played with Medical Kit. | 拥有医疗箱时可以打出。 |
 | `PLAYED_CARD` | The card just played. | 刚打出的牌。 |
 | `PLAY_CARD` | Play a card from a zone. | 从区域打出卡牌。 |
 | `PLAY_TWICE` | Play upcoming cards twice. | 重复打出后续卡牌。 |
@@ -117,6 +123,7 @@ Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum 
 | `RARITY_BASIC` | Basic rarity. | 基础。 |
 | `RARITY_COMMON` | Common rarity. | 普通。 |
 | `RARITY_RARE` | Rare rarity. | 稀有。 |
+| `RARITY_SPECIAL` | Special rarity. | 特殊。 |
 | `RARITY_UNCOMMON` | Uncommon rarity. | 罕见。 |
 | `REDUCE_COST` | Reduce card cost. | 降低卡牌费用。 |
 | `REPEATABLE_UPGRADE` | May be upgraded repeatedly. | 可重复升级。 |
@@ -142,7 +149,9 @@ Language version / 语言版本: `2`; vocabulary / 词表大小: `125`; maximum 
 | `TYPE_ATTACK` | Attack card. | 攻击牌。 |
 | `TYPE_POWER` | Power card. | 能力牌。 |
 | `TYPE_SKILL` | Skill card. | 技能牌。 |
+| `TYPE_STATUS` | Status card. | 状态牌。 |
 | `UNBLOCKED_DAMAGE_DEALT` | Total unblocked damage dealt. | 实际造成的未格挡伤害。 |
+| `UNPLAYABLE_NORMALLY` | Normally cannot be played. | 通常无法打出。 |
 | `UNTIL_END_TURN` | Until turn end. | 直到回合结束。 |
 | `UPGRADED_VERSION` | The following program is upgraded. | 以下程序描述升级版。 |
 | `UPGRADE_CARD` | Upgrade matching cards. | 升级匹配卡牌。 |
@@ -1729,5 +1738,88 @@ CARD_BEGIN TYPE_ATTACK RARITY_RARE COST NUM_BEGIN DIGIT_2 NUM_END DO DEAL_DAMAGE
 
 ```text
 CARD_BEGIN TYPE_ATTACK RARITY_RARE COST NUM_BEGIN DIGIT_2 NUM_END DO DEAL_DAMAGE NUM_BEGIN DIGIT_5 NUM_END ALL_ENEMIES STMT_END DO HEAL_FROM UNBLOCKED_DAMAGE_DEALT SELF STMT_END TRAIT EXHAUST STMT_END CARD_END
+```
+
+
+## Status Cards / 状态牌
+
+### 灼伤 / Burn
+
+- English: Unplayable. At end of turn, take 2 damage (4 for Burn+).
+- 中文: 无法打出。回合结束时受到2点伤害；灼伤+为4点。
+- Base DSL / 基础版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRIGGER END_TURN_IN_HAND DO LOSE_HP NUM_BEGIN DIGIT_2 NUM_END SELF STMT_END BLOCK_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+- Upgraded DSL / 升级版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRIGGER END_TURN_IN_HAND DO LOSE_HP NUM_BEGIN DIGIT_4 NUM_END SELF STMT_END BLOCK_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+### 晕眩 / Dazed
+
+- English: Unplayable. Ethereal.
+- 中文: 无法打出。虚无。
+- Base DSL / 基础版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRAIT ETHEREAL STMT_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+- Upgraded DSL / 升级版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRAIT ETHEREAL STMT_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+### 粘液 / Slimed
+
+- English: Costs 1. Exhaust.
+- 中文: 耗费1点能量。消耗。
+- Base DSL / 基础版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NUM_BEGIN DIGIT_1 NUM_END TRAIT EXHAUST STMT_END CARD_END
+```
+
+- Upgraded DSL / 升级版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NUM_BEGIN DIGIT_1 NUM_END TRAIT EXHAUST STMT_END CARD_END
+```
+
+### 虚空 / Void
+
+- English: Unplayable. Ethereal. When drawn, lose 1 Energy.
+- 中文: 无法打出。虚无。抽到时失去1点能量。
+- Base DSL / 基础版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRIGGER ON_DRAW DO LOSE_ENERGY NUM_BEGIN DIGIT_1 NUM_END SELF STMT_END BLOCK_END TRAIT ETHEREAL STMT_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+- Upgraded DSL / 升级版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRIGGER ON_DRAW DO LOSE_ENERGY NUM_BEGIN DIGIT_1 NUM_END SELF STMT_END BLOCK_END TRAIT ETHEREAL STMT_END TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+### 伤口 / Wound
+
+- English: Unplayable.
+- 中文: 无法打出。
+- Base DSL / 基础版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
+```
+
+- Upgraded DSL / 升级版:
+
+```text
+CARD_BEGIN TYPE_STATUS RARITY_SPECIAL COST NOT_APPLICABLE TRAIT UNPLAYABLE_NORMALLY STMT_END TRAIT PLAYABLE_WITH_MEDICAL_KIT STMT_END TRAIT EXHAUST_WITH_MEDICAL_KIT STMT_END CARD_END
 ```
 

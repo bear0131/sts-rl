@@ -201,7 +201,7 @@ class CardLanguageEmbedding(nn.Embedding):
     therefore retain the plain ID embedding behavior.
     """
 
-    LANGUAGE_VERSION = 2
+    LANGUAGE_VERSION = 3
 
     def __init__(self, num_embeddings: int, embedding_dim: int) -> None:
         super().__init__(num_embeddings, embedding_dim, padding_idx=0)

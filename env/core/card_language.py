@@ -1,4 +1,4 @@
-"""Structured effect language for all 75 Ironclad cards.
+"""Structured effect language for all Ironclad and common Status cards.
 
 The language is deliberately small and compositional: card metadata, actions,
 targets, conditions, triggers, durations, and numeric arguments are separate
@@ -82,8 +82,39 @@ RARITY_RARE = {
     "Impervious", "Juggernaut", "Limit Break", "Offering", "Reaper",
 }
 
+STATUS_CARDS = {
+    "Burn": {
+        "name_zh": "灼伤",
+        "effect_en": "Unplayable. At end of turn, take 2 damage (4 for Burn+).",
+        "effect_zh": "无法打出。回合结束时受到2点伤害；灼伤+为4点。",
+    },
+    "Dazed": {
+        "name_zh": "晕眩",
+        "effect_en": "Unplayable. Ethereal.",
+        "effect_zh": "无法打出。虚无。",
+    },
+    "Slimed": {
+        "name_zh": "粘液",
+        "effect_en": "Costs 1. Exhaust.",
+        "effect_zh": "耗费1点能量。消耗。",
+    },
+    "Void": {
+        "name_zh": "虚空",
+        "effect_en": "Unplayable. Ethereal. When drawn, lose 1 Energy.",
+        "effect_zh": "无法打出。虚无。抽到时失去1点能量。",
+    },
+    "Wound": {
+        "name_zh": "伤口",
+        "effect_en": "Unplayable.",
+        "effect_zh": "无法打出。",
+    },
+}
+LANGUAGE_CARDS = frozenset(IRONCLAD_CARDS) | frozenset(STATUS_CARDS)
+
 
 def card_rarity(card_id: str) -> str:
+    if card_id in STATUS_CARDS:
+        return "SPECIAL"
     if card_id in RARITY_BASIC:
         return "BASIC"
     if card_id in RARITY_COMMON:
@@ -307,18 +338,55 @@ _EFFECTS: dict[str, EffectBuilder] = {
 }
 
 
-_TYPE_TOKEN = {ATTACK: "TYPE_ATTACK", SKILL: "TYPE_SKILL", POWER: "TYPE_POWER"}
+def _status_effects(card_id: str, upgraded: bool) -> tuple[str, ...]:
+    medical_kit = (
+        _trait("UNPLAYABLE_NORMALLY"),
+        _trait("PLAYABLE_WITH_MEDICAL_KIT"),
+        _trait("EXHAUST_WITH_MEDICAL_KIT"),
+    )
+    if card_id == "Burn":
+        return _effects(
+            _trigger("END_TURN_IN_HAND", _do("LOSE_HP", "N4" if upgraded else "N2", "SELF")),
+            *medical_kit,
+        )
+    if card_id == "Dazed":
+        return _effects(_trait("ETHEREAL"), *medical_kit)
+    if card_id == "Slimed":
+        return _trait("EXHAUST")
+    if card_id == "Void":
+        return _effects(
+            _trigger("ON_DRAW", _do("LOSE_ENERGY", "N1", "SELF")),
+            _trait("ETHEREAL"),
+            *medical_kit,
+        )
+    if card_id == "Wound":
+        return _effects(*medical_kit)
+    raise KeyError(card_id)
+
+
+_TYPE_TOKEN = {
+    ATTACK: "TYPE_ATTACK", SKILL: "TYPE_SKILL", POWER: "TYPE_POWER",
+    "status": "TYPE_STATUS",
+}
 
 
 def card_program(card_id: str, upgraded: bool = False) -> tuple[str, ...]:
     """Compile one card/version to a complete language-token program."""
-    info = IRONCLAD_CARDS[card_id]
+    if card_id in STATUS_CARDS:
+        kind = "status"
+        cost = "N1" if card_id == "Slimed" else "NOT_APPLICABLE"
+        effects = _status_effects(card_id, bool(upgraded))
+    else:
+        info = IRONCLAD_CARDS[card_id]
+        kind = info.kind
+        cost = _v(info.cost, upgraded)
+        effects = _EFFECTS[card_id](bool(upgraded))
     raw = (
         CARD_BEGIN,
-        _TYPE_TOKEN[info.kind],
+        _TYPE_TOKEN[kind],
         f"RARITY_{card_rarity(card_id)}",
-        "COST", _v(info.cost, upgraded),
-        *_EFFECTS[card_id](bool(upgraded)),
+        "COST", cost,
+        *effects,
         CARD_END,
     )
     return _expand_number_tokens(raw)
@@ -357,8 +425,10 @@ _TOKEN_GROUPS = {
     "Card metadata": {
         "TYPE_ATTACK": "Attack card / 攻击牌", "TYPE_SKILL": "Skill card / 技能牌",
         "TYPE_POWER": "Power card / 能力牌", "RARITY_BASIC": "Basic rarity / 基础",
+        "TYPE_STATUS": "Status card / 状态牌",
         "RARITY_COMMON": "Common rarity / 普通", "RARITY_UNCOMMON": "Uncommon rarity / 罕见",
         "RARITY_RARE": "Rare rarity / 稀有",
+        "RARITY_SPECIAL": "Special rarity / 特殊",
     },
     "Operations": {
         "DEAL_DAMAGE": "Deal the stated damage / 造成给定伤害",
@@ -368,6 +438,7 @@ _TOKEN_GROUPS = {
         "APPLY": "Apply a status or debuff / 施加状态或减益",
         "GAIN": "Gain a stat / 获得属性", "LOSE": "Lose a stat / 失去属性",
         "LOSE_HP": "Lose HP directly / 直接失去生命",
+        "LOSE_ENERGY": "Lose Energy / 失去能量",
         "GAIN_ENERGY": "Gain energy / 获得能量", "GAIN_TEMPORARY": "Gain a temporary stat / 获得临时属性",
         "CREATE_CARD": "Create a named card / 生成指定卡",
         "CREATE_RANDOM_CARD": "Create a random matching card / 生成随机匹配卡",
@@ -414,6 +485,7 @@ _TOKEN_GROUPS = {
         "UPGRADE_COUNT": "Number of upgrades applied to this card / 本牌的升级次数",
         "WOUND": "Wound status card / 伤口", "DAZED": "Dazed status card / 晕眩",
         "BURN": "Burn status card / 灼伤",
+        "NOT_APPLICABLE": "No printed energy cost / 无印刷能量费用",
     },
     "Timing and modifiers": {
         "THIS_COMBAT": "For this combat / 本场战斗", "UNTIL_END_TURN": "Until turn end / 直到回合结束",
@@ -422,6 +494,8 @@ _TOKEN_GROUPS = {
     },
     "Events and conditions": {
         "START_TURN": "At start of turn / 回合开始", "END_TURN": "At end of turn / 回合结束",
+        "ON_DRAW": "When this card is drawn / 抽到此牌时",
+        "END_TURN_IN_HAND": "At end of turn while this card is in hand / 此牌在手中时的回合结束",
         "ON_HP_LOSS": "Whenever HP is lost / 每次失去生命",
         "ON_CARD_HP_LOSS": "When a card causes HP loss / 卡牌导致生命损失时",
         "ON_ANY_CARD_EXHAUSTED": "Whenever any card is exhausted / 任意牌被消耗时",
@@ -438,6 +512,9 @@ _TOKEN_GROUPS = {
     },
     "Traits": {
         "EXHAUST": "Exhaust after use / 使用后消耗", "ETHEREAL": "Ethereal / 虚无",
+        "UNPLAYABLE_NORMALLY": "Normally cannot be played / 通常无法打出",
+        "PLAYABLE_WITH_MEDICAL_KIT": "Can be played with Medical Kit / 拥有医疗箱时可以打出",
+        "EXHAUST_WITH_MEDICAL_KIT": "Exhausts when played with Medical Kit / 通过医疗箱打出时消耗",
         "INNATE": "Innate / 固有", "REPEATABLE_UPGRADE": "May be upgraded repeatedly / 可重复升级",
         "KEEP_BLOCK_BETWEEN_TURNS": "Block is retained between turns / 回合间保留格挡",
         "PLAYABLE_IF_ALL_HAND_ATTACK": "Playable only if all hand cards are Attacks / 仅当全部手牌为攻击牌时可打出",
@@ -456,7 +533,7 @@ for digit in range(10):
 
 ALL_PROGRAM_TOKENS = {
     token
-    for card_id in IRONCLAD_CARDS
+    for card_id in LANGUAGE_CARDS
     for upgraded in (False, True)
     for token in card_program(card_id, upgraded)
 } | {"VERSIONS_BEGIN", "VERSIONS_END", "BASE_VERSION", "UPGRADED_VERSION"}
@@ -464,12 +541,13 @@ ALL_PROGRAM_TOKENS = {
 missing_docs = ALL_PROGRAM_TOKENS - TOKEN_DOC.keys()
 assert not missing_docs, f"undocumented card-language tokens: {sorted(missing_docs)}"
 assert set(_EFFECTS) == set(IRONCLAD_CARDS)
+assert set(STATUS_CARDS) == {"Burn", "Dazed", "Slimed", "Void", "Wound"}
 assert len(RARITY_BASIC | RARITY_COMMON | RARITY_RARE) == 39
 
 TOKEN_VOCAB = (PAD, *sorted(ALL_PROGRAM_TOKENS - {PAD}))
 TOKEN_INDEX = {token: idx for idx, token in enumerate(TOKEN_VOCAB)}
 MAX_PROGRAM_TOKENS = max(
-    len(combined_card_program(card_id)) for card_id in IRONCLAD_CARDS
+    len(combined_card_program(card_id)) for card_id in LANGUAGE_CARDS
 )
 
 
@@ -477,7 +555,7 @@ def encoded_card_programs() -> tuple[tuple[int, ...], ...]:
     """One PAD-padded combined program per global card-vocabulary row."""
     rows = []
     for card_id in CARD_VOCAB:
-        tokens = combined_card_program(card_id) if card_id in IRONCLAD_CARDS else ()
+        tokens = combined_card_program(card_id) if card_id in LANGUAGE_CARDS else ()
         ids = tuple(TOKEN_INDEX[token] for token in tokens)
         rows.append(ids + (0,) * (MAX_PROGRAM_TOKENS - len(ids)))
     return tuple(rows)
@@ -485,7 +563,7 @@ def encoded_card_programs() -> tuple[tuple[int, ...], ...]:
 
 def render_markdown() -> str:
     lines = [
-        "# Ironclad Card Effect Language / 战士卡牌效果语言",
+        "# Ironclad and Status Card Effect Language / 战士与状态牌效果语言",
         "",
         "This document is generated from `env/core/card_language.py`. Each card is "
         "compiled independently for its base and upgraded versions.",
@@ -517,7 +595,7 @@ def render_markdown() -> str:
         "token embedding、保持局部顺序的一维编码器和掩码池化得到的效果语言向量。"
         "手牌、奖励、选牌、商店、抽牌堆、弃牌堆、消耗堆和完整牌组共用同一语义卡表。",
         "",
-        f"Language version / 语言版本: `2`; vocabulary / 词表大小: "
+        f"Language version / 语言版本: `3`; vocabulary / 词表大小: "
         f"`{len(TOKEN_VOCAB)}`; maximum combined program length / 最长组合程序: "
         f"`{MAX_PROGRAM_TOKENS}`.",
         "",
@@ -542,6 +620,26 @@ def render_markdown() -> str:
             f"- Block / 格挡: `{info.block[0]}` -> `{info.block[1]}`",
             f"- English: {info.effect_en}",
             f"- 中文: {info.effect_zh}",
+            "- Base DSL / 基础版:",
+            "",
+            "```text",
+            " ".join(card_program(card_id, False)),
+            "```",
+            "",
+            "- Upgraded DSL / 升级版:",
+            "",
+            "```text",
+            " ".join(card_program(card_id, True)),
+            "```",
+            "",
+        ]
+    lines += ["", "## Status Cards / 状态牌", ""]
+    for card_id, info in STATUS_CARDS.items():
+        lines += [
+            f"### {info['name_zh']} / {card_id}",
+            "",
+            f"- English: {info['effect_en']}",
+            f"- 中文: {info['effect_zh']}",
             "- Base DSL / 基础版:",
             "",
             "```text",

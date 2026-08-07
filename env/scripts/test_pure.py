@@ -18,7 +18,9 @@ from env.core import intents
 from env.core import vocab as V
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from env.core.card_language import (
+    LANGUAGE_CARDS,
     MAX_PROGRAM_TOKENS,
+    STATUS_CARDS,
     TOKEN_DOC,
     TOKEN_INDEX,
     TOKEN_VOCAB,
@@ -124,7 +126,7 @@ def test_ironclad_card_table():
 
 
 def test_ironclad_card_language():
-    from env.core.cards_vocab import CARD_VOCAB
+    from env.core.cards_vocab import CARD_INDEX, CARD_VOCAB
 
     assert len(TOKEN_VOCAB) == len(TOKEN_INDEX) == len(set(TOKEN_VOCAB))
     assert all(token in TOKEN_DOC for token in TOKEN_VOCAB)
@@ -136,10 +138,75 @@ def test_ironclad_card_language():
     rows = encoded_card_programs()
     assert len(rows) == len(CARD_VOCAB)
     assert all(len(row) == MAX_PROGRAM_TOKENS for row in rows)
+    for card_id in STATUS_CARDS:
+        assert any(rows[CARD_INDEX[card_id]]), card_id
+    assert "END_TURN_IN_HAND" in card_program("Burn", False)
+    assert "DIGIT_4" in card_program("Burn", True)
+    assert "ETHEREAL" in card_program("Dazed", False)
+    assert "EXHAUST" in card_program("Slimed", False)
+    assert "ON_DRAW" in card_program("Void", False)
+    assert "LOSE_ENERGY" in card_program("Void", False)
+    assert "UNPLAYABLE_NORMALLY" in card_program("Wound", False)
+    unrelated = next(card for card in CARD_VOCAB if card not in LANGUAGE_CARDS)
+    assert not any(rows[CARD_INDEX[unrelated]])
     print(
-        f"Ironclad card language OK (75 cards, {len(TOKEN_VOCAB)} tokens, "
+        f"Card language OK (75 Ironclad + 5 Status cards, "
+        f"{len(TOKEN_VOCAB)} tokens, "
         f"max program {MAX_PROGRAM_TOKENS})"
     )
+
+
+def test_status_card_language_model_paths():
+    """Status DSL must affect both per-card hand and aggregate pile inputs."""
+    import torch
+
+    from env.core.cards_vocab import CARD_INDEX, CARD_VOCAB
+    from rl.model import CardLanguageEmbedding, StSTransformerExtractor
+
+    status_ids = torch.tensor([CARD_INDEX[c] for c in STATUS_CARDS])
+    card_embedding = CardLanguageEmbedding(len(CARD_VOCAB), 64)
+    assert torch.all(card_embedding.program_ids[status_ids].ne(0).any(dim=1))
+    raw = torch.nn.Embedding.forward(card_embedding, status_ids)
+    language_delta = card_embedding(status_ids) - raw
+    assert torch.all(language_delta.norm(dim=1) > 0)
+
+    canon = _fake_combat()
+    canon["hand"][0] = {"id": "Burn", "up": 0, "cost": -1}
+    canon["draw"] = [{"id": "Void", "up": 0}]
+    obs_np = encode.encode(canon)
+    obs = {
+        key: torch.as_tensor(value).unsqueeze(0)
+        for key, value in obs_np.items()
+    }
+    encoder = StSTransformerExtractor(
+        encode.obs_space(), features_dim=32, d_model=64,
+        n_layers=1, n_heads=4, card_language=True,
+    )
+    seen_inputs = []
+    handle = encoder.shared["card"].register_forward_pre_hook(
+        lambda _module, args: seen_inputs.append(args[0].detach().clone())
+    )
+    with torch.no_grad():
+        encoded, _ = encoder.encode_tokens(obs)
+    handle.remove()
+    burn_id = CARD_INDEX["Burn"]
+    assert encoded.shape[1] == encoder.n_tokens
+    assert any(x.shape == obs["hand_ids"].shape and (x == burn_id).any()
+               for x in seen_inputs)
+
+    card_layer = encoder.shared["card"]
+    ids = torch.arange(len(CARD_VOCAB))
+    semantic_delta_table = (
+        card_layer.effective_weight()
+        - torch.nn.Embedding.forward(card_layer, ids)
+    )
+    void_counts = torch.zeros(1, len(CARD_VOCAB))
+    void_counts[0, CARD_INDEX["Void"]] = 1
+    pile_language_delta = encoder.pile_card_language(
+        void_counts @ semantic_delta_table
+    )
+    assert pile_language_delta.norm() > 0
+    print("Status language reaches model hand and pile encoding paths")
 
 
 # ------------------------------ intents ------------------------------
@@ -290,6 +357,7 @@ if __name__ == "__main__":
     test_vocab_invariants()
     test_ironclad_card_table()
     test_ironclad_card_language()
+    test_status_card_language_model_paths()
     test_intent_derivation()
     test_obs_matches_space()
     test_combat_fields_land()

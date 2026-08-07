@@ -1,4 +1,4 @@
-"""Regenerate the bilingual Ironclad card-language reference."""
+"""Regenerate the bilingual Ironclad and Status card-language reference."""
 
 from __future__ import annotations
 
