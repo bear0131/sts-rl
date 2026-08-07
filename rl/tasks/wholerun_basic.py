@@ -82,7 +82,9 @@ class BasicWholeRunTask(WholeRunTask):
             env = SlayTheSpireEnv(
                 backend_factory=lambda: BasicCardsGameEnv(
                     ascension=ascension,
-                )
+                    global_map_view=args.global_map_view,
+                ),
+                global_map_view=args.global_map_view,
             )
             env = ShapedRewardWrapper(env)
             return TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
@@ -90,4 +92,5 @@ class BasicWholeRunTask(WholeRunTask):
         return _thunk
 
     def tag(self, args, run_id):
-        return f"whole-run-basic-asc{args.ascension}-s{args.seed}-{run_id}"
+        map_tag = "-globalmap" if args.global_map_view else ""
+        return f"whole-run-basic{map_tag}-asc{args.ascension}-s{args.seed}-{run_id}"

@@ -174,8 +174,11 @@ def main() -> None:
     if args.episodes < 1:
         raise ValueError("--episodes must be at least 1")
 
-    env = SlayTheSpireEnv(ascension=args.ascension)
     model = MaskablePPO.load(args.checkpoint, device=args.device)
+    env = SlayTheSpireEnv(
+        ascension=args.ascension,
+        global_map_view=_model.uses_global_map_observation(model),
+    )
 
     wins = 0
     for ep in range(args.episodes):

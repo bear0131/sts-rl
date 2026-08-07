@@ -127,6 +127,13 @@ class WholeRunTask(Task):
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
+            "--global-map-view",
+            action="store_true",
+            help="Expose the complete current-act map DAG to the policy. Adds "
+                 "105 room tokens with coordinates, edges, and reachability; "
+                 "off by default for checkpoint compatibility.",
+        )
+        parser.add_argument(
             "--arch",
             choices=[
                 "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
@@ -150,7 +157,10 @@ class WholeRunTask(Task):
         ascension = args.ascension
 
         def _thunk():
-            env = SlayTheSpireEnv(ascension=ascension)
+            env = SlayTheSpireEnv(
+                ascension=ascension,
+                global_map_view=args.global_map_view,
+            )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
             # truncated=True passes straight through ShapedRewardWrapper.step
@@ -205,4 +215,5 @@ class WholeRunTask(Task):
             )
 
     def tag(self, args, run_id):
-        return f"whole-run-asc{args.ascension}-s{args.seed}-{run_id}"
+        map_tag = "-globalmap" if args.global_map_view else ""
+        return f"whole-run{map_tag}-asc{args.ascension}-s{args.seed}-{run_id}"

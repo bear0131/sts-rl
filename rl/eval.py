@@ -25,6 +25,9 @@ from env.core.run_env import SlayTheSpireEnv
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 
+from env.core import action_space as A
+from rl.eval_starter_policy import _dp_route_choices
+
 # Register both custom policy families before SB3 unpickles a checkpoint.
 from . import model as _model  # noqa: F401
 from . import pointer_policy as _pointer_policy  # noqa: F401
@@ -46,6 +49,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=10_000)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--route",
+        choices=("model", "min-elite-max-rest"),
+        default="model",
+        help="model lets the checkpoint choose map nodes; min-elite-max-rest "
+        "overrides only map actions using full-map DP (minimize elites first, "
+        "then maximize rest sites).",
+    )
     parser.add_argument(
         "--stochastic",
         action="store_true",
@@ -104,8 +115,11 @@ def main() -> None:
 
     load_started = time.monotonic()
     print(f"[eval] loading checkpoint: {args.checkpoint}", flush=True)
-    env = SlayTheSpireEnv(ascension=args.ascension)
     model = MaskablePPO.load(args.checkpoint, device=args.device)
+    env = SlayTheSpireEnv(
+        ascension=args.ascension,
+        global_map_view=_model.uses_global_map_observation(model),
+    )
     model.set_random_seed(args.seed)
     print(
         f"[eval] loaded {args.checkpoint.name} in "
@@ -129,14 +143,35 @@ def main() -> None:
             terminated = truncated = False
             episode_return = 0.0
             episode_length = 0
+            route_choices = 0
+            route_rng = np.random.default_rng(episode_seed ^ 0x51A7_7E12)
 
             while not (terminated or truncated):
                 action_masks = get_action_masks(env)
-                action, _ = model.predict(
-                    obs,
-                    action_masks=action_masks,
-                    deterministic=not args.stochastic,
-                )
+                if args.route == "min-elite-max-rest" and info.get("phase") == "map":
+                    legal = np.flatnonzero(action_masks).tolist()
+                    map_choices = [
+                        (offset, action_id)
+                        for action_id in legal
+                        for segment, offset in [A.segment_of(action_id)]
+                        if segment == "MAP_NODE"
+                    ]
+                    if not map_choices:
+                        raise RuntimeError("map phase has no legal MAP_NODE action")
+                    backend = env.unwrapped.thick
+                    optimal, _score = _dp_route_choices(
+                        map_choices,
+                        backend.rmap,
+                        backend.gc.cur_map_node_y,
+                    )
+                    action = int(route_rng.choice(optimal))
+                    route_choices += 1
+                else:
+                    action, _ = model.predict(
+                        obs,
+                        action_masks=action_masks,
+                        deterministic=not args.stochastic,
+                    )
                 obs, reward, terminated, truncated, info = env.step(
                     int(np.asarray(action).item())
                 )
@@ -184,6 +219,7 @@ def main() -> None:
                     "final_floor": floor,
                     "final_act": act,
                     "steps": episode_length,
+                    "route_choices": route_choices,
                     "raw_return": episode_return,
                     "outcome": stats["outcome"],
                 }
@@ -212,7 +248,8 @@ def main() -> None:
     print()
     print(
         f"[eval] episodes={args.episodes} ascension={args.ascension} "
-        f"deterministic={not args.stochastic} no_step_limit=True"
+        f"deterministic={not args.stochastic} route={args.route} "
+        "no_step_limit=True"
     )
     print(f"[eval] wins={wins}/{args.episodes} win_rate={wins / args.episodes:.4f}")
     print(

@@ -10,6 +10,12 @@ from torch import nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 
+def uses_global_map_observation(model_or_space) -> bool:
+    """Whether a model/space expects the optional full-map observation fields."""
+    space = getattr(model_or_space, "observation_space", model_or_space)
+    return "map_full_rooms" in getattr(space, "spaces", {})
+
+
 def _embedding_dim_for(vocab_size: int) -> int:
     """Heuristic embedding width from vocabulary size (fasttext-style rule of
     thumb, ~1.6 * vocab**0.56, clamped). Used when the caller doesn't pin one."""
@@ -239,6 +245,15 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             ("map",         self._n("map_node_rooms"),  "map_node_rooms",  "room",
                 [("map_node_x", 1)]),
         ]
+        if "map_full_rooms" in observation_space.spaces:
+            map_width = (
+                self._n("map_full_features", flat=True)
+                // self._n("map_full_rooms")
+            )
+            self.generic.append(
+                ("map_full", self._n("map_full_rooms"), "map_full_rooms", "room",
+                 [("map_full_features", map_width)])
+            )
         emb_dim_of = {
             "card": d_card, "relic": d_relic, "potion": d_potion, "room": d_room,
         }

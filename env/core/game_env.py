@@ -75,9 +75,10 @@ class SimGameEnv:
     step(action) -> (canonical, reward, terminated, info).
     """
 
-    def __init__(self, character=None, ascension=0):
+    def __init__(self, character=None, ascension=0, global_map_view=False):
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
+        self._global_map_view = global_map_view
         self.gc = None
         self.bc = None            # live BattleContext while in combat, else None
         self.rmap = None          # RunMap for the current act
@@ -133,6 +134,8 @@ class SimGameEnv:
                 "nodes": [(x2, self.rmap.room_type(x2, (y + 1) if y >= 0 else 0))
                           for x2 in opts]
             }
+            if self._global_map_view:
+                d["options"]["full_map"] = self.rmap.full_view(x, y)
         return d
 
     def _info(self):
@@ -160,12 +163,14 @@ class SimGameEnv:
 
     def obs(self):
         """The structured Dict observation (encode v2) for the current state."""
-        return encode.encode(self.obs_canonical())
+        return encode.encode(
+            self.obs_canonical(), global_map_view=self._global_map_view
+        )
 
     @staticmethod
-    def observation_space():
+    def observation_space(global_map_view=False):
         """The gymnasium Dict space (shared with SimCombatEnv via encode)."""
-        return encode.obs_space()
+        return encode.obs_space(global_map_view=global_map_view)
 
     # --------------------------------------------------------------- terminal
     @property

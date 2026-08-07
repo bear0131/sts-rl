@@ -68,5 +68,48 @@ class RunMap:
         out of range."""
         return _room_name(self._m.get_room_type(x, y))
 
+    def full_view(self, current_x, current_y):
+        """Return the visible act map as a fixed-grid-friendly DAG description.
+
+        Each node carries its outgoing child columns plus three positional
+        flags. ``reachable`` means the node lies downstream of the player's
+        current position; ``choice`` marks a legal next map choice. The game
+        displays the complete act map, so this contains no hidden information.
+        """
+        choices = {
+            (x, 0 if current_y < 0 else current_y + 1)
+            for x in self.reachable(current_x, current_y)
+            if current_y < MAX_Y
+        }
+        downstream = set(choices)
+        frontier = list(choices)
+        while frontier:
+            x, y = frontier.pop()
+            if y >= MAX_Y:
+                continue
+            for child_x in self.reachable(x, y):
+                child = (child_x, y + 1)
+                if child not in downstream:
+                    downstream.add(child)
+                    frontier.append(child)
+
+        nodes = []
+        for y in range(MAX_Y + 1):
+            for x in range(N_COLS):
+                room = self.room_type(x, y)
+                if room == _NONE:
+                    continue
+                children = self.reachable(x, y) if y < MAX_Y else []
+                nodes.append({
+                    "x": x,
+                    "y": y,
+                    "room": room,
+                    "children": children,
+                    "current": x == current_x and y == current_y,
+                    "choice": (x, y) in choices,
+                    "reachable": (x, y) in downstream,
+                })
+        return nodes
+
     def __repr__(self):
         return repr(self._m)

@@ -49,6 +49,59 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     return None
 
 
+def _warm_start_policy(model, pretrained, *, allow_global_map_extension=False):
+    """Copy pretrained policy weights, optionally initializing new map params.
+
+    Global-map models append one encoder role. Old checkpoints therefore lack
+    only ``map_full`` tokenizer/position parameters and one role-embedding row;
+    every pre-existing tensor must still match exactly.
+    """
+    source = pretrained.policy.state_dict()
+    if not allow_global_map_extension:
+        model.policy.load_state_dict(source)
+        return 0
+
+    target = model.policy.state_dict()
+    incompatible = []
+    initialized = []
+    for key, value in source.items():
+        if key not in target:
+            incompatible.append(f"unexpected source parameter {key}")
+            continue
+        if value.shape == target[key].shape:
+            target[key] = value
+            continue
+        is_appended_role = (
+            key.endswith("role_emb.weight")
+            and value.ndim == 2
+            and target[key].ndim == 2
+            and target[key].shape[0] == value.shape[0] + 1
+            and target[key].shape[1] == value.shape[1]
+        )
+        if is_appended_role:
+            target[key][:value.shape[0]] = value
+            initialized.append(f"{key}[-1]")
+        else:
+            incompatible.append(
+                f"shape mismatch for {key}: checkpoint {tuple(value.shape)}, "
+                f"target {tuple(target[key].shape)}"
+            )
+
+    for key in target.keys() - source.keys():
+        if ".map_full." in key or key.endswith(".map_full"):
+            initialized.append(key)
+        else:
+            incompatible.append(f"missing source parameter {key}")
+    if incompatible:
+        details = "\n  - ".join(incompatible)
+        raise ValueError(
+            "--init-from is not compatible with the global-map policy:\n  - "
+            + details
+        )
+    model.policy.load_state_dict(target)
+    return len(initialized)
+
+
 def build_parser(task) -> argparse.ArgumentParser:
     """Full parser for a chosen task: shared PPO/infra args + the task's own
     args, with the task's preferred defaults applied last so an explicit CLI
@@ -200,6 +253,28 @@ def main() -> None:
         pretrained = AccumulatingMaskablePPO.load(
             args.init_from, device=args.device
         )
+
+    if hasattr(args, "global_map_view"):
+        from rl.model import uses_global_map_observation
+
+        source_has_global_map = (
+            pretrained is not None
+            and uses_global_map_observation(pretrained)
+        )
+        if args.resume and not args.global_map_view:
+            from stable_baselines3.common.save_util import load_from_zip_file
+
+            resume_data, _params, _pytorch_variables = load_from_zip_file(
+                args.resume, device="cpu"
+            )
+            source_has_global_map = uses_global_map_observation(
+                resume_data["observation_space"]
+            )
+            del resume_data, _params, _pytorch_variables
+        if source_has_global_map and not args.global_map_view:
+            args.global_map_view = True
+            source = args.resume or args.init_from
+            print(f"[trainer] enabled --global-map-view from {source}")
 
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
@@ -364,9 +439,18 @@ def main() -> None:
         # checkpoint; the freshly built model keeps its step-0 counter and fresh
         # optimizer state. Same obs/action space + arch => strict load.
         assert pretrained is not None
-        model.policy.load_state_dict(pretrained.policy.state_dict())
+        initialized = _warm_start_policy(
+            model,
+            pretrained,
+            allow_global_map_extension=getattr(args, "global_map_view", False),
+        )
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")
+        if initialized:
+            print(
+                f"[trainer] initialized {initialized} new global-map parameter "
+                "tensors"
+            )
 
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)
@@ -377,8 +461,25 @@ def main() -> None:
         for p in core.encoder.parameters():
             p.requires_grad = False
             n += 1
+        map_adapter = 0
+        if getattr(args, "global_map_view", False):
+            for module in (
+                core.encoder.tok["map_full"],
+                core.encoder.role_emb,
+            ):
+                for p in module.parameters():
+                    p.requires_grad = True
+                    map_adapter += 1
+            core.encoder.pos["map_full"].requires_grad = True
+            map_adapter += 1
         # Params stay in the optimizer but get no grad, so Adam skips them.
-        print(f"[trainer] froze encoder ({n} param tensors) — only heads train")
+        if map_adapter:
+            print(
+                f"[trainer] froze encoder ({n} param tensors) except "
+                f"{map_adapter} global-map adapter tensors; heads also train"
+            )
+        else:
+            print(f"[trainer] froze encoder ({n} param tensors) — only heads train")
 
     print(
         f"[trainer] task={task.name} steps={args.steps} n_envs={args.n_envs} "

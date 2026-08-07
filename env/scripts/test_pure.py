@@ -58,7 +58,15 @@ def _fake_combat():
 def _fake_map():
     return {
         "phase": "map",
-        "options": {"nodes": [(2, "MONSTER"), (3, "EVENT"), (4, "REST")]},
+        "options": {
+            "nodes": [(2, "MONSTER"), (3, "EVENT"), (4, "REST")],
+            "full_map": [
+                {"x": 2, "y": 0, "room": "MONSTER", "children": [2, 3],
+                 "current": False, "choice": True, "reachable": True},
+                {"x": 3, "y": 1, "room": "REST", "children": [3],
+                 "current": False, "choice": False, "reachable": True},
+            ],
+        },
         "global": {
             "character": "IRONCLAD", "ascension": 0, "act": 1, "floor": 5,
             "boss": "HEXAGHOST", "relics": ["Burning Blood"], "potions": [],
@@ -184,6 +192,23 @@ def test_global_and_options():
     print("global + options OK")
 
 
+def test_optional_global_map_view():
+    base = encode.encode(_fake_map())
+    assert "map_full_rooms" not in base
+
+    space = encode.obs_space(global_map_view=True)
+    o = encode.encode(_fake_map(), global_map_view=True)
+    assert space.contains(o)
+    first = 2
+    second = encode.MAP_COLS + 3
+    assert o["map_full_rooms"][first] == V.ROOM_VOCAB_INDEX["MONSTER"]
+    assert o["map_full_features"][first, 3] == 1.0
+    assert o["map_full_features"][first, 5 + 3] == 1.0
+    assert o["map_full_rooms"][second] == V.ROOM_VOCAB_INDEX["REST"]
+    assert o["map_full_features"][second, 4] == 1.0
+    print(f"optional global map obs OK (version {encode.GLOBAL_MAP_OBS_VERSION})")
+
+
 # --------------------------- actions / render ---------------------------
 
 def test_action_codec_roundtrip():
@@ -218,6 +243,7 @@ if __name__ == "__main__":
     test_combat_fields_land()
     test_fixed_monster_slots_no_drift()
     test_global_and_options()
+    test_optional_global_map_view()
     test_action_codec_roundtrip()
     test_render()
     print("\nALL OK")

@@ -71,7 +71,9 @@ class WatchSession:
     def __init__(self, model: MaskablePPO, model_lock: threading.Lock, seed: int = 0):
         self.model = model
         self.model_lock = model_lock
-        self.env = SlayTheSpireEnv()
+        self.env = SlayTheSpireEnv(
+            global_map_view=_model.uses_global_map_observation(model)
+        )
         self.seed = seed
         self.history: list[int] = []
         self.obs = None
@@ -289,7 +291,9 @@ class DashboardState:
         ).start()
 
     def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
-        env = SlayTheSpireEnv()
+        env = SlayTheSpireEnv(
+            global_map_view=_model.uses_global_map_observation(model)
+        )
         death_floors: Counter[int] = Counter()
         death_seeds: dict[int, list[int]] = {}
         result_counts: Counter[str] = Counter()

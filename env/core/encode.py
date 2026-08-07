@@ -54,7 +54,11 @@ from . import intents
 # select_hand_mask (obs_design §4.2): a hand-aligned 0/1 vector of the cards the
 # thin env has TOGGLED on a combat MULTI screen (Exhaust Many / Gamble), so the
 # feed-forward policy sees its own pending pick (mask != obs, §0.5).
+# The optional global-map layout is version 8: it appends the full 15x7 map DAG
+# only when ``global_map_view=True``. The default v7 layout stays compatible
+# with existing combat and whole-run checkpoints.
 OBS_VERSION = 7
+GLOBAL_MAP_OBS_VERSION = 8
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -69,6 +73,10 @@ SELECT_PICK_SLOTS = 3     # overworld grid's max simultaneous picks (sim's
                           # haveSelectedCards is fixed_list<3>: Astrolabe=3 max)
 OFFER_SLOTS = 3           # combat card-reward choices
 MAP_EDGES = 3             # reachable next-row nodes (<=3 edges out of a node)
+MAP_ROWS = 15
+MAP_COLS = 7
+MAP_FULL_SLOTS = MAP_ROWS * MAP_COLS
+MAP_FULL_FEATURES = 12    # x, y, current, choice, reachable, 7 outgoing edges
 SHOP_CARD_SLOTS = 7       # shop shelf: cards[7] (slot == buy action id)
 SHOP_RELIC_SLOTS = 3      # shop shelf: relics[3]
 SHOP_POTION_SLOTS = 3     # shop shelf: potions[3]
@@ -100,7 +108,7 @@ _SCALAR = np.float32
 
 # ============================ observation space ============================
 
-def obs_space():
+def obs_space(*, global_map_view=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -110,7 +118,7 @@ def obs_space():
     def scal(shape, high=np.inf):
         return spaces.Box(low=-np.inf, high=high, shape=shape, dtype=_SCALAR)
 
-    return spaces.Dict({
+    groups = {
         # ---- player ----
         "player_scalars": scal((PLAYER_SCALARS,)),
         "player_buffs": scal((V.PLAYER_BUFF_VEC,)),
@@ -175,7 +183,15 @@ def obs_space():
         "shop_potion_ids": cat((SHOP_POTION_SLOTS,), V.POTION_VOCAB_CAPACITY),
         "shop_potion_prices": scal((SHOP_POTION_SLOTS,)),
         "shop_remove_cost": scal((1,)),
-    })
+    }
+    if global_map_view:
+        groups.update({
+            "map_full_rooms": cat((MAP_FULL_SLOTS,), len(V.ROOM_VOCAB)),
+            "map_full_features": scal(
+                (MAP_FULL_SLOTS, MAP_FULL_FEATURES), high=1.0
+            ),
+        })
+    return spaces.Dict(groups)
 
 
 # ============================== index helpers ==============================
@@ -188,9 +204,9 @@ def _idx(index_map, key):
     return index_map.get(key, 0)            # 0 == PAD for every id vocabulary
 
 
-def _empty():
+def _empty(*, global_map_view=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
-    return {
+    o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
         "player_buffs": np.zeros(V.PLAYER_BUFF_VEC, _SCALAR),
         "monster_id": np.zeros(MAX_MONSTERS, _CAT),
@@ -237,6 +253,12 @@ def _empty():
         "shop_potion_prices": np.zeros(SHOP_POTION_SLOTS, _SCALAR),
         "shop_remove_cost": np.zeros(1, _SCALAR),
     }
+    if global_map_view:
+        o["map_full_rooms"] = np.zeros(MAP_FULL_SLOTS, _CAT)
+        o["map_full_features"] = np.zeros(
+            (MAP_FULL_SLOTS, MAP_FULL_FEATURES), _SCALAR
+        )
+    return o
 
 
 # ================================ encoders ================================
@@ -352,6 +374,26 @@ def _encode_options(o, canon):
         for j, (x, room) in enumerate(opts.get("nodes", [])[:MAP_EDGES]):
             o["map_node_rooms"][j] = V.ROOM_VOCAB_INDEX.get(room, 0)
             o["map_node_x"][j] = x / MAP_X_SCALE
+        if "map_full_rooms" in o:
+            for node in opts.get("full_map", []):
+                x, y = int(node["x"]), int(node["y"])
+                if not (0 <= x < MAP_COLS and 0 <= y < MAP_ROWS):
+                    continue
+                slot = y * MAP_COLS + x
+                o["map_full_rooms"][slot] = V.ROOM_VOCAB_INDEX.get(
+                    node["room"], 0
+                )
+                features = o["map_full_features"][slot]
+                features[:5] = (
+                    x / MAP_X_SCALE,
+                    y / (MAP_ROWS - 1),
+                    float(bool(node.get("current"))),
+                    float(bool(node.get("choice"))),
+                    float(bool(node.get("reachable"))),
+                )
+                for child_x in node.get("children", []):
+                    if 0 <= child_x < MAP_COLS:
+                        features[5 + child_x] = 1.0
     elif phase == "event":
         g = canon.get("global") or {}
         # event id lives in the options (env reads gc.cur_event_name into it)
@@ -382,12 +424,12 @@ def _encode_options(o, canon):
             o["boss_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
 
 
-def encode(canon):
+def encode(canon, *, global_map_view=False):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
     `canon` may carry only the combat block (a normalize_sim result), only the
     overworld block, or the full assembled dict — absent groups encode to PAD."""
-    o = _empty()
+    o = _empty(global_map_view=global_map_view)
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)

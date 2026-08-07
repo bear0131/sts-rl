@@ -106,8 +106,11 @@ def main() -> None:
     summary_path = os.path.join(out_dir, "summary.json")
     print(f"[bughunt] output -> {out_dir}")
 
-    env = SlayTheSpireEnv(ascension=args.ascension)
     model = MaskablePPO.load(args.checkpoint, device=args.device)
+    env = SlayTheSpireEnv(
+        ascension=args.ascension,
+        global_map_view=_model.uses_global_map_observation(model),
+    )
 
     # dedup table: signature -> {count, type, message, examples:[{seed,step,floor}], first_tb}
     seen: dict[str, dict] = {}
