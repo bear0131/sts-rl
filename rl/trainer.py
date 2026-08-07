@@ -49,15 +49,23 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     return None
 
 
-def _warm_start_policy(model, pretrained, *, allow_global_map_extension=False):
-    """Copy pretrained policy weights, optionally initializing new map params.
+def _warm_start_policy(
+    model,
+    pretrained,
+    *,
+    allow_global_map_extension=False,
+    allow_card_language_extension=False,
+    allow_combat_language_extension=False,
+):
+    """Copy pretrained weights, optionally initializing new semantic params.
 
     Global-map models append one encoder role. Old checkpoints therefore lack
     only ``map_full`` tokenizer/position parameters and one role-embedding row;
     every pre-existing tensor must still match exactly.
     """
     source = pretrained.policy.state_dict()
-    if not allow_global_map_extension:
+    if not any((allow_global_map_extension, allow_card_language_extension,
+                allow_combat_language_extension)):
         model.policy.load_state_dict(source)
         return 0
 
@@ -88,14 +96,28 @@ def _warm_start_policy(model, pretrained, *, allow_global_map_extension=False):
             )
 
     for key in target.keys() - source.keys():
-        if ".map_full." in key or key.endswith(".map_full"):
+        is_global_map = ".map_full." in key or key.endswith(".map_full")
+        is_card_language = any(marker in key for marker in (
+            ".shared.card.token_embedding.",
+            ".shared.card.local_encoder.",
+            ".shared.card.effect_scale",
+            ".pile_card_language.",
+        ))
+        is_combat_language = ".combat_language" in key
+        if (
+            allow_global_map_extension and is_global_map
+        ) or (
+            allow_card_language_extension and is_card_language
+        ) or (
+            allow_combat_language_extension and is_combat_language
+        ):
             initialized.append(key)
         else:
             incompatible.append(f"missing source parameter {key}")
     if incompatible:
         details = "\n  - ".join(incompatible)
         raise ValueError(
-            "--init-from is not compatible with the global-map policy:\n  - "
+            "--init-from is not compatible with the requested policy:\n  - "
             + details
         )
     model.policy.load_state_dict(target)
@@ -165,6 +187,18 @@ def build_parser(task) -> argparse.ArgumentParser:
     parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=8)
+    parser.add_argument(
+        "--card-language",
+        action="store_true",
+        help="Enrich Ironclad card ID embeddings with tokenized base/upgraded "
+             "effect programs. Off by default for checkpoint compatibility.",
+    )
+    parser.add_argument(
+        "--combat-language",
+        action="store_true",
+        help="Tokenize every monster intent and each live entity status bar "
+             "(HP, max HP, Block, powers). Off for checkpoint compatibility.",
+    )
 
     # --- run / io --------------------------------------------------------------
     parser.add_argument("--ascension", type=int, default=0)
@@ -275,6 +309,28 @@ def main() -> None:
             args.global_map_view = True
             source = args.resume or args.init_from
             print(f"[trainer] enabled --global-map-view from {source}")
+
+    if pretrained is not None:
+        from rl.model import uses_card_language, uses_combat_language
+
+        if uses_card_language(pretrained) and not args.card_language:
+            args.card_language = True
+            print(f"[trainer] enabled --card-language from {args.init_from}")
+        if uses_combat_language(pretrained) and not args.combat_language:
+            args.combat_language = True
+            print(f"[trainer] enabled --combat-language from {args.init_from}")
+
+    if args.resume and not args.combat_language:
+        from stable_baselines3.common.save_util import load_from_zip_file
+        from rl.model import uses_combat_language
+
+        resume_data, _params, _pytorch_variables = load_from_zip_file(
+            args.resume, device="cpu"
+        )
+        if uses_combat_language(resume_data["observation_space"]):
+            args.combat_language = True
+            print(f"[trainer] enabled --combat-language from {args.resume}")
+        del resume_data, _params, _pytorch_variables
 
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
@@ -443,13 +499,14 @@ def main() -> None:
             model,
             pretrained,
             allow_global_map_extension=getattr(args, "global_map_view", False),
+            allow_card_language_extension=args.card_language,
+            allow_combat_language_extension=args.combat_language,
         )
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")
         if initialized:
             print(
-                f"[trainer] initialized {initialized} new global-map parameter "
-                "tensors"
+                f"[trainer] initialized {initialized} new semantic parameter tensors"
             )
 
     if args.freeze_encoder:
@@ -461,7 +518,7 @@ def main() -> None:
         for p in core.encoder.parameters():
             p.requires_grad = False
             n += 1
-        map_adapter = 0
+        trainable_extensions = 0
         if getattr(args, "global_map_view", False):
             for module in (
                 core.encoder.tok["map_full"],
@@ -469,14 +526,32 @@ def main() -> None:
             ):
                 for p in module.parameters():
                     p.requires_grad = True
-                    map_adapter += 1
+                    trainable_extensions += 1
             core.encoder.pos["map_full"].requires_grad = True
-            map_adapter += 1
+            trainable_extensions += 1
+        if args.card_language:
+            card_embedding = core.encoder.shared["card"]
+            for name in ("token_embedding", "local_encoder"):
+                for p in getattr(card_embedding, name).parameters():
+                    p.requires_grad = True
+                    trainable_extensions += 1
+            card_embedding.effect_scale.requires_grad = True
+            trainable_extensions += 1
+        if args.combat_language:
+            for p in core.encoder.combat_language.parameters():
+                p.requires_grad = True
+                trainable_extensions += 1
+            core.encoder.combat_language_scale.requires_grad = True
+            trainable_extensions += 1
+            for p in core.encoder.pile_card_language.parameters():
+                p.requires_grad = True
+                trainable_extensions += 1
         # Params stay in the optimizer but get no grad, so Adam skips them.
-        if map_adapter:
+        if trainable_extensions:
             print(
                 f"[trainer] froze encoder ({n} param tensors) except "
-                f"{map_adapter} global-map adapter tensors; heads also train"
+                f"{trainable_extensions} new semantic adapter tensors; "
+                "heads also train"
             )
         else:
             print(f"[trainer] froze encoder ({n} param tensors) — only heads train")
@@ -487,6 +562,8 @@ def main() -> None:
         f"micro_batch={args.batch_size} "
         f"grad_accum={args.gradient_accumulation_steps} "
         f"effective_batch={args.batch_size * args.gradient_accumulation_steps} "
+        f"card_language={args.card_language} "
+        f"combat_language={args.combat_language} "
         f"ent_coef={args.ent_coef} lr={args.learning_rate}"
     )
 

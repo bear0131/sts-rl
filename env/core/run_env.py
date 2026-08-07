@@ -61,7 +61,8 @@ class SlayTheSpireEnv(gym.Env):
     metadata = {"render_modes": ["ansi"]}
 
     def __init__(self, backend_factory=None, character=None, ascension=0,
-                 render_mode=None, global_map_view=False):
+                 render_mode=None, global_map_view=False,
+                 combat_language=False):
         super().__init__()
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
@@ -71,6 +72,7 @@ class SlayTheSpireEnv(gym.Env):
             )
         )
         self._global_map_view = global_map_view
+        self._combat_language = combat_language
         self.render_mode = render_mode
         self.thick = None
         # autoregressive sub-state: None at ROOT, else ('play', hand_idx) awaiting
@@ -82,7 +84,8 @@ class SlayTheSpireEnv(gym.Env):
         self._multi = None
 
         self.observation_space = encode.obs_space(
-            global_map_view=global_map_view
+            global_map_view=global_map_view,
+            combat_language=combat_language,
         )
         self.action_space = spaces.Discrete(A.N_ACTIONS)
 
@@ -233,7 +236,11 @@ class SlayTheSpireEnv(gym.Env):
             cap = int(sel.get("pick_max", 0))
             sel["pick_remaining"] = max(0, cap - len(self._multi))
             canon["options"]["select"] = sel
-        return encode.encode(canon, global_map_view=self._global_map_view)
+        return encode.encode(
+            canon,
+            global_map_view=self._global_map_view,
+            combat_language=self._combat_language,
+        )
 
     def action_masks(self):
         """Bool[N_ACTIONS] legal mask for the CURRENT (phase, arg_step). Name

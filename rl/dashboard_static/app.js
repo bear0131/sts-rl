@@ -160,7 +160,7 @@ function renderAll() {
 function powersText(powers) { return Object.entries(powers || {}).filter(([,v]) => v !== 0).map(([k,v]) => `${k} ${v}`).join(" · "); }
 function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${zhCards[id] || id}${up ? "+" : ""}`; }
 function intentLabel(monster) {
-  if (monster.base_damage > 0) return `攻击 ${monster.base_damage}${monster.hits > 1 ? ` × ${monster.hits}` : ""}`;
+  if (monster.base_damage > 0) return `攻击 ${monster.adjusted_damage ?? monster.base_damage}${monster.hits > 1 ? ` × ${monster.hits}` : ""}`;
   const move = String(monster.move || "").toUpperCase();
   if (move.includes("DEFEND") || move.includes("PROTECT")) return "防御意图";
   if (move.includes("DEBUFF") || move.includes("WEAK") || move.includes("LICK")) return "弱化意图";
@@ -179,7 +179,7 @@ function captureCombatTransition(w) {
     animation,
     playerHp: canon.player?.hp,
     enemyAttackExpected: (canon.monsters || []).reduce((total, monster) => total + (
-      monster.gone ? 0 : Math.max(0, monster.base_damage || 0) * Math.max(1, monster.hits || 1)
+      monster.gone ? 0 : Math.max(0, monster.adjusted_damage ?? monster.base_damage ?? 0) * Math.max(1, monster.hits || 1)
     ), 0),
     monsters: (canon.monsters || []).map(monster => ({hp: monster.hp, block: monster.block, gone: monster.gone})),
     targetPoint: targetRect ? {x: targetRect.left + targetRect.width / 2, y: targetRect.top + targetRect.height / 2} : null

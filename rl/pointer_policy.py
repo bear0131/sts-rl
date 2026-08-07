@@ -82,6 +82,8 @@ class StSPolicyCore(nn.Module):
         d_model: int = 256,
         n_layers: int = 4,
         n_heads: int = 8,
+        card_language: bool = False,
+        combat_language: bool = False,
         features_dim: int = 256,
         vf_arch: tuple[int, ...] = (512, 256),
     ) -> None:
@@ -92,6 +94,8 @@ class StSPolicyCore(nn.Module):
             d_model=d_model,
             n_layers=n_layers,
             n_heads=n_heads,
+            card_language=card_language,
+            combat_language=combat_language,
         )
         d = d_model
 
@@ -201,9 +205,17 @@ class StSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         d_model: int = 256,
         n_layers: int = 4,
         n_heads: int = 8,
+        card_language: bool = False,
+        combat_language: bool = False,
         **kwargs,
     ) -> None:
-        self._core_cfg = dict(d_model=d_model, n_layers=n_layers, n_heads=n_heads)
+        self._core_cfg = dict(
+            d_model=d_model,
+            n_layers=n_layers,
+            n_heads=n_heads,
+            card_language=card_language,
+            combat_language=combat_language,
+        )
         # The core owns the whole net; force SB3's features extractor to a stub.
         kwargs["features_extractor_class"] = _NullExtractor
         kwargs.pop("features_extractor_kwargs", None)

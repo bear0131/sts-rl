@@ -12,7 +12,8 @@ localized `name` field, which is GBK-localized and unstable):
     "turn": int,
     "player": {"hp", "max_hp", "block", "energy", "powers": {power_id: amount}},
     "monsters": [
-      {"id", "hp", "max_hp", "block", "gone", "base_damage", "hits",
+      {"id", "hp", "max_hp", "block", "gone", "base_damage",
+       "adjusted_damage", "hits",
        "powers": {power_id: amount}}, ...],   # real side also carries intent/move_id (diff ignores)
     "hand": [{"id", "up", "cost"}, ...],
     "draw"/"discard"/"exhaust": [{"id", "up"}, ...],
@@ -72,6 +73,7 @@ def _attack(base, hits):
 
 def _monster_real(m):
     base, hits = _attack(m.get("move_base_damage", -1), m.get("move_hits", 1))
+    adjusted, _ = _attack(m.get("move_adjusted_damage", base), hits)
     hp = m["current_hp"]
     return {
         "id": m["id"],
@@ -80,6 +82,7 @@ def _monster_real(m):
         "block": m["block"],
         "gone": m["is_gone"],
         "base_damage": base,
+        "adjusted_damage": adjusted,
         "hits": hits,
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
@@ -223,6 +226,7 @@ def _powers_sim(pairs):
 
 def _norm_sim_monster(m):
     base, hits = _attack(m["base_damage"], m["hits"])
+    adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
     hp = m["hp"]
     return {
         "id": _sim_monster_id(m["id"]),
@@ -231,6 +235,7 @@ def _norm_sim_monster(m):
         "block": m["block"],
         "gone": m["gone"],
         "base_damage": base,
+        "adjusted_damage": adjusted,
         "hits": hits,
         "powers": _powers_sim(m["powers"]) if hp > 0 else {},
         # current intent: the sim now exports the rolled MonsterMoveId as an

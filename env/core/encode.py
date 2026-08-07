@@ -29,7 +29,8 @@ overworld-only canonical both encode):
     arg_step  : thin-env autoregressive sub-step (vocab.ARG_STEP_VOCAB; PAD=root)
     turn      : combat turn (int)
     player    : {hp,max_hp,block,energy,powers}
-    monsters  : [{id,hp,max_hp,block,gone,base_damage,hits,powers,move,move_id}]
+    monsters  : [{id,hp,max_hp,block,gone,base_damage,adjusted_damage,
+                  hits,powers,move,move_id}]
     hand      : [{id,up,cost}, ...] (cost is current cost for this turn)
     draw/discard/exhaust : [{id,up}, ...]
     global    : {character,ascension,act,floor,boss,relics,potions,gold,deck,boss_relics}
@@ -43,6 +44,7 @@ from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 from .ironclad_cards import card_numbers
 from . import vocab as V
 from . import intents
+from . import combat_language as CL
 
 # Bump on any layout/order/scaling change (see module docstring). v1 was a flat
 # Box; v2 is the structured Dict below. v3 adds `arg_step` (the thin
@@ -99,7 +101,7 @@ PICK_SCALE = 10.0         # cards-remaining-to-pick (pickCount up to a handful)
 
 # ---- per-group scalar widths ----
 PLAYER_SCALARS = 6        # hp, max_hp, block, energy, turn, hp_frac
-MON_SCALARS = 6           # present, hp, hp_frac, block, base_damage, hits
+MON_SCALARS = 6           # present, hp, hp_frac, block, adjusted_damage, hits
 
 # dtypes: categorical ids are integer indices, scalars are float32.
 _CAT = np.int64
@@ -108,7 +110,7 @@ _SCALAR = np.float32
 
 # ============================ observation space ============================
 
-def obs_space(*, global_map_view=False):
+def obs_space(*, global_map_view=False, combat_language=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -191,6 +193,20 @@ def obs_space(*, global_map_view=False):
                 (MAP_FULL_SLOTS, MAP_FULL_FEATURES), high=1.0
             ),
         })
+    if combat_language:
+        groups.update({
+            "player_status_language": cat(
+                (CL.MAX_PLAYER_STATUS_TOKENS,), len(CL.TOKEN_VOCAB)
+            ),
+            "monster_status_language": cat(
+                (MAX_MONSTERS, CL.MAX_MONSTER_STATUS_TOKENS),
+                len(CL.TOKEN_VOCAB),
+            ),
+            "monster_intent_language": cat(
+                (MAX_MONSTERS, CL.MAX_LIVE_INTENT_TOKENS),
+                len(CL.TOKEN_VOCAB),
+            ),
+        })
     return spaces.Dict(groups)
 
 
@@ -204,7 +220,7 @@ def _idx(index_map, key):
     return index_map.get(key, 0)            # 0 == PAD for every id vocabulary
 
 
-def _empty(*, global_map_view=False):
+def _empty(*, global_map_view=False, combat_language=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -258,6 +274,16 @@ def _empty(*, global_map_view=False):
         o["map_full_features"] = np.zeros(
             (MAP_FULL_SLOTS, MAP_FULL_FEATURES), _SCALAR
         )
+    if combat_language:
+        o["player_status_language"] = np.zeros(
+            CL.MAX_PLAYER_STATUS_TOKENS, _CAT
+        )
+        o["monster_status_language"] = np.zeros(
+            (MAX_MONSTERS, CL.MAX_MONSTER_STATUS_TOKENS), _CAT
+        )
+        o["monster_intent_language"] = np.zeros(
+            (MAX_MONSTERS, CL.MAX_LIVE_INTENT_TOKENS), _CAT
+        )
     return o
 
 
@@ -282,6 +308,11 @@ def _encode_combat(o, canon):
         j = V.PLAYER_BUFF_VOCAB_INDEX.get(name)
         if j is not None:
             o["player_buffs"][j] = amt / BUFF_SCALE
+    if "player_status_language" in o:
+        program = CL.status_program("PLAYER", hp, max_hp, p["block"], p["powers"])
+        ids = [CL.TOKEN_INDEX.get(token, 0) for token in program]
+        ids = ids[:CL.MAX_PLAYER_STATUS_TOKENS]
+        o["player_status_language"][:len(ids)] = ids
 
     # Monsters keep FIXED slots (obs_design.md §2.2): monster i stays in slot i;
     # a dead one is marked present=0 rather than filtered (filtering shifts slots
@@ -304,13 +335,28 @@ def _encode_combat(o, canon):
             min(mhp, HP_SCALE) / HP_SCALE,
             (mhp / mmax) if mmax else 0.0,
             m["block"] / BLOCK_SCALE,
-            m["base_damage"] / DMG_SCALE,
+            m.get("adjusted_damage", m["base_damage"]) / DMG_SCALE,
             m["hits"] / HITS_SCALE,
         )
         for name, amt in m["powers"].items():
             j = V.MONSTER_BUFF_VOCAB_INDEX.get(name)
             if j is not None:
                 o["monster_buffs"][i, j] = amt / BUFF_SCALE
+        if "monster_status_language" in o:
+            status = CL.status_program(
+                "MONSTER", mhp, mmax, m["block"], m["powers"]
+            )
+            status_ids = [CL.TOKEN_INDEX.get(token, 0) for token in status]
+            status_ids = status_ids[:CL.MAX_MONSTER_STATUS_TOKENS]
+            o["monster_status_language"][i, :len(status_ids)] = status_ids
+            intent = CL.live_intent_program(
+                m.get("move", "PAD"),
+                m.get("adjusted_damage", m["base_damage"]),
+                m["hits"],
+            )
+            intent_ids = [CL.TOKEN_INDEX.get(token, 0) for token in intent]
+            intent_ids = intent_ids[:CL.MAX_LIVE_INTENT_TOKENS]
+            o["monster_intent_language"][i, :len(intent_ids)] = intent_ids
 
     hand = canon.get("hand", [])
     for i in range(HAND_SLOTS):
@@ -424,12 +470,15 @@ def _encode_options(o, canon):
             o["boss_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
 
 
-def encode(canon, *, global_map_view=False):
+def encode(canon, *, global_map_view=False, combat_language=False):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
     `canon` may carry only the combat block (a normalize_sim result), only the
     overworld block, or the full assembled dict — absent groups encode to PAD."""
-    o = _empty(global_map_view=global_map_view)
+    o = _empty(
+        global_map_view=global_map_view,
+        combat_language=combat_language,
+    )
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)

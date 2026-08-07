@@ -17,6 +17,15 @@ from env.core import render
 from env.core import intents
 from env.core import vocab as V
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
+from env.core.card_language import (
+    MAX_PROGRAM_TOKENS,
+    TOKEN_DOC,
+    TOKEN_INDEX,
+    TOKEN_VOCAB,
+    card_program,
+    encoded_card_programs,
+)
+from env.core import combat_language as CL
 
 
 # ------------------------------ fixtures ------------------------------
@@ -32,7 +41,8 @@ def _fake_combat():
         },
         "monsters": [
             {"id": "JawWorm", "hp": 40, "max_hp": 44, "block": 0, "gone": False,
-             "base_damage": 11, "hits": 1, "powers": {"Strength": 3},
+             "base_damage": 11, "adjusted_damage": 14, "hits": 1,
+             "powers": {"Strength": 3},
              "move": "JAW_WORM_CHOMP", "move_id": 87},
             {"id": "Cultist", "hp": 0, "max_hp": 48, "block": 0, "gone": True,
              "base_damage": 0, "hits": 0, "powers": {},
@@ -111,6 +121,25 @@ def test_ironclad_card_table():
     assert card_numbers("Infernal Blade", 1) == (0, 0, 0)
     assert card_numbers("Searing Blow", 10) == (2, 97, 0)
     print("Ironclad card table OK (75 bilingual wiki-backed entries)")
+
+
+def test_ironclad_card_language():
+    from env.core.cards_vocab import CARD_VOCAB
+
+    assert len(TOKEN_VOCAB) == len(TOKEN_INDEX) == len(set(TOKEN_VOCAB))
+    assert all(token in TOKEN_DOC for token in TOKEN_VOCAB)
+    for card_id in IRONCLAD_CARDS:
+        for upgraded in (False, True):
+            program = card_program(card_id, upgraded)
+            assert program[0] == "CARD_BEGIN" and program[-1] == "CARD_END"
+            assert all(token in TOKEN_INDEX for token in program)
+    rows = encoded_card_programs()
+    assert len(rows) == len(CARD_VOCAB)
+    assert all(len(row) == MAX_PROGRAM_TOKENS for row in rows)
+    print(
+        f"Ironclad card language OK (75 cards, {len(TOKEN_VOCAB)} tokens, "
+        f"max program {MAX_PROGRAM_TOKENS})"
+    )
 
 
 # ------------------------------ intents ------------------------------
@@ -209,6 +238,28 @@ def test_optional_global_map_view():
     print(f"optional global map obs OK (version {encode.GLOBAL_MAP_OBS_VERSION})")
 
 
+def test_combat_language():
+    assert CL.ATTACK_MOVES <= set(V.MOVE_VOCAB)
+    for move in V.MOVE_VOCAB[1:]:
+        program = CL.intent_program(move)
+        assert program[0] == "INTENT_BEGIN" and program[-1] == "INTENT_END"
+        assert f"MOVE_{move}" in program
+
+    o = encode.encode(_fake_combat(), combat_language=True)
+    assert encode.obs_space(combat_language=True).contains(o)
+    player = [CL.TOKEN_VOCAB[i] for i in o["player_status_language"] if i]
+    intent = [CL.TOKEN_VOCAB[i] for i in o["monster_intent_language"][0] if i]
+    assert "STATUS_Strength" in player and "STATUS_Frail" in player
+    # Adjusted 14 damage, not raw 11, is digit-tokenized into the live intent.
+    damage_at = intent.index("DEAL_DAMAGE")
+    assert intent[damage_at + 1:damage_at + 5] == [
+        "NUM_BEGIN", "DIGIT_1", "DIGIT_4", "NUM_END"
+    ]
+    assert abs(o["monster_scalars"][0, 4] - 14 / encode.DMG_SCALE) < 1e-6
+    print(f"combat language OK ({len(V.MOVE_VOCAB) - 1} intents, "
+          f"{len(CL.TOKEN_VOCAB)} tokens)")
+
+
 # --------------------------- actions / render ---------------------------
 
 def test_action_codec_roundtrip():
@@ -238,12 +289,14 @@ def test_render():
 if __name__ == "__main__":
     test_vocab_invariants()
     test_ironclad_card_table()
+    test_ironclad_card_language()
     test_intent_derivation()
     test_obs_matches_space()
     test_combat_fields_land()
     test_fixed_monster_slots_no_drift()
     test_global_and_options()
     test_optional_global_map_view()
+    test_combat_language()
     test_action_codec_roundtrip()
     test_render()
     print("\nALL OK")

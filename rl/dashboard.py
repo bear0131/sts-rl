@@ -24,7 +24,12 @@ from sb3_contrib import MaskablePPO
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.eval import is_win
-from rl.visualize_card_vectors import extract_state_dict_vectors, pca_project
+from rl.visualize_card_vectors import (
+    extract_state_dict_vectors,
+    extract_vectors,
+    pca_project,
+    resolve_encoder,
+)
 from rl.watch import _action_dist
 from env.core.cards_vocab import CARD_INDEX
 from env.core.ironclad_cards import card_numbers
@@ -72,7 +77,8 @@ class WatchSession:
         self.model = model
         self.model_lock = model_lock
         self.env = SlayTheSpireEnv(
-            global_map_view=_model.uses_global_map_observation(model)
+            global_map_view=_model.uses_global_map_observation(model),
+            combat_language=_model.uses_combat_language(model),
         )
         self.seed = seed
         self.history: list[int] = []
@@ -242,9 +248,20 @@ class DashboardState:
         self.start_evaluation(episodes=episodes, seed=0)
 
     def _embedding(self, model: MaskablePPO):
-        state = model.policy.state_dict()
-        base, description = extract_state_dict_vectors(state, "hand", upgrades=0)
-        upgraded, _ = extract_state_dict_vectors(state, "hand", upgrades=1)
+        try:
+            encoder = resolve_encoder(model)
+            base, description = extract_vectors(encoder, "hand", upgrades=0)
+            upgraded, _ = extract_vectors(encoder, "hand", upgrades=1)
+        except RuntimeError:
+            # Older flat policies have no pointer core; retain their state-dict
+            # compatibility path (they also predate the card language).
+            state = model.policy.state_dict()
+            base, description = extract_state_dict_vectors(
+                state, "hand", upgrades=0
+            )
+            upgraded, _ = extract_state_dict_vectors(
+                state, "hand", upgrades=1
+            )
         indices = np.asarray([CARD_INDEX[name] for name in COMMON_CARDS])
         vectors = np.concatenate([base[indices], upgraded[indices]], axis=0)
         coords, ratio, norms = pca_project(vectors, dim=2, normalize=False)
@@ -292,7 +309,8 @@ class DashboardState:
 
     def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
         env = SlayTheSpireEnv(
-            global_map_view=_model.uses_global_map_observation(model)
+            global_map_view=_model.uses_global_map_observation(model),
+            combat_language=_model.uses_combat_language(model),
         )
         death_floors: Counter[int] = Counter()
         death_seeds: dict[int, list[int]] = {}

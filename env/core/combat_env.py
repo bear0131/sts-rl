@@ -109,17 +109,19 @@ class SimCombatEnv(gym.Env):
 
     metadata = {"render_modes": ["ansi"]}
 
-    def __init__(self, gc_factory=None, pool="normal", ascension=0, render_mode=None):
+    def __init__(self, gc_factory=None, pool="normal", ascension=0,
+                 render_mode=None, combat_language=False):
         super().__init__()
         self._gc_factory = gc_factory
         self._pool = pool
         self._ascension = ascension
         self.render_mode = render_mode
+        self._combat_language = combat_language
         self.gc = None
         self.bc = None
         self.encounter = None
 
-        self.observation_space = encode.obs_space()
+        self.observation_space = encode.obs_space(combat_language=combat_language)
         self.action_space = spaces.Discrete(actions.N_ACTIONS)
 
     # ---- gym API ----
@@ -173,7 +175,9 @@ class SimCombatEnv(gym.Env):
         return d
 
     def _obs(self):
-        return encode.encode(self._obs_canon())
+        return encode.encode(
+            self._obs_canon(), combat_language=self._combat_language
+        )
 
     def _info(self):
         return {"action_mask": self.action_mask()}

@@ -106,6 +106,12 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
         md["move"] = sts::monsterMoveStrings[static_cast<int>(curMove)];
         const auto dmg = m.getMoveBaseDamage(bc);
         md["base_damage"] = dmg.damage;
+        // Use the simulator's actual damage pipeline for the displayed intent.
+        // This includes Strength, Weak/Paper Krane, player Vulnerable/Odd
+        // Mushroom, Surrounded, Wrath, Intangible, and the game's rounding.
+        md["adjusted_damage"] = dmg.damage > 0
+            ? m.calculateDamageToPlayer(bc, dmg.damage)
+            : 0;
         md["hits"] = dmg.attackCount;
         md["powers"] = monsterPowersToList(m);
         monsters.append(md);

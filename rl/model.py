@@ -9,11 +9,33 @@ from gymnasium import spaces
 from torch import nn
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
+from env.core.card_language import TOKEN_VOCAB, encoded_card_programs
+from env.core.combat_language import TOKEN_VOCAB as COMBAT_TOKEN_VOCAB
+
 
 def uses_global_map_observation(model_or_space) -> bool:
     """Whether a model/space expects the optional full-map observation fields."""
     space = getattr(model_or_space, "observation_space", model_or_space)
     return "map_full_rooms" in getattr(space, "spaces", {})
+
+
+def uses_combat_language(model_or_space) -> bool:
+    """Whether a model/space carries tokenized intent and status programs."""
+    space = getattr(model_or_space, "observation_space", model_or_space)
+    return "player_status_language" in getattr(space, "spaces", {})
+
+
+def uses_card_language(model) -> bool:
+    """Whether a loaded policy uses semantic card-effect programs."""
+    policy = getattr(model, "policy", model)
+    core = getattr(policy, "core", None)
+    encoder = getattr(core, "encoder", None)
+    if encoder is None:
+        encoder = getattr(policy, "features_extractor", None)
+    shared = getattr(encoder, "shared", None)
+    if shared is None or "card" not in shared:
+        return False
+    return isinstance(shared["card"], CardLanguageEmbedding)
 
 
 def _embedding_dim_for(vocab_size: int) -> int:
@@ -170,6 +192,82 @@ _SHARED_EMB_DIMS = {
 }
 
 
+class CardLanguageEmbedding(nn.Embedding):
+    """Card-id embedding enriched by the card's tokenized effect program.
+
+    A small 1-D convolution preserves local operator/argument order, masked
+    mean-pooling yields one semantic vector, and that vector is added to the
+    normal learned card-id row. Non-Ironclad cards have an all-PAD program and
+    therefore retain the plain ID embedding behavior.
+    """
+
+    LANGUAGE_VERSION = 2
+
+    def __init__(self, num_embeddings: int, embedding_dim: int) -> None:
+        super().__init__(num_embeddings, embedding_dim, padding_idx=0)
+        programs = torch.as_tensor(encoded_card_programs(), dtype=torch.long)
+        if programs.shape[0] != num_embeddings:
+            raise ValueError(
+                f"card language has {programs.shape[0]} rows, expected "
+                f"{num_embeddings}"
+            )
+        self.register_buffer("program_ids", programs, persistent=False)
+        token_dim = 32
+        self.token_embedding = nn.Embedding(
+            len(TOKEN_VOCAB), token_dim, padding_idx=0
+        )
+        self.local_encoder = nn.Conv1d(
+            token_dim, embedding_dim, kernel_size=3, padding=1
+        )
+        self.effect_scale = nn.Parameter(torch.tensor(0.1))
+
+    def effect_vectors(self, ids: torch.Tensor) -> torch.Tensor:
+        programs = self.program_ids[ids.long()]
+        shape = programs.shape
+        flat = programs.reshape(-1, shape[-1])
+        mask = flat != 0
+        tokens = self.token_embedding(flat).transpose(1, 2)
+        encoded = torch.nn.functional.gelu(self.local_encoder(tokens)).transpose(1, 2)
+        encoded = encoded * mask.unsqueeze(-1)
+        pooled = encoded.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp_min(1)
+        return pooled.reshape(*shape[:-1], self.embedding_dim)
+
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        return super().forward(ids) + self.effect_scale * self.effect_vectors(ids)
+
+    def effective_weight(self) -> torch.Tensor:
+        ids = torch.arange(self.num_embeddings, device=self.weight.device)
+        return self(ids)
+
+
+class CombatProgramEncoder(nn.Module):
+    """Encode variable-length intent/status DSL programs into entity vectors."""
+
+    LANGUAGE_VERSION = 1
+
+    def __init__(self, output_dim: int) -> None:
+        super().__init__()
+        token_dim = 32
+        self.token_embedding = nn.Embedding(
+            len(COMBAT_TOKEN_VOCAB), token_dim, padding_idx=0
+        )
+        self.local_encoder = nn.Conv1d(
+            token_dim, token_dim, kernel_size=3, padding=1
+        )
+        self.output = nn.Linear(token_dim, output_dim)
+
+    def forward(self, programs: torch.Tensor) -> torch.Tensor:
+        shape = programs.shape
+        flat = programs.long().reshape(-1, shape[-1])
+        mask = flat != 0
+        x = self.token_embedding(flat).transpose(1, 2)
+        x = torch.nn.functional.gelu(self.local_encoder(x)).transpose(1, 2)
+        x = x * mask.unsqueeze(-1)
+        pooled = x.sum(1) / mask.sum(1, keepdim=True).clamp_min(1)
+        pooled = self.output(pooled)
+        return pooled.reshape(*shape[:-1], self.output.out_features)
+
+
 class StSTransformerExtractor(BaseFeaturesExtractor):
     """Tokenize Dict observations and encode them with a Transformer.
 
@@ -186,6 +284,8 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         d_model: int = 256,
         n_layers: int = 4,
         n_heads: int = 8,
+        card_language: bool = False,
+        combat_language: bool = False,
         dim_feedforward: int | None = None,
         dropout: float = 0.0,
     ) -> None:
@@ -193,6 +293,16 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
 
         self.d_model = d_model
         self._obs = observation_space
+        if combat_language != ("player_status_language" in observation_space.spaces):
+            raise ValueError(
+                "combat_language must match the environment observation layout"
+            )
+        self.combat_language = (
+            CombatProgramEncoder(d_model) if combat_language else None
+        )
+        self.combat_language_scale = (
+            nn.Parameter(torch.tensor(0.1)) if combat_language else None
+        )
         if dim_feedforward is None:
             dim_feedforward = 4 * d_model
 
@@ -202,7 +312,10 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
 
         def make_emb(name: str, vocab_size: int) -> int:
             dim = _SHARED_EMB_DIMS.get(name, _embedding_dim_for(vocab_size))
-            self.shared[name] = nn.Embedding(vocab_size, dim, padding_idx=0)
+            if name == "card" and card_language:
+                self.shared[name] = CardLanguageEmbedding(vocab_size, dim)
+            else:
+                self.shared[name] = nn.Embedding(vocab_size, dim, padding_idx=0)
             return dim
 
         d_card = make_emb("card", cap["card"])
@@ -287,6 +400,9 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         self.pile_keys = ["draw_counts", "discard_counts", "exhaust_counts", "deck_counts"]
         self.tok["pile"] = nn.Linear(self._n("draw_counts"), d_model)
         self.pos["pile"] = nn.Parameter(torch.zeros(len(self.pile_keys), d_model))
+        self.pile_card_language = (
+            nn.Linear(d_card, d_model, bias=False) if card_language else None
+        )
 
         # global token: assorted run/player scalars + small categorical embeddings
         self.global_scalar_keys = [
@@ -389,13 +505,22 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         for k in self.global_cat_keys:
             gparts.append(self.shared[k](obs[k].long()).reshape(B, -1))
         g = self.tok["global"](torch.cat(gparts, dim=1)).unsqueeze(1)
+        if self.combat_language is not None:
+            status = self.combat_language(obs["player_status_language"])
+            g = g + self.combat_language_scale * status.unsqueeze(1)
         add(self._role(g, "global"),
             torch.zeros(B, 1, dtype=torch.bool, device=device))
 
         # pile tokens — always present
         pile_toks = []
+        card_table = None
+        if self.pile_card_language is not None:
+            card_table = self.shared["card"].effective_weight()
         for i, k in enumerate(self.pile_keys):
             t = self.tok["pile"](obs[k].float()) + self.pos["pile"][i]
+            if card_table is not None:
+                semantic_counts = obs[k].float() @ card_table
+                t = t + self.pile_card_language(semantic_counts)
             pile_toks.append(t)
         pile = torch.stack(pile_toks, dim=1)
         add(self._role(pile, "pile"),
@@ -410,6 +535,12 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             obs["monster_buffs"].float(),
         ], dim=-1)
         mon = self.tok["monster"](mon) + self.pos["monster"].unsqueeze(0)
+        if self.combat_language is not None:
+            mon_language = (
+                self.combat_language(obs["monster_status_language"])
+                + self.combat_language(obs["monster_intent_language"])
+            )
+            mon = mon + self.combat_language_scale * mon_language
         add(self._role(mon, "monster"), obs["monster_id"].long() == 0)
 
         # generic id+scalar families

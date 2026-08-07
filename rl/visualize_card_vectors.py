@@ -198,7 +198,19 @@ def extract_vectors(
         # nn.Linear computes y = x @ weight.T + bias.
         # A one-hot card-count input e_i contributes weight[:, i].
         vectors = layer.weight.detach().float().cpu().numpy().T
-        description = 'columns of encoder.tok["pile"].weight (deck-count contributions)'
+        language_layer = getattr(encoder, "pile_card_language", None)
+        card_embedding = getattr(getattr(encoder, "shared", {}), "card", None)
+        if language_layer is not None and hasattr(card_embedding, "effective_weight"):
+            semantic = card_embedding.effective_weight()
+            language_contrib = semantic @ language_layer.weight.T
+            vectors = vectors + language_contrib.detach().float().cpu().numpy()
+            description = (
+                'encoder.tok["pile"] columns + effect-language pile contribution'
+            )
+        else:
+            description = (
+                'columns of encoder.tok["pile"].weight (deck-count contributions)'
+            )
     elif source == "card":
         try:
             embedding = encoder.shared["card"]
@@ -214,8 +226,18 @@ def extract_vectors(
                 "expected nn.Embedding."
             )
 
-        vectors = embedding.weight.detach().float().cpu().numpy()
-        description = 'rows of encoder.shared["card"].weight (card embeddings)'
+        weight = (
+            embedding.effective_weight()
+            if hasattr(embedding, "effective_weight")
+            else embedding.weight
+        )
+        vectors = weight.detach().float().cpu().numpy()
+        description = (
+            'rows of encoder.shared["card"] effective weight '
+            '(card ID + effect-language embeddings)'
+            if hasattr(embedding, "effective_weight")
+            else 'rows of encoder.shared["card"].weight (card embeddings)'
+        )
     elif source == "hand":
         try:
             embedding = encoder.shared["card"]
@@ -226,7 +248,8 @@ def extract_vectors(
                 "checkpoint architecture does not match the current model."
             ) from exc
         vectors = _complete_hand_vectors(
-            embedding.weight,
+            (embedding.effective_weight()
+             if hasattr(embedding, "effective_weight") else embedding.weight),
             layer.weight,
             layer.bias,
             upgrades,

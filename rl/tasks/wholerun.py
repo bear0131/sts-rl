@@ -160,6 +160,7 @@ class WholeRunTask(Task):
             env = SlayTheSpireEnv(
                 ascension=ascension,
                 global_map_view=args.global_map_view,
+                combat_language=args.combat_language,
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
@@ -191,6 +192,8 @@ class WholeRunTask(Task):
                 d_model=args.d_model,
                 n_layers=args.n_layers,
                 n_heads=args.n_heads,
+                card_language=args.card_language,
+                combat_language=args.combat_language,
             )
         elif args.arch == "transformer-flat":
             return "MultiInputPolicy", dict(
@@ -200,12 +203,18 @@ class WholeRunTask(Task):
                     d_model=args.d_model,
                     n_layers=args.n_layers,
                     n_heads=args.n_heads,
+                    card_language=args.card_language,
+                    combat_language=args.combat_language,
                 ),
                 activation_fn=nn.GELU,
                 net_arch=dict(pi=[256, 128], vf=[512, 256]),
                 ortho_init=False,
             )
         else:
+            if args.card_language or args.combat_language:
+                raise ValueError(
+                    "--card-language/--combat-language require a transformer architecture"
+                )
             return "MultiInputPolicy", dict(
                 features_extractor_class=StSMLPExtractor,
                 features_extractor_kwargs=dict(features_dim=256),
@@ -216,4 +225,10 @@ class WholeRunTask(Task):
 
     def tag(self, args, run_id):
         map_tag = "-globalmap" if args.global_map_view else ""
-        return f"whole-run{map_tag}-asc{args.ascension}-s{args.seed}-{run_id}"
+        card_tag = "-cardlang" if args.card_language else ""
+        if args.combat_language:
+            card_tag += "-combatlang"
+        return (
+            f"whole-run{map_tag}{card_tag}-asc{args.ascension}"
+            f"-s{args.seed}-{run_id}"
+        )

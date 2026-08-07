@@ -61,7 +61,7 @@ def render_state(canon):
             lines.append(f"  #{i} {m['id']:<16} (gone)")
             continue
         if m["base_damage"] > 0:
-            intent = f"atk {m['base_damage']}x{m['hits']}"
+            intent = f"atk {m.get('adjusted_damage', m['base_damage'])}x{m['hits']}"
         else:
             intent = "       "  # unknown/non-attack intent (sim doesn't export it)
         mw = _powers_str(m["powers"])

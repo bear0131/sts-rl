@@ -142,7 +142,8 @@ class CombatTask(Task):
 
         def _thunk():
             env = SlayTheSpireEnv(
-                backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension)
+                backend_factory=lambda: SimCombatBackend(_builder, ascension=ascension),
+                combat_language=args.combat_language,
             )
             env = CombatGauntletRewardWrapper(
                 env,
@@ -161,6 +162,8 @@ class CombatTask(Task):
             d_model=args.d_model,
             n_layers=args.n_layers,
             n_heads=args.n_heads,
+            card_language=args.card_language,
+            combat_language=args.combat_language,
         )
 
     def tag(self, args, run_id):
@@ -170,4 +173,8 @@ class CombatTask(Task):
         )
         if args.combat_hp_loss_coef:
             tag += f"-hploss{args.combat_hp_loss_coef:g}"
+        if args.card_language:
+            tag += "-cardlang"
+        if args.combat_language:
+            tag += "-combatlang"
         return tag

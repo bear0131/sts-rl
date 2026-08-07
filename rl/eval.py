@@ -119,6 +119,7 @@ def main() -> None:
     env = SlayTheSpireEnv(
         ascension=args.ascension,
         global_map_view=_model.uses_global_map_observation(model),
+        combat_language=_model.uses_combat_language(model),
     )
     model.set_random_seed(args.seed)
     print(
