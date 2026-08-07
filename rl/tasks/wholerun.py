@@ -128,11 +128,15 @@ class WholeRunTask(Task):
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "--arch",
-            choices=["mlp-flat", "transformer-flat", "transformer-pointer"],
-            default="transformer-flat",
+            choices=[
+                "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
+            ],
+            default="auto",
             help="Policy architecture, named <encoder>-<head>. The encoder maps obs "
                  "to token/feature reps; the head maps those to the 149 action "
-                 "logits. mlp-flat = flat Linear extractor + flat head. "
+                 "logits. auto = transformer-flat for a fresh run, or infer the "
+                 "architecture from --init-from. mlp-flat = flat Linear "
+                 "extractor + flat head. "
                  "transformer-flat = per-entity Transformer encoder + flat head "
                  "(default). transformer-pointer = same Transformer encoder + "
                  "per-entity POINTER head (only the head differs from "
@@ -164,6 +168,10 @@ class WholeRunTask(Task):
         # auto-detected from the observation space by the feature extractor —
         # integer-dtype Boxes are categorical, float Boxes are scalars (see
         # model.py / encode.obs_space()). No hand-maintained key list to drift.
+        if args.arch == "auto":
+            raise RuntimeError(
+                "trainer must resolve --arch auto before building the policy"
+            )
         if args.arch == "transformer-pointer":
             # Pointer action head. The core owns the network (transformer encoder
             # + pointer/flat heads + value path), so no features_extractor/net_arch

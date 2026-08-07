@@ -33,6 +33,22 @@ from rl.tasks import TASKS
 from rl.accumulating_ppo import AccumulatingMaskablePPO
 
 
+def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
+    """Return the trainer architecture name represented by a loaded policy."""
+    from rl.model import StSMLPExtractor, StSTransformerExtractor
+    from rl.pointer_policy import StSPointerPolicy
+
+    policy = model.policy
+    if isinstance(policy, StSPointerPolicy):
+        return "transformer-pointer"
+    extractor = getattr(policy, "features_extractor", None)
+    if isinstance(extractor, StSTransformerExtractor):
+        return "transformer-flat"
+    if isinstance(extractor, StSMLPExtractor):
+        return "mlp-flat"
+    return None
+
+
 def build_parser(task) -> argparse.ArgumentParser:
     """Full parser for a chosen task: shared PPO/infra args + the task's own
     args, with the task's preferred defaults applied last so an explicit CLI
@@ -170,6 +186,45 @@ def main() -> None:
 
     args = build_parser(task).parse_args()
 
+    # Whole-run fresh training retains transformer-flat as its default.  When
+    # warm-starting, infer the architecture from the checkpoint so a combat
+    # checkpoint (always transformer-pointer) works without a second, easy to
+    # miss --arch flag. Keep the loaded object for the actual weight transfer.
+    pretrained = None
+    if args.init_from:
+        if args.resume:
+            raise ValueError(
+                "--init-from and --resume are mutually exclusive: --resume "
+                "already restores weights + step counter."
+            )
+        pretrained = AccumulatingMaskablePPO.load(
+            args.init_from, device=args.device
+        )
+
+    if hasattr(args, "arch") and args.arch == "auto":
+        if pretrained is None:
+            args.arch = "transformer-flat"
+        else:
+            source_arch = _checkpoint_policy_arch(pretrained)
+            if source_arch is None:
+                raise ValueError(
+                    "Could not infer the policy architecture in --init-from. "
+                    "Pass --arch explicitly."
+                )
+            args.arch = source_arch
+            print(
+                f"[trainer] inferred --arch {args.arch} from {args.init_from}"
+            )
+
+    if pretrained is not None and hasattr(args, "arch"):
+        source_arch = _checkpoint_policy_arch(pretrained)
+        if source_arch is not None and source_arch != args.arch:
+            raise ValueError(
+                f"--init-from uses {source_arch}, but the requested whole-run "
+                f"policy uses {args.arch}. Omit --arch to infer it, or pass "
+                f"--arch {source_arch} to transfer the complete policy."
+            )
+
     if args.n_envs < 1:
         raise ValueError("--n-envs must be at least 1")
     if args.n_steps < 1:
@@ -305,15 +360,10 @@ def main() -> None:
         print(f"[trainer] resumed from {args.resume} @ {model.num_timesteps} steps")
 
     if args.init_from:
-        if args.resume:
-            raise ValueError("--init-from and --resume are mutually exclusive: "
-                             "--resume already restores weights + step counter.")
         # Copy only the policy weights (encoder + heads) from the pretrained
         # checkpoint; the freshly built model keeps its step-0 counter and fresh
         # optimizer state. Same obs/action space + arch => strict load.
-        pretrained = AccumulatingMaskablePPO.load(
-            args.init_from, device=args.device
-        )
+        assert pretrained is not None
         model.policy.load_state_dict(pretrained.policy.state_dict())
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")
