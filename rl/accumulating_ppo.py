@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from types import MethodType
+
 import numpy as np
 import torch as th
 import torch.nn.functional as F
@@ -22,12 +25,88 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self,
         *args,
         gradient_accumulation_steps: int = 1,
+        performance_profile: bool = False,
         **kwargs,
     ) -> None:
         if gradient_accumulation_steps < 1:
             raise ValueError("gradient_accumulation_steps must be at least 1")
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
+        self.performance_profile = bool(performance_profile)
+        self._performance_rollout = None
         super().__init__(*args, **kwargs)
+
+    def _sync_device(self) -> None:
+        if self.device.type == "cuda":
+            th.cuda.synchronize(self.device)
+
+    def collect_rollouts(self, env, callback, rollout_buffer,
+                         n_rollout_steps, use_masking=True):
+        if not self.performance_profile:
+            return super().collect_rollouts(
+                env, callback, rollout_buffer, n_rollout_steps, use_masking
+            )
+
+        timings = {"policy": 0.0, "env": 0.0, "mask": 0.0}
+        calls = {"policy": 0, "env": 0, "mask": 0}
+        had_forward = "forward" in self.policy.__dict__
+        saved_forward = self.policy.__dict__.get("forward")
+        original_forward = self.policy.forward
+        original_step_wait = env.step_wait
+        original_env_method = env.env_method
+
+        def timed_forward(_policy, *args, **kwargs):
+            self._sync_device()
+            started = time.perf_counter()
+            result = original_forward(*args, **kwargs)
+            self._sync_device()
+            timings["policy"] += time.perf_counter() - started
+            calls["policy"] += 1
+            return result
+
+        def timed_step_wait(_env):
+            started = time.perf_counter()
+            result = original_step_wait()
+            timings["env"] += time.perf_counter() - started
+            calls["env"] += 1
+            return result
+
+        def timed_env_method(_env, method_name, *args, **kwargs):
+            started = time.perf_counter()
+            result = original_env_method(method_name, *args, **kwargs)
+            if method_name == "action_masks":
+                timings["mask"] += time.perf_counter() - started
+                calls["mask"] += 1
+            return result
+
+        self.policy.forward = MethodType(timed_forward, self.policy)
+        env.step_wait = MethodType(timed_step_wait, env)
+        env.env_method = MethodType(timed_env_method, env)
+        self._sync_device()
+        started = time.perf_counter()
+        try:
+            result = super().collect_rollouts(
+                env, callback, rollout_buffer, n_rollout_steps, use_masking
+            )
+        finally:
+            self._sync_device()
+            total = time.perf_counter() - started
+            if had_forward:
+                self.policy.forward = saved_forward
+            else:
+                del self.policy.forward
+            env.step_wait = original_step_wait
+            env.env_method = original_env_method
+
+        transitions = n_rollout_steps * env.num_envs
+        known = timings["policy"] + timings["env"] + timings["mask"]
+        self._performance_rollout = {
+            **timings,
+            "overhead": max(0.0, total - known),
+            "total": total,
+            "transitions": transitions,
+            "calls": calls,
+        }
+        return result
 
     def _optimizer_step(self, micro_batches: int) -> None:
         """Average accumulated gradients, clip once, and update parameters."""
@@ -43,6 +122,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def train(self) -> None:
         """Update the policy, accumulating gradients across micro-batches."""
+        if self.performance_profile:
+            self._sync_device()
+            train_started = time.perf_counter()
+            if self.device.type == "cuda":
+                th.cuda.reset_peak_memory_stats(self.device)
         self.policy.set_training_mode(True)
         self._update_learning_rate(self.policy.optimizer)
         clip_range = self.clip_range(self._current_progress_remaining)  # type: ignore[operator]
@@ -176,3 +260,49 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.logger.record("train/optimizer_steps", optimizer_steps)
         if self.clip_range_vf is not None:
             self.logger.record("train/clip_range_vf", clip_range_vf)
+
+        if self.performance_profile:
+            self._sync_device()
+            train_seconds = time.perf_counter() - train_started
+            rollout = self._performance_rollout
+            self.logger.record("perf/train_update_seconds", train_seconds)
+            if self.device.type == "cuda":
+                self.logger.record(
+                    "perf/gpu_peak_memory_mb",
+                    th.cuda.max_memory_allocated(self.device) / (1024 ** 2),
+                )
+            if rollout is not None:
+                total = max(rollout["total"], 1e-12)
+                transitions = rollout["transitions"]
+                for key in ("policy", "env", "mask", "overhead", "total"):
+                    self.logger.record(f"perf/rollout_{key}_seconds", rollout[key])
+                    self.logger.record(
+                        f"perf/rollout_{key}_ms_per_transition",
+                        rollout[key] * 1000.0 / transitions,
+                    )
+                self.logger.record(
+                    "perf/rollout_policy_fraction", rollout["policy"] / total
+                )
+                self.logger.record(
+                    "perf/rollout_env_fraction", rollout["env"] / total
+                )
+                self.logger.record(
+                    "perf/rollout_mask_fraction", rollout["mask"] / total
+                )
+                bottleneck = max(
+                    ("gpu-policy", rollout["policy"]),
+                    ("cpu-env", rollout["env"]),
+                    ("cpu-mask-ipc", rollout["mask"]),
+                    ("python-overhead", rollout["overhead"]),
+                    key=lambda item: item[1],
+                )[0]
+                print(
+                    "[perf] "
+                    f"rollout={rollout['total']:.2f}s "
+                    f"gpu_policy={rollout['policy']:.2f}s "
+                    f"cpu_env={rollout['env']:.2f}s "
+                    f"mask_ipc={rollout['mask']:.2f}s "
+                    f"overhead={rollout['overhead']:.2f}s "
+                    f"update={train_seconds:.2f}s bottleneck={bottleneck}",
+                    flush=True,
+                )

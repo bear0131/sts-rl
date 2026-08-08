@@ -18,6 +18,9 @@ dependencies = [
     "sb3-contrib>=2.3.0",   # MaskablePPO + ActionMasker; pulls stable-baselines3
 ]
 
+[project.optional-dependencies]
+rllib = ["ray[rllib]==2.48.0"]
+
 [tool.uv]
 package = false
 

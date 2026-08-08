@@ -240,6 +240,13 @@ def build_parser(task) -> argparse.ArgumentParser:
     )
     parser.add_argument("--tensorboard", action="store_true")
     parser.add_argument(
+        "--profile-performance",
+        action="store_true",
+        help="Measure GPU policy, CPU env, action-mask IPC, rollout overhead, "
+             "update time, and peak GPU memory. CUDA synchronization makes "
+             "these timings accurate but adds profiling overhead.",
+    )
+    parser.add_argument(
         "--metrics-window", type=int,
         help="Rolling window (episodes) for game/* and rollout/* metrics.",
     )
@@ -501,6 +508,7 @@ def main() -> None:
             n_steps=args.n_steps,
             batch_size=args.batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
+            performance_profile=args.profile_performance,
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
@@ -536,6 +544,7 @@ def main() -> None:
                 "gradient_accumulation_steps": (
                     args.gradient_accumulation_steps
                 ),
+                "performance_profile": args.profile_performance,
             },
         )
         # Each resume command creates a new run directory and metrics callback.
