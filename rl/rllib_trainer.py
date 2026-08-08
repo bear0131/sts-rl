@@ -14,7 +14,13 @@ import time
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
-for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+for _thread_env in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
     os.environ.setdefault(_thread_env, "1")
 
 import gymnasium as gym
@@ -65,6 +71,28 @@ RAY_RUNTIME_EXCLUDES = [
 ]
 
 
+def _limit_torch_cpu_threads() -> None:
+    """Keep each Ray actor close to its reserved CPU slot.
+
+    Environment variables alone are not enough once PyTorch has initialized its
+    thread pools in a worker process.  RLlib creates one model copy per rollout
+    worker, so an uncapped intra-op pool makes ``num_cpus_per_env_runner=1`` lie:
+    eight workers can consume two dozen host threads before the learner even
+    starts updating.
+    """
+    try:
+        torch.set_num_threads(1)
+    except RuntimeError:
+        pass
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+
+
+_limit_torch_cpu_threads()
+
+
 def _fragment_length(value):
     if value == "auto":
         return value
@@ -86,6 +114,10 @@ def _ray_runtime_env():
             "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "1"),
             "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "1"),
             "NUMEXPR_NUM_THREADS": os.environ.get("NUMEXPR_NUM_THREADS", "1"),
+            "OPENBLAS_NUM_THREADS": os.environ.get("OPENBLAS_NUM_THREADS", "1"),
+            "VECLIB_MAXIMUM_THREADS": os.environ.get(
+                "VECLIB_MAXIMUM_THREADS", "1"
+            ),
         },
     }
 
@@ -173,6 +205,7 @@ class StSRLLibTorchModel(TorchModelV2, torch.nn.Module):
             )
         base_space = obs_space["observations"]
         cfg = model_config.get("custom_model_config", {})
+        _limit_torch_cpu_threads()
         self.core = StSPolicyCore(
             base_space,
             d_model=int(cfg.get("d_model", 256)),
