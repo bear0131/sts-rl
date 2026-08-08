@@ -18,8 +18,9 @@ the CARD_SELECT input state — Armaments/Headbutt/Gamble/...), asserts:
 
   combat MULTI (Exhaust Many / Gamble, obs_design §4.2):
     - the screen reports multi=True with a sane pick_max / cards_in_hand;
-    - the thin env exposes a CONFIRM_SELECT id + per-hand toggles in the mask;
-    - toggling a hand card lights select_hand_mask[h] and decrements
+    - the thin env exposes a CONFIRM_SELECT id + unselected hand cards in the mask;
+    - selecting a hand card lights select_hand_mask[h], removes that action from
+      the mask, and decrements
       pick_remaining; confirming a non-empty pick actually removes those cards
       from hand (exhaust pile grows / hand shrinks).
 
@@ -43,9 +44,10 @@ from env.core import vocab as V
 
 def _probe_multi(env, report):
     """We are on a combat MULTI card-select screen (Exhaust Many / Gamble). Drive
-    the thin toggle+confirm machine deterministically and assert it WORKS:
-      - mask offers CONFIRM_SELECT + per-hand toggles;
-      - toggling hand card h lights select_hand_mask[h] and drops pick_remaining;
+    the thin select+confirm machine deterministically and assert it WORKS:
+      - mask offers CONFIRM_SELECT + unselected hand cards;
+      - selecting hand card h lights select_hand_mask[h], masks h, and drops
+        pick_remaining;
       - confirming a non-empty pick removes those cards from hand.
     Returns the action id sequence applied (so the caller advances the same env)."""
     thick = env.thick
@@ -58,9 +60,9 @@ def _probe_multi(env, report):
 
     mask = env.action_masks()
     assert mask[A._CONFIRM], "CONFIRM_SELECT not legal on a MULTI screen"
-    toggle_ids = [A._PICK + h for h in range(min(n, cap))]
-    for tid in toggle_ids:
-        assert mask[tid], f"hand toggle {tid} not legal (n={n} cap={cap})"
+    select_ids = [A._PICK + h for h in range(min(n, cap))]
+    for sid in select_ids:
+        assert mask[sid], f"hand selection {sid} not legal (n={n} cap={cap})"
 
     if n == 0 or cap == 0:
         # nothing to pick — just confirm empty (valid: dismisses the screen).
@@ -68,15 +70,16 @@ def _probe_multi(env, report):
         return
 
     hand_before = len(thick.bc.to_dict()["hand"])
-    # toggle the first hand card ON, verify obs reflects it.
+    # Select the first hand card and verify obs and the monotonic mask reflect it.
     obs, _r, _t, _tr, _i = env.step(A._PICK + 0)
-    assert obs["select_hand_mask"][0] == 1.0, "toggle ON not in select_hand_mask"
+    assert obs["select_hand_mask"][0] == 1.0, "selection not in select_hand_mask"
+    assert not env.action_masks()[A._PICK + 0], "selected hand card remained legal"
     rem_after_one = float(obs["pick_remaining"][0]) * encode.PICK_SCALE
     assert abs(rem_after_one - (cap - 1)) < 0.5, (rem_after_one, cap)
-    # toggle it OFF and back ON to exercise the deselect path.
-    obs, *_ = env.step(A._PICK + 0)
-    assert obs["select_hand_mask"][0] == 0.0, "toggle OFF not cleared"
-    obs, *_ = env.step(A._PICK + 0)
+    # Defense in depth: a direct repeat is illegal and cannot cancel the pick.
+    obs, reward, _t, _tr, repeated = env.step(A._PICK + 0)
+    assert repeated.get("illegal") and reward == -0.1, repeated
+    assert obs["select_hand_mask"][0] == 1.0, "repeat canceled a monotonic pick"
     # pick a second card if the cap and hand allow, then confirm.
     picked = 1
     if n >= 2 and cap >= 2:
@@ -162,7 +165,7 @@ def run_episode(env, rng, report):
                 f"obs select_context {ctx_idx} != binding {context} "
                 f"({V.SELECT_CONTEXT_VOCAB_INDEX[context]})")
             assert ctx_idx != 0, "select_context is PAD on a live select screen"
-            # combat MULTI screen: drive the toggle+confirm machine explicitly so we
+            # combat MULTI screen: drive select+confirm explicitly so we
             # actually exercise it (random play would too, but rarely confirm a
             # non-empty pick). _probe_multi advances the env itself.
             desc = thick.select_descriptor()

@@ -5,7 +5,7 @@
 > v3 相对 v2：新增 `arg_step` 键（薄层 `SlayTheSpireEnv` 的 autoregressive 子步，见 `action_design.md` §1）。
 > v4 相对 v3：新增商店货架组 `shop_*`（卡/遗物/药水 id + 价格 + 移牌价），与 SHOP_* 动作段 positional 对位。
 > v5 相对 v4：新增选牌屏契约组（`select_context`/`pick_remaining`/`can_pick_zero`/`can_pick_any`/`selected_card_ids`，§4.1），`select_card_ids` 的 `G_MAX` 12→64（全卡组选牌屏）。
-> v6 相对 v5：新增 `select_hand_mask`（手牌对齐 0/1 向量，§4.2）——战内多选屏（Gamble/Exhaust-Many）薄层已 toggle 的手牌，前馈模型据此看见自己挂起的选择（§0.5）。其余不变。
+> v6 相对 v5：新增 `select_hand_mask`（手牌对齐 0/1 向量，§4.2）——战内多选屏（Gamble/Exhaust-Many）薄层已选手牌，前馈模型据此看见自己挂起的选择（§0.5）。其余不变。
 >
 > 关联：`env/core/encode.py`（实现）、`env/core/vocab.py`（词表）、`doc/day_0623/action_design.md`（动作面，姊妹文档）、`bridge/schemas/combat_state.py`（canonical 生产）。
 >
@@ -173,7 +173,7 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 | 键 | 类型 | 形状 | 内容 / 来源 |
 |---|---|---|---|
 | `select_context` | **categorical** | (1,) | 这屏选牌**干嘛的**——升级/消耗/复制/转化/移除/从弃牌堆拿回/检索…。一张合并词表 `SELECT_CONTEXT_VOCAB`（战内 `CardSelectTask` 20 项 + 战外 `CardSelectScreenType` 8 项，index 0=PAD，共 29）。✅ **已绑 C++**（`bc.select_info()['context']` / `gc.select_screen_info()['context']`）。为何不能只靠 mask：升级一张 vs 移除一张，**可点的牌集合可能完全相同**，目的却相反（升级挑最值钱、移除挑最废）——语义不进 obs，模型在信息上无法区分这两屏。 |
-| `pick_remaining` | scalar | (1,) | **还要选几张**，`/PICK_SCALE=10`。✅ **已绑**。战外 = `pickCount − 已选数`（读 C++）。⚠️ 战内单选屏（Armaments/Dual Wield…）恒 0：sim 的 `cardSelectInfo.pickCount` 对单选任务留 0（选一张即结束屏），靠 `select_context` 区分屏即可。战内**多选**屏（Gamble/Exhaust-Many）由**薄层 patch** = `pick_max − 已 toggle 数`（sim 不知道薄层挂起的选择，见 §4.2）。 |
+| `pick_remaining` | scalar | (1,) | **还要选几张**，`/PICK_SCALE=10`。✅ **已绑**。战外 = `pickCount − 已选数`（读 C++）。⚠️ 战内单选屏（Armaments/Dual Wield…）恒 0：sim 的 `cardSelectInfo.pickCount` 对单选任务留 0（选一张即结束屏），靠 `select_context` 区分屏即可。战内**多选**屏（Gamble/Exhaust-Many）由**薄层 patch** = `pick_max − 已选数`（sim 不知道薄层挂起的选择，见 §4.2）。 |
 | `can_pick_zero` / `can_pick_any` | flag scalar | (1,)×2 | 能否合法停手 / 是否任意张。✅ **已绑**。战内多选：sim 把这两个 flag 对 Gamble/Exhaust-Many 留 False，但这两屏**永远可空选确认**（`chooseExhaust/GambleCards` 对空集 early-return），故 bridge 派生 `can_pick_zero = multi`。战外恒 False（必须选满 pick_count）。 |
 | `selected_card_ids` | **categorical** | (3,) | **本屏已选牌的 id**（CARD_VOCAB index，PAD 到 3）。✅ **纯 Python + C++**：战外读 `gc.select_screen_info()['selected']`，战内恒空（战内多选用 `select_hand_mask` 表达，见 §4.2）。 |
 
@@ -187,24 +187,24 @@ encode 是 canonical dict → obs 的纯函数，不 import slaythespire。sim �
 
 ---
 
-### 4.2 战内多选屏的 toggle+confirm（select_hand_mask）—— ✅ 已落地（v6）
+### 4.2 战内多选屏的单调 select+confirm（select_hand_mask）—— ✅ 已落地（v6 / action v5）
 
 战内**多选**只有两类任务：**Gamble**（随机弃任意张再抽等量）和 **Exhaust Many**（消耗至多 N 张，如 Fiend Fire / Sever Soul / True Grit+）。sim 用**一个 Action** 催收整屏：低 10 bit 是手牌下标 bitset（`getSelectedIdxs()` → `chooseExhaustCards`/`chooseGambleCards`，`Action.cpp:404`）。**C++ 早已支持任意 bitset**（不是只能选空），所以本批**零 C++ 执行改动**——缺口纯在 Python：薄层原来硬编码 `Action(MULTI_CARD_SELECT, 0)`（恒空选）。
 
-落地为薄层一个 **toggle+confirm 子状态机**（`run_env.py`，对 sim/real backend 都适用）：
+落地为薄层一个 **单调 select+confirm 子状态机**（`run_env.py`，对 sim/real backend 都适用）：
 
 | 步 | 动作 id | 效果 |
 |---|---|---|
-| toggle | `PICK_CARD[h]`（复用选牌段，落在手牌下标 h） | 把手牌 h 加入/移出挂起集；不调 backend；`arg_step=pick_hand` |
+| select | `PICK_CARD[h]`（复用选牌段，落在手牌下标 h） | 把未选手牌 h 加入挂起集并在本屏内永久 mask；不调 backend；`arg_step=pick_hand` |
 | confirm | `CONFIRM_SELECT`（动作面新段，§action_design 1.1） | 把挂起集作为 `(MULTI_SELECT, idxs)` 交 backend，sim 收 bitset 催收整屏 |
 
 | 字段 | 类型 | 形状 | 说明 |
 |---|---|---|---|
-| `select_hand_mask` | scalar | (HAND_SLOTS=10,) | **薄层已 toggle 的手牌 0/1 向量**，slot h == `PICK_CARD[h]` toggle id == 手牌槽 h。下了多选屏 PAD 全 0。 |
+| `select_hand_mask` | scalar | (HAND_SLOTS=10,) | **薄层已选手牌的 0/1 向量**，slot h == `PICK_CARD[h]` id == 手牌槽 h。下了多选屏 PAD 全 0。 |
 
-> **为何必须进 obs（§0.5 的直接应用）**：挂起集只活在薄层、跨 env step 累积，sim 无从知晓；mask 只把“已 toggle 的牌再点 = 取消”这一层表达出来，但前馈模型**看不到自己已经挑了哪几张**。`select_hand_mask` 就是那条 obs 通道；配套 `pick_remaining`（薄层 patch = `pick_max − 已 toggle 数`）告诉模型还能再挑几张（Exhaust Many 有上限；Gamble 上限=整手）。
+> **为何必须进 obs（§0.5 的直接应用）**：挂起集只活在薄层、跨 env step 累积，sim 无从知晓；mask 负责禁止重选，但前馈模型**看不到自己已经挑了哪几张**。`select_hand_mask` 就是那条 obs 通道；配套 `pick_remaining`（薄层 patch = `pick_max − 已选数`）告诉模型还能再挑几张（Exhaust Many 有上限；Gamble 上限=整手）。
 >
-> **cap 语义**：`pick_max` = Exhaust Many 的 `limit` / Gamble 的整手手牌数（`bc.select_info()` 经 `combat_select_options` 暴露）。到 cap 后 mask 只留“取消已选” + `CONFIRM`，不再允许新 toggle。空选 confirm 永远合法（直接撤屏）。
+> **cap 语义**：`pick_max` = Exhaust Many 的 `limit` / Gamble 的整手手牌数（`bc.select_info()` 经 `combat_select_options` 暴露）。到 cap 后 mask 只留 `CONFIRM`。空选 confirm 永远合法（直接撤屏）。
 >
 > **薄层与屏同步**：每个 step 薄层用 `thick.select_descriptor()` 对账——是多选屏则确保挂起集是 set，否则清空（confirm 后 sim 撤屏，挂起集随之清零）。`SimCombatEnv`（单战 harness，非模型契约）仍保留旧的“硬编码空选”，不在本契约内。
 
@@ -284,7 +284,7 @@ obs 是单层 `spaces.Dict`（无嵌套），共 42 个键。下表是 `obs_spac
 | `pick_remaining` | scalar | (1,) | /PICK_SCALE=10（战外有效） | §4.1 |
 | `can_pick_zero`/`can_pick_any` | flag | (1,)×2 | 0/1 | §4.1 |
 | `selected_card_ids` | cat | (3,) | CARD_VOCAB（已选牌，战外） | §4.1 |
-| `select_hand_mask` | scalar | (10,) | 0/1（战内多选已 toggle 手牌） | §4.2 |
+| `select_hand_mask` | scalar | (10,) | 0/1（战内多选已选手牌） | §4.2 |
 | `map_node_rooms` | cat | (3,) | ROOM_VOCAB | §4 |
 | `map_node_x` | scalar | (3,) | /6 | §4 |
 | `boss_relic_ids` | cat | (3,) | RELIC_VOCAB | §4 |
@@ -297,4 +297,4 @@ obs 是单层 `spaces.Dict`（无嵌套），共 42 个键。下表是 `obs_spac
 | `shop_potion_prices` | scalar | (3,) | /999 | §4 |
 | `shop_remove_cost` | scalar | (1,) | /999 | §4 |
 
-> **缺口（与动作面共享，详见 action_design）**：(1) ~~`select_context` 缺~~ ✅ 已落地（v5，§4.1）+ ~~战内多选“选哪几张”~~ ✅ 已落地（v6，§4.2）：选牌屏语义/进度全部进 obs，**战内单选 + 战外多选 + 战内多选（Gamble/Exhaust-Many toggle+confirm）全覆盖**。(2) `shop_*` 货架已绑定并进 obs（v4），但商店牌的**升级态**未编码（与 `offer_card_ids` 一致地省略，留后续版本）。(3) `event` 只有 id，选项数/选项语义未绑定。
+> **缺口（与动作面共享，详见 action_design）**：(1) ~~`select_context` 缺~~ ✅ 已落地（v5，§4.1）+ ~~战内多选“选哪几张”~~ ✅ 已落地（obs v6 / action v5，§4.2）：选牌屏语义/进度全部进 obs，**战内单选 + 战外多选 + 战内多选（Gamble/Exhaust-Many 单调 select+confirm）全覆盖**。(2) `shop_*` 货架已绑定并进 obs（v4），但商店牌的**升级态**未编码（与 `offer_card_ids` 一致地省略，留后续版本）。(3) `event` 只有 id，选项数/选项语义未绑定。

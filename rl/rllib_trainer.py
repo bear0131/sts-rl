@@ -390,6 +390,21 @@ def _normalize_compat_args(args):
         args.train_batch_size = (
             args.minibatch_size * args.gradient_accumulation_steps
         )
+    if args.rollout_fragment_length == "auto":
+        sampling_width = max(1, args.num_env_runners) * args.envs_per_runner
+        if args.train_batch_size % sampling_width == 0:
+            samples_per_runner = args.train_batch_size // sampling_width
+            args.rollout_fragment_length = next(
+                fragment
+                for fragment in range(min(128, samples_per_runner), 0, -1)
+                if samples_per_runner % fragment == 0
+            )
+            print(
+                "[rllib] auto rollout fragment length="
+                f"{args.rollout_fragment_length} "
+                f"({sampling_width} concurrent envs)",
+                flush=True,
+            )
     if args.device == "cpu":
         args.num_gpus = 0.0
 

@@ -55,7 +55,7 @@ from . import combat_language as CL
 # pick_remaining / can_pick_zero / can_pick_any / selected_card_ids, and widens
 # select_card_ids G_MAX 12->64 (full-deck select screens). v6 adds
 # select_hand_mask (obs_design §4.2): a hand-aligned 0/1 vector of the cards the
-# thin env has TOGGLED on a combat MULTI screen (Exhaust Many / Gamble), so the
+# thin env has selected on a combat MULTI screen (Exhaust Many / Gamble), so the
 # feed-forward policy sees its own pending pick (mask != obs, §0.5).
 # The optional global-map layout is version 8: it appends the full 15x7 map DAG
 # only when ``global_map_view=True``. The default v7 layout stays compatible
@@ -180,8 +180,8 @@ def obs_space(*, global_map_view=False, card_language=False,
         "can_pick_any": scal((1,)),
         "selected_card_ids": cat((SELECT_PICK_SLOTS,), N_CARDS),
         # combat MULTI screen (Exhaust Many / Gamble): hand-aligned 0/1 vector of
-        # the cards the thin env has toggled so far (obs_design §4.2). slot h == the
-        # PICK_CARD[h] toggle id == hand slot h. PAD (all 0) off a MULTI screen.
+        # the cards the thin env has selected so far (obs_design §4.2). slot h ==
+        # the PICK_CARD[h] id == hand slot h. PAD (all 0) off a MULTI screen.
         "select_hand_mask": scal((HAND_SLOTS,)),
         "map_node_rooms": cat((MAP_EDGES,), len(V.ROOM_VOCAB)),
         "map_node_x": scal((MAP_EDGES,)),
@@ -573,7 +573,7 @@ def _encode_select(o, sel):
     o["can_pick_any"][0] = 1.0 if sel.get("can_pick_any") else 0.0
     for i, cid in enumerate(sel.get("selected", [])[:SELECT_PICK_SLOTS]):
         o["selected_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
-    # combat MULTI screen: thin-env toggled hand indices -> hand-aligned 0/1.
+    # combat MULTI screen: thin-env selected hand indices -> hand-aligned 0/1.
     for h in sel.get("hand_selected", []):
         if 0 <= h < HAND_SLOTS:
             o["select_hand_mask"][h] = 1.0

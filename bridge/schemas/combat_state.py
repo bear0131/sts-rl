@@ -384,11 +384,12 @@ def _select_options(context, pick_count, have_selected, selected_ids,
                        SINGLE sub-screen never accumulates across env steps (one
                        pick resolves) -> []. The combat MULTI screen (Exhaust
                        Many / Gamble) DOES accumulate, but in the THIN layer's
-                       own toggle set (the sim is told the whole bitset at once on
-                       confirm) -> the bridge leaves it [] and the thin layer
+                       own monotonic selection set (the sim is told the whole
+                       bitset at once on confirm) -> the bridge leaves it [] and
+                       the thin layer
                        patches pick_remaining/selected from its accumulator.
       multi          : True for Exhaust Many / Gamble — the thin layer drives a
-                       toggle+confirm machine over `cards_in_hand` hand indices,
+                       select+confirm machine over `cards_in_hand` hand indices,
                        capped at `pick_max` (obs_design §4.2). False otherwise.
     """
     return {
@@ -412,7 +413,7 @@ def combat_select_options(select_info):
     the thin layer maps each candidate to a PICK_CARD id directly.
 
     MULTI screens (Exhaust Many / Gamble): the sim resolves the whole screen with
-    one bitset Action, so the thin layer toggles hand indices and confirms. The
+    one bitset Action, so the thin layer selects hand indices and confirms. The
     sim leaves canPickZero/canPickAnyNumber false for these, but a MULTI screen
     can ALWAYS confirm zero (chooseExhaust/GambleCards early-return on empty) and
     Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any

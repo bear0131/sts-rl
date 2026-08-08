@@ -33,14 +33,20 @@ is live for the low option ids (the thick layer enumerates real event options)
 with a reserved wide tail; SHOP_* likewise went LIVE this way (the thick layer
 enumerates real buys/removes) — both filling reserved width.
 
+ACTION_VERSION 5 (was 4): combat MULTI selection is monotonic. PICK_CARD adds an
+unselected hand card to the pending set, and selected cards are masked until the
+screen is confirmed. The ids and table width are unchanged; the version bump
+records the changed mask/action semantics and prevents deterministic policies
+from cycling between selecting and deselecting the same card.
+
 ACTION_VERSION 4 (was 3): appended a CONFIRM_SELECT segment (1 id) at the END of
 the table for the combat MULTI card-select screens (Exhaust Many / Gamble,
 action_design §1.1). Those resolve the WHOLE screen with one hand-index bitset,
-so the thin env TOGGLES hand cards across steps (reusing the PICK_CARD ids over
+so the thin env selects hand cards across steps (reusing the PICK_CARD ids over
 hand indices) and CONFIRMs once — CONFIRM_SELECT is that commit. Appending at the
 end renumbers NOTHING before it (every prior base is frozen); it only widens
 N_ACTIONS by 1, which still bumps ACTION_VERSION (the policy's output head grows).
-No new OBS-less state: the toggled set rides in obs as select_hand_mask
+No new OBS-less state: the selected set rides in obs as select_hand_mask
 (OBS_VERSION 6) so the feed-forward policy sees what it has already picked.
 
 ACTION_VERSION 3 (was 2): the PICK_CARD segment widened G_MAX 12->64 to fit a
@@ -56,7 +62,7 @@ from . import actions
 from . import game_actions as ga
 from . import vocab as V
 
-ACTION_VERSION = 4
+ACTION_VERSION = 5
 
 # ---- capacities (must match encode.py slot counts) ----
 HAND_SLOTS = actions.HAND_SLOTS        # 10  (combat hand; play slot == hand idx)
@@ -410,46 +416,44 @@ def resolve(chosen_id, legal_semantic, pending, phase):
 
 # ===================== combat MULTI card-select (Exhaust Many / Gamble) =====
 # These screens resolve the WHOLE screen with one hand-index bitset, so the thin
-# env runs a toggle+confirm machine: each step either TOGGLES a hand card in/out
-# of the pending set (a PICK_CARD id over the hand index) or CONFIRMs the set
-# (CONFIRM_SELECT). The pending set lives in the thin env; these helpers are pure
+# env runs a monotonic select+confirm machine: each PICK_CARD adds one hand card
+# to the pending set, and CONFIRM_SELECT commits the set. The pending set lives in
+# the thin env; these helpers are pure
 # over (descriptor, selected) so the codec stays backend-free. `descriptor` is the
 # combat select block (combat_select_options): {multi, cards_in_hand, pick_max,
-# can_pick_zero, ...}. `selected` is the current set of toggled hand indices.
+# can_pick_zero, ...}. `selected` is the current set of selected hand indices.
 
 def is_multi_select(descriptor):
     """True when the live combat card-select screen is a MULTI (Exhaust Many /
-    Gamble) screen — the only one the toggle+confirm machine drives."""
+    Gamble) screen — the only one the select+confirm machine drives."""
     return bool(descriptor) and bool(descriptor.get("multi"))
 
 
 def multi_legal_ids(descriptor, selected):
-    """Thin ids legal on a MULTI screen given the already-toggled `selected` set:
+    """Thin ids legal on a MULTI screen given the pending `selected` set:
 
-      - PICK_CARD[h] for every hand index h in 0..cards_in_hand-1 that can still
-        be toggled. An already-selected card can always be toggled OFF; an unselected
-        one only if we are under the pick_max cap (Exhaust Many caps; Gamble's cap
-        is the whole hand, so it never blocks).
+      - PICK_CARD[h] for each unselected hand index while below pick_max. Selection
+        is monotonic: an already-selected card stays masked until confirmation.
       - CONFIRM_SELECT, always (an empty pick is valid — it just dismisses the
         screen; chooseExhaust/GambleCards early-return on empty).
     """
     ids = set()
     n = int(descriptor.get("cards_in_hand", 0))
     cap = int(descriptor.get("pick_max", 0))
-    for h in range(min(n, G_MAX)):
-        if h in selected:
-            ids.add(_PICK + h)                 # toggle OFF always allowed
-        elif len(selected) < cap:
-            ids.add(_PICK + h)                 # toggle ON only under the cap
+    if len(selected) < cap:
+        for h in range(min(n, G_MAX)):
+            if h not in selected:
+                ids.add(_PICK + h)
     ids.add(_CONFIRM)
     return sorted(ids)
 
 
 def multi_toggle(chosen_id, selected):
-    """Apply one MULTI-screen id to the toggled set. Returns (new_selected, commit)
-    where commit is None for a toggle (stay on the screen) or the sorted tuple of
-    chosen hand indices when CONFIRM_SELECT was chosen (hand it to the backend as
-    a MULTI_SELECT semantic action).
+    """Apply one monotonic MULTI-screen selection or confirmation.
+
+    Returns (new_selected, commit), where commit is None after selecting a new
+    card or the sorted tuple of chosen hand indices after CONFIRM_SELECT. Repeating
+    an already-selected PICK_CARD is invalid; the legal mask normally prevents it.
 
     selected is a Python set of hand indices; we return a fresh set so the caller
     can keep it immutable per step."""
@@ -458,10 +462,12 @@ def multi_toggle(chosen_id, selected):
         return set(selected), tuple(sorted(selected))
     if _PICK <= cid < _PICK + G_MAX:
         h = cid - _PICK
+        if h in selected:
+            raise ValueError(f"hand index {h} is already selected")
         new = set(selected)
-        new.discard(h) if h in new else new.add(h)
+        new.add(h)
         return new, None
-    raise ValueError(f"expected a MULTI toggle/confirm id, got {cid}")
+    raise ValueError(f"expected a MULTI select/confirm id, got {cid}")
 
 
 # ============================== introspection ==============================

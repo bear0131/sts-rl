@@ -64,24 +64,26 @@ autoregressive 的合法性 mask 只告诉模型**能选什么**，不告诉它*
 
 > `arg_step` 已加进 obs（encode v3，`spaces.Dict` 键），`select_context` ✅ 已绑（obs v5）。`arg_step` 纯 Python（薄层子状态机自己知道）；`select_context` 由 C++ 绑定。
 >
-> **多选屏完整契约见 obs_design §4.1/§4.2（✅ 全部已落地）**：除 `select_context` 外还有 `pick_remaining`（还选几张）、`can_pick_zero`/`can_pick_any`（能否停手）、`selected_card_ids`（已选牌 id，战外）、`select_hand_mask`（战内多选已 toggle 手牌，§4.2/§1.1）。关键纪律（obs_design §0.5）：`MaskablePPO` 前馈无记忆，**mask 不进网络输入**——已选的牌 mask 只能“禁止重选”，要让模型**知道**自己选过什么、还差几张，必须把这些显式塞进 obs。另：`select_card_ids` 的 `G_MAX` 已 12→64（容纳满卡组）。
+> **多选屏完整契约见 obs_design §4.1/§4.2（✅ 全部已落地）**：除 `select_context` 外还有 `pick_remaining`（还选几张）、`can_pick_zero`/`can_pick_any`（能否停手）、`selected_card_ids`（已选牌 id，战外）、`select_hand_mask`（战内多选已选手牌，§4.2/§1.1）。关键纪律（obs_design §0.5）：`MaskablePPO` 前馈无记忆，**mask 不进网络输入**——已选的牌 mask 只能“禁止重选”，要让模型**知道**自己选过什么、还差几张，必须把这些显式塞进 obs。另：`select_card_ids` 的 `G_MAX` 已 12→64（容纳满卡组）。
 
 ---
 
-### 1.1 战内多选屏：toggle + confirm（✅ 已落地，ACTION_VERSION 4）
+### 1.1 战内多选屏：单调 select + confirm（✅ 已落地，ACTION_VERSION 5）
 
 战内多选（**Gamble** 弃任意张 / **Exhaust Many** 消耗至多 N 张）不是“选一张就结束”，而是 RL 要逐张决定**选哪几张**再一次性催收。sim 用一个 Action 的低 10 bit 作手牌下标 bitset 整屏催收（`getSelectedIdxs()` → `chooseExhaust/GambleCards`，`Action.cpp:404`）——**C++ 早已支持任意 bitset**，故本批**零 C++ 执行改动**，缺口纯在薄层（原来硬编码空选 bitset）。
 
-落地为薄层一个 **toggle+confirm 子状态机**（`run_env.py` 的 `_multi` 累积集 + `action_space.multi_legal_ids/multi_toggle`）：
+落地为薄层一个 **单调 select+confirm 子状态机**（`run_env.py` 的 `_multi` 累积集 + `action_space.multi_legal_ids/multi_toggle`）：
 
 | 步 | id | 语义动作 | 效果 |
 |---|---|---|---|
-| toggle | `PICK_CARD[h]`（复用选牌段，落手牌下标 h） | —（不调 backend） | 把手牌 h 加入/移出薄层挂起集；`arg_step=pick_hand`；obs `select_hand_mask[h]` 翻转 |
+| select | `PICK_CARD[h]`（复用选牌段，落手牌下标 h） | —（不调 backend） | 把未选手牌 h 加入薄层挂起集并在本屏内永久 mask；`arg_step=pick_hand`；obs `select_hand_mask[h]` 置 1 |
 | confirm | `CONFIRM_SELECT`（**动作面新段**，append 在表末，id 148） | `(MULTI_SELECT, idxs)` | 挂起集作 bitset 交厚层 → sim 整屏催收 |
 
 > **`ACTION_VERSION` 3→4（纯 append）**：`CONFIRM_SELECT` 段宽 1，追加在表**末尾**，PICK_CARD 之前所有 base 冻结不动，仅 `N_ACTIONS` 148→149。因策略输出头宽度增 1，仍 bump `ACTION_VERSION`；与 `OBS_VERSION` 5→6（`select_hand_mask`）同批落地。
 >
-> **mask 语义**：cap（Exhaust Many=limit / Gamble=整手）未满时，未选手牌可 toggle on；已选可 toggle off；`CONFIRM_SELECT` 永远合法（空选直接撤屏）。到 cap 后只留 off-toggle + confirm。`pick_remaining` 由薄层 patch = `pick_max − 已 toggle 数`（sim 不知薄层挂起集）。
+> **`ACTION_VERSION` 4→5（语义变更，id/宽度不变）**：多选改为单调集合，消除确定性策略对同一张牌反复选择/取消的二步循环。旧 checkpoint 结构上仍可加载，但评测时遵循新 mask。
+>
+> **mask 语义**：cap（Exhaust Many=limit / Gamble=整手）未满时，仅未选手牌可选；已选手牌保持 masked；`CONFIRM_SELECT` 永远合法（空选直接撤屏）。到 cap 后只留 confirm。`pick_remaining` 由薄层 patch = `pick_max − 已选数`（sim 不知薄层挂起集）。
 >
 > **对账**：薄层每 step 用 `thick.select_descriptor()` 同步——非多选屏即清空挂起集（confirm 后 sim 撤屏，挂起集随之清零）。`MULTI_SELECT` 语义动作对 `RealGameEnv` 一样适用（厚层 `_apply` 把 idxs OR 成 bitset 执行）。
 
@@ -180,13 +182,13 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 |---|---|---|---|---|
 | 1 | ✅ **意图 move_id** | `monster.moveHistory[0]`（MonsterMoveId，197 项；草案误写 `[1]`） | obs `monster_move` 细粒度招式身份（obs v2 已导出） | `MOVE_VOCAB` |
 | 2 | ✅ **战内 select_context** | `bc.select_info()['context']`（绑 `cardSelectInfo.cardSelectTask`，20 项） | obs `select_context`：这屏选牌干嘛 | `SELECT_CONTEXT_VOCAB` |
-| 3 | ✅ **选几张** | `bc.select_info()`（含 multi/pick_max/cards_in_hand） / `gc.select_screen_info()` | obs `pick_remaining`/`can_pick_*`：还选几张、能否停手（战外读 sim；战内多选由薄层 patch=pick_max−已 toggle，§1.1） | scalar/flag |
+| 3 | ✅ **选几张** | `bc.select_info()`（含 multi/pick_max/cards_in_hand） / `gc.select_screen_info()` | obs `pick_remaining`/`can_pick_*`：还选几张、能否停手（战外读 sim；战内多选由薄层 patch=pick_max−已选数，§1.1） | scalar/flag |
 | 4 | ✅ **火堆可用选项** | `gc.legal_campfire_options()`（绑 `getAllActionsInState`） | rest/smith/recall/lift/toke/dig/skip 的真实可用性（relic/key 门控） | — |
 | 5 | ✅ **战外 select_context** | `gc.select_screen_info()['context']`（绑 `info.selectScreenType`，8 项：TRANSFORM/UPGRADE/REMOVE/OBTAIN/BOTTLE/BONFIRE_SPIRITS/DUPLICATE/TRANSFORM_UPGRADE） | obs `select_context`：商店/营火/事件选牌目的 | `SELECT_CONTEXT_VOCAB` |
 | 6 | ✅ **商店货架** | `Shop`（`include/game/Shop.h`）→ `gc.shop_contents()` + `gc.legal_shop_options()`（绑 `getAllShopActions`） | obs 货架卡/遗物/药水 + 价格（OBS v4）；action SHOP 买卖段（已 live） | `CARD_/RELIC_/POTION_VOCAB` |
 | 7 | ✅ **事件选项数 + 语义** | `gc.legal_event_options()`（绑 `getValidEventSelectBits`） | action `EVENT_OPT` 真实合法选项（多阶段事件已解锁） | — |
 
-> #1（move_id）原是战斗 obs 完整性的唯一硬依赖（obs_design D），**已于 obs v2 批导出**；#2/#3/#5 选牌屏语义/进度**已于 obs v5 批落地**（合并词表 `SELECT_CONTEXT_VOCAB`，`selected` 改读 sim 自累积的 `haveSelectedCards`——见 obs_design §4.1 的实现纪律）；#6 商店货架**已落地**；战内多选“选哪几张”动作面**已于 obs v6 / action v4 批落地**（toggle+confirm，§1.1，C++ 零执行改动——bitset executor 早已就位）。**#1–#7 + 战内多选全部完成。**
+> #1（move_id）原是战斗 obs 完整性的唯一硬依赖（obs_design D），**已于 obs v2 批导出**；#2/#3/#5 选牌屏语义/进度**已于 obs v5 批落地**（合并词表 `SELECT_CONTEXT_VOCAB`，`selected` 改读 sim 自累积的 `haveSelectedCards`——见 obs_design §4.1 的实现纪律）；#6 商店货架**已落地**；战内多选“选哪几张”动作面当前为 **obs v6 / action v5**（单调 select+confirm，§1.1，C++ 零执行改动——bitset executor 早已就位）。**#1–#7 + 战内多选全部完成。**
 
 ---
 
@@ -203,7 +205,7 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 | combat_reward | 三张候选牌 id（**变长**，截 3） | take/skip/proceed | ✅ | — |
 | boss_relic | 3 个 boss 遗物 id | `BOSS_RELIC[i]` | ✅ | — |
 | chest | — | open/skip | ✅ | — |
-| card_select | grid 候选牌 id（**变长**，截 G_MAX=64）+ select_context/pick_remaining/selected_card_ids/select_hand_mask | `select(k)`（单选/战外）/ `PICK_CARD[h]` toggle + `CONFIRM_SELECT`（战内多选） | ✅ | ✅ 选牌屏语义/进度进 obs（§4.1/§4.2）：知为何选、还差几张、已选哪些。**全覆盖**：战外多选(REMOVE/TRANSFORM/Astrolabe) + 战内单选 + 战内多选(Gamble/Exhaust-Many toggle+confirm，§1.1) |
+| card_select | grid 候选牌 id（**变长**，截 G_MAX=64）+ select_context/pick_remaining/selected_card_ids/select_hand_mask | `select(k)`（单选/战外）/ `PICK_CARD[h]` 单调选择 + `CONFIRM_SELECT`（战内多选） | ✅ | ✅ 选牌屏语义/进度进 obs（§4.1/§4.2）：知为何选、还差几张、已选哪些。**全覆盖**：战外多选(REMOVE/TRANSFORM/Astrolabe) + 战内单选 + 战内多选(Gamble/Exhaust-Many select+confirm，§1.1) |
 | rest | — | rest/smith/recall/lift/toke/dig/skip | ✅ | 选项可用性由 sim `legal_campfire_options()` 门控（relic/key 感知）；缺 toke/dig 后续选牌屏仍需 select_context（#2/#5） |
 | event | event_id（事件身份齐） | `event(i)` 真实合法选项 | ✅ | 由 sim `legal_event_options()` 枚举，多阶段事件已解锁；少数事件(MATCH_AND_KEEP/BONFIRE_SPIRITS)枚举器返回空，薄层无合法动作（不崩，老实停在该屏） |
 | shop | 货架卡/遗物/药水 id + 价格（OBS v4，positional 对位买入 id） | `shop_buy(kind,idx)` / `shop_remove()` / `shop_proceed()`，sim 枚举真实货架 | ✅ | 商店牌升级态未编码（与 offer_card_ids 一致省略，后续版本）；移牌后选牌屏仍缺 select_context（#2/#5） |
@@ -214,11 +216,11 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 
 1. ~~**event 选项数（#7）**~~ ✅ 已绑：sim `legal_event_options()` 枚举真实合法选项，多阶段事件解锁，旧死循环消除。
 2. ~~**商店货架（#6）**~~ ✅ 已落地：`gc.shop_contents()` + `gc.legal_shop_options()`（绑 `getAllShopActions`）→ 厚层枚举真实货架，`shop_buy`/`shop_remove` 语义动词 + codec 接 SHOP_* 段（填预留宽，未 bump `ACTION_VERSION`）+ 货架进 obs v4。顺带修了被商店分流暴露的两个既有缺口：combat `MULTI_CARD_SELECT`（EXHAUST_MANY/GAMBLE）漏 mask、事件战斗（Mushrooms 等）未在 `_settle` 起战。
-3. ~~**select_context + pickCount（#2/#3/#5）**~~ ✅ 已落地（obs v5）：`bc.select_info()` / `gc.select_screen_info()` → 合并词表 `SELECT_CONTEXT_VOCAB` + `pick_remaining` + `can_pick_*` + `selected_card_ids`。选牌屏不再瞎选（知目的/进度/已选）。战内单选 + 战外多选覆盖。~~**战内多选(Gamble/Exhaust-Many)“选哪几张”**~~ ✅ 已落地（obs v6 / action v4，§1.1）：薄层 toggle+confirm 子状态机 + `CONFIRM_SELECT` id + `MULTI_SELECT` 语义动词；C++ bitset executor 早已就位，**零执行改动**。
+3. ~~**select_context + pickCount（#2/#3/#5）**~~ ✅ 已落地（obs v5）：`bc.select_info()` / `gc.select_screen_info()` → 合并词表 `SELECT_CONTEXT_VOCAB` + `pick_remaining` + `can_pick_*` + `selected_card_ids`。选牌屏不再瞎选（知目的/进度/已选）。战内单选 + 战外多选覆盖。~~**战内多选(Gamble/Exhaust-Many)“选哪几张”**~~ ✅ 当前为 obs v6 / action v5（§1.1）：薄层单调 select+confirm 子状态机 + `CONFIRM_SELECT` id + `MULTI_SELECT` 语义动词；C++ bitset executor 早已就位，**零执行改动**。
 4. ~~**火堆 recall/lift/toke/dig**~~ ✅ 已绑：sim `legal_campfire_options()` 给出 relic/key 门控后的真实可用选项（index 0–5 映射 CAMPFIRE_OPTIONS，6=skip→proceed）。
 5. ~~**move_id 细粒度（#1）**~~ ✅ 已绑（obs v2 批）：`monster_move` 带真实 move_id；不阻塞整局，intent_cat 另有派生顶上。
 
-> event + 火堆 + move_id + shop + **选牌屏语义(#2/#3/#5, obs v5) + 战内多选 toggle+confirm(obs v6 / action v4, §1.1)** 全部已落地。整局已能端到端跑“能打架+能选路+能拿奖励+**能有目的地选牌（含战内多选选哪几张）**+能玩事件+能用火堆+能逛商店买卖”。`--run` MaskablePPO 训练全程跑通（rollout→learn→eval→save 无崩，obs v6 / action v4）。**唯一剩项**：potion 使用（§7，预留段未接厚层动词）。
+> event + 火堆 + move_id + shop + **选牌屏语义(#2/#3/#5, obs v5) + 战内多选单调 select+confirm(obs v6 / action v5, §1.1)** 全部已落地。整局已能端到端跑“能打架+能选路+能拿奖励+**能有目的地选牌（含战内多选选哪几张）**+能玩事件+能用火堆+能逛商店买卖”。
 
 ---
 
@@ -228,4 +230,4 @@ sb3-contrib `MaskablePPO` 每个 timestep 调 `action_masks()` 拿当前 mask—
 - ~~**event**~~ ✅：`gc.legal_event_options()` 枚举真实合法选项（多阶段事件解锁）。
 - ~~**campfire**~~ ✅：`gc.legal_campfire_options()` 给 relic/key 门控后的 rest/smith/recall/lift/toke/dig/skip。
 - **potion 使用**：v1 动作面无“喝药”。§3 已规划 `USE_POTION` 段（预留宽，未接厚层动词），落地随后续批。**当前唯一剩项。**
-- ~~**select_context / pickCount**~~ ✅：选牌屏语义/进度已进 obs v5（select_context/pick_remaining/can_pick_*/selected_card_ids，§4.1）。~~**战内多选(Gamble/Exhaust-Many)“选哪几张”**~~ ✅ 已落地（obs v6 / action v4，§1.1）：薄层 toggle+confirm（`PICK_CARD[h]` toggle + `CONFIRM_SELECT`）+ `MULTI_SELECT` 语义动词；C++ bitset executor 早已就位，零执行改动。
+- ~~**select_context / pickCount**~~ ✅：选牌屏语义/进度已进 obs v5（select_context/pick_remaining/can_pick_*/selected_card_ids，§4.1）。~~**战内多选(Gamble/Exhaust-Many)“选哪几张”**~~ ✅ 当前为 obs v6 / action v5（§1.1）：薄层单调选择（`PICK_CARD[h]` + `CONFIRM_SELECT`）+ `MULTI_SELECT` 语义动词；C++ bitset executor 早已就位，零执行改动。

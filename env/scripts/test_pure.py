@@ -14,6 +14,7 @@ import numpy as np
 from env.core import encode
 from env.core.cards_vocab import CARD_INDEX
 from env.core import actions
+from env.core import action_space as run_actions
 from env.core import render
 from env.core import intents
 from env.core import vocab as V
@@ -382,6 +383,33 @@ def test_action_codec_roundtrip():
     print(f"N_ACTIONS = {actions.N_ACTIONS}  (version {actions.ACTION_VERSION})")
 
 
+def test_monotonic_multi_select():
+    desc = {"cards_in_hand": 4, "pick_max": 2}
+    assert run_actions.multi_legal_ids(desc, set()) == [
+        run_actions._PICK + h for h in range(4)
+    ] + [run_actions._CONFIRM]
+
+    selected, commit = run_actions.multi_toggle(run_actions._PICK + 1, set())
+    assert selected == {1} and commit is None
+    legal = run_actions.multi_legal_ids(desc, selected)
+    assert run_actions._PICK + 1 not in legal
+    assert all(run_actions._PICK + h in legal for h in (0, 2, 3))
+
+    selected, commit = run_actions.multi_toggle(run_actions._PICK + 3, selected)
+    assert selected == {1, 3} and commit is None
+    assert run_actions.multi_legal_ids(desc, selected) == [run_actions._CONFIRM]
+    selected, commit = run_actions.multi_toggle(run_actions._CONFIRM, selected)
+    assert selected == {1, 3} and commit == (1, 3)
+
+    try:
+        run_actions.multi_toggle(run_actions._PICK + 1, selected)
+    except ValueError as exc:
+        assert "already selected" in str(exc)
+    else:
+        raise AssertionError("an already-selected MULTI card was accepted")
+    print("monotonic combat MULTI selection OK")
+
+
 def test_render():
     canon = _fake_combat()
     s = render.render_state(canon)
@@ -407,5 +435,6 @@ if __name__ == "__main__":
     test_optional_deck_size_observation()
     test_combat_language()
     test_action_codec_roundtrip()
+    test_monotonic_multi_select()
     test_render()
     print("\nALL OK")

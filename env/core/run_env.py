@@ -21,14 +21,14 @@ knows why the menu changed.
 
 A second multi-step shape is the combat MULTI card-select (Exhaust Many / Gamble,
 action_design §1.1): one Action resolves the WHOLE screen with a hand-index
-bitset, so the thin env TOGGLES hand cards across steps and CONFIRMs once —
+bitset, so the thin env SELECTS hand cards monotonically and CONFIRMS once —
 
-    step PICK_CARD[h]      -> toggle hand card h in/out of the pending set (no
-                              backend call; arg_step = pick_hand)
+    step PICK_CARD[h]      -> add hand card h to the pending set (no backend call;
+                              arg_step = pick_hand; selected cards become illegal)
     step CONFIRM_SELECT    -> emit (MULTI_SELECT, chosen_idxs) to the backend
 
 The pending set rides in obs as select_hand_mask (OBS_VERSION 6) so the
-feed-forward policy sees what it has already toggled (mask != obs discipline,
+feed-forward policy sees what it has already selected (mask != obs discipline,
 obs_design §0.5). The thin env reconciles its accumulator against the live screen
 each step via the backend's select_descriptor(), so leaving the screen (the sim
 dismissed it after confirm) clears the set.
@@ -82,7 +82,7 @@ class SlayTheSpireEnv(gym.Env):
         # a PICK_TARGET. Lives in the thin layer only — the backend never sees it.
         self._pending = None
         # combat MULTI card-select accumulator (Exhaust Many / Gamble): the set of
-        # toggled hand indices awaiting CONFIRM_SELECT. None when not on a MULTI
+        # selected hand indices awaiting CONFIRM_SELECT. None when not on a MULTI
         # screen. Thin-layer only; reconciled against the live screen each step.
         self._multi = None
 
@@ -179,7 +179,7 @@ class SlayTheSpireEnv(gym.Env):
         phase = self.thick.phase()
         desc = self._multi_desc()
 
-        # ---- combat MULTI card-select (toggle + confirm) ----
+        # ---- combat MULTI card-select (monotonic select + confirm) ----
         if desc is not None:
             if aid not in set(A.multi_legal_ids(desc, self._multi)):
                 info = self._info()
@@ -187,7 +187,7 @@ class SlayTheSpireEnv(gym.Env):
                 return self._obs(), -0.1, False, False, info
             self._multi, commit = A.multi_toggle(aid, self._multi)
             if commit is None:
-                # toggled a hand card — stay on the screen, no backend call.
+                # Selected a hand card; stay on the screen with no backend call.
                 return self._obs(), 0.0, False, False, self._info()
             _canon, reward, terminated, _tinfo = self.thick.step(ga.multi_select(commit))
             self._multi = None
@@ -226,8 +226,8 @@ class SlayTheSpireEnv(gym.Env):
         """Structured Dict obs (encode v3): the thick layer's assembled canonical
         plus the thin layer's `arg_step` (which the backend cannot know). On a
         combat MULTI screen we also patch the thin-only progress into the select
-        block: the toggled hand indices (select_hand_mask) and pick_remaining =
-        pick_max - already-toggled (the sim can't know our pending set).
+        block: the selected hand indices (select_hand_mask) and pick_remaining =
+        pick_max - already-selected (the sim can't know our pending set).
 
         Reconciles the MULTI accumulator FIRST so obs and the action mask never
         disagree within one step (e.g. the frame that just LANDED on the screen)."""
@@ -297,12 +297,12 @@ class SlayTheSpireEnv(gym.Env):
         legal = self.thick.legal_semantic_actions()
         phase = self.thick.phase()
 
-        # combat MULTI screen: CONFIRM commits; a PICK_CARD id toggles a hand card.
+        # combat MULTI screen: CONFIRM commits; PICK_CARD adds an unselected card.
         if self._multi is not None:
             if aid == A._CONFIRM:
                 return f"confirm multi-select {sorted(self._multi)}"
             seg, off = A.segment_of(aid)
-            verb = "deselect" if off in self._multi else "select"
+            verb = "already selected (illegal)" if off in self._multi else "select"
             return f"{verb} {_card_label(self._combat_canon(), off)} (hand #{off})"
 
         # parameter step: a target pick (shared by a pending card play AND a
