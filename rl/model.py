@@ -44,6 +44,12 @@ def uses_deck_size_observation(model_or_space) -> bool:
     return "deck_size" in getattr(space, "spaces", {})
 
 
+def uses_neow_observation(model_or_space) -> bool:
+    """Whether a model/space carries per-option Neow blessing features."""
+    space = getattr(model_or_space, "observation_space", model_or_space)
+    return "neow_bonus_ids" in getattr(space, "spaces", {})
+
+
 def uses_combat_language(model_or_space) -> bool:
     """Whether a model/space carries tokenized intent and status programs."""
     space = getattr(model_or_space, "observation_space", model_or_space)
@@ -519,6 +525,16 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         d_monster = make_emb("monster", cap["monster"])
         d_intent = make_emb("intent", cap["intent"])
         d_room = make_emb("room", cap["room"])
+        self.neow_enabled = "neow_bonus_ids" in observation_space.spaces
+        if self.neow_enabled:
+            d_neow_bonus = make_emb(
+                "neow_bonus",
+                int(observation_space["neow_bonus_ids"].high.max()) + 1,
+            )
+            d_neow_drawback = make_emb(
+                "neow_drawback",
+                int(observation_space["neow_drawback_ids"].high.max()) + 1,
+            )
 
         # small categorical embeddings that all live on the single global token
         self.global_cat_keys = [
@@ -565,10 +581,14 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             "card": d_card, "relic": d_relic, "potion": d_potion, "room": d_room,
         }
 
-        # roles: 0=cls, 1=global, 2=monster, 3=pile, then one per generic family
+        # roles: 0=cls, 1=global, 2=monster, 3=pile, then one per generic
+        # family. New singleton roles are appended so old checkpoints keep the
+        # same role ids for existing token families.
         self.role_ids = {"cls": 0, "global": 1, "monster": 2, "pile": 3}
         for i, (role, *_rest) in enumerate(self.generic):
             self.role_ids[role] = 4 + i
+        if self.neow_enabled:
+            self.role_ids["neow"] = 4 + len(self.generic)
         n_roles = len(self.role_ids)
 
         # --- per-family tokenizers (project to d_model) + position embeddings ---
@@ -597,6 +617,15 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         )
         self.tok["monster"] = nn.Linear(mon_in, d_model)
         self.pos["monster"] = nn.Parameter(torch.zeros(self.n_monsters, d_model))
+
+        if self.neow_enabled:
+            neow_in = d_neow_bonus + d_neow_drawback + self._n(
+                "neow_features", flat=True
+            ) // self._n("neow_bonus_ids")
+            self.tok["neow"] = nn.Linear(neow_in, d_model)
+            self.pos["neow"] = nn.Parameter(
+                torch.zeros(self._n("neow_bonus_ids"), d_model)
+            )
 
         # pile tokens: draw / discard / exhaust / deck count vectors
         self.pile_keys = ["draw_counts", "discard_counts", "exhaust_counts", "deck_counts"]
@@ -636,6 +665,10 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             [("cls", 1), ("global", 1), ("pile", len(self.pile_keys)),
              ("monster", self.n_monsters)]
             + [(role, n_slots) for role, n_slots, *_ in self.generic]
+            + (
+                [("neow", self._n("neow_bonus_ids"))]
+                if self.neow_enabled else []
+            )
         ):
             self.token_pos[_role] = (_p, _cnt)
             _p += _cnt
@@ -764,6 +797,15 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             )
             mon = mon + self.combat_language_scale * mon_language
         add(self._role(mon, "monster"), obs["monster_id"].long() == 0)
+
+        if self.neow_enabled:
+            neow = torch.cat([
+                self.shared["neow_bonus"](obs["neow_bonus_ids"].long()),
+                self.shared["neow_drawback"](obs["neow_drawback_ids"].long()),
+                obs["neow_features"].float(),
+            ], dim=-1)
+            neow = self.tok["neow"](neow) + self.pos["neow"].unsqueeze(0)
+            add(self._role(neow, "neow"), obs["neow_bonus_ids"].long() == 0)
 
         # generic id+scalar families
         for role, _n_slots, id_key, emb_name, scalar_keys in self.generic:

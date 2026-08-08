@@ -147,6 +147,12 @@ class WholeRunTask(Task):
             help="Add the normalized total held-card count to the global token.",
         )
         parser.add_argument(
+            "--neow-observation",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Expose the four Neow blessing choices as option tokens.",
+        )
+        parser.add_argument(
             "--arch",
             choices=[
                 "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
@@ -176,6 +182,7 @@ class WholeRunTask(Task):
                 card_language=args.card_language,
                 combat_language=args.combat_language,
                 deck_size_observation=args.deck_size_observation,
+                neow_observation=args.neow_observation,
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its

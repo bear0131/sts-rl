@@ -10,14 +10,18 @@ Install on every Ray node:
 pip install -r rl/requirements.txt
 ```
 
-Single machine, one GPU and 16 environments:
+Single machine, one GPU and 16 environments. This follows the same resource
+shape as balatrobot: one Ray CPU slot per env-runner actor, with several
+vectorized environments inside each actor when the simulator is light enough.
+It is not one CPU per environment.
 
 ```bash
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m rl.rllib_trainer \
   --task wholerun \
   --steps 8000000 \
-  --num-env-runners 4 \
-  --envs-per-runner 4 \
+  --num-env-runners 8 \
+  --envs-per-runner 2 \
+  --num-cpus-per-env-runner 1 \
   --num-gpus 1 \
   --train-batch-size 8192 \
   --minibatch-size 512
@@ -31,8 +35,9 @@ uv run python -m rl.rllib_trainer \
   --global-map-view \
   --map-dag \
   --steps 8000000 \
-  --num-env-runners 4 \
-  --envs-per-runner 4 \
+  --num-env-runners 8 \
+  --envs-per-runner 2 \
+  --num-cpus-per-env-runner 1 \
   --num-gpus 1 \
   --train-batch-size 7168 \
   --minibatch-size 512 \
@@ -47,7 +52,8 @@ uv run python -m rl.rllib_trainer \
 RLlib at step zero with a fresh optimizer. The checkpoint must use
 `StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
 The default `--rollout-fragment-length auto` chooses the largest exact divisor
-no greater than 256 after the final runner layout is known. On single-machine
+no greater than `--auto-fragment-max 64` after the final runner layout is known.
+On single-machine
 training, prefer fewer Ray actors with several vectorized environments each
 (`4x4` or `8x2`) before trying `16x1`; many one-env actors can waste time in Ray
 scheduling and may wait forever if the head/learner process also reserves CPU

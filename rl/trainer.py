@@ -58,6 +58,7 @@ def _warm_start_policy(
     allow_combat_language_extension=False,
     allow_map_dag_extension=False,
     allow_deck_size_extension=False,
+    allow_neow_extension=True,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -103,7 +104,18 @@ def _warm_start_policy(
             and target[key].shape[0] == value.shape[0]
             and target[key].shape[1] == value.shape[1] + 1
         )
+        is_appended_neow_role = (
+            allow_neow_extension
+            and key.endswith("role_emb.weight")
+            and value.ndim == 2
+            and target[key].ndim == 2
+            and target[key].shape[0] == value.shape[0] + 1
+            and target[key].shape[1] == value.shape[1]
+        )
         if is_appended_role:
+            target[key][:value.shape[0]] = value
+            initialized.append(f"{key}[-1]")
+        elif is_appended_neow_role:
             target[key][:value.shape[0]] = value
             initialized.append(f"{key}[-1]")
         elif is_appended_global_scalar:
@@ -127,6 +139,12 @@ def _warm_start_policy(
             ".exhaust_card_language.",
         ))
         is_combat_language = ".combat_language" in key
+        is_neow = any(marker in key for marker in (
+            ".shared.neow_bonus.",
+            ".shared.neow_drawback.",
+            ".tok.neow.",
+            ".pos.neow",
+        ))
         if (
             allow_global_map_extension and is_global_map
         ) or (
@@ -135,6 +153,8 @@ def _warm_start_policy(
             allow_card_language_extension and is_card_language
         ) or (
             allow_combat_language_extension and is_combat_language
+        ) or (
+            allow_neow_extension and is_neow
         ):
             initialized.append(key)
         else:
@@ -352,6 +372,20 @@ def main() -> None:
                 args.resume, device="cpu"
             )
             args.deck_size_observation = uses_deck_size_observation(
+                resume_data["observation_space"]
+            )
+            del resume_data, _params, _pytorch_variables
+
+    if hasattr(args, "neow_observation"):
+        from rl.model import uses_neow_observation
+
+        if args.resume:
+            from stable_baselines3.common.save_util import load_from_zip_file
+
+            resume_data, _params, _pytorch_variables = load_from_zip_file(
+                args.resume, device="cpu"
+            )
+            args.neow_observation = uses_neow_observation(
                 resume_data["observation_space"]
             )
             del resume_data, _params, _pytorch_variables

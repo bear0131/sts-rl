@@ -50,6 +50,7 @@ _ENTITY_SEGMENTS = [
     ("BOSS_RELIC", "boss_relic"),   # take boss relic i       <- boss relic token i
     ("REWARD_CARD", "offer"),       # take card reward i      <- offer token i (first 3;
                                     #   obs tokenizes only OFFER_SLOTS of up-to-5)
+    ("NEOW", "neow"),               # choose Neow blessing i   <- Neow option token i
 ]
 
 
@@ -172,6 +173,8 @@ class StSPolicyCore(nn.Module):
             logits[:, b:b + A.N_COLS] = map_logits
 
         for seg, role in _ENTITY_SEGMENTS:
+            if role not in self.encoder.token_pos:
+                continue
             scores = self._score(self._block(out, role), g)
             b = A.seg_base(seg)
             logits[:, b:b + scores.shape[1]] = scores

@@ -63,7 +63,7 @@ class SlayTheSpireEnv(gym.Env):
     def __init__(self, backend_factory=None, character=None, ascension=0,
                  render_mode=None, global_map_view=False,
                  card_language=False, combat_language=False,
-                 deck_size_observation=False):
+                 deck_size_observation=False, neow_observation=False):
         super().__init__()
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
@@ -76,6 +76,7 @@ class SlayTheSpireEnv(gym.Env):
         self._card_language = card_language
         self._combat_language = combat_language
         self._deck_size_observation = deck_size_observation
+        self._neow_observation = neow_observation
         self.render_mode = render_mode
         self.thick = None
         # autoregressive sub-state: None at ROOT, else ('play', hand_idx) awaiting
@@ -91,6 +92,7 @@ class SlayTheSpireEnv(gym.Env):
             card_language=card_language,
             combat_language=combat_language,
             deck_size_observation=deck_size_observation,
+            neow_observation=neow_observation,
         )
         self.action_space = spaces.Discrete(A.N_ACTIONS)
 
@@ -247,6 +249,7 @@ class SlayTheSpireEnv(gym.Env):
             card_language=self._card_language,
             combat_language=self._combat_language,
             deck_size_observation=self._deck_size_observation,
+            neow_observation=self._neow_observation,
         )
 
     def action_masks(self):

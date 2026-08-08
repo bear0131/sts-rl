@@ -14,6 +14,9 @@ import time
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
+for _thread_env in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_thread_env, "1")
+
 import gymnasium as gym
 import numpy as np
 import ray
@@ -79,6 +82,11 @@ def _ray_runtime_env():
     return {
         "working_dir": str(Path(__file__).resolve().parents[1]),
         "excludes": RAY_RUNTIME_EXCLUDES,
+        "env_vars": {
+            "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS", "1"),
+            "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "1"),
+            "NUMEXPR_NUM_THREADS": os.environ.get("NUMEXPR_NUM_THREADS", "1"),
+        },
     }
 
 
@@ -117,6 +125,7 @@ class RLLibActionMaskEnv(gym.Wrapper):
             deck_size_observation=bool(
                 config.get("deck_size_observation", True)
             ),
+            neow_observation=bool(config.get("neow_observation", True)),
         )
         env = ShapedRewardWrapper(env)
         env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
@@ -225,6 +234,12 @@ def build_parser():
         help="Seconds RLlib waits for slow env-runner sample requests.",
     )
     parser.add_argument(
+        "--auto-fragment-max", type=int, default=64,
+        help="Largest rollout fragment length chosen by --rollout-fragment-length "
+             "auto. Smaller fragments keep slow map-DAG samplers returning "
+             "before RLlib's sample timeout.",
+    )
+    parser.add_argument(
         "--max-requests-in-flight-per-env-runner", type=int, default=1,
         help="Limit queued sample requests per runner to keep CPU and memory "
              "pressure predictable.",
@@ -251,6 +266,8 @@ def build_parser():
     parser.add_argument("--map-dag", action=argparse.BooleanOptionalAction,
                         default=True)
     parser.add_argument("--deck-size-observation",
+                        action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--neow-observation",
                         action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--card-language", action="store_true")
     parser.add_argument("--combat-language", action="store_true")
@@ -299,6 +316,7 @@ def _load_sb3_checkpoint(path: Path, device: str):
         uses_deck_size_observation,
         uses_global_map_observation,
         uses_map_dag,
+        uses_neow_observation,
     )
     from rl.pointer_policy import StSPointerPolicy
 
@@ -318,6 +336,7 @@ def _load_sb3_checkpoint(path: Path, device: str):
         global_map_view=uses_global_map_observation(model),
         map_dag=uses_map_dag(model),
         deck_size_observation=uses_deck_size_observation(model),
+        neow_observation=uses_neow_observation(model),
         card_language=uses_card_language(model),
         combat_language=uses_combat_language(model),
         d_model=int(cfg.get("d_model", 256)),
@@ -329,13 +348,76 @@ def _load_sb3_checkpoint(path: Path, device: str):
 def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
     """Copy a shared StSPolicyCore from SB3 into RLlib and sync samplers."""
     core = algo.get_policy().model.core
-    try:
-        core.load_state_dict(checkpoint.core.state_dict(), strict=True)
-    except RuntimeError as exc:
+    source = checkpoint.core.state_dict()
+    target = core.state_dict()
+    incompatible = []
+    initialized = []
+    for key, value in source.items():
+        if key not in target:
+            incompatible.append(f"unexpected source parameter {key}")
+            continue
+        if value.shape == target[key].shape:
+            target[key] = value
+            continue
+        is_appended_role = (
+            key.endswith("role_emb.weight")
+            and value.ndim == 2
+            and target[key].ndim == 2
+            and target[key].shape[0] == value.shape[0] + 1
+            and target[key].shape[1] == value.shape[1]
+        )
+        if is_appended_role:
+            target[key][:value.shape[0]] = value
+            initialized.append(f"{key}[-1]")
+            continue
+        is_appended_global_scalar = (
+            key.endswith("tok.global.weight")
+            and value.ndim == 2
+            and target[key].ndim == 2
+            and target[key].shape[0] == value.shape[0]
+            and target[key].shape[1] == value.shape[1] + 1
+        )
+        if is_appended_global_scalar:
+            target[key][:, :value.shape[1]] = value
+            initialized.append(f"{key}[:, -1]")
+            continue
+        incompatible.append(
+            f"shape mismatch for {key}: checkpoint {tuple(value.shape)}, "
+            f"target {tuple(target[key].shape)}"
+        )
+    for key in target.keys() - source.keys():
+        is_neow = any(marker in key for marker in (
+            ".shared.neow_bonus.",
+            ".shared.neow_drawback.",
+            ".tok.neow.",
+            ".pos.neow",
+        ))
+        is_card_language = any(marker in key for marker in (
+            ".shared.card.token_embedding.",
+            ".shared.card.local_encoder.",
+            ".shared.card.program_position",
+            ".shared.card.effect_scale",
+            ".pile_card_language.",
+            ".exhaust_card_language.",
+        ))
+        is_combat_language = ".combat_language" in key
+        is_map_dag = ".map_dag." in key or key.endswith(".map_dag")
+        if is_neow or is_card_language or is_combat_language or is_map_dag:
+            initialized.append(key)
+        else:
+            incompatible.append(f"missing source parameter {key}")
+    if incompatible:
+        details = "\n  - ".join(incompatible)
         raise ValueError(
             "SB3 checkpoint geometry does not match the requested RLlib model: "
-            f"{exc}"
-        ) from exc
+            f"\n  - {details}"
+        )
+    core.load_state_dict(target)
+    if initialized:
+        print(
+            f"[rllib] initialized {len(initialized)} new policy tensors",
+            flush=True,
+        )
     if freeze_encoder:
         for parameter in core.encoder.parameters():
             parameter.requires_grad_(False)
@@ -441,11 +523,13 @@ def _normalize_compat_args(args):
         sb3_resume_steps = sb3_source.num_timesteps if args.resume else 0
         for name in (
             "global_map_view", "map_dag", "deck_size_observation",
-            "card_language", "combat_language", "d_model", "n_layers",
-            "n_heads",
+            "neow_observation", "card_language", "combat_language", "d_model",
+            "n_layers", "n_heads",
         ):
             old = getattr(args, name)
             new = getattr(sb3_source, name)
+            if args.init_from and isinstance(old, bool) and isinstance(new, bool):
+                new = old or new
             if old != new:
                 print(f"[rllib] inferred --{name.replace('_', '-')}={new} from {sb3_path}")
                 setattr(args, name, new)
@@ -523,9 +607,10 @@ def _set_auto_rollout_fragment_length(args):
     if args.train_batch_size % sampling_width:
         return
     samples_per_runner = args.train_batch_size // sampling_width
+    max_fragment = max(1, int(args.auto_fragment_max))
     args.rollout_fragment_length = next(
         fragment
-        for fragment in range(min(256, samples_per_runner), 0, -1)
+        for fragment in range(min(max_fragment, samples_per_runner), 0, -1)
         if samples_per_runner % fragment == 0
     )
     print(
@@ -536,12 +621,51 @@ def _set_auto_rollout_fragment_length(args):
 
 
 def _sampled_steps(result):
-    return int(
-        result.get("num_env_steps_sampled_lifetime")
-        or result.get("num_env_steps_sampled")
-        or result.get("timesteps_total")
-        or 0
-    )
+    return int(_number_metric(
+        result,
+        "num_env_steps_sampled_lifetime",
+        "env_runners/num_env_steps_sampled_lifetime",
+        "num_env_steps_sampled",
+        "env_runners/num_env_steps_sampled",
+        "timesteps_total",
+        "env_runners/timesteps_total",
+        default=0,
+    ) or 0)
+
+
+def _trained_steps(result):
+    return int(_number_metric(
+        result,
+        "num_env_steps_trained_lifetime",
+        "learners/default_policy/num_env_steps_trained_lifetime",
+        "info/num_env_steps_trained",
+        "num_agent_steps_trained_lifetime",
+        default=0,
+    ) or 0)
+
+
+def _agent_steps(result):
+    return int(_number_metric(
+        result,
+        "num_agent_steps_sampled_lifetime",
+        "env_runners/num_agent_steps_sampled_lifetime",
+        "num_agent_steps_sampled",
+        "env_runners/num_agent_steps_sampled",
+        default=0,
+    ) or 0)
+
+
+def _episodes_total(result):
+    return int(_number_metric(
+        result,
+        "num_episodes_lifetime",
+        "env_runners/num_episodes_lifetime",
+        "episodes_total",
+        "env_runners/episodes_total",
+        "episodes_this_iter",
+        "env_runners/num_episodes",
+        default=0,
+    ) or 0)
 
 
 def _metric(result, *paths, default=None):
@@ -556,15 +680,37 @@ def _metric(result, *paths, default=None):
     return default
 
 
+def _number_metric(result, *paths, default=None):
+    value = _metric(result, *paths, default=default)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _summary(result, elapsed):
-    sample_ms = _metric(result, "timers/sample_time_ms", default=0.0) or 0.0
-    learn_ms = _metric(result, "timers/learn_time_ms", default=0.0) or 0.0
-    sync_ms = _metric(
-        result, "timers/synch_weights_time_ms", default=0.0
+    sample_ms = _number_metric(
+        result, "timers/sample_time_ms", "timers/sample_time_ms_mean",
+        default=0.0,
     ) or 0.0
+    learn_ms = _number_metric(
+        result, "timers/learn_time_ms", "timers/learn_time_ms_mean",
+        default=0.0,
+    ) or 0.0
+    sync_ms = _number_metric(
+        result, "timers/synch_weights_time_ms",
+        "timers/synch_weights_time_ms_mean",
+        default=0.0
+    ) or 0.0
+    sampled_steps = _sampled_steps(result)
     summary = {
         "iteration": result.get("training_iteration"),
-        "steps": _sampled_steps(result),
+        "steps": sampled_steps,
+        "agent_steps": _agent_steps(result),
+        "trained_steps": _trained_steps(result),
+        "episodes_total": _episodes_total(result),
         "episode_return_mean": _metric(
             result,
             "env_runners/episode_return_mean",
@@ -575,9 +721,11 @@ def _summary(result, elapsed):
             "env_runners/episode_len_mean",
             "episode_len_mean",
         ),
-        "sample_throughput": _metric(
+        "sample_throughput": _number_metric(
             result,
             "env_runners/num_env_steps_sampled_per_second",
+            "env_runners/num_env_steps_sampled_throughput_per_sec",
+            "env_runners/num_env_steps_sampled_lifetime_throughput_per_sec",
             "num_env_steps_sampled_throughput_per_sec",
             "num_env_steps_sampled_per_second",
         ),
@@ -590,15 +738,26 @@ def _summary(result, elapsed):
     # Match SB3's time/fps semantics: all sampled steps divided by the
     # complete train iteration wall time (sampling + learning + sync).
     previous_steps = getattr(_summary, "_previous_steps", None)
-    iter_steps = result.get("num_env_steps_sampled_this_iter")
+    iter_steps = _number_metric(
+        result,
+        "num_env_steps_sampled_this_iter",
+        "env_runners/num_env_steps_sampled_this_iter",
+        "env_runners/num_env_steps_sampled",
+        default=None,
+    )
     if iter_steps is None and previous_steps is not None:
         iter_steps = summary["steps"] - previous_steps
     if iter_steps is None:
         iter_steps = summary["steps"]
+    iter_steps = max(0.0, float(iter_steps or 0.0))
+    if summary["sample_throughput"] in (None, 0.0) and sample_ms > 0 and iter_steps > 0:
+        summary["sample_throughput"] = round(iter_steps / (sample_ms / 1000.0), 2)
     summary["total_throughput"] = round(
         float(iter_steps) / elapsed, 2
     ) if elapsed > 0 else 0.0
     _summary._previous_steps = summary["steps"]
+    summary["iteration_steps"] = int(iter_steps)
+    summary["no_samples"] = iter_steps <= 0
     custom = _metric(result, "env_runners/custom_metrics", "custom_metrics",
                      default={}) or {}
     for source, destination in (
@@ -681,6 +840,7 @@ def main():
                 "card_language": args.card_language,
                 "combat_language": args.combat_language,
                 "deck_size_observation": args.deck_size_observation,
+                "neow_observation": args.neow_observation,
             }
             config = (
                 PPOConfig()

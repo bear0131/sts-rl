@@ -89,6 +89,9 @@ MAP_FULL_FEATURES = 12    # x, y, current, choice, reachable, 7 outgoing edges
 SHOP_CARD_SLOTS = 7       # shop shelf: cards[7] (slot == buy action id)
 SHOP_RELIC_SLOTS = 3      # shop shelf: relics[3]
 SHOP_POTION_SLOTS = 3     # shop shelf: potions[3]
+NEOW_SLOTS = 4            # Neow always offers four blessing choices
+NEOW_BONUS_CAPACITY = 32
+NEOW_DRAWBACK_CAPACITY = 8
 PILE_LANGUAGE_SLOTS = len(LANGUAGE_CARDS)  # one slot per language-covered card id
 
 # ---- normalization scales (divisors; keep scalars ~[0,1]) ----
@@ -120,7 +123,8 @@ _SCALAR = np.float32
 # ============================ observation space ============================
 
 def obs_space(*, global_map_view=False, card_language=False,
-              combat_language=False, deck_size_observation=False):
+              combat_language=False, deck_size_observation=False,
+              neow_observation=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -196,6 +200,13 @@ def obs_space(*, global_map_view=False, card_language=False,
         "shop_potion_prices": scal((SHOP_POTION_SLOTS,)),
         "shop_remove_cost": scal((1,)),
     }
+    if neow_observation:
+        groups.update({
+            # ---- Neow choices (slot i == NEOW[i] action id) ----
+            "neow_bonus_ids": cat((NEOW_SLOTS,), NEOW_BONUS_CAPACITY),
+            "neow_drawback_ids": cat((NEOW_SLOTS,), NEOW_DRAWBACK_CAPACITY),
+            "neow_features": scal((NEOW_SLOTS, 2)),
+        })
     if global_map_view:
         groups.update({
             "map_full_rooms": cat((MAP_FULL_SLOTS,), len(V.ROOM_VOCAB)),
@@ -268,7 +279,8 @@ def _encode_card_sequence(o, pile, cards):
 
 
 def _empty(*, global_map_view=False, card_language=False,
-           combat_language=False, deck_size_observation=False):
+           combat_language=False, deck_size_observation=False,
+           neow_observation=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -317,6 +329,10 @@ def _empty(*, global_map_view=False, card_language=False,
         "shop_potion_prices": np.zeros(SHOP_POTION_SLOTS, _SCALAR),
         "shop_remove_cost": np.zeros(1, _SCALAR),
     }
+    if neow_observation:
+        o["neow_bonus_ids"] = np.zeros(NEOW_SLOTS, _CAT)
+        o["neow_drawback_ids"] = np.zeros(NEOW_SLOTS, _CAT)
+        o["neow_features"] = np.zeros((NEOW_SLOTS, 2), _SCALAR)
     if global_map_view:
         o["map_full_rooms"] = np.zeros(MAP_FULL_SLOTS, _CAT)
         o["map_full_features"] = np.zeros(
@@ -482,6 +498,20 @@ def _encode_options(o, canon):
     if phase == "combat_reward":
         for j, (cid, _up) in enumerate(opts.get("cards", [])[:OFFER_SLOTS]):
             o["offer_card_ids"][j] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+    elif phase == "event" and opts.get("neow") and "neow_bonus_ids" in o:
+        for i, option in enumerate(opts.get("neow", [])[:NEOW_SLOTS]):
+            bonus_id = int(option.get("bonus_id", 0))
+            drawback_id = int(option.get("drawback_id", 0))
+            o["neow_bonus_ids"][i] = max(
+                0, min(NEOW_BONUS_CAPACITY - 1, bonus_id)
+            )
+            o["neow_drawback_ids"][i] = max(
+                0, min(NEOW_DRAWBACK_CAPACITY - 1, drawback_id)
+            )
+            o["neow_features"][i] = (
+                i / max(1, NEOW_SLOTS - 1),
+                1.0 if drawback_id > 1 else 0.0,
+            )
     elif phase == "card_select":
         for k, (cid, _up) in enumerate(opts.get("cards", [])[:G_MAX]):
             o["select_card_ids"][k] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
@@ -541,7 +571,7 @@ def _encode_options(o, canon):
 
 def encode(
     canon, *, global_map_view=False, card_language=False,
-    combat_language=False, deck_size_observation=False,
+    combat_language=False, deck_size_observation=False, neow_observation=False,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -552,6 +582,7 @@ def encode(
         card_language=card_language,
         combat_language=combat_language,
         deck_size_observation=deck_size_observation,
+        neow_observation=neow_observation,
     )
     _encode_combat(o, canon)
     _encode_global(o, canon)
