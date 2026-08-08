@@ -49,23 +49,7 @@ STATIC_DIR = Path(__file__).with_name("dashboard_static")
 UPLOAD_DIR = Path("rl/runs/dashboard/uploads")
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
-COMMON_CARDS = [
-    "Anger", "Armaments", "Body Slam", "Clash", "Cleave", "Clothesline",
-    "Flex", "Havoc", "Headbutt", "Heavy Blade", "Iron Wave",
-    "Perfected Strike", "Pommel Strike", "Shrug It Off", "Sword Boomerang",
-    "Thunderclap", "True Grit", "Twin Strike", "Warcry", "Wild Strike",
-]
-COMMON_ZH = {
-    "Anger": "愤怒", "Armaments": "武装", "Body Slam": "全身撞击",
-    "Clash": "交锋", "Cleave": "顺劈斩", "Clothesline": "金刚臂",
-    "Flex": "活动肌肉", "Havoc": "破灭", "Headbutt": "头槌",
-    "Heavy Blade": "重刃", "Iron Wave": "铁斩波",
-    "Perfected Strike": "完美打击", "Pommel Strike": "剑柄打击",
-    "Shrug It Off": "耸肩无视", "Sword Boomerang": "飞剑回旋镖",
-    "Thunderclap": "闪电霹雳", "True Grit": "坚毅",
-    "Twin Strike": "双重打击", "Warcry": "战吼",
-    "Wild Strike": "狂野打击",
-}
+IRONCLAD_VECTOR_CARDS = list(IRONCLAD_CARDS)
 
 
 def _jsonable(value):
@@ -442,10 +426,26 @@ class DashboardState:
                 "embedding": self.embedding,
                 "token_embeddings": self.token_embeddings,
                 "card_catalog": {
-                    card_id: {"name_zh": info.name_zh, "kind": info.kind}
+                    card_id: {
+                        "name_zh": info.name_zh,
+                        "kind": info.kind,
+                        "cost": list(info.cost),
+                        "damage": list(info.damage),
+                        "block": list(info.block),
+                        "effect_en": info.effect_en,
+                        "effect_zh": info.effect_zh,
+                    }
                     for card_id, info in IRONCLAD_CARDS.items()
                 } | {
-                    card_id: {"name_zh": info["name_zh"], "kind": "status"}
+                    card_id: {
+                        "name_zh": info["name_zh"],
+                        "kind": "status",
+                        "cost": [-1, -1],
+                        "damage": [0, 0],
+                        "block": [0, 0],
+                        "effect_en": info.get("effect_en", ""),
+                        "effect_zh": info.get("effect_zh", ""),
+                    }
                     for card_id, info in STATUS_CARDS.items()
                 },
                 "watch": self.watch.snapshot() if self.watch else None,
@@ -486,17 +486,19 @@ class DashboardState:
             upgraded, _ = extract_state_dict_vectors(
                 state, "hand", upgrades=1
             )
-        indices = np.asarray([CARD_INDEX[name] for name in COMMON_CARDS])
+        indices = np.asarray([CARD_INDEX[name] for name in IRONCLAD_VECTOR_CARDS])
         vectors = np.concatenate([base[indices], upgraded[indices]], axis=0)
         coords, ratio, norms = pca_project(vectors, dim=2, normalize=False)
         points = []
         for variant in (0, 1):
-            for i, card_id in enumerate(COMMON_CARDS):
-                row = variant * len(COMMON_CARDS) + i
+            for i, card_id in enumerate(IRONCLAD_VECTOR_CARDS):
+                row = variant * len(IRONCLAD_VECTOR_CARDS) + i
                 cost, damage, block = card_numbers(card_id, variant)
+                info = IRONCLAD_CARDS[card_id]
                 points.append({
                     "card_id": card_id,
-                    "name": COMMON_ZH[card_id] + ("+" if variant else ""),
+                    "name": info.name_zh + ("+" if variant else ""),
+                    "kind": info.kind,
                     "upgrade": variant,
                     "x": float(coords[row, 0]),
                     "y": float(coords[row, 1]),
@@ -509,6 +511,7 @@ class DashboardState:
             "points": points,
             "explained_ratio": ratio.tolist(),
             "description": description,
+            "card_count": len(IRONCLAD_VECTOR_CARDS),
         }
 
     @staticmethod

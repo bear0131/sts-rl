@@ -12,7 +12,7 @@
     <div class="brand-copy"><strong>STS-RL</strong><span>参数检验台</span></div>
     <nav class="tabs" aria-label="工作区">
       <button class="tab active" data-tab="watch">战局回放</button>
-      <button class="tab" data-tab="embedding">白卡向量</button>
+      <button class="tab" data-tab="embedding">战士全卡向量</button>
       <button class="tab" data-tab="tokens">Token 向量</button>
       <button class="tab" data-tab="evaluation">爬塔评测</button>
     </nav>
@@ -83,8 +83,11 @@
 
     <section id="embeddingView" class="view">
       <div class="section-heading">
-        <div><h1>战士白卡向量</h1><p>完整手牌 token，基础版与升级版共同进行 PCA</p></div>
-        <div class="legend"><span><i class="dot base"></i>基础</span><span><i class="dot upgraded"></i>升级</span></div>
+        <div><h1>战士全卡向量</h1><p>全部 75 张战士卡牌，基础版与升级版共同进行 PCA</p></div>
+        <div class="legend">
+          <span><i class="dot base"></i>基础</span><span><i class="dot upgraded"></i>升级</span>
+          <span><i class="dot attack"></i>攻击</span><span><i class="dot skill"></i>技能</span><span><i class="dot power"></i>能力</span>
+        </div>
       </div>
       <div class="plot-shell">
         <canvas id="embeddingCanvas"></canvas>

@@ -247,15 +247,95 @@ function deckCardClass(id) {
   return "attack";
 }
 
+function cardMeta(card) {
+  const id = card?.id ?? card?.[0] ?? String(card ?? "");
+  const up = Number(card?.up ?? card?.[1] ?? 0) || 0;
+  const catalog = appState?.card_catalog?.[id] || {};
+  return {
+    id,
+    up,
+    name: `${catalog.name_zh || zhCards[id] || id}${up ? "+" : ""}`,
+    kind: deckCardClass(id),
+    rawKind: catalog.kind || deckCardClass(id),
+    cost: card?.cost ?? catalog.cost?.[Math.min(up, 1)] ?? "?",
+    damage: catalog.damage?.[Math.min(up, 1)] ?? 0,
+    block: catalog.block?.[Math.min(up, 1)] ?? 0,
+    effect: catalog.effect_zh || catalog.effect_en || id,
+  };
+}
+
+function cardCostText(cost) {
+  if (cost === -1 || cost === "X") return "X";
+  if (cost == null || cost === "") return "?";
+  return String(cost);
+}
+
+function shortEffect(text, max = 48) {
+  const clean = String(text || "").replace(/\s+/g, "");
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function cardArtSvg(meta) {
+  const h = hashString(meta.id);
+  const r1 = 18 + (h % 58), r2 = 18 + ((h >> 6) % 58), r3 = 18 + ((h >> 12) % 58);
+  const initials = escapeHtml(String(meta.name || meta.id).replace("+", "").slice(0, 2));
+  const typeGlyph = meta.kind === "skill" ? "盾" : meta.kind === "power" ? "焰" : meta.kind === "status" ? "晕" : meta.kind === "curse" ? "咒" : "斩";
+  const motif = meta.kind === "skill"
+    ? `<path class="card-art-main" d="M50 19 L78 30 Q74 70 50 82 Q26 70 22 30 Z"/><path d="M50 30 V68 M35 45 H65"/>`
+    : meta.kind === "power"
+      ? `<path class="card-art-main" d="M49 82 C28 65 35 48 47 35 C48 49 63 39 55 18 C78 39 78 68 49 82 Z"/><path d="M45 70 C53 60 56 53 52 43"/>`
+      : meta.kind === "status" || meta.kind === "curse"
+        ? `<path class="card-art-main" d="M23 52 C31 25 70 25 77 52 C67 80 34 80 23 52 Z"/><circle cx="50" cy="52" r="12"/><path d="M37 40 Q50 29 63 40"/>`
+        : `<path class="card-art-main" d="M25 74 L68 20 L76 28 L33 82 Z"/><path d="M63 22 L78 37 M23 76 L38 91"/>`;
+  return `<svg class="card-svg" viewBox="0 0 100 140" role="img" aria-label="${escapeHtml(meta.name)}">
+    <defs>
+      <radialGradient id="g${h}" cx="50%" cy="36%" r="70%">
+        <stop offset="0%" stop-color="rgb(${r1 + 130},${r2 + 116},${r3 + 92})"/>
+        <stop offset="100%" stop-color="rgb(${r1 + 38},${r2 + 32},${r3 + 26})"/>
+      </radialGradient>
+    </defs>
+    <rect class="card-frame" x="3" y="3" width="94" height="134" rx="8"/>
+    <rect class="card-title-band" x="10" y="9" width="80" height="18" rx="5"/>
+    <circle class="card-cost-orb" cx="17" cy="18" r="11"/>
+    <text class="card-cost-text" x="17" y="22">${escapeHtml(cardCostText(meta.cost))}</text>
+    <text class="card-name-text" x="53" y="22">${escapeHtml(meta.name)}</text>
+    <rect class="card-art-box" x="11" y="31" width="78" height="55" rx="6" fill="url(#g${h})"/>
+    <g class="card-art-lines">${motif}</g>
+    <text class="card-type-glyph" x="50" y="66">${typeGlyph}</text>
+    <rect class="card-text-box" x="11" y="91" width="78" height="33" rx="5"/>
+    <text class="card-effect-text" x="50" y="104">${escapeHtml(shortEffect(meta.effect, 18))}</text>
+    <text class="card-id-text" x="50" y="118">${escapeHtml(meta.id)}</text>
+    ${meta.up ? `<path class="card-upgrade-star" d="M82 12 l2.5 5 5.5 .8 -4 3.9 .9 5.5 -4.9-2.6 -4.9 2.6 .9-5.5 -4-3.9 5.5-.8z"/>` : ""}
+  </svg>`;
+}
+
+function renderVectorCard(card, {index = null, slot = null, className = "", compact = false} = {}) {
+  const meta = cardMeta(card);
+  const attrs = [
+    `class="vector-card ${meta.kind} ${compact ? "compact" : ""} ${className}"`,
+    `title="${escapeHtml(`${index != null ? `第 ${index + 1} 张 · ` : ""}${meta.name} · ${meta.id}${meta.up ? "+" : ""}\n${meta.effect}`)}"`,
+  ];
+  if (slot != null) attrs.push(`data-slot="${slot}"`);
+  return `<div ${attrs.join(" ")}>
+    ${index != null ? `<span class="card-order">${index + 1}</span>` : ""}
+    ${cardArtSvg(meta)}
+  </div>`;
+}
+
 function renderDeck(deck) {
   const cards = deck || [];
   $("deckButtonCount").textContent = cards.length;
   $("deckCards").innerHTML = cards.map((card, index) => {
-    const id = card.id ?? card[0];
-    const up = card.up ?? card[1] ?? 0;
-    return `<div class="deck-card ${deckCardClass(id)}" title="第 ${index + 1} 张 · ${escapeHtml(id)}${up ? "+" : ""}">
-      <span>${index + 1}</span><strong>${escapeHtml(cardName(card))}</strong><small>${escapeHtml(id)}${up ? "+" : ""}</small>
-    </div>`;
+    return renderVectorCard(card, {index, compact: true});
   }).join("");
 }
 
@@ -421,9 +501,8 @@ function renderWatch() {
     $("player").innerHTML = `<div class="player-avatar"><div class="energy-orb" title="当前能量"><strong>${canon.player.energy}</strong><span>能量</span></div><div class="player-core"><div class="player-figure">战</div><div class="resource-block hp-resource"><div><span>生命</span><b>${canon.player.hp}/${canon.player.max_hp}</b></div><div class="resource-track"><i style="width:${hpPct}%"></i></div></div><div class="resource-block block-resource"><div><span>格挡</span><b>${canon.player.block}</b></div><div class="resource-track"><i style="width:${blockPct}%"></i></div></div></div><div class="player-copy"><strong>铁甲战士</strong><div>回合 ${canon.turn}</div><div class="power-row">${escapeHtml(powersText(canon.player.powers))}</div></div></div>`;
   } else $("player").innerHTML = "";
   $("hand").innerHTML = combat ? (canon.hand || []).map((card, slot) => {
-    const cost = card.cost ?? "?"; const id = card.id; const cls = ["Defend_R","Armaments","Flex","Havoc","Shrug It Off","True Grit","Warcry"].includes(id) ? "skill" : "";
     const committed = w.pending_card_slot === slot ? "card-committed" : "";
-    return `<div class="game-card ${cls} ${committed}" data-slot="${slot}"><span class="cost">${cost}</span><strong>${escapeHtml(cardName(card))}</strong><small>${escapeHtml(id)}</small></div>`;
+    return renderVectorCard(card, {slot, className: `game-card ${committed}`});
   }).join("") : "";
   $("piles").textContent = combat ? `抽牌 ${canon.draw?.length || 0}　弃牌 ${canon.discard?.length || 0}　消耗 ${canon.exhaust?.length || 0}` : "";
   $("overworld").classList.toggle("visible", !combat);
@@ -434,9 +513,12 @@ function renderWatch() {
     } else {
     let detail = `HP ${canon.hp ?? "—"}/${canon.max_hp ?? "—"}　金币 ${canon.gold ?? global.gold ?? 0}\n`;
     if (opts.nodes) detail += `可达路线：${opts.nodes.map(n => `${n[0]}:${n[1]}`).join("　")}\n`;
+    const optionCards = opts.cards
+      ? `<div class="option-card-grid">${opts.cards.map((card, index) => renderVectorCard(card, {index, compact: true})).join("")}</div>`
+      : "";
     if (opts.cards) detail += `卡牌：${opts.cards.map(cardName).join("　")}\n`;
     if (opts.event) detail += `事件：${opts.event}`;
-    $("overworld").innerHTML = `<div class="overworld-box"><h2>${escapeHtml(phaseNames[w.phase] || w.phase)}</h2><pre>${escapeHtml(detail)}</pre></div>`;
+    $("overworld").innerHTML = `<div class="overworld-box"><h2>${escapeHtml(phaseNames[w.phase] || w.phase)}</h2><pre>${escapeHtml(detail)}</pre>${optionCards}</div>`;
     }
   }
   const d = w.decision;
@@ -458,7 +540,8 @@ $("miniMapCanvas").addEventListener("click",async event=>{if(seeking)return;cons
 function renderEmbedding() {
   plotPoints = appState?.embedding?.points || [];
   const ratio = appState?.embedding?.explained_ratio || [];
-  $("variance").textContent = ratio.length ? `PC1 ${(ratio[0]*100).toFixed(1)}% · PC2 ${(ratio[1]*100).toFixed(1)}%` : "等待参数";
+  const cardCount = appState?.embedding?.card_count || Math.floor(plotPoints.length / 2);
+  $("variance").textContent = ratio.length ? `全战士卡 ${cardCount} 张 · PC1 ${(ratio[0]*100).toFixed(1)}% · PC2 ${(ratio[1]*100).toFixed(1)}%` : "等待参数";
   drawEmbedding();
 }
 function canvasSetup(canvas) {
@@ -474,12 +557,15 @@ function drawEmbedding() {
   const xs=plotPoints.map(p=>p.x), ys=plotPoints.map(p=>p.y), minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
   const sx=x=>55+(x-minX)/(maxX-minX||1)*(w-90), sy=y=>h-45-(y-minY)/(maxY-minY||1)*(h-80);
   plotScreenPoints=plotPoints.map(p=>({...p,sx:sx(p.x),sy:sy(p.y)}));
-  ctx.strokeStyle="rgba(145,154,148,.3)"; ctx.lineWidth=1;
-  for (let i=0;i<20;i++){ const a=plotScreenPoints[i], b=plotScreenPoints[i+20]; ctx.beginPath();ctx.moveTo(a.sx,a.sy);ctx.lineTo(b.sx,b.sy);ctx.stroke(); }
+  const cardCount = appState?.embedding?.card_count || Math.floor(plotScreenPoints.length / 2);
+  ctx.strokeStyle="rgba(145,154,148,.22)"; ctx.lineWidth=1;
+  for (let i=0;i<cardCount;i++){ const a=plotScreenPoints[i], b=plotScreenPoints[i+cardCount]; if(!a||!b)continue; ctx.beginPath();ctx.moveTo(a.sx,a.sy);ctx.lineTo(b.sx,b.sy);ctx.stroke(); }
   ctx.font='12px "Microsoft YaHei", sans-serif'; ctx.textAlign="center";
+  const kindColor = {attack:"#e46b5f", skill:"#5d83a8", power:"#d0a94f", status:"#84918a", curse:"#9b7bb4"};
   plotScreenPoints.forEach(p=>{
-    if(p.upgrade){ctx.fillStyle="#d0a94f";ctx.save();ctx.translate(p.sx,p.sy);ctx.rotate(Math.PI/4);ctx.fillRect(-4,-4,8,8);ctx.restore();}
-    else{ctx.fillStyle="#5d83a8";ctx.beginPath();ctx.arc(p.sx,p.sy,7,0,Math.PI*2);ctx.fill();ctx.fillStyle="#cdd2ce";ctx.fillText(p.name,p.sx,p.sy-12);}
+    ctx.fillStyle = kindColor[p.kind] || "#5d83a8";
+    if(p.upgrade){ctx.save();ctx.translate(p.sx,p.sy);ctx.rotate(Math.PI/4);ctx.fillRect(-4,-4,8,8);ctx.restore();}
+    else{ctx.beginPath();ctx.arc(p.sx,p.sy,6,0,Math.PI*2);ctx.fill(); if(cardCount <= 35){ctx.fillStyle="#cdd2ce";ctx.fillText(p.name,p.sx,p.sy-12);}}
   });
 }
 $("embeddingCanvas").addEventListener("mousemove", event => {

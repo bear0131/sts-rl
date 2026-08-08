@@ -61,16 +61,30 @@ main { min-height: calc(100vh - 58px); }
 .deck-popover-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; color: #e4dfd1; }
 .deck-popover-heading strong { font: 700 17px Georgia, "Microsoft YaHei", serif; }
 .deck-popover-heading span { color: #a8aea9; font-size: 11px; }
-.deck-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
-.deck-card { position: relative; aspect-ratio: 5 / 7; min-width: 0; padding: 26px 7px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; color: #29251d; text-align: center; background: rgba(218, 208, 181, .92); border: 3px solid #913a32; border-radius: 7px; box-shadow: 0 4px 0 rgba(0, 0, 0, .38), inset 0 0 18px rgba(77, 48, 31, .17); }
-.deck-card.skill { border-color: #507b9a; }
-.deck-card.power { border-color: #b4a24c; }
-.deck-card.status { border-color: #777b78; background: rgba(185, 188, 182, .9); }
-.deck-card.curse { border-color: #4c3b58; color: #e1dce5; background: rgba(58, 48, 63, .92); }
-.deck-card > span { position: absolute; top: 6px; left: 7px; color: rgba(42, 36, 27, .58); font: 700 10px Georgia, serif; }
-.deck-card.curse > span { color: rgba(235, 226, 239, .55); }
-.deck-card strong { max-width: 100%; font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
-.deck-card small { max-width: 100%; margin-top: 7px; color: inherit; opacity: .67; font-size: 9px; overflow-wrap: anywhere; }
+.deck-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+.vector-card { --card-border: #9b392f; --card-top: #7f211c; --card-mid: #d9c79f; --card-paper: #f0e6cb; position: relative; width: 112px; height: 157px; flex: 0 1 112px; filter: drop-shadow(0 5px 0 rgba(0,0,0,.42)); transition: transform .16s ease, filter .16s ease, opacity .16s ease; }
+.vector-card.attack { --card-border: #9b392f; --card-top: #7f211c; --card-mid: #d7b071; }
+.vector-card.skill { --card-border: #547f9e; --card-top: #1e567b; --card-mid: #9fc3d8; }
+.vector-card.power { --card-border: #b59e45; --card-top: #765b15; --card-mid: #dfca72; }
+.vector-card.status { --card-border: #7b807b; --card-top: #4d5550; --card-mid: #c9cbc2; }
+.vector-card.curse { --card-border: #564064; --card-top: #2d2036; --card-mid: #75627d; --card-paper: #e6dfee; }
+.vector-card:hover { transform: translateY(-5px) scale(1.04); filter: drop-shadow(0 9px 8px rgba(0,0,0,.42)); z-index: 8; }
+.vector-card.compact { width: 96px; height: 134px; }
+.card-svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.card-frame { fill: var(--card-paper); stroke: var(--card-border); stroke-width: 5; }
+.card-title-band { fill: var(--card-top); stroke: rgba(255,237,184,.55); stroke-width: .7; }
+.card-cost-orb { fill: #236b9b; stroke: #d6f1ff; stroke-width: 1.5; }
+.card-cost-text { fill: #fff; font: 900 12px Georgia, serif; text-anchor: middle; paint-order: stroke; stroke: rgba(0,0,0,.45); stroke-width: 2px; }
+.card-name-text { fill: #fff2cf; font: 700 8.5px "Microsoft YaHei", "Segoe UI", sans-serif; text-anchor: middle; dominant-baseline: middle; }
+.card-art-box { stroke: rgba(55,34,22,.45); stroke-width: 1.2; }
+.card-art-lines { fill: none; stroke: rgba(255,244,207,.92); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.card-art-main { fill: rgba(255,232,166,.14); }
+.card-type-glyph { fill: rgba(255,248,223,.9); font: 900 20px Georgia, "Microsoft YaHei", serif; text-anchor: middle; dominant-baseline: middle; opacity: .9; }
+.card-text-box { fill: rgba(255,250,232,.88); stroke: rgba(85,64,42,.35); stroke-width: .8; }
+.card-effect-text { fill: #2b251c; font: 700 6.3px "Microsoft YaHei", "Segoe UI", sans-serif; text-anchor: middle; }
+.card-id-text { fill: rgba(43,37,28,.62); font: 5.2px "Segoe UI", sans-serif; text-anchor: middle; }
+.card-upgrade-star { fill: #f4d35f; stroke: #6c5012; stroke-width: .7; }
+.card-order { position: absolute; z-index: 2; top: 6px; right: 7px; min-width: 17px; height: 17px; display: grid; place-items: center; color: #251d12; background: rgba(239,213,132,.94); border: 1px solid rgba(77,53,23,.5); border-radius: 50%; font: 800 10px Georgia, serif; }
 .monsters { position: absolute; z-index: 3; left: 42%; right: 3%; top: 135px; display: flex; justify-content: center; align-items: flex-end; gap: 18px; }
 .monster { width: min(170px, 26%); min-width: 112px; text-align: center; }
 .monster-figure { height: 118px; display: grid; place-items: center; margin-bottom: 7px; font: 700 42px Georgia, serif; color: #c6cdc8; text-shadow: 0 5px 0 #0b0e0c; }
@@ -99,11 +113,7 @@ main { min-height: calc(100vh - 58px); }
 .hp-resource .resource-track i { background: var(--red); }
 .block-resource .resource-track i { background: #4e91c5; }
 .hand { position: absolute; z-index: 5; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; justify-content: center; align-items: end; width: calc(100% - 150px); gap: 5px; }
-.game-card { position: relative; width: clamp(74px, 8.2vw, 112px); height: 148px; flex: 0 1 112px; background: #d8d0b9; color: #1e211f; border: 3px solid #8e2f29; border-radius: 7px; padding: 27px 7px 8px; box-shadow: 0 5px 0 rgba(0,0,0,.45); text-align: center; overflow: hidden; }
-.game-card.skill { border-color: #58778e; }
-.game-card .cost { position: absolute; top: 4px; left: 5px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: white; background: #3979a9; border: 1px solid #cbe7fa; font-weight: 800; }
-.game-card strong { font-size: 12px; line-height: 1.15; display: block; overflow-wrap: anywhere; }
-.game-card small { display: block; margin-top: 8px; color: #505550; }
+.game-card { width: clamp(78px, 8.5vw, 118px); height: clamp(109px, 11.9vw, 165px); flex: 0 1 118px; }
 .game-card.card-committed { opacity: .38; transform: translateY(-18px); }
 .game-card.card-playing { opacity: .18; }
 .card-flight { position: fixed; z-index: 100; pointer-events: none; margin: 0; transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .32s ease, filter .2s ease; }
@@ -124,6 +134,7 @@ main { min-height: calc(100vh - 58px); }
 .overworld-box { width: min(660px, 90%); background: rgba(15,20,17,.94); border: 1px solid #67716a; padding: 24px; }
 .overworld-box h2 { margin: 0 0 12px; color: var(--gold); }
 .overworld-box pre { white-space: pre-wrap; color: #cbd0cc; font-family: inherit; line-height: 1.6; }
+.option-card-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }
 .neow-screen { width: min(720px, 94%); }
 .neow-screen > p { margin: 0 0 18px; color: var(--gold); text-align: center; font: 700 22px Georgia, "Microsoft YaHei", serif; }
 .neow-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -162,6 +173,9 @@ main { min-height: calc(100vh - 58px); }
 .legend span { display: flex; align-items: center; gap: 7px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--blue); }
 .dot.upgraded { border-radius: 1px; transform: rotate(45deg); background: var(--gold); }
+.dot.attack { background: var(--red-bright); }
+.dot.skill { background: var(--blue); }
+.dot.power { background: var(--gold); }
 .plot-shell, .distribution-shell { position: relative; margin: 0 28px 28px; min-height: 560px; border: 1px solid var(--line); background: #171d1a; }
 #embeddingCanvas, #tokenCanvas { display: block; width: 100%; height: 620px; }
 .token-heading { align-items: center; }
@@ -238,7 +252,7 @@ main { min-height: calc(100vh - 58px); }
   .arena { min-height: 590px; }
   .deck-viewer { left: 8px; top: 72px; }
   .deck-popover { left: 52px; width: calc(100vw - 72px); max-height: 430px; padding: 10px; }
-  .deck-cards { grid-template-columns: repeat(auto-fill, minmax(74px, 1fr)); gap: 7px; }
+  .deck-cards { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 7px; }
   .overworld-state { inset: 115px 3% 130px; }
   .neow-screen > p { margin-bottom: 10px; font-size: 18px; }
   .neow-options { grid-template-columns: 1fr; gap: 6px; }
@@ -252,7 +266,10 @@ main { min-height: calc(100vh - 58px); }
   .monster-figure { height: 85px; font-size: 31px; }
   .player-zone { left: 3%; bottom: 170px; transform: scale(.84); transform-origin: left bottom; }
   .hand { width: 96%; gap: 2px; overflow-x: auto; justify-content: flex-start; }
-  .game-card { width: 70px; min-width: 70px; height: 132px; }
+  .vector-card.compact { width: 78px; height: 109px; }
+  .game-card { width: 72px; min-width: 72px; height: 101px; }
+  .card-name-text { font-size: 7.4px; }
+  .card-effect-text { font-size: 5.5px; }
   .section-heading { padding: 18px 14px; align-items: flex-start; flex-direction: column; }
   .plot-shell, .distribution-shell, .metric-strip { margin-left: 14px; margin-right: 14px; }
   #embeddingCanvas, #tokenCanvas { height: 520px; }
