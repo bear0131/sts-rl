@@ -125,7 +125,8 @@ def _ray_runtime_env():
 class StSRLLibCallbacks(DefaultCallbacks):
     """Publish the same whole-run outcome metrics used by the SB3 trainer."""
 
-    def on_episode_end(self, *, episode, **kwargs):
+    def on_episode_end(self, *, episode, metrics_logger=None, env_runner=None,
+                       **kwargs):
         info = episode.last_info_for()
         stats = info.get("run_stats") if info else None
         if stats is None:
@@ -142,6 +143,31 @@ class StSRLLibCallbacks(DefaultCallbacks):
             episode.custom_metrics[f"game/floor_won/{threshold:02d}"] = float(
                 floor > threshold
             )
+        if metrics_logger is not None:
+            config = getattr(env_runner, "config", None)
+            window = int(
+                getattr(config, "metrics_num_episodes_for_smoothing", 100)
+                or 100
+            )
+            values = {
+                "win_rate": float(won),
+                "floor_mean": float(floor),
+                "deck_size_mean": float(stats["deck_size"]),
+                "act_1_won_mean": float(act > 1),
+                "act_2_won_mean": float(act > 2),
+                "act_3_won_mean": float(act > 3),
+            }
+            for name, value in values.items():
+                metrics_logger.log_value(
+                    ("game", name), value, reduce="mean", window=window
+                )
+            for threshold in range(5, 55, 5):
+                metrics_logger.log_value(
+                    ("game", "floor_won", f"{threshold:02d}"),
+                    float(floor > threshold),
+                    reduce="mean",
+                    window=window,
+                )
 
 
 class RLLibActionMaskEnv(gym.Wrapper):
@@ -809,16 +835,40 @@ def _summary(result, elapsed):
     summary["no_samples"] = iter_steps <= 0
     custom = _metric(result, "env_runners/custom_metrics", "custom_metrics",
                      default={}) or {}
-    for source, destination in (
-        ("game/win_rate_mean", "game/win_rate"),
-        ("game/floor_mean", "game/floor_mean"),
-        ("game/deck_size_mean", "game/deck_size_mean"),
-        ("game/act_1_won_mean", "game/act_1_won_mean"),
-        ("game/act_2_won_mean", "game/act_2_won_mean"),
-        ("game/act_3_won_mean", "game/act_3_won_mean"),
+    for metric_name in (
+        "win_rate", "floor_mean", "deck_size_mean",
+        "act_1_won_mean", "act_2_won_mean", "act_3_won_mean",
     ):
-        if source in custom:
-            summary[destination] = custom[source]
+        direct = _number_metric(
+            result,
+            f"env_runners/game/{metric_name}",
+            f"game/{metric_name}",
+            default=None,
+        )
+        if direct is not None:
+            summary[f"game/{metric_name}"] = direct
+            continue
+        custom_name = (
+            "game/win_rate_mean"
+            if metric_name == "win_rate"
+            else f"game/{metric_name}"
+        )
+        if custom_name in custom:
+            summary[f"game/{metric_name}"] = custom[custom_name]
+    for threshold in range(5, 55, 5):
+        key = f"{threshold:02d}"
+        direct = _number_metric(
+            result,
+            f"env_runners/game/floor_won/{key}",
+            f"game/floor_won/{key}",
+            default=None,
+        )
+        if direct is not None:
+            summary[f"game/floor_won/{key}"] = direct
+            continue
+        custom_name = f"game/floor_won/{key}_mean"
+        if custom_name in custom:
+            summary[f"game/floor_won/{key}"] = custom[custom_name]
     summary["bottleneck"] = (
         "sampling/cpu" if sample_ms >= learn_ms else "learning/gpu"
     )
