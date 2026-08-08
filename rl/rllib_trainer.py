@@ -199,6 +199,36 @@ def build_parser():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-env-runners", type=int, default=4)
     parser.add_argument("--envs-per-runner", type=int, default=4)
+    parser.add_argument(
+        "--num-cpus-per-env-runner", type=int, default=1,
+        help="Ray CPU slots reserved for each remote env-runner actor.",
+    )
+    parser.add_argument(
+        "--max-env-runners", type=int, default=8,
+        help="Maximum remote env-runner actors before folding extra envs into "
+             "vectorized runners. Use 0 to disable this single-node cap.",
+    )
+    parser.add_argument(
+        "--num-cpus-for-main-process", type=int, default=0,
+        help="Ray CPU slots reserved for the local driver/learner process. "
+             "Use 0 on one-GPU boxes to let all CPUs host env runners.",
+    )
+    parser.add_argument(
+        "--create-local-env-runner",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Also create a local env runner in the driver process. Off by "
+             "default to avoid a hidden extra sampler competing with learning.",
+    )
+    parser.add_argument(
+        "--sample-timeout-s", type=float, default=120.0,
+        help="Seconds RLlib waits for slow env-runner sample requests.",
+    )
+    parser.add_argument(
+        "--max-requests-in-flight-per-env-runner", type=int, default=1,
+        help="Limit queued sample requests per runner to keep CPU and memory "
+             "pressure predictable.",
+    )
     parser.add_argument("--num-gpus", type=float, default=1.0)
     parser.add_argument(
         "--rollout-fragment-length", type=_fragment_length, default="auto",
@@ -384,27 +414,19 @@ def _normalize_compat_args(args):
     if args.n_envs is not None:
         args.num_env_runners = args.n_envs if args.vec != "dummy" else 0
         args.envs_per_runner = 1 if args.vec != "dummy" else args.n_envs
+    if args.num_env_runners <= 0 and not args.create_local_env_runner:
+        args.create_local_env_runner = True
+        print(
+            "[rllib] enabled --create-local-env-runner because no remote "
+            "env runners were requested",
+            flush=True,
+        )
     if args.n_steps is not None:
         args.rollout_fragment_length = args.n_steps
     if args.gradient_accumulation_steps > 1:
         args.train_batch_size = (
             args.minibatch_size * args.gradient_accumulation_steps
         )
-    if args.rollout_fragment_length == "auto":
-        sampling_width = max(1, args.num_env_runners) * args.envs_per_runner
-        if args.train_batch_size % sampling_width == 0:
-            samples_per_runner = args.train_batch_size // sampling_width
-            args.rollout_fragment_length = next(
-                fragment
-                for fragment in range(min(128, samples_per_runner), 0, -1)
-                if samples_per_runner % fragment == 0
-            )
-            print(
-                "[rllib] auto rollout fragment length="
-                f"{args.rollout_fragment_length} "
-                f"({sampling_width} concurrent envs)",
-                flush=True,
-            )
     if args.device == "cpu":
         args.num_gpus = 0.0
 
@@ -428,6 +450,89 @@ def _normalize_compat_args(args):
                 print(f"[rllib] inferred --{name.replace('_', '-')}={new} from {sb3_path}")
                 setattr(args, name, new)
     return sb3_source, sb3_resume_steps
+
+
+def _plan_distribution(args):
+    """Choose a runner layout that fits the available CPU budget.
+
+    RLlib env runners are Ray actors, so too many 1-env actors can stall a
+    single machine by exhausting CPU slots and increasing scheduling overhead.
+    We keep the total env count stable and fold excess runners back into a
+    smaller number of vectorized runners when needed.
+    """
+    cpu_total = int(ray.cluster_resources().get("CPU", os.cpu_count() or 1))
+    runner_cpu = max(1, int(args.num_cpus_per_env_runner))
+    main_cpu = max(0, int(args.num_cpus_for_main_process))
+    requested_runners = max(0, int(args.num_env_runners))
+    requested_envs_per_runner = max(1, int(args.envs_per_runner))
+    requested_total_envs = requested_runners * requested_envs_per_runner
+    if requested_runners == 0:
+        args.envs_per_runner = requested_envs_per_runner
+        return {
+            "cpu_total": cpu_total,
+            "runner_cpu": runner_cpu,
+            "main_cpu": main_cpu,
+            "max_env_runners": 0,
+            "requested_total_envs": requested_envs_per_runner,
+            "planned_total_envs": requested_envs_per_runner,
+        }
+    actor_cap = (
+        requested_runners if args.max_env_runners <= 0
+        else max(1, int(args.max_env_runners))
+    )
+
+    # Keep one CPU free for the driver only if the user explicitly asked for it.
+    usable_cpu_slots = max(1, cpu_total - main_cpu)
+    max_runners = min(actor_cap, max(1, usable_cpu_slots // runner_cpu))
+    planned_runners = min(requested_runners, max_runners)
+    planned_envs_per_runner = max(
+        requested_envs_per_runner,
+        (requested_total_envs + planned_runners - 1) // planned_runners,
+    )
+
+    changed = (
+        planned_runners != requested_runners
+        or planned_envs_per_runner != requested_envs_per_runner
+    )
+    if changed:
+        print(
+            "[rllib] adjusted env layout from "
+            f"{requested_runners}x{requested_envs_per_runner} "
+            f"to {planned_runners}x{planned_envs_per_runner} "
+            f"for CPU budget {cpu_total} and actor cap {actor_cap} "
+            f"(main={main_cpu}, runner={runner_cpu})",
+            flush=True,
+        )
+
+    args.num_env_runners = planned_runners
+    args.envs_per_runner = planned_envs_per_runner
+    return {
+        "cpu_total": cpu_total,
+        "runner_cpu": runner_cpu,
+        "main_cpu": main_cpu,
+        "max_env_runners": actor_cap,
+        "requested_total_envs": requested_total_envs,
+        "planned_total_envs": planned_runners * planned_envs_per_runner,
+    }
+
+
+def _set_auto_rollout_fragment_length(args):
+    if args.rollout_fragment_length != "auto":
+        return
+    sampling_width = max(1, args.num_env_runners) * args.envs_per_runner
+    if args.train_batch_size % sampling_width:
+        return
+    samples_per_runner = args.train_batch_size // sampling_width
+    args.rollout_fragment_length = next(
+        fragment
+        for fragment in range(min(256, samples_per_runner), 0, -1)
+        if samples_per_runner % fragment == 0
+    )
+    print(
+        "[rllib] auto rollout fragment length="
+        f"{args.rollout_fragment_length} ({sampling_width} concurrent envs)",
+        flush=True,
+    )
 
 
 def _sampled_steps(result):
@@ -531,6 +636,25 @@ def main():
         ignore_reinit_error=True,
         runtime_env=_ray_runtime_env(),
     )
+    distribution = _plan_distribution(args)
+    _set_auto_rollout_fragment_length(args)
+    print(
+        "[rllib] distribution="
+        + json.dumps({
+            "num_env_runners": args.num_env_runners,
+            "envs_per_runner": args.envs_per_runner,
+            "total_envs": args.num_env_runners * args.envs_per_runner,
+            "rollout_fragment_length": args.rollout_fragment_length,
+            "num_cpus_per_env_runner": args.num_cpus_per_env_runner,
+            "num_cpus_for_main_process": args.num_cpus_for_main_process,
+            "create_local_env_runner": args.create_local_env_runner,
+            "sample_timeout_s": args.sample_timeout_s,
+            "max_requests_in_flight_per_env_runner":
+                args.max_requests_in_flight_per_env_runner,
+            **distribution,
+        }, ensure_ascii=False),
+        flush=True,
+    )
 
     run_dir = args.out / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -574,11 +698,20 @@ def main():
                 .experimental(_disable_preprocessor_api=True)
                 .env_runners(
                     num_env_runners=args.num_env_runners,
+                    create_local_env_runner=args.create_local_env_runner,
                     num_envs_per_env_runner=args.envs_per_runner,
+                    num_cpus_per_env_runner=args.num_cpus_per_env_runner,
                     rollout_fragment_length=args.rollout_fragment_length,
                     batch_mode="truncate_episodes",
+                    sample_timeout_s=args.sample_timeout_s,
+                    max_requests_in_flight_per_env_runner=(
+                        args.max_requests_in_flight_per_env_runner
+                    ),
                 )
-                .resources(num_gpus=args.num_gpus)
+                .resources(
+                    num_cpus_for_main_process=args.num_cpus_for_main_process,
+                    num_gpus=args.num_gpus,
+                )
                 .debugging(seed=args.seed, log_sys_usage=True)
                 .reporting(
                     metrics_num_episodes_for_smoothing=args.metrics_window,

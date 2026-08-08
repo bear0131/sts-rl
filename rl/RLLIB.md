@@ -31,8 +31,8 @@ uv run python -m rl.rllib_trainer \
   --global-map-view \
   --map-dag \
   --steps 8000000 \
-  --num-env-runners 16 \
-  --envs-per-runner 1 \
+  --num-env-runners 4 \
+  --envs-per-runner 4 \
   --num-gpus 1 \
   --train-batch-size 7168 \
   --minibatch-size 512 \
@@ -47,9 +47,15 @@ uv run python -m rl.rllib_trainer \
 RLlib at step zero with a fresh optimizer. The checkpoint must use
 `StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
 The default `--rollout-fragment-length auto` chooses the largest exact divisor
-no greater than 128. The 16-runner/7168-batch example uses 112 and accumulates
-four short sampling waves. Short fragments avoid Ray's 60-second sampling
-timeout when the map-DAG policy runs on CPU samplers.
+no greater than 256 after the final runner layout is known. On single-machine
+training, prefer fewer Ray actors with several vectorized environments each
+(`4x4` or `8x2`) before trying `16x1`; many one-env actors can waste time in Ray
+scheduling and may wait forever if the head/learner process also reserves CPU
+slots. The trainer now reserves no Ray CPU for the local main process by default,
+does not create a hidden local env runner, and folds too many requested runners
+back into fewer vectorized runners when the cluster CPU budget or the default
+`--max-env-runners 8` actor cap would otherwise be exceeded. Pass
+`--max-env-runners 0` to disable that cap on a real multi-node Ray cluster.
 SB3-style `--n-envs`, `--n-steps`, `--batch-size`, and
 `--gradient-accumulation-steps` are also accepted. On a 32 GiB GPU, use
 `--batch-size 512 --gradient-accumulation-steps 64`: RLlib samples 32768
