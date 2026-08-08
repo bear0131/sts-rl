@@ -8,6 +8,7 @@ let tokenSource = "card";
 let tokenPlotPoints = [];
 let tokenScreenPoints = [];
 let distributionBars = [];
+let miniMapScreenNodes = [];
 let uploadManuallyOpen = false;
 let watchSeedDirty = false;
 
@@ -21,6 +22,35 @@ const zhCards = {
   "Twin Strike": "双重打击", Warcry: "战吼", "Wild Strike": "狂野打击"
 };
 const phaseNames = { combat: "战斗", map: "选择路线", combat_reward: "战斗奖励", card_select: "选择卡牌", rest: "篝火", event: "事件", chest: "宝箱", boss_relic: "Boss 遗物", shop: "商店", neow: "涅奥" };
+const neowBonusZh = [
+  "选择一张牌加入牌组", "获得一张随机稀有牌", "移除一张牌", "升级一张牌", "变化一张牌", "选择一张无色牌加入牌组",
+  "获得三瓶药水", "获得一个随机普通遗物", "最大生命提高 10%", "获得涅奥的悲恸", "获得 100 金币",
+  "选择一张稀有无色牌加入牌组", "移除两张牌", "获得一个随机稀有遗物", "选择一张稀有牌加入牌组", "获得 250 金币",
+  "变化两张牌", "最大生命提高 20%", "获得一个随机 Boss 遗物"
+];
+const neowDrawbackZh = ["", "", "最大生命降低 10%", "失去所有金币", "获得一张诅咒牌", "失去当前生命的 30%", "失去初始遗物"];
+
+function neowOptionText(option) {
+  return {
+    bonus: neowBonusZh[Number(option.bonus_id)] || option.bonus || "未知奖励",
+    drawback: neowDrawbackZh[Number(option.drawback_id)] || (option.drawback && option.drawback !== "INVALID" ? option.drawback : "")
+  };
+}
+
+function renderNeowOptions(options, decision) {
+  const rows = options.map((option, index) => {
+    const text = neowOptionText(option);
+    const action = decision?.top_actions?.find(item => item.action === 124 + index);
+    const selected = decision?.action === 124 + index;
+    const probability = action?.prob == null ? "" : `${(action.prob * 100).toFixed(1)}%`;
+    return `<div class="neow-option ${selected ? "selected" : ""}">
+      <span class="neow-index">${index + 1}</span>
+      <div><strong>${escapeHtml(text.bonus)}</strong>${text.drawback ? `<small>代价：${escapeHtml(text.drawback)}</small>` : `<small class="free-cost">无代价</small>`}</div>
+      ${probability ? `<b>${probability}</b>` : ""}
+    </div>`;
+  }).join("");
+  return `<div class="neow-screen"><p>选择涅奥的祝福</p><div class="neow-options">${rows}</div></div>`;
+}
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
@@ -162,7 +192,42 @@ function renderAll() {
   renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation();
 }
 function powersText(powers) { return Object.entries(powers || {}).filter(([,v]) => v !== 0).map(([k,v]) => `${k} ${v}`).join(" · "); }
-function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${zhCards[id] || id}${up ? "+" : ""}`; }
+function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${appState?.card_catalog?.[id]?.name_zh || zhCards[id] || id}${up ? "+" : ""}`; }
+const skillCards = new Set(["Defend_R", "Armaments", "Battle Trance", "Bloodletting", "Burning Pact", "Disarm", "Dual Wield", "Entrench", "Exhume", "Feel No Pain", "Flame Barrier", "Flex", "Ghostly Armor", "Havoc", "Impervious", "Infernal Blade", "Intimidate", "Limit Break", "Offering", "Power Through", "Rage", "Second Wind", "Seeing Red", "Sentinel", "Sever Soul", "Shockwave", "Shrug It Off", "Spot Weakness", "True Grit", "Warcry"]);
+const powerCards = new Set(["Barricade", "Berserk", "Brutality", "Combust", "Corruption", "Dark Embrace", "Demon Form", "Evolve", "Fire Breathing", "Inflame", "Juggernaut", "Metallicize", "Rupture"]);
+
+function deckCardClass(id) {
+  const catalogKind = appState?.card_catalog?.[id]?.kind;
+  if (["attack", "skill", "power", "status"].includes(catalogKind)) return catalogKind;
+  if (skillCards.has(id)) return "skill";
+  if (powerCards.has(id)) return "power";
+  if (["AscendersBane", "Clumsy", "Curse of the Bell", "Decay", "Doubt", "Injury", "Necronomicurse", "Normality", "Pain", "Parasite", "Pride", "Regret", "Shame", "Writhe"].includes(id)) return "curse";
+  if (["Burn", "Dazed", "Slimed", "Void", "Wound"].includes(id)) return "status";
+  return "attack";
+}
+
+function renderDeck(deck) {
+  const cards = deck || [];
+  $("deckButtonCount").textContent = cards.length;
+  $("deckCards").innerHTML = cards.map((card, index) => {
+    const id = card.id ?? card[0];
+    const up = card.up ?? card[1] ?? 0;
+    return `<div class="deck-card ${deckCardClass(id)}" title="第 ${index + 1} 张 · ${escapeHtml(id)}${up ? "+" : ""}">
+      <span>${index + 1}</span><strong>${escapeHtml(cardName(card))}</strong><small>${escapeHtml(id)}${up ? "+" : ""}</small>
+    </div>`;
+  }).join("");
+}
+
+$("deckButton").addEventListener("click", () => {
+  const open = $("deckViewer").classList.toggle("open");
+  $("deckButton").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("click", event => {
+  if (!$("deckViewer").contains(event.target)) {
+    $("deckViewer").classList.remove("open");
+    $("deckButton").setAttribute("aria-expanded", "false");
+  }
+});
 function intentLabel(monster) {
   if (monster.base_damage > 0) return `攻击 ${monster.adjusted_damage ?? monster.base_damage}${monster.hits > 1 ? ` × ${monster.hits}` : ""}`;
   const move = String(monster.move || "").toUpperCase();
@@ -171,6 +236,35 @@ function intentLabel(monster) {
   if (move.includes("SLEEP") || move.includes("STUN")) return "休眠意图";
   if (move.includes("BUFF") || move.includes("GROW") || move.includes("RITUAL")) return "强化意图";
   return "技能意图";
+}
+
+const mapRoomNames = {MONSTER:"怪物", ELITE:"精英", EVENT:"未知", SHOP:"商店", REST:"篝火", TREASURE:"宝箱", BOSS:"Boss"};
+function mapNodeKey(x,y){return `${x},${y}`;}
+function drawMapRoomIcon(ctx, room, x, y) {
+  ctx.save();ctx.translate(x,y);ctx.strokeStyle="#30291d";ctx.fillStyle="#30291d";ctx.lineWidth=1.5;ctx.lineCap="round";
+  if(room==="MONSTER"){ctx.beginPath();ctx.moveTo(-4,-4);ctx.lineTo(4,4);ctx.moveTo(4,-4);ctx.lineTo(-4,4);ctx.stroke();}
+  else if(room==="ELITE"){ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(5,0);ctx.lineTo(0,5);ctx.lineTo(-5,0);ctx.closePath();ctx.stroke();ctx.beginPath();ctx.arc(0,0,1.6,0,Math.PI*2);ctx.fill();}
+  else if(room==="EVENT"){ctx.font='700 12px Georgia';ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("?",0,.5);}
+  else if(room==="SHOP"){ctx.font='700 11px Georgia';ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("$",0,.5);}
+  else if(room==="REST"){ctx.beginPath();ctx.moveTo(-5,4);ctx.lineTo(5,4);ctx.moveTo(-3,5);ctx.lineTo(3,-4);ctx.moveTo(3,5);ctx.lineTo(-2,-1);ctx.stroke();ctx.fillStyle="#a84b32";ctx.beginPath();ctx.moveTo(0,-5);ctx.lineTo(3,1);ctx.lineTo(0,3);ctx.lineTo(-3,1);ctx.closePath();ctx.fill();}
+  else if(room==="TREASURE"){ctx.strokeRect(-5,-3,10,7);ctx.beginPath();ctx.moveTo(-5,-3);ctx.quadraticCurveTo(0,-7,5,-3);ctx.moveTo(0,-3);ctx.lineTo(0,4);ctx.stroke();}
+  else {ctx.beginPath();ctx.arc(0,0,2.5,0,Math.PI*2);ctx.fill();}
+  ctx.restore();
+}
+function renderMiniMap(map) {
+  const panel=$("miniMapPanel"),canvas=$("miniMapCanvas");
+  const nodes=map?.nodes||[];panel.classList.toggle("empty",!nodes.length);
+  $("miniMapAct").textContent=map?.act?`ACT ${map.act}`:"ACT —";
+  $("miniMapBoss").textContent=map?.boss||"";
+  if(!canvas.offsetParent)return;
+  const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h);miniMapScreenNodes=[];
+  if(!nodes.length){ctx.fillStyle="#655c47";ctx.font='12px "Microsoft YaHei"';ctx.textAlign="center";ctx.fillText("当前模式没有地图",w/2,h/2);return;}
+  const px=x=>20+x/6*(w-40),py=y=>h-22-y/14*(h-72),visited=new Set((map.visited||[]).map(p=>mapNodeKey(p[0],p[1]))),nodeKeys=new Set(nodes.map(n=>mapNodeKey(n.x,n.y)));
+  ctx.save();ctx.strokeStyle="rgba(65,54,36,.62)";ctx.lineWidth=1.2;ctx.setLineDash([3,4]);
+  nodes.forEach(n=>(n.children||[]).forEach(child=>{if(!nodeKeys.has(mapNodeKey(child,n.y+1)))return;ctx.beginPath();ctx.moveTo(px(n.x),py(n.y)-7);ctx.lineTo(px(child),py(n.y+1)+7);ctx.stroke();}));
+  const topNodes=nodes.filter(n=>n.y===14),boss={x:w/2,y:19};topNodes.forEach(n=>{ctx.beginPath();ctx.moveTo(px(n.x),py(14)-7);ctx.lineTo(boss.x,boss.y+9);ctx.stroke();});ctx.restore();
+  ctx.save();ctx.fillStyle="#8e2f29";ctx.strokeStyle="#3e2118";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(boss.x,boss.y-8);ctx.lineTo(boss.x+8,boss.y);ctx.lineTo(boss.x,boss.y+8);ctx.lineTo(boss.x-8,boss.y);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle="#f1d889";ctx.font='700 9px Georgia';ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("B",boss.x,boss.y+.5);ctx.restore();
+  nodes.forEach(n=>{const x=px(n.x),y=py(n.y),key=mapNodeKey(n.x,n.y),isVisited=visited.has(key),isCurrent=map.current&&n.x===map.current[0]&&n.y===map.current[1];ctx.save();ctx.fillStyle=n.choice?"#b7cfd0":n.reachable?"#d8cda8":"#aaa184";ctx.strokeStyle=n.choice?"#467b91":"#514836";ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(x,y,7.5,0,Math.PI*2);ctx.fill();ctx.stroke();if(n.choice&&!isVisited){ctx.fillStyle="#467b91";ctx.beginPath();ctx.moveTo(x,y+11);ctx.lineTo(x-3,y+15);ctx.lineTo(x+3,y+15);ctx.closePath();ctx.fill();}if(isVisited){ctx.strokeStyle="#9d392d";ctx.lineWidth=2.4;ctx.beginPath();ctx.arc(x,y,11.5,0,Math.PI*2);ctx.stroke();}if(isCurrent){ctx.strokeStyle="#f0c653";ctx.shadowColor="#f0c653";ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,13.5,0,Math.PI*2);ctx.stroke();}ctx.restore();drawMapRoomIcon(ctx,n.room,x,y);miniMapScreenNodes.push({...n,sx:x,sy:y,visited:isVisited,current:isCurrent});});
 }
 
 function captureCombatTransition(w) {
@@ -260,6 +354,7 @@ function renderWatch() {
   $("actStat").textContent = `Act ${stats.act ?? global.act ?? "—"}`;
   $("goldStat").textContent = `${global.gold ?? canon.gold ?? 0} 金币`;
   $("deckStat").textContent = `${(global.deck || canon.deck || []).length} 张牌`;
+  renderDeck(global.deck || canon.deck || []);
   $("phaseBanner").textContent = w.done ? (w.won ? "胜利" : "本局结束") : (phaseNames[w.phase] || w.phase || "等待");
   const combat = w.phase === "combat" && canon.player;
   $("monsters").innerHTML = combat ? (canon.monsters || []).map((m, slot) => ({m, slot})).filter(({m}) => !m.gone).map(({m, slot}) => {
@@ -281,11 +376,15 @@ function renderWatch() {
   $("overworld").classList.toggle("visible", !combat);
   if (!combat) {
     const opts = canon.options || {};
+    if ((w.phase === "event" || w.phase === "neow") && opts.neow?.length) {
+      $("overworld").innerHTML = renderNeowOptions(opts.neow, w.decision);
+    } else {
     let detail = `HP ${canon.hp ?? "—"}/${canon.max_hp ?? "—"}　金币 ${canon.gold ?? global.gold ?? 0}\n`;
     if (opts.nodes) detail += `可达路线：${opts.nodes.map(n => `${n[0]}:${n[1]}`).join("　")}\n`;
     if (opts.cards) detail += `卡牌：${opts.cards.map(cardName).join("　")}\n`;
     if (opts.event) detail += `事件：${opts.event}`;
     $("overworld").innerHTML = `<div class="overworld-box"><h2>${escapeHtml(phaseNames[w.phase] || w.phase)}</h2><pre>${escapeHtml(detail)}</pre></div>`;
+    }
   }
   const d = w.decision;
   $("chosenAction").textContent = d?.label || (w.done ? "没有下一步动作" : "等待模型");
@@ -293,7 +392,11 @@ function renderWatch() {
   $("actionList").innerHTML = (d?.top_actions || []).map(a => `<div class="action-row"><b>${a.prob == null ? "—" : (a.prob*100).toFixed(1)+"%"}</b><span>${escapeHtml(a.label)}</span><div class="prob-track"><i style="width:${a.prob == null ? 0 : a.prob*100}%"></i></div></div>`).join("");
   $("lastAction").textContent = w.last_action?.label || "—";
   $("lastReward").textContent = `${Number(w.last_reward).toFixed(3)}`;
+  renderMiniMap(w.map);
 }
+
+$("miniMapCanvas").addEventListener("mousemove",event=>{const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;miniMapScreenNodes.forEach(n=>{const d=Math.hypot(n.sx-x,n.sy-y);if(d<dist){dist=d;best=n;}});const tip=$("miniMapTooltip");if(!best||dist>15){tip.style.display="none";return;}tip.innerHTML=`<strong>${escapeHtml(mapRoomNames[best.room]||best.room)}</strong><br>第 ${best.y+1} 层 · 列 ${best.x+1}${best.current?"<br>当前位置":best.visited?"<br>已经走过":best.choice?"<br>下一步可选":""}`;tip.style.display="block";tip.style.left=`${Math.max(6,Math.min(x+12,canvas.clientWidth-125))}px`;tip.style.top=`${Math.max(32,y-48)}px`;});
+$("miniMapCanvas").addEventListener("mouseleave",()=>$("miniMapTooltip").style.display="none");
 
 function renderEmbedding() {
   plotPoints = appState?.embedding?.points || [];
@@ -385,7 +488,7 @@ $("distributionCanvas").addEventListener("mousemove", event => {
 $("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
-  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.evaluation=fresh.evaluation;} renderAll(); }
+  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.evaluation=fresh.evaluation;} renderAll(); }
   catch (_) {}
   setTimeout(poll, appState?.evaluation?.state==="running"?1000:3000);
 }

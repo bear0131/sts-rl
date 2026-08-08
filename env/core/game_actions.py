@@ -98,7 +98,16 @@ def describe(action, canon=None):
         from . import render
         # canon here is the combat-phase canonical dict, if available
         return f"combat: {render.render_action(action[1], canon)}"
-    if verb == NEOW:        return f"Neow option {action[1]}"
+    if verb == NEOW:
+        idx = action[1]
+        try:
+            option = canon["options"]["neow"][idx]
+            bonus = option["bonus"]
+            drawback = option.get("drawback", "")
+            suffix = f"; cost: {drawback}" if drawback else ""
+            return f"Neow option {idx + 1}: {bonus}{suffix}"
+        except (TypeError, KeyError, IndexError):
+            return f"Neow option {idx + 1}"
     if verb == MAP:         return f"go to map node x={action[1]}"
     if verb == CLAIM:       return f"claim {action[1]} #{action[2]}"
     if verb == REWARD_CARD: return f"take card: {_card_at(canon, 'cards', action[1])}"

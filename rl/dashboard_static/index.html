@@ -43,6 +43,16 @@
             <span id="goldStat">0 金币</span><span id="deckStat">10 张牌</span>
           </div>
           <div id="phaseBanner" class="phase-banner">等待 checkpoint</div>
+          <div id="deckViewer" class="deck-viewer">
+            <button id="deckButton" class="deck-button" type="button" aria-label="查看当前卡组" aria-expanded="false">
+              <span class="deck-stack-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+              <b id="deckButtonCount">0</b>
+            </button>
+            <section id="deckPopover" class="deck-popover" aria-label="当前卡组">
+              <div class="deck-popover-heading"><strong>当前卡组</strong><span>按获得顺序</span></div>
+              <div id="deckCards" class="deck-cards"></div>
+            </section>
+          </div>
           <div id="monsters" class="monsters"></div>
           <div id="overworld" class="overworld-state"></div>
           <div id="player" class="player-zone"></div>
@@ -54,6 +64,11 @@
           <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="actionList" class="action-list"></div>
+          <section id="miniMapPanel" class="mini-map-panel" aria-label="Act 小地图">
+            <div class="mini-map-heading"><strong id="miniMapAct">ACT —</strong><span id="miniMapBoss"></span></div>
+            <canvas id="miniMapCanvas"></canvas>
+            <div id="miniMapTooltip" class="map-tooltip"></div>
+          </section>
           <div class="last-action">
             <span>上一步</span><strong id="lastAction">—</strong><em id="lastReward">0.000</em>
           </div>

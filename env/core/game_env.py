@@ -127,6 +127,13 @@ class SimGameEnv:
                 d["options"] = {"select": combat_select_options(self.bc.select_info())}
             return d
         d = normalize_sim_overworld(self.gc)
+        if d["phase"] == "event" and self.gc.cur_event_name == "NEOW":
+            # Keep each generated reward visible to human-facing tools.  These
+            # are the actual options stored by the sim, including their costs;
+            # the observation encoder ignores this display-only metadata.
+            get_options = getattr(self.gc, "get_neow_options", None)
+            if get_options is not None:
+                d["options"]["neow"] = [dict(option) for option in get_options()]
         if d["phase"] == "map":
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
             opts = self.rmap.reachable(x, y)

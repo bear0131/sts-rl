@@ -84,6 +84,7 @@ class StSPolicyCore(nn.Module):
         n_heads: int = 8,
         card_language: bool = False,
         combat_language: bool = False,
+        map_dag: bool = False,
         features_dim: int = 256,
         vf_arch: tuple[int, ...] = (512, 256),
     ) -> None:
@@ -96,6 +97,7 @@ class StSPolicyCore(nn.Module):
             n_heads=n_heads,
             card_language=card_language,
             combat_language=combat_language,
+            map_dag=map_dag,
         )
         d = d_model
 
@@ -130,6 +132,7 @@ class StSPolicyCore(nn.Module):
         # PICK_CARD reads hand tokens in combat (the id is a hand index there) and
         # grid (select) tokens in the overworld card_select screen.
         self._combat_phase = V.PHASE_VOCAB_INDEX["combat"]
+        self.map_dag_enabled = bool(map_dag and "map_full_rooms" in observation_space.spaces)
 
     # ---- encoding ----------------------------------------------------------
     def encode(self, obs):
@@ -145,9 +148,28 @@ class StSPolicyCore(nn.Module):
         return self.ptr_v(h).squeeze(-1)
 
     # ---- heads -------------------------------------------------------------
-    def _logits(self, out, combat):
+    def _logits(self, out, combat, map_features=None):
         g = out[:, 0]                       # [CLS]
         logits = self.fixed_head(g).clone()  # fixed segments; entity ones overwritten
+
+        if self.map_dag_enabled:
+            # Score every map node, then project the scores of the current row's
+            # legal choices back to the frozen MAP_NODE[x] action segment.
+            map_tokens = self._block(out, "map_full")
+            map_scores = self._score(map_tokens, g)
+            features = map_features
+            if features is None:
+                raise ValueError("DAG map logits require map_full_features")
+            choice = features[..., 3] > 0.5
+            xcoord = (features[..., 0] * 6.0).round().long()
+            map_logits = torch.full_like(map_scores[:, :A.N_COLS], -1e9)
+            for x in range(A.N_COLS):
+                selected = torch.where(
+                    choice & (xcoord == x), map_scores, torch.full_like(map_scores, -1e9)
+                )
+                map_logits[:, x] = selected.max(dim=1).values
+            b = A.seg_base("MAP_NODE")
+            logits[:, b:b + A.N_COLS] = map_logits
 
         for seg, role in _ENTITY_SEGMENTS:
             scores = self._score(self._block(out, role), g)
@@ -176,7 +198,7 @@ class StSPolicyCore(nn.Module):
     # ---- public API --------------------------------------------------------
     def action_logits(self, obs):
         out, _ = self.encode(obs)
-        return self._logits(out, self._combat(obs))
+        return self._logits(out, self._combat(obs), obs.get("map_full_features"))
 
     def value(self, obs):
         out, _ = self.encode(obs)
@@ -184,7 +206,7 @@ class StSPolicyCore(nn.Module):
 
     def actor_critic(self, obs):
         out, _ = self.encode(obs)
-        return self._logits(out, self._combat(obs)), self._value(out)
+        return self._logits(out, self._combat(obs), obs.get("map_full_features")), self._value(out)
 
 
 class StSPointerPolicy(MaskableMultiInputActorCriticPolicy):
@@ -207,6 +229,7 @@ class StSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         n_heads: int = 8,
         card_language: bool = False,
         combat_language: bool = False,
+        map_dag: bool = False,
         **kwargs,
     ) -> None:
         self._core_cfg = dict(
@@ -215,6 +238,7 @@ class StSPointerPolicy(MaskableMultiInputActorCriticPolicy):
             n_heads=n_heads,
             card_language=card_language,
             combat_language=combat_language,
+            map_dag=map_dag,
         )
         # The core owns the whole net; force SB3's features extractor to a stub.
         kwargs["features_extractor_class"] = _NullExtractor

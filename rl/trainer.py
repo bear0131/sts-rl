@@ -56,6 +56,7 @@ def _warm_start_policy(
     allow_global_map_extension=False,
     allow_card_language_extension=False,
     allow_combat_language_extension=False,
+    allow_map_dag_extension=False,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -74,6 +75,12 @@ def _warm_start_policy(
     initialized = []
     for key, value in source.items():
         if key not in target:
+            is_old_map = any(marker in key for marker in (
+                ".tok.map_full.", ".pos.map_full", ".map_dag.", ".map_dag"
+            ))
+            if allow_global_map_extension and (is_old_map or allow_map_dag_extension):
+                initialized.append(f"skipped source map parameter {key}")
+                continue
             incompatible.append(f"unexpected source parameter {key}")
             continue
         if value.shape == target[key].shape:
@@ -97,6 +104,7 @@ def _warm_start_policy(
 
     for key in target.keys() - source.keys():
         is_global_map = ".map_full." in key or key.endswith(".map_full")
+        is_map_dag = ".map_dag." in key or key.endswith(".map_dag")
         is_card_language = any(marker in key for marker in (
             ".shared.card.token_embedding.",
             ".shared.card.local_encoder.",
@@ -108,6 +116,8 @@ def _warm_start_policy(
         is_combat_language = ".combat_language" in key
         if (
             allow_global_map_extension and is_global_map
+        ) or (
+            allow_map_dag_extension and is_map_dag
         ) or (
             allow_card_language_extension and is_card_language
         ) or (
@@ -340,7 +350,14 @@ def main() -> None:
 
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
-            args.arch = "transformer-flat"
+            args.arch = (
+                "transformer-pointer"
+                if getattr(args, "global_map_view", False)
+                and getattr(args, "map_dag", False)
+                else "transformer-flat"
+            )
+            if args.arch == "transformer-pointer":
+                print("[trainer] selected transformer-pointer for --map-dag")
         else:
             source_arch = _checkpoint_policy_arch(pretrained)
             if source_arch is None:
@@ -505,6 +522,10 @@ def main() -> None:
             model,
             pretrained,
             allow_global_map_extension=getattr(args, "global_map_view", False),
+            allow_map_dag_extension=(
+                getattr(args, "global_map_view", False)
+                and getattr(args, "map_dag", False)
+            ),
             allow_card_language_extension=args.card_language,
             allow_combat_language_extension=args.combat_language,
         )

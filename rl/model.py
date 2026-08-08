@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from gymnasium import spaces
 from torch import nn
+from env.core import encode
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from env.core.card_language import (
@@ -361,6 +362,77 @@ class CombatProgramEncoder(nn.Module):
         return pooled.reshape(*shape[:-1], self.output.out_features)
 
 
+class MapDAGEncoder(nn.Module):
+    """Encode the full map as a directed acyclic graph.
+
+    ``future`` is propagated from the Boss row toward the current row, so every
+    node representation contains a learned summary of its descendants.  A
+    second light pass propagates context from the current node down its edges;
+    this preserves route identity when two branches later merge.
+    """
+
+    def __init__(self, room_dim: int, d_model: int, *, rows: int, cols: int):
+        super().__init__()
+        self.rows, self.cols = rows, cols
+        self.node = nn.Sequential(
+            nn.Linear(room_dim + 5, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+        )
+        self.child_message = nn.Linear(d_model, d_model, bias=False)
+        self.future_update = nn.GRUCell(d_model, d_model)
+        self.down_update = nn.GRUCell(d_model, d_model)
+        self.output = nn.Sequential(
+            nn.Linear(d_model * 3, d_model), nn.GELU(), nn.Linear(d_model, d_model)
+        )
+
+    def forward(self, room_embeddings: torch.Tensor, features: torch.Tensor):
+        batch = room_embeddings.shape[0]
+        node_features = features[..., :5]
+        base = self.node(torch.cat([room_embeddings, node_features], dim=-1))
+        grid = base.reshape(batch, self.rows, self.cols, -1)
+        feature_grid = features.reshape(batch, self.rows, self.cols, -1)
+        edges = feature_grid[..., 5:]
+
+        # Reverse topological DP: each node receives a message from all of its
+        # children in the next row.
+        future_rows: list[torch.Tensor | None] = [None] * self.rows
+        for row in range(self.rows - 1, -1, -1):
+            if row == self.rows - 1:
+                future_rows[row] = grid[:, row]
+                continue
+            degree = edges[:, row].sum(dim=-1, keepdim=True).clamp_min(1.0)
+            child = torch.bmm(edges[:, row], future_rows[row + 1]) / degree
+            shape = child.shape
+            future_rows[row] = self.future_update(
+                self.child_message(child).reshape(-1, shape[-1]),
+                grid[:, row].reshape(-1, shape[-1]),
+            ).reshape(shape)
+        future = torch.stack(future_rows, dim=1)
+
+        # Forward route context: only nodes marked current seed this pass;
+        # subsequent messages follow the map edges toward descendants.
+        down_rows: list[torch.Tensor] = [grid[:, 0] * feature_grid[:, 0, :, 2:3]]
+        active_rows: list[torch.Tensor] = [feature_grid[:, 0, :, 2:3]]
+        for row in range(self.rows - 1):
+            incoming = torch.bmm(
+                edges[:, row].transpose(1, 2), down_rows[row]
+            )
+            incoming_active = torch.bmm(
+                edges[:, row].transpose(1, 2), active_rows[row]
+            ).clamp_max(1.0)
+            shape = incoming.shape
+            updated = self.down_update(
+                incoming.reshape(-1, shape[-1]),
+                grid[:, row + 1].reshape(-1, shape[-1]),
+            ).reshape(shape)
+            seed = feature_grid[:, row + 1, :, 2:3]
+            down_rows.append(updated * incoming_active + grid[:, row + 1] * seed)
+            active_rows.append(torch.maximum(incoming_active, seed))
+        down = torch.stack(down_rows, dim=1)
+
+        encoded = self.output(torch.cat([grid, future, down], dim=-1))
+        return encoded.reshape(batch, self.rows * self.cols, -1)
+
+
 class StSTransformerExtractor(BaseFeaturesExtractor):
     """Tokenize Dict observations and encode them with a Transformer.
 
@@ -379,6 +451,7 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         n_heads: int = 8,
         card_language: bool = False,
         combat_language: bool = False,
+        map_dag: bool = False,
         dim_feedforward: int | None = None,
         dropout: float = 0.0,
     ) -> None:
@@ -386,6 +459,7 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
 
         self.d_model = d_model
         self._obs = observation_space
+        self.map_dag_enabled = bool(map_dag and "map_full_rooms" in observation_space.spaces)
         if combat_language != ("player_status_language" in observation_space.spaces):
             raise ValueError(
                 "combat_language must match the environment observation layout"
@@ -483,9 +557,17 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         self.pos = nn.ParameterDict()
 
         for role, n_slots, _id_key, emb_name, scalar_keys in self.generic:
+            if role == "map_full" and self.map_dag_enabled:
+                continue
             in_dim = emb_dim_of[emb_name] + sum(w for _, w in scalar_keys)
             self.tok[role] = nn.Linear(in_dim, d_model)
             self.pos[role] = nn.Parameter(torch.zeros(n_slots, d_model))
+
+        if self.map_dag_enabled:
+            self.map_dag = MapDAGEncoder(
+                emb_dim_of["room"], d_model,
+                rows=encode.MAP_ROWS, cols=encode.MAP_COLS,
+            )
 
         # monster token: id + move + intent embeddings + scalars + buffs
         self.n_monsters = self._n("monster_id")
@@ -663,6 +745,10 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         # generic id+scalar families
         for role, _n_slots, id_key, emb_name, scalar_keys in self.generic:
             ids = obs[id_key].long()
+            if role == "map_full" and self.map_dag_enabled:
+                x = self.map_dag(self.shared[emb_name](ids), obs["map_full_features"].float())
+                add(self._role(x, role), ids == 0)
+                continue
             parts = [self.shared[emb_name](ids)]
             for skey, w in scalar_keys:
                 parts.append(obs[skey].float().reshape(B, ids.shape[1], w))

@@ -37,7 +37,8 @@ from env.core.card_language import (
     TOKEN_VOCAB as CARD_LANGUAGE_TOKENS,
 )
 from env.core.combat_language import TOKEN_VOCAB as COMBAT_LANGUAGE_TOKENS
-from env.core.ironclad_cards import card_numbers
+from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
+from env.core.card_language import STATUS_CARDS
 
 # Register custom policy classes before checkpoint loading.
 from . import model as _model  # noqa: F401
@@ -96,6 +97,7 @@ class WatchSession:
         self.last_action = None
         self.last_reward = 0.0
         self.decision = None
+        self.map_state: dict | None = None
         self.reset(seed)
 
     def close(self):
@@ -109,6 +111,7 @@ class WatchSession:
         self.total_reward = 0.0
         self.last_action = None
         self.last_reward = 0.0
+        self.map_state = None
         self._prepare_decision()
         return self.snapshot()
 
@@ -177,17 +180,64 @@ class WatchSession:
         self.last_action = None
         self.last_reward = 0.0
         self.history = []
+        self.map_state = None
         for action in replay:
             self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
             self.history.append(action)
             self.total_reward += float(reward)
+            self._update_map(self.env.unwrapped.thick.obs_canonical())
             if self.terminated or self.truncated:
                 break
         self._prepare_decision()
         return self.snapshot()
 
+    def _update_map(self, canon):
+        global_state = canon.get("global") or {}
+        act = int(global_state.get("act", 0) or 0)
+        if act <= 0:
+            return None
+        if self.map_state is None or self.map_state["act"] != act:
+            self.map_state = {
+                "act": act,
+                "boss": global_state.get("boss", ""),
+                "nodes": [],
+                "visited": set(),
+                "current": None,
+            }
+
+        state = self.map_state
+        state["boss"] = global_state.get("boss", state["boss"])
+        full_map = (canon.get("options") or {}).get("full_map")
+        thick = self.env.unwrapped.thick
+        gc = getattr(thick, "gc", None)
+        current_x = getattr(gc, "cur_map_node_x", -1)
+        current_y = getattr(gc, "cur_map_node_y", -1)
+        if not full_map:
+            run_map = getattr(thick, "rmap", None)
+            if run_map is not None:
+                full_map = run_map.full_view(current_x, current_y)
+        if full_map:
+            state["nodes"] = [dict(node) for node in full_map]
+        if current_x >= 0 and current_y >= 0:
+            current = (int(current_x), int(current_y))
+            state["current"] = current
+            state["visited"].add(current)
+        for node in state["nodes"]:
+            if node.get("current"):
+                current = (int(node["x"]), int(node["y"]))
+                state["current"] = current
+                state["visited"].add(current)
+        return {
+            "act": state["act"],
+            "boss": state["boss"],
+            "nodes": state["nodes"],
+            "visited": [list(node) for node in sorted(state["visited"])],
+            "current": list(state["current"]) if state["current"] else None,
+        }
+
     def snapshot(self):
         canon = self.env.unwrapped.thick.obs_canonical()
+        map_snapshot = self._update_map(canon)
         stats = self.info.get("run_stats", {}) if self.info else {}
         pending = self.env._pending
         pending_card_slot = (
@@ -211,6 +261,7 @@ class WatchSession:
             "pending_card_slot": pending_card_slot,
             "stats": stats,
             "canon": canon,
+            "map": map_snapshot,
         })
 
 
@@ -234,6 +285,13 @@ class DashboardState:
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
                 "embedding": self.embedding,
                 "token_embeddings": self.token_embeddings,
+                "card_catalog": {
+                    card_id: {"name_zh": info.name_zh, "kind": info.kind}
+                    for card_id, info in IRONCLAD_CARDS.items()
+                } | {
+                    card_id: {"name_zh": info["name_zh"], "kind": "status"}
+                    for card_id, info in STATUS_CARDS.items()
+                },
                 "watch": self.watch.snapshot() if self.watch else None,
                 "evaluation": self.eval_status,
                 "error": self.error,

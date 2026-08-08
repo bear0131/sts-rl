@@ -134,6 +134,13 @@ class WholeRunTask(Task):
                  "off by default for checkpoint compatibility.",
         )
         parser.add_argument(
+            "--map-dag",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Use the topology-aware DAG encoder for the full map. The old "
+                 "flat map encoder remains available with --no-map-dag.",
+        )
+        parser.add_argument(
             "--arch",
             choices=[
                 "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
@@ -195,6 +202,7 @@ class WholeRunTask(Task):
                 n_heads=args.n_heads,
                 card_language=args.card_language,
                 combat_language=args.combat_language,
+                map_dag=args.map_dag,
             )
         elif args.arch == "transformer-flat":
             return "MultiInputPolicy", dict(
@@ -206,6 +214,7 @@ class WholeRunTask(Task):
                     n_heads=args.n_heads,
                     card_language=args.card_language,
                     combat_language=args.combat_language,
+                    map_dag=args.map_dag,
                 ),
                 activation_fn=nn.GELU,
                 net_arch=dict(pi=[256, 128], vf=[512, 256]),
@@ -226,6 +235,8 @@ class WholeRunTask(Task):
 
     def tag(self, args, run_id):
         map_tag = "-globalmap" if args.global_map_view else ""
+        if args.global_map_view and args.map_dag:
+            map_tag += "-dag"
         card_tag = "-cardlang" if args.card_language else ""
         if args.combat_language:
             card_tag += "-combatlang"

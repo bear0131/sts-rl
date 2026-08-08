@@ -558,6 +558,20 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("choose_neow_option",
              [](GameContext &gc, int idx) { gc.chooseNeowOption(gc.info.neowRewards[idx]); },
              "apply the Neow reward option at the given index (0-3)")
+        .def("get_neow_options", [](const GameContext &gc) {
+            pybind11::list out;
+            for (std::size_t idx = 0; idx < gc.info.neowRewards.size(); ++idx) {
+                const auto &option = gc.info.neowRewards[idx];
+                pybind11::dict item;
+                item["index"] = idx;
+                item["bonus_id"] = static_cast<int>(option.r);
+                item["drawback_id"] = static_cast<int>(option.d);
+                item["bonus"] = Neow::bonusStrings[static_cast<int>(option.r)];
+                item["drawback"] = Neow::drawbackStrings[static_cast<int>(option.d)];
+                out.append(item);
+            }
+            return out;
+        }, "return the four generated Neow rewards and their drawbacks")
         .def("transition_to_map_node",
              [](GameContext &gc, int x) { gc.transitionToMapNode(x); },
              "advance to the map node at column x on the next row (enters that room)")
