@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -41,6 +42,24 @@ from rl.tasks.wholerun import _MAX_EPISODE_STEPS
 ENV_NAME = "sts-whole-run-masked-v1"
 MODEL_NAME = "sts-pointer-core-v1"
 MASK_LOG_FLOOR = -1.0e9
+RAY_RUNTIME_EXCLUDES = [
+    ".git/",
+    ".venv/",
+    "venv/",
+    "wandb/",
+    "rl/runs/",
+    "rl/bughunt_out/",
+    "bridge/client/logs/",
+    "**/__pycache__/",
+    "*.zip",
+    "sim/sts_lightspeed/build/CMakeFiles/",
+    "sim/sts_lightspeed/build/**/*.o",
+    "sim/sts_lightspeed/build/**/*.obj",
+    "sim/sts_lightspeed/build/*.exe",
+    "sim/sts_lightspeed/build/*.dll",
+    "sim/sts_lightspeed/build-combat-language/",
+    "sim/sts_lightspeed/cmake-build-*/",
+]
 
 
 def _fragment_length(value):
@@ -50,6 +69,17 @@ def _fragment_length(value):
     if parsed <= 0:
         raise argparse.ArgumentTypeError("rollout fragment length must be positive")
     return parsed
+
+
+def _ray_runtime_env():
+    """Package worker code without historical runs or checkpoint archives."""
+    # The simulator extension is intentionally gitignored but must be shipped
+    # to Ray workers, so use our explicit excludes instead of .gitignore.
+    os.environ.setdefault("RAY_RUNTIME_ENV_IGNORE_GITIGNORE", "1")
+    return {
+        "working_dir": str(Path(__file__).resolve().parents[1]),
+        "excludes": RAY_RUNTIME_EXCLUDES,
+    }
 
 
 class StSRLLibCallbacks(DefaultCallbacks):
@@ -469,7 +499,11 @@ def main():
 
     register_env(ENV_NAME, lambda config: RLLibActionMaskEnv(config))
     ModelCatalog.register_custom_model(MODEL_NAME, StSRLLibTorchModel)
-    ray.init(address=args.ray_address, ignore_reinit_error=True)
+    ray.init(
+        address=args.ray_address,
+        ignore_reinit_error=True,
+        runtime_env=_ray_runtime_env(),
+    )
 
     run_dir = args.out / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)

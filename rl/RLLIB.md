@@ -78,6 +78,10 @@ For a multi-node Ray cluster, start the head and workers with `ray start`, make
 the repository and compiled simulator available on every node, then add
 `--ray-address auto`. Cross-node training requires the nodes to be mutually
 reachable; separate AutoDL instances often need explicit network configuration.
+The trainer packages the repository for Ray workers while excluding `.venv`,
+W&B history, run outputs, and checkpoint `.zip` files. The compiled simulator
+extension remains included; this prevents Ray's 512 MiB working-directory limit
+from being consumed by old training artifacts.
 
 Each iteration prints sampling, learning, and weight-sync durations plus a
 coarse bottleneck classification. RLlib also writes detailed `timers`, learner

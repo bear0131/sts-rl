@@ -650,7 +650,9 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             batch_first=True,
             norm_first=True,
         )
-        self.transformer = nn.TransformerEncoder(layer, num_layers=n_layers)
+        self.transformer = nn.TransformerEncoder(
+            layer, num_layers=n_layers, enable_nested_tensor=False
+        )
         self.readout = nn.Sequential(
             nn.LayerNorm(d_model),
             nn.Linear(d_model, features_dim),
