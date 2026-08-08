@@ -83,6 +83,10 @@ def main(argv=None):
         combat_language=(
             _model.uses_combat_language(model) if model is not None else False
         ),
+        deck_size_observation=(
+            _model.uses_deck_size_observation(model)
+            if model is not None else False
+        ),
     )
     obs, _ = env.reset(seed=args.seed)
     # The episode's fixed level L (gauntlet has no map; gc.floor_num is L) sets the

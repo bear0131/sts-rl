@@ -86,6 +86,7 @@ class WatchSession:
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
+            deck_size_observation=_model.uses_deck_size_observation(model),
         )
         self.seed = seed
         self.history: list[int] = []
@@ -291,6 +292,8 @@ class DashboardState:
                     if self.model else False,
                     "combat_language": _model.uses_combat_language(self.model)
                     if self.model else False,
+                    "deck_size": _model.uses_deck_size_observation(self.model)
+                    if self.model else False,
                 },
                 "embedding": self.embedding,
                 "token_embeddings": self.token_embeddings,
@@ -452,6 +455,7 @@ class DashboardState:
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
+            deck_size_observation=_model.uses_deck_size_observation(model),
         )
         death_floors: Counter[int] = Counter()
         death_seeds: dict[int, list[int]] = {}

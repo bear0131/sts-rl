@@ -57,6 +57,7 @@ def _warm_start_policy(
     allow_card_language_extension=False,
     allow_combat_language_extension=False,
     allow_map_dag_extension=False,
+    allow_deck_size_extension=False,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -66,7 +67,8 @@ def _warm_start_policy(
     """
     source = pretrained.policy.state_dict()
     if not any((allow_global_map_extension, allow_card_language_extension,
-                allow_combat_language_extension)):
+                allow_combat_language_extension, allow_map_dag_extension,
+                allow_deck_size_extension)):
         model.policy.load_state_dict(source)
         return 0
 
@@ -93,9 +95,20 @@ def _warm_start_policy(
             and target[key].shape[0] == value.shape[0] + 1
             and target[key].shape[1] == value.shape[1]
         )
+        is_appended_global_scalar = (
+            allow_deck_size_extension
+            and key.endswith("tok.global.weight")
+            and value.ndim == 2
+            and target[key].ndim == 2
+            and target[key].shape[0] == value.shape[0]
+            and target[key].shape[1] == value.shape[1] + 1
+        )
         if is_appended_role:
             target[key][:value.shape[0]] = value
             initialized.append(f"{key}[-1]")
+        elif is_appended_global_scalar:
+            target[key][:, :value.shape[1]] = value
+            initialized.append(f"{key}[:, -1]")
         else:
             incompatible.append(
                 f"shape mismatch for {key}: checkpoint {tuple(value.shape)}, "
@@ -322,6 +335,20 @@ def main() -> None:
             source = args.resume or args.init_from
             print(f"[trainer] enabled --global-map-view from {source}")
 
+    if hasattr(args, "deck_size_observation"):
+        from rl.model import uses_deck_size_observation
+
+        if args.resume:
+            from stable_baselines3.common.save_util import load_from_zip_file
+
+            resume_data, _params, _pytorch_variables = load_from_zip_file(
+                args.resume, device="cpu"
+            )
+            args.deck_size_observation = uses_deck_size_observation(
+                resume_data["observation_space"]
+            )
+            del resume_data, _params, _pytorch_variables
+
     if pretrained is not None:
         from rl.model import uses_card_language, uses_combat_language
 
@@ -534,6 +561,9 @@ def main() -> None:
             allow_map_dag_extension=(
                 getattr(args, "global_map_view", False)
                 and getattr(args, "map_dag", False)
+            ),
+            allow_deck_size_extension=getattr(
+                args, "deck_size_observation", False
             ),
             allow_card_language_extension=args.card_language,
             allow_combat_language_extension=args.combat_language,

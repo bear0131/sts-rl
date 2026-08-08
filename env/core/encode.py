@@ -62,9 +62,12 @@ from . import combat_language as CL
 # with existing combat and whole-run checkpoints. The optional card-language
 # layout is version 9: it appends compact, upgrade-aware language-card sequences
 # for draw/discard/deck while retaining the complete count vectors.
+# The optional deck-size layout is version 10: it adds the explicit normalized
+# total held-card count while retaining deck_counts as the composition signal.
 OBS_VERSION = 7
 GLOBAL_MAP_OBS_VERSION = 8
 CARD_LANGUAGE_OBS_VERSION = 9
+DECK_SIZE_OBS_VERSION = 10
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -101,6 +104,7 @@ ASCENSION_SCALE = 20.0
 ACT_SCALE = 4.0
 FLOOR_SCALE = 56.0
 GOLD_SCALE = 999.0
+DECK_SIZE_SCALE = 100.0
 MAP_X_SCALE = 6.0         # map columns 0..6
 PICK_SCALE = 10.0         # cards-remaining-to-pick (pickCount up to a handful)
 
@@ -115,7 +119,8 @@ _SCALAR = np.float32
 
 # ============================ observation space ============================
 
-def obs_space(*, global_map_view=False, card_language=False, combat_language=False):
+def obs_space(*, global_map_view=False, card_language=False,
+              combat_language=False, deck_size_observation=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -220,6 +225,8 @@ def obs_space(*, global_map_view=False, card_language=False, combat_language=Fal
                 len(CL.TOKEN_VOCAB),
             ),
         })
+    if deck_size_observation:
+        groups["deck_size"] = scal((1,), high=1.0)
     return spaces.Dict(groups)
 
 
@@ -260,7 +267,8 @@ def _encode_card_sequence(o, pile, cards):
         o[f"{pile}_card_upgrades"][i] = upgrade_sum / UPGRADE_SCALE
 
 
-def _empty(*, global_map_view=False, card_language=False, combat_language=False):
+def _empty(*, global_map_view=False, card_language=False,
+           combat_language=False, deck_size_observation=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -336,6 +344,8 @@ def _empty(*, global_map_view=False, card_language=False, combat_language=False)
         o["monster_intent_language"] = np.zeros(
             (MAX_MONSTERS, CL.MAX_LIVE_INTENT_TOKENS), _CAT
         )
+    if deck_size_observation:
+        o["deck_size"] = np.zeros(1, _SCALAR)
     return o
 
 
@@ -455,6 +465,10 @@ def _encode_global(o, canon):
         o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
     for cid, _up in g.get("deck", []):
         o["deck_counts"][CARD_INDEX.get(cid, CARD_INDEX[EMPTY])] += 1.0
+    if "deck_size" in o:
+        o["deck_size"][0] = min(
+            len(g.get("deck", [])) / DECK_SIZE_SCALE, 1.0
+        )
     _encode_card_sequence(o, "deck", g.get("deck", []))
 
 
@@ -527,7 +541,7 @@ def _encode_options(o, canon):
 
 def encode(
     canon, *, global_map_view=False, card_language=False,
-    combat_language=False,
+    combat_language=False, deck_size_observation=False,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -537,6 +551,7 @@ def encode(
         global_map_view=global_map_view,
         card_language=card_language,
         combat_language=combat_language,
+        deck_size_observation=deck_size_observation,
     )
     _encode_combat(o, canon)
     _encode_global(o, canon)

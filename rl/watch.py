@@ -180,6 +180,7 @@ def main() -> None:
         global_map_view=_model.uses_global_map_observation(model),
         card_language=_model.uses_card_language(model),
         combat_language=_model.uses_combat_language(model),
+        deck_size_observation=_model.uses_deck_size_observation(model),
     )
 
     wins = 0

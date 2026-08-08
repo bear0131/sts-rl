@@ -38,6 +38,12 @@ def uses_map_dag(model) -> bool:
     return bool(isinstance(kwargs, Mapping) and kwargs.get("map_dag", False))
 
 
+def uses_deck_size_observation(model_or_space) -> bool:
+    """Whether a model/space expects the explicit normalized deck size."""
+    space = getattr(model_or_space, "observation_space", model_or_space)
+    return "deck_size" in getattr(space, "spaces", {})
+
+
 def uses_combat_language(model_or_space) -> bool:
     """Whether a model/space carries tokenized intent and status programs."""
     space = getattr(model_or_space, "observation_space", model_or_space)
@@ -613,6 +619,8 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             "gold", "pick_remaining", "can_pick_zero", "can_pick_any",
             "shop_remove_cost",
         ]
+        if "deck_size" in observation_space.spaces:
+            self.global_scalar_keys.append("deck_size")
         g_in = sum(self._n(k, flat=True) for k in self.global_scalar_keys) + d_global_cat
         self.tok["global"] = nn.Linear(g_in, d_model)
 

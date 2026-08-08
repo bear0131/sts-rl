@@ -87,6 +87,7 @@ class BasicWholeRunTask(WholeRunTask):
                 global_map_view=args.global_map_view,
                 card_language=args.card_language,
                 combat_language=args.combat_language,
+                deck_size_observation=args.deck_size_observation,
             )
             env = ShapedRewardWrapper(env)
             return TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
@@ -98,7 +99,8 @@ class BasicWholeRunTask(WholeRunTask):
         card_tag = "-cardlang" if args.card_language else ""
         if args.combat_language:
             card_tag += "-combatlang"
+        deck_tag = "-decksize" if args.deck_size_observation else ""
         return (
-            f"whole-run-basic{map_tag}{card_tag}-asc{args.ascension}"
+            f"whole-run-basic{map_tag}{card_tag}{deck_tag}-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )

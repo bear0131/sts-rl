@@ -141,6 +141,12 @@ class WholeRunTask(Task):
                  "flat map encoder remains available with --no-map-dag.",
         )
         parser.add_argument(
+            "--deck-size-observation",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Add the normalized total held-card count to the global token.",
+        )
+        parser.add_argument(
             "--arch",
             choices=[
                 "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
@@ -169,6 +175,7 @@ class WholeRunTask(Task):
                 global_map_view=args.global_map_view,
                 card_language=args.card_language,
                 combat_language=args.combat_language,
+                deck_size_observation=args.deck_size_observation,
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
@@ -240,7 +247,8 @@ class WholeRunTask(Task):
         card_tag = "-cardlang" if args.card_language else ""
         if args.combat_language:
             card_tag += "-combatlang"
+        deck_tag = "-decksize" if args.deck_size_observation else ""
         return (
-            f"whole-run{map_tag}{card_tag}-asc{args.ascension}"
+            f"whole-run{map_tag}{card_tag}{deck_tag}-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )

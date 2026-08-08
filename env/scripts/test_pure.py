@@ -334,6 +334,17 @@ def test_optional_global_map_view():
     print(f"optional global map obs OK (version {encode.GLOBAL_MAP_OBS_VERSION})")
 
 
+def test_optional_deck_size_observation():
+    canon = _fake_map()
+    deck = canon["global"]["deck"]
+    o = encode.encode(canon, deck_size_observation=True)
+    space = encode.obs_space(deck_size_observation=True)
+    assert space.contains(o)
+    assert abs(o["deck_size"][0] - len(deck) / encode.DECK_SIZE_SCALE) < 1e-6
+    assert abs(o["deck_size"][0] - o["deck_counts"].sum() / encode.DECK_SIZE_SCALE) < 1e-6
+    print(f"optional deck size obs OK (version {encode.DECK_SIZE_OBS_VERSION})")
+
+
 def test_combat_language():
     assert CL.ATTACK_MOVES <= set(V.MOVE_VOCAB)
     for move in V.MOVE_VOCAB[1:]:
@@ -393,6 +404,7 @@ if __name__ == "__main__":
     test_fixed_monster_slots_no_drift()
     test_global_and_options()
     test_optional_global_map_view()
+    test_optional_deck_size_observation()
     test_combat_language()
     test_action_codec_roundtrip()
     test_render()
