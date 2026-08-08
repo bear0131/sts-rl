@@ -826,6 +826,19 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             mon = mon + self.combat_language_scale * mon_language
         add(self._role(mon, "monster"), obs["monster_id"].long() == 0)
 
+        # generic id+scalar families
+        for role, _n_slots, id_key, emb_name, scalar_keys in self.generic:
+            ids = obs[id_key].long()
+            if role == "map_full" and self.map_dag_enabled:
+                x = self.map_dag(self.shared[emb_name](ids), obs["map_full_features"].float())
+                add(self._role(x, role), ids == 0)
+                continue
+            parts = [self.shared[emb_name](ids)]
+            for skey, w in scalar_keys:
+                parts.append(obs[skey].float().reshape(B, ids.shape[1], w))
+            x = self.tok[role](torch.cat(parts, dim=-1)) + self.pos[role].unsqueeze(0)
+            add(self._role(x, role), ids == 0)
+
         if self.neow_enabled:
             neow = torch.cat([
                 self.shared["neow_bonus"](obs["neow_bonus_ids"].long()),
@@ -849,19 +862,6 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
                 self._role(event_option, "event_option"),
                 obs["event_option_ids"].long() == 0,
             )
-
-        # generic id+scalar families
-        for role, _n_slots, id_key, emb_name, scalar_keys in self.generic:
-            ids = obs[id_key].long()
-            if role == "map_full" and self.map_dag_enabled:
-                x = self.map_dag(self.shared[emb_name](ids), obs["map_full_features"].float())
-                add(self._role(x, role), ids == 0)
-                continue
-            parts = [self.shared[emb_name](ids)]
-            for skey, w in scalar_keys:
-                parts.append(obs[skey].float().reshape(B, ids.shape[1], w))
-            x = self.tok[role](torch.cat(parts, dim=-1)) + self.pos[role].unsqueeze(0)
-            add(self._role(x, role), ids == 0)
 
         src = torch.cat(tokens, dim=1)
         pad_mask = torch.cat(masks, dim=1)
