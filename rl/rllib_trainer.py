@@ -11,7 +11,7 @@ import argparse
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
@@ -24,6 +24,11 @@ from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.models import ModelCatalog
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
+from ray.rllib.policy.torch_policy import (
+    TorchPolicy,
+    _directStepOptimizerSingleton,
+)
+from ray.rllib.policy.torch_policy_v2 import TorchPolicyV2
 from ray.tune.registry import register_env
 
 from env.core import action_space as A
@@ -283,19 +288,78 @@ def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
         runner_group.sync_weights()
 
 
+def _accumulating_apply_gradients(policy, gradients):
+    """Average micro-batch gradients before one RLlib optimizer step."""
+    if gradients != _directStepOptimizerSingleton:
+        raise ValueError("gradient accumulation requires direct optimizer steps")
+
+    parameters = list(policy.model.parameters())
+    if policy._sts_accumulated_gradients is None:
+        policy._sts_accumulated_gradients = [
+            None if parameter.grad is None else torch.zeros_like(parameter.grad)
+            for parameter in parameters
+        ]
+    for index, parameter in enumerate(parameters):
+        if parameter.grad is None:
+            continue
+        buffer = policy._sts_accumulated_gradients[index]
+        if buffer is None:
+            buffer = torch.zeros_like(parameter.grad)
+            policy._sts_accumulated_gradients[index] = buffer
+        buffer.add_(parameter.grad.detach())
+
+    policy._sts_accumulated_micro_batches += 1
+    if policy._sts_accumulated_micro_batches < policy._sts_accumulation_steps:
+        return
+
+    scale = 1.0 / policy._sts_accumulated_micro_batches
+    for parameter, accumulated in zip(
+        parameters, policy._sts_accumulated_gradients
+    ):
+        parameter.grad = None if accumulated is None else accumulated.mul(scale)
+    policy_base = (
+        TorchPolicyV2 if isinstance(policy, TorchPolicyV2) else TorchPolicy
+    )
+    policy_base.apply_gradients(policy, _directStepOptimizerSingleton)
+    policy._sts_optimizer_steps += 1
+    policy._sts_accumulated_micro_batches = 0
+    policy._sts_accumulated_gradients = None
+
+
+def _install_gradient_accumulation(algo, steps):
+    if steps == 1:
+        return
+    policy = algo.get_policy()
+    if not isinstance(policy, (TorchPolicy, TorchPolicyV2)):
+        raise TypeError(
+            "--gradient-accumulation-steps requires RLlib TorchPolicy"
+        )
+    policy._sts_accumulation_steps = steps
+    policy._sts_accumulated_micro_batches = 0
+    policy._sts_accumulated_gradients = None
+    policy._sts_optimizer_steps = 0
+    policy.apply_gradients = MethodType(_accumulating_apply_gradients, policy)
+    print(
+        f"[rllib] accumulating {steps} micro-batches per optimizer step",
+        flush=True,
+    )
+
+
 def _normalize_compat_args(args):
     """Translate rl.trainer spellings and checkpoint-derived model geometry."""
     if args.init_from and args.resume:
         raise ValueError("--init-from and --resume are mutually exclusive")
-    if args.gradient_accumulation_steps != 1:
-        raise ValueError(
-            "RLlib old-API PPO does not support --gradient-accumulation-steps"
-        )
+    if args.gradient_accumulation_steps < 1:
+        raise ValueError("--gradient-accumulation-steps must be at least 1")
     if args.n_envs is not None:
         args.num_env_runners = args.n_envs if args.vec != "dummy" else 0
         args.envs_per_runner = 1 if args.vec != "dummy" else args.n_envs
     if args.n_steps is not None:
         args.rollout_fragment_length = args.n_steps
+    if args.gradient_accumulation_steps > 1:
+        args.train_batch_size = (
+            args.minibatch_size * args.gradient_accumulation_steps
+        )
     if args.device == "cpu":
         args.num_gpus = 0.0
 
@@ -396,6 +460,12 @@ def main():
     sb3_source, sb3_resume_steps = _normalize_compat_args(args)
     if args.train_batch_size % args.minibatch_size:
         raise ValueError("--minibatch-size must divide --train-batch-size")
+    micro_batches = args.train_batch_size // args.minibatch_size
+    if micro_batches % args.gradient_accumulation_steps:
+        raise ValueError(
+            "--gradient-accumulation-steps must divide the number of "
+            "micro-batches in --train-batch-size"
+        )
 
     register_env(ENV_NAME, lambda config: RLLibActionMaskEnv(config))
     ModelCatalog.register_custom_model(MODEL_NAME, StSRLLibTorchModel)
@@ -485,6 +555,10 @@ def main():
                     flush=True,
                 )
 
+        _install_gradient_accumulation(
+            algo, args.gradient_accumulation_steps
+        )
+
         if args.freeze_encoder and sb3_source is None:
             for parameter in algo.get_policy().model.core.encoder.parameters():
                 parameter.requires_grad_(False)
@@ -508,6 +582,10 @@ def main():
             result = algo.train()
             summary = _summary(result, time.perf_counter() - started)
             summary["steps"] += sb3_resume_steps
+            if args.gradient_accumulation_steps > 1:
+                policy = algo.get_policy()
+                summary["train/effective_batch_size"] = args.train_batch_size
+                summary["train/optimizer_steps"] = policy._sts_optimizer_steps
             print("[rllib] " + json.dumps(summary, ensure_ascii=False), flush=True)
             if wandb_run is not None:
                 wandb_run.log(summary, step=summary["steps"])

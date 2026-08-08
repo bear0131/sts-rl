@@ -48,6 +48,10 @@ RLlib at step zero with a fresh optimizer. The checkpoint must use
 `StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
 The default `--rollout-fragment-length auto` makes RLlib choose 448 for the
 16-runner/7168-batch example, so each sampling wave exactly fills one batch.
+SB3-style `--n-envs`, `--n-steps`, `--batch-size`, and
+`--gradient-accumulation-steps` are also accepted. With `--n-envs 16`,
+`--n-steps 2048`, `--batch-size 1024`, and 32 accumulation steps, RLlib samples
+32768 transitions and performs one optimizer update per 32 micro-batches.
 `--resume` accepts a native RLlib checkpoint. Passing an SB3 `.zip` to
 `--resume` migrates its weights and preserves its step offset, but the SB3
 optimizer state cannot be converted.
