@@ -144,8 +144,11 @@ main { min-height: calc(100vh - 58px); }
 .prob-track { grid-column: 1 / -1; height: 3px; background: #2f3833; }
 .prob-track i { display: block; height: 100%; background: var(--green); }
 .mini-map-panel { position: relative; margin-top: 22px; border: 1px solid #756b51; background-color: #c9bd96; color: #30291d; box-shadow: inset 0 0 24px rgba(77,61,32,.22); background-image: repeating-linear-gradient(3deg, rgba(78,61,31,.035) 0 1px, transparent 1px 7px); }
-.mini-map-heading { height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border-bottom: 1px solid rgba(75,63,41,.35); font: 700 12px Georgia, "Microsoft YaHei", serif; }
-.mini-map-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6a3429; font-size: 10px; }
+.mini-map-heading { height: 34px; display: grid; grid-template-columns: 24px auto 24px minmax(0,1fr); align-items: center; gap: 6px; padding: 0 7px; border-bottom: 1px solid rgba(75,63,41,.35); font: 700 12px Georgia, "Microsoft YaHei", serif; }
+.mini-map-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6a3429; font-size: 10px; text-align: right; }
+.map-act-button { width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 0; border-color: rgba(75,63,41,.48); background: rgba(255,249,219,.22); color: #493b27; font-size: 20px; line-height: 1; }
+.map-act-button:hover { border-color: #6a3429; background: rgba(255,249,219,.5); }
+.mini-map-panel.loading::after { content: "正在推演路线…"; position: absolute; z-index: 6; inset: 34px 0 0; display: grid; place-items: center; color: #493b27; background: rgba(201,189,150,.82); font-size: 12px; }
 #miniMapCanvas { display: block; width: 100%; height: 340px; }
 .map-tooltip { position: absolute; z-index: 5; display: none; pointer-events: none; min-width: 112px; padding: 7px 9px; color: #eee4c8; background: rgba(38,31,22,.96); border: 1px solid #77684a; font-size: 11px; line-height: 1.45; }
 .last-action { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 7px; font-size: 12px; }

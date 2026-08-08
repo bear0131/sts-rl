@@ -11,6 +11,10 @@ let distributionBars = [];
 let miniMapScreenNodes = [];
 let uploadManuallyOpen = false;
 let watchSeedDirty = false;
+let seeking = false;
+let selectedMapAct = null;
+let mapPreviewing = false;
+let previewedMapKeys = new Set();
 
 const zhCards = {
   Strike_R: "打击", Defend_R: "防御", Bash: "痛击", Anger: "愤怒",
@@ -125,6 +129,8 @@ async function uploadFile(file) {
       headers: {"X-Filename": file.name, "X-Eval-Episodes": $("uploadEpisodes").value}
     });
     appState = data;
+    selectedMapAct = null;
+    previewedMapKeys.clear();
     uploadManuallyOpen = false;
     $("uploadOverlay").classList.add("hidden");
     renderAll();
@@ -136,12 +142,19 @@ async function uploadFile(file) {
 
 $("resetButton").addEventListener("click", async () => {
   pause();
+  const button = $("resetButton");
+  button.disabled = true;
+  button.textContent = "预处理中…";
+  $("watchMeta").textContent = "正在预处理完整路线…";
   try {
-    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed: Number($("watchSeed").value)}), headers:{"Content-Type":"application/json"}});
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed: Number($("watchSeed").value), precompute: true}), headers:{"Content-Type":"application/json"}});
     watchSeedDirty = false;
+    selectedMapAct = null;
+    previewedMapKeys.clear();
     renderWatch();
   }
   catch (e) { toast(e.message); }
+  finally { button.disabled = false; button.textContent = "重开"; }
 });
 $("watchSeed").addEventListener("input", () => { watchSeedDirty = true; });
 $("watchSeed").addEventListener("keydown", event => {
@@ -152,6 +165,34 @@ $("undoButton").addEventListener("click", async () => {
   try { appState.watch = await api("/api/watch/undo", {method:"POST"}); renderWatch(); }
   catch (e) { toast(e.message); }
 });
+$("mapPrevAct").addEventListener("click", () => switchMapAct(-1));
+$("mapNextAct").addEventListener("click", () => switchMapAct(1));
+function switchMapAct(delta) {
+  selectedMapAct = Math.max(1, Math.min(3, (selectedMapAct || 1) + delta));
+  renderWatch();
+}
+
+async function previewMapAct(act) {
+  const w = appState?.watch;
+  const key = `${w?.seed}:${act}`;
+  if (!w || mapPreviewing || previewedMapKeys.has(key) || w.timeline_exhausted) return;
+  previewedMapKeys.add(key);
+  mapPreviewing = true;
+  $("miniMapPanel").classList.add("loading");
+  try {
+    appState.watch = await api("/api/watch/map-preview", {
+      method: "POST", body: JSON.stringify({act}),
+      headers: {"Content-Type": "application/json"}
+    });
+    renderWatch();
+  } catch (e) {
+    previewedMapKeys.delete(key);
+    toast(e.message);
+  } finally {
+    mapPreviewing = false;
+    $("miniMapPanel").classList.remove("loading");
+  }
+}
 $("stepButton").addEventListener("click", stepOnce);
 $("playButton").addEventListener("click", () => { playing ? pause() : play(); });
 async function stepOnce() {
@@ -251,21 +292,27 @@ function drawMapRoomIcon(ctx, room, x, y) {
   else {ctx.beginPath();ctx.arc(0,0,2.5,0,Math.PI*2);ctx.fill();}
   ctx.restore();
 }
-function renderMiniMap(map) {
+function renderMiniMap(map, watch) {
   const panel=$("miniMapPanel"),canvas=$("miniMapCanvas");
   const nodes=map?.nodes||[];panel.classList.toggle("empty",!nodes.length);
   const dagEnabled = Boolean(appState?.capabilities?.map_dag);
   $("miniMapAct").textContent=map?.act?`ACT ${map.act}${dagEnabled ? " · DAG" : ""}`:"ACT —";
   $("miniMapBoss").textContent=map?.boss||"";
+  $("mapPrevAct").disabled=(selectedMapAct||1)<=1;
+  $("mapNextAct").disabled=(selectedMapAct||1)>=3;
   if(!canvas.offsetParent)return;
   const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h);miniMapScreenNodes=[];
-  if(!nodes.length){ctx.fillStyle="#655c47";ctx.font='12px "Microsoft YaHei"';ctx.textAlign="center";ctx.fillText("当前模式没有地图",w/2,h/2);return;}
-  const px=x=>20+x/6*(w-40),py=y=>h-22-y/14*(h-72),visited=new Set((map.visited||[]).map(p=>mapNodeKey(p[0],p[1]))),nodeKeys=new Set(nodes.map(n=>mapNodeKey(n.x,n.y)));
+  if(!nodes.length){ctx.fillStyle="#655c47";ctx.font='12px "Microsoft YaHei"';ctx.textAlign="center";ctx.fillText(watch?.timeline_exhausted?"本局未到达该 Act":"正在推演该 Act 路线…",w/2,h/2);return;}
+  const px=x=>20+x/6*(w-40),py=y=>h-22-y/14*(h-72),nodeKeys=new Set(nodes.map(n=>mapNodeKey(n.x,n.y)));
+  const route=(watch?.timeline||[]).filter(n=>n.act===map.act&&n.y>=0&&n.y<=14);
+  const routeByKey=new Map(route.map(n=>[mapNodeKey(n.x,n.y),n]));
   ctx.save();ctx.strokeStyle="rgba(65,54,36,.62)";ctx.lineWidth=1.2;ctx.setLineDash([3,4]);
   nodes.forEach(n=>(n.children||[]).forEach(child=>{if(!nodeKeys.has(mapNodeKey(child,n.y+1)))return;ctx.beginPath();ctx.moveTo(px(n.x),py(n.y)-7);ctx.lineTo(px(child),py(n.y+1)+7);ctx.stroke();}));
   const topNodes=nodes.filter(n=>n.y===14),boss={x:w/2,y:19};topNodes.forEach(n=>{ctx.beginPath();ctx.moveTo(px(n.x),py(14)-7);ctx.lineTo(boss.x,boss.y+9);ctx.stroke();});ctx.restore();
+  ctx.save();ctx.lineCap="round";ctx.lineWidth=4;ctx.setLineDash([]);
+  route.slice(1).forEach((node,index)=>{const prev=route[index];if(node.y!==prev.y+1)return;ctx.strokeStyle=node.step<=watch.step?"#9d392d":"#39758a";ctx.beginPath();ctx.moveTo(px(prev.x),py(prev.y));ctx.lineTo(px(node.x),py(node.y));ctx.stroke();});ctx.restore();
   ctx.save();ctx.fillStyle="#8e2f29";ctx.strokeStyle="#3e2118";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(boss.x,boss.y-8);ctx.lineTo(boss.x+8,boss.y);ctx.lineTo(boss.x,boss.y+8);ctx.lineTo(boss.x-8,boss.y);ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle="#f1d889";ctx.font='700 9px Georgia';ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("B",boss.x,boss.y+.5);ctx.restore();
-  nodes.forEach(n=>{const x=px(n.x),y=py(n.y),key=mapNodeKey(n.x,n.y),isVisited=visited.has(key),isCurrent=map.current&&n.x===map.current[0]&&n.y===map.current[1];ctx.save();ctx.fillStyle=n.choice?"#b7cfd0":n.reachable?"#d8cda8":"#aaa184";ctx.strokeStyle=n.choice?"#467b91":"#514836";ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(x,y,7.5,0,Math.PI*2);ctx.fill();ctx.stroke();if(n.choice&&!isVisited){ctx.fillStyle="#467b91";ctx.beginPath();ctx.moveTo(x,y+11);ctx.lineTo(x-3,y+15);ctx.lineTo(x+3,y+15);ctx.closePath();ctx.fill();}if(isVisited){ctx.strokeStyle="#9d392d";ctx.lineWidth=2.4;ctx.beginPath();ctx.arc(x,y,11.5,0,Math.PI*2);ctx.stroke();}if(isCurrent){ctx.strokeStyle="#f0c653";ctx.shadowColor="#f0c653";ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,13.5,0,Math.PI*2);ctx.stroke();}ctx.restore();drawMapRoomIcon(ctx,n.room,x,y);miniMapScreenNodes.push({...n,sx:x,sy:y,visited:isVisited,current:isCurrent});});
+  nodes.forEach(n=>{const x=px(n.x),y=py(n.y),key=mapNodeKey(n.x,n.y),pathNode=routeByKey.get(key),isReached=Boolean(pathNode&&pathNode.step<=watch.step),isCurrent=map.act===(watch.stats?.act||watch.canon?.global?.act)&&map.current&&n.x===map.current[0]&&n.y===map.current[1];ctx.save();ctx.fillStyle=pathNode?(isReached?"#d7b56a":"#a9ccd2"):n.choice?"#b7cfd0":n.reachable?"#d8cda8":"#aaa184";ctx.strokeStyle=pathNode?(isReached?"#9d392d":"#39758a"):n.choice?"#467b91":"#514836";ctx.lineWidth=pathNode?2.6:1.2;ctx.beginPath();ctx.arc(x,y,pathNode?9:7.5,0,Math.PI*2);ctx.fill();ctx.stroke();if(isCurrent){ctx.strokeStyle="#f0c653";ctx.shadowColor="#f0c653";ctx.shadowBlur=8;ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,13.5,0,Math.PI*2);ctx.stroke();}ctx.restore();drawMapRoomIcon(ctx,n.room,x,y);miniMapScreenNodes.push({...n,sx:x,sy:y,reached:isReached,current:isCurrent,pathStep:pathNode?.step});});
 }
 
 function captureCombatTransition(w) {
@@ -349,10 +396,13 @@ function renderWatch() {
   if (!watchSeedDirty && document.activeElement !== $("watchSeed")) {
     $("watchSeed").value = w.seed;
   }
-  $("watchMeta").textContent = `step ${w.step} · return ${Number(w.total_reward).toFixed(2)}`;
+  const stepProgress = w.precomputed_steps ? `${w.step} / ${w.precomputed_steps}` : `${w.step}`;
+  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}`;
   $("undoButton").disabled = !w.can_undo;
   $("stepButton").disabled = w.done;
   const stats = w.stats || {}, canon = w.canon || {}, global = canon.global || {};
+  const currentAct = Math.max(1, Math.min(3, Number(stats.act ?? global.act ?? 1)));
+  if (selectedMapAct == null) selectedMapAct = currentAct;
   $("floorStat").textContent = `第 ${stats.floor ?? global.floor ?? "—"} 层`;
   $("actStat").textContent = `Act ${stats.act ?? global.act ?? "—"}`;
   $("goldStat").textContent = `${global.gold ?? canon.gold ?? 0} 金币`;
@@ -395,11 +445,15 @@ function renderWatch() {
   $("actionList").innerHTML = (d?.top_actions || []).map(a => `<div class="action-row"><b>${a.prob == null ? "—" : (a.prob*100).toFixed(1)+"%"}</b><span>${escapeHtml(a.label)}</span><div class="prob-track"><i style="width:${a.prob == null ? 0 : a.prob*100}%"></i></div></div>`).join("");
   $("lastAction").textContent = w.last_action?.label || "—";
   $("lastReward").textContent = `${Number(w.last_reward).toFixed(3)}`;
-  renderMiniMap(w.map);
+  const selectedMap = (w.maps || []).find(map => map.act === selectedMapAct) || {act:selectedMapAct, nodes:[], visited:[], current:null, boss:""};
+  renderMiniMap(selectedMap, w);
+  const routeCount = (w.timeline || []).filter(node => node.act === selectedMapAct).length;
+  if (routeCount < 15 && !w.timeline_exhausted) setTimeout(() => previewMapAct(selectedMapAct), 0);
 }
 
-$("miniMapCanvas").addEventListener("mousemove",event=>{const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;miniMapScreenNodes.forEach(n=>{const d=Math.hypot(n.sx-x,n.sy-y);if(d<dist){dist=d;best=n;}});const tip=$("miniMapTooltip");if(!best||dist>15){tip.style.display="none";return;}tip.innerHTML=`<strong>${escapeHtml(mapRoomNames[best.room]||best.room)}</strong><br>第 ${best.y+1} 层 · 列 ${best.x+1}${best.current?"<br>当前位置":best.visited?"<br>已经走过":best.choice?"<br>下一步可选":""}`;tip.style.display="block";tip.style.left=`${Math.max(6,Math.min(x+12,canvas.clientWidth-125))}px`;tip.style.top=`${Math.max(32,y-48)}px`;});
+$("miniMapCanvas").addEventListener("mousemove",event=>{const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;miniMapScreenNodes.forEach(n=>{const d=Math.hypot(n.sx-x,n.sy-y);if(d<dist){dist=d;best=n;}});const tip=$("miniMapTooltip");if(!best||dist>15){tip.style.display="none";canvas.style.cursor="default";return;}canvas.style.cursor=best.pathStep==null?"default":"pointer";tip.innerHTML=`<strong>${escapeHtml(mapRoomNames[best.room]||best.room)}</strong><br>地图节点 ${best.y+1} · 列 ${best.x+1}${best.current?"<br>当前位置":best.pathStep!=null?(best.reached?"<br>已走路线 · 点击跳转":"<br>未来路线 · 点击跳转"):best.choice?"<br>下一步可选":""}`;tip.style.display="block";tip.style.left=`${Math.max(6,Math.min(x+12,canvas.clientWidth-125))}px`;tip.style.top=`${Math.max(32,y-48)}px`;});
 $("miniMapCanvas").addEventListener("mouseleave",()=>$("miniMapTooltip").style.display="none");
+$("miniMapCanvas").addEventListener("click",async event=>{if(seeking)return;const rect=event.currentTarget.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;miniMapScreenNodes.forEach(n=>{const d=Math.hypot(n.sx-x,n.sy-y);if(d<dist){dist=d;best=n;}});if(!best||dist>15||best.pathStep==null)return;pause();seeking=true;$("miniMapPanel").classList.add("loading");try{appState.watch=await api("/api/watch/seek",{method:"POST",body:JSON.stringify({step:best.pathStep}),headers:{"Content-Type":"application/json"}});renderWatch();}catch(e){toast(e.message);}finally{seeking=false;$("miniMapPanel").classList.remove("loading");}});
 
 function renderEmbedding() {
   plotPoints = appState?.embedding?.points || [];

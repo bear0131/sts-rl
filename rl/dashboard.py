@@ -90,6 +90,9 @@ class WatchSession:
         )
         self.seed = seed
         self.history: list[int] = []
+        self.position = 0
+        self.timeline: list[dict] = []
+        self.timeline_exhausted = False
         self.obs = None
         self.info = None
         self.terminated = False
@@ -99,21 +102,83 @@ class WatchSession:
         self.last_reward = 0.0
         self.decision = None
         self.map_state: dict | None = None
+        self.map_states: dict[int, dict] = {}
         self.reset(seed)
 
     def close(self):
         self.env.close()
 
-    def reset(self, seed: int):
+    def reset(self, seed: int, precompute: bool = False):
         self.seed = int(seed)
         self.history = []
+        self.position = 0
+        self.timeline = []
+        self.timeline_exhausted = False
         self.obs, self.info = self.env.reset(seed=self.seed)
         self.terminated = self.truncated = False
         self.total_reward = 0.0
         self.last_action = None
         self.last_reward = 0.0
         self.map_state = None
+        self.map_states = {}
         self._prepare_decision()
+        if precompute:
+            return self.precompute_run()
+        return self.snapshot()
+
+    def precompute_run(self):
+        original_position = self.position
+        steps = 0
+        while not (self.terminated or self.truncated):
+            previous_position = self.position
+            self._advance_one()
+            steps += 1
+            if self.position == previous_position:
+                break
+            if steps >= 5000:
+                raise RuntimeError("route preprocessing exceeded 5000 actions")
+        if self.terminated or self.truncated:
+            self.timeline_exhausted = True
+        return self.seek(original_position)
+
+    def advance_to_timeline(self, target_index: int):
+        target_index = int(target_index)
+        if target_index < 0 or target_index >= 48:
+            raise ValueError(f"timeline index must be between 0 and 47, got {target_index}")
+        if target_index < len(self.timeline):
+            return self.seek(self.timeline[target_index]["step"])
+
+        steps = 0
+        while len(self.timeline) <= target_index and not (
+            self.terminated or self.truncated
+        ):
+            previous_position = self.position
+            self._advance_one()
+            steps += 1
+            if self.position == previous_position:
+                break
+            if steps >= 5000:
+                raise RuntimeError("fast-forward exceeded 5000 actions")
+
+        if self.terminated or self.truncated:
+            self.timeline_exhausted = True
+        if target_index < len(self.timeline):
+            return self.snapshot()
+        return self.snapshot()
+
+    def preview_map(self, act: int):
+        act = int(act)
+        if act < 1 or act > 3:
+            raise ValueError(f"act must be between 1 and 3, got {act}")
+        original_position = self.position
+        # Each act contributes 15 visible map rooms plus a y=15 boss entry.
+        # Preview through the last visible room; entering a later act naturally
+        # records the previous act's boss checkpoint as well.
+        target_index = (act - 1) * 16 + 14
+        if target_index >= len(self.timeline) and not self.timeline_exhausted:
+            self.advance_to_timeline(target_index)
+        if self.position != original_position:
+            self.seek(original_position)
         return self.snapshot()
 
     def _prepare_decision(self):
@@ -156,11 +221,23 @@ class WatchSession:
     def step(self):
         if self.decision is None:
             return self.snapshot()
-        action = int(self.decision["action"])
-        label = self.decision["label"]
-        animation = self.decision.get("animation")
+        self._advance_one()
+        return self.snapshot()
+
+    def _advance_one(self):
+        if self.decision is None:
+            return
+        if self.position < len(self.history):
+            action = self.history[self.position]
+        else:
+            action = int(self.decision["action"])
+            self.history.append(action)
+        label = self.env.describe_action(action)
+        animation = self._action_animation(action)
         self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
-        self.history.append(action)
+        self.position += 1
+        if self.terminated or self.truncated:
+            self.timeline_exhausted = True
         self.last_action = {
             "action": action,
             "label": label,
@@ -169,36 +246,83 @@ class WatchSession:
         self.last_reward = float(reward)
         self.total_reward += float(reward)
         self._prepare_decision()
-        return self.snapshot()
+        canon = self.env.unwrapped.thick.obs_canonical()
+        map_snapshot = self._update_map(canon)
+        self._record_timeline(map_snapshot, canon)
 
     def undo(self):
-        if not self.history:
+        if self.position <= 0:
             return self.snapshot()
-        replay = self.history[:-1]
+        return self.seek(self.position - 1)
+
+    def seek(self, target_step: int):
+        target_step = int(target_step)
+        if target_step < 0 or target_step > len(self.history):
+            raise ValueError(
+                f"step must be between 0 and {len(self.history)}, got {target_step}"
+            )
         self.obs, self.info = self.env.reset(seed=self.seed)
         self.terminated = self.truncated = False
         self.total_reward = 0.0
         self.last_action = None
         self.last_reward = 0.0
-        self.history = []
+        self.position = 0
         self.map_state = None
-        for action in replay:
+        for action in self.history[:target_step]:
+            label = self.env.describe_action(action)
             self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
-            self.history.append(action)
+            self.position += 1
             self.total_reward += float(reward)
-            self._update_map(self.env.unwrapped.thick.obs_canonical())
+            self.last_reward = float(reward)
+            self.last_action = {
+                "action": action,
+                "label": label,
+                "animation": self._action_animation(action),
+            }
+            canon = self.env.unwrapped.thick.obs_canonical()
+            map_snapshot = self._update_map(canon)
+            self._record_timeline(map_snapshot, canon)
             if self.terminated or self.truncated:
                 break
         self._prepare_decision()
         return self.snapshot()
+
+    def _record_timeline(self, map_snapshot, canon):
+        if not map_snapshot or not map_snapshot.get("current"):
+            return
+        act = int(map_snapshot["act"])
+        x, y = (int(v) for v in map_snapshot["current"])
+        if any(
+            node["act"] == act and node["x"] == x and node["y"] == y
+            for node in self.timeline
+        ):
+            return
+        room = next(
+            (
+                node.get("room", "")
+                for node in map_snapshot.get("nodes", [])
+                if int(node.get("x", -1)) == x and int(node.get("y", -1)) == y
+            ),
+            "",
+        )
+        global_state = canon.get("global") or {}
+        stats = self.info.get("run_stats", {}) if self.info else {}
+        self.timeline.append({
+            "step": self.position,
+            "act": act,
+            "floor": int(stats.get("floor", global_state.get("floor", 0)) or 0),
+            "x": x,
+            "y": y,
+            "room": room,
+        })
 
     def _update_map(self, canon):
         global_state = canon.get("global") or {}
         act = int(global_state.get("act", 0) or 0)
         if act <= 0:
             return None
-        if self.map_state is None or self.map_state["act"] != act:
-            self.map_state = {
+        if act not in self.map_states:
+            self.map_states[act] = {
                 "act": act,
                 "boss": global_state.get("boss", ""),
                 "nodes": [],
@@ -206,7 +330,8 @@ class WatchSession:
                 "current": None,
             }
 
-        state = self.map_state
+        state = self.map_states[act]
+        self.map_state = state
         state["boss"] = global_state.get("boss", state["boss"])
         full_map = (canon.get("options") or {}).get("full_map")
         thick = self.env.unwrapped.thick
@@ -228,6 +353,10 @@ class WatchSession:
                 current = (int(node["x"]), int(node["y"]))
                 state["current"] = current
                 state["visited"].add(current)
+        return self._map_snapshot(state)
+
+    @staticmethod
+    def _map_snapshot(state):
         return {
             "act": state["act"],
             "boss": state["boss"],
@@ -239,6 +368,7 @@ class WatchSession:
     def snapshot(self):
         canon = self.env.unwrapped.thick.obs_canonical()
         map_snapshot = self._update_map(canon)
+        self._record_timeline(map_snapshot, canon)
         stats = self.info.get("run_stats", {}) if self.info else {}
         pending = self.env._pending
         pending_card_slot = (
@@ -248,8 +378,10 @@ class WatchSession:
         )
         return _jsonable({
             "seed": self.seed,
-            "step": len(self.history),
-            "can_undo": bool(self.history),
+            "step": self.position,
+            "max_step": len(self.history),
+            "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
+            "can_undo": self.position > 0,
             "done": self.terminated or self.truncated,
             "terminated": self.terminated,
             "truncated": self.truncated,
@@ -263,6 +395,12 @@ class WatchSession:
             "stats": stats,
             "canon": canon,
             "map": map_snapshot,
+            "maps": [
+                self._map_snapshot(self.map_states[act])
+                for act in sorted(self.map_states)
+            ],
+            "timeline": self.timeline,
+            "timeline_exhausted": self.timeline_exhausted,
         })
 
 
@@ -595,7 +733,10 @@ class Handler(BaseHTTPRequestHandler):
                 with APP.lock:
                     if not APP.watch:
                         raise RuntimeError("no checkpoint loaded")
-                    result = APP.watch.reset(int(body.get("seed", 0)))
+                    result = APP.watch.reset(
+                        int(body.get("seed", 0)),
+                        precompute=bool(body.get("precompute", False)),
+                    )
                 self._send_json(result)
             elif path == "/api/watch/step":
                 with APP.lock:
@@ -608,6 +749,27 @@ class Handler(BaseHTTPRequestHandler):
                     if not APP.watch:
                         raise RuntimeError("no checkpoint loaded")
                     result = APP.watch.undo()
+                self._send_json(result)
+            elif path == "/api/watch/seek":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.seek(int(body.get("step", 0)))
+                self._send_json(result)
+            elif path == "/api/watch/advance":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.advance_to_timeline(int(body.get("index", 0)))
+                self._send_json(result)
+            elif path == "/api/watch/map-preview":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.preview_map(int(body.get("act", 1)))
                 self._send_json(result)
             elif path == "/api/eval/start":
                 body = self._read_json()

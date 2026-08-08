@@ -65,7 +65,12 @@
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="actionList" class="action-list"></div>
           <section id="miniMapPanel" class="mini-map-panel" aria-label="Act 小地图">
-            <div class="mini-map-heading"><strong id="miniMapAct">ACT —</strong><span id="miniMapBoss"></span></div>
+            <div class="mini-map-heading">
+              <button id="mapPrevAct" class="map-act-button" type="button" title="上一个 Act" aria-label="上一个 Act">‹</button>
+              <strong id="miniMapAct">ACT —</strong>
+              <button id="mapNextAct" class="map-act-button" type="button" title="下一个 Act" aria-label="下一个 Act">›</button>
+              <span id="miniMapBoss"></span>
+            </div>
             <canvas id="miniMapCanvas"></canvas>
             <div id="miniMapTooltip" class="map-tooltip"></div>
           </section>

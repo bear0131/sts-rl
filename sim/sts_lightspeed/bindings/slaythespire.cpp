@@ -56,7 +56,11 @@ py::list playerPowersToList(const sts::Player &p) {
     if (p.focus)     out.append(py::make_tuple("Focus", p.focus));
     if (p.artifact)  out.append(py::make_tuple("Artifact", p.artifact));
     for (const auto &kv : p.statusMap) {
-        if (kv.second != 0) {
+        // statusMap retains the last numeric value after removeStatus() clears
+        // the corresponding status bit. Export only powers that are still
+        // active, otherwise consumed powers such as Akabeko's Vigor remain
+        // visible in canonical observations and the dashboard.
+        if (p.hasStatusRuntime(kv.first) && kv.second != 0) {
             out.append(py::make_tuple(playerStatusStrings[static_cast<int>(kv.first)], kv.second));
         }
     }

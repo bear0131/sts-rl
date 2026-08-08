@@ -113,9 +113,31 @@ def _check_wiki_card_corrections():
     print("OK - wiki corrections: Infernal Blade+, Seeing Red, Disarm+.")
 
 
+def _check_akabeko_vigor_export():
+    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 27, 0)
+    gc.floor_num = 1
+    gc.set_deck([("STRIKE_RED", 0)] * 10)
+    gc.set_relics(["Burning Blood", "Akabeko"])
+    bc = sts.create_battle(gc, "Cultist")
+
+    before = dict(bc.to_dict()["player"]["powers"])
+    assert before.get("Vigor") == 8, f"Akabeko did not grant Vigor 8: {before}"
+
+    attack = next(
+        a for a in bc.legal_actions()
+        if a.action_type == sts.ActionType.CARD
+    )
+    bc.execute(attack)
+
+    after = dict(bc.to_dict()["player"]["powers"])
+    assert "Vigor" not in after, f"consumed Vigor leaked into exported powers: {after}"
+    print("OK - Akabeko Vigor disappears from exported state after the first attack.")
+
+
 def main():
     _check_all_encounters_spawn()
     _check_wiki_card_corrections()
+    _check_akabeko_vigor_export()
     rng = np.random.default_rng(0)
     n_per_pool = 5
     for pool in ("normal", "elite", "boss"):
