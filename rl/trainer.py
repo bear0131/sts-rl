@@ -59,6 +59,7 @@ def _warm_start_policy(
     allow_map_dag_extension=False,
     allow_deck_size_extension=False,
     allow_neow_extension=True,
+    allow_event_option_extension=True,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -69,7 +70,8 @@ def _warm_start_policy(
     source = pretrained.policy.state_dict()
     if not any((allow_global_map_extension, allow_card_language_extension,
                 allow_combat_language_extension, allow_map_dag_extension,
-                allow_deck_size_extension)):
+                allow_deck_size_extension, allow_neow_extension,
+                allow_event_option_extension)):
         model.policy.load_state_dict(source)
         return 0
 
@@ -93,7 +95,7 @@ def _warm_start_policy(
             key.endswith("role_emb.weight")
             and value.ndim == 2
             and target[key].ndim == 2
-            and target[key].shape[0] == value.shape[0] + 1
+            and target[key].shape[0] >= value.shape[0]
             and target[key].shape[1] == value.shape[1]
         )
         is_appended_global_scalar = (
@@ -114,7 +116,7 @@ def _warm_start_policy(
         )
         if is_appended_role:
             target[key][:value.shape[0]] = value
-            initialized.append(f"{key}[-1]")
+            initialized.append(f"{key}[{value.shape[0]}:]")
         elif is_appended_neow_role:
             target[key][:value.shape[0]] = value
             initialized.append(f"{key}[-1]")
@@ -145,6 +147,11 @@ def _warm_start_policy(
             ".tok.neow.",
             ".pos.neow",
         ))
+        is_event_option = any(marker in key for marker in (
+            ".shared.event_option.",
+            ".tok.event_option.",
+            ".pos.event_option",
+        ))
         if (
             allow_global_map_extension and is_global_map
         ) or (
@@ -155,6 +162,8 @@ def _warm_start_policy(
             allow_combat_language_extension and is_combat_language
         ) or (
             allow_neow_extension and is_neow
+        ) or (
+            allow_event_option_extension and is_event_option
         ):
             initialized.append(key)
         else:
@@ -390,6 +399,20 @@ def main() -> None:
             )
             del resume_data, _params, _pytorch_variables
 
+    if hasattr(args, "event_option_observation"):
+        from rl.model import uses_event_option_observation
+
+        if args.resume:
+            from stable_baselines3.common.save_util import load_from_zip_file
+
+            resume_data, _params, _pytorch_variables = load_from_zip_file(
+                args.resume, device="cpu"
+            )
+            args.event_option_observation = uses_event_option_observation(
+                resume_data["observation_space"]
+            )
+            del resume_data, _params, _pytorch_variables
+
     if pretrained is not None:
         from rl.model import uses_card_language, uses_combat_language
 
@@ -610,6 +633,9 @@ def main() -> None:
             ),
             allow_card_language_extension=args.card_language,
             allow_combat_language_extension=args.combat_language,
+            allow_event_option_extension=getattr(
+                args, "event_option_observation", False
+            ),
         )
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")

@@ -126,6 +126,9 @@ class RLLibActionMaskEnv(gym.Wrapper):
                 config.get("deck_size_observation", True)
             ),
             neow_observation=bool(config.get("neow_observation", True)),
+            event_option_observation=bool(
+                config.get("event_option_observation", True)
+            ),
         )
         env = ShapedRewardWrapper(env)
         env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
@@ -269,6 +272,8 @@ def build_parser():
                         action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--neow-observation",
                         action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--event-option-observation",
+                        action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--card-language", action="store_true")
     parser.add_argument("--combat-language", action="store_true")
     parser.add_argument(
@@ -314,6 +319,7 @@ def _load_sb3_checkpoint(path: Path, device: str):
         uses_card_language,
         uses_combat_language,
         uses_deck_size_observation,
+        uses_event_option_observation,
         uses_global_map_observation,
         uses_map_dag,
         uses_neow_observation,
@@ -337,6 +343,7 @@ def _load_sb3_checkpoint(path: Path, device: str):
         map_dag=uses_map_dag(model),
         deck_size_observation=uses_deck_size_observation(model),
         neow_observation=uses_neow_observation(model),
+        event_option_observation=uses_event_option_observation(model),
         card_language=uses_card_language(model),
         combat_language=uses_combat_language(model),
         d_model=int(cfg.get("d_model", 256)),
@@ -363,12 +370,12 @@ def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
             key.endswith("role_emb.weight")
             and value.ndim == 2
             and target[key].ndim == 2
-            and target[key].shape[0] == value.shape[0] + 1
+            and target[key].shape[0] >= value.shape[0]
             and target[key].shape[1] == value.shape[1]
         )
         if is_appended_role:
             target[key][:value.shape[0]] = value
-            initialized.append(f"{key}[-1]")
+            initialized.append(f"{key}[{value.shape[0]}:]")
             continue
         is_appended_global_scalar = (
             key.endswith("tok.global.weight")
@@ -392,6 +399,11 @@ def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
             ".tok.neow.",
             ".pos.neow",
         ))
+        is_event_option = any(marker in key for marker in (
+            ".shared.event_option.",
+            ".tok.event_option.",
+            ".pos.event_option",
+        ))
         is_card_language = any(marker in key for marker in (
             ".shared.card.token_embedding.",
             ".shared.card.local_encoder.",
@@ -402,7 +414,10 @@ def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
         ))
         is_combat_language = ".combat_language" in key
         is_map_dag = ".map_dag." in key or key.endswith(".map_dag")
-        if is_neow or is_card_language or is_combat_language or is_map_dag:
+        if (
+            is_neow or is_event_option or is_card_language
+            or is_combat_language or is_map_dag
+        ):
             initialized.append(key)
         else:
             incompatible.append(f"missing source parameter {key}")
@@ -523,8 +538,9 @@ def _normalize_compat_args(args):
         sb3_resume_steps = sb3_source.num_timesteps if args.resume else 0
         for name in (
             "global_map_view", "map_dag", "deck_size_observation",
-            "neow_observation", "card_language", "combat_language", "d_model",
-            "n_layers", "n_heads",
+            "neow_observation", "event_option_observation",
+            "card_language", "combat_language", "d_model", "n_layers",
+            "n_heads",
         ):
             old = getattr(args, name)
             new = getattr(sb3_source, name)
@@ -841,6 +857,7 @@ def main():
                 "combat_language": args.combat_language,
                 "deck_size_observation": args.deck_size_observation,
                 "neow_observation": args.neow_observation,
+                "event_option_observation": args.event_option_observation,
             }
             config = (
                 PPOConfig()

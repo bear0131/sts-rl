@@ -134,6 +134,13 @@ class SimGameEnv:
             get_options = getattr(self.gc, "get_neow_options", None)
             if get_options is not None:
                 d["options"]["neow"] = [dict(option) for option in get_options()]
+        elif d["phase"] == "event":
+            # Normal events expose legal option indices via the sim.  The native
+            # bindings do not currently export localized option text/effects, so
+            # the observation carries the stable action-aligned option identity:
+            # current event id + legal button index.  This lets the pointer head
+            # score EVENT_OPT[i] from a per-option token instead of a flat column.
+            d["options"]["event_options"] = list(self.gc.legal_event_options())
         if d["phase"] == "map":
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
             opts = self.rmap.reachable(x, y)

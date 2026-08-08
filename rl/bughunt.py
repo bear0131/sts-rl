@@ -113,6 +113,8 @@ def main() -> None:
         card_language=_model.uses_card_language(model),
         combat_language=_model.uses_combat_language(model),
         deck_size_observation=_model.uses_deck_size_observation(model),
+        neow_observation=_model.uses_neow_observation(model),
+        event_option_observation=_model.uses_event_option_observation(model),
     )
 
     # dedup table: signature -> {count, type, message, examples:[{seed,step,floor}], first_tb}

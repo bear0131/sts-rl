@@ -153,6 +153,12 @@ class WholeRunTask(Task):
             help="Expose the four Neow blessing choices as option tokens.",
         )
         parser.add_argument(
+            "--event-option-observation",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="Expose normal event legal choices as action-aligned option tokens.",
+        )
+        parser.add_argument(
             "--arch",
             choices=[
                 "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
@@ -183,6 +189,7 @@ class WholeRunTask(Task):
                 combat_language=args.combat_language,
                 deck_size_observation=args.deck_size_observation,
                 neow_observation=args.neow_observation,
+                event_option_observation=args.event_option_observation,
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
@@ -255,7 +262,8 @@ class WholeRunTask(Task):
         if args.combat_language:
             card_tag += "-combatlang"
         deck_tag = "-decksize" if args.deck_size_observation else ""
+        event_tag = "-eventopt" if args.event_option_observation else ""
         return (
-            f"whole-run{map_tag}{card_tag}{deck_tag}-asc{args.ascension}"
+            f"whole-run{map_tag}{card_tag}{deck_tag}{event_tag}-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )

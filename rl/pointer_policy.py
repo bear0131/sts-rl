@@ -51,6 +51,7 @@ _ENTITY_SEGMENTS = [
     ("REWARD_CARD", "offer"),       # take card reward i      <- offer token i (first 3;
                                     #   obs tokenizes only OFFER_SLOTS of up-to-5)
     ("NEOW", "neow"),               # choose Neow blessing i   <- Neow option token i
+    ("EVENT_OPT", "event_option"),  # choose event option i    <- event option token i
 ]
 
 

@@ -92,6 +92,8 @@ SHOP_POTION_SLOTS = 3     # shop shelf: potions[3]
 NEOW_SLOTS = 4            # Neow always offers four blessing choices
 NEOW_BONUS_CAPACITY = 32
 NEOW_DRAWBACK_CAPACITY = 8
+EVENT_OPTION_SLOTS = 10   # slot i == EVENT_OPT[i]; 0 is PAD, option i stores i+1
+EVENT_OPTION_CAPACITY = EVENT_OPTION_SLOTS + 1
 PILE_LANGUAGE_SLOTS = len(LANGUAGE_CARDS)  # one slot per language-covered card id
 
 # ---- normalization scales (divisors; keep scalars ~[0,1]) ----
@@ -124,7 +126,7 @@ _SCALAR = np.float32
 
 def obs_space(*, global_map_view=False, card_language=False,
               combat_language=False, deck_size_observation=False,
-              neow_observation=False):
+              neow_observation=False, event_option_observation=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -207,6 +209,18 @@ def obs_space(*, global_map_view=False, card_language=False,
             "neow_drawback_ids": cat((NEOW_SLOTS,), NEOW_DRAWBACK_CAPACITY),
             "neow_features": scal((NEOW_SLOTS, 2)),
         })
+    if event_option_observation:
+        groups.update({
+            # ---- normal event choices (slot i == EVENT_OPT[i] action id) ----
+            # event_option_ids uses 0 as PAD; real sim option index i is i + 1.
+            "event_option_ids": cat((EVENT_OPTION_SLOTS,), EVENT_OPTION_CAPACITY),
+            "event_option_event_ids": cat(
+                (EVENT_OPTION_SLOTS,), V.EVENT_VOCAB_CAPACITY
+            ),
+            # index_norm, is_legal. Option text is not exported by sts_lightspeed,
+            # so this is the stable information available at the decision point.
+            "event_option_features": scal((EVENT_OPTION_SLOTS, 2)),
+        })
     if global_map_view:
         groups.update({
             "map_full_rooms": cat((MAP_FULL_SLOTS,), len(V.ROOM_VOCAB)),
@@ -280,7 +294,7 @@ def _encode_card_sequence(o, pile, cards):
 
 def _empty(*, global_map_view=False, card_language=False,
            combat_language=False, deck_size_observation=False,
-           neow_observation=False):
+           neow_observation=False, event_option_observation=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -333,6 +347,12 @@ def _empty(*, global_map_view=False, card_language=False,
         o["neow_bonus_ids"] = np.zeros(NEOW_SLOTS, _CAT)
         o["neow_drawback_ids"] = np.zeros(NEOW_SLOTS, _CAT)
         o["neow_features"] = np.zeros((NEOW_SLOTS, 2), _SCALAR)
+    if event_option_observation:
+        o["event_option_ids"] = np.zeros(EVENT_OPTION_SLOTS, _CAT)
+        o["event_option_event_ids"] = np.zeros(EVENT_OPTION_SLOTS, _CAT)
+        o["event_option_features"] = np.zeros(
+            (EVENT_OPTION_SLOTS, 2), _SCALAR
+        )
     if global_map_view:
         o["map_full_rooms"] = np.zeros(MAP_FULL_SLOTS, _CAT)
         o["map_full_features"] = np.zeros(
@@ -542,7 +562,19 @@ def _encode_options(o, canon):
     elif phase == "event":
         g = canon.get("global") or {}
         # event id lives in the options (env reads gc.cur_event_name into it)
-        o["event_id"][0] = _idx(V.EVENT_VOCAB_INDEX, opts.get("event", "PAD"))
+        event_id = _idx(V.EVENT_VOCAB_INDEX, opts.get("event", "PAD"))
+        o["event_id"][0] = event_id
+        if "event_option_ids" in o:
+            for option_idx in opts.get("event_options", [])[:EVENT_OPTION_SLOTS]:
+                option_idx = int(option_idx)
+                if not (0 <= option_idx < EVENT_OPTION_SLOTS):
+                    continue
+                o["event_option_ids"][option_idx] = option_idx + 1
+                o["event_option_event_ids"][option_idx] = event_id
+                o["event_option_features"][option_idx] = (
+                    option_idx / max(1, EVENT_OPTION_SLOTS - 1),
+                    1.0,
+                )
     elif phase == "shop":
         # Positional shelf: slot i lines up with the SHOP_* buy action id. A sold
         # slot has price -1 (shop_contents) -> PAD id + price 0 (decision: a shop
@@ -572,6 +604,7 @@ def _encode_options(o, canon):
 def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
+    event_option_observation=False,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -583,6 +616,7 @@ def encode(
         combat_language=combat_language,
         deck_size_observation=deck_size_observation,
         neow_observation=neow_observation,
+        event_option_observation=event_option_observation,
     )
     _encode_combat(o, canon)
     _encode_global(o, canon)

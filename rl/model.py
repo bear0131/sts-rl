@@ -50,6 +50,12 @@ def uses_neow_observation(model_or_space) -> bool:
     return "neow_bonus_ids" in getattr(space, "spaces", {})
 
 
+def uses_event_option_observation(model_or_space) -> bool:
+    """Whether a model/space carries per-option normal-event features."""
+    space = getattr(model_or_space, "observation_space", model_or_space)
+    return "event_option_ids" in getattr(space, "spaces", {})
+
+
 def uses_combat_language(model_or_space) -> bool:
     """Whether a model/space carries tokenized intent and status programs."""
     space = getattr(model_or_space, "observation_space", model_or_space)
@@ -545,6 +551,13 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
         for key in self.global_cat_keys:
             v = int(observation_space[key].high.max()) + 1
             d_global_cat += make_emb(key, v)
+        self.event_option_enabled = "event_option_ids" in observation_space.spaces
+        if self.event_option_enabled:
+            d_event_id = self.shared["event_id"].embedding_dim
+            d_event_option = make_emb(
+                "event_option",
+                int(observation_space["event_option_ids"].high.max()) + 1,
+            )
 
         # --- generic "id + per-slot scalars" families ---
         # (role, n_slots, id_key, shared_emb, [(scalar_key, width), ...])
@@ -589,6 +602,8 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             self.role_ids[role] = 4 + i
         if self.neow_enabled:
             self.role_ids["neow"] = 4 + len(self.generic)
+        if self.event_option_enabled:
+            self.role_ids["event_option"] = len(self.role_ids)
         n_roles = len(self.role_ids)
 
         # --- per-family tokenizers (project to d_model) + position embeddings ---
@@ -625,6 +640,15 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             self.tok["neow"] = nn.Linear(neow_in, d_model)
             self.pos["neow"] = nn.Parameter(
                 torch.zeros(self._n("neow_bonus_ids"), d_model)
+            )
+
+        if self.event_option_enabled:
+            event_option_in = d_event_id + d_event_option + self._n(
+                "event_option_features", flat=True
+            ) // self._n("event_option_ids")
+            self.tok["event_option"] = nn.Linear(event_option_in, d_model)
+            self.pos["event_option"] = nn.Parameter(
+                torch.zeros(self._n("event_option_ids"), d_model)
             )
 
         # pile tokens: draw / discard / exhaust / deck count vectors
@@ -668,6 +692,10 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             + (
                 [("neow", self._n("neow_bonus_ids"))]
                 if self.neow_enabled else []
+            )
+            + (
+                [("event_option", self._n("event_option_ids"))]
+                if self.event_option_enabled else []
             )
         ):
             self.token_pos[_role] = (_p, _cnt)
@@ -806,6 +834,21 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             ], dim=-1)
             neow = self.tok["neow"](neow) + self.pos["neow"].unsqueeze(0)
             add(self._role(neow, "neow"), obs["neow_bonus_ids"].long() == 0)
+
+        if self.event_option_enabled:
+            event_option = torch.cat([
+                self.shared["event_id"](obs["event_option_event_ids"].long()),
+                self.shared["event_option"](obs["event_option_ids"].long()),
+                obs["event_option_features"].float(),
+            ], dim=-1)
+            event_option = (
+                self.tok["event_option"](event_option)
+                + self.pos["event_option"].unsqueeze(0)
+            )
+            add(
+                self._role(event_option, "event_option"),
+                obs["event_option_ids"].long() == 0,
+            )
 
         # generic id+scalar families
         for role, _n_slots, id_key, emb_name, scalar_keys in self.generic:

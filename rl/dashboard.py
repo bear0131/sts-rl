@@ -88,6 +88,7 @@ class WatchSession:
             combat_language=_model.uses_combat_language(model),
             deck_size_observation=_model.uses_deck_size_observation(model),
             neow_observation=_model.uses_neow_observation(model),
+            event_option_observation=_model.uses_event_option_observation(model),
         )
         self.seed = seed
         self.history: list[int] = []
@@ -435,6 +436,8 @@ class DashboardState:
                     if self.model else False,
                     "neow": _model.uses_neow_observation(self.model)
                     if self.model else False,
+                    "event_option": _model.uses_event_option_observation(self.model)
+                    if self.model else False,
                 },
                 "embedding": self.embedding,
                 "token_embeddings": self.token_embeddings,
@@ -598,6 +601,7 @@ class DashboardState:
             combat_language=_model.uses_combat_language(model),
             deck_size_observation=_model.uses_deck_size_observation(model),
             neow_observation=_model.uses_neow_observation(model),
+            event_option_observation=_model.uses_event_option_observation(model),
         )
         death_floors: Counter[int] = Counter()
         death_seeds: dict[int, list[int]] = {}
