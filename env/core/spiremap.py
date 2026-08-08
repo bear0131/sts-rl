@@ -76,11 +76,16 @@ class RunMap:
         current position; ``choice`` marks a legal next map choice. The game
         displays the complete act map, so this contains no hidden information.
         """
-        choices = {
-            (x, 0 if current_y < 0 else current_y + 1)
-            for x in self.reachable(current_x, current_y)
-            if current_y < MAX_Y
-        }
+        if current_y >= MAX_Y:
+            # The action after row 14 enters the act boss.  MAP_NODE still uses
+            # the current column, so expose that row-14 node as the DAG choice
+            # even though there is no row-15 map node to encode.
+            choices = {(current_x, current_y)} if current_x >= 0 else set()
+        else:
+            choices = {
+                (x, 0 if current_y < 0 else current_y + 1)
+                for x in self.reachable(current_x, current_y)
+            }
         downstream = set(choices)
         frontier = list(choices)
         while frontier:

@@ -511,6 +511,15 @@ def main() -> None:
                 ),
             },
         )
+        # Each resume command creates a new run directory and metrics callback.
+        # Do not carry the checkpoint's rolling episode statistics into that
+        # new run: they may describe an older environment contract (notably the
+        # pre-fix map-DAG boss loop) and otherwise pollute ep_len_mean until 100
+        # newly completed episodes have displaced them.  Training state,
+        # optimizer state, and num_timesteps remain continuous.
+        model.ep_info_buffer = None
+        model.ep_success_buffer = None
+        model._episode_num = 0
         print(f"[trainer] resumed from {args.resume} @ {model.num_timesteps} steps")
 
     if args.init_from:

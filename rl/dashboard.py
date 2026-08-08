@@ -283,6 +283,15 @@ class DashboardState:
             return {
                 "checkpoint": self.checkpoint.name if self.checkpoint else None,
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
+                "capabilities": {
+                    "global_map": _model.uses_global_map_observation(self.model)
+                    if self.model else False,
+                    "map_dag": _model.uses_map_dag(self.model) if self.model else False,
+                    "card_language": _model.uses_card_language(self.model)
+                    if self.model else False,
+                    "combat_language": _model.uses_combat_language(self.model)
+                    if self.model else False,
+                },
                 "embedding": self.embedding,
                 "token_embeddings": self.token_embeddings,
                 "card_catalog": {
@@ -427,7 +436,9 @@ class DashboardState:
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
                 "seed": seed, "started_at": time.time(), "death_floors": {},
-                "death_seeds": {},
+                "death_seeds": {}, "current_episode": 1,
+                "current_steps": 0, "current_floor": 0,
+                "current_phase": None, "current_action": None,
             }
         threading.Thread(
             target=self._evaluate,
@@ -457,12 +468,32 @@ class DashboardState:
                         if token != self.eval_token:
                             return
                     mask = env.action_masks()
+                    phase_before = info.get("phase")
                     with self.model_lock:
                         action, _ = model.predict(obs, action_masks=mask, deterministic=True)
+                    action_id = int(np.asarray(action).item())
+                    action_label = env.describe_action(action_id)
                     obs, _reward, terminated, truncated, info = env.step(
-                        int(np.asarray(action).item())
+                        action_id
                     )
                     steps += 1
+                    if steps == 1 or steps % 25 == 0:
+                        live_stats = info.get("run_stats", {})
+                        with self.lock:
+                            if token != self.eval_token:
+                                return
+                            self.eval_status.update({
+                                "current_episode": episode + 1,
+                                "current_steps": steps,
+                                "current_floor": int(live_stats.get("floor", 0)),
+                                "current_phase": info.get("phase"),
+                                "current_phase_before": phase_before,
+                                "current_action": action_id,
+                                "current_action_label": action_label,
+                                "current_action_legal": bool(mask[action_id]),
+                                "current_legal_actions": np.flatnonzero(mask).tolist(),
+                                "last_progress_at": time.time(),
+                            })
                 stats = env.unwrapped.thick.run_stats()
                 floor = int(stats["floor"])
                 if is_win(env):

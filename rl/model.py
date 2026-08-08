@@ -25,6 +25,19 @@ def uses_global_map_observation(model_or_space) -> bool:
     return "map_full_rooms" in getattr(space, "spaces", {})
 
 
+def uses_map_dag(model) -> bool:
+    """Whether a loaded policy uses the topology-aware full-map encoder."""
+    policy = getattr(model, "policy", model)
+    core = getattr(policy, "core", None)
+    if core is not None and hasattr(core, "map_dag_enabled"):
+        return bool(core.map_dag_enabled)
+    cfg = getattr(policy, "_core_cfg", None)
+    if isinstance(cfg, Mapping):
+        return bool(cfg.get("map_dag", False))
+    kwargs = getattr(policy, "policy_kwargs", None)
+    return bool(isinstance(kwargs, Mapping) and kwargs.get("map_dag", False))
+
+
 def uses_combat_language(model_or_space) -> bool:
     """Whether a model/space carries tokenized intent and status programs."""
     space = getattr(model_or_space, "observation_space", model_or_space)

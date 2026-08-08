@@ -254,7 +254,8 @@ function drawMapRoomIcon(ctx, room, x, y) {
 function renderMiniMap(map) {
   const panel=$("miniMapPanel"),canvas=$("miniMapCanvas");
   const nodes=map?.nodes||[];panel.classList.toggle("empty",!nodes.length);
-  $("miniMapAct").textContent=map?.act?`ACT ${map.act}`:"ACT —";
+  const dagEnabled = Boolean(appState?.capabilities?.map_dag);
+  $("miniMapAct").textContent=map?.act?`ACT ${map.act}${dagEnabled ? " · DAG" : ""}`:"ACT —";
   $("miniMapBoss").textContent=map?.boss||"";
   if(!canvas.offsetParent)return;
   const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h);miniMapScreenNodes=[];
@@ -343,6 +344,8 @@ function playCombatOutcome(before, after) {
 function renderWatch() {
   const w = appState?.watch;
   if (!w) return;
+  const capabilities = appState?.capabilities || {};
+  $("miniMapPanel").classList.toggle("dag-enabled", Boolean(capabilities.map_dag));
   if (!watchSeedDirty && document.activeElement !== $("watchSeed")) {
     $("watchSeed").value = w.seed;
   }
@@ -488,7 +491,7 @@ $("distributionCanvas").addEventListener("mousemove", event => {
 $("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
-  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.evaluation=fresh.evaluation;} renderAll(); }
+  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.capabilities=fresh.capabilities;appState.evaluation=fresh.evaluation;} renderAll(); }
   catch (_) {}
   setTimeout(poll, appState?.evaluation?.state==="running"?1000:3000);
 }

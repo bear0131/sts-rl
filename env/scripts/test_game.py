@@ -83,6 +83,20 @@ def test_map_spine(seeds=(42, 1, 7, 100, 999)):
     print(f"[ok] test_map_spine: {len(seeds)} seeds, RunMap matches gc landings")
 
 
+def test_boss_transition_is_dag_choice(seed=0):
+    rmap = spiremap.RunMap(seed, 0, 1, burning=False)
+    x = next(
+        col for col in range(spiremap.N_COLS)
+        if rmap.room_type(col, spiremap.MAX_Y) not in ("NONE", "INVALID")
+    )
+    view = rmap.full_view(x, spiremap.MAX_Y)
+    chosen = [node for node in view if node["choice"]]
+    assert [(node["x"], node["y"]) for node in chosen] == [
+        (x, spiremap.MAX_Y)
+    ]
+    print("[ok] test_boss_transition_is_dag_choice")
+
+
 def _run_episode(seed, max_steps=2000, verbose=False):
     """Drive one whole run with a random legal policy. Returns a summary dict.
     Asserts the invariants that must hold at every decision point."""
@@ -168,6 +182,7 @@ def test_full_run(seeds=(7, 42, 1, 100, 999, 2024)):
 
 def main():
     test_map_spine()
+    test_boss_transition_is_dag_choice()
     print()
     test_full_run()
     print("\nall whole-run tests passed.")
