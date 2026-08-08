@@ -482,6 +482,18 @@ def _summary(result, elapsed):
         "cpu_percent": _metric(result, "perf/cpu_util_percent"),
         "iteration_seconds": round(elapsed, 3),
     }
+    # Match SB3's time/fps semantics: all sampled steps divided by the
+    # complete train iteration wall time (sampling + learning + sync).
+    previous_steps = getattr(_summary, "_previous_steps", None)
+    iter_steps = result.get("num_env_steps_sampled_this_iter")
+    if iter_steps is None and previous_steps is not None:
+        iter_steps = summary["steps"] - previous_steps
+    if iter_steps is None:
+        iter_steps = summary["steps"]
+    summary["total_throughput"] = round(
+        float(iter_steps) / elapsed, 2
+    ) if elapsed > 0 else 0.0
+    _summary._previous_steps = summary["steps"]
     custom = _metric(result, "env_runners/custom_metrics", "custom_metrics",
                      default={}) or {}
     for source, destination in (
