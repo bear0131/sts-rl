@@ -11,6 +11,7 @@ import argparse
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
@@ -19,6 +20,7 @@ import torch
 from gymnasium import spaces
 from gymnasium.wrappers import TimeLimit
 from ray.rllib.algorithms.algorithm import Algorithm
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.models import ModelCatalog
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
@@ -34,6 +36,37 @@ from rl.tasks.wholerun import _MAX_EPISODE_STEPS
 ENV_NAME = "sts-whole-run-masked-v1"
 MODEL_NAME = "sts-pointer-core-v1"
 MASK_LOG_FLOOR = -1.0e9
+
+
+def _fragment_length(value):
+    if value == "auto":
+        return value
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("rollout fragment length must be positive")
+    return parsed
+
+
+class StSRLLibCallbacks(DefaultCallbacks):
+    """Publish the same whole-run outcome metrics used by the SB3 trainer."""
+
+    def on_episode_end(self, *, episode, **kwargs):
+        info = episode.last_info_for()
+        stats = info.get("run_stats") if info else None
+        if stats is None:
+            return
+        act = int(stats["act"])
+        floor = int(stats["floor"])
+        won = act > 3 or stats["outcome"] == "PLAYER_VICTORY"
+        episode.custom_metrics["game/win_rate"] = float(won)
+        episode.custom_metrics["game/floor"] = floor
+        episode.custom_metrics["game/deck_size"] = int(stats["deck_size"])
+        for number in (1, 2, 3):
+            episode.custom_metrics[f"game/act_{number}_won"] = float(act > number)
+        for threshold in range(5, 55, 5):
+            episode.custom_metrics[f"game/floor_won/{threshold:02d}"] = float(
+                floor > threshold
+            )
 
 
 class RLLibActionMaskEnv(gym.Wrapper):
@@ -122,22 +155,29 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description="Train whole-run PPO with RLlib distributed sampling."
     )
+    parser.add_argument(
+        "--task", choices=["wholerun"], default="wholerun",
+        help="Compatibility with rl.trainer; RLlib currently trains wholerun.",
+    )
     parser.add_argument("--steps", type=int, default=1_000_000)
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--num-env-runners", type=int, default=4)
     parser.add_argument("--envs-per-runner", type=int, default=4)
     parser.add_argument("--num-gpus", type=float, default=1.0)
-    parser.add_argument("--rollout-fragment-length", type=int, default=128)
+    parser.add_argument(
+        "--rollout-fragment-length", type=_fragment_length, default="auto",
+        help="Steps sampled per runner fragment; auto matches train batch size.",
+    )
     parser.add_argument("--train-batch-size", type=int, default=8192)
-    parser.add_argument("--minibatch-size", type=int, default=512)
-    parser.add_argument("--num-epochs", type=int, default=10)
+    parser.add_argument("--minibatch-size", "--batch-size", type=int, default=512)
+    parser.add_argument("--num-epochs", "--n-epochs", type=int, default=10)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-range", type=float, default=0.2)
-    parser.add_argument("--entropy-coeff", type=float, default=0.01)
-    parser.add_argument("--vf-coeff", type=float, default=0.5)
+    parser.add_argument("--entropy-coeff", "--ent-coef", type=float, default=0.01)
+    parser.add_argument("--vf-coeff", "--vf-coef", type=float, default=0.5)
     parser.add_argument("--d-model", type=int, default=256)
     parser.add_argument("--n-layers", type=int, default=4)
     parser.add_argument("--n-heads", type=int, default=8)
@@ -149,13 +189,136 @@ def build_parser():
                         action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--card-language", action="store_true")
     parser.add_argument("--combat-language", action="store_true")
+    parser.add_argument(
+        "--arch", choices=["auto", "transformer-pointer"], default="auto",
+        help="RLlib uses the shared transformer-pointer policy core.",
+    )
+    parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("rl/runs/rllib"))
     parser.add_argument("--checkpoint-every", type=int, default=10,
                         help="Save every N RLlib training iterations.")
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument(
+        "--init-from", type=Path, default=None,
+        help="Warm-start policy weights from an SB3 .zip checkpoint.",
+    )
+    parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--wandb-project", default="sts-rl")
+    parser.add_argument("--wandb-entity", default=None)
+    parser.add_argument("--wandb-name", default=None)
+    parser.add_argument("--wandb-grad-freq", type=int, default=0)
+    parser.add_argument("--wandb-save-freq", type=int, default=50_000)
+    parser.add_argument("--tensorboard", action="store_true")
+    parser.add_argument("--profile-performance", action="store_true")
+    parser.add_argument("--metrics-window", type=int, default=100)
+    parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--save-every", type=int, default=None,
+        help="SB3-compatible checkpoint interval in sampled environment steps.",
+    )
+    parser.add_argument("--n-envs", type=int, default=None)
+    parser.add_argument("--n-steps", type=int, default=None)
+    parser.add_argument("--vec", choices=["subproc", "dummy"], default=None)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--ray-address", default=None,
                         help="Ray cluster address; omit to start a local cluster.")
     return parser
+
+
+def _load_sb3_checkpoint(path: Path, device: str):
+    """Load and describe a pointer-policy SB3 checkpoint for migration."""
+    from rl.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.model import (
+        uses_card_language,
+        uses_combat_language,
+        uses_deck_size_observation,
+        uses_global_map_observation,
+        uses_map_dag,
+    )
+    from rl.pointer_policy import StSPointerPolicy
+
+    if not path.is_file():
+        raise FileNotFoundError(f"SB3 checkpoint not found: {path}")
+    model = AccumulatingMaskablePPO.load(str(path), device=device)
+    if not isinstance(model.policy, StSPointerPolicy):
+        raise ValueError(
+            "RLlib can migrate only SB3 transformer-pointer checkpoints; "
+            f"{path} contains {type(model.policy).__name__}"
+        )
+    cfg = dict(getattr(model.policy, "_core_cfg", {}))
+    return SimpleNamespace(
+        model=model,
+        core=model.policy.core,
+        num_timesteps=int(model.num_timesteps),
+        global_map_view=uses_global_map_observation(model),
+        map_dag=uses_map_dag(model),
+        deck_size_observation=uses_deck_size_observation(model),
+        card_language=uses_card_language(model),
+        combat_language=uses_combat_language(model),
+        d_model=int(cfg.get("d_model", 256)),
+        n_layers=int(cfg.get("n_layers", 4)),
+        n_heads=int(cfg.get("n_heads", 8)),
+    )
+
+
+def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
+    """Copy a shared StSPolicyCore from SB3 into RLlib and sync samplers."""
+    core = algo.get_policy().model.core
+    try:
+        core.load_state_dict(checkpoint.core.state_dict(), strict=True)
+    except RuntimeError as exc:
+        raise ValueError(
+            "SB3 checkpoint geometry does not match the requested RLlib model: "
+            f"{exc}"
+        ) from exc
+    if freeze_encoder:
+        for parameter in core.encoder.parameters():
+            parameter.requires_grad_(False)
+    runner_group = getattr(algo, "env_runner_group", None)
+    if runner_group is None:
+        runner_group = getattr(algo, "workers", None)
+        if callable(runner_group):
+            runner_group = runner_group()
+    if runner_group is not None:
+        runner_group.sync_weights()
+
+
+def _normalize_compat_args(args):
+    """Translate rl.trainer spellings and checkpoint-derived model geometry."""
+    if args.init_from and args.resume:
+        raise ValueError("--init-from and --resume are mutually exclusive")
+    if args.gradient_accumulation_steps != 1:
+        raise ValueError(
+            "RLlib old-API PPO does not support --gradient-accumulation-steps"
+        )
+    if args.n_envs is not None:
+        args.num_env_runners = args.n_envs if args.vec != "dummy" else 0
+        args.envs_per_runner = 1 if args.vec != "dummy" else args.n_envs
+    if args.n_steps is not None:
+        args.rollout_fragment_length = args.n_steps
+    if args.device == "cpu":
+        args.num_gpus = 0.0
+
+    sb3_source = None
+    sb3_resume_steps = 0
+    sb3_path = args.init_from
+    if args.resume and args.resume.suffix.lower() == ".zip":
+        sb3_path = args.resume
+    if sb3_path:
+        load_device = "cpu" if args.device == "auto" else args.device
+        sb3_source = _load_sb3_checkpoint(sb3_path, load_device)
+        sb3_resume_steps = sb3_source.num_timesteps if args.resume else 0
+        for name in (
+            "global_map_view", "map_dag", "deck_size_observation",
+            "card_language", "combat_language", "d_model", "n_layers",
+            "n_heads",
+        ):
+            old = getattr(args, name)
+            new = getattr(sb3_source, name)
+            if old != new:
+                print(f"[rllib] inferred --{name.replace('_', '-')}={new} from {sb3_path}")
+                setattr(args, name, new)
+    return sb3_source, sb3_resume_steps
 
 
 def _sampled_steps(result):
@@ -210,6 +373,18 @@ def _summary(result, elapsed):
         "cpu_percent": _metric(result, "perf/cpu_util_percent"),
         "iteration_seconds": round(elapsed, 3),
     }
+    custom = _metric(result, "env_runners/custom_metrics", "custom_metrics",
+                     default={}) or {}
+    for source, destination in (
+        ("game/win_rate_mean", "game/win_rate"),
+        ("game/floor_mean", "game/floor_mean"),
+        ("game/deck_size_mean", "game/deck_size_mean"),
+        ("game/act_1_won_mean", "game/act_1_won_mean"),
+        ("game/act_2_won_mean", "game/act_2_won_mean"),
+        ("game/act_3_won_mean", "game/act_3_won_mean"),
+    ):
+        if source in custom:
+            summary[destination] = custom[source]
     summary["bottleneck"] = (
         "sampling/cpu" if sample_ms >= learn_ms else "learning/gpu"
     )
@@ -218,6 +393,7 @@ def _summary(result, elapsed):
 
 def main():
     args = build_parser().parse_args()
+    sb3_source, sb3_resume_steps = _normalize_compat_args(args)
     if args.train_batch_size % args.minibatch_size:
         raise ValueError("--minibatch-size must divide --train-batch-size")
 
@@ -228,8 +404,20 @@ def main():
     run_dir = args.out / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     algo = None
+    wandb_run = None
     try:
-        if args.resume:
+        if args.wandb:
+            import wandb
+
+            wandb_run = wandb.init(
+                project=args.wandb_project,
+                entity=args.wandb_entity,
+                name=args.wandb_name,
+                config=vars(args),
+                dir=str(run_dir),
+            )
+
+        if args.resume and sb3_source is None:
             algo = Algorithm.from_checkpoint(str(args.resume.resolve()))
         else:
             env_config = {
@@ -251,6 +439,7 @@ def main():
                     disable_env_checking=False,
                 )
                 .framework("torch")
+                .callbacks(StSRLLibCallbacks)
                 .experimental(_disable_preprocessor_api=True)
                 .env_runners(
                     num_env_runners=args.num_env_runners,
@@ -260,6 +449,9 @@ def main():
                 )
                 .resources(num_gpus=args.num_gpus)
                 .debugging(seed=args.seed, log_sys_usage=True)
+                .reporting(
+                    metrics_num_episodes_for_smoothing=args.metrics_window,
+                )
                 .training(
                     gamma=args.gamma,
                     lambda_=args.gae_lambda,
@@ -284,16 +476,62 @@ def main():
                 )
             )
             algo = config.build_algo()
+            if sb3_source is not None:
+                _apply_sb3_weights(algo, sb3_source, args.freeze_encoder)
+                mode = "resume" if sb3_resume_steps else "warm-start"
+                print(
+                    f"[rllib] {mode} loaded {len(sb3_source.core.state_dict())} "
+                    f"policy tensors from {args.resume or args.init_from}",
+                    flush=True,
+                )
 
+        if args.freeze_encoder and sb3_source is None:
+            for parameter in algo.get_policy().model.core.encoder.parameters():
+                parameter.requires_grad_(False)
+        if wandb_run is not None and args.wandb_grad_freq > 0:
+            wandb_run.watch(
+                algo.get_policy().model,
+                log="gradients",
+                log_freq=args.wandb_grad_freq,
+            )
+
+        next_step_checkpoint = (
+            args.save_every if args.save_every and args.save_every > 0 else None
+        )
+        next_wandb_checkpoint = (
+            args.wandb_save_freq
+            if wandb_run is not None and args.wandb_save_freq > 0
+            else None
+        )
         while True:
             started = time.perf_counter()
             result = algo.train()
             summary = _summary(result, time.perf_counter() - started)
+            summary["steps"] += sb3_resume_steps
             print("[rllib] " + json.dumps(summary, ensure_ascii=False), flush=True)
+            if wandb_run is not None:
+                wandb_run.log(summary, step=summary["steps"])
             iteration = int(result.get("training_iteration", 0))
             if args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0:
                 saved = algo.save(str(run_dir / "checkpoints"))
                 print(f"[rllib] checkpoint={saved.checkpoint.path}", flush=True)
+            step_due = (
+                next_step_checkpoint is not None
+                and summary["steps"] >= next_step_checkpoint
+            )
+            wandb_due = (
+                next_wandb_checkpoint is not None
+                and summary["steps"] >= next_wandb_checkpoint
+            )
+            if step_due or wandb_due:
+                saved = algo.save(str(run_dir / "step_checkpoints"))
+                print(f"[rllib] checkpoint={saved.checkpoint.path}", flush=True)
+                if step_due:
+                    while summary["steps"] >= next_step_checkpoint:
+                        next_step_checkpoint += args.save_every
+                if wandb_due:
+                    while summary["steps"] >= next_wandb_checkpoint:
+                        next_wandb_checkpoint += args.wandb_save_freq
             if summary["steps"] >= args.steps:
                 break
 
@@ -302,6 +540,8 @@ def main():
     finally:
         if algo is not None:
             algo.stop()
+        if wandb_run is not None:
+            wandb_run.finish()
         ray.shutdown()
 
 

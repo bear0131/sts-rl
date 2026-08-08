@@ -14,6 +14,7 @@ Single machine, one GPU and 16 environments:
 
 ```bash
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m rl.rllib_trainer \
+  --task wholerun \
   --steps 8000000 \
   --num-env-runners 4 \
   --envs-per-runner 4 \
@@ -21,6 +22,35 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m rl.rllib_trainer \
   --train-batch-size 8192 \
   --minibatch-size 512
 ```
+
+Warm-start from an SB3 transformer-pointer checkpoint and log to W&B:
+
+```bash
+uv run python -m rl.rllib_trainer \
+  --task wholerun \
+  --global-map-view \
+  --map-dag \
+  --steps 8000000 \
+  --num-env-runners 16 \
+  --envs-per-runner 1 \
+  --num-gpus 1 \
+  --train-batch-size 7168 \
+  --minibatch-size 512 \
+  --init-from maskable_ppo_300000_steps.zip \
+  --num-epochs 10 \
+  --wandb \
+  --wandb-project sts-rl \
+  --wandb-name wholerun-rllib
+```
+
+`--init-from` copies the shared policy/value core from an SB3 `.zip` and starts
+RLlib at step zero with a fresh optimizer. The checkpoint must use
+`StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
+The default `--rollout-fragment-length auto` makes RLlib choose 448 for the
+16-runner/7168-batch example, so each sampling wave exactly fills one batch.
+`--resume` accepts a native RLlib checkpoint. Passing an SB3 `.zip` to
+`--resume` migrates its weights and preserves its step offset, but the SB3
+optimizer state cannot be converted.
 
 Single machine, two GPUs for RLlib's multi-GPU PPO optimizer:
 
