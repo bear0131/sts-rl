@@ -132,6 +132,9 @@ def evaluate_checkpoint(args: argparse.Namespace, checkpoint: Path) -> EvalResul
         floor_lo=args.floor_lo,
         floor_hi=args.floor_hi,
         ascension=args.ascension,
+        combat_hp_loss_coef=0.0,
+        card_language=False,
+        combat_language=False,
     )
     env = CombatTask().make_env_fn(env_args)()
     model = MaskablePPO.load(checkpoint, device=args.device)

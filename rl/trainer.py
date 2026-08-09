@@ -225,7 +225,8 @@ def build_parser(task) -> argparse.ArgumentParser:
         "--gamma", type=float, default=0.999,
         help="Discount. <1 so non-terminating infinite combos (0 per-step "
              "reward) discount to value 0; 0.999 keeps act1-boss credit ~0.71 "
-             "(~20 steps/floor), reward.floor_base then re-weights.",
+             "(~20 steps/floor), while whole-run reward puts most progress "
+             "credit on boss clears.",
     )
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument(
