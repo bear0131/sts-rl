@@ -140,6 +140,40 @@
         <canvas id="distributionCanvas"></canvas>
         <div id="distributionTooltip" class="plot-tooltip distribution-tooltip"></div>
       </div>
+      <div class="hybrid-eval-shell">
+        <div class="hybrid-eval-heading">
+          <div>
+            <h2>混合模型对比</h2>
+            <p>全程 policy_state.pkl 对比：仅战斗阶段使用 maskable_ppo_6400000_steps.zip</p>
+          </div>
+          <div class="hybrid-actions">
+            <button id="hybridEvalButton" class="primary">启动对比</button>
+            <button id="hybridStopButton">停止</button>
+          </div>
+        </div>
+        <div class="hybrid-form">
+          <label>policy_state.pkl <input id="hybridPolicyPath" type="text"></label>
+          <label>战斗 ZIP <input id="hybridCombatPath" type="text"></label>
+          <label>路由阶段
+            <select id="hybridRoutePhase">
+              <option value="combat">战斗内出牌</option>
+              <option value="map">选路线</option>
+            </select>
+          </label>
+          <label>局数 <input id="hybridEpisodes" type="number" min="1" max="10000" value="100"></label>
+          <label>Seed <input id="hybridSeed" type="number" value="10000"></label>
+          <label>并发 <input id="hybridNumEnvs" type="number" min="1" max="256" value="16"></label>
+        </div>
+        <div class="hybrid-status-row">
+          <span id="hybridEvalState">等待启动</span>
+          <span id="hybridEvalProgress">0 / 0</span>
+          <span id="hybridEvalEta">—</span>
+          <span id="hybridEvalOutput">—</span>
+        </div>
+        <div id="hybridMetricTable" class="hybrid-metric-table"></div>
+        <div id="hybridPairOutcomes" class="hybrid-pairs"></div>
+        <pre id="hybridEvalLog" class="hybrid-log">等待启动</pre>
+      </div>
     </section>
   </main>
 
@@ -148,9 +182,9 @@
       <button id="closeUploadButton" class="close-upload" title="关闭上传窗口">×</button>
       <div class="upload-title"><span class="brand-mark large">S</span><div><h1>载入模型参数</h1><p>上传后自动准备四项测试</p></div></div>
       <label id="dropzone" class="dropzone">
-        <input id="fileInput" type="file" accept=".zip" hidden>
+        <input id="fileInput" type="file" accept=".pkl,.zip" hidden>
         <span class="upload-symbol">⇧</span>
-        <strong>拖入 MaskablePPO .zip</strong>
+        <strong>拖入 RLlib policy_state.pkl 或 MaskablePPO .zip</strong>
         <span>或点击选择 checkpoint</span>
       </label>
       <label class="upload-option">自动评测局数 <input id="uploadEpisodes" type="number" min="1" max="10000" value="50"></label>

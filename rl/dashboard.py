@@ -8,6 +8,8 @@ import math
 import mimetypes
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -16,6 +18,7 @@ from collections import Counter
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import numpy as np
@@ -37,8 +40,10 @@ from env.core.card_language import (
     TOKEN_VOCAB as CARD_LANGUAGE_TOKENS,
 )
 from env.core.combat_language import TOKEN_VOCAB as COMBAT_LANGUAGE_TOKENS
+from env.core.event_descriptions import describe_event
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from env.core.card_language import STATUS_CARDS
+from rl.rllib_inference import RLLibInferenceModel
 
 # Register custom policy classes before checkpoint loading.
 from . import model as _model  # noqa: F401
@@ -46,7 +51,21 @@ from . import pointer_policy as _pointer_policy  # noqa: F401
 
 
 STATIC_DIR = Path(__file__).with_name("dashboard_static")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = Path("rl/runs/dashboard/uploads")
+HYBRID_EVAL_ROOT = PROJECT_ROOT / "rl/runs/eval-hybrid"
+DEFAULT_HYBRID_POLICY_STATE = Path(
+    os.environ.get(
+        "STS_RL_POLICY_STATE",
+        r"C:\Users\Tony2\Downloads\policy_state.pkl",
+    )
+)
+DEFAULT_HYBRID_COMBAT_CHECKPOINT = Path(
+    os.environ.get(
+        "STS_RL_COMBAT_CHECKPOINT",
+        r"C:\Users\Tony2\Downloads\maskable_ppo_6400000_steps.zip",
+    )
+)
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 IRONCLAD_VECTOR_CARDS = list(IRONCLAD_CARDS)
@@ -62,8 +81,72 @@ def _jsonable(value):
     return value
 
 
+def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def _file_info(path: Path) -> dict:
+    if not path.is_file():
+        return {"path": str(path), "exists": False}
+    stat = path.stat()
+    return {
+        "path": str(path),
+        "exists": True,
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+
+
+def _tail_text(path: Path, max_lines: int = 80) -> str:
+    if not path.is_file():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def _parse_hybrid_progress(stdout_tail: str) -> dict:
+    condition_progress: dict[str, dict] = {}
+    loaded: dict[str, int] = {}
+    current = None
+    progress_re = re.compile(
+        r"\[hybrid-eval\]\s+"
+        r"([A-Za-z0-9_]+)\s+"
+        r"(\d+)/(\d+)\s+floor_mean=([0-9.]+)"
+    )
+    loaded_re = re.compile(r"loaded RLlib steps=(\d+) and SB3 steps=(\d+)")
+    for line in stdout_tail.splitlines():
+        match = progress_re.search(line)
+        if match:
+            condition, done, episodes, floor_mean = match.groups()
+            current = condition
+            condition_progress[condition] = {
+                "completed": int(done),
+                "episodes": int(episodes),
+                "floor_mean": float(floor_mean),
+            }
+            continue
+        match = loaded_re.search(line)
+        if match:
+            loaded = {
+                "rllib_steps": int(match.group(1)),
+                "sb3_steps": int(match.group(2)),
+            }
+    return {
+        "conditions": condition_progress,
+        "current_condition": current,
+        "loaded": loaded,
+    }
+
+
 class WatchSession:
-    def __init__(self, model: MaskablePPO, model_lock: threading.Lock, seed: int = 0):
+    def __init__(self, model: Any, model_lock: threading.Lock, seed: int = 0):
         self.model = model
         self.model_lock = model_lock
         self.env = SlayTheSpireEnv(
@@ -362,6 +445,14 @@ class WatchSession:
             if pending is not None and pending[0] == "play"
             else None
         )
+        event = describe_event(
+            (canon.get("options") or {}).get("event"),
+            (canon.get("options") or {}).get("event_options", []),
+        )
+        if event is not None:
+            event_base = A.seg_base("EVENT_OPT")
+            for option in event["options"]:
+                option["action"] = event_base + option["index"]
         return _jsonable({
             "seed": self.seed,
             "step": self.position,
@@ -380,6 +471,7 @@ class WatchSession:
             "pending_card_slot": pending_card_slot,
             "stats": stats,
             "canon": canon,
+            "event": event,
             "map": map_snapshot,
             "maps": [
                 self._map_snapshot(self.map_states[act])
@@ -395,19 +487,39 @@ class DashboardState:
         self.lock = threading.RLock()
         self.model_lock = threading.Lock()
         self.checkpoint: Path | None = None
-        self.model: MaskablePPO | None = None
+        self.checkpoint_format: str | None = None
+        self.model: Any | None = None
         self.embedding: dict | None = None
         self.token_embeddings: dict = {}
         self.watch: WatchSession | None = None
         self.eval_status: dict = {"state": "idle"}
         self.eval_token = ""
+        self.hybrid_eval_status: dict = {
+            "state": "idle",
+            "defaults": self.hybrid_eval_defaults(),
+        }
+        self.hybrid_eval_token = ""
+        self.hybrid_eval_process: subprocess.Popen | None = None
         self.error: str | None = None
+
+    @staticmethod
+    def hybrid_eval_defaults() -> dict:
+        return {
+            "policy_state": str(DEFAULT_HYBRID_POLICY_STATE),
+            "combat_checkpoint": str(DEFAULT_HYBRID_COMBAT_CHECKPOINT),
+            "route_phase": "combat",
+            "episodes": 100,
+            "seed": 10_000,
+            "ascension": 0,
+            "num_envs": 16,
+        }
 
     def public_state(self):
         with self.lock:
             return {
                 "checkpoint": self.checkpoint.name if self.checkpoint else None,
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
+                "checkpoint_format": self.checkpoint_format,
                 "capabilities": {
                     "global_map": _model.uses_global_map_observation(self.model)
                     if self.model else False,
@@ -450,11 +562,32 @@ class DashboardState:
                 },
                 "watch": self.watch.snapshot() if self.watch else None,
                 "evaluation": self.eval_status,
+                "hybrid_evaluation": self._hybrid_eval_public_locked(),
                 "error": self.error,
             }
 
+    def _hybrid_eval_public_locked(self) -> dict:
+        status = dict(self.hybrid_eval_status)
+        status.setdefault("defaults", self.hybrid_eval_defaults())
+        process = self.hybrid_eval_process
+        if status.get("state") == "running" and process is not None:
+            return_code = process.poll()
+            if return_code is not None:
+                status["return_code"] = return_code
+        return status
+
     def load_checkpoint(self, path: Path, episodes: int):
-        model = MaskablePPO.load(path, device="auto")
+        suffix = path.suffix.lower()
+        if suffix == ".zip":
+            model = MaskablePPO.load(path, device="auto")
+            checkpoint_format = "sb3"
+        elif suffix == ".pkl":
+            model = RLLibInferenceModel(path, device="auto")
+            checkpoint_format = "rllib"
+        else:
+            raise ValueError(
+                "checkpoint must be an SB3 .zip or RLlib policy_state.pkl"
+            )
         model.set_random_seed(0)
         embedding = self._embedding(model)
         token_embeddings = self._token_embeddings(model)
@@ -462,6 +595,7 @@ class DashboardState:
         with self.lock:
             old_watch = self.watch
             self.checkpoint = path
+            self.checkpoint_format = checkpoint_format
             self.model = model
             self.embedding = embedding
             self.token_embeddings = token_embeddings
@@ -471,7 +605,7 @@ class DashboardState:
             old_watch.close()
         self.start_evaluation(episodes=episodes, seed=0)
 
-    def _embedding(self, model: MaskablePPO):
+    def _embedding(self, model: Any):
         try:
             encoder = resolve_encoder(model)
             base, description = extract_vectors(encoder, "hand", upgrades=0)
@@ -526,7 +660,7 @@ class DashboardState:
             return "operator"
         return "semantic"
 
-    def _token_embeddings(self, model: MaskablePPO):
+    def _token_embeddings(self, model: Any):
         """Project each learned DSL token table in its own parameter space."""
         try:
             encoder = resolve_encoder(model)
@@ -597,7 +731,7 @@ class DashboardState:
             name="dashboard-eval",
         ).start()
 
-    def _evaluate(self, token: str, model: MaskablePPO, episodes: int, seed: int):
+    def _evaluate(self, token: str, model: Any, episodes: int, seed: int):
         env = SlayTheSpireEnv(
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
@@ -691,6 +825,256 @@ class DashboardState:
         finally:
             env.close()
 
+    @staticmethod
+    def _request_path(value, default: Path) -> Path:
+        path = Path(value or default)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+
+    def start_hybrid_evaluation(self, config: dict):
+        policy_state = self._request_path(
+            config.get("policy_state"),
+            DEFAULT_HYBRID_POLICY_STATE,
+        )
+        combat_checkpoint = self._request_path(
+            config.get("combat_checkpoint"),
+            DEFAULT_HYBRID_COMBAT_CHECKPOINT,
+        )
+        if not policy_state.is_file():
+            raise FileNotFoundError(f"policy_state not found: {policy_state}")
+        if not combat_checkpoint.is_file():
+            raise FileNotFoundError(
+                f"combat checkpoint not found: {combat_checkpoint}"
+            )
+        route_phase = str(config.get("route_phase", "combat")).strip() or "combat"
+        if route_phase not in {"combat", "map"}:
+            raise ValueError(f"unsupported route phase: {route_phase}")
+        hybrid_label = f"hybrid_{route_phase}_sb3"
+
+        episodes = _clamp_int(config.get("episodes"), 100, 1, 10_000)
+        seed = _clamp_int(config.get("seed"), 10_000, -2_147_483_648, 2_147_483_647)
+        ascension = _clamp_int(config.get("ascension"), 0, 0, 20)
+        num_envs = _clamp_int(config.get("num_envs"), 16, 1, 256)
+        progress_every = _clamp_int(config.get("progress_every"), 10, 0, 10_000)
+        heartbeat_seconds = _clamp_int(
+            config.get("heartbeat_seconds"), 30, 0, 3_600
+        )
+        token = uuid.uuid4().hex
+
+        requested_output = config.get("output_dir")
+        if requested_output:
+            output_dir = self._request_path(requested_output, HYBRID_EVAL_ROOT)
+        else:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            output_dir = HYBRID_EVAL_ROOT / f"dashboard-{stamp}-{token[:8]}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        stdout_path = output_dir / "stdout.log"
+        stderr_path = output_dir / "stderr.log"
+        summary_path = output_dir / "summary.json"
+        command = [
+            sys.executable,
+            "-u",
+            "-m",
+            "rl.eval_hybrid",
+            str(policy_state),
+            "--combat-checkpoint",
+            str(combat_checkpoint),
+            "--episodes",
+            str(episodes),
+            "--seed",
+            str(seed),
+            "--route-phase",
+            route_phase,
+            "--ascension",
+            str(ascension),
+            "--num-envs",
+            str(num_envs),
+            "--progress-every",
+            str(progress_every),
+            "--heartbeat-seconds",
+            str(heartbeat_seconds),
+            "--output-dir",
+            str(output_dir),
+        ]
+
+        creationflags = (
+            subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        )
+        with self.lock:
+            self._terminate_hybrid_eval_locked("replaced")
+            self.hybrid_eval_token = token
+            self.hybrid_eval_status = {
+                "state": "starting",
+                "token": token,
+                "started_at": time.time(),
+                "episodes": episodes,
+                "seed": seed,
+                "route_phase": route_phase,
+                "hybrid_label": hybrid_label,
+                "ascension": ascension,
+                "num_envs": num_envs,
+                "completed": 0,
+                "total": episodes * 2,
+                "policy_state": str(policy_state),
+                "combat_checkpoint": str(combat_checkpoint),
+                "policy_state_file": _file_info(policy_state),
+                "combat_checkpoint_file": _file_info(combat_checkpoint),
+                "output_dir": str(output_dir),
+                "stdout_log": str(stdout_path),
+                "stderr_log": str(stderr_path),
+                "summary_path": str(summary_path),
+                "command": command,
+                "defaults": self.hybrid_eval_defaults(),
+            }
+        try:
+            with stdout_path.open("w", encoding="utf-8") as stdout, (
+                stderr_path.open("w", encoding="utf-8")
+            ) as stderr:
+                process = subprocess.Popen(
+                    command,
+                    cwd=PROJECT_ROOT,
+                    stdout=stdout,
+                    stderr=stderr,
+                    creationflags=creationflags,
+                )
+        except Exception:
+            with self.lock:
+                if token == self.hybrid_eval_token:
+                    self.hybrid_eval_status["state"] = "error"
+            raise
+
+        with self.lock:
+            if token != self.hybrid_eval_token:
+                if process.poll() is None:
+                    process.terminate()
+                return self._hybrid_eval_public_locked()
+            self.hybrid_eval_process = process
+            self.hybrid_eval_status["state"] = "running"
+
+        threading.Thread(
+            target=self._monitor_hybrid_evaluation,
+            args=(token, process, output_dir, stdout_path, stderr_path),
+            daemon=True,
+            name="dashboard-hybrid-eval",
+        ).start()
+        with self.lock:
+            return self._hybrid_eval_public_locked()
+
+    def _terminate_hybrid_eval_locked(self, reason: str):
+        process = self.hybrid_eval_process
+        if process is None or process.poll() is not None:
+            return
+        self.hybrid_eval_status.update({"state": "stopping", "stop_reason": reason})
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+    def stop_hybrid_evaluation(self):
+        with self.lock:
+            self._terminate_hybrid_eval_locked("stopped")
+            if self.hybrid_eval_status.get("state") == "stopping":
+                self.hybrid_eval_status["state"] = "stopped"
+            return self._hybrid_eval_public_locked()
+
+    def _update_hybrid_eval_progress(
+        self,
+        token: str,
+        stdout_path: Path,
+        stderr_path: Path,
+    ) -> bool:
+        stdout_tail = _tail_text(stdout_path)
+        stderr_tail = _tail_text(stderr_path, max_lines=40)
+        parsed = _parse_hybrid_progress(stdout_tail)
+        conditions = parsed["conditions"]
+        completed = sum(
+            int(item.get("completed", 0)) for item in conditions.values()
+        )
+        with self.lock:
+            if token != self.hybrid_eval_token:
+                return False
+            total = int(
+                self.hybrid_eval_status.get(
+                    "total",
+                    int(self.hybrid_eval_status.get("episodes", 0)) * 2,
+                )
+            )
+            elapsed = time.time() - float(
+                self.hybrid_eval_status.get("started_at", time.time())
+            )
+            update = {
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+                "progress": conditions,
+                "current_condition": parsed["current_condition"],
+                "completed": completed,
+                "elapsed_seconds": elapsed,
+            }
+            if parsed["loaded"]:
+                update["loaded"] = parsed["loaded"]
+            if completed > 0 and total > completed:
+                update["eta_seconds"] = elapsed / completed * (total - completed)
+            elif total and completed >= total:
+                update["eta_seconds"] = 0
+            self.hybrid_eval_status.update(update)
+            return True
+
+    @staticmethod
+    def _load_hybrid_summary(summary_path: Path) -> dict | None:
+        if not summary_path.is_file():
+            return None
+        try:
+            return json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def _monitor_hybrid_evaluation(
+        self,
+        token: str,
+        process: subprocess.Popen,
+        output_dir: Path,
+        stdout_path: Path,
+        stderr_path: Path,
+    ):
+        summary_path = output_dir / "summary.json"
+        while process.poll() is None:
+            if not self._update_hybrid_eval_progress(
+                token, stdout_path, stderr_path
+            ):
+                return
+            time.sleep(1)
+
+        self._update_hybrid_eval_progress(token, stdout_path, stderr_path)
+        return_code = process.returncode
+        summary = self._load_hybrid_summary(summary_path)
+        with self.lock:
+            if token != self.hybrid_eval_token:
+                return
+            previous_state = self.hybrid_eval_status.get("state")
+            self.hybrid_eval_status["return_code"] = return_code
+            self.hybrid_eval_status["finished_at"] = time.time()
+            if previous_state == "stopping":
+                self.hybrid_eval_status["state"] = "stopped"
+            elif return_code == 0 and summary is not None:
+                self.hybrid_eval_status.update({
+                    "state": "complete",
+                    "summary": summary,
+                    "completed": self.hybrid_eval_status.get("total", 0),
+                    "eta_seconds": 0,
+                })
+            elif return_code == 0:
+                self.hybrid_eval_status.update({
+                    "state": "error",
+                    "error": "summary.json was not produced",
+                })
+            else:
+                error = self.hybrid_eval_status.get("stderr_tail") or (
+                    f"process exited with code {return_code}"
+                )
+                self.hybrid_eval_status.update({
+                    "state": "error",
+                    "error": error,
+                })
 
 APP = DashboardState()
 
@@ -718,6 +1102,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/state":
             self._send_json(APP.public_state())
+            return
+        if path == "/api/hybrid-eval/status":
+            self._send_json(APP.public_state()["hybrid_evaluation"])
             return
         relative = "index.html" if path == "/" else path.lstrip("/")
         target = (STATIC_DIR / relative).resolve()
@@ -786,6 +1173,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = self._read_json()
                 APP.start_evaluation(body.get("episodes", 50), body.get("seed", 0))
                 self._send_json(APP.public_state()["evaluation"])
+            elif path == "/api/hybrid-eval/start":
+                body = self._read_json()
+                self._send_json(APP.start_hybrid_evaluation(body))
+            elif path == "/api/hybrid-eval/stop":
+                self._send_json(APP.stop_hybrid_evaluation())
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -797,8 +1189,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("upload must be a non-empty file smaller than 512 MB")
         original = self.headers.get("X-Filename", "checkpoint.zip")
         filename = re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(original).name)
-        if not filename.lower().endswith(".zip"):
-            raise ValueError("only .zip checkpoints are accepted")
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".zip", ".pkl"}:
+            raise ValueError(
+                "only SB3 .zip or RLlib policy_state.pkl checkpoints are accepted"
+            )
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         target = UPLOAD_DIR / f"{int(time.time())}-{uuid.uuid4().hex[:8]}-{filename}"
         partial = target.with_suffix(target.suffix + ".part")
@@ -816,15 +1211,23 @@ class Handler(BaseHTTPRequestHandler):
                     remaining -= len(chunk)
             with partial.open("rb") as stream:
                 signature = stream.read(4)
-            if signature not in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
+            if suffix == ".zip":
+                if signature not in (
+                    b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"
+                ):
+                    raise ValueError(
+                        "uploaded file does not have a ZIP signature; re-download "
+                        "the checkpoint and drag the .zip file itself"
+                    )
+            elif signature[:1] != b"\x80":
                 raise ValueError(
-                    "uploaded file does not have a ZIP signature; re-download "
-                    "the checkpoint and drag the .zip file itself"
+                    "uploaded .pkl is not a binary RLlib policy_state checkpoint"
                 )
             os.replace(partial, target)
-            with zipfile.ZipFile(target) as archive:
-                if archive.testzip() is not None:
-                    raise ValueError("checkpoint ZIP failed integrity validation")
+            if suffix == ".zip":
+                with zipfile.ZipFile(target) as archive:
+                    if archive.testzip() is not None:
+                        raise ValueError("checkpoint ZIP failed integrity validation")
             episodes = int(self.headers.get("X-Eval-Episodes", "50"))
             APP.load_checkpoint(target, episodes)
         except Exception:

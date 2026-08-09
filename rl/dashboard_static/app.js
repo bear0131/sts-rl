@@ -15,6 +15,7 @@ let seeking = false;
 let selectedMapAct = null;
 let mapPreviewing = false;
 let previewedMapKeys = new Set();
+let hybridRoutePhaseDirty = false;
 
 const zhCards = {
   Strike_R: "打击", Defend_R: "防御", Bash: "痛击", Anger: "愤怒",
@@ -56,6 +57,32 @@ function renderNeowOptions(options, decision) {
   return `<div class="neow-screen"><p>选择涅奥的祝福</p><div class="neow-options">${rows}</div></div>`;
 }
 
+function renderEvent(event, decision) {
+  const rows = (event.options || []).map(option => {
+    const action = decision?.top_actions?.find(item => item.action === option.action);
+    const selected = decision?.action === option.action;
+    const probability = action?.prob == null ? "" : `${(action.prob * 100).toFixed(1)}%`;
+    return `<div class="event-option ${selected ? "selected" : ""}">
+      <span class="event-index">${option.index + 1}</span>
+      <div><strong>${escapeHtml(option.label_zh)}</strong><small>${escapeHtml(option.description_zh)}</small></div>
+      ${probability ? `<b>${probability}</b>` : ""}
+    </div>`;
+  }).join("");
+  const empty = rows ? "" : `<div class="event-empty">当前事件没有可由模型选择的普通选项</div>`;
+  return `<section class="event-screen">
+    <header class="event-heading"><span>随机事件</span><h2>${escapeHtml(event.title_zh)}</h2><p>${escapeHtml(event.title_en)}</p></header>
+    <p class="event-description">${escapeHtml(event.description_zh)}</p>
+    <div class="event-options">${rows || empty}</div>
+  </section>`;
+}
+
+function decisionActionText(action, event) {
+  const option = event?.options?.find(item => item.action === action?.action);
+  return option
+    ? `${option.label_zh}：${option.description_zh}`
+    : action?.label;
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 }
@@ -86,7 +113,7 @@ dropzone.addEventListener("drop", event => {
   const files = [...event.dataTransfer.files];
   if (files.length !== 1) {
     $("uploadStatus").classList.add("error");
-    $("uploadStatus").textContent = "请只拖入一个 .zip checkpoint 文件";
+    $("uploadStatus").textContent = "请只拖入一个 .pkl 或 .zip checkpoint 文件";
     return;
   }
   uploadFile(files[0]);
@@ -97,16 +124,18 @@ $("replaceButton").addEventListener("click", () => {
   $("uploadOverlay").classList.remove("hidden");
 });
 $("closeUploadButton").addEventListener("click", () => {
-  if (!appState?.checkpoint) return;
   uploadManuallyOpen = false;
   $("uploadOverlay").classList.add("hidden");
 });
 
 async function uploadFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".zip")) {
+  const lowerName = file.name.toLowerCase();
+  const isZip = lowerName.endsWith(".zip");
+  const isRllib = lowerName.endsWith(".pkl");
+  if (!isZip && !isRllib) {
     $("uploadStatus").classList.add("error");
-    $("uploadStatus").textContent = "请选择 .zip checkpoint";
+    $("uploadStatus").textContent = "请选择 RLlib policy_state.pkl 或 SB3 .zip";
     return;
   }
   const signature = new Uint8Array(await file.slice(0, 4).arrayBuffer());
@@ -115,9 +144,14 @@ async function uploadFile(file) {
     (signature[2] === 0x05 && signature[3] === 0x06) ||
     (signature[2] === 0x07 && signature[3] === 0x08)
   );
-  if (!zipSignature) {
+  if (isZip && !zipSignature) {
     $("uploadStatus").classList.add("error");
     $("uploadStatus").textContent = "文件扩展名是 .zip，但内容不是 ZIP；请重新下载 checkpoint";
+    return;
+  }
+  if (isRllib && signature[0] !== 0x80) {
+    $("uploadStatus").classList.add("error");
+    $("uploadStatus").textContent = "这个 .pkl 不是 RLlib 二进制策略参数；请选择 policies/default_policy/policy_state.pkl";
     return;
   }
   $("uploadStatus").classList.remove("error");
@@ -227,10 +261,38 @@ $("evalButton").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
+$("hybridEvalButton").addEventListener("click", async () => {
+  try {
+    appState.hybrid_evaluation = await api("/api/hybrid-eval/start", {
+      method: "POST",
+      body: JSON.stringify({
+        policy_state: $("hybridPolicyPath").value,
+        combat_checkpoint: $("hybridCombatPath").value,
+        route_phase: $("hybridRoutePhase").value,
+        episodes: Number($("hybridEpisodes").value),
+        seed: Number($("hybridSeed").value),
+        num_envs: Number($("hybridNumEnvs").value)
+      }),
+      headers: {"Content-Type": "application/json"}
+    });
+    renderHybridEvaluationV2();
+  } catch (e) { toast(e.message); }
+});
+$("hybridStopButton").addEventListener("click", async () => {
+  try {
+    appState.hybrid_evaluation = await api("/api/hybrid-eval/stop", {method: "POST"});
+    renderHybridEvaluationV2();
+  } catch (e) { toast(e.message); }
+});
+$("hybridRoutePhase").addEventListener("change", () => {
+  hybridRoutePhaseDirty = true;
+});
+
 function renderAll() {
-  $("checkpointPill").textContent = appState?.checkpoint || "未载入参数";
-  if (appState?.checkpoint && !uploadManuallyOpen) $("uploadOverlay").classList.add("hidden");
-  renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation();
+  const format = appState?.checkpoint_format === "rllib" ? "RLlib" : appState?.checkpoint_format === "sb3" ? "SB3" : "";
+  $("checkpointPill").textContent = appState?.checkpoint ? `${format} · ${appState.checkpoint}` : "未载入参数";
+  if ((appState?.checkpoint || appState?.hybrid_evaluation?.defaults) && !uploadManuallyOpen) $("uploadOverlay").classList.add("hidden");
+  renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation(); renderHybridEvaluationV2();
 }
 function powersText(powers) { return Object.entries(powers || {}).filter(([,v]) => v !== 0).map(([k,v]) => `${k} ${v}`).join(" · "); }
 function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${appState?.card_catalog?.[id]?.name_zh || zhCards[id] || id}${up ? "+" : ""}`; }
@@ -506,9 +568,14 @@ function renderWatch() {
   }).join("") : "";
   $("piles").textContent = combat ? `抽牌 ${canon.draw?.length || 0}　弃牌 ${canon.discard?.length || 0}　消耗 ${canon.exhaust?.length || 0}` : "";
   $("overworld").classList.toggle("visible", !combat);
+  const eventVisible = !combat && w.phase === "event" && Boolean(w.event);
+  $("overworld").classList.toggle("event-visible", eventVisible);
+  $("overworld").parentElement.classList.toggle("event-active", eventVisible);
   if (!combat) {
     const opts = canon.options || {};
-    if ((w.phase === "event" || w.phase === "neow") && opts.neow?.length) {
+    if (w.phase === "event" && w.event) {
+      $("overworld").innerHTML = renderEvent(w.event, w.decision);
+    } else if ((w.phase === "event" || w.phase === "neow") && opts.neow?.length) {
       $("overworld").innerHTML = renderNeowOptions(opts.neow, w.decision);
     } else {
     let detail = `HP ${canon.hp ?? "—"}/${canon.max_hp ?? "—"}　金币 ${canon.gold ?? global.gold ?? 0}\n`;
@@ -522,9 +589,9 @@ function renderWatch() {
     }
   }
   const d = w.decision;
-  $("chosenAction").textContent = d?.label || (w.done ? "没有下一步动作" : "等待模型");
+  $("chosenAction").textContent = decisionActionText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
-  $("actionList").innerHTML = (d?.top_actions || []).map(a => `<div class="action-row"><b>${a.prob == null ? "—" : (a.prob*100).toFixed(1)+"%"}</b><span>${escapeHtml(a.label)}</span><div class="prob-track"><i style="width:${a.prob == null ? 0 : a.prob*100}%"></i></div></div>`).join("");
+  $("actionList").innerHTML = (d?.top_actions || []).map(a => `<div class="action-row"><b>${a.prob == null ? "—" : (a.prob*100).toFixed(1)+"%"}</b><span>${escapeHtml(decisionActionText(a, w.event))}</span><div class="prob-track"><i style="width:${a.prob == null ? 0 : a.prob*100}%"></i></div></div>`).join("");
   $("lastAction").textContent = w.last_action?.label || "—";
   $("lastReward").textContent = `${Number(w.last_reward).toFixed(3)}`;
   const selectedMap = (w.maps || []).find(map => map.act === selectedMapAct) || {act:selectedMapAct, nodes:[], visited:[], current:null, boss:""};
@@ -613,6 +680,129 @@ function renderEvaluation() {
   $("evalStatus").textContent=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
   drawDistribution();
 }
+function setDefaultInput(id, value) {
+  const node = $(id);
+  if (node && !node.value && value != null) node.value = value;
+}
+function metricText(value, percent = false) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  return percent ? `${(Number(value) * 100).toFixed(1)}%` : Number(value).toFixed(2);
+}
+function deltaText(value, percent = false) {
+  if (value == null || Number.isNaN(Number(value))) return "—";
+  const number = Number(value);
+  const sign = number > 0 ? "+" : "";
+  return percent ? `${sign}${(number * 100).toFixed(1)}pp` : `${sign}${number.toFixed(2)}`;
+}
+function renderHybridEvaluation() {
+  const h = appState?.hybrid_evaluation || {}, defaults = h.defaults || {};
+  setDefaultInput("hybridPolicyPath", defaults.policy_state);
+  setDefaultInput("hybridCombatPath", defaults.combat_checkpoint);
+  setDefaultInput("hybridEpisodes", defaults.episodes);
+  setDefaultInput("hybridSeed", defaults.seed);
+  setDefaultInput("hybridNumEnvs", defaults.num_envs);
+
+  const running = ["starting", "running", "stopping"].includes(h.state);
+  $("hybridEvalButton").disabled = running;
+  $("hybridStopButton").disabled = !["starting", "running"].includes(h.state);
+  const stateNames = {idle: "等待启动", starting: "启动中", running: "运行中", stopping: "停止中", stopped: "已停止", complete: "已完成", error: "错误"};
+  $("hybridEvalState").textContent = h.state === "error" ? `错误：${h.error || "unknown"}` : (stateNames[h.state] || "等待启动");
+  $("hybridEvalProgress").textContent = `${h.completed || 0} / ${h.total || 0}`;
+  $("hybridEvalEta").textContent = h.eta_seconds == null ? "—" : `预计 ${Math.ceil(h.eta_seconds / 60)} 分钟`;
+  $("hybridEvalOutput").textContent = h.output_dir ? `输出 ${h.output_dir}` : "—";
+
+  const summary = h.summary || {};
+  const pure = summary.pure_policy_state || {};
+  const hybrid = summary.hybrid_combat_sb3 || {};
+  const paired = summary.paired_delta_hybrid_minus_pure || {};
+  const winDelta = pure.win_rate == null || hybrid.win_rate == null ? null : Number(hybrid.win_rate) - Number(pure.win_rate);
+  const rows = [
+    ["floor mean", pure.floor_mean, hybrid.floor_mean, paired.final_floor_delta_mean, false],
+    ["act 1 won mean", pure.act_1_won_mean, hybrid.act_1_won_mean, paired.act_1_won_delta_mean, true],
+    ["act 2 won mean", pure.act_2_won_mean, hybrid.act_2_won_mean, paired.act_2_won_delta_mean, true],
+    ["act 3 won mean", pure.act_3_won_mean, hybrid.act_3_won_mean, paired.act_3_won_delta_mean, true],
+    ["win rate", pure.win_rate, hybrid.win_rate, winDelta, true],
+    ["steps mean", pure.steps_mean, hybrid.steps_mean, null, false]
+  ];
+  $("hybridMetricTable").innerHTML = [
+    `<div class="head">指标</div><div class="head">policy_state</div><div class="head">hybrid</div><div class="head">delta</div>`,
+    ...rows.map(([name, pureValue, hybridValue, deltaValue, percent]) => {
+      const deltaClass = deltaValue == null ? "" : Number(deltaValue) >= 0 ? " good" : " bad";
+      return `<div>${escapeHtml(name)}</div><div>${metricText(pureValue, percent)}</div><div>${metricText(hybridValue, percent)}</div><div class="delta${deltaClass}">${deltaText(deltaValue, percent)}</div>`;
+    })
+  ].join("");
+  const pairs = paired.floor_pair_outcomes || {};
+  $("hybridPairOutcomes").textContent = pairs.hybrid_better == null
+    ? ""
+    : `配对 floor：hybrid better ${pairs.hybrid_better}，tie ${pairs.tied}，worse ${pairs.hybrid_worse}`;
+  $("hybridEvalLog").textContent = h.stdout_tail || h.stderr_tail || (h.error ? String(h.error) : "等待启动");
+}
+function renderHybridEvaluationV2() {
+  const h = appState?.hybrid_evaluation || {};
+  const defaults = h.defaults || {};
+  const routePhaseNode = $("hybridRoutePhase");
+  setDefaultInput("hybridPolicyPath", defaults.policy_state);
+  setDefaultInput("hybridCombatPath", defaults.combat_checkpoint);
+  if (routePhaseNode && !hybridRoutePhaseDirty && document.activeElement !== routePhaseNode) {
+    routePhaseNode.value = h.route_phase || defaults.route_phase || "combat";
+  }
+  setDefaultInput("hybridEpisodes", defaults.episodes);
+  setDefaultInput("hybridSeed", defaults.seed);
+  setDefaultInput("hybridNumEnvs", defaults.num_envs);
+
+  const running = ["starting", "running", "stopping"].includes(h.state);
+  $("hybridEvalButton").disabled = running;
+  $("hybridStopButton").disabled = !["starting", "running"].includes(h.state);
+  const stateNames = {
+    idle: "等待启动",
+    starting: "启动中",
+    running: "运行中",
+    stopping: "停止中",
+    stopped: "已停止",
+    complete: "已完成",
+    error: "错误",
+  };
+  $("hybridEvalState").textContent = h.state === "error"
+    ? `错误：${h.error || "unknown"}`
+    : (stateNames[h.state] || "等待启动");
+  $("hybridEvalProgress").textContent = `${h.completed || 0} / ${h.total || 0}`;
+  $("hybridEvalEta").textContent = h.eta_seconds == null
+    ? "—"
+    : `预计 ${Math.ceil(h.eta_seconds / 60)} 分钟`;
+  const routePhase = h.route_phase || defaults.route_phase || "combat";
+  const hybridLabel = h.hybrid_label || `hybrid_${routePhase}_sb3`;
+  $("hybridEvalOutput").textContent = h.output_dir
+    ? `输出 ${h.output_dir} · 路由 ${routePhase}`
+    : "—";
+
+  const summary = h.summary || {};
+  const pure = summary.pure_policy_state || {};
+  const hybrid = summary[hybridLabel] || summary.hybrid_combat_sb3 || {};
+  const paired = summary.paired_delta_hybrid_minus_pure || {};
+  const winDelta = pure.win_rate == null || hybrid.win_rate == null
+    ? null
+    : Number(hybrid.win_rate) - Number(pure.win_rate);
+  const rows = [
+    ["floor mean", pure.floor_mean, hybrid.floor_mean, paired.final_floor_delta_mean, false],
+    ["act 1 won mean", pure.act_1_won_mean, hybrid.act_1_won_mean, paired.act_1_won_delta_mean, true],
+    ["act 2 won mean", pure.act_2_won_mean, hybrid.act_2_won_mean, paired.act_2_won_delta_mean, true],
+    ["act 3 won mean", pure.act_3_won_mean, hybrid.act_3_won_mean, paired.act_3_won_delta_mean, true],
+    ["win rate", pure.win_rate, hybrid.win_rate, winDelta, true],
+    ["steps mean", pure.steps_mean, hybrid.steps_mean, null, false],
+  ];
+  $("hybridMetricTable").innerHTML = [
+    `<div class="head">指标</div><div class="head">policy_state</div><div class="head">${escapeHtml(routePhase)}</div><div class="head">delta</div>`,
+    ...rows.map(([name, pureValue, hybridValue, deltaValue, percent]) => {
+      const deltaClass = deltaValue == null ? "" : Number(deltaValue) >= 0 ? " good" : " bad";
+      return `<div>${escapeHtml(name)}</div><div>${metricText(pureValue, percent)}</div><div>${metricText(hybridValue, percent)}</div><div class="delta${deltaClass}">${deltaText(deltaValue, percent)}</div>`;
+    }),
+  ].join("");
+  const pairs = paired.floor_pair_outcomes || {};
+  $("hybridPairOutcomes").textContent = pairs.hybrid_better == null
+    ? ""
+    : `配对 floor：hybrid better ${pairs.hybrid_better}，tie ${pairs.tied}，worse ${pairs.hybrid_worse}`;
+  $("hybridEvalLog").textContent = h.stdout_tail || h.stderr_tail || (h.error ? String(h.error) : "等待启动");
+}
 function drawDistribution() {
   const canvas=$("distributionCanvas"); if(!canvas.offsetParent)return; const {ctx,w,h}=canvasSetup(canvas);ctx.clearRect(0,0,w,h); distributionBars=[];
   const data=appState?.evaluation?.death_floors||{}, floors=Object.keys(data).map(Number).sort((a,b)=>a-b); if(!floors.length){ctx.fillStyle="#8f9993";ctx.fillText("评测完成后显示死亡楼层",30,45);$("distributionTooltip").style.display="none";return;}
@@ -631,9 +821,10 @@ $("distributionCanvas").addEventListener("mousemove", event => {
 $("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
-  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.capabilities=fresh.capabilities;appState.evaluation=fresh.evaluation;} renderAll(); }
+  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.checkpoint_format=fresh.checkpoint_format;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.capabilities=fresh.capabilities;appState.evaluation=fresh.evaluation;appState.hybrid_evaluation=fresh.hybrid_evaluation;} renderAll(); }
   catch (_) {}
-  setTimeout(poll, appState?.evaluation?.state==="running"?1000:3000);
+  const fastPoll = appState?.evaluation?.state==="running" || ["starting","running","stopping"].includes(appState?.hybrid_evaluation?.state);
+  setTimeout(poll, fastPoll?1000:3000);
 }
 window.addEventListener("resize",()=>{drawEmbedding();drawTokens();drawDistribution();});
 const initialParams = new URLSearchParams(location.search);

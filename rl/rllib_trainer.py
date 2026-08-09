@@ -1,4 +1,4 @@
-"""Distributed RLlib PPO trainer for the whole-run STS environment.
+"""Distributed RLlib PPO trainer for STS tasks.
 
 This is an alternative backend to ``rl.trainer``.  It reuses the environment,
 reward, observation encoder, and StSPolicyCore, while RLlib owns distributed
@@ -42,15 +42,22 @@ from ray.rllib.policy.torch_policy_v2 import TorchPolicyV2
 from ray.tune.registry import register_env
 
 from env.core import action_space as A
+from env.core import factories
+from env.core.combat_backend import SimCombatBackend
 from env.core.run_env import SlayTheSpireEnv
 from rl.pointer_policy import StSPolicyCore
-from rl.reward import ShapedRewardWrapper
-from rl.tasks.wholerun import _MAX_EPISODE_STEPS
+from rl.reward import CombatGauntletRewardWrapper, ShapedRewardWrapper
+from rl.tasks.combat import (
+    _CLEAR_THRESHOLDS as COMBAT_CLEAR_THRESHOLDS,
+    _MAX_EPISODE_STEPS as COMBAT_MAX_EPISODE_STEPS,
+)
+from rl.tasks.wholerun import _MAX_EPISODE_STEPS as WHOLERUN_MAX_EPISODE_STEPS
 
 
 ENV_NAME = "sts-whole-run-masked-v1"
 MODEL_NAME = "sts-pointer-core-v1"
 MASK_LOG_FLOOR = -1.0e9
+TASKS = ("combat", "wholerun")
 RAY_RUNTIME_EXCLUDES = [
     ".git/",
     ".venv/",
@@ -123,14 +130,34 @@ def _ray_runtime_env():
 
 
 class StSRLLibCallbacks(DefaultCallbacks):
-    """Publish the same whole-run outcome metrics used by the SB3 trainer."""
+    """Publish task-specific outcome metrics used by the SB3 trainer."""
 
     def on_episode_end(self, *, episode, metrics_logger=None, env_runner=None,
                        **kwargs):
         info = episode.last_info_for()
+        if info and "combats_won" in info:
+            self._log_combat_episode(
+                episode, info, metrics_logger, env_runner
+            )
+            return
         stats = info.get("run_stats") if info else None
         if stats is None:
             return
+        self._log_wholerun_episode(
+            episode, stats, metrics_logger, env_runner
+        )
+
+    @staticmethod
+    def _window(env_runner, default):
+        config = getattr(env_runner, "config", None)
+        return int(
+            getattr(config, "metrics_num_episodes_for_smoothing", default)
+            or default
+        )
+
+    def _log_wholerun_episode(
+        self, episode, stats, metrics_logger=None, env_runner=None
+    ):
         act = int(stats["act"])
         floor = int(stats["floor"])
         won = act > 3 or stats["outcome"] == "PLAYER_VICTORY"
@@ -144,11 +171,7 @@ class StSRLLibCallbacks(DefaultCallbacks):
                 floor > threshold
             )
         if metrics_logger is not None:
-            config = getattr(env_runner, "config", None)
-            window = int(
-                getattr(config, "metrics_num_episodes_for_smoothing", 100)
-                or 100
-            )
+            window = self._window(env_runner, 100)
             values = {
                 "win_rate": float(won),
                 "floor_mean": float(floor),
@@ -169,12 +192,92 @@ class StSRLLibCallbacks(DefaultCallbacks):
                     window=window,
                 )
 
+    def _log_combat_episode(
+        self, episode, info, metrics_logger=None, env_runner=None
+    ):
+        cleared = float(info.get("combats_won", 0))
+        episode.custom_metrics["combat/cleared_per_episode"] = cleared
+        act = info.get("combat_act")
+        try:
+            act = int(act)
+        except (TypeError, ValueError):
+            act = None
+        if act in (1, 2, 3):
+            episode.custom_metrics[f"combat/cleared_act{act}"] = cleared
+        for threshold in COMBAT_CLEAR_THRESHOLDS:
+            episode.custom_metrics[f"combat/clear_ge_{threshold}"] = float(
+                cleared >= threshold
+            )
+        hp_lost = info.get("combat_hp_lost")
+        hp_penalty = info.get("combat_hp_penalty")
+        if hp_lost is not None:
+            episode.custom_metrics["combat/hp_lost_per_combat"] = float(hp_lost)
+        if hp_penalty is not None:
+            episode.custom_metrics["combat/hp_penalty_per_combat"] = float(
+                hp_penalty
+            )
+
+        if metrics_logger is None:
+            return
+        window = self._window(env_runner, 200)
+        metrics_logger.log_value(
+            ("combat", "cleared_per_episode"),
+            cleared,
+            reduce="mean",
+            window=window,
+        )
+        if act in (1, 2, 3):
+            metrics_logger.log_value(
+                ("combat", f"cleared_act{act}"),
+                cleared,
+                reduce="mean",
+                window=window,
+            )
+        for threshold in COMBAT_CLEAR_THRESHOLDS:
+            metrics_logger.log_value(
+                ("combat", f"clear_ge_{threshold}"),
+                float(cleared >= threshold),
+                reduce="mean",
+                window=window,
+            )
+        if hp_lost is not None:
+            metrics_logger.log_value(
+                ("combat", "hp_lost_per_combat"),
+                float(hp_lost),
+                reduce="mean",
+                window=window,
+            )
+        if hp_penalty is not None:
+            metrics_logger.log_value(
+                ("combat", "hp_penalty_per_combat"),
+                float(hp_penalty),
+                reduce="mean",
+                window=window,
+            )
+
 
 class RLLibActionMaskEnv(gym.Wrapper):
     """Expose RLlib's standard ``action_mask + observations`` contract."""
 
     def __init__(self, config=None):
         config = dict(config or {})
+        self._task = str(config.get("task", "wholerun"))
+        if self._task == "combat":
+            env = self._make_combat_env(config)
+        elif self._task == "wholerun":
+            env = self._make_wholerun_env(config)
+        else:
+            raise ValueError(f"unknown RLlib task: {self._task!r}")
+        super().__init__(env)
+        self.observation_space = spaces.Dict({
+            "observations": env.observation_space,
+            "action_mask": spaces.Box(
+                low=0.0, high=1.0, shape=(A.N_ACTIONS,), dtype=np.float32
+            ),
+        })
+
+    @staticmethod
+    def _make_wholerun_env(config):
         env = SlayTheSpireEnv(
             ascension=int(config.get("ascension", 0)),
             global_map_view=bool(config.get("global_map_view", True)),
@@ -189,14 +292,38 @@ class RLLibActionMaskEnv(gym.Wrapper):
             ),
         )
         env = ShapedRewardWrapper(env)
-        env = TimeLimit(env, max_episode_steps=_MAX_EPISODE_STEPS)
-        super().__init__(env)
-        self.observation_space = spaces.Dict({
-            "observations": env.observation_space,
-            "action_mask": spaces.Box(
-                low=0.0, high=1.0, shape=(A.N_ACTIONS,), dtype=np.float32
+        return TimeLimit(env, max_episode_steps=WHOLERUN_MAX_EPISODE_STEPS)
+
+    @staticmethod
+    def _make_combat_env(config):
+        ascension = int(config.get("ascension", 0))
+        floor_lo = int(config.get("floor_lo", 1))
+        floor_hi = int(config.get("floor_hi", 50))
+        hp_loss_coef = float(config.get("combat_hp_loss_coef", 0.0))
+        if floor_lo > floor_hi:
+            raise ValueError("--floor-lo must be <= --floor-hi")
+        if hp_loss_coef < 0:
+            raise ValueError("--combat-hp-loss-coef must be non-negative")
+
+        def _builder(np_random):
+            return factories.random_gauntlet_factory(
+                np_random,
+                ascension=ascension,
+                floor_range=(floor_lo, floor_hi),
+            )
+
+        env = SlayTheSpireEnv(
+            backend_factory=lambda: SimCombatBackend(
+                _builder, ascension=ascension
             ),
-        })
+            card_language=bool(config.get("card_language", False)),
+            combat_language=bool(config.get("combat_language", False)),
+        )
+        env = CombatGauntletRewardWrapper(
+            env,
+            hp_loss_coef=hp_loss_coef,
+        )
+        return TimeLimit(env, max_episode_steps=COMBAT_MAX_EPISODE_STEPS)
 
     def _masked(self, observation):
         mask = self.env.get_wrapper_attr("action_masks")()
@@ -211,6 +338,15 @@ class RLLibActionMaskEnv(gym.Wrapper):
 
     def step(self, action):
         observation, reward, terminated, truncated, info = self.env.step(action)
+        if (
+            self._task == "combat"
+            and (terminated or truncated)
+            and "combats_won" not in info
+        ):
+            info = dict(info)
+            backend = self.env.unwrapped.thick
+            info["combats_won"] = int(getattr(backend, "combats_won", 0))
+            info["combat_act"] = backend.gc.act
         return (
             self._masked(observation), reward, terminated, truncated, info
         )
@@ -259,15 +395,26 @@ class StSRLLibTorchModel(TorchModelV2, torch.nn.Module):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Train whole-run PPO with RLlib distributed sampling."
+        description="Train STS PPO with RLlib distributed sampling."
     )
     parser.add_argument(
-        "--task", choices=["wholerun"], default="wholerun",
-        help="Compatibility with rl.trainer; RLlib currently trains wholerun.",
+        "--task", choices=TASKS, default="wholerun",
+        help="Training task: wholerun or combat gauntlet pretraining.",
     )
     parser.add_argument("--steps", type=int, default=1_000_000)
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--floor-lo", type=int, default=1)
+    parser.add_argument("--floor-hi", type=int, default=50)
+    parser.add_argument(
+        "--combat-hp-loss-coef",
+        type=float,
+        nargs="?",
+        const=0.02,
+        default=0.0,
+        help="Combat task only: subtract coefficient * net HP lost when each "
+             "combat ends. Passing the flag without a value uses 0.02.",
+    )
     parser.add_argument("--num-env-runners", type=int, default=4)
     parser.add_argument("--envs-per-runner", type=int, default=4)
     parser.add_argument(
@@ -565,6 +712,11 @@ def _normalize_compat_args(args):
     """Translate rl.trainer spellings and checkpoint-derived model geometry."""
     if args.init_from and args.resume:
         raise ValueError("--init-from and --resume are mutually exclusive")
+    if args.task == "combat":
+        if args.floor_lo > args.floor_hi:
+            raise ValueError("--floor-lo must be <= --floor-hi")
+        if args.combat_hp_loss_coef < 0:
+            raise ValueError("--combat-hp-loss-coef must be non-negative")
     if args.gradient_accumulation_steps < 1:
         raise ValueError("--gradient-accumulation-steps must be at least 1")
     if args.n_envs is not None:
@@ -869,6 +1021,51 @@ def _summary(result, elapsed):
         custom_name = f"game/floor_won/{key}_mean"
         if custom_name in custom:
             summary[f"game/floor_won/{key}"] = custom[custom_name]
+    for metric_name in (
+        "cleared_per_episode",
+        "hp_lost_per_combat",
+        "hp_penalty_per_combat",
+    ):
+        direct = _number_metric(
+            result,
+            f"env_runners/combat/{metric_name}",
+            f"combat/{metric_name}",
+            default=None,
+        )
+        if direct is not None:
+            summary[f"combat/{metric_name}"] = direct
+            continue
+        custom_name = f"combat/{metric_name}_mean"
+        if custom_name in custom:
+            summary[f"combat/{metric_name}"] = custom[custom_name]
+    for act in (1, 2, 3):
+        metric_name = f"cleared_act{act}"
+        direct = _number_metric(
+            result,
+            f"env_runners/combat/{metric_name}",
+            f"combat/{metric_name}",
+            default=None,
+        )
+        if direct is not None:
+            summary[f"combat/{metric_name}"] = direct
+            continue
+        custom_name = f"combat/{metric_name}_mean"
+        if custom_name in custom:
+            summary[f"combat/{metric_name}"] = custom[custom_name]
+    for threshold in COMBAT_CLEAR_THRESHOLDS:
+        metric_name = f"clear_ge_{threshold}"
+        direct = _number_metric(
+            result,
+            f"env_runners/combat/{metric_name}",
+            f"combat/{metric_name}",
+            default=None,
+        )
+        if direct is not None:
+            summary[f"combat/{metric_name}"] = direct
+            continue
+        custom_name = f"combat/{metric_name}_mean"
+        if custom_name in custom:
+            summary[f"combat/{metric_name}"] = custom[custom_name]
     summary["bottleneck"] = (
         "sampling/cpu" if sample_ms >= learn_ms else "learning/gpu"
     )
@@ -899,6 +1096,7 @@ def main():
     print(
         "[rllib] distribution="
         + json.dumps({
+            "task": args.task,
             "num_env_runners": args.num_env_runners,
             "envs_per_runner": args.envs_per_runner,
             "total_envs": args.num_env_runners * args.envs_per_runner,
@@ -934,6 +1132,7 @@ def main():
             algo = Algorithm.from_checkpoint(str(args.resume.resolve()))
         else:
             env_config = {
+                "task": args.task,
                 "ascension": args.ascension,
                 "global_map_view": args.global_map_view,
                 "card_language": args.card_language,
@@ -941,6 +1140,9 @@ def main():
                 "deck_size_observation": args.deck_size_observation,
                 "neow_observation": args.neow_observation,
                 "event_option_observation": args.event_option_observation,
+                "floor_lo": args.floor_lo,
+                "floor_hi": args.floor_hi,
+                "combat_hp_loss_coef": args.combat_hp_loss_coef,
             }
             config = (
                 PPOConfig()

@@ -48,6 +48,27 @@ uv run python -m rl.rllib_trainer \
   --wandb-name wholerun-rllib
 ```
 
+Combat-gauntlet pretraining with card and combat language observations:
+
+```bash
+uv run python -m rl.rllib_trainer \
+  --task combat \
+  --steps 8000000 \
+  --max-env-runners 16 \
+  --num-env-runners 16 \
+  --envs-per-runner 2 \
+  --num-cpus-per-env-runner 1 \
+  --num-gpus 1 \
+  --batch-size 256 \
+  --gradient-accumulation-steps 128 \
+  --rollout-fragment-length 64 \
+  --card-language \
+  --combat-language \
+  --wandb \
+  --wandb-project sts-rl \
+  --wandb-name combat-lang-card-combat-bs32768-mb256
+```
+
 `--init-from` copies the shared policy/value core from an SB3 `.zip` and starts
 RLlib at step zero with a fresh optimizer. The checkpoint must use
 `StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
@@ -88,6 +109,45 @@ python -m rl.rllib_trainer \
   --resume rl/runs/rllib/<run>/final \
   --steps 16000000
 ```
+
+For the local parameter dashboard, download only the policy weights file from
+the newest checkpoint:
+
+```text
+rl/runs/rllib/<run>/step_checkpoints/policies/default_policy/policy_state.pkl
+```
+
+Upload that `.pkl` directly in `python -m rl.dashboard`. The dashboard does not
+need `algorithm_state.pkl`; resuming training still requires the complete RLlib
+checkpoint directory shown above.
+
+The dashboard also exposes a reusable hybrid comparison interface on port 8765.
+It compares pure `policy_state.pkl` against a hybrid that routes one phase to
+the RLlib policy and everything else to the SB3 checkpoint:
+
+```bash
+python -m rl.dashboard --port 8765
+```
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/hybrid-eval/start \
+  -H "Content-Type: application/json" \
+  -d "{\"episodes\":100,\"seed\":10000,\"num_envs\":16,\"route_phase\":\"combat\"}"
+```
+
+By default the interface reads:
+
+```text
+C:\Users\Tony2\Downloads\policy_state.pkl
+C:\Users\Tony2\Downloads\maskable_ppo_6400000_steps.zip
+```
+
+Use `GET /api/hybrid-eval/status` to poll progress and
+`POST /api/hybrid-eval/stop` to stop the current run. Each run writes
+`summary.json`, `episodes.csv`, `stdout.log`, and `stderr.log` under
+`rl/runs/eval-hybrid/dashboard-*`.
+
+Set `"route_phase":"map"` to test the route-selection hybrid the same way.
 
 For a multi-node Ray cluster, start the head and workers with `ray start`, make
 the repository and compiled simulator available on every node, then add
