@@ -459,6 +459,15 @@ def build_parser():
     )
     parser.add_argument("--num-gpus", type=float, default=1.0)
     parser.add_argument(
+        "--simple-optimizer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use RLlib's train_one_step path instead of multi_gpu_train_one_step. "
+             "This keeps only each PPO minibatch on GPU and avoids staging the "
+             "whole train batch there; pass --no-simple-optimizer to restore "
+             "RLlib's default multi-GPU batch loader.",
+    )
+    parser.add_argument(
         "--rollout-fragment-length", type=_fragment_length, default="auto",
         help="Steps sampled per runner fragment; auto matches train batch size.",
     )
@@ -799,6 +808,19 @@ def _install_gradient_accumulation(algo, steps):
     )
 
 
+def _set_simple_optimizer(algo_or_config, enabled: bool) -> None:
+    config = getattr(algo_or_config, "config", algo_or_config)
+    config.simple_optimizer = bool(enabled)
+
+
+def _optimizer_path(config) -> str:
+    return (
+        "train_one_step"
+        if bool(getattr(config, "simple_optimizer", False))
+        else "multi_gpu_train_one_step"
+    )
+
+
 def _normalize_compat_args(args):
     """Translate rl.trainer spellings and checkpoint-derived model geometry."""
     if args.init_from and args.resume:
@@ -828,6 +850,12 @@ def _normalize_compat_args(args):
         )
     if args.device == "cpu":
         args.num_gpus = 0.0
+    if args.simple_optimizer and args.num_gpus > 1.0:
+        raise ValueError(
+            "--simple-optimizer supports at most one learner GPU. Use "
+            "--no-simple-optimizer for multi-GPU RLlib updates, or lower "
+            "--num-gpus to 1."
+        )
 
     sb3_source = None
     sb3_resume_steps = 0
@@ -1304,6 +1332,7 @@ def _print_sb3_table(summary: Mapping[str, object]) -> None:
             "hp_penalty_per_combat",
         ),
         "rllib": (
+            "optimizer_path",
             "sample_throughput",
             "iteration_steps",
         ),
@@ -1371,6 +1400,11 @@ def main():
             "num_cpus_for_main_process": args.num_cpus_for_main_process,
             "create_local_env_runner": args.create_local_env_runner,
             "sample_timeout_s": args.sample_timeout_s,
+            "optimizer_path": (
+                "train_one_step"
+                if args.simple_optimizer
+                else "multi_gpu_train_one_step"
+            ),
             "max_requests_in_flight_per_env_runner":
                 args.max_requests_in_flight_per_env_runner,
             **distribution,
@@ -1413,6 +1447,7 @@ def main():
                     flush=True,
                 )
             algo = Algorithm.from_checkpoint(str(resume_path))
+            _set_simple_optimizer(algo, args.simple_optimizer)
         else:
             env_config = {
                 "task": args.task,
@@ -1484,6 +1519,7 @@ def main():
                     },
                 )
             )
+            _set_simple_optimizer(config, args.simple_optimizer)
             algo = config.build_algo()
             if sb3_source is not None:
                 _apply_sb3_weights(algo, sb3_source, args.freeze_encoder)
@@ -1494,6 +1530,10 @@ def main():
                     flush=True,
                 )
 
+        print(
+            f"[rllib] optimizer_path={_optimizer_path(algo.config)}",
+            flush=True,
+        )
         _install_gradient_accumulation(
             algo, args.gradient_accumulation_steps
         )
@@ -1521,6 +1561,7 @@ def main():
             result = algo.train()
             summary = _summary(result, time.perf_counter() - started)
             _apply_step_offset(summary, sb3_resume_steps)
+            summary["rllib/optimizer_path"] = _optimizer_path(algo.config)
             if args.gradient_accumulation_steps > 1:
                 policy = algo.get_policy()
                 summary["train/effective_batch_size"] = args.train_batch_size
