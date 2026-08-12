@@ -13,6 +13,7 @@ sim/sts_lightspeed/cmake-build-*/
 *.obj
 
 # CommunicationMod run captures (real-game logs) -- local only, can be large
+bridge/client/*.log
 bridge/client/logs/
 
 # RL training artifacts (checkpoints, tensorboard logs)

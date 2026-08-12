@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from types import MethodType, SimpleNamespace
 
@@ -917,6 +918,16 @@ def _number_metric(result, *paths, default=None):
         return default
 
 
+def _timesteps_this_iter(result):
+    return _number_metric(
+        result,
+        "num_env_steps_sampled_this_iter",
+        "env_runners/num_env_steps_sampled_this_iter",
+        "env_runners/num_env_steps_sampled",
+        default=None,
+    )
+
+
 def _summary(result, elapsed):
     sample_ms = _number_metric(
         result, "timers/sample_time_ms", "timers/sample_time_ms_mean",
@@ -933,22 +944,22 @@ def _summary(result, elapsed):
     ) or 0.0
     sampled_steps = _sampled_steps(result)
     summary = {
-        "iteration": result.get("training_iteration"),
-        "steps": sampled_steps,
-        "agent_steps": _agent_steps(result),
-        "trained_steps": _trained_steps(result),
-        "episodes_total": _episodes_total(result),
-        "episode_return_mean": _metric(
+        "time/iterations": result.get("training_iteration"),
+        "time/total_timesteps": sampled_steps,
+        "rllib/agent_steps": _agent_steps(result),
+        "rllib/trained_steps": _trained_steps(result),
+        "rollout/episodes_total": _episodes_total(result),
+        "rollout/ep_rew_mean": _metric(
             result,
             "env_runners/episode_return_mean",
             "episode_reward_mean",
         ),
-        "episode_len_mean": _metric(
+        "rollout/ep_len_mean": _metric(
             result,
             "env_runners/episode_len_mean",
             "episode_len_mean",
         ),
-        "sample_throughput": _number_metric(
+        "rllib/sample_throughput": _number_metric(
             result,
             "env_runners/num_env_steps_sampled_per_second",
             "env_runners/num_env_steps_sampled_throughput_per_sec",
@@ -956,37 +967,109 @@ def _summary(result, elapsed):
             "num_env_steps_sampled_throughput_per_sec",
             "num_env_steps_sampled_per_second",
         ),
-        "sample_seconds": round(float(sample_ms) / 1000.0, 3),
-        "learn_seconds": round(float(learn_ms) / 1000.0, 3),
-        "sync_weights_seconds": round(float(sync_ms) / 1000.0, 3),
-        "cpu_percent": _metric(result, "perf/cpu_util_percent"),
-        "iteration_seconds": round(elapsed, 3),
+        "perf/sample_seconds": round(float(sample_ms) / 1000.0, 3),
+        "perf/train_update_seconds": round(float(learn_ms) / 1000.0, 3),
+        "perf/sync_weights_seconds": round(float(sync_ms) / 1000.0, 3),
+        "perf/iteration_seconds": round(elapsed, 3),
+        "perf/cpu_percent": _metric(result, "perf/cpu_util_percent"),
+        "time/time_elapsed": 0,
     }
+    # Backwards-compatible aliases for existing dashboards/scripts.
+    summary["iteration"] = summary["time/iterations"]
+    summary["steps"] = summary["time/total_timesteps"]
+    summary["agent_steps"] = summary["rllib/agent_steps"]
+    summary["trained_steps"] = summary["rllib/trained_steps"]
+    summary["episodes_total"] = summary["rollout/episodes_total"]
+    summary["episode_return_mean"] = summary["rollout/ep_rew_mean"]
+    summary["episode_len_mean"] = summary["rollout/ep_len_mean"]
+    summary["sample_throughput"] = summary["rllib/sample_throughput"]
+    summary["sample_seconds"] = summary["perf/sample_seconds"]
+    summary["learn_seconds"] = summary["perf/train_update_seconds"]
+    summary["sync_weights_seconds"] = summary["perf/sync_weights_seconds"]
+    summary["cpu_percent"] = summary["perf/cpu_percent"]
+    summary["iteration_seconds"] = summary["perf/iteration_seconds"]
+
     # Match SB3's time/fps semantics: all sampled steps divided by the
     # complete train iteration wall time (sampling + learning + sync).
     previous_steps = getattr(_summary, "_previous_steps", None)
-    iter_steps = _number_metric(
-        result,
-        "num_env_steps_sampled_this_iter",
-        "env_runners/num_env_steps_sampled_this_iter",
-        "env_runners/num_env_steps_sampled",
-        default=None,
-    )
+    iter_steps = _timesteps_this_iter(result)
     if iter_steps is None and previous_steps is not None:
-        iter_steps = summary["steps"] - previous_steps
+        iter_steps = summary["time/total_timesteps"] - previous_steps
     if iter_steps is None:
-        iter_steps = summary["steps"]
+        iter_steps = summary["time/total_timesteps"]
     iter_steps = max(0.0, float(iter_steps or 0.0))
-    if summary["sample_throughput"] in (None, 0.0) and sample_ms > 0 and iter_steps > 0:
-        summary["sample_throughput"] = round(iter_steps / (sample_ms / 1000.0), 2)
-    summary["total_throughput"] = round(
-        float(iter_steps) / elapsed, 2
-    ) if elapsed > 0 else 0.0
-    _summary._previous_steps = summary["steps"]
+    if (
+        summary["rllib/sample_throughput"] in (None, 0.0)
+        and sample_ms > 0
+        and iter_steps > 0
+    ):
+        summary["rllib/sample_throughput"] = round(
+            iter_steps / (sample_ms / 1000.0), 2
+        )
+        summary["sample_throughput"] = summary["rllib/sample_throughput"]
+    total_throughput = round(iter_steps / elapsed, 2) if elapsed > 0 else 0.0
+    lifetime_started = getattr(_summary, "_started_at", None)
+    if lifetime_started is None:
+        lifetime_started = time.monotonic() - max(elapsed, 0.0)
+        _summary._started_at = lifetime_started
+        _summary._start_steps = max(
+            0, summary["time/total_timesteps"] - int(iter_steps)
+        )
+    lifetime_elapsed = max(time.monotonic() - lifetime_started, 1e-12)
+    lifetime_steps = (
+        summary["time/total_timesteps"] - getattr(_summary, "_start_steps", 0)
+    )
+    summary["time/time_elapsed"] = int(lifetime_elapsed)
+    summary["time/elapsed_seconds"] = lifetime_elapsed
+    summary["time/fps"] = int(lifetime_steps / lifetime_elapsed)
+    summary["speed/env_steps_per_second"] = total_throughput
+    summary["speed/env_steps_per_second_lifetime"] = (
+        lifetime_steps / lifetime_elapsed
+    )
+    summary["total_throughput"] = total_throughput
+    _summary._previous_steps = summary["time/total_timesteps"]
+    summary["rllib/iteration_steps"] = int(iter_steps)
     summary["iteration_steps"] = int(iter_steps)
+    summary["rllib/no_samples"] = iter_steps <= 0
     summary["no_samples"] = iter_steps <= 0
     custom = _metric(result, "env_runners/custom_metrics", "custom_metrics",
                      default={}) or {}
+    learner_paths = (
+        "info/learner/default_policy/learner_stats",
+        "learners/default_policy/learner_stats",
+        "learner/default_policy/learner_stats",
+    )
+    train_mapping = {
+        "train/loss": ("total_loss", "loss"),
+        "train/policy_gradient_loss": ("policy_loss", "pi_loss"),
+        "train/value_loss": ("vf_loss", "value_loss"),
+        "train/approx_kl": ("kl", "mean_kl_loss"),
+        "train/explained_variance": ("vf_explained_var", "explained_variance"),
+    }
+    for out_key, names in train_mapping.items():
+        for base_path in learner_paths:
+            value = _number_metric(
+                result,
+                *(f"{base_path}/{name}" for name in names),
+                default=None,
+            )
+            if value is not None:
+                summary[out_key] = value
+                break
+        if out_key in summary:
+            continue
+    entropy = None
+    for base_path in learner_paths:
+        entropy = _number_metric(
+            result,
+            f"{base_path}/entropy",
+            f"{base_path}/mean_entropy",
+            default=None,
+        )
+        if entropy is not None:
+            break
+    if entropy is not None:
+        summary["train/entropy_loss"] = -float(entropy)
     for metric_name in (
         "win_rate", "floor_mean", "deck_size_mean",
         "act_1_won_mean", "act_2_won_mean", "act_3_won_mean",
@@ -1072,6 +1155,95 @@ def _summary(result, elapsed):
     return summary
 
 
+def _format_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        if abs(value) >= 1000:
+            return f"{value:.0f}"
+        if abs(value) >= 100:
+            return f"{value:.1f}"
+        return f"{value:.3g}"
+    return str(value)
+
+
+def _print_sb3_table(summary: Mapping[str, object]) -> None:
+    groups = {
+        "rollout": (
+            "ep_len_mean",
+            "ep_rew_mean",
+            "episodes_total",
+        ),
+        "time": (
+            "fps",
+            "iterations",
+            "time_elapsed",
+            "total_timesteps",
+        ),
+        "speed": (
+            "env_steps_per_second",
+            "env_steps_per_second_lifetime",
+        ),
+        "train": (
+            "loss",
+            "policy_gradient_loss",
+            "value_loss",
+            "entropy_loss",
+            "approx_kl",
+            "explained_variance",
+            "effective_batch_size",
+            "optimizer_steps",
+        ),
+        "perf": (
+            "sample_seconds",
+            "train_update_seconds",
+            "sync_weights_seconds",
+        ),
+        "game": (
+            "win_rate",
+            "floor_mean",
+            "deck_size_mean",
+        ),
+        "combat": (
+            "cleared_per_episode",
+            "hp_lost_per_combat",
+            "hp_penalty_per_combat",
+        ),
+        "rllib": (
+            "sample_throughput",
+            "iteration_steps",
+        ),
+    }
+    rows: list[tuple[str, str, str]] = []
+    for group, names in groups.items():
+        for name in names:
+            key = f"{group}/{name}"
+            if key in summary and summary[key] is not None:
+                rows.append((group, name, _format_value(summary[key])))
+    if not rows:
+        print("[rllib] " + json.dumps(dict(summary), ensure_ascii=False), flush=True)
+        return
+    key_width = max(len(name) for _group, name, _value in rows)
+    val_width = max(len(value) for _group, _name, value in rows)
+    sep_width = key_width + val_width + 7
+    current = None
+    for group, name, value in rows:
+        if group != current:
+            print("-" * sep_width, flush=True)
+            print(f"| {group:<{sep_width - 4}} |", flush=True)
+            print("|" + "-" * (sep_width - 2) + "|", flush=True)
+            current = group
+        print(f"| {name:<{key_width}} | {value:>{val_width}} |", flush=True)
+    print("-" * sep_width, flush=True)
+
+
+def _apply_step_offset(summary: dict, offset: int) -> None:
+    if offset <= 0:
+        return
+    for key in ("time/total_timesteps", "steps"):
+        summary[key] = int(summary.get(key, 0) or 0) + offset
+
+
 def main():
     args = build_parser().parse_args()
     sb3_source, sb3_resume_steps = _normalize_compat_args(args)
@@ -1127,6 +1299,8 @@ def main():
                 config=vars(args),
                 dir=str(run_dir),
             )
+            wandb.define_metric("time/total_timesteps")
+            wandb.define_metric("*", step_metric="time/total_timesteps")
 
         if args.resume and sb3_source is None:
             algo = Algorithm.from_checkpoint(str(args.resume.resolve()))
@@ -1237,14 +1411,18 @@ def main():
             started = time.perf_counter()
             result = algo.train()
             summary = _summary(result, time.perf_counter() - started)
-            summary["steps"] += sb3_resume_steps
+            _apply_step_offset(summary, sb3_resume_steps)
             if args.gradient_accumulation_steps > 1:
                 policy = algo.get_policy()
                 summary["train/effective_batch_size"] = args.train_batch_size
                 summary["train/optimizer_steps"] = policy._sts_optimizer_steps
-            print("[rllib] " + json.dumps(summary, ensure_ascii=False), flush=True)
+            _print_sb3_table(summary)
+            print(
+                "[rllib-json] " + json.dumps(summary, ensure_ascii=False),
+                flush=True,
+            )
             if wandb_run is not None:
-                wandb_run.log(summary, step=summary["steps"])
+                wandb_run.log(summary, step=summary["time/total_timesteps"])
             iteration = int(result.get("training_iteration", 0))
             if args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0:
                 saved = algo.save(str(run_dir / "checkpoints"))

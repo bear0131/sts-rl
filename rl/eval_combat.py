@@ -128,20 +128,24 @@ def evaluate_checkpoint(args: argparse.Namespace, checkpoint: Path) -> EvalResul
 
     load_started = time.monotonic()
     print(f"[eval-combat] loading checkpoint: {checkpoint}", flush=True)
+    model = MaskablePPO.load(checkpoint, device=args.device)
+    card_language = _model.uses_card_language(model)
+    combat_language = _model.uses_combat_language(model)
     env_args = argparse.Namespace(
         floor_lo=args.floor_lo,
         floor_hi=args.floor_hi,
         ascension=args.ascension,
         combat_hp_loss_coef=0.0,
-        card_language=False,
-        combat_language=False,
+        card_language=card_language,
+        combat_language=combat_language,
     )
     env = CombatTask().make_env_fn(env_args)()
-    model = MaskablePPO.load(checkpoint, device=args.device)
     model.set_random_seed(args.seed)
     print(
         f"[eval-combat] loaded {checkpoint.name} in "
-        f"{time.monotonic() - load_started:.1f}s; starting {args.episodes} episodes",
+        f"{time.monotonic() - load_started:.1f}s; "
+        f"card_language={card_language} combat_language={combat_language}; "
+        f"starting {args.episodes} episodes",
         flush=True,
     )
 

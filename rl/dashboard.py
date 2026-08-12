@@ -172,6 +172,7 @@ class WatchSession:
         self.decision = None
         self.map_state: dict | None = None
         self.map_states: dict[int, dict] = {}
+        self.card_reward_choices: list[dict] = []
         self.reset(seed)
 
     def close(self):
@@ -190,6 +191,7 @@ class WatchSession:
         self.last_reward = 0.0
         self.map_state = None
         self.map_states = {}
+        self.card_reward_choices = []
         self._prepare_decision()
         if precompute:
             return self.precompute_run()
@@ -303,6 +305,8 @@ class WatchSession:
             self.history.append(action)
         label = self.env.describe_action(action)
         animation = self._action_animation(action)
+        canon_before = self.env.unwrapped.thick.obs_canonical()
+        self._record_card_reward_choice(action, canon_before)
         self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
         self.position += 1
         if self.terminated or self.truncated:
@@ -337,8 +341,13 @@ class WatchSession:
         self.last_reward = 0.0
         self.position = 0
         self.map_state = None
+        self.card_reward_choices = []
         for action in self.history[:target_step]:
             label = self.env.describe_action(action)
+            canon_before = self.env.unwrapped.thick.obs_canonical()
+            self._record_card_reward_choice(
+                action, canon_before, include_current_prob=False
+            )
             self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
             self.position += 1
             self.total_reward += float(reward)
@@ -434,6 +443,49 @@ class WatchSession:
             "current": list(state["current"]) if state["current"] else None,
         }
 
+    def _record_card_reward_choice(
+        self, action: int, canon: dict, *, include_current_prob: bool = True
+    ) -> None:
+        phase = self.info.get("phase") if self.info else canon.get("phase")
+        if phase != "combat_reward":
+            return
+        options = canon.get("options") or {}
+        cards = options.get("cards") or []
+        if not cards:
+            return
+        card_base = A.seg_base("REWARD_CARD")
+        skip_action = A.seg_base("REWARD_SKIP")
+        selected_index = None
+        skipped = False
+        if card_base <= action < card_base + A.REWARD_CARD:
+            selected_index = int(action - card_base)
+            if selected_index >= len(cards):
+                return
+        elif action == skip_action:
+            skipped = True
+        else:
+            return
+
+        stats = self.info.get("run_stats", {}) if self.info else {}
+        global_state = canon.get("global") or {}
+        prob = None
+        if include_current_prob and self.decision:
+            for ranked in self.decision.get("top_actions", []):
+                if int(ranked.get("action", -1)) == int(action):
+                    prob = ranked.get("prob")
+                    break
+        self.card_reward_choices.append({
+            "step": self.position,
+            "floor": int(stats.get("floor", global_state.get("floor", 0)) or 0),
+            "cards": list(cards),
+            "selected_index": selected_index,
+            "skipped": skipped,
+            "relics": list(global_state.get("relics", [])),
+            "action": int(action),
+            "action_label": self.env.describe_action(action),
+            "prob": prob,
+        })
+
     def snapshot(self):
         canon = self.env.unwrapped.thick.obs_canonical()
         map_snapshot = self._update_map(canon)
@@ -479,6 +531,7 @@ class WatchSession:
             ],
             "timeline": self.timeline,
             "timeline_exhausted": self.timeline_exhausted,
+            "card_reward_choices": self.card_reward_choices,
         })
 
 
@@ -720,7 +773,7 @@ class DashboardState:
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
                 "seed": seed, "started_at": time.time(), "death_floors": {},
-                "death_seeds": {}, "current_episode": 1,
+                "death_seeds": {}, "win_seeds": [], "current_episode": 1,
                 "current_steps": 0, "current_floor": 0,
                 "current_phase": None, "current_action": None,
             }
@@ -742,6 +795,7 @@ class DashboardState:
         )
         death_floors: Counter[int] = Counter()
         death_seeds: dict[int, list[int]] = {}
+        win_seeds: list[int] = []
         result_counts: Counter[str] = Counter()
         floors: list[int] = []
         lengths: list[int] = []
@@ -785,6 +839,7 @@ class DashboardState:
                 floor = int(stats["floor"])
                 if is_win(env):
                     result = "win"
+                    win_seeds.append(seed + episode)
                 elif truncated and info.get("dead_screen"):
                     result = "dead_screen"
                 elif truncated:
@@ -808,6 +863,7 @@ class DashboardState:
                             floor: seeds
                             for floor, seeds in sorted(death_seeds.items())
                         },
+                        "win_seeds": win_seeds,
                         "results": dict(result_counts),
                         "floor_mean": float(np.mean(floors)),
                         "floor_median": float(np.median(floors)),

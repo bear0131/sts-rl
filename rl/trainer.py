@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from stable_baselines3.common.callbacks import (
+    BaseCallback,
     CallbackList,
     CheckpointCallback,
 )
@@ -31,6 +32,22 @@ from stable_baselines3.common.vec_env import (
 
 from rl.tasks import TASKS
 from rl.accumulating_ppo import AccumulatingMaskablePPO
+
+
+class WandbStepMetricCallback(BaseCallback):
+    """Expose SB3's TensorBoard global step as an explicit W&B scalar."""
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        import wandb
+
+        if wandb.run is not None:
+            wandb.log(
+                {"time/total_timesteps": int(self.num_timesteps)},
+                step=int(self.num_timesteps),
+            )
 
 
 def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
@@ -540,6 +557,7 @@ def main() -> None:
             sync_tensorboard=True,
             save_code=True,
         )
+        wandb.define_metric("time/total_timesteps")
         callbacks.append(
             WandbCallback(
                 gradient_save_freq=args.wandb_grad_freq,
@@ -548,6 +566,7 @@ def main() -> None:
                 verbose=2,
             )
         )
+        callbacks.append(WandbStepMetricCallback())
 
     callback = CallbackList(callbacks)
 
@@ -605,6 +624,10 @@ def main() -> None:
                 "performance_profile": args.profile_performance,
             },
         )
+        # SB3 load restores weights/optimizer state but not the RNG state.
+        # Re-apply the run seed so resume and fresh runs initialize sampling
+        # the same way.
+        model.set_random_seed(args.seed)
         # Each resume command creates a new run directory and metrics callback.
         # Do not carry the checkpoint's rolling episode statistics into that
         # new run: they may describe an older environment contract (notably the

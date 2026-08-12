@@ -55,9 +55,15 @@ class StSMetricsCallback(BaseCallback):
         self._deck = deque(maxlen=window)
         self._n_episodes = 0
         self._t0 = None
+        self._last_speed_t = None
+        self._last_speed_steps = 0
+        self._start_steps = 0
 
     def _on_training_start(self) -> None:
         self._t0 = time.monotonic()
+        self._last_speed_t = self._t0
+        self._last_speed_steps = int(self.num_timesteps)
+        self._start_steps = int(self.num_timesteps)
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
@@ -113,7 +119,25 @@ class StSMetricsCallback(BaseCallback):
                     mean([1.0 if f > t else 0.0 for f in self._floor]),
                 )
         if self._t0 is not None:
-            self.logger.record("time/elapsed_seconds", time.monotonic() - self._t0)
+            now = time.monotonic()
+            elapsed = now - self._t0
+            self.logger.record("time/elapsed_seconds", elapsed)
+            trained_steps = int(self.num_timesteps) - self._start_steps
+            if elapsed > 0:
+                self.logger.record(
+                    "speed/env_steps_per_second_lifetime",
+                    trained_steps / elapsed,
+                )
+            if self._last_speed_t is not None:
+                dt = now - self._last_speed_t
+                d_steps = int(self.num_timesteps) - self._last_speed_steps
+                if dt > 0:
+                    self.logger.record(
+                        "speed/env_steps_per_second",
+                        d_steps / dt,
+                    )
+            self._last_speed_t = now
+            self._last_speed_steps = int(self.num_timesteps)
 
 
 class WholeRunTask(Task):

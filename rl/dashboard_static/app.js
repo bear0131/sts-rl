@@ -16,6 +16,7 @@ let selectedMapAct = null;
 let mapPreviewing = false;
 let previewedMapKeys = new Set();
 let hybridRoutePhaseDirty = false;
+let rewardChoicesCollapsed = false;
 
 const zhCards = {
   Strike_R: "打击", Defend_R: "防御", Bash: "痛击", Anger: "愤怒",
@@ -85,6 +86,19 @@ function decisionActionText(action, event) {
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+}
+function evaluationWinSeeds(e) {
+  if (Array.isArray(e?.win_seeds)) return e.win_seeds.map(Number).filter(Number.isFinite);
+  const results = e?.results || {};
+  if (!results.win || results.dead_screen || results.other_truncation) return [];
+  const start = Number(e?.seed), total = Number(e?.completed || e?.episodes);
+  if (!Number.isFinite(start) || !Number.isFinite(total) || total > 20000) return [];
+  const death = new Set(Object.values(e?.death_seeds || {}).flat().map(Number));
+  const seeds = [];
+  for (let seed = start; seed < start + total; seed += 1) {
+    if (!death.has(seed)) seeds.push(seed);
+  }
+  return seeds;
 }
 function toast(message) {
   $("toast").textContent = message; $("toast").classList.add("show");
@@ -260,6 +274,17 @@ $("evalButton").addEventListener("click", async () => {
     renderEvaluation();
   } catch (e) { toast(e.message); }
 });
+$("winSeedList").addEventListener("click", async event => {
+  const button = event.target.closest(".seed-pill");
+  if (!button) return;
+  $("watchSeed").value = button.dataset.seed;
+  watchSeedDirty = false;
+  document.querySelector('.tab[data-tab="watch"]').click();
+  try {
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed:Number(button.dataset.seed), precompute:true}), headers:{"Content-Type":"application/json"}});
+    renderWatch();
+  } catch (e) { toast(e.message); }
+});
 
 $("hybridEvalButton").addEventListener("click", async () => {
   try {
@@ -313,6 +338,7 @@ function cardMeta(card) {
   const id = card?.id ?? card?.[0] ?? String(card ?? "");
   const up = Number(card?.up ?? card?.[1] ?? 0) || 0;
   const catalog = appState?.card_catalog?.[id] || {};
+  const baseEffect = catalog.effect_zh || catalog.effect_en || id;
   return {
     id,
     up,
@@ -322,65 +348,71 @@ function cardMeta(card) {
     cost: card?.cost ?? catalog.cost?.[Math.min(up, 1)] ?? "?",
     damage: catalog.damage?.[Math.min(up, 1)] ?? 0,
     block: catalog.block?.[Math.min(up, 1)] ?? 0,
-    effect: catalog.effect_zh || catalog.effect_en || id,
+    effect: upgradeEffectText(baseEffect, up > 0, id),
   };
 }
 
-function cardCostText(cost) {
-  if (cost === -1 || cost === "X") return "X";
-  if (cost == null || cost === "") return "?";
-  return String(cost);
-}
-
-function shortEffect(text, max = 48) {
-  const clean = String(text || "").replace(/\s+/g, "");
-  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
-}
-
-function hashString(value) {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
+function upgradeEffectText(text, upgraded, cardId) {
+  if (cardId === "Burn") {
+    return upgraded
+      ? "无法打出。回合结束时受到4点伤害。"
+      : "无法打出。回合结束时受到2点伤害。";
   }
-  return hash >>> 0;
+  let out = String(text || "").trim();
+  if (!out) return "";
+  out = out.replace(/未升级时消耗；升级后不消耗。/g, upgraded ? "不消耗。" : "消耗。");
+  out = out.replace(/升级后固有。/g, upgraded ? "固有。" : "");
+  out = out.replace(/一张\/所有牌/g, upgraded ? "所有牌" : "一张牌");
+  out = out.replace(/随机\/选择/g, upgraded ? "选择" : "随机");
+  out = out.replace(/one\/all/gi, upgraded ? "all" : "one");
+  out = out.replace(/random\/chosen/gi, upgraded ? "chosen" : "random");
+  out = out.replace(/([0-9X]+)\/([0-9X]+)/g, (_m, left, right) => (
+    upgraded ? right : left
+  ));
+  out = out.replace(/\s+/g, " ").replace(/\s*([。！？；，,])/g, "$1").trim();
+  return out;
+}
+
+function splitCardText(text, maxChars, maxLines) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (!clean) return [""];
+  const lines = [];
+  let rest = clean;
+  while (rest && lines.length < maxLines) {
+    if (rest.length <= maxChars || lines.length === maxLines - 1) {
+      lines.push(rest);
+      break;
+    }
+    let cut = rest.lastIndexOf(" ", maxChars);
+    if (cut < Math.floor(maxChars * 0.45)) cut = maxChars;
+    lines.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest && lines.length >= maxLines) {
+    lines[maxLines - 1] = `${lines[maxLines - 1].slice(0, Math.max(0, maxChars - 1))}…`;
+  }
+  return lines.filter(Boolean);
+}
+
+function svgTextLines(text, x, y, lineHeight, maxChars, maxLines) {
+  return splitCardText(text, maxChars, maxLines).map((line, index) => (
+    index === 0
+      ? `<tspan x="${x}" dy="0">${escapeHtml(line)}</tspan>`
+      : `<tspan x="${x}" dy="${lineHeight}">${escapeHtml(line)}</tspan>`
+  )).join("");
 }
 
 function cardArtSvg(meta) {
-  const h = hashString(meta.id);
-  const r1 = 18 + (h % 58), r2 = 18 + ((h >> 6) % 58), r3 = 18 + ((h >> 12) % 58);
-  const initials = escapeHtml(String(meta.name || meta.id).replace("+", "").slice(0, 2));
-  const typeGlyph = meta.kind === "skill" ? "盾" : meta.kind === "power" ? "焰" : meta.kind === "status" ? "晕" : meta.kind === "curse" ? "咒" : "斩";
-  const motif = meta.kind === "skill"
-    ? `<path class="card-art-main" d="M50 19 L78 30 Q74 70 50 82 Q26 70 22 30 Z"/><path d="M50 30 V68 M35 45 H65"/>`
-    : meta.kind === "power"
-      ? `<path class="card-art-main" d="M49 82 C28 65 35 48 47 35 C48 49 63 39 55 18 C78 39 78 68 49 82 Z"/><path d="M45 70 C53 60 56 53 52 43"/>`
-      : meta.kind === "status" || meta.kind === "curse"
-        ? `<path class="card-art-main" d="M23 52 C31 25 70 25 77 52 C67 80 34 80 23 52 Z"/><circle cx="50" cy="52" r="12"/><path d="M37 40 Q50 29 63 40"/>`
-        : `<path class="card-art-main" d="M25 74 L68 20 L76 28 L33 82 Z"/><path d="M63 22 L78 37 M23 76 L38 91"/>`;
   return `<svg class="card-svg" viewBox="0 0 100 140" role="img" aria-label="${escapeHtml(meta.name)}">
-    <defs>
-      <radialGradient id="g${h}" cx="50%" cy="36%" r="70%">
-        <stop offset="0%" stop-color="rgb(${r1 + 130},${r2 + 116},${r3 + 92})"/>
-        <stop offset="100%" stop-color="rgb(${r1 + 38},${r2 + 32},${r3 + 26})"/>
-      </radialGradient>
-    </defs>
     <rect class="card-frame" x="3" y="3" width="94" height="134" rx="8"/>
-    <rect class="card-title-band" x="10" y="9" width="80" height="18" rx="5"/>
-    <circle class="card-cost-orb" cx="17" cy="18" r="11"/>
-    <text class="card-cost-text" x="17" y="22">${escapeHtml(cardCostText(meta.cost))}</text>
-    <text class="card-name-text" x="53" y="22">${escapeHtml(meta.name)}</text>
-    <rect class="card-art-box" x="11" y="31" width="78" height="55" rx="6" fill="url(#g${h})"/>
-    <g class="card-art-lines">${motif}</g>
-    <text class="card-type-glyph" x="50" y="66">${typeGlyph}</text>
-    <rect class="card-text-box" x="11" y="91" width="78" height="33" rx="5"/>
-    <text class="card-effect-text" x="50" y="104">${escapeHtml(shortEffect(meta.effect, 18))}</text>
-    <text class="card-id-text" x="50" y="118">${escapeHtml(meta.id)}</text>
-    ${meta.up ? `<path class="card-upgrade-star" d="M82 12 l2.5 5 5.5 .8 -4 3.9 .9 5.5 -4.9-2.6 -4.9 2.6 .9-5.5 -4-3.9 5.5-.8z"/>` : ""}
+    <rect class="card-name-band" x="10" y="9" width="80" height="30" rx="5"/>
+    <text class="card-name-text" x="50" y="19">${svgTextLines(meta.name, 50, 19, 9.6, 13, 2)}</text>
+    <rect class="card-effect-box" x="11" y="45" width="78" height="81" rx="6"/>
+    <text class="card-effect-text" x="50" y="60">${svgTextLines(meta.effect, 50, 60, 9.5, 12, 5)}</text>
   </svg>`;
 }
 
-function renderVectorCard(card, {index = null, slot = null, className = "", compact = false} = {}) {
+function renderVectorCard(card, {index = null, slot = null, className = "", compact = false, showOrder = index != null} = {}) {
   const meta = cardMeta(card);
   const attrs = [
     `class="vector-card ${meta.kind} ${compact ? "compact" : ""} ${className}"`,
@@ -388,7 +420,7 @@ function renderVectorCard(card, {index = null, slot = null, className = "", comp
   ];
   if (slot != null) attrs.push(`data-slot="${slot}"`);
   return `<div ${attrs.join(" ")}>
-    ${index != null ? `<span class="card-order">${index + 1}</span>` : ""}
+    ${showOrder && index != null ? `<span class="card-order">${index + 1}</span>` : ""}
     ${cardArtSvg(meta)}
   </div>`;
 }
@@ -401,10 +433,82 @@ function renderDeck(deck) {
   }).join("");
 }
 
+function setRewardChoicesCollapsed(collapsed) {
+  rewardChoicesCollapsed = Boolean(collapsed);
+  const panel = $("rewardChoicesPanel");
+  if (panel) panel.classList.toggle("collapsed", rewardChoicesCollapsed);
+  const button = $("rewardChoicesToggle");
+  if (button) {
+    button.setAttribute("aria-expanded", String(!rewardChoicesCollapsed));
+    button.textContent = rewardChoicesCollapsed ? "显示" : "隐藏";
+  }
+}
+
+function renderRewardChoices() {
+  const list = appState?.watch?.card_reward_choices || [];
+  const container = $("rewardChoicesList");
+  const panel = $("rewardChoicesPanel");
+  if (!container || !panel) return;
+  panel.classList.toggle("empty", !list.length);
+  if (!list.length) {
+    container.innerHTML = `<div class="reward-choice-empty">暂无选牌记录</div>`;
+    return;
+  }
+  const recent = list.slice(-12);
+  container.innerHTML = recent.map(choice => {
+    const cards = (choice.cards || []).slice(0, 3);
+    const selected = choice.selected_index;
+    const relics = new Set([
+      ...(choice.relics || []),
+      ...(appState?.watch?.canon?.global?.relics || []),
+    ]);
+    const missing = Math.max(0, 3 - cards.length);
+    const limitedReason = missing
+      ? relics.has("Busted Crown")
+        ? "破碎王冠：仅 1 张候选"
+        : `仅 ${cards.length} 张候选`
+      : "";
+    const note = choice.skipped
+      ? "跳过"
+      : selected != null && cards[selected]
+        ? `模型选中：${cardName(cards[selected])}`
+        : "未记录";
+    const slots = [0, 1, 2].map(index => {
+      const card = cards[index];
+      if (!card) {
+        return `<div class="reward-choice-card reward-choice-empty-card">
+          <span>无候选</span>
+        </div>`;
+      }
+      return renderVectorCard(card, {
+        index,
+        compact: true,
+        showOrder: false,
+        className: `reward-choice-card${selected === index ? " selected" : ""}`,
+      });
+    }).join("");
+    return `<article class="reward-choice-row ${choice.skipped ? "skipped" : ""}">
+      <div class="reward-choice-head">
+        <strong>第 ${choice.floor || "?"} 层</strong>
+        <span>${escapeHtml([note, limitedReason].filter(Boolean).join(" · "))}</span>
+      </div>
+      <div class="reward-choice-cards">
+        ${slots}
+      </div>
+    </article>`;
+  }).join("");
+}
+
 $("deckButton").addEventListener("click", () => {
   const open = $("deckViewer").classList.toggle("open");
   $("deckButton").setAttribute("aria-expanded", String(open));
 });
+if ($("rewardChoicesToggle")) {
+  $("rewardChoicesToggle").addEventListener("click", () => {
+    setRewardChoicesCollapsed(!rewardChoicesCollapsed);
+  });
+  setRewardChoicesCollapsed(false);
+}
 document.addEventListener("click", event => {
   if (!$("deckViewer").contains(event.target)) {
     $("deckViewer").classList.remove("open");
@@ -596,6 +700,7 @@ function renderWatch() {
   $("lastReward").textContent = `${Number(w.last_reward).toFixed(3)}`;
   const selectedMap = (w.maps || []).find(map => map.act === selectedMapAct) || {act:selectedMapAct, nodes:[], visited:[], current:null, boss:""};
   renderMiniMap(selectedMap, w);
+  renderRewardChoices();
   const routeCount = (w.timeline || []).filter(node => node.act === selectedMapAct).length;
   if (routeCount < 15 && !w.timeline_exhausted) setTimeout(() => previewMapAct(selectedMapAct), 0);
 }
@@ -678,6 +783,11 @@ function renderEvaluation() {
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   $("evalStatus").textContent=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
+  const winSeeds = evaluationWinSeeds(e);
+  $("winSeedCount").textContent = String(winSeeds.length);
+  $("winSeedList").innerHTML = winSeeds.length
+    ? winSeeds.map(seed => `<button class="seed-pill" type="button" data-seed="${seed}">${seed}</button>`).join("")
+    : "—";
   drawDistribution();
 }
 function setDefaultInput(id, value) {

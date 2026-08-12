@@ -1,0 +1,363 @@
+"""Automatic CommunicationMod orchestrator backed by a MaskablePPO checkpoint.
+
+CommunicationMod launches this script as a subprocess:
+
+    stdin  <- one JSON game-state frame per line
+    stdout -> one command line per frame
+
+Never write diagnostics to stdout.  Everything except commands goes to
+``agent_orchestrator.log`` next to this file.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import sys
+import traceback
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from bridge.real_game_env import RealDecision, RealGameAdapter
+from env.core import action_space as A
+from env.core import game_actions as ga
+
+# Register custom policy/extractor classes before SB3 unpickles the checkpoint.
+from rl import model as _model  # noqa: F401
+from rl import pointer_policy as _pointer_policy  # noqa: F401
+from sb3_contrib import MaskablePPO
+
+
+try:
+    sys.stdin.reconfigure(encoding="gbk", errors="replace")
+    sys.stdout.reconfigure(encoding="gbk")
+except Exception:
+    # reconfigure() is unavailable on a few embedded streams; the commands are
+    # ASCII, so the default encoding is still usable.
+    pass
+
+
+LOG_PATH = Path(__file__).with_name("agent_orchestrator.log")
+logging.basicConfig(
+    filename=LOG_PATH,
+    filemode="a",
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger("agent_orchestrator")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Drive the real Slay the Spire game through CommunicationMod."
+    )
+    parser.add_argument(
+        "checkpoint",
+        nargs="?",
+        default=os.environ.get("STS_RL_CHECKPOINT"),
+        help="MaskablePPO .zip checkpoint. May also be set with STS_RL_CHECKPOINT.",
+    )
+    parser.add_argument("--device", default=os.environ.get("STS_RL_DEVICE", "auto"))
+    parser.add_argument(
+        "--ascension",
+        type=int,
+        default=int(os.environ.get("STS_RL_ASCENSION", "0")),
+    )
+    parser.add_argument(
+        "--character",
+        default=os.environ.get("STS_RL_CHARACTER", "IRONCLAD"),
+        choices=("IRONCLAD", "SILENT", "DEFECT", "WATCHER"),
+    )
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        default=os.environ.get("STS_RL_STOCHASTIC", "").lower() in {"1", "true", "yes"},
+        help="Sample from the masked policy instead of deterministic argmax.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=int(os.environ.get("STS_RL_SEED", "10000")),
+        help="Random seed for stochastic policy sampling.",
+    )
+    parser.add_argument(
+        "--start-seed",
+        default=os.environ.get("STS_RL_START_SEED"),
+        help="If not currently in a run, send START with this game seed.",
+    )
+    parser.add_argument(
+        "--auto-start",
+        action="store_true",
+        default=os.environ.get("STS_RL_AUTO_START", "").lower() in {"1", "true", "yes"},
+        help="Start a new Ironclad run when the frame says in_game=false.",
+    )
+    parser.add_argument(
+        "--no-auto-enter-shop",
+        action="store_true",
+        help="Do not auto-enter SHOP_SCREEN from SHOP_ROOM.",
+    )
+    parser.add_argument(
+        "--topk",
+        type=int,
+        default=int(os.environ.get("STS_RL_LOG_TOPK", "5")),
+        help="How many legal policy choices to log per decision.",
+    )
+    parser.add_argument(
+        "--max-inner-decisions",
+        type=int,
+        default=4,
+        help="Max policy calls within one frame for autoregressive target picks.",
+    )
+    return parser
+
+
+def send(command: str) -> None:
+    log.info("SEND %s", command)
+    sys.stdout.write(command + "\n")
+    sys.stdout.flush()
+
+
+def _load_model(path: str, device: str) -> MaskablePPO:
+    checkpoint = Path(path)
+    if not checkpoint.is_file():
+        raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
+    log.info("loading checkpoint=%s device=%s", checkpoint, device)
+    model = MaskablePPO.load(checkpoint, device=device)
+    log.info(
+        "loaded checkpoint; obs flags global_map=%s card_language=%s combat_language=%s "
+        "deck_size=%s neow=%s event_option=%s",
+        _model.uses_global_map_observation(model),
+        _model.uses_card_language(model),
+        _model.uses_combat_language(model),
+        _model.uses_deck_size_observation(model),
+        _model.uses_neow_observation(model),
+        _model.uses_event_option_observation(model),
+    )
+    return model
+
+
+def _adapter_for_model(model: MaskablePPO, args: argparse.Namespace) -> RealGameAdapter:
+    return RealGameAdapter(
+        character=args.character,
+        ascension=args.ascension,
+        global_map_view=_model.uses_global_map_observation(model),
+        card_language=_model.uses_card_language(model),
+        combat_language=_model.uses_combat_language(model),
+        deck_size_observation=_model.uses_deck_size_observation(model),
+        neow_observation=_model.uses_neow_observation(model),
+        event_option_observation=_model.uses_event_option_observation(model),
+    )
+
+
+class RealPolicyAgent:
+    def __init__(
+        self,
+        model: MaskablePPO,
+        adapter: RealGameAdapter,
+        *,
+        stochastic: bool,
+        topk: int,
+        max_inner_decisions: int,
+        auto_enter_shop: bool,
+        auto_start: bool,
+        start_seed: str | None,
+        ascension: int,
+        character: str,
+    ) -> None:
+        self.model = model
+        self.adapter = adapter
+        self.stochastic = bool(stochastic)
+        self.topk = max(0, int(topk))
+        self.max_inner_decisions = max(1, int(max_inner_decisions))
+        self.auto_enter_shop = bool(auto_enter_shop)
+        self.auto_start = bool(auto_start)
+        self.start_seed = start_seed
+        self.ascension = int(ascension)
+        self.character = character
+
+    def decide(self, frame: dict[str, Any]) -> RealDecision:
+        self.adapter.update(frame)
+
+        if not self.adapter.in_game():
+            if self.auto_start or self.start_seed is not None:
+                seed_suffix = "" if self.start_seed is None else f" {self.start_seed}"
+                return RealDecision(
+                    f"START {self.character} {self.ascension}{seed_suffix}",
+                    "auto_start",
+                )
+            return RealDecision("STATE", "not_in_game")
+
+        auto = self.adapter.auto_command(auto_enter_shop=self.auto_enter_shop)
+        if auto is not None:
+            command, reason = auto
+            return RealDecision(command, reason)
+
+        pending: tuple | None = None
+        trace: list[tuple[int, tuple | None, str]] = []
+        for inner in range(self.max_inner_decisions):
+            obs = self.adapter.observation(pending=pending)
+            mask = self.adapter.action_mask(pending=pending)
+            legal_ids = tuple(int(i) for i in np.flatnonzero(mask))
+            if not legal_ids:
+                fallback = self.adapter.fallback_command()
+                log.warning(
+                    "no legal policy actions; fallback=%s screen=%s phase=%s choices=%s",
+                    fallback,
+                    self.adapter.screen_type(),
+                    self.adapter.phase(),
+                    self.adapter.choices(),
+                )
+                return RealDecision(fallback, "fallback_no_legal")
+
+            action_id, top = self._predict(obs, mask, pending=pending)
+            desc = self.adapter.select_descriptor()
+            if A.is_multi_select(desc):
+                command = self.adapter.command_for_multi_action(action_id)
+                return RealDecision(
+                    command,
+                    "policy_multi",
+                    action_id=action_id,
+                    semantic=None,
+                    legal_ids=legal_ids,
+                    top=top,
+                )
+
+            legal_semantic = self.adapter.legal_semantic_actions()
+            semantic, next_pending = A.resolve(
+                action_id, legal_semantic, pending, self.adapter.phase()
+            )
+            trace.append((action_id, pending, self.adapter.describe_action_id(action_id, pending)))
+            if semantic is None:
+                pending = next_pending
+                continue
+
+            command = self.adapter.command_for_semantic(semantic)
+            return RealDecision(
+                command,
+                "policy",
+                action_id=action_id,
+                semantic=semantic,
+                legal_ids=legal_ids,
+                top=top,
+            )
+
+        fallback = self.adapter.fallback_command()
+        log.warning("inner decision limit reached; trace=%s fallback=%s", trace, fallback)
+        return RealDecision(fallback, "fallback_inner_limit")
+
+    def _predict(
+        self, obs: dict[str, np.ndarray], mask: np.ndarray, *, pending: tuple | None
+    ) -> tuple[int, tuple[tuple[int, float, str], ...]]:
+        action, _ = self.model.predict(
+            obs,
+            action_masks=mask,
+            deterministic=not self.stochastic,
+        )
+        action_id = int(np.asarray(action).item())
+        top = self._top_actions(obs, mask, action_id, pending=pending)
+        log.debug(
+            "policy action=%s label=%s top=%s",
+            action_id,
+            self.adapter.describe_action_id(action_id, pending),
+            top,
+        )
+        return action_id, top
+
+    def _top_actions(
+        self,
+        obs: dict[str, np.ndarray],
+        mask: np.ndarray,
+        chosen: int,
+        *,
+        pending: tuple | None,
+    ) -> tuple[tuple[int, float, str], ...]:
+        if self.topk <= 0:
+            return ()
+        try:
+            import torch
+
+            obs_tensor, _ = self.model.policy.obs_to_tensor(obs)
+            with torch.no_grad():
+                dist = self.model.policy.get_distribution(obs_tensor, action_masks=mask)
+                probs = dist.distribution.probs[0].detach().cpu().numpy()
+            legal = np.flatnonzero(mask)
+            ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[: self.topk]
+            out = []
+            for i in ranked:
+                label = self.adapter.describe_action_id(int(i), pending)
+                if int(i) == chosen:
+                    label = "> " + label
+                out.append((int(i), float(probs[i]), label))
+            return tuple(out)
+        except Exception:
+            log.debug("could not compute action distribution", exc_info=True)
+            return ()
+
+
+def _log_decision(frame: dict[str, Any], decision: RealDecision, adapter: RealGameAdapter) -> None:
+    gs = frame.get("game_state") or {}
+    log.info(
+        "decision reason=%s command=%s action_id=%s semantic=%s screen=%s phase=%s "
+        "floor=%s act=%s hp=%s/%s choices=%s legal_ids=%s top=%s",
+        decision.reason,
+        decision.command,
+        decision.action_id,
+        decision.semantic,
+        gs.get("screen_type"),
+        adapter.phase(),
+        gs.get("floor"),
+        gs.get("act"),
+        gs.get("current_hp"),
+        gs.get("max_hp"),
+        gs.get("choice_list"),
+        list(decision.legal_ids),
+        decision.top,
+    )
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    log.info("=== agent session start argv=%s cwd=%s ===", sys.argv, Path.cwd())
+    if not args.checkpoint:
+        raise SystemExit("checkpoint path required or STS_RL_CHECKPOINT must be set")
+
+    model = _load_model(args.checkpoint, args.device)
+    model.set_random_seed(args.seed)
+    adapter = _adapter_for_model(model, args)
+    agent = RealPolicyAgent(
+        model,
+        adapter,
+        stochastic=args.stochastic,
+        topk=args.topk,
+        max_inner_decisions=args.max_inner_decisions,
+        auto_enter_shop=not args.no_auto_enter_shop,
+        auto_start=args.auto_start,
+        start_seed=args.start_seed,
+        ascension=args.ascension,
+        character=args.character,
+    )
+
+    send("ready")
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        log.debug("RECV %s", line)
+        try:
+            frame = json.loads(line)
+            decision = agent.decide(frame)
+            _log_decision(frame, decision, adapter)
+            send(decision.command)
+        except Exception:
+            log.error("failed to handle frame:\n%s\n%s", line, traceback.format_exc())
+            send("STATE")
+
+    log.info("stdin EOF; session end")
+
+
+if __name__ == "__main__":
+    main()

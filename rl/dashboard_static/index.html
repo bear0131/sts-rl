@@ -64,6 +64,13 @@
           <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="actionList" class="action-list"></div>
+          <section id="rewardChoicesPanel" class="reward-choices-panel" aria-label="战斗选牌历史">
+            <div class="reward-choices-heading">
+              <span>战斗选牌</span>
+              <button id="rewardChoicesToggle" class="reward-choices-toggle" type="button" aria-expanded="true">隐藏</button>
+            </div>
+            <div id="rewardChoicesList" class="reward-choices-list"></div>
+          </section>
           <section id="miniMapPanel" class="mini-map-panel" aria-label="Act 小地图">
             <div class="mini-map-heading">
               <button id="mapPrevAct" class="map-act-button" type="button" title="上一个 Act" aria-label="上一个 Act">‹</button>
@@ -135,6 +142,13 @@
         <div><span>预计剩余</span><strong id="evalEta">—</strong></div>
       </div>
       <div class="progress-track"><div id="evalProgressBar"></div></div>
+      <div class="win-seeds-panel">
+        <div>
+          <span>通关 Seeds</span>
+          <strong id="winSeedCount">0</strong>
+        </div>
+        <div id="winSeedList" class="seed-list">—</div>
+      </div>
       <div class="distribution-shell">
         <div class="distribution-title"><h2>死亡楼层分布</h2><span id="evalStatus">等待参数</span></div>
         <canvas id="distributionCanvas"></canvas>
