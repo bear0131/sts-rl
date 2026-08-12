@@ -10,7 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import tempfile
 import time
+import zipfile
 from collections.abc import Mapping
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -491,7 +494,14 @@ def build_parser():
     parser.add_argument("--out", type=Path, default=Path("rl/runs/rllib"))
     parser.add_argument("--checkpoint-every", type=int, default=10,
                         help="Save every N RLlib training iterations.")
-    parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        default=None,
+        help="Resume from a native RLlib checkpoint directory or its .zip "
+             "wrapper. Passing an SB3 .zip still migrates policy weights and "
+             "step offset, without optimizer-state conversion.",
+    )
     parser.add_argument(
         "--init-from", type=Path, default=None,
         help="Warm-start policy weights from an SB3 .zip checkpoint.",
@@ -517,6 +527,86 @@ def build_parser():
     parser.add_argument("--ray-address", default=None,
                         help="Ray cluster address; omit to start a local cluster.")
     return parser
+
+
+def _zip_has_rllib_checkpoint(path: Path) -> bool:
+    if path.suffix.lower() != ".zip" or not path.is_file():
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            return any(
+                name.rstrip("/").endswith("rllib_checkpoint.json")
+                for name in archive.namelist()
+            )
+    except zipfile.BadZipFile:
+        return False
+
+
+def _zip_has_sb3_checkpoint(path: Path) -> bool:
+    if path.suffix.lower() != ".zip" or not path.is_file():
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            names = {name.rstrip("/") for name in archive.namelist()}
+    except zipfile.BadZipFile:
+        return False
+    return "data" in names and any(name.endswith(".pth") for name in names)
+
+
+def _zip_checkpoint_dir(checkpoint_dir: Path) -> Path:
+    checkpoint_dir = checkpoint_dir.resolve()
+    zip_path = checkpoint_dir.with_suffix(".zip")
+    tmp_zip = zip_path.with_suffix(zip_path.suffix + ".tmp")
+    if tmp_zip.exists():
+        tmp_zip.unlink()
+    with zipfile.ZipFile(
+        tmp_zip, mode="w", compression=zipfile.ZIP_DEFLATED
+    ) as archive:
+        for path in checkpoint_dir.rglob("*"):
+            if path.is_file():
+                archive.write(path, path.relative_to(checkpoint_dir).as_posix())
+    tmp_zip.replace(zip_path)
+    return zip_path
+
+
+def _extract_rllib_checkpoint_zip(path: Path) -> tempfile.TemporaryDirectory:
+    tmp = tempfile.TemporaryDirectory(prefix="sts-rllib-checkpoint-")
+    root = Path(tmp.name)
+    with zipfile.ZipFile(path) as archive:
+        archive.extractall(root)
+
+    candidates = [
+        candidate
+        for candidate in root.rglob("rllib_checkpoint.json")
+        if candidate.is_file()
+    ]
+    if not candidates:
+        tmp.cleanup()
+        raise ValueError(f"{path} does not contain an RLlib checkpoint")
+    checkpoint_root = min(candidates, key=lambda p: len(p.parts)).parent
+    if checkpoint_root != root:
+        for child in list(root.iterdir()):
+            if child == checkpoint_root or child in checkpoint_root.parents:
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        staging = root / "__checkpoint__"
+        checkpoint_root.rename(staging)
+        for child in staging.iterdir():
+            child.rename(root / child.name)
+        staging.rmdir()
+    return tmp
+
+
+def _save_rllib_checkpoint_zip(algo, parent: Path, label: str) -> tuple[Path, Path]:
+    saved = algo.save(str(parent))
+    checkpoint_path = Path(saved.checkpoint.path)
+    zip_path = _zip_checkpoint_dir(checkpoint_path)
+    print(f"[rllib] {label}={checkpoint_path}", flush=True)
+    print(f"[rllib] {label}_zip={zip_path}", flush=True)
+    return checkpoint_path, zip_path
 
 
 def _load_sb3_checkpoint(path: Path, device: str):
@@ -742,7 +832,11 @@ def _normalize_compat_args(args):
     sb3_source = None
     sb3_resume_steps = 0
     sb3_path = args.init_from
-    if args.resume and args.resume.suffix.lower() == ".zip":
+    if (
+        args.resume
+        and args.resume.suffix.lower() == ".zip"
+        and not _zip_has_rllib_checkpoint(args.resume)
+    ):
         sb3_path = args.resume
     if sb3_path:
         load_device = "cpu" if args.device == "auto" else args.device
@@ -1287,6 +1381,7 @@ def main():
     run_dir = args.out / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     algo = None
+    resume_tmp = None
     wandb_run = None
     try:
         if args.wandb:
@@ -1303,7 +1398,21 @@ def main():
             wandb.define_metric("*", step_metric="time/total_timesteps")
 
         if args.resume and sb3_source is None:
-            algo = Algorithm.from_checkpoint(str(args.resume.resolve()))
+            resume_path = args.resume.resolve()
+            if resume_path.suffix.lower() == ".zip":
+                if not _zip_has_rllib_checkpoint(resume_path):
+                    raise ValueError(
+                        f"{resume_path} is neither an RLlib checkpoint zip "
+                        "nor a supported SB3 checkpoint zip"
+                    )
+                resume_tmp = _extract_rllib_checkpoint_zip(resume_path)
+                resume_path = Path(resume_tmp.name)
+                print(
+                    f"[rllib] extracted checkpoint zip {args.resume} -> "
+                    f"{resume_path}",
+                    flush=True,
+                )
+            algo = Algorithm.from_checkpoint(str(resume_path))
         else:
             env_config = {
                 "task": args.task,
@@ -1425,8 +1534,9 @@ def main():
                 wandb_run.log(summary, step=summary["time/total_timesteps"])
             iteration = int(result.get("training_iteration", 0))
             if args.checkpoint_every > 0 and iteration % args.checkpoint_every == 0:
-                saved = algo.save(str(run_dir / "checkpoints"))
-                print(f"[rllib] checkpoint={saved.checkpoint.path}", flush=True)
+                _save_rllib_checkpoint_zip(
+                    algo, run_dir / "checkpoints", "checkpoint"
+                )
             step_due = (
                 next_step_checkpoint is not None
                 and summary["steps"] >= next_step_checkpoint
@@ -1436,8 +1546,9 @@ def main():
                 and summary["steps"] >= next_wandb_checkpoint
             )
             if step_due or wandb_due:
-                saved = algo.save(str(run_dir / "step_checkpoints"))
-                print(f"[rllib] checkpoint={saved.checkpoint.path}", flush=True)
+                _save_rllib_checkpoint_zip(
+                    algo, run_dir / "step_checkpoints", "checkpoint"
+                )
                 if step_due:
                     while summary["steps"] >= next_step_checkpoint:
                         next_step_checkpoint += args.save_every
@@ -1447,11 +1558,12 @@ def main():
             if summary["steps"] >= args.steps:
                 break
 
-        saved = algo.save(str(run_dir / "final"))
-        print(f"[rllib] final={saved.checkpoint.path}", flush=True)
+        _save_rllib_checkpoint_zip(algo, run_dir / "final", "final")
     finally:
         if algo is not None:
             algo.stop()
+        if resume_tmp is not None:
+            resume_tmp.cleanup()
         if wandb_run is not None:
             wandb_run.finish()
         ray.shutdown()
