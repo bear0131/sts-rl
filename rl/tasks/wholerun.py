@@ -145,6 +145,7 @@ class WholeRunTask(Task):
         "steps": 100_000,
         "metrics_window": 100,
         "out": "rl/runs/whole-run",
+        "n_layers": 8,
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:

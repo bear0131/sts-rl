@@ -138,9 +138,7 @@ class CombatTask(Task):
         "steps": 2_000_000,
         "metrics_window": 200,
         "out": "rl/runs/combat",
-        # Whole-run defaults to a four-layer combined budget: two combat and
-        # two overworld layers. Match its combat specialist for warm starts.
-        "n_layers": 2,
+        "n_layers": 4,
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
