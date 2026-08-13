@@ -67,6 +67,30 @@ def _tail(gc):
     return gc.screen_state_name.split(".")[-1]
 
 
+def _reward_card_count(gc):
+    try:
+        return int(gc.get_reward_info()["card_count"])
+    except Exception:
+        return 0
+
+
+def _has_card_rewards(gc):
+    return (
+        gc.outcome == _GC_UNDECIDED
+        and _tail(gc) == "REWARDS"
+        and _reward_card_count(gc) > 0
+    )
+
+
+def _card_reward_state_error(gc, action):
+    return RuntimeError(
+        "card reward action in invalid GameContext state: "
+        f"action={action!r} screen={gc.screen_state_name} "
+        f"outcome={gc.outcome} card_count={_reward_card_count(gc)} "
+        f"act={gc.act} floor={gc.floor_num}"
+    )
+
+
 class SimGameEnv:
     """Whole-run environment over the sim.
 
@@ -173,6 +197,8 @@ class SimGameEnv:
         This is what encode.encode() consumes."""
         d = self._canonical()
         d["global"] = normalize_sim_global(self.gc)
+        if self.bc is not None:
+            d["global"]["potions"] = list(self.bc.potions)
         return d
 
     def obs(self):
@@ -270,7 +296,7 @@ class SimGameEnv:
             acts += [ga.claim(ga.CLAIM_GOLD, i) for i in range(len(info["gold"]))]
             acts += [ga.claim(ga.CLAIM_RELIC, i) for i in range(len(info["relics"]))]
             acts += [ga.claim(ga.CLAIM_POTION, i) for i in range(len(info["potions"]))]
-            if info["card_count"]:
+            if int(info["card_count"]) and _has_card_rewards(self.gc):
                 n = len(self.gc.get_card_reward())
                 acts += [ga.reward_card(j) for j in range(n)]
                 acts.append(ga.skip_cards())
@@ -352,8 +378,15 @@ class SimGameEnv:
             elif kind == ga.CLAIM_POTION: gc.claim_potion(idx)
             return
         if verb == ga.REWARD_CARD:
-            gc.pick_reward_card(gc.get_card_reward()[action[1]]); return
+            if not _has_card_rewards(gc):
+                raise _card_reward_state_error(gc, action)
+            cards = gc.get_card_reward()
+            if action[1] >= len(cards):
+                raise _card_reward_state_error(gc, action)
+            gc.pick_reward_card(cards[action[1]]); return
         if verb == ga.SKIP_CARDS:
+            if not _has_card_rewards(gc):
+                raise _card_reward_state_error(gc, action)
             gc.skip_reward_cards(); return
         if verb == ga.SELECT:
             gc.choose_select_card_option(action[1]); return

@@ -3,19 +3,18 @@
 This script supports three related vector spaces:
 
 1. ``--source deck``
-   Extracts columns of ``encoder.tok["pile"].weight``.  These are the learned
-   per-card contribution vectors used when ``deck_counts`` / ``draw_counts`` /
-   ``discard_counts`` / ``exhaust_counts`` are linearly projected into one pile
-   token.  For a one-hot card count e_i, the contribution is W[:, i].
+   Builds the complete per-card token used by the overworld model's flattened
+   master deck: shared card semantics plus upgrade count, followed by the shared
+   card projection.
 
 2. ``--source card``
-   Extracts rows of ``encoder.shared["card"].weight``.  These are the ordinary
-   categorical card embeddings used for hand/offer/select/shop card tokens.
+   Extracts the shared categorical/card-language representation before the
+   common card projection.
 
 3. ``--source hand``
-   Builds the complete pre-Transformer hand token used at runtime: card
-   embedding plus upgrade count, printed cost, damage, block, and an
-   unselected select-mask value, followed by ``encoder.tok["hand"]``. Because
+   Builds the complete pre-Transformer hand token used at runtime: the shared
+   projected card token plus printed cost, damage, block, and an unselected
+   select-mask value through ``combat.encoder.hand_context``. Because
    the numeric annotation table currently covers Ironclad, this source plots
    the 75 annotated Ironclad cards only. ``--upgrades`` selects the card version.
    The role embedding is common to every hand card and therefore disappears
@@ -29,7 +28,7 @@ interactive Plotly HTML file and a CSV file.
 Example:
     uv run python -m rl.visualize_card_vectors \
         rl/runs/combat/20260804-215612/final.zip \
-        --source deck --dim 2 \
+        --source hand --dim 2 \
         --output rl/runs/combat/20260804-215612/deck_vectors_2d.html
 """
 
@@ -65,8 +64,8 @@ def parse_args() -> argparse.Namespace:
         choices=("deck", "card", "hand"),
         default="deck",
         help=(
-            "deck: per-card columns of the deck/pile count projection; "
-            "card: raw categorical card embeddings; "
+            "deck: complete per-card flattened-deck tokens; "
+            "card: shared card semantics before projection; "
             "hand: complete annotated Ironclad hand tokens before the Transformer."
         ),
     )
@@ -75,7 +74,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help=(
-            "Upgrade count used by --source hand (default: 0). Use 1 for the "
+            "Upgrade count used by card tokens (default: 0). Use 1 for the "
             "normal upgraded variants; values above 1 affect Searing Blow."
         ),
     )
@@ -158,112 +157,96 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_encoder(model: Any) -> Any:
-    """Return the StSTransformerExtractor from the custom pointer policy."""
+    """Return the current specialized policy core.
+
+    The historical function name is retained because the dashboard imports it.
+    """
     policy = model.policy
 
     core = getattr(policy, "core", None)
     if core is None:
         raise RuntimeError(
-            "Checkpoint policy has no '.core'. It may be an older MLP checkpoint "
-            "rather than StSPointerPolicy."
+            "Checkpoint policy has no current specialized '.core'."
         )
+    if getattr(core, "shared", None) is None:
+        raise RuntimeError("Checkpoint policy core has no shared tokenizer.")
+    combat = getattr(core, "combat", None)
+    if getattr(combat, "encoder", None) is None:
+        raise RuntimeError("Checkpoint policy core has no combat encoder.")
+    return core
 
-    encoder = getattr(core, "encoder", None)
-    if encoder is None:
-        raise RuntimeError("Checkpoint policy.core has no '.encoder'.")
 
-    return encoder
-
-
-def extract_vectors(
-    encoder: Any,
-    source: str,
-    upgrades: int = 0,
-) -> tuple[np.ndarray, str]:
-    """Return an array shaped [N_CARDS, vector_dim]."""
-    if source == "deck":
-        try:
-            layer = encoder.tok["pile"]
-        except (AttributeError, KeyError) as exc:
-            raise RuntimeError(
-                'Could not find encoder.tok["pile"]; checkpoint architecture '
-                "does not match the current Transformer model."
-            ) from exc
-
-        if not isinstance(layer, torch.nn.Linear):
-            raise TypeError(
-                f'encoder.tok["pile"] is {type(layer).__name__}, expected nn.Linear.'
-            )
-
-        # nn.Linear computes y = x @ weight.T + bias.
-        # A one-hot card-count input e_i contributes weight[:, i].
-        vectors = layer.weight.detach().float().cpu().numpy().T
-        language_layer = getattr(encoder, "pile_card_language", None)
-        card_embedding = getattr(getattr(encoder, "shared", {}), "card", None)
-        if language_layer is not None and hasattr(card_embedding, "effective_weight"):
-            if hasattr(language_layer, "singleton_vectors"):
-                language_contrib = language_layer.singleton_vectors(
-                    card_embedding, upgrades=upgrades
-                )
-                language_description = "connected card-language pile encoder"
-            else:
-                semantic = card_embedding.effective_weight()
-                language_contrib = semantic @ language_layer.weight.T
-                language_description = "linear effect-language pile contribution"
-            vectors = vectors + language_contrib.detach().float().cpu().numpy()
-            description = (
-                f'encoder.tok["pile"] columns + {language_description}'
-            )
-        else:
-            description = (
-                'columns of encoder.tok["pile"].weight (deck-count contributions)'
-            )
-    elif source == "card":
-        try:
-            embedding = encoder.shared["card"]
-        except (AttributeError, KeyError) as exc:
-            raise RuntimeError(
-                'Could not find encoder.shared["card"]; checkpoint architecture '
-                "does not match the current Transformer model."
-            ) from exc
-
-        if not isinstance(embedding, torch.nn.Embedding):
-            raise TypeError(
-                f'encoder.shared["card"] is {type(embedding).__name__}, '
-                "expected nn.Embedding."
-            )
-
-        weight = (
-            embedding.effective_weight()
-            if hasattr(embedding, "effective_weight")
-            else embedding.weight
-        )
-        vectors = weight.detach().float().cpu().numpy()
-        description = (
-            'rows of encoder.shared["card"] effective weight '
-            '(card ID + effect-language embeddings)'
-            if hasattr(embedding, "effective_weight")
-            else 'rows of encoder.shared["card"].weight (card embeddings)'
-        )
-    elif source == "hand":
-        try:
-            embedding = encoder.shared["card"]
-            layer = encoder.tok["hand"]
-        except (AttributeError, KeyError) as exc:
-            raise RuntimeError(
-                "Could not find the card embedding and hand tokenizer; "
-                "checkpoint architecture does not match the current model."
-            ) from exc
-        vectors = _complete_hand_vectors(
-            (embedding.effective_weight()
-             if hasattr(embedding, "effective_weight") else embedding.weight),
-            layer.weight,
-            layer.bias,
-            upgrades,
-        )
-        description = _hand_description(upgrades)
+def _semantic_card_vectors(
+    embedding: torch.nn.Embedding,
+    upgrades: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    device = embedding.weight.device
+    ids = torch.arange(len(CARD_VOCAB), device=device)
+    normalized = torch.full(
+        (len(CARD_VOCAB),),
+        upgrades / UPGRADE_SCALE,
+        dtype=torch.float32,
+        device=device,
+    )
+    if hasattr(embedding, "versioned_forward"):
+        semantic = embedding.versioned_forward(ids, normalized)
     else:
-        raise ValueError(f"Unknown vector source: {source!r}")
+        semantic = embedding(ids)
+    return semantic, normalized
+
+
+def _vectors_from_components(
+    embedding: torch.nn.Embedding,
+    card_projection: torch.nn.Linear,
+    hand_context: torch.nn.Linear,
+    source: str,
+    upgrades: int,
+) -> tuple[np.ndarray, str]:
+    semantic, normalized = _semantic_card_vectors(embedding, upgrades)
+    if source == "card":
+        vectors = semantic
+        description = (
+            "shared card ID + versioned effect-language semantics"
+            if hasattr(embedding, "versioned_forward")
+            else "shared card ID embedding"
+        )
+    else:
+        projected = card_projection(
+            torch.cat([semantic, normalized.unsqueeze(-1)], dim=-1)
+        )
+        if source == "deck":
+            vectors = projected
+            description = (
+                "shared.cards token used by each flattened master-deck slot "
+                f"(upgrade count={upgrades})"
+            )
+        elif source == "hand":
+            context = torch.zeros(
+                (len(CARD_VOCAB), 4),
+                dtype=projected.dtype,
+                device=projected.device,
+            )
+            for index, card_id in enumerate(CARD_VOCAB):
+                numbers = card_numbers(card_id, upgrades)
+                if numbers is None:
+                    continue
+                cost, damage, block = numbers
+                context[index] = torch.tensor(
+                    [
+                        cost / ENERGY_SCALE,
+                        damage / DMG_SCALE,
+                        block / BLOCK_SCALE,
+                        0.0,
+                    ],
+                    dtype=projected.dtype,
+                    device=projected.device,
+                )
+            vectors = projected + hand_context(context)
+            description = _hand_description(upgrades)
+        else:
+            raise ValueError(f"Unknown vector source: {source!r}")
+
+    vectors = vectors.detach().float().cpu().numpy()
 
     if vectors.ndim != 2:
         raise RuntimeError(f"Expected a 2D vector matrix, got shape {vectors.shape}.")
@@ -279,48 +262,32 @@ def extract_vectors(
     return vectors, description
 
 
-def _hand_description(upgrades: int) -> str:
-    return (
-        'encoder.tok["hand"] of card embedding + upgrade + cost + damage + '
-        f"block + select mask (upgrade count={upgrades}, select mask=0)"
+def extract_vectors(
+    core: Any,
+    source: str,
+    upgrades: int = 0,
+) -> tuple[np.ndarray, str]:
+    """Return current runtime card vectors shaped [N_CARDS, vector_dim]."""
+    try:
+        shared = core.shared
+        hand_context = core.combat.encoder.hand_context
+        embedding = shared.card
+        card_projection = shared.card_projection
+    except AttributeError as exc:
+        raise RuntimeError(
+            "Checkpoint does not contain the current shared tokenizer and "
+            "combat hand context."
+        ) from exc
+    return _vectors_from_components(
+        embedding, card_projection, hand_context, source, upgrades
     )
 
 
-def _complete_hand_vectors(
-    embedding_weight: torch.Tensor,
-    hand_weight: torch.Tensor,
-    hand_bias: torch.Tensor,
-    upgrades: int,
-) -> np.ndarray:
-    """Build the pre-role/position/Transformer hand token for every card id."""
-    embedding = embedding_weight.detach().float().cpu()
-    weight = hand_weight.detach().float().cpu()
-    bias = hand_bias.detach().float().cpu()
-    scalar_width = weight.shape[1] - embedding.shape[1]
-    if scalar_width != 5:
-        raise RuntimeError(
-            "--source hand requires a checkpoint trained with OBS_VERSION 7 "
-            "card annotations: expected 5 hand scalars after the card embedding "
-            f"but checkpoint has {scalar_width}. Old checkpoints can still use "
-            "--source deck or --source card."
-        )
-
-    scalars = torch.zeros((len(CARD_VOCAB), scalar_width), dtype=torch.float32)
-    for index, card_id in enumerate(CARD_VOCAB):
-        numbers = card_numbers(card_id, upgrades)
-        if numbers is None:
-            continue
-        cost, damage, block = numbers
-        scalars[index] = torch.tensor([
-            upgrades / UPGRADE_SCALE,
-            cost / ENERGY_SCALE,
-            damage / DMG_SCALE,
-            block / BLOCK_SCALE,
-            0.0,  # select_hand_mask: compare cards before any selection
-        ])
-
-    inputs = torch.cat([embedding, scalars], dim=1)
-    return torch.nn.functional.linear(inputs, weight, bias).numpy()
+def _hand_description(upgrades: int) -> str:
+    return (
+        "shared projected card token + combat hand cost/damage/block/select "
+        f"context (upgrade count={upgrades}, select mask=0)"
+    )
 
 
 def extract_state_dict_vectors(
@@ -328,73 +295,65 @@ def extract_state_dict_vectors(
     source: str,
     upgrades: int = 0,
 ) -> tuple[np.ndarray, str]:
-    """Extract vectors directly from an SB3 policy state dict.
+    """Extract current specialized-policy vectors from an SB3 state dict."""
+    from rl.model import CardLanguageEmbedding
 
-    This avoids constructing today's policy around an older observation space,
-    so pre-OBS_VERSION-7 checkpoints remain usable for deck/card visualization.
-    """
-    # Pointer policies own the encoder under ``core.encoder``.  SB3's regular
-    # MultiInputPolicy stores the same StSTransformerExtractor under
-    # ``features_extractor`` (and may expose aliases for the policy/value
-    # extractors).  Resolve by the card table, which is required by every
-    # vector source below and uniquely identifies the compatible encoder.
-    prefixes = (
-        "core.encoder.",
-        "features_extractor.",
-        "pi_features_extractor.",
-        "vf_features_extractor.",
-    )
-    prefix = next(
-        (
-            candidate
-            for candidate in prefixes
-            if candidate + "shared.card.weight" in policy_state
-        ),
-        None,
-    )
-    if prefix is None:
-        expected = ", ".join(
-            repr(candidate + "shared.card.weight") for candidate in prefixes
-        )
-        raise RuntimeError(
-            "Checkpoint has no compatible Transformer card embedding. "
-            f"Tried {expected}. It may use an older MLP policy."
-        )
-
+    prefix = "core."
+    card_prefix = prefix + "shared.card."
     try:
-        embedding_weight = policy_state[prefix + "shared.card.weight"]
-        if source == "deck":
-            vectors = (
-                policy_state[prefix + "tok.pile.weight"]
-                .detach().float().cpu().numpy().T
-            )
-            description = 'columns of encoder.tok["pile"].weight (deck-count contributions)'
-        elif source == "card":
-            vectors = embedding_weight.detach().float().cpu().numpy()
-            description = 'rows of encoder.shared["card"].weight (card embeddings)'
-        elif source == "hand":
-            vectors = _complete_hand_vectors(
-                embedding_weight,
-                policy_state[prefix + "tok.hand.weight"],
-                policy_state[prefix + "tok.hand.bias"],
-                upgrades,
-            )
-            description = _hand_description(upgrades)
-        else:
-            raise ValueError(f"Unknown vector source: {source!r}")
+        embedding_weight = policy_state[card_prefix + "weight"]
+        projection_weight = policy_state[
+            prefix + "shared.card_projection.weight"
+        ]
+        projection_bias = policy_state[
+            prefix + "shared.card_projection.bias"
+        ]
+        hand_weight = policy_state[
+            prefix + "combat.encoder.hand_context.weight"
+        ]
     except KeyError as exc:
         raise RuntimeError(
-            f"Checkpoint encoder at {prefix!r} is missing Transformer "
-            f"parameter {exc.args[0]!r}."
+            "Checkpoint is not a current combat/split specialized policy; "
+            f"missing {exc.args[0]!r}."
         ) from exc
 
-    if vectors.ndim != 2 or vectors.shape[0] != len(CARD_VOCAB):
-        raise RuntimeError(
-            "Card vocabulary/checkpoint mismatch: "
-            f"vector matrix is {vectors.shape}, expected first dimension "
-            f"{len(CARD_VOCAB)}."
+    embedding_dim = int(embedding_weight.shape[1])
+    if card_prefix + "token_embedding.weight" in policy_state:
+        embedding = CardLanguageEmbedding(len(CARD_VOCAB), embedding_dim)
+    else:
+        embedding = torch.nn.Embedding(
+            len(CARD_VOCAB), embedding_dim, padding_idx=0
         )
-    return vectors, description
+    embedding_state = {
+        name: policy_state[card_prefix + name].detach().cpu()
+        for name in embedding.state_dict()
+        if card_prefix + name in policy_state
+    }
+    try:
+        embedding.load_state_dict(embedding_state, strict=True)
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "Checkpoint shared card tokenizer does not match this checkout."
+        ) from exc
+
+    card_projection = torch.nn.Linear(
+        int(projection_weight.shape[1]), int(projection_weight.shape[0])
+    )
+    card_projection.load_state_dict({
+        "weight": projection_weight.detach().cpu(),
+        "bias": projection_bias.detach().cpu(),
+    })
+    hand_context = torch.nn.Linear(
+        int(hand_weight.shape[1]), int(hand_weight.shape[0]), bias=False
+    )
+    hand_context.load_state_dict({"weight": hand_weight.detach().cpu()})
+    embedding.eval()
+    card_projection.eval()
+    hand_context.eval()
+    with torch.no_grad():
+        return _vectors_from_components(
+            embedding, card_projection, hand_context, source, upgrades
+        )
 
 
 def select_cards(
@@ -778,7 +737,7 @@ def main() -> None:
     )
     if args.variants == "both":
         source_description = (
-            'encoder.tok["hand"] complete base/+1 tokens; circles=base, '
+            "complete runtime hand base/+1 tokens; circles=base, "
             "diamonds=upgraded, lines connect each card pair"
         )
 
@@ -816,8 +775,8 @@ def main() -> None:
     )
 
     titles = {
-        "deck": "Deck-count card contribution vectors",
-        "card": "Shared categorical card embeddings",
+        "deck": "Flattened master-deck card tokens",
+        "card": "Shared card semantic vectors",
         "hand": (
             "Complete Ironclad hand tokens (base and upgraded)"
             if args.variants == "both"

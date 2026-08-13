@@ -149,7 +149,12 @@ def _int_or_none(value: Any) -> int | None:
 
 def _real_card_tuple(card: dict[str, Any]) -> tuple[str, int]:
     cid = card.get("id") or card.get("name") or "EMPTY"
-    up = int(card.get("upgrades", card.get("upgrade_count", card.get("up", 0))) or 0)
+    for key in ("upgrades", "upgrade_count", "up"):
+        if key in card:
+            up = int(card[key] or 0)
+            break
+    else:
+        raise ValueError(f"card record is missing its upgrade count: {card!r}")
     c = _card(str(cid), up)
     return c["id"], c["up"]
 
@@ -166,6 +171,17 @@ def _relic_id(relic: Any) -> str:
     if isinstance(relic, dict):
         return str(relic.get("id") or relic.get("name") or "PAD")
     return str(relic or "PAD")
+
+
+_COMBAT_COUNTER_KEYS = {
+    "Happy Flower": "happy_flower",
+    "Incense Burner": "incense_burner",
+    "InkBottle": "ink_bottle",
+    "Inserter": "inserter",
+    "Nunchaku": "nunchaku",
+    "Pen Nib": "pen_nib",
+    "Sundial": "sundial",
+}
 
 
 def _potion_id(potion: Any) -> str:
@@ -481,6 +497,15 @@ class RealGameAdapter:
             if desc is not None:
                 canon.setdefault("options", {})["select"] = desc
             canon["global"] = self._global_block()
+            counters = canon.setdefault("player", {}).setdefault(
+                "combat_counters", {}
+            )
+            for relic, value in zip(
+                canon["global"]["relics"], canon["global"]["relic_counters"]
+            ):
+                key = _COMBAT_COUNTER_KEYS.get(relic)
+                if key is not None:
+                    counters[key] = value
             return canon
 
         phase = self.phase()
@@ -514,8 +539,11 @@ class RealGameAdapter:
                 or ss.get("act_boss")
             ),
             "relics": self._relics(),
+            "relic_counters": self._relic_counters(),
             "potions": self._potions(),
             "gold": int(self.gs.get("gold", 0) or 0),
+            "hp": int(self.gs.get("current_hp", 0) or 0),
+            "max_hp": int(self.gs.get("max_hp", 0) or 0),
             "deck": self._deck_cards(),
             "boss_relics": _screen_relics(ss) if self.phase() == "boss_relic" else [],
         }
@@ -531,6 +559,15 @@ class RealGameAdapter:
         if not isinstance(relics, list):
             return []
         return [_relic_id(r) for r in relics]
+
+    def _relic_counters(self) -> list[int]:
+        relics = self.gs.get("relics") or []
+        if not isinstance(relics, list):
+            return []
+        return [
+            int(r.get("counter", 0) or 0) if isinstance(r, dict) else 0
+            for r in relics
+        ]
 
     def _potions(self) -> list[str]:
         return [_potion_id(p) for p in self._potion_records()]
@@ -702,8 +739,8 @@ class RealGameAdapter:
         cards = []
         for card in ss.get("cards") or []:
             if isinstance(card, dict):
-                cid, _up = _real_card_tuple(card)
-                cards.append((cid, _price(card)))
+                cid, up = _real_card_tuple(card)
+                cards.append((cid, up, _price(card)))
         relics = [(_relic_id(r), _price(r)) for r in ss.get("relics") or []]
         potions = _screen_potions(ss)
         remove_cost = int(ss.get("purge_cost", ss.get("remove_cost", -1)) or -1)

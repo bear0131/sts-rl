@@ -48,6 +48,7 @@ from rl.rllib_inference import RLLibInferenceModel
 # Register custom policy classes before checkpoint loading.
 from . import model as _model  # noqa: F401
 from . import pointer_policy as _pointer_policy  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 
 
 STATIC_DIR = Path(__file__).with_name("dashboard_static")
@@ -721,14 +722,15 @@ class DashboardState:
             return {}
 
         sources = []
-        card = getattr(getattr(encoder, "shared", {}), "card", None)
+        card = getattr(getattr(encoder, "shared", None), "card", None)
         card_tokens = getattr(card, "token_embedding", None)
         if card_tokens is not None:
             sources.append((
                 "card", "卡牌语言", CARD_LANGUAGE_TOKENS,
                 CARD_LANGUAGE_DOC, card_tokens.weight,
             ))
-        combat = getattr(encoder, "combat_language", None)
+        combat_encoder = getattr(getattr(encoder, "combat", None), "encoder", None)
+        combat = getattr(combat_encoder, "combat_language", None)
         combat_tokens = getattr(combat, "token_embedding", None)
         if combat_tokens is not None:
             sources.append((

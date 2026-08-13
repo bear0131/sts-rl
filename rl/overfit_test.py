@@ -136,6 +136,7 @@ def train(args):
 
 def evaluate(args):
     from sb3_contrib import MaskablePPO
+    from rl import split_policy as _split_policy  # noqa: F401
 
     model = MaskablePPO.load(args.eval)
     if args.run:

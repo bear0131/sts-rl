@@ -67,6 +67,7 @@ def main(argv=None):
         from sb3_contrib.common.maskable.utils import get_action_masks
         # Import the policy class before load so cloudpickle can find it.
         from . import pointer_policy as _pp  # noqa: F401
+        from . import split_policy as _split_policy  # noqa: F401
         model = MaskablePPO.load(args.watch, device=args.device)
 
     def _builder(np_random):

@@ -109,6 +109,13 @@ def normalize_real(game_state):
     if not cs:
         return None
     p = cs["player"]
+    combat_counters = {
+        # These two counters are exported directly by CommunicationMod. Other
+        # simulator-internal counters are unavailable in the real-game schema
+        # and intentionally remain zero-filled by the observation encoder.
+        "cards_discarded": int(cs.get("cards_discarded_this_turn", 0) or 0),
+        "times_damaged": int(cs.get("times_damaged", 0) or 0),
+    }
     return {
         "turn": cs["turn"],
         "player": {
@@ -116,6 +123,8 @@ def normalize_real(game_state):
             "max_hp": p["max_hp"],
             "block": p["block"],
             "energy": p["energy"],
+            "gold": game_state.get("gold", 0),
+            "combat_counters": combat_counters,
             "powers": _powers_real(p["powers"]),
         },
         "monsters": [_monster_real(m) for m in cs["monsters"]],
@@ -258,6 +267,8 @@ def normalize_sim(raw):
             "max_hp": p["max_hp"],
             "block": p["block"],
             "energy": p["energy"],
+            "gold": p.get("gold", 0),
+            "combat_counters": p.get("combat_counters", {}),
             "powers": _powers_sim(p["powers"]),
         },
         "monsters": [
@@ -313,6 +324,10 @@ def sim_phase(gc):
     return _SCREEN2PHASE.get(tail, tail.lower())
 
 
+def _sim_outcome_name(gc):
+    return str(getattr(gc, "outcome", "")).split(".")[-1]
+
+
 def _sim_screen_options(gc, phase):
     """The current screen's decision context, read from the gc itself (no map
     reachability here — that needs the rebuilt SpireMap and is added by the env,
@@ -322,16 +337,21 @@ def _sim_screen_options(gc, phase):
     """
     if phase == "combat_reward":
         info = gc.get_reward_info()
+        card_count = int(info["card_count"])
+        cards = []
+        if card_count and _sim_outcome_name(gc) == "UNDECIDED":
+            cards = [_card_reward_entry(c) for c in gc.get_card_reward()]
+        elif _sim_outcome_name(gc) != "UNDECIDED":
+            card_count = 0
         return {
             "gold": list(info["gold"]),
             "relics": list(info["relics"]),
             "potions": list(info["potions"]),
-            "card_count": info["card_count"],
+            "card_count": card_count,
             # the actual card choices, so the player/agent sees WHICH cards are on
             # offer, not just how many. get_card_reward returns Card objects;
             # str(card.id) is 'CardId.FLASH_OF_STEEL' -> take the bare enum name.
-            "cards": ([_card_reward_entry(c) for c in gc.get_card_reward()]
-                      if info["card_count"] else []),
+            "cards": cards,
         }
     if phase == "card_select":
         # The grid candidates PLUS the select-screen semantics/progress
@@ -346,7 +366,7 @@ def _sim_screen_options(gc, phase):
             "cards": [(_sim_card_id(n), u) for n, u in gc.get_select_cards()],
             "select": _select_options(
                 si["context"], si["pick_count"], si["have_selected"],
-                [_sim_card_id(n) for n in si["selected"]],
+                [(_sim_card_id(n), u) for n, u in si["selected"]],
                 can_pick_zero=False, can_pick_any=False),
         }
     if phase == "event":
@@ -359,7 +379,10 @@ def _sim_screen_options(gc, phase):
         # normalized like the deck; relic/potion ids are the sim's stable strings.
         s = gc.shop_contents()
         return {
-            "shop_cards": [(_sim_card_id(c["id"]), c["price"]) for c in s["cards"]],
+            "shop_cards": [
+                (_sim_card_id(c["id"]), c["upgrades"], c["price"])
+                for c in s["cards"]
+            ],
             "shop_relics": [(r["id"], r["price"]) for r in s["relics"]],
             "shop_potions": [(p["id"], p["price"]) for p in s["potions"]],
             "shop_remove_cost": s["remove_cost"],
@@ -476,14 +499,18 @@ def normalize_sim_global(gc):
             boss_relics = list(gc.boss_relic_ids())
         except (AttributeError, RuntimeError):
             boss_relics = []
+    relic_state = list(gc.relic_state())
     return {
         "character": _enum_tail(gc.character) if hasattr(gc, "character")
                      else _enum_tail(gc.cc) if hasattr(gc, "cc") else "INVALID",
         "ascension": getattr(gc, "ascension", 0),
         "act": gc.act,
         "floor": gc.floor_num,
+        "hp": gc.cur_hp,
+        "max_hp": gc.max_hp,
         "boss": _enum_tail(gc.boss),
-        "relics": list(gc.relic_ids()),
+        "relics": [item["id"] for item in relic_state],
+        "relic_counters": [item["counter"] for item in relic_state],
         "potions": list(gc.overworld_potions),
         "gold": gc.gold,
         "deck": [(_sim_card_id(n), u) for n, u in gc.deck_ids()],

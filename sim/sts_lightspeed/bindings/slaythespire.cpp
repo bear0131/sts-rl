@@ -89,6 +89,37 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     player["max_hp"] = bc.player.maxHp;
     player["block"] = bc.player.block;
     player["energy"] = bc.player.energy;
+    player["gold"] = bc.player.gold;
+    py::dict counters;
+    counters["centennial_puzzle_active"] =
+        bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE);
+    counters["happy_flower"] = bc.player.happyFlowerCounter;
+    counters["incense_burner"] = bc.player.incenseBurnerCounter;
+    counters["ink_bottle"] = bc.player.inkBottleCounter;
+    counters["inserter"] = bc.player.inserterCounter;
+    counters["lizard_tail_active"] =
+        bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL);
+    counters["nunchaku"] = bc.player.nunchakuCounter;
+    counters["pen_nib"] = bc.player.penNibCounter;
+    counters["sundial"] = bc.player.sundialCounter;
+    counters["necronomicon_used"] = bc.player.haveUsedNecronomiconThisTurn;
+    counters["cards_played"] = bc.player.cardsPlayedThisTurn;
+    counters["attacks_played"] = bc.player.attacksPlayedThisTurn;
+    counters["skills_played"] = bc.player.skillsPlayedThisTurn;
+    counters["orange_attack"] = bc.player.orangePelletsCardTypesPlayed.test(0);
+    counters["orange_skill"] = bc.player.orangePelletsCardTypesPlayed.test(1);
+    counters["orange_power"] = bc.player.orangePelletsCardTypesPlayed.test(2);
+    counters["combust_hp_loss"] = bc.player.combustHpLoss;
+    counters["deva_form_energy_per_turn"] = bc.player.devaFormEnergyPerTurn;
+    counters["echo_form_cards_doubled"] = bc.player.echoFormCardsDoubled;
+    counters["panache_counter"] = bc.player.panacheCounter;
+    counters["cards_discarded"] = bc.player.cardsDiscardedThisTurn;
+    counters["times_damaged"] = bc.player.timesDamagedThisCombat;
+    counters["bomb_1"] = bc.player.bomb1;
+    counters["bomb_2"] = bc.player.bomb2;
+    counters["bomb_3"] = bc.player.bomb3;
+    counters["last_attack_unblocked_damage"] = bc.player.lastAttackUnblockedDamage;
+    player["combat_counters"] = counters;
     player["powers"] = playerPowersToList(bc.player);
     d["player"] = player;
 
@@ -310,6 +341,17 @@ py::list gcRelicIds(const sts::GameContext &gc) {
     return out;
 }
 
+py::list gcRelics(const sts::GameContext &gc) {
+    py::list out;
+    for (const auto &r : gc.relics.relics) {
+        py::dict item;
+        item["id"] = std::string(sts::relicIds[static_cast<int>(r.id)]);
+        item["counter"] = r.data;
+        out.append(item);
+    }
+    return out;
+}
+
 // the cards offered on a CARD_SELECT (grid) screen, in the sim's order
 py::list selectCards(const sts::GameContext &gc) {
     py::list out;
@@ -351,7 +393,9 @@ void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
     gc.relics.relics.clear();
     gc.relics.relicBits0 = gc.relics.relicBits1 = gc.relics.relicBits2 = 0;
     for (const auto &id : ids) {
-        gc.relics.add(sts::RelicInstance{relicIdFromString(id), 0});
+        const auto relicId = relicIdFromString(id);
+        const int data = relicId == sts::RelicId::LIZARD_TAIL ? 1 : 0;
+        gc.relics.add(sts::RelicInstance{relicId, data});
     }
 }
 
@@ -487,7 +531,10 @@ py::dict selectScreenInfo(const sts::GameContext &gc) {
     d["have_selected"] = static_cast<int>(info.haveSelectedCards.size());
     py::list sel;
     for (const auto &sc : info.haveSelectedCards) {
-        sel.append(std::string(sts::cardEnumStrings[static_cast<int>(sc.card.getId())]));
+        sel.append(py::make_tuple(
+            sts::cardEnumStrings[static_cast<int>(sc.card.getId())],
+            sc.card.getUpgraded()
+        ));
     }
     d["selected"] = sel;
     return d;
@@ -612,6 +659,7 @@ PYBIND11_MODULE(slaythespire, m) {
         // ----- out-of-combat replay/diff (added for full-run replay) -----
         .def("deck_ids", &deckIds, "deck as [(sim_card_enum, upgrade_count), ...]")
         .def("relic_ids", &gcRelicIds, "relics as [stable_id_string, ...]")
+        .def("relic_state", &gcRelics, "relics as [{id, counter}, ...]")
         .def("set_deck", &setDeck, "replace the deck with [(sim_card_enum, upgrade_count), ...]")
         .def("set_relics", &setRelics, "replace the relics with [stable_id_string, ...]")
         .def_property_readonly("screen_state_name",

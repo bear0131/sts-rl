@@ -1,8 +1,8 @@
 # RLlib PPO trainer
 
 `rl.rllib_trainer` is the distributed alternative to the SB3 trainer. It uses
-the same environment, shaped reward, observation encoder, map-DAG pointer core,
-and action masks. RLlib checkpoints are separate from SB3 `.zip` checkpoints.
+the same environment, shaped reward, split combat/overworld pointer cores, and
+action masks. RLlib checkpoints are separate from SB3 `.zip` checkpoints.
 
 Install on every Ray node:
 
@@ -27,7 +27,7 @@ OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 python -m rl.rllib_trainer \
   --minibatch-size 512
 ```
 
-Warm-start from an SB3 transformer-pointer checkpoint and log to W&B:
+Warm-start from an SB3 split/combat-specialist checkpoint and log to W&B:
 
 ```bash
 uv run python -m rl.rllib_trainer \
@@ -69,9 +69,11 @@ uv run python -m rl.rllib_trainer \
   --wandb-name combat-lang-card-combat-bs32768-mb256
 ```
 
-`--init-from` copies the shared policy/value core from an SB3 `.zip` and starts
-RLlib at step zero with a fresh optimizer. The checkpoint must use
-`StSPointerPolicy`; flat SB3 policies cannot be mapped to RLlib's pointer head.
+`--init-from` copies current specialized weights from an SB3 `.zip` and starts
+RLlib at step zero with a fresh optimizer. A combat checkpoint initializes the
+shared tokenizer and complete combat actor-critic in a fresh split model; the
+overworld actor-critic remains newly initialized. Old unified/flat policies are
+not accepted.
 The default `--rollout-fragment-length auto` chooses the largest exact divisor
 no greater than `--auto-fragment-max 64` after the final runner layout is known.
 On single-machine

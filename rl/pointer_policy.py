@@ -2,9 +2,9 @@
 
 THE EXPERIMENT (controlled A/B vs the flat baseline): everything else — env,
 reward, rollout, GAE, PPO hyperparameters, action mask, training steps — is held
-fixed. The ONLY thing that changes is how the 149 action logits are produced:
+fixed. The ONLY thing that changes is how the action logits are produced:
 
-    transformer-flat (baseline):  Linear(features_256 -> 149) over a pooled [CLS]
+    transformer-flat (baseline):  Linear(features_256 -> N_ACTIONS) over [CLS]
     transformer-pointer (this):   per-entity POINTER scoring
 
 Why pointer: the action ids are entity-indexed. `PLAY_CARD[h]` means "play the

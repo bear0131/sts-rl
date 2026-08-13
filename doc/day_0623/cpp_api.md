@@ -114,6 +114,7 @@ gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed: int, ascension: int)
 |---|---|
 | `deck_ids() -> list[(enum_str, upgrade)]` | 卡组,sim enum 名 + 升级数。 |
 | `relic_ids() -> list[str]` | 遗物,**稳定 id 串**(`Art of War`,非显示名)。 |
+| `relic_state() -> list[{"id": str, "counter": int}]` | 按持有顺序返回全部遗物及其 `RelicInstance.data`；obs 用它保持遗物 id/counter 槽对齐。 |
 | `set_deck([(enum_str, upgrade), ...])` | 整体替换卡组(force-sync 用)。 |
 | `set_relics([id_str, ...])` | 整体替换遗物(force-sync 用)。 |
 | `deck` (属性) | 卡组的 `Card` 对象列表副本。 |

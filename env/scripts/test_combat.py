@@ -134,10 +134,40 @@ def _check_akabeko_vigor_export():
     print("OK - Akabeko Vigor disappears from exported state after the first attack.")
 
 
+def _check_consumable_relic_state_export():
+    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 42, 0)
+    gc.floor_num = 1
+    gc.set_deck([("INJURY", 0)] * 10)
+    gc.set_relics(["Centennial Puzzle", "Lizard Tail"])
+    assert gc.relic_state()[1]["counter"] == 1
+    bc = sts.create_battle(gc, "Cultist")
+
+    counters = bc.to_dict()["player"]["combat_counters"]
+    assert counters["centennial_puzzle_active"] is True
+    assert counters["lizard_tail_active"] is True
+
+    puzzle_consumed = False
+    tail_consumed = False
+    for _ in range(40):
+        bc.execute(sts.Action(sts.ActionType.END_TURN))
+        state = bc.to_dict()
+        counters = state["player"]["combat_counters"]
+        puzzle_consumed |= not counters["centennial_puzzle_active"]
+        if not counters["lizard_tail_active"]:
+            assert state["player"]["hp"] > 0
+            assert state["outcome"] == 0
+            tail_consumed = True
+            break
+    assert puzzle_consumed, "Centennial Puzzle never became inactive"
+    assert tail_consumed, "Lizard Tail never revived the player"
+    print("OK - consumable relic active states update during combat.")
+
+
 def main():
     _check_all_encounters_spawn()
     _check_wiki_card_corrections()
     _check_akabeko_vigor_export()
+    _check_consumable_relic_state_export()
     rng = np.random.default_rng(0)
     n_per_pool = 5
     for pool in ("normal", "elite", "boss"):

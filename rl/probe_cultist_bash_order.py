@@ -19,6 +19,7 @@ from schemas.combat_state import normalize_sim, normalize_sim_global
 # Register custom checkpoint classes before loading.
 from . import model as _model  # noqa: F401
 from . import pointer_policy as _pointer_policy  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 
 
 DEFAULT_DOWNLOADS = Path.home() / "Downloads"

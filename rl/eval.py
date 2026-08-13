@@ -31,6 +31,7 @@ from rl.eval_starter_policy import _dp_route_choices
 # Register both custom policy families before SB3 unpickles a checkpoint.
 from . import model as _model  # noqa: F401
 from . import pointer_policy as _pointer_policy  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 
 
 def build_parser() -> argparse.ArgumentParser:

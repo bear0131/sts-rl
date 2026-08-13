@@ -24,6 +24,7 @@ def _run_worker(args_tuple):
     from env.core.run_env import SlayTheSpireEnv
     from rl import model as model_utils
     from rl import pointer_policy as _pointer_policy  # noqa: F401
+    from rl import split_policy as _split_policy  # noqa: F401
     from rl.reward import ShapedRewardWrapper
 
     model = MaskablePPO.load(checkpoint, device=device)

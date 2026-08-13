@@ -5,9 +5,9 @@ each episode is ONE random loadout (random Ironclad deck, relics, starting HP)
 fighting an ENDLESS stream of random encounters; HP carries over with no healing,
 so the episode ends on death. Reward is +1 per fight cleared by default;
 ``--combat-hp-loss-coef`` optionally subtracts a net-HP-loss penalty when each
-fight ends. The network is the SAME StSPointerPolicy used by
-the whole-run task, on the SAME obs/action space — so the resulting weights
-warm-start global training via
+fight ends. The network is the combat specialist used inside the whole-run
+split policy, on the same obs/action space, so its shared tokenizer, combat
+encoder, policy head, and value head can warm-start global training via
 ``python -m rl.trainer --task wholerun --init-from <combat>.zip --freeze-encoder``.
 """
 
@@ -24,7 +24,7 @@ from env.core import factories
 from env.core.run_env import SlayTheSpireEnv
 from env.core.combat_backend import SimCombatBackend
 from rl.reward import CombatGauntletRewardWrapper
-from rl.pointer_policy import StSPointerPolicy
+from rl.split_policy import CombatStSPointerPolicy
 from rl.tasks.base import Task
 
 
@@ -138,6 +138,9 @@ class CombatTask(Task):
         "steps": 2_000_000,
         "metrics_window": 200,
         "out": "rl/runs/combat",
+        # Whole-run defaults to a four-layer combined budget: two combat and
+        # two overworld layers. Match its combat specialist for warm starts.
+        "n_layers": 2,
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
@@ -183,7 +186,7 @@ class CombatTask(Task):
         return CombatMetricsCallback(window=args.metrics_window)
 
     def build_policy(self, args):
-        return StSPointerPolicy, dict(
+        return CombatStSPointerPolicy, dict(
             d_model=args.d_model,
             n_layers=args.n_layers,
             n_heads=args.n_heads,

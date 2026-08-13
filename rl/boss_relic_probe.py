@@ -18,6 +18,11 @@ from env.core import encode
 from env.core import vocab as V
 from env.core.factories import _build_gauntlet_gc
 
+# Register custom checkpoint classes before SB3 restores the policy.
+from rl import model as _model  # noqa: F401
+from rl import pointer_policy as _pointer_policy  # noqa: F401
+from rl import split_policy as _split_policy  # noqa: F401
+
 
 ACT1_BOSSES = ["SLIME_BOSS", "THE_GUARDIAN", "HEXAGHOST"]
 BOSS_POOL = [

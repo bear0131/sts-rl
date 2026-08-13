@@ -69,13 +69,16 @@ def uses_card_language(model) -> bool:
         return True
     policy = getattr(model, "policy", model)
     core = getattr(policy, "core", None)
-    encoder = getattr(core, "encoder", None)
-    if encoder is None:
-        encoder = getattr(policy, "features_extractor", None)
-    shared = getattr(encoder, "shared", None)
-    if shared is None or "card" not in shared:
-        return False
-    return isinstance(shared["card"], CardLanguageEmbedding)
+    shared = getattr(core, "shared", None)
+    if shared is None:
+        encoder = getattr(core, "encoder", None)
+        if encoder is None:
+            encoder = getattr(policy, "features_extractor", None)
+        shared = getattr(encoder, "shared", None)
+    card = getattr(shared, "card", None)
+    if card is None and isinstance(shared, nn.ModuleDict) and "card" in shared:
+        card = shared["card"]
+    return isinstance(card, CardLanguageEmbedding)
 
 
 def _embedding_dim_for(vocab_size: int) -> int:
@@ -295,6 +298,14 @@ class CardLanguageEmbedding(nn.Embedding):
 
     def forward(self, ids: torch.Tensor) -> torch.Tensor:
         return super().forward(ids) + self.effect_scale * self.effect_vectors(ids)
+
+    def versioned_forward(
+        self, ids: torch.Tensor, upgrades: torch.Tensor
+    ) -> torch.Tensor:
+        """Embed physical cards with the base or upgraded effect program."""
+        return super().forward(ids) + self.effect_scale * self.version_effect_vectors(
+            ids, upgrades.gt(0).long()
+        )
 
     def effective_weight(self) -> torch.Tensor:
         ids = torch.arange(self.num_embeddings, device=self.weight.device)
@@ -566,12 +577,16 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
                 [("hand_upgrades", 1), ("hand_costs", 1),
                  ("hand_damage", 1), ("hand_block", 1),
                  ("select_hand_mask", 1)]),
-            ("offer",       self._n("offer_card_ids"),  "offer_card_ids",  "card", []),
-            ("select",      self._n("select_card_ids"), "select_card_ids", "card", []),
-            ("selected",    self._n("selected_card_ids"),"selected_card_ids","card", []),
+            ("offer",       self._n("offer_card_ids"),  "offer_card_ids",  "card",
+                [("offer_card_upgrades", 1)]),
+            ("select",      self._n("select_card_ids"), "select_card_ids", "card",
+                [("select_card_upgrades", 1)]),
+            ("selected",    self._n("selected_card_ids"),"selected_card_ids","card",
+                [("selected_card_upgrades", 1)]),
             ("shop_card",   self._n("shop_card_ids"),   "shop_card_ids",   "card",
-                [("shop_card_prices", 1)]),
-            ("relic_held",  self._n("relics"),          "relics",          "relic", []),
+                [("shop_card_upgrades", 1), ("shop_card_prices", 1)]),
+            ("relic_held",  self._n("relics"),          "relics",          "relic",
+                [("relic_counters", 1)]),
             ("shop_relic",  self._n("shop_relic_ids"),  "shop_relic_ids",  "relic",
                 [("shop_relic_prices", 1)]),
             ("boss_relic",  self._n("boss_relic_ids"),  "boss_relic_ids",  "relic", []),
@@ -651,8 +666,9 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
                 torch.zeros(self._n("event_option_ids"), d_model)
             )
 
-        # pile tokens: draw / discard / exhaust / deck count vectors
-        self.pile_keys = ["draw_counts", "discard_counts", "exhaust_counts", "deck_counts"]
+        # Combat pile tokens. The master deck is represented losslessly by
+        # deck_ids/deck_upgrades in the split overworld model, never as a bucket.
+        self.pile_keys = ["draw_counts", "discard_counts", "exhaust_counts"]
         self.tok["pile"] = nn.Linear(self._n("draw_counts"), d_model)
         self.pos["pile"] = nn.Parameter(torch.zeros(len(self.pile_keys), d_model))
         self.pile_card_language = (

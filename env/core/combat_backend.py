@@ -10,7 +10,7 @@ implicitly from the structure — no explicit HP-delta or death-penalty reward t
 
 It REUSES the whole-run thick backend's combat handling verbatim — same
 legal_semantic_actions / step / obs as SimGameEnv — so the thin SlayTheSpireEnv
-on top exposes the SAME 149-action space + masks the whole-run policy trains on,
+on top exposes the SAME 181-action space + masks the whole-run policy trains on,
 and combat-pretrained weights transfer to `rl.trainer --task wholerun
 --init-from` with no
 remapping. (The standalone SimCombatEnv speaks the narrower 71-id combat space and
@@ -36,7 +36,7 @@ _OUTCOME_LOSS = 2
 
 
 class SimCombatBackend(SimGameEnv):
-    """A random-loadout combat gauntlet = one episode, in the whole-run 149-action
+    """A random-loadout combat gauntlet = one episode, in the whole-run 181-action
     space.
 
     factory_builder(np_random) -> (make_gc, next_encounter)

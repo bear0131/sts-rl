@@ -57,30 +57,30 @@ from . import combat_language as CL
 # select_hand_mask (obs_design §4.2): a hand-aligned 0/1 vector of the cards the
 # thin env has selected on a combat MULTI screen (Exhaust Many / Gamble), so the
 # feed-forward policy sees its own pending pick (mask != obs, §0.5).
-# The optional global-map layout is version 8: it appends the full 15x7 map DAG
-# only when ``global_map_view=True``. The default v7 layout stays compatible
-# with existing combat and whole-run checkpoints. The optional card-language
-# layout is version 9: it appends compact, upgrade-aware language-card sequences
-# for draw/discard/deck while retaining the complete count vectors.
-# The optional deck-size layout is version 10: it adds the explicit normalized
-# total held-card count while retaining deck_counts as the composition signal.
-OBS_VERSION = 7
-GLOBAL_MAP_OBS_VERSION = 8
-CARD_LANGUAGE_OBS_VERSION = 9
-DECK_SIZE_OBS_VERSION = 10
+# v11 is an intentional checkpoint break for the split combat/overworld policy.
+# It adds a lossless per-card master-deck sequence (including upgrade count),
+# action-aligned upgrade fields for every overworld card choice, and persistent
+# run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
+OBS_VERSION = 11
+GLOBAL_MAP_OBS_VERSION = 12
+CARD_LANGUAGE_OBS_VERSION = 13
+DECK_SIZE_OBS_VERSION = 14
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
 HAND_SLOTS = 10           # real hand cap
 N_CARDS = len(CARD_VOCAB)
-R_MAX = 30                # held-relic id slots (PAD); see decision B (id list)
+# One slot per possible held relic. Runtime encoders trim trailing PAD slots
+# before attention, so this complete contract does not make ordinary runs pay
+# for all reserved slots.
+R_MAX = V.RELIC_VOCAB_CAPACITY
 P_MAX = 5                 # potion slots
-G_MAX = 64                # card-select grid candidate slots (full deck: a Remove/
-                          # Transform/Smith grid is the whole deck, 30-40+ cards
-                          # mid/late run; 12 truncated it. 64 is the gen-1 cap.)
+DECK_SLOTS = 96           # sts::Deck::MAX_SIZE
+G_MAX = DECK_SLOTS        # full-deck select grids use the same hard capacity
 SELECT_PICK_SLOTS = 3     # overworld grid's max simultaneous picks (sim's
                           # haveSelectedCards is fixed_list<3>: Astrolabe=3 max)
-OFFER_SLOTS = 3           # combat card-reward choices
+OFFER_SLOTS = 5           # aligns with the reserved REWARD_CARD action segment
+BOSS_RELIC_SLOTS = 3
 MAP_EDGES = 3             # reachable next-row nodes (<=3 edges out of a node)
 MAP_ROWS = 15
 MAP_COLS = 7
@@ -105,6 +105,7 @@ DMG_SCALE = 100.0
 HITS_SCALE = 10.0
 BUFF_SCALE = 30.0         # signed buff amounts (e.g. Strength can be negative)
 UPGRADE_SCALE = 5.0       # hand-card upgrade count (Searing Blow can stack)
+COUNTER_SCALE = 10.0      # relic / per-turn counters are generally 0..10
 ASCENSION_SCALE = 20.0
 ACT_SCALE = 4.0
 FLOOR_SCALE = 56.0
@@ -116,6 +117,39 @@ PICK_SCALE = 10.0         # cards-remaining-to-pick (pickCount up to a handful)
 # ---- per-group scalar widths ----
 PLAYER_SCALARS = 6        # hp, max_hp, block, energy, turn, hp_frac
 MON_SCALARS = 6           # present, hp, hp_frac, block, adjusted_damage, hits
+RUN_HP_SCALARS = 3        # current hp, max hp, hp fraction (all phases)
+COMBAT_COUNTER_KEYS = (
+    "happy_flower", "incense_burner", "ink_bottle", "inserter",
+    "nunchaku", "pen_nib", "sundial", "necronomicon_used",
+    "cards_played", "attacks_played", "skills_played",
+    "orange_attack", "orange_skill", "orange_power",
+    "combust_hp_loss", "deva_form_energy_per_turn",
+    "echo_form_cards_doubled", "panache_counter",
+    "cards_discarded", "times_damaged",
+    "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
+)
+COMBAT_COUNTERS = len(COMBAT_COUNTER_KEYS)
+
+_BINARY_COMBAT_COUNTERS = frozenset({
+    "necronomicon_used", "orange_attack", "orange_skill", "orange_power",
+})
+
+_LIVE_RELIC_COUNTER = {
+    "Centennial Puzzle": "centennial_puzzle_active",
+    "Happy Flower": "happy_flower",
+    "Incense Burner": "incense_burner",
+    "InkBottle": "ink_bottle",
+    "Inserter": "inserter",
+    "Lizard Tail": "lizard_tail_active",
+    "Nunchaku": "nunchaku",
+    "Pen Nib": "pen_nib",
+    "Sundial": "sundial",
+}
+
+_BINARY_LIVE_RELICS = frozenset({
+    "Centennial Puzzle",
+    "Lizard Tail",
+})
 
 # dtypes: categorical ids are integer indices, scalars are float32.
 _CAT = np.int64
@@ -140,6 +174,7 @@ def obs_space(*, global_map_view=False, card_language=False,
         # ---- player ----
         "player_scalars": scal((PLAYER_SCALARS,)),
         "player_buffs": scal((V.PLAYER_BUFF_VEC,)),
+        "combat_counters": scal((COMBAT_COUNTERS,)),
         # ---- monsters (fixed slots; slot i == action target i) ----
         "monster_id": cat((MAX_MONSTERS,), V.MONSTER_VOCAB_CAPACITY),
         "monster_move": cat((MAX_MONSTERS,), V.MOVE_VOCAB_CAPACITY),
@@ -167,12 +202,22 @@ def obs_space(*, global_map_view=False, card_language=False,
         "floor": scal((1,)),
         "next_boss": cat((1,), V.BOSS_VOCAB_CAPACITY),
         "relics": cat((R_MAX,), V.RELIC_VOCAB_CAPACITY),
+        "relic_counters": scal((R_MAX,)),
         "potions": cat((P_MAX,), V.POTION_VOCAB_CAPACITY),
         "gold": scal((1,)),
-        "deck_counts": scal((N_CARDS,)),
+        "run_hp": scal((RUN_HP_SCALARS,)),
+        # Lossless master deck: slot i is one physical card, including its
+        # upgrade count. This is the overworld value model's deck signal.
+        "deck_ids": cat((DECK_SLOTS,), N_CARDS),
+        "deck_upgrades": scal((DECK_SLOTS,)),
         # ---- overworld decision context (phase-gated; PAD otherwise) ----
         "offer_card_ids": cat((OFFER_SLOTS,), N_CARDS),
+        "offer_card_upgrades": scal((OFFER_SLOTS,)),
+        "reward_gold": scal((2,)),
+        "reward_relic_ids": cat((3,), V.RELIC_VOCAB_CAPACITY),
+        "reward_potion_ids": cat((5,), V.POTION_VOCAB_CAPACITY),
         "select_card_ids": cat((G_MAX,), N_CARDS),
+        "select_card_upgrades": scal((G_MAX,)),
         # card-select screen semantics + progress (obs_design §4.1). select_context
         # says WHAT this screen is for (upgrade/exhaust/transform/remove/...) — the
         # legal card set can be identical across two opposite-intent screens, so the
@@ -185,16 +230,18 @@ def obs_space(*, global_map_view=False, card_language=False,
         "can_pick_zero": scal((1,)),
         "can_pick_any": scal((1,)),
         "selected_card_ids": cat((SELECT_PICK_SLOTS,), N_CARDS),
+        "selected_card_upgrades": scal((SELECT_PICK_SLOTS,)),
         # combat MULTI screen (Exhaust Many / Gamble): hand-aligned 0/1 vector of
         # the cards the thin env has selected so far (obs_design §4.2). slot h ==
         # the PICK_CARD[h] id == hand slot h. PAD (all 0) off a MULTI screen.
         "select_hand_mask": scal((HAND_SLOTS,)),
         "map_node_rooms": cat((MAP_EDGES,), len(V.ROOM_VOCAB)),
         "map_node_x": scal((MAP_EDGES,)),
-        "boss_relic_ids": cat((OFFER_SLOTS,), V.RELIC_VOCAB_CAPACITY),
+        "boss_relic_ids": cat((BOSS_RELIC_SLOTS,), V.RELIC_VOCAB_CAPACITY),
         "event_id": cat((1,), V.EVENT_VOCAB_CAPACITY),
         # ---- shop shelf (phase-gated; slot i == buy action id; PAD otherwise) ----
         "shop_card_ids": cat((SHOP_CARD_SLOTS,), N_CARDS),
+        "shop_card_upgrades": scal((SHOP_CARD_SLOTS,)),
         "shop_card_prices": scal((SHOP_CARD_SLOTS,)),
         "shop_relic_ids": cat((SHOP_RELIC_SLOTS,), V.RELIC_VOCAB_CAPACITY),
         "shop_relic_prices": scal((SHOP_RELIC_SLOTS,)),
@@ -265,6 +312,27 @@ def _idx(index_map, key):
     return index_map.get(key, 0)            # 0 == PAD for every id vocabulary
 
 
+def _card_tuple(card):
+    if isinstance(card, dict):
+        if "up" in card:
+            upgrades = card["up"]
+        elif "upgrades" in card:
+            upgrades = card["upgrades"]
+        else:
+            raise ValueError(f"card entry is missing its upgrade count: {card!r}")
+        return card["id"], int(upgrades)
+    if len(card) < 2:
+        raise ValueError(f"card entry needs id and upgrade count: {card!r}")
+    return card[0], int(card[1])
+
+
+def _require_capacity(name, values, capacity):
+    if len(values) > capacity:
+        raise ValueError(
+            f"{name} contains {len(values)} entries, exceeding capacity {capacity}"
+        )
+
+
 def _encode_card_sequence(o, pile, cards):
     """Compact every language-covered card ID without truncating duplicates."""
     ids_key = f"{pile}_card_ids"
@@ -299,6 +367,7 @@ def _empty(*, global_map_view=False, card_language=False,
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
         "player_buffs": np.zeros(V.PLAYER_BUFF_VEC, _SCALAR),
+        "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
         "monster_id": np.zeros(MAX_MONSTERS, _CAT),
         "monster_move": np.zeros(MAX_MONSTERS, _CAT),
         "monster_intent_cat": np.zeros(MAX_MONSTERS, _CAT),
@@ -320,22 +389,32 @@ def _empty(*, global_map_view=False, card_language=False,
         "floor": np.zeros(1, _SCALAR),
         "next_boss": np.zeros(1, _CAT),
         "relics": np.zeros(R_MAX, _CAT),
+        "relic_counters": np.zeros(R_MAX, _SCALAR),
         "potions": np.zeros(P_MAX, _CAT),
         "gold": np.zeros(1, _SCALAR),
-        "deck_counts": np.zeros(N_CARDS, _SCALAR),
+        "run_hp": np.zeros(RUN_HP_SCALARS, _SCALAR),
+        "deck_ids": np.zeros(DECK_SLOTS, _CAT),
+        "deck_upgrades": np.zeros(DECK_SLOTS, _SCALAR),
         "offer_card_ids": np.zeros(OFFER_SLOTS, _CAT),
+        "offer_card_upgrades": np.zeros(OFFER_SLOTS, _SCALAR),
+        "reward_gold": np.zeros(2, _SCALAR),
+        "reward_relic_ids": np.zeros(3, _CAT),
+        "reward_potion_ids": np.zeros(5, _CAT),
         "select_card_ids": np.zeros(G_MAX, _CAT),
+        "select_card_upgrades": np.zeros(G_MAX, _SCALAR),
         "select_context": np.zeros(1, _CAT),
         "pick_remaining": np.zeros(1, _SCALAR),
         "can_pick_zero": np.zeros(1, _SCALAR),
         "can_pick_any": np.zeros(1, _SCALAR),
         "selected_card_ids": np.zeros(SELECT_PICK_SLOTS, _CAT),
+        "selected_card_upgrades": np.zeros(SELECT_PICK_SLOTS, _SCALAR),
         "select_hand_mask": np.zeros(HAND_SLOTS, _SCALAR),
         "map_node_rooms": np.zeros(MAP_EDGES, _CAT),
         "map_node_x": np.zeros(MAP_EDGES, _SCALAR),
-        "boss_relic_ids": np.zeros(OFFER_SLOTS, _CAT),
+        "boss_relic_ids": np.zeros(BOSS_RELIC_SLOTS, _CAT),
         "event_id": np.zeros(1, _CAT),
         "shop_card_ids": np.zeros(SHOP_CARD_SLOTS, _CAT),
+        "shop_card_upgrades": np.zeros(SHOP_CARD_SLOTS, _SCALAR),
         "shop_card_prices": np.zeros(SHOP_CARD_SLOTS, _SCALAR),
         "shop_relic_ids": np.zeros(SHOP_RELIC_SLOTS, _CAT),
         "shop_relic_prices": np.zeros(SHOP_RELIC_SLOTS, _SCALAR),
@@ -406,6 +485,13 @@ def _encode_combat(o, canon):
         j = V.PLAYER_BUFF_VOCAB_INDEX.get(name)
         if j is not None:
             o["player_buffs"][j] = amt / BUFF_SCALE
+    counters = p.get("combat_counters", {})
+    for i, name in enumerate(COMBAT_COUNTER_KEYS):
+        value = counters.get(name, 0)
+        o["combat_counters"][i] = (
+            float(bool(value)) if name in _BINARY_COMBAT_COUNTERS
+            else value / COUNTER_SCALE
+        )
     if "player_status_language" in o:
         program = CL.status_program("PLAYER", hp, max_hp, p["block"], p["powers"])
         ids = [CL.TOKEN_INDEX.get(token, 0) for token in program]
@@ -492,20 +578,57 @@ def _encode_global(o, canon):
     o["act"][0] = g.get("act", 0) / ACT_SCALE
     o["floor"][0] = g.get("floor", 0) / FLOOR_SCALE
     o["next_boss"][0] = _idx(V.BOSS_VOCAB_INDEX, g.get("boss", "PAD"))
-    o["gold"][0] = g.get("gold", 0) / GOLD_SCALE
-    # relics: multi-hot id LIST padded to R_MAX (decision B). Order = hold order.
-    for i, rid in enumerate(g.get("relics", [])[:R_MAX]):
+    gold = g.get("gold", 0)
+    if canon.get("phase") == "combat" and canon.get("player") is not None:
+        gold = canon["player"].get("gold", gold)
+    o["gold"][0] = gold / GOLD_SCALE
+    hp = canon.get("hp", g.get("hp", 0))
+    max_hp = canon.get("max_hp", g.get("max_hp", 0))
+    if canon.get("phase") == "combat" and canon.get("player") is not None:
+        hp = canon["player"].get("hp", hp)
+        max_hp = canon["player"].get("max_hp", max_hp)
+    o["run_hp"][:] = (
+        min(hp, HP_SCALE) / HP_SCALE,
+        min(max_hp, HP_SCALE) / HP_SCALE,
+        (hp / max_hp) if max_hp else 0.0,
+    )
+    # Relic ids and persistent counters share slots. During combat, overwrite
+    # the counters that live in BattleContext with their current values.
+    relics = g.get("relics", [])
+    relic_counters = g.get("relic_counters", [])
+    _require_capacity("global.relics", relics, R_MAX)
+    _require_capacity("global.relic_counters", relic_counters, R_MAX)
+    for i, rid in enumerate(relics):
         o["relics"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
+        if i < len(relic_counters):
+            o["relic_counters"][i] = relic_counters[i] / COUNTER_SCALE
+        live_key = _LIVE_RELIC_COUNTER.get(rid)
+        live_counters = canon.get("player", {}).get("combat_counters", {})
+        if (
+            canon.get("phase") == "combat"
+            and live_key is not None
+            and live_key in live_counters
+        ):
+            live_value = live_counters[live_key]
+            o["relic_counters"][i] = (
+                float(bool(live_value))
+                if rid in _BINARY_LIVE_RELICS
+                else live_value / COUNTER_SCALE
+            )
     # potions: slot-aligned ids; empty/INVALID names -> PAD 0.
     for i, pid in enumerate(g.get("potions", [])[:P_MAX]):
         o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
-    for cid, _up in g.get("deck", []):
-        o["deck_counts"][CARD_INDEX.get(cid, CARD_INDEX[EMPTY])] += 1.0
+    deck = g.get("deck", [])
+    _require_capacity("global.deck", deck, DECK_SLOTS)
+    for i, card in enumerate(deck):
+        cid, up = _card_tuple(card)
+        o["deck_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+        o["deck_upgrades"][i] = up / UPGRADE_SCALE
     if "deck_size" in o:
         o["deck_size"][0] = min(
-            len(g.get("deck", [])) / DECK_SIZE_SCALE, 1.0
+            len(deck) / DECK_SIZE_SCALE, 1.0
         )
-    _encode_card_sequence(o, "deck", g.get("deck", []))
+    _encode_card_sequence(o, "deck", deck)
 
 
 def _encode_options(o, canon):
@@ -516,8 +639,18 @@ def _encode_options(o, canon):
     opts = canon.get("options") or {}
 
     if phase == "combat_reward":
-        for j, (cid, _up) in enumerate(opts.get("cards", [])[:OFFER_SLOTS]):
+        cards = opts.get("cards", [])
+        _require_capacity("options.cards", cards, OFFER_SLOTS)
+        for j, card in enumerate(cards):
+            cid, up = _card_tuple(card)
             o["offer_card_ids"][j] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+            o["offer_card_upgrades"][j] = up / UPGRADE_SCALE
+        for j, amount in enumerate(opts.get("gold", [])[:2]):
+            o["reward_gold"][j] = amount / GOLD_SCALE
+        for j, rid in enumerate(opts.get("relics", [])[:3]):
+            o["reward_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
+        for j, pid in enumerate(opts.get("potions", [])[:5]):
+            o["reward_potion_ids"][j] = _idx(V.POTION_VOCAB_INDEX, pid)
     elif phase == "event" and opts.get("neow") and "neow_bonus_ids" in o:
         for i, option in enumerate(opts.get("neow", [])[:NEOW_SLOTS]):
             bonus_id = int(option.get("bonus_id", 0))
@@ -533,8 +666,12 @@ def _encode_options(o, canon):
                 1.0 if drawback_id > 1 else 0.0,
             )
     elif phase == "card_select":
-        for k, (cid, _up) in enumerate(opts.get("cards", [])[:G_MAX]):
+        cards = opts.get("cards", [])
+        _require_capacity("options.cards", cards, G_MAX)
+        for k, card in enumerate(cards):
+            cid, up = _card_tuple(card)
             o["select_card_ids"][k] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+            o["select_card_upgrades"][k] = up / UPGRADE_SCALE
     elif phase == "map":
         for j, (x, room) in enumerate(opts.get("nodes", [])[:MAP_EDGES]):
             o["map_node_rooms"][j] = V.ROOM_VOCAB_INDEX.get(room, 0)
@@ -579,9 +716,12 @@ def _encode_options(o, canon):
         # Positional shelf: slot i lines up with the SHOP_* buy action id. A sold
         # slot has price -1 (shop_contents) -> PAD id + price 0 (decision: a shop
         # has no "originally empty" slot, so -1 means "already bought").
-        for i, (cid, price) in enumerate(opts.get("shop_cards", [])[:SHOP_CARD_SLOTS]):
+        shop_cards = opts.get("shop_cards", [])
+        _require_capacity("options.shop_cards", shop_cards, SHOP_CARD_SLOTS)
+        for i, (cid, up, price) in enumerate(shop_cards):
             if price != -1:
                 o["shop_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+                o["shop_card_upgrades"][i] = up / UPGRADE_SCALE
                 o["shop_card_prices"][i] = price / GOLD_SCALE
         for i, (rid, price) in enumerate(opts.get("shop_relics", [])[:SHOP_RELIC_SLOTS]):
             if price != -1:
@@ -597,7 +737,7 @@ def _encode_options(o, canon):
 
     if phase == "boss_relic":
         g = canon.get("global") or {}
-        for j, rid in enumerate(g.get("boss_relics", [])[:OFFER_SLOTS]):
+        for j, rid in enumerate(g.get("boss_relics", [])[:BOSS_RELIC_SLOTS]):
             o["boss_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
 
 
@@ -636,8 +776,12 @@ def _encode_select(o, sel):
     o["pick_remaining"][0] = sel.get("pick_remaining", 0) / PICK_SCALE
     o["can_pick_zero"][0] = 1.0 if sel.get("can_pick_zero") else 0.0
     o["can_pick_any"][0] = 1.0 if sel.get("can_pick_any") else 0.0
-    for i, cid in enumerate(sel.get("selected", [])[:SELECT_PICK_SLOTS]):
+    selected = sel.get("selected", [])
+    _require_capacity("options.select.selected", selected, SELECT_PICK_SLOTS)
+    for i, card in enumerate(selected):
+        cid, up = _card_tuple(card)
         o["selected_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+        o["selected_card_upgrades"][i] = up / UPGRADE_SCALE
     # combat MULTI screen: thin-env selected hand indices -> hand-aligned 0/1.
     for h in sel.get("hand_selected", []):
         if 0 <= h < HAND_SLOTS:

@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.pointer_policy import StSPolicyCore
+from rl.split_policy import CombatStSPolicyCore, SplitStSPolicyCore
 
 
 class RLLibInferencePolicy:
@@ -18,7 +18,7 @@ class RLLibInferencePolicy:
 
     def __init__(
         self,
-        core: StSPolicyCore,
+        core: CombatStSPolicyCore | SplitStSPolicyCore,
         observation_space,
         device: torch.device,
     ):
@@ -110,6 +110,11 @@ class RLLibInferenceModel:
         custom = config.get("model", {}).get("custom_model_config", {})
         if not isinstance(custom, dict):
             raise ValueError("RLlib policy config has no custom model config")
+        task = custom.get("task")
+        if task not in {"combat", "wholerun"}:
+            raise ValueError(
+                "RLlib policy config has no current specialized model task"
+            )
         core_config = {
             "d_model": int(custom.get("d_model", 256)),
             "n_layers": int(custom.get("n_layers", 4)),
@@ -123,14 +128,17 @@ class RLLibInferenceModel:
             else "cpu" if device == "auto"
             else device
         )
-        core = StSPolicyCore(self.observation_space, **core_config)
+        core_class = (
+            CombatStSPolicyCore if task == "combat" else SplitStSPolicyCore
+        )
+        core = core_class(self.observation_space, **core_config)
         core_weights = {
             key.removeprefix("core."): torch.as_tensor(value)
             for key, value in state["weights"].items()
             if key.startswith("core.")
         }
         if not core_weights:
-            raise ValueError("RLlib policy has no StSPolicyCore weights")
+            raise ValueError("RLlib policy has no specialized policy-core weights")
         try:
             core.load_state_dict(core_weights, strict=True)
         except RuntimeError as exc:

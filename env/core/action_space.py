@@ -33,6 +33,12 @@ is live for the low option ids (the thick layer enumerates real event options)
 with a reserved wide tail; SHOP_* likewise went LIVE this way (the thick layer
 enumerates real buys/removes) — both filling reserved width.
 
+ACTION_VERSION 6 (was 5): PICK_CARD widens from 64 to 96, matching the
+simulator's Deck::MAX_SIZE. Full-deck select screens and the lossless master-deck
+observation now share one hard capacity. Inputs above that capacity raise an
+error instead of being silently truncated. This renumbers later segments and
+widens N_ACTIONS from 149 to 181; old checkpoints are intentionally unsupported.
+
 ACTION_VERSION 5 (was 4): combat MULTI selection is monotonic. PICK_CARD adds an
 unselected hand card to the pending set, and selected cards are masked until the
 screen is confirmed. The ids and table width are unchanged; the version bump
@@ -62,13 +68,13 @@ from . import actions
 from . import game_actions as ga
 from . import vocab as V
 
-ACTION_VERSION = 5
+ACTION_VERSION = 6
 
 # ---- capacities (must match encode.py slot counts) ----
 HAND_SLOTS = actions.HAND_SLOTS        # 10  (combat hand; play slot == hand idx)
 MAX_MONSTERS = actions.MAX_MONSTERS    # 5   (target slot == monster slot in obs)
 P_MAX = 5                              # potion slots (reserved segment)
-G_MAX = 64                             # card-select / grid pick slots (full deck;
+G_MAX = 96                             # card-select / grid pick slots (full deck;
                                        # must equal encode.G_MAX — a Remove/Transform
                                        # grid is the whole deck. Was 12: a >12 pick
                                        # idx overflowed PICK_CARD into MAP_NODE.)

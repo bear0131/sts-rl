@@ -27,6 +27,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 # Register both custom policy families before SB3 unpickles a checkpoint.
 from . import model as _model  # noqa: F401
 from . import pointer_policy as _pointer_policy  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 from .tasks.combat import CombatTask
 
 

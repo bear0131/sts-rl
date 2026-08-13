@@ -1,8 +1,8 @@
 """Distributed RLlib PPO trainer for STS tasks.
 
-This is an alternative backend to ``rl.trainer``.  It reuses the environment,
-reward, observation encoder, and StSPolicyCore, while RLlib owns distributed
-sampling, multi-GPU PPO updates, metrics, and checkpoints.
+This is an alternative backend to ``rl.trainer``. It reuses the environment,
+reward, observation encoder, and phase-specialized policy cores, while RLlib
+owns distributed sampling, multi-GPU PPO updates, metrics, and checkpoints.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ from env.core import action_space as A
 from env.core import factories
 from env.core.combat_backend import SimCombatBackend
 from env.core.run_env import SlayTheSpireEnv
-from rl.pointer_policy import StSPolicyCore
+from rl.split_policy import CombatStSPolicyCore, SplitStSPolicyCore
 from rl.reward import CombatGauntletRewardWrapper, ShapedRewardWrapper
 from rl.tasks.combat import (
     _CLEAR_THRESHOLDS as COMBAT_CLEAR_THRESHOLDS,
@@ -62,7 +62,7 @@ from rl.tasks.wholerun import _MAX_EPISODE_STEPS as WHOLERUN_MAX_EPISODE_STEPS
 
 
 ENV_NAME = "sts-whole-run-masked-v1"
-MODEL_NAME = "sts-pointer-core-v1"
+MODEL_NAME = "sts-split-pointer-core-v2"
 MASK_LOG_FLOOR = -1.0e9
 TASKS = ("combat", "wholerun")
 RAY_RUNTIME_EXCLUDES = [
@@ -360,7 +360,7 @@ class RLLibActionMaskEnv(gym.Wrapper):
 
 
 class StSRLLibTorchModel(TorchModelV2, torch.nn.Module):
-    """RLlib adapter around the same pointer actor-critic used by SB3."""
+    """RLlib adapter around the same specialized actor-critic used by SB3."""
 
     def __init__(self, obs_space, action_space, num_outputs, model_config, name,
                  **kwargs):
@@ -375,7 +375,13 @@ class StSRLLibTorchModel(TorchModelV2, torch.nn.Module):
         base_space = obs_space["observations"]
         cfg = model_config.get("custom_model_config", {})
         _limit_torch_cpu_threads()
-        self.core = StSPolicyCore(
+        task = str(cfg.get("task", "wholerun"))
+        core_class = (
+            CombatStSPolicyCore if task == "combat" else SplitStSPolicyCore
+        )
+        if task not in TASKS:
+            raise ValueError(f"unknown RLlib model task: {task!r}")
+        self.core = core_class(
             base_space,
             d_model=int(cfg.get("d_model", 256)),
             n_layers=int(cfg.get("n_layers", 4)),
@@ -484,7 +490,12 @@ def build_parser():
     parser.add_argument("--entropy-coeff", "--ent-coef", type=float, default=0.01)
     parser.add_argument("--vf-coeff", "--vf-coef", type=float, default=0.5)
     parser.add_argument("--d-model", type=int, default=256)
-    parser.add_argument("--n-layers", type=int, default=4)
+    parser.add_argument(
+        "--n-layers", type=int, default=None,
+        help="Transformer layer count: direct count for combat pretraining; "
+             "combined combat+overworld budget for whole-run training "
+             "(defaults: combat=2, wholerun=4).",
+    )
     parser.add_argument("--n-heads", type=int, default=8)
     parser.add_argument("--global-map-view", action=argparse.BooleanOptionalAction,
                         default=True)
@@ -499,8 +510,9 @@ def build_parser():
     parser.add_argument("--card-language", action="store_true")
     parser.add_argument("--combat-language", action="store_true")
     parser.add_argument(
-        "--arch", choices=["auto", "transformer-pointer"], default="auto",
-        help="RLlib uses the shared transformer-pointer policy core.",
+        "--arch", choices=["auto", "split-pointer"], default="auto",
+        help="RLlib uses the split combat/overworld pointer architecture; the "
+             "combat task constructs only its combat specialist.",
     )
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("rl/runs/rllib"))
@@ -622,7 +634,7 @@ def _save_rllib_checkpoint_zip(algo, parent: Path, label: str) -> tuple[Path, Pa
 
 
 def _load_sb3_checkpoint(path: Path, device: str):
-    """Load and describe a pointer-policy SB3 checkpoint for migration."""
+    """Load and describe a current specialized SB3 checkpoint for migration."""
     from rl.accumulating_ppo import AccumulatingMaskablePPO
     from rl.model import (
         uses_card_language,
@@ -633,20 +645,25 @@ def _load_sb3_checkpoint(path: Path, device: str):
         uses_map_dag,
         uses_neow_observation,
     )
-    from rl.pointer_policy import StSPointerPolicy
+    from rl.split_policy import CombatStSPointerPolicy, SplitStSPointerPolicy
 
     if not path.is_file():
         raise FileNotFoundError(f"SB3 checkpoint not found: {path}")
     model = AccumulatingMaskablePPO.load(str(path), device=device)
-    if not isinstance(model.policy, StSPointerPolicy):
+    if isinstance(model.policy, CombatStSPointerPolicy):
+        source_task = "combat"
+    elif isinstance(model.policy, SplitStSPointerPolicy):
+        source_task = "wholerun"
+    else:
         raise ValueError(
-            "RLlib can migrate only SB3 transformer-pointer checkpoints; "
+            "RLlib can migrate only current SB3 combat/split checkpoints; "
             f"{path} contains {type(model.policy).__name__}"
         )
     cfg = dict(getattr(model.policy, "_core_cfg", {}))
     return SimpleNamespace(
         model=model,
         core=model.policy.core,
+        task=source_task,
         num_timesteps=int(model.num_timesteps),
         global_map_view=uses_global_map_observation(model),
         map_dag=uses_map_dag(model),
@@ -661,75 +678,48 @@ def _load_sb3_checkpoint(path: Path, device: str):
     )
 
 
+def _freeze_pretrained_encoder(core):
+    shared = getattr(core, "shared", None)
+    combat = getattr(core, "combat", None)
+    combat_encoder = getattr(combat, "encoder", None)
+    if shared is None or combat_encoder is None:
+        raise TypeError("specialized policy core has no shared/combat encoder")
+    for module in (shared, combat_encoder):
+        for parameter in module.parameters():
+            parameter.requires_grad_(False)
+
+
 def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
-    """Copy a shared StSPolicyCore from SB3 into RLlib and sync samplers."""
+    """Strictly copy current SB3 specialist weights into the RLlib core."""
     core = algo.get_policy().model.core
     source = checkpoint.core.state_dict()
     target = core.state_dict()
+    source_is_split = checkpoint.task == "wholerun"
+    target_is_split = isinstance(core, SplitStSPolicyCore)
+    if source_is_split and target_is_split:
+        required = set(target)
+    elif not source_is_split and not target_is_split:
+        required = set(target)
+    elif source_is_split:
+        # Extract shared tokenizer and combat specialist from a split model.
+        required = set(target)
+    else:
+        # Initialize shared tokenizer and combat specialist in a fresh split model.
+        required = set(source)
+
     incompatible = []
-    initialized = []
-    for key, value in source.items():
-        if key not in target:
-            incompatible.append(f"unexpected source parameter {key}")
-            continue
-        if value.shape == target[key].shape:
-            target[key] = value
-            continue
-        is_appended_role = (
-            key.endswith("role_emb.weight")
-            and value.ndim == 2
-            and target[key].ndim == 2
-            and target[key].shape[0] >= value.shape[0]
-            and target[key].shape[1] == value.shape[1]
-        )
-        if is_appended_role:
-            target[key][:value.shape[0]] = value
-            initialized.append(f"{key}[{value.shape[0]}:]")
-            continue
-        is_appended_global_scalar = (
-            key.endswith("tok.global.weight")
-            and value.ndim == 2
-            and target[key].ndim == 2
-            and target[key].shape[0] == value.shape[0]
-            and target[key].shape[1] == value.shape[1] + 1
-        )
-        if is_appended_global_scalar:
-            target[key][:, :value.shape[1]] = value
-            initialized.append(f"{key}[:, -1]")
-            continue
-        incompatible.append(
-            f"shape mismatch for {key}: checkpoint {tuple(value.shape)}, "
-            f"target {tuple(target[key].shape)}"
-        )
-    for key in target.keys() - source.keys():
-        is_neow = any(marker in key for marker in (
-            ".shared.neow_bonus.",
-            ".shared.neow_drawback.",
-            ".tok.neow.",
-            ".pos.neow",
-        ))
-        is_event_option = any(marker in key for marker in (
-            ".shared.event_option.",
-            ".tok.event_option.",
-            ".pos.event_option",
-        ))
-        is_card_language = any(marker in key for marker in (
-            ".shared.card.token_embedding.",
-            ".shared.card.local_encoder.",
-            ".shared.card.program_position",
-            ".shared.card.effect_scale",
-            ".pile_card_language.",
-            ".exhaust_card_language.",
-        ))
-        is_combat_language = ".combat_language" in key
-        is_map_dag = ".map_dag." in key or key.endswith(".map_dag")
-        if (
-            is_neow or is_event_option or is_card_language
-            or is_combat_language or is_map_dag
-        ):
-            initialized.append(key)
-        else:
+    for key in sorted(required):
+        if key not in source:
             incompatible.append(f"missing source parameter {key}")
+        elif key not in target:
+            incompatible.append(f"unexpected source parameter {key}")
+        elif source[key].shape != target[key].shape:
+            incompatible.append(
+                f"shape mismatch for {key}: checkpoint "
+                f"{tuple(source[key].shape)}, target {tuple(target[key].shape)}"
+            )
+        else:
+            target[key] = source[key]
     if incompatible:
         details = "\n  - ".join(incompatible)
         raise ValueError(
@@ -737,14 +727,14 @@ def _apply_sb3_weights(algo, checkpoint, freeze_encoder=False):
             f"\n  - {details}"
         )
     core.load_state_dict(target)
-    if initialized:
+    initialized = len(target) - len(required)
+    if initialized > 0:
         print(
-            f"[rllib] initialized {len(initialized)} new policy tensors",
+            f"[rllib] initialized {initialized} new overworld policy tensors",
             flush=True,
         )
     if freeze_encoder:
-        for parameter in core.encoder.parameters():
-            parameter.requires_grad_(False)
+        _freeze_pretrained_encoder(core)
     runner_group = getattr(algo, "env_runner_group", None)
     if runner_group is None:
         runner_group = getattr(algo, "workers", None)
@@ -984,6 +974,8 @@ def _normalize_compat_args(args):
             raise ValueError("--combat-hp-loss-coef must be non-negative")
     if args.gradient_accumulation_steps < 1:
         raise ValueError("--gradient-accumulation-steps must be at least 1")
+    if args.n_layers is None:
+        args.n_layers = 2 if args.task == "combat" else 4
     if args.n_envs is not None:
         args.num_env_runners = args.n_envs if args.vec != "dummy" else 0
         args.envs_per_runner = 1 if args.vec != "dummy" else args.n_envs
@@ -1022,11 +1014,19 @@ def _normalize_compat_args(args):
         load_device = "cpu" if args.device == "auto" else args.device
         sb3_source = _load_sb3_checkpoint(sb3_path, load_device)
         sb3_resume_steps = sb3_source.num_timesteps if args.resume else 0
+        if sb3_source.task == args.task:
+            inferred_layers = sb3_source.n_layers
+        elif args.task == "wholerun":
+            # A combat checkpoint's depth is one specialist's depth. Build an
+            # equally deep fresh overworld specialist alongside it.
+            inferred_layers = 2 * sb3_source.n_layers
+        else:
+            # Extract the combat specialist from a split checkpoint.
+            inferred_layers = int(sb3_source.core.specialist_layers[0])
         for name in (
             "global_map_view", "map_dag", "deck_size_observation",
             "neow_observation", "event_option_observation",
-            "card_language", "combat_language", "d_model", "n_layers",
-            "n_heads",
+            "card_language", "combat_language", "d_model", "n_heads",
         ):
             old = getattr(args, name)
             new = getattr(sb3_source, name)
@@ -1035,6 +1035,12 @@ def _normalize_compat_args(args):
             if old != new:
                 print(f"[rllib] inferred --{name.replace('_', '-')}={new} from {sb3_path}")
                 setattr(args, name, new)
+        if args.n_layers != inferred_layers:
+            print(
+                f"[rllib] inferred --n-layers={inferred_layers} from "
+                f"{sb3_path} ({sb3_source.task} -> {args.task})"
+            )
+            args.n_layers = inferred_layers
     return sb3_source, sb3_resume_steps
 
 
@@ -1661,6 +1667,7 @@ def main():
                     model={
                         "custom_model": MODEL_NAME,
                         "custom_model_config": {
+                            "task": args.task,
                             "d_model": args.d_model,
                             "n_layers": args.n_layers,
                             "n_heads": args.n_heads,
@@ -1692,8 +1699,7 @@ def main():
         _install_rllib_backprop_fix(algo)
 
         if args.freeze_encoder and sb3_source is None:
-            for parameter in algo.get_policy().model.core.encoder.parameters():
-                parameter.requires_grad_(False)
+            _freeze_pretrained_encoder(algo.get_policy().model.core)
         if wandb_run is not None and args.wandb_grad_freq > 0:
             wandb_run.watch(
                 algo.get_policy().model,

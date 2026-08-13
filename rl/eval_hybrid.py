@@ -33,6 +33,7 @@ from rl.rllib_inference import RLLibInferenceModel
 
 # Register the custom SB3 policy before loading its checkpoint.
 from . import pointer_policy as _pointer_policy  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 
 
 @dataclass

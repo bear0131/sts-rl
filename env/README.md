@@ -24,9 +24,9 @@ env/
     cards_vocab.py      全集卡词表(canonical id 空间,checked-in,append-only)   [无 sim]
     vocab.py            生成的 categorical 词表(monster/move/relic/...)         [无 sim]
     intents.py          move 名 → INTENT_CATEGORY 派生                          [无 sim]
-    encode.py           canonical dict → 结构化 Dict obs(OBS_VERSION=4,布局真相源) [无 sim]
+    encode.py           canonical dict → 结构化 Dict obs(OBS_VERSION=11,布局真相源) [无 sim]
     actions.py          战斗内 71-id sts↔id 映射                                [无 sim]
-    action_space.py     薄层整局 autoregressive id 面(ACTION_VERSION=2)          [无 sim]
+    action_space.py     薄层整局 181-id autoregressive 面(ACTION_VERSION=6)       [无 sim]
     game_actions.py     backend 无关的语义动作面                                [无 sim]
     render.py           canonical 状态/动作 → 人读字符串                        [无 sim]
     encounters.py       act-1 遭遇战名单(normal/elite/boss)                     [无 sim]
@@ -47,14 +47,14 @@ env/
 
 ## 当前规格
 
-- obs:`encode.OBS_VERSION = 4`,结构化 `spaces.Dict`(36 组,见 `doc/day_0623/obs_design.md`)。v1 的扁平 `Box(OBS_SIZE=1288)` 已废弃。
-- 动作:薄层 `action_space.N_ACTIONS = 96`,`ACTION_VERSION = 2`(整局 autoregressive id 面,见 `doc/day_0623/action_design.md`)。`actions.py` 的 71-id 平面只作战斗内 sts↔id 映射被复用。
+- obs:`encode.OBS_VERSION = 11`,结构化 `spaces.Dict`(见 `doc/day_0623/obs_design.md`)。战斗/战外字段由模型白名单隔离，完整主卡组按每张实体牌及升级数编码。
+- 动作:薄层 `action_space.N_ACTIONS = 181`,`ACTION_VERSION = 6`(整局 autoregressive id 面,见 `doc/day_0623/action_design.md`)。`actions.py` 的 71-id 平面只作战斗内 sts↔id 映射被复用。
 
 ### obs 稳定性怎么保证
 
 模型输入一旦变就等于重训,所以 obs 靠四条纪律保持稳定:
 
-- **定长 + 全集 + 预留零槽**:手牌不变长(`HAND_SLOTS` 个槽)、敌人铺到 `MAX_MONSTERS=5` 行零填充、卡组堆用全集计数向量。加内容不改长度。
+- **定长 + 全集 + 预留零槽**:手牌不变长(`HAND_SLOTS` 个槽)、敌人铺到 `MAX_MONSTERS=5` 行零填充；主卡组最多 96 张，每张实体牌一个 token，并保留升级数；全部持有遗物进入 208 个预留槽。
 - **版本号 `OBS_VERSION`**:只有改布局(键集合/某字段形状/词表顺序/scaling)才跳号 —— 跳号 = 旧 checkpoint 作废的信号。**把一个预留零槽填上真实数据,不算改布局,不跳号。**
 - 词表(`cards_vocab.py` + 生成的 `vocab.py`)一律 **append-only**,绝不重排/删除。
 
@@ -62,7 +62,7 @@ env/
 
 - ✅ 敌人这回合的 `base_damage` × `hits` —— `to_dict()` 已导出。
 - ✅ **敌人意图**:`monster_move`(真实 `MonsterMoveId`,obs v2 起 C++ 导出 `moveHistory[0]`)+ `monster_intent_cat`(纯 Python 从 move 名派生,见 `intents.py`)。v1 的「预留零槽 + 暂未导出」已落地。
-- ❌ **药水使用**:动作面留了 `USE_POTION` 预留段,厚层暂无喝药语义动作(mask 恒 0),待 C++ 绑定。
+- ✅ **药水使用**:`USE_POTION` 段已接入厚层与动作 mask；战斗内外都读取实时药水槽。
 
 ### 手牌编码
 

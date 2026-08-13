@@ -6,13 +6,11 @@ import argparse
 import time
 from collections import deque
 
-import torch.nn as nn
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.callbacks import BaseCallback
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.model import StSMLPExtractor, StSTransformerExtractor
-from rl.pointer_policy import StSPointerPolicy
+from rl.split_policy import SplitStSPointerPolicy
 from rl.tasks.base import Task
 
 
@@ -184,20 +182,11 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=[
-                "auto", "mlp-flat", "transformer-flat", "transformer-pointer",
-            ],
+            choices=["auto", "split-pointer"],
             default="auto",
-            help="Policy architecture, named <encoder>-<head>. The encoder maps obs "
-                 "to token/feature reps; the head maps those to the 149 action "
-                 "logits. auto = transformer-flat for a fresh run, or infer the "
-                 "architecture from --init-from. mlp-flat = flat Linear "
-                 "extractor + flat head. "
-                 "transformer-flat = per-entity Transformer encoder + flat head "
-                 "(default). transformer-pointer = same Transformer encoder + "
-                 "per-entity POINTER head (only the head differs from "
-                 "transformer-flat; for the head A/B). New heads append as "
-                 "transformer-<head> (e.g. transformer-hier).",
+            help="Independent combat and overworld Transformer actor-critics "
+                 "with shared card/relic/potion tokenizers. --n-layers is the "
+                 "combined layer budget split between both specialists.",
         )
 
     def make_env_fn(self, args):
@@ -236,12 +225,10 @@ class WholeRunTask(Task):
             raise RuntimeError(
                 "trainer must resolve --arch auto before building the policy"
             )
-        if args.arch == "transformer-pointer":
-            # Pointer action head. The core owns the network (transformer encoder
-            # + pointer/flat heads + value path), so no features_extractor/net_arch
-            # here — only the encoder geometry. Same encoder geometry as
-            # transformer-flat so the A/B isolates the action head.
-            return StSPointerPolicy, dict(
+        if args.arch == "split-pointer":
+            # The core owns both specialist encoders, policy heads, and value
+            # heads, so no SB3 features_extractor/net_arch is needed here.
+            return SplitStSPointerPolicy, dict(
                 d_model=args.d_model,
                 n_layers=args.n_layers,
                 n_heads=args.n_heads,
@@ -249,34 +236,7 @@ class WholeRunTask(Task):
                 combat_language=args.combat_language,
                 map_dag=args.map_dag,
             )
-        elif args.arch == "transformer-flat":
-            return "MultiInputPolicy", dict(
-                features_extractor_class=StSTransformerExtractor,
-                features_extractor_kwargs=dict(
-                    features_dim=256,
-                    d_model=args.d_model,
-                    n_layers=args.n_layers,
-                    n_heads=args.n_heads,
-                    card_language=args.card_language,
-                    combat_language=args.combat_language,
-                    map_dag=args.map_dag,
-                ),
-                activation_fn=nn.GELU,
-                net_arch=dict(pi=[256, 128], vf=[512, 256]),
-                ortho_init=False,
-            )
-        else:
-            if args.card_language or args.combat_language:
-                raise ValueError(
-                    "--card-language/--combat-language require a transformer architecture"
-                )
-            return "MultiInputPolicy", dict(
-                features_extractor_class=StSMLPExtractor,
-                features_extractor_kwargs=dict(features_dim=256),
-                activation_fn=nn.GELU,
-                net_arch=dict(pi=[256, 128], vf=[512, 256]),
-                ortho_init=False,
-            )
+        raise ValueError(f"unsupported whole-run architecture: {args.arch}")
 
     def tag(self, args, run_id):
         map_tag = "-globalmap" if args.global_map_view else ""

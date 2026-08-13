@@ -28,6 +28,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 # Import custom model code before loading a checkpoint so the custom extractor
 # classes are available to cloudpickle (same reason as eval.py).
 from . import model as _model  # noqa: F401
+from . import split_policy as _split_policy  # noqa: F401
 from .eval import is_win
 
 

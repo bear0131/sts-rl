@@ -1393,6 +1393,11 @@ bool GameContext::obtainRelic(RelicId r) {
             break;
         }
 
+        case RelicId::LIZARD_TAIL: {
+            relicData = 1;
+            break;
+        }
+
         case RelicId::NEOWS_LAMENT: {
             relicData = 3;
             break;

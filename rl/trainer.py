@@ -9,7 +9,7 @@ Run from repo root:
 
     python -m rl.trainer --task combat
     python -m rl.trainer --task combat --ent-coef 0.03 --steps 5000000 --wandb
-    python -m rl.trainer --task wholerun --arch transformer-pointer \
+    python -m rl.trainer --task wholerun --arch split-pointer \
         --init-from rl/runs/combat/<ts>/final.zip --freeze-encoder
 """
 
@@ -54,8 +54,13 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     """Return the trainer architecture name represented by a loaded policy."""
     from rl.model import StSMLPExtractor, StSTransformerExtractor
     from rl.pointer_policy import StSPointerPolicy
+    from rl.split_policy import CombatStSPointerPolicy, SplitStSPointerPolicy
 
     policy = model.policy
+    if isinstance(policy, CombatStSPointerPolicy):
+        return "combat-pointer"
+    if isinstance(policy, SplitStSPointerPolicy):
+        return "split-pointer"
     if isinstance(policy, StSPointerPolicy):
         return "transformer-pointer"
     extractor = getattr(policy, "features_extractor", None)
@@ -318,11 +323,10 @@ def build_parser(task) -> argparse.ArgumentParser:
     parser.add_argument(
         "--freeze-encoder",
         action="store_true",
-        help="Freeze the shared Transformer encoder (core.encoder) — only the "
-             "policy/value heads train. Intended with --init-from to hand a "
-             "combat-pretrained trunk to whole-run training without it being "
-             "pulled away by meta-game gradients (the deliberately myopic-trunk "
-             "tradeoff; see doc/night_0625/combat_pretrain_decision.md).",
+        help="Freeze the shared semantic tokenizers and combat encoder. The "
+             "combat/overworld heads and overworld encoder remain trainable, "
+             "so combat pretraining can be retained while the new overworld "
+             "specialist learns.",
     )
 
     # --- wandb -----------------------------------------------------------------
@@ -352,10 +356,9 @@ def main() -> None:
 
     args = build_parser(task).parse_args()
 
-    # Whole-run fresh training retains transformer-flat as its default.  When
-    # warm-starting, infer the architecture from the checkpoint so a combat
-    # checkpoint (always transformer-pointer) works without a second, easy to
-    # miss --arch flag. Keep the loaded object for the actual weight transfer.
+    # Whole-run training uses the split specialist architecture. When warm-
+    # starting, a combat-only specialist is copied into the split model's
+    # shared tokenizer and combat branch. Keep the loaded object for transfer.
     pretrained = None
     if args.init_from:
         if args.resume:
@@ -459,14 +462,8 @@ def main() -> None:
 
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
-            args.arch = (
-                "transformer-pointer"
-                if getattr(args, "global_map_view", False)
-                and getattr(args, "map_dag", False)
-                else "transformer-flat"
-            )
-            if args.arch == "transformer-pointer":
-                print("[trainer] selected transformer-pointer for --map-dag")
+            args.arch = "split-pointer"
+            print("[trainer] selected split-pointer")
         else:
             source_arch = _checkpoint_policy_arch(pretrained)
             if source_arch is None:
@@ -474,14 +471,19 @@ def main() -> None:
                     "Could not infer the policy architecture in --init-from. "
                     "Pass --arch explicitly."
                 )
-            args.arch = source_arch
+            args.arch = (
+                "split-pointer" if source_arch == "combat-pointer" else source_arch
+            )
             print(
                 f"[trainer] inferred --arch {args.arch} from {args.init_from}"
             )
 
     if pretrained is not None and hasattr(args, "arch"):
         source_arch = _checkpoint_policy_arch(pretrained)
-        if source_arch is not None and source_arch != args.arch:
+        combat_into_split = (
+            source_arch == "combat-pointer" and args.arch == "split-pointer"
+        )
+        if source_arch is not None and source_arch != args.arch and not combat_into_split:
             raise ValueError(
                 f"--init-from uses {source_arch}, but the requested whole-run "
                 f"policy uses {args.arch}. Omit --arch to infer it, or pass "
@@ -522,11 +524,10 @@ def main() -> None:
 
     env_fns = [task.make_env_fn(args) for _ in range(args.n_envs)]
     if args.vec == "subproc":
-        # forkserver, not the default fork: forking a process that already
-        # imported the native sts module + torch (threads, CUDA context) into a
-        # child can deadlock. forkserver starts each worker from a clean-ish
-        # process. spawn would also work but is slower to start.
-        venv = SubprocVecEnv(env_fns, start_method="forkserver")
+        # SB3 selects forkserver where available and spawn on Windows. Both
+        # avoid forking a process that already imported the native sim and
+        # torch, which can otherwise inherit unsafe thread/CUDA state.
+        venv = SubprocVecEnv(env_fns)
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv, filename=str(out_dir / "monitor.csv"))
@@ -644,23 +645,40 @@ def main() -> None:
         # checkpoint; the freshly built model keeps its step-0 counter and fresh
         # optimizer state. Same obs/action space + arch => strict load.
         assert pretrained is not None
-        initialized = _warm_start_policy(
-            model,
-            pretrained,
-            allow_global_map_extension=getattr(args, "global_map_view", False),
-            allow_map_dag_extension=(
-                getattr(args, "global_map_view", False)
-                and getattr(args, "map_dag", False)
-            ),
-            allow_deck_size_extension=getattr(
-                args, "deck_size_observation", False
-            ),
-            allow_card_language_extension=args.card_language,
-            allow_combat_language_extension=args.combat_language,
-            allow_event_option_extension=getattr(
-                args, "event_option_observation", False
-            ),
-        )
+        source_arch = _checkpoint_policy_arch(pretrained)
+        if source_arch == "combat-pointer" and getattr(args, "arch", None) == "split-pointer":
+            source = pretrained.policy.state_dict()
+            target = model.policy.state_dict()
+            incompatible = [
+                key for key, value in source.items()
+                if key not in target or target[key].shape != value.shape
+            ]
+            if incompatible:
+                raise ValueError(
+                    "combat checkpoint does not match the split combat specialist: "
+                    + ", ".join(incompatible[:8])
+                )
+            target.update(source)
+            model.policy.load_state_dict(target)
+            initialized = len(target.keys() - source.keys())
+        else:
+            initialized = _warm_start_policy(
+                model,
+                pretrained,
+                allow_global_map_extension=getattr(args, "global_map_view", False),
+                allow_map_dag_extension=(
+                    getattr(args, "global_map_view", False)
+                    and getattr(args, "map_dag", False)
+                ),
+                allow_deck_size_extension=getattr(
+                    args, "deck_size_observation", False
+                ),
+                allow_card_language_extension=args.card_language,
+                allow_combat_language_extension=args.combat_language,
+                allow_event_option_extension=getattr(
+                    args, "event_option_observation", False
+                ),
+            )
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")
         if initialized:
@@ -670,56 +688,25 @@ def main() -> None:
 
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)
-        if core is None or not hasattr(core, "encoder"):
-            raise ValueError("--freeze-encoder requires the transformer-pointer "
-                             "policy (no core.encoder to freeze on this arch).")
-        n = 0
-        for p in core.encoder.parameters():
-            p.requires_grad = False
-            n += 1
-        trainable_extensions = 0
-        if getattr(args, "global_map_view", False):
-            for module in (
-                core.encoder.tok["map_full"],
-                core.encoder.role_emb,
-            ):
-                for p in module.parameters():
-                    p.requires_grad = True
-                    trainable_extensions += 1
-            core.encoder.pos["map_full"].requires_grad = True
-            trainable_extensions += 1
-        if args.card_language:
-            card_embedding = core.encoder.shared["card"]
-            for name in ("token_embedding", "local_encoder"):
-                for p in getattr(card_embedding, name).parameters():
-                    p.requires_grad = True
-                    trainable_extensions += 1
-            card_embedding.program_position.requires_grad = True
-            trainable_extensions += 1
-            card_embedding.effect_scale.requires_grad = True
-            trainable_extensions += 1
-            for module in (
-                core.encoder.pile_card_language,
-                core.encoder.exhaust_card_language,
-            ):
-                for p in module.parameters():
-                    p.requires_grad = True
-                    trainable_extensions += 1
-        if args.combat_language:
-            for p in core.encoder.combat_language.parameters():
-                p.requires_grad = True
-                trainable_extensions += 1
-            core.encoder.combat_language_scale.requires_grad = True
-            trainable_extensions += 1
-        # Params stay in the optimizer but get no grad, so Adam skips them.
-        if trainable_extensions:
-            print(
-                f"[trainer] froze encoder ({n} param tensors) except "
-                f"{trainable_extensions} new semantic adapter tensors; "
-                "heads also train"
+        shared = getattr(core, "shared", None)
+        combat = getattr(core, "combat", None)
+        combat_encoder = getattr(combat, "encoder", None)
+        if shared is None or combat_encoder is None:
+            raise ValueError(
+                "--freeze-encoder requires a split or combat specialist policy"
             )
-        else:
-            print(f"[trainer] froze encoder ({n} param tensors) — only heads train")
+        frozen = 0
+        for module in (shared, combat_encoder):
+            for parameter in module.parameters():
+                parameter.requires_grad = False
+                frozen += 1
+        # Frozen parameters stay in Adam's parameter groups but receive no
+        # gradients, so the optimizer leaves them untouched.
+        print(
+            f"[trainer] froze shared tokenizers and combat encoder "
+            f"({frozen} parameter tensors); specialist heads and the "
+            "overworld encoder remain trainable"
+        )
 
     print(
         f"[trainer] task={task.name} steps={args.steps} n_envs={args.n_envs} "

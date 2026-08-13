@@ -41,6 +41,17 @@ def _fake_combat():
         "turn": 2,
         "player": {
             "hp": 68, "max_hp": 80, "block": 5, "energy": 3,
+            "combat_counters": {
+                "centennial_puzzle_active": True,
+                "cards_played": 4,
+                "combust_hp_loss": 2,
+                "echo_form_cards_doubled": 1,
+                "cards_discarded": 3,
+                "times_damaged": 5,
+                "bomb_2": 40,
+                "orange_attack": True,
+                "lizard_tail_active": False,
+            },
             "powers": {"Strength": 2, "Vulnerable": 0, "Frail": 1},
         },
         "monsters": [
@@ -60,7 +71,11 @@ def _fake_combat():
         "exhaust": [],
         "global": {
             "character": "IRONCLAD", "ascension": 3, "act": 1, "floor": 6,
-            "boss": "HEXAGHOST", "relics": ["Burning Blood", "Akabeko"],
+            "boss": "HEXAGHOST",
+            "relics": [
+                "Burning Blood", "Centennial Puzzle", "Lizard Tail", "Akabeko",
+            ],
+            "relic_counters": [0, -1, -1, 2],
             "potions": ["Fire Potion", "INVALID"], "gold": 99,
             "deck": [("Strike_R", 0), ("Strike_R", 0), ("Bash", 0),
                      ("Defend_R", 1)],
@@ -83,6 +98,7 @@ def _fake_map():
         },
         "global": {
             "character": "IRONCLAD", "ascension": 0, "act": 1, "floor": 5,
+            "hp": 61, "max_hp": 80,
             "boss": "HEXAGHOST", "relics": ["Burning Blood"], "potions": [],
             "gold": 50, "deck": [("Strike_R", 0)], "boss_relics": [],
         },
@@ -287,6 +303,14 @@ def test_combat_fields_land():
     assert abs(o["hand_damage"][0] - 6 / encode.DMG_SCALE) < 1e-6
     assert abs(o["hand_block"][2] - 8 / encode.BLOCK_SCALE) < 1e-6
     assert o["draw_counts"][CARD_INDEX["Strike_R"]] == 2.0
+    counter = dict(zip(encode.COMBAT_COUNTER_KEYS, o["combat_counters"]))
+    assert counter["cards_played"] == 4 / encode.COUNTER_SCALE
+    assert counter["combust_hp_loss"] == 2 / encode.COUNTER_SCALE
+    assert counter["echo_form_cards_doubled"] == 1 / encode.COUNTER_SCALE
+    assert counter["cards_discarded"] == 3 / encode.COUNTER_SCALE
+    assert counter["times_damaged"] == 5 / encode.COUNTER_SCALE
+    assert counter["bomb_2"] == 40 / encode.COUNTER_SCALE
+    assert counter["orange_attack"] == 1.0
     print("combat fields land OK")
 
 
@@ -305,6 +329,8 @@ def test_global_and_options():
     assert o["character"][0] == V.CHARACTER_VOCAB_INDEX["IRONCLAD"]
     assert o["next_boss"][0] == V.BOSS_VOCAB_INDEX["HEXAGHOST"]
     assert o["relics"][0] == V.RELIC_VOCAB_INDEX["Burning Blood"]
+    assert o["relic_counters"][1] == 1
+    assert o["relic_counters"][2] == 0
     assert o["potions"][0] == V.POTION_VOCAB_INDEX["Fire Potion"]
     assert o["potions"][1] == 0                    # 'INVALID' -> PAD
     assert abs(o["gold"][0] - 99 / encode.GOLD_SCALE) < 1e-6
@@ -342,8 +368,89 @@ def test_optional_deck_size_observation():
     space = encode.obs_space(deck_size_observation=True)
     assert space.contains(o)
     assert abs(o["deck_size"][0] - len(deck) / encode.DECK_SIZE_SCALE) < 1e-6
-    assert abs(o["deck_size"][0] - o["deck_counts"].sum() / encode.DECK_SIZE_SCALE) < 1e-6
+    assert np.count_nonzero(o["deck_ids"]) == len(deck)
     print(f"optional deck size obs OK (version {encode.DECK_SIZE_OBS_VERSION})")
+
+
+def test_lossless_deck_sequence():
+    canon = _fake_map()
+    canon["global"]["deck"] = [
+        ("Strike_R", 0), ("Strike_R", 1), ("Searing Blow", 4),
+    ]
+    o = encode.encode(canon)
+    assert o["deck_ids"][:3].tolist() == [
+        CARD_INDEX["Strike_R"], CARD_INDEX["Strike_R"],
+        CARD_INDEX["Searing Blow"],
+    ]
+    assert np.allclose(
+        o["deck_upgrades"][:3], [0, 1 / encode.UPGRADE_SCALE, 4 / encode.UPGRADE_SCALE]
+    )
+    assert "deck_counts" not in o
+
+    canon["global"]["deck"] = [("Strike_R", 0)] * encode.DECK_SLOTS
+    assert encode.obs_space().contains(encode.encode(canon))
+    canon["global"]["deck"].append(("Defend_R", 0))
+    try:
+        encode.encode(canon)
+    except ValueError as exc:
+        assert "global.deck" in str(exc) and "capacity 96" in str(exc)
+    else:
+        raise AssertionError("oversized deck was silently truncated")
+    print("lossless per-card deck sequence and hard capacity OK")
+
+
+def test_upgrade_counts_are_required_for_overworld_cards():
+    canon = _fake_map()
+    canon["phase"] = "shop"
+    canon["options"] = {"shop_cards": [("Strike_R", 1, 50)]}
+    o = encode.encode(canon)
+    assert o["shop_card_ids"][0] == CARD_INDEX["Strike_R"]
+    assert o["shop_card_upgrades"][0] == 1 / encode.UPGRADE_SCALE
+
+    canon["options"]["shop_cards"] = [("Strike_R", 50)]
+    try:
+        encode.encode(canon)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("legacy shop card without upgrade count was accepted")
+
+    canon = _fake_map()
+    canon["global"]["deck"] = [{"id": "Strike_R"}]
+    try:
+        encode.encode(canon)
+    except ValueError as exc:
+        assert "upgrade count" in str(exc)
+    else:
+        raise AssertionError("deck card without upgrade count was accepted")
+    print("overworld card upgrade counts are mandatory")
+
+
+def test_complete_relic_sequence():
+    canon = _fake_combat()
+    canon["player"]["combat_counters"] = {}
+    held = list(V.RELIC_VOCAB[1:42])
+    assert len(held) > 30
+    canon["global"]["relics"] = held
+    canon["global"]["relic_counters"] = list(range(len(held)))
+    o = encode.encode(canon)
+    assert o["relics"][:len(held)].tolist() == [
+        V.RELIC_VOCAB_INDEX[relic] for relic in held
+    ]
+    assert np.allclose(
+        o["relic_counters"][:len(held)],
+        np.arange(len(held)) / encode.COUNTER_SCALE,
+    )
+
+    canon["global"]["relics"] = [held[0]] * (encode.R_MAX + 1)
+    canon["global"]["relic_counters"] = []
+    try:
+        encode.encode(canon)
+    except ValueError as exc:
+        assert "global.relics" in str(exc) and str(encode.R_MAX) in str(exc)
+    else:
+        raise AssertionError("oversized relic list was silently truncated")
+    print("all held relics are encoded with a hard capacity check")
 
 
 def test_combat_language():
@@ -433,6 +540,9 @@ if __name__ == "__main__":
     test_global_and_options()
     test_optional_global_map_view()
     test_optional_deck_size_observation()
+    test_lossless_deck_sequence()
+    test_upgrade_counts_are_required_for_overworld_cards()
+    test_complete_relic_sequence()
     test_combat_language()
     test_action_codec_roundtrip()
     test_monotonic_multi_select()
