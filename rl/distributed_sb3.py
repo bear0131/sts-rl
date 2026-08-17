@@ -455,11 +455,14 @@ def main() -> None:
             id=args.wandb_id,
             name=args.wandb_name,
             resume="allow" if args.wandb_id else None,
-            config={
-                **vars(args),
+        )
+        wandb.config.update(
+            {
+                **{key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
                 "start_timesteps": start_timesteps,
                 "global_rollout_size": global_rollout_size,
             },
+            allow_val_change=True,
         )
         wandb.define_metric("time/total_timesteps")
         wandb.define_metric("*", step_metric="time/total_timesteps")
