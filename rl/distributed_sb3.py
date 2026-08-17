@@ -120,8 +120,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--wandb-step-base",
         type=int,
         default=None,
-        help="W&B Step value at --wandb-step-base-timesteps. Use with "
-        "--wandb-step-per-update to continue a legacy run's Step axis.",
+        help="Legacy chart-step value at --wandb-step-base-timesteps. Use "
+        "with --wandb-step-per-update to continue an existing chart axis.",
     )
     parser.add_argument(
         "--wandb-step-base-timesteps",
@@ -523,6 +523,18 @@ def main() -> None:
             allow_val_change=True,
         )
         wandb.define_metric("time/total_timesteps")
+        if args.wandb_step_base is not None:
+            wandb.define_metric("legacy_step")
+            for metric in (
+                "game/*",
+                "rollout/*",
+                "speed/*",
+                "train/*",
+                "dist/*",
+                "global_step",
+                "time/total_timesteps",
+            ):
+                wandb.define_metric(metric, step_metric="legacy_step")
 
     callback = CallbackList(
         [WholeRunTask().metrics_callback(args)] if args.rank == 0 else [NoopCallback()]
@@ -720,17 +732,20 @@ def main() -> None:
                         ),
                     }
                 wandb_payload.update(logger_scalars(model))
-                wandb_step = wandb_step_for_timesteps(
+                legacy_step = wandb_step_for_timesteps(
                     global_timesteps=global_timesteps,
                     global_rollout_size=global_rollout_size,
                     base_step=args.wandb_step_base,
                     base_timesteps=args.wandb_step_base_timesteps,
                     step_per_update=args.wandb_step_per_update,
                 )
-                if wandb_step is None:
-                    wandb.log(wandb_payload)
-                else:
-                    wandb.log(wandb_payload, step=wandb_step)
+                if legacy_step is not None:
+                    # W&B's internal _step is append-only and cannot be moved
+                    # backwards when resuming an existing run. A custom step
+                    # metric preserves the legacy chart axis without changing
+                    # the real global environment-step counters.
+                    wandb_payload["legacy_step"] = legacy_step
+                wandb.log(wandb_payload)
 
             if args.output is not None and (
                 args.save_every_updates
