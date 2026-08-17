@@ -647,6 +647,7 @@ def main() -> None:
                 import wandb
 
                 wandb_payload = {
+                        "global_step": global_timesteps,
                         "time/total_timesteps": global_timesteps,
                         "dist/rank0_total_sec": record["total_sec_rank"],
                         "dist/rollout_sec": record["rollout_sec"],
