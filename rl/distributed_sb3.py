@@ -116,6 +116,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
     parser.add_argument("--wandb-name", default=None)
+    parser.add_argument(
+        "--wandb-step-base",
+        type=int,
+        default=None,
+        help="W&B Step value at --wandb-step-base-timesteps. Use with "
+        "--wandb-step-per-update to continue a legacy run's Step axis.",
+    )
+    parser.add_argument(
+        "--wandb-step-base-timesteps",
+        type=int,
+        default=None,
+        help="Global env-step anchor corresponding to --wandb-step-base.",
+    )
+    parser.add_argument(
+        "--wandb-step-per-update",
+        type=int,
+        default=1,
+        help="Amount to advance W&B Step for each global rollout update.",
+    )
     parser.add_argument("--barrier-timeout", type=float, default=600.0)
     parser.add_argument("--stable-file-seconds", type=float, default=0.25)
     return parser
@@ -341,6 +360,33 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
             if isinstance(value, (int, float, np.integer, np.floating)):
                 scalars[key] = float(value)
     return scalars
+
+
+def wandb_step_for_timesteps(
+    *,
+    global_timesteps: int,
+    global_rollout_size: int,
+    base_step: int | None,
+    base_timesteps: int | None,
+    step_per_update: int,
+) -> int | None:
+    if base_step is None and base_timesteps is None:
+        return None
+    if base_step is None or base_timesteps is None:
+        raise ValueError(
+            "--wandb-step-base and --wandb-step-base-timesteps must be set together"
+        )
+    if step_per_update < 1:
+        raise ValueError("--wandb-step-per-update must be positive")
+
+    elapsed = global_timesteps - base_timesteps
+    updates, remainder = divmod(elapsed, global_rollout_size)
+    if elapsed < 0 or remainder:
+        raise ValueError(
+            f"global timesteps {global_timesteps} do not align with W&B Step "
+            f"anchor {base_timesteps} and rollout size {global_rollout_size}"
+        )
+    return base_step + updates * step_per_update
 
 
 def ppo_microbatch_backward(
@@ -674,10 +720,17 @@ def main() -> None:
                         ),
                     }
                 wandb_payload.update(logger_scalars(model))
-                # Match rl.trainer's W&B indexing: do not pass step= here and
-                # do not bind all metrics to time/total_timesteps. The original
-                # SB3 path lets W&B/TensorBoard advance the run step naturally.
-                wandb.log(wandb_payload)
+                wandb_step = wandb_step_for_timesteps(
+                    global_timesteps=global_timesteps,
+                    global_rollout_size=global_rollout_size,
+                    base_step=args.wandb_step_base,
+                    base_timesteps=args.wandb_step_base_timesteps,
+                    step_per_update=args.wandb_step_per_update,
+                )
+                if wandb_step is None:
+                    wandb.log(wandb_payload)
+                else:
+                    wandb.log(wandb_payload, step=wandb_step)
 
             if args.output is not None and (
                 args.save_every_updates
