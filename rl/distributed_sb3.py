@@ -143,7 +143,7 @@ def ssh_options(peer: Peer, key: Path, control_dir: Path) -> list[str]:
         "-o",
         "ControlPersist=600",
         "-o",
-        f"ControlPath={control_dir}/%r_%h_%p",
+        f"ControlPath={control_dir}/%C",
     ]
 
 
