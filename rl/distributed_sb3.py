@@ -477,7 +477,6 @@ def main() -> None:
             allow_val_change=True,
         )
         wandb.define_metric("time/total_timesteps")
-        wandb.define_metric("*", step_metric="time/total_timesteps")
 
     callback = CallbackList(
         [WholeRunTask().metrics_callback(args)] if args.rank == 0 else [NoopCallback()]
@@ -669,7 +668,10 @@ def main() -> None:
                         ),
                     }
                 wandb_payload.update(logger_scalars(model))
-                wandb.log(wandb_payload, step=global_timesteps)
+                # Match rl.trainer's W&B indexing: do not pass step= here and
+                # do not bind all metrics to time/total_timesteps. The original
+                # SB3 path lets W&B/TensorBoard advance the run step naturally.
+                wandb.log(wandb_payload)
 
             if args.output is not None and (
                 args.save_every_updates
