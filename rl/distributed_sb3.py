@@ -28,7 +28,7 @@ import numpy as np
 import torch as th
 import torch.nn.functional as F
 from gymnasium import spaces
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
 
 from rl.accumulating_ppo import AccumulatingMaskablePPO
@@ -101,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--vf-coef", type=float, default=0.5)
     parser.add_argument("--clip-range", type=float, default=0.2)
+    parser.add_argument("--metrics-window", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--device", default="cuda")
@@ -331,6 +332,17 @@ def prune_checkpoints(directory: Path, prefix: str, limit: int) -> None:
         path.unlink()
 
 
+def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
+    scalars = {}
+    for key, value in model.logger.name_to_value.items():
+        if key.startswith(("game/", "rollout/", "speed/")):
+            if isinstance(value, np.generic):
+                value = value.item()
+            if isinstance(value, (int, float, np.integer, np.floating)):
+                scalars[key] = float(value)
+    return scalars
+
+
 def ppo_microbatch_backward(
     model: AccumulatingMaskablePPO,
     rollout_data,
@@ -467,7 +479,9 @@ def main() -> None:
         wandb.define_metric("time/total_timesteps")
         wandb.define_metric("*", step_metric="time/total_timesteps")
 
-    callback = NoopCallback()
+    callback = CallbackList(
+        [WholeRunTask().metrics_callback(args)] if args.rank == 0 else [NoopCallback()]
+    )
     total_timesteps, callback = model._setup_learn(
         total_timesteps=args.updates * rollout_size,
         callback=callback,
@@ -628,8 +642,7 @@ def main() -> None:
             if wandb_run is not None:
                 import wandb
 
-                wandb.log(
-                    {
+                wandb_payload = {
                         "time/total_timesteps": global_timesteps,
                         "dist/rank0_total_sec": record["total_sec_rank"],
                         "dist/rollout_sec": record["rollout_sec"],
@@ -641,14 +654,22 @@ def main() -> None:
                         ),
                         "train/loss": record["loss_mean"],
                         "train/optimizer_steps": record["optimizer_steps"],
+                        "train/gradient_accumulation_steps": (
+                            args.gradient_accumulation_steps * args.world_size
+                        ),
+                        "train/effective_batch_size": (
+                            args.batch_size
+                            * args.gradient_accumulation_steps
+                            * args.world_size
+                        ),
                         "train/effective_batch_size_global": (
                             args.batch_size
                             * args.gradient_accumulation_steps
                             * args.world_size
                         ),
-                    },
-                    step=global_timesteps,
-                )
+                    }
+                wandb_payload.update(logger_scalars(model))
+                wandb.log(wandb_payload, step=global_timesteps)
 
             if args.output is not None and (
                 args.save_every_updates
