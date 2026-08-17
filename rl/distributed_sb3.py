@@ -601,6 +601,11 @@ def main() -> None:
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     step_seconds += time.perf_counter() - step_started
+                    for path in [grad_path, *peer_paths]:
+                        try:
+                            path.unlink()
+                        except FileNotFoundError:
+                            pass
 
                     accumulated = 0
                     optimizer_steps += 1
