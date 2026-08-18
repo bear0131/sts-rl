@@ -189,6 +189,29 @@ class WholeRunTask(Task):
                  "with shared card/relic/potion tokenizers. --n-layers is the "
                  "combined layer budget split between both specialists.",
         )
+        parser.add_argument(
+            "--hierarchical-combat-hp",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Train combat as a fight-local option whose terminal reward "
+                 "is remaining HP on the fixed observation scale. Overworld "
+                 "returns skip combat and connect directly to the post-combat "
+                 "state. On resume, omission preserves the checkpoint mode.",
+        )
+        parser.add_argument(
+            "--combat-hp-gamma",
+            type=float,
+            default=None,
+            help="Fight-local discount for hierarchical combat-HP mode "
+                 "(default 1.0, or the checkpoint value on resume).",
+        )
+        parser.add_argument(
+            "--combat-hp-gae-lambda",
+            type=float,
+            default=None,
+            help="Fight-local GAE lambda (default 0.95, or the checkpoint "
+                 "value on resume).",
+        )
 
     def make_env_fn(self, args):
         from rl.reward import ShapedRewardWrapper
@@ -248,7 +271,9 @@ class WholeRunTask(Task):
             card_tag += "-combatlang"
         deck_tag = "-decksize" if args.deck_size_observation else ""
         event_tag = "-eventopt" if args.event_option_observation else ""
+        hierarchy_tag = "-hier-hp" if args.hierarchical_combat_hp else ""
         return (
-            f"whole-run{map_tag}{card_tag}{deck_tag}{event_tag}-asc{args.ascension}"
+            f"whole-run{map_tag}{card_tag}{deck_tag}{event_tag}{hierarchy_tag}"
+            f"-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )

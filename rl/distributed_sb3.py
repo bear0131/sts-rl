@@ -26,12 +26,14 @@ from pathlib import Path
 
 import numpy as np
 import torch as th
-import torch.nn.functional as F
 from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
 
-from rl.accumulating_ppo import AccumulatingMaskablePPO
+from rl.accumulating_ppo import (
+    AccumulatingMaskablePPO,
+    ppo_loss_components,
+)
 from rl.tasks.wholerun import WholeRunTask
 
 # Register custom policies before loading checkpoints.
@@ -98,6 +100,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
+    parser.add_argument(
+        "--hierarchical-combat-hp",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use fight-local terminal-HP returns for combat and macro combat "
+             "transitions for overworld. Omission preserves checkpoint mode.",
+    )
+    parser.add_argument("--combat-hp-gamma", type=float, default=None)
+    parser.add_argument("--combat-hp-gae-lambda", type=float, default=None)
     parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--vf-coef", type=float, default=0.5)
     parser.add_argument("--clip-range", type=float, default=0.2)
@@ -354,7 +365,7 @@ def prune_checkpoints(directory: Path, prefix: str, limit: int) -> None:
 def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
-        if key.startswith(("game/", "rollout/", "speed/")):
+        if key.startswith(("game/", "rollout/", "speed/", "hierarchical/")):
             if isinstance(value, np.generic):
                 value = value.item()
             if isinstance(value, (int, float, np.integer, np.floating)):
@@ -394,7 +405,7 @@ def ppo_microbatch_backward(
     rollout_data,
     clip_range: float,
     clip_range_vf: float | None,
-) -> float:
+) -> dict[str, float | None]:
     actions = rollout_data.actions
     if isinstance(model.action_space, spaces.Discrete):
         actions = rollout_data.actions.long().flatten()
@@ -405,28 +416,37 @@ def ppo_microbatch_backward(
         action_masks=rollout_data.action_masks,
     )
     values = values.flatten()
-    advantages = rollout_data.advantages
-    if model.normalize_advantage:
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    ratio = th.exp(log_prob - rollout_data.old_log_prob)
-    policy_loss = -th.min(
-        advantages * ratio,
-        advantages * th.clamp(ratio, 1 - clip_range, 1 + clip_range),
-    ).mean()
-    if clip_range_vf is None:
-        values_pred = values
-    else:
-        values_pred = rollout_data.old_values + th.clamp(
-            values - rollout_data.old_values,
-            -clip_range_vf,
-            clip_range_vf,
-        )
-    value_loss = F.mse_loss(rollout_data.returns, values_pred)
-    entropy_loss = -th.mean(entropy) if entropy is not None else -th.mean(-log_prob)
-    loss = policy_loss + model.ent_coef * entropy_loss + model.vf_coef * value_loss
+    components = ppo_loss_components(
+        hierarchical=model.hierarchical_combat_hp,
+        normalize_advantage=model.normalize_advantage,
+        observations=rollout_data.observations,
+        advantages=rollout_data.advantages,
+        returns=rollout_data.returns,
+        old_values=rollout_data.old_values,
+        old_log_prob=rollout_data.old_log_prob,
+        values=values,
+        log_prob=log_prob,
+        entropy=entropy,
+        clip_range=clip_range,
+        clip_range_vf=clip_range_vf,
+    )
+    loss = (
+        components.policy_loss
+        + model.ent_coef * components.entropy_loss
+        + model.vf_coef * components.value_loss
+    )
     loss.backward()
-    return float(loss.detach().cpu())
+    return {
+        "loss": float(loss.detach().cpu()),
+        "combat_value_loss": (
+            float(components.combat_value_loss.detach().cpu())
+            if components.combat_value_loss is not None else None
+        ),
+        "overworld_value_loss": (
+            float(components.overworld_value_loss.detach().cpu())
+            if components.overworld_value_loss is not None else None
+        ),
+    }
 
 
 def main() -> None:
@@ -471,6 +491,25 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    source_hierarchical = bool(
+        getattr(probe_model, "hierarchical_combat_hp", False)
+    )
+    source_combat_gamma = float(
+        getattr(probe_model, "combat_hp_gamma", 1.0)
+    )
+    source_combat_gae_lambda = float(
+        getattr(probe_model, "combat_hp_gae_lambda", 0.95)
+    )
+    if args.hierarchical_combat_hp is None:
+        args.hierarchical_combat_hp = source_hierarchical
+    if args.combat_hp_gamma is None:
+        args.combat_hp_gamma = source_combat_gamma
+    if args.combat_hp_gae_lambda is None:
+        args.combat_hp_gae_lambda = source_combat_gae_lambda
+    if not 0.0 <= args.combat_hp_gamma <= 1.0:
+        raise ValueError("--combat-hp-gamma must be in [0, 1]")
+    if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
+        raise ValueError("--combat-hp-gae-lambda must be in [0, 1]")
     env = make_env(probe_model, args)
     del probe_model
     model = AccumulatingMaskablePPO.load(
@@ -488,8 +527,26 @@ def main() -> None:
             "gamma": args.gamma,
             "gae_lambda": args.gae_lambda,
             "clip_range": args.clip_range,
+            "hierarchical_combat_hp": args.hierarchical_combat_hp,
+            "combat_hp_gamma": args.combat_hp_gamma,
+            "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
         },
     )
+    reset_count = model.configure_hierarchical_combat_hp(
+        enabled=args.hierarchical_combat_hp,
+        combat_gamma=args.combat_hp_gamma,
+        combat_gae_lambda=args.combat_hp_gae_lambda,
+        reset_combat_value=(
+            bool(args.hierarchical_combat_hp) != source_hierarchical
+        ),
+        reset_seed=args.seed,
+    )
+    if reset_count:
+        print(
+            f"[rank {args.rank}] combat value objective changed; reset "
+            f"{reset_count} value parameter tensors",
+            flush=True,
+        )
     model.set_random_seed(args.seed + args.rank * 1_000_003)
 
     start_timesteps = int(model.num_timesteps)
@@ -529,6 +586,7 @@ def main() -> None:
                 "game/*",
                 "rollout/*",
                 "speed/*",
+                "hierarchical/*",
                 "train/*",
                 "dist/*",
                 "global_step",
@@ -576,6 +634,8 @@ def main() -> None:
             )
 
             losses = []
+            combat_value_losses = []
+            overworld_value_losses = []
             sync_seconds = 0.0
             sync_mbps = []
             avg_seconds = 0.0
@@ -589,14 +649,21 @@ def main() -> None:
                 model.policy.optimizer.zero_grad()
                 for rollout_data in model.rollout_buffer.get(args.batch_size):
                     backward_started = time.perf_counter()
-                    losses.append(
-                        ppo_microbatch_backward(
-                            model,
-                            rollout_data,
-                            clip_range,
-                            clip_range_vf,
-                        )
+                    batch_result = ppo_microbatch_backward(
+                        model,
+                        rollout_data,
+                        clip_range,
+                        clip_range_vf,
                     )
+                    losses.append(batch_result["loss"])
+                    if batch_result["combat_value_loss"] is not None:
+                        combat_value_losses.append(
+                            batch_result["combat_value_loss"]
+                        )
+                    if batch_result["overworld_value_loss"] is not None:
+                        overworld_value_losses.append(
+                            batch_result["overworld_value_loss"]
+                        )
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     backward_seconds += time.perf_counter() - backward_started
@@ -694,6 +761,15 @@ def main() -> None:
                     + step_seconds
                 ),
             }
+            if args.hierarchical_combat_hp:
+                record["combat_value_loss_mean"] = (
+                    float(np.mean(combat_value_losses))
+                    if combat_value_losses else 0.0
+                )
+                record["overworld_value_loss_mean"] = (
+                    float(np.mean(overworld_value_losses))
+                    if overworld_value_losses else 0.0
+                )
             records.append(record)
             print(json.dumps(record, sort_keys=True), flush=True)
 
@@ -731,6 +807,15 @@ def main() -> None:
                             * args.world_size
                         ),
                     }
+                if args.hierarchical_combat_hp:
+                    wandb_payload.update({
+                        "train/combat_value_loss": record[
+                            "combat_value_loss_mean"
+                        ],
+                        "train/overworld_value_loss": record[
+                            "overworld_value_loss_mean"
+                        ],
+                    })
                 wandb_payload.update(logger_scalars(model))
                 legacy_step = wandb_step_for_timesteps(
                     global_timesteps=global_timesteps,

@@ -50,6 +50,40 @@ class WandbStepMetricCallback(BaseCallback):
             )
 
 
+class RollingCheckpointCallback(CheckpointCallback):
+    """Keep only the newest checkpoints for this callback's name prefix."""
+
+    def __init__(self, *args, max_checkpoints: int = 20, **kwargs):
+        super().__init__(*args, **kwargs)
+        if max_checkpoints < 1:
+            raise ValueError("max_checkpoints must be at least 1")
+        self.max_checkpoints = max_checkpoints
+
+    def _prune_checkpoints(self, limit: int) -> None:
+        prefix = f"{self.name_prefix}_"
+        suffix = "_steps"
+        checkpoints = []
+        for path in Path(self.save_path).glob(f"{prefix}*{suffix}.zip"):
+            step_text = path.stem[len(prefix):-len(suffix)]
+            if step_text.isdigit():
+                checkpoints.append((int(step_text), path))
+
+        checkpoints.sort()
+        excess = len(checkpoints) - limit
+        for _step, path in checkpoints[:max(excess, 0)]:
+            path.unlink()
+
+    def _on_step(self) -> bool:
+        saving = self.n_calls % self.save_freq == 0
+        if saving:
+            # Make room before saving so a full disk cannot prevent rotation.
+            self._prune_checkpoints(self.max_checkpoints - 1)
+        result = super()._on_step()
+        if saving:
+            self._prune_checkpoints(self.max_checkpoints)
+        return result
+
+
 def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     """Return the trainer architecture name represented by a loaded policy."""
     from rl.model import StSMLPExtractor, StSTransformerExtractor
@@ -69,6 +103,19 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     if isinstance(extractor, StSMLPExtractor):
         return "mlp-flat"
     return None
+
+
+def _checkpoint_hierarchical_settings(path) -> tuple[bool, float, float]:
+    from stable_baselines3.common.save_util import load_from_zip_file
+
+    data, _params, _pytorch_variables = load_from_zip_file(path, device="cpu")
+    settings = (
+        bool(data.get("hierarchical_combat_hp", False)),
+        float(data.get("combat_hp_gamma", 1.0)),
+        float(data.get("combat_hp_gae_lambda", 0.95)),
+    )
+    del data, _params, _pytorch_variables
+    return settings
 
 
 def _warm_start_policy(
@@ -356,6 +403,33 @@ def main() -> None:
 
     args = build_parser(task).parse_args()
 
+    source_hierarchical = False
+    source_combat_gamma = 1.0
+    source_combat_gae_lambda = 0.95
+    if args.resume and hasattr(args, "hierarchical_combat_hp"):
+        (
+            source_hierarchical,
+            source_combat_gamma,
+            source_combat_gae_lambda,
+        ) = _checkpoint_hierarchical_settings(args.resume)
+    if hasattr(args, "hierarchical_combat_hp"):
+        if args.hierarchical_combat_hp is None:
+            args.hierarchical_combat_hp = (
+                source_hierarchical if args.resume else False
+            )
+        if args.combat_hp_gamma is None:
+            args.combat_hp_gamma = (
+                source_combat_gamma if args.resume else 1.0
+            )
+        if args.combat_hp_gae_lambda is None:
+            args.combat_hp_gae_lambda = (
+                source_combat_gae_lambda if args.resume else 0.95
+            )
+        if not 0.0 <= args.combat_hp_gamma <= 1.0:
+            raise ValueError("--combat-hp-gamma must be in [0, 1]")
+        if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
+            raise ValueError("--combat-hp-gae-lambda must be in [0, 1]")
+
     # Whole-run training uses the split specialist architecture. When warm-
     # starting, a combat-only specialist is copied into the split model's
     # shared tokenizer and combat branch. Keep the loaded object for transfer.
@@ -369,6 +443,10 @@ def main() -> None:
         pretrained = AccumulatingMaskablePPO.load(
             args.init_from, device=args.device
         )
+        if hasattr(args, "hierarchical_combat_hp"):
+            source_hierarchical = bool(
+                getattr(pretrained, "hierarchical_combat_hp", False)
+            )
 
     if hasattr(args, "global_map_view"):
         from rl.model import uses_global_map_observation
@@ -518,7 +596,11 @@ def main() -> None:
     # name — concurrent/repeated runs never clobber each other.
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_dir = Path(args.out) / run_id
-    checkpoint_dir = out_dir / "checkpoints"
+    checkpoint_dir = (
+        Path(args.resume).expanduser().resolve().parent
+        if args.resume
+        else out_dir / "checkpoints"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -534,10 +616,11 @@ def main() -> None:
     venv.seed(args.seed)
 
     # Callback runs once per vectorized step, so adjust for n_envs.
-    checkpoint_callback = CheckpointCallback(
+    checkpoint_callback = RollingCheckpointCallback(
         save_freq=max(args.save_every // args.n_envs, 1),
         save_path=str(checkpoint_dir),
         name_prefix=task.ckpt_prefix,
+        max_checkpoints=20,
     )
 
     tag = task.tag(args, run_id)
@@ -587,6 +670,13 @@ def main() -> None:
             batch_size=args.batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             performance_profile=args.profile_performance,
+            hierarchical_combat_hp=getattr(
+                args, "hierarchical_combat_hp", False
+            ),
+            combat_hp_gamma=getattr(args, "combat_hp_gamma", 1.0),
+            combat_hp_gae_lambda=getattr(
+                args, "combat_hp_gae_lambda", 0.95
+            ),
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
@@ -618,11 +708,19 @@ def main() -> None:
                 "gae_lambda": args.gae_lambda,
                 "vf_coef": args.vf_coef,
                 "n_epochs": args.n_epochs,
+                "n_steps": args.n_steps,
                 "batch_size": args.batch_size,
                 "gradient_accumulation_steps": (
                     args.gradient_accumulation_steps
                 ),
                 "performance_profile": args.profile_performance,
+                "hierarchical_combat_hp": getattr(
+                    args, "hierarchical_combat_hp", False
+                ),
+                "combat_hp_gamma": getattr(args, "combat_hp_gamma", 1.0),
+                "combat_hp_gae_lambda": getattr(
+                    args, "combat_hp_gae_lambda", 0.95
+                ),
             },
         )
         # SB3 load restores weights/optimizer state but not the RNG state.
@@ -686,6 +784,25 @@ def main() -> None:
                 f"[trainer] initialized {initialized} new semantic parameter tensors"
             )
 
+    if hasattr(args, "hierarchical_combat_hp"):
+        has_source_checkpoint = bool(args.resume or args.init_from)
+        objective_changed = (
+            has_source_checkpoint
+            and bool(args.hierarchical_combat_hp) != source_hierarchical
+        )
+        reset_count = model.configure_hierarchical_combat_hp(
+            enabled=args.hierarchical_combat_hp,
+            combat_gamma=args.combat_hp_gamma,
+            combat_gae_lambda=args.combat_hp_gae_lambda,
+            reset_combat_value=objective_changed,
+            reset_seed=args.seed,
+        )
+        if reset_count:
+            print(
+                "[trainer] combat value objective changed; reset "
+                f"{reset_count} combat value parameter tensors"
+            )
+
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)
         shared = getattr(core, "shared", None)
@@ -716,6 +833,7 @@ def main() -> None:
         f"effective_batch={args.batch_size * args.gradient_accumulation_steps} "
         f"card_language={args.card_language} "
         f"combat_language={args.combat_language} "
+        f"hierarchical_combat_hp={getattr(args, 'hierarchical_combat_hp', False)} "
         f"ent_coef={args.ent_coef} lr={args.learning_rate}"
     )
 
