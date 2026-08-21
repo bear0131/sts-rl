@@ -29,6 +29,7 @@ from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
+from env.core import vocab as V
 from rl.accumulating_ppo import (
     AccumulatingMaskablePPO,
     ppo_loss_components,
@@ -182,6 +183,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=29750,
         help="Loopback listener port forwarded by the ssh-ring transport.",
+    )
+    parser.add_argument(
+        "--profile-cuda-memory",
+        action="store_true",
+        help="Record per-micro-batch CUDA allocated/reserved peaks and the "
+             "observation mix that produced the largest peak.",
     )
     return parser
 
@@ -523,7 +530,19 @@ def ppo_microbatch_backward(
     rollout_data,
     clip_range: float,
     clip_range_vf: float | None,
-) -> dict[str, float | None]:
+    *,
+    profile_cuda_memory: bool = False,
+) -> dict[str, object]:
+    cuda_profile = None
+    if profile_cuda_memory:
+        if model.device.type != "cuda":
+            raise ValueError("CUDA memory profiling requires a CUDA device")
+        th.cuda.reset_peak_memory_stats(model.device)
+        cuda_profile = {
+            "allocated_before": th.cuda.memory_allocated(model.device),
+            "reserved_before": th.cuda.memory_reserved(model.device),
+        }
+
     actions = rollout_data.actions
     if isinstance(model.action_space, spaces.Discrete):
         actions = rollout_data.actions.long().flatten()
@@ -533,6 +552,10 @@ def ppo_microbatch_backward(
             rollout_data.observations,
             actions,
             action_masks=rollout_data.action_masks,
+        )
+    if cuda_profile is not None:
+        cuda_profile["allocated_after_forward"] = th.cuda.memory_allocated(
+            model.device
         )
     values = values.flatten()
     components = ppo_loss_components(
@@ -555,6 +578,15 @@ def ppo_microbatch_backward(
         + model.vf_coef * components.value_loss
     )
     loss.backward()
+    if cuda_profile is not None:
+        cuda_profile.update({
+            "allocated_after_backward": th.cuda.memory_allocated(model.device),
+            "peak_allocated": th.cuda.max_memory_allocated(model.device),
+            "peak_reserved": th.cuda.max_memory_reserved(model.device),
+            "observation_mix": cuda_observation_mix(
+                rollout_data.observations
+            ),
+        })
     return {
         "loss": float(loss.detach().cpu()),
         "combat_value_loss": (
@@ -565,7 +597,52 @@ def ppo_microbatch_backward(
             float(components.overworld_value_loss.detach().cpu())
             if components.overworld_value_loss is not None else None
         ),
+        "cuda_profile": cuda_profile,
     }
+
+
+def cuda_observation_mix(
+    observations: dict[str, th.Tensor],
+) -> dict[str, object]:
+    """Describe the routed samples and dynamic token widths in one batch."""
+    phase = observations["phase"].long().reshape(-1)
+    phase_counts = {
+        V.PHASE_VOCAB[phase_id]: int((phase == phase_id).sum().item())
+        for phase_id in range(len(V.PHASE_VOCAB))
+        if bool((phase == phase_id).any())
+    }
+
+    def active_width(key: str, indices: th.Tensor | None = None) -> int:
+        values = observations[key]
+        if indices is not None:
+            values = values.index_select(0, indices)
+        active_columns = values.long().ne(0).any(dim=0).nonzero(
+            as_tuple=False
+        )
+        return (
+            int(active_columns[-1, 0].item()) + 1
+            if active_columns.numel() else 1
+        )
+
+    combat_id = V.PHASE_VOCAB_INDEX["combat"]
+    combat_indices = th.nonzero(phase == combat_id, as_tuple=False).flatten()
+    widths: dict[str, int] = {}
+    if combat_indices.numel():
+        widths["combat_relic"] = active_width("relics", combat_indices)
+    for phase_id in range(len(V.PHASE_VOCAB)):
+        if phase_id == combat_id:
+            continue
+        indices = th.nonzero(phase == phase_id, as_tuple=False).flatten()
+        if not indices.numel():
+            continue
+        name = V.PHASE_VOCAB[phase_id]
+        widths[f"{name}_deck"] = active_width("deck_ids", indices)
+        widths[f"{name}_relic"] = active_width("relics", indices)
+        if name == "card_select":
+            widths["card_select_options"] = active_width(
+                "select_card_ids", indices
+            )
+    return {"phase_counts": phase_counts, "active_widths": widths}
 
 
 def main() -> None:
@@ -804,6 +881,7 @@ def main() -> None:
             backward_seconds = 0.0
             grad_bytes = 0
             optimizer_steps = 0
+            cuda_memory_peak = None
 
             for epoch in range(args.n_epochs):
                 accumulated = 0
@@ -815,7 +893,18 @@ def main() -> None:
                         rollout_data,
                         clip_range,
                         clip_range_vf,
+                        profile_cuda_memory=args.profile_cuda_memory,
                     )
+                    batch_cuda_profile = batch_result["cuda_profile"]
+                    if (
+                        batch_cuda_profile is not None
+                        and (
+                            cuda_memory_peak is None
+                            or batch_cuda_profile["peak_allocated"]
+                            > cuda_memory_peak["peak_allocated"]
+                        )
+                    ):
+                        cuda_memory_peak = batch_cuda_profile
                     losses.append(batch_result["loss"])
                     if batch_result["combat_value_loss"] is not None:
                         combat_value_losses.append(
@@ -967,6 +1056,8 @@ def main() -> None:
                     float(np.mean(overworld_value_losses))
                     if overworld_value_losses else 0.0
                 )
+            if cuda_memory_peak is not None:
+                record["cuda_memory_peak"] = cuda_memory_peak
             records.append(record)
             print(json.dumps(record, sort_keys=True), flush=True)
 
