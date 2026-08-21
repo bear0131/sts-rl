@@ -19,6 +19,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+import torch as th
 from stable_baselines3.common.callbacks import (
     BaseCallback,
     CallbackList,
@@ -26,12 +27,12 @@ from stable_baselines3.common.callbacks import (
 )
 from stable_baselines3.common.vec_env import (
     DummyVecEnv,
-    SubprocVecEnv,
     VecMonitor,
 )
 
 from rl.tasks import TASKS
 from rl.accumulating_ppo import AccumulatingMaskablePPO
+from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
 
 
 class WandbStepMetricCallback(BaseCallback):
@@ -329,6 +330,20 @@ def build_parser(task) -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument(
+        "--float32-matmul-precision",
+        choices=("highest", "high", "medium"),
+        default="high",
+        help="PyTorch float32 matmul precision. 'high' enables TF32 tensor cores "
+             "on supported NVIDIA GPUs; use 'highest' for strict FP32.",
+    )
+    parser.add_argument(
+        "--amp-mode",
+        choices=("off", "bf16"),
+        default="off",
+        help="Optional CUDA autocast for policy inference and PPO backward. "
+             "BF16 keeps parameters and accumulated gradients in FP32.",
+    )
+    parser.add_argument(
         "--out",
         help="Base directory; each run lands in <out>/<timestamp>/ "
              "(checkpoints, final model, optional TensorBoard logs).",
@@ -402,6 +417,7 @@ def main() -> None:
     task = TASKS[known.task]
 
     args = build_parser(task).parse_args()
+    th.set_float32_matmul_precision(args.float32_matmul_precision)
 
     source_hierarchical = False
     source_combat_gamma = 1.0
@@ -609,7 +625,7 @@ def main() -> None:
         # SB3 selects forkserver where available and spawn on Windows. Both
         # avoid forking a process that already imported the native sim and
         # torch, which can otherwise inherit unsafe thread/CUDA state.
-        venv = SubprocVecEnv(env_fns)
+        venv = CachedMaskSubprocVecEnv(env_fns)
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv, filename=str(out_dir / "monitor.csv"))
@@ -670,6 +686,7 @@ def main() -> None:
             batch_size=args.batch_size,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             performance_profile=args.profile_performance,
+            amp_mode=args.amp_mode,
             hierarchical_combat_hp=getattr(
                 args, "hierarchical_combat_hp", False
             ),
@@ -700,6 +717,7 @@ def main() -> None:
             env=venv,
             device=args.device,
             tensorboard_log=tensorboard_log,
+            amp_mode=args.amp_mode,
             custom_objects={
                 "learning_rate": args.learning_rate,
                 "ent_coef": args.ent_coef,
@@ -831,6 +849,7 @@ def main() -> None:
         f"micro_batch={args.batch_size} "
         f"grad_accum={args.gradient_accumulation_steps} "
         f"effective_batch={args.batch_size * args.gradient_accumulation_steps} "
+        f"matmul={args.float32_matmul_precision} amp={args.amp_mode} "
         f"card_language={args.card_language} "
         f"combat_language={args.combat_language} "
         f"hierarchical_combat_hp={getattr(args, 'hierarchical_combat_hp', False)} "

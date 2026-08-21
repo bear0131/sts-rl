@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shlex
 import subprocess
 import time
@@ -28,12 +27,14 @@ import numpy as np
 import torch as th
 from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecMonitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from rl.accumulating_ppo import (
     AccumulatingMaskablePPO,
     ppo_loss_components,
 )
+from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
+from rl.ring_allreduce import SshRingAllReduce
 from rl.tasks.wholerun import WholeRunTask
 
 # Register custom policies before loading checkpoints.
@@ -116,6 +117,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--float32-matmul-precision",
+        choices=("highest", "high", "medium"),
+        default="high",
+        help="PyTorch float32 matmul precision. 'high' enables TF32 tensor cores "
+             "on supported NVIDIA GPUs; use 'highest' for strict FP32.",
+    )
+    parser.add_argument(
+        "--amp-mode",
+        choices=("off", "bf16"),
+        default="off",
+        help="Optional CUDA autocast for rollout inference and PPO backward. "
+             "BF16 keeps parameters and synchronized gradients in FP32.",
+    )
     parser.add_argument("--vec", choices=("subproc", "dummy"), default="subproc")
     parser.add_argument("--start-method", default="fork")
     parser.add_argument("--save-every-updates", type=int, default=0)
@@ -147,7 +162,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Amount to advance W&B Step for each global rollout update.",
     )
     parser.add_argument("--barrier-timeout", type=float, default=600.0)
-    parser.add_argument("--stable-file-seconds", type=float, default=0.25)
+    # Accepted so existing launch scripts keep working; atomic rename makes the
+    # old post-copy stability delay unnecessary.
+    parser.add_argument(
+        "--stable-file-seconds",
+        type=float,
+        default=0.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--gradient-transport",
+        choices=("scp", "ssh-ring"),
+        default="scp",
+        help="Gradient exchange backend. ssh-ring keeps one persistent SSH "
+             "tunnel per rank and avoids gradient files.",
+    )
+    parser.add_argument(
+        "--ring-port",
+        type=int,
+        default=29750,
+        help="Loopback listener port forwarded by the ssh-ring transport.",
+    )
     return parser
 
 
@@ -221,20 +256,19 @@ def scp_to(
     )
 
 
-def wait_stable(path: Path, timeout: float, stable_for: float) -> None:
+def wait_for_sized_file(path: Path, timeout: float, expected_size: int) -> None:
+    """Wait for an atomically published peer file of the expected size."""
     start = time.perf_counter()
-    last_size = -1
-    last_change = time.perf_counter()
     while time.perf_counter() - start < timeout:
         if path.exists():
             size = path.stat().st_size
-            if size != last_size:
-                last_size = size
-                last_change = time.perf_counter()
-            elif size > 0 and time.perf_counter() - last_change >= stable_for:
+            if size == expected_size:
                 return
+            raise RuntimeError(
+                f"peer gradient file has size {size}, expected {expected_size}: {path}"
+            )
         time.sleep(0.05)
-    raise TimeoutError(f"timed out waiting for stable file: {path}")
+    raise TimeoutError(f"timed out waiting for peer file: {path}")
 
 
 def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
@@ -268,7 +302,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
 
     env_fns = [WholeRunTask().make_env_fn(env_args) for _ in range(args.n_envs)]
     if args.vec == "subproc":
-        venv = SubprocVecEnv(env_fns, start_method=args.start_method)
+        venv = CachedMaskSubprocVecEnv(
+            env_fns, start_method=args.start_method
+        )
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv)
@@ -302,40 +338,122 @@ def sync_file_to_peers(
     return elapsed, mbps
 
 
-def save_gradients(model: AccumulatingMaskablePPO, path: Path) -> int:
-    grads = {
-        name: parameter.grad.detach().cpu()
-        for name, parameter in model.policy.named_parameters()
-        if parameter.grad is not None
-    }
-    th.save(grads, path)
+def all_rank_file_barrier(
+    *,
+    tag: str,
+    rank: int,
+    peers: list[Peer],
+    key: Path,
+    control_dir: Path,
+    local_root: Path,
+    remote_root: str,
+    run_id: str,
+    timeout: float,
+) -> None:
+    marker = local_root / f"barrier_rank{rank}_{tag}.ready"
+    marker.write_bytes(b"ready")
+    remote_name = f"rank{rank}/{marker.name}"
+    sync_file_to_peers(
+        local_file=marker,
+        remote_name=remote_name,
+        peers=peers,
+        key=key,
+        control_dir=control_dir,
+        remote_root=f"{remote_root}/{run_id}",
+        timeout=timeout,
+    )
+    peer_markers = [
+        Path(remote_root)
+        / run_id
+        / f"rank{peer.rank}"
+        / f"barrier_rank{peer.rank}_{tag}.ready"
+        for peer in peers
+    ]
+    for path in peer_markers:
+        wait_for_sized_file(path, timeout=timeout, expected_size=5)
+    for path in [marker, *peer_markers]:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def gradient_parameters(model: AccumulatingMaskablePPO) -> list[th.nn.Parameter]:
+    return [
+        parameter
+        for parameter in model.policy.parameters()
+        if parameter.requires_grad
+    ]
+
+
+def pack_gradients(model: AccumulatingMaskablePPO) -> th.Tensor:
+    """Pack every trainable gradient into one CPU FP32 vector."""
+    parameters = gradient_parameters(model)
+    parts = [
+        (
+            parameter.grad.detach().reshape(-1)
+            if parameter.grad is not None
+            else th.zeros_like(parameter).reshape(-1)
+        )
+        for parameter in parameters
+    ]
+    flat = th.cat(parts).detach().cpu()
+    if flat.dtype != th.float32:
+        raise TypeError(f"distributed gradients must be float32, got {flat.dtype}")
+    return flat
+
+
+def save_gradients(flat: th.Tensor, path: Path) -> int:
+    """Publish a fixed-layout raw gradient vector for SCP transport."""
+    flat.numpy().tofile(path)
     return path.stat().st_size
+
+
+def install_flat_gradients(
+    model: AccumulatingMaskablePPO, averaged: th.Tensor
+) -> None:
+    averaged_device = averaged.to(model.device)
+    with th.no_grad():
+        offset = 0
+        for parameter in gradient_parameters(model):
+            end = offset + parameter.numel()
+            parameter.grad = averaged_device[offset:end].view_as(parameter)
+            offset = end
+        if offset != averaged_device.numel():
+            raise RuntimeError(
+                f"consumed {offset} averaged gradients, got "
+                f"{averaged_device.numel()}"
+            )
 
 
 def average_peer_gradients(
     model: AccumulatingMaskablePPO,
-    paths: list[Path],
+    local_flat: th.Tensor,
+    peer_gradients: list[tuple[int, Path]],
     *,
+    rank: int,
     world_size: int,
 ) -> float:
     started = time.perf_counter()
-    totals: dict[str, th.Tensor] = {}
-    for path in paths:
-        peer = th.load(path, map_location="cpu")
-        for name, grad in peer.items():
-            if name not in totals:
-                totals[name] = grad
-            else:
-                totals[name].add_(grad)
-
-    with th.no_grad():
-        for name, parameter in model.policy.named_parameters():
-            if parameter.grad is not None:
-                total = parameter.grad.detach().cpu()
-                if name in totals:
-                    total = total + totals[name]
-                averaged = total / world_size
-                parameter.grad.copy_(averaged.to(parameter.grad.device))
+    by_rank = {rank: local_flat}
+    for peer_rank, path in peer_gradients:
+        peer_array = np.fromfile(path, dtype=np.float32)
+        if peer_array.size != local_flat.numel():
+            raise RuntimeError(
+                f"peer gradient has {peer_array.size} values, expected "
+                f"{local_flat.numel()}: {path}"
+            )
+        by_rank[peer_rank] = th.from_numpy(peer_array)
+    if set(by_rank) != set(range(world_size)):
+        raise RuntimeError(
+            f"gradient ranks are {sorted(by_rank)}, expected "
+            f"{list(range(world_size))}"
+        )
+    total = th.zeros_like(local_flat)
+    for source_rank in range(world_size):
+        total.add_(by_rank[source_rank])
+    total.mul_(1.0 / world_size)
+    install_flat_gradients(model, total)
     return time.perf_counter() - started
 
 
@@ -410,11 +528,12 @@ def ppo_microbatch_backward(
     if isinstance(model.action_space, spaces.Discrete):
         actions = rollout_data.actions.long().flatten()
 
-    values, log_prob, entropy = model.policy.evaluate_actions(
-        rollout_data.observations,
-        actions,
-        action_masks=rollout_data.action_masks,
-    )
+    with model.autocast_context():
+        values, log_prob, entropy = model.policy.evaluate_actions(
+            rollout_data.observations,
+            actions,
+            action_masks=rollout_data.action_masks,
+        )
     values = values.flatten()
     components = ppo_loss_components(
         hierarchical=model.hierarchical_combat_hp,
@@ -451,12 +570,17 @@ def ppo_microbatch_backward(
 
 def main() -> None:
     args = build_parser().parse_args()
+    th.set_float32_matmul_precision(args.float32_matmul_precision)
     if args.world_size < 1:
         raise ValueError("--world-size must be positive")
     if args.rank < 0 or args.rank >= args.world_size:
         raise ValueError("--rank must be in [0, world_size)")
     if args.world_size == 1 and args.peer:
         raise ValueError("--peer is meaningless for world_size=1")
+    if args.gradient_transport == "ssh-ring" and args.world_size < 2:
+        raise ValueError("--gradient-transport ssh-ring requires world_size >= 2")
+    if not 1 <= args.ring_port <= 65535:
+        raise ValueError("--ring-port must be in [1, 65535]")
 
     peers = sorted((parse_peer(p) for p in args.peer), key=lambda p: p.rank)
     peer_ranks = {p.rank for p in peers}
@@ -516,6 +640,7 @@ def main() -> None:
         args.checkpoint,
         env=env,
         device=args.device,
+        amp_mode=args.amp_mode,
         custom_objects={
             "n_steps": args.n_steps,
             "batch_size": args.batch_size,
@@ -548,6 +673,41 @@ def main() -> None:
             flush=True,
         )
     model.set_random_seed(args.seed + args.rank * 1_000_003)
+
+    ring_transport = None
+    if args.gradient_transport == "ssh-ring":
+        next_rank = (args.rank + 1) % args.world_size
+        next_peer = next(peer for peer in peers if peer.rank == next_rank)
+
+        def ring_ready_barrier() -> None:
+            all_rank_file_barrier(
+                tag="ssh_ring_listening",
+                rank=args.rank,
+                peers=peers,
+                key=key,
+                control_dir=control_dir,
+                local_root=local_root,
+                remote_root=args.remote_root,
+                run_id=run_id,
+                timeout=args.barrier_timeout,
+            )
+
+        ring_transport = SshRingAllReduce(
+            rank=args.rank,
+            world_size=args.world_size,
+            next_host=next_peer.host,
+            next_port=next_peer.port,
+            next_user=next_peer.user,
+            ssh_key=key,
+            listen_port=args.ring_port,
+            timeout=args.barrier_timeout,
+            ready_barrier=ring_ready_barrier,
+        )
+        print(
+            f"[rank {args.rank}] persistent SSH gradient ring connected to "
+            f"rank {next_rank}",
+            flush=True,
+        )
 
     start_timesteps = int(model.num_timesteps)
     global_rollout_size = rollout_size * args.world_size
@@ -639,6 +799,7 @@ def main() -> None:
             sync_seconds = 0.0
             sync_mbps = []
             avg_seconds = 0.0
+            gradient_pack_seconds = 0.0
             step_seconds = 0.0
             backward_seconds = 0.0
             grad_bytes = 0
@@ -671,48 +832,81 @@ def main() -> None:
                     if accumulated != args.gradient_accumulation_steps:
                         continue
 
-                    for parameter in model.policy.parameters():
-                        if parameter.grad is not None:
-                            parameter.grad.mul_(1.0 / accumulated)
-
-                    sync_tag = f"u{update:06d}_e{epoch:03d}_s{optimizer_steps:06d}"
-                    grad_path = local_root / f"grad_rank{args.rank}_{sync_tag}.pt"
-                    grad_bytes = save_gradients(model, grad_path)
-
-                    remote_name = f"rank{args.rank}/grad_rank{args.rank}_{sync_tag}.pt"
-                    elapsed, mbps = sync_file_to_peers(
-                        local_file=grad_path,
-                        remote_name=remote_name,
-                        peers=peers,
-                        key=key,
-                        control_dir=control_dir,
-                        remote_root=f"{args.remote_root}/{run_id}",
-                        timeout=args.barrier_timeout,
-                    )
-                    sync_seconds += elapsed
-                    sync_mbps.append(mbps)
-
-                    peer_paths = [
-                        Path(args.remote_root)
-                        / run_id
-                        / f"rank{peer.rank}"
-                        / f"grad_rank{peer.rank}_{sync_tag}.pt"
-                        for peer in peers
+                    gradients = [
+                        parameter.grad
+                        for parameter in model.policy.parameters()
+                        if parameter.grad is not None
                     ]
-                    wait_started = time.perf_counter()
-                    for path in peer_paths:
-                        wait_stable(
-                            path,
-                            timeout=args.barrier_timeout,
-                            stable_for=args.stable_file_seconds,
-                        )
-                    sync_seconds += time.perf_counter() - wait_started
+                    th._foreach_mul_(gradients, 1.0 / accumulated)
 
-                    avg_seconds += average_peer_gradients(
-                        model,
-                        peer_paths,
-                        world_size=args.world_size,
-                    )
+                    pack_started = time.perf_counter()
+                    local_flat = pack_gradients(model)
+                    grad_bytes = local_flat.numel() * local_flat.element_size()
+                    gradient_pack_seconds += time.perf_counter() - pack_started
+                    paths_to_remove = []
+
+                    if ring_transport is not None:
+                        ring_started = time.perf_counter()
+                        local_flat, bytes_sent = ring_transport.average(local_flat)
+                        elapsed = time.perf_counter() - ring_started
+                        sync_seconds += elapsed
+                        sync_mbps.append(
+                            bytes_sent / 1024 / 1024 / max(elapsed, 1e-9)
+                        )
+                        avg_started = time.perf_counter()
+                        install_flat_gradients(model, local_flat)
+                        avg_seconds += time.perf_counter() - avg_started
+                    else:
+                        sync_tag = (
+                            f"u{update:06d}_e{epoch:03d}_s{optimizer_steps:06d}"
+                        )
+                        grad_path = local_root / (
+                            f"grad_rank{args.rank}_{sync_tag}.pt"
+                        )
+                        save_gradients(local_flat, grad_path)
+                        remote_name = (
+                            f"rank{args.rank}/grad_rank{args.rank}_{sync_tag}.pt"
+                        )
+                        elapsed, mbps = sync_file_to_peers(
+                            local_file=grad_path,
+                            remote_name=remote_name,
+                            peers=peers,
+                            key=key,
+                            control_dir=control_dir,
+                            remote_root=f"{args.remote_root}/{run_id}",
+                            timeout=args.barrier_timeout,
+                        )
+                        sync_seconds += elapsed
+                        sync_mbps.append(mbps)
+
+                        peer_paths = [
+                            Path(args.remote_root)
+                            / run_id
+                            / f"rank{peer.rank}"
+                            / f"grad_rank{peer.rank}_{sync_tag}.pt"
+                            for peer in peers
+                        ]
+                        wait_started = time.perf_counter()
+                        for path in peer_paths:
+                            wait_for_sized_file(
+                                path,
+                                timeout=args.barrier_timeout,
+                                expected_size=grad_bytes,
+                            )
+                        sync_seconds += time.perf_counter() - wait_started
+
+                        avg_seconds += average_peer_gradients(
+                            model,
+                            local_flat,
+                            list(zip(
+                                (peer.rank for peer in peers),
+                                peer_paths,
+                                strict=True,
+                            )),
+                            rank=args.rank,
+                            world_size=args.world_size,
+                        )
+                        paths_to_remove = [grad_path, *peer_paths]
 
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
@@ -726,7 +920,7 @@ def main() -> None:
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     step_seconds += time.perf_counter() - step_started
-                    for path in [grad_path, *peer_paths]:
+                    for path in paths_to_remove:
                         try:
                             path.unlink()
                         except FileNotFoundError:
@@ -738,6 +932,7 @@ def main() -> None:
             record = {
                 "rank": args.rank,
                 "world_size": args.world_size,
+                "gradient_transport": args.gradient_transport,
                 "update": update,
                 "start_timesteps": start_timesteps,
                 "global_timesteps": start_timesteps + (update + 1) * global_rollout_size,
@@ -750,12 +945,14 @@ def main() -> None:
                 "sync_sec": sync_seconds,
                 "sync_mbps_mean": float(np.mean(sync_mbps)) if sync_mbps else 0.0,
                 "backward_sec": backward_seconds,
+                "gradient_pack_sec": gradient_pack_seconds,
                 "avg_grad_sec": avg_seconds,
                 "optimizer_step_sec": step_seconds,
                 "grad_bytes": grad_bytes,
                 "total_sec_rank": (
                     rollout_sec
                     + backward_seconds
+                    + gradient_pack_seconds
                     + sync_seconds
                     + avg_seconds
                     + step_seconds
@@ -787,6 +984,10 @@ def main() -> None:
                         "dist/rollout_sec": record["rollout_sec"],
                         "dist/backward_sec": record["backward_sec"],
                         "dist/sync_sec": record["sync_sec"],
+                        "dist/gradient_pack_sec": record["gradient_pack_sec"],
+                        "dist/avg_grad_sec": record["avg_grad_sec"],
+                        "dist/optimizer_step_sec": record["optimizer_step_sec"],
+                        "dist/sync_mbps": record["sync_mbps_mean"],
                         "dist/global_steps_per_second": (
                             record["transitions_global"]
                             / max(record["total_sec_rank"], 1e-9)
@@ -878,6 +1079,8 @@ def main() -> None:
             )
     finally:
         callback.on_training_end()
+        if ring_transport is not None:
+            ring_transport.close()
         env.close()
         if wandb_run is not None:
             wandb_run.finish()

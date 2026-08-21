@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from types import MethodType
 
@@ -174,6 +175,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         *args,
         gradient_accumulation_steps: int = 1,
         performance_profile: bool = False,
+        amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
         combat_hp_gamma: float = 1.0,
         combat_hp_gae_lambda: float = 0.95,
@@ -181,18 +183,28 @@ class AccumulatingMaskablePPO(MaskablePPO):
     ) -> None:
         if gradient_accumulation_steps < 1:
             raise ValueError("gradient_accumulation_steps must be at least 1")
+        if amp_mode not in ("off", "bf16"):
+            raise ValueError("amp_mode must be 'off' or 'bf16'")
         if not 0.0 <= combat_hp_gamma <= 1.0:
             raise ValueError("combat_hp_gamma must be in [0, 1]")
         if not 0.0 <= combat_hp_gae_lambda <= 1.0:
             raise ValueError("combat_hp_gae_lambda must be in [0, 1]")
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
         self.performance_profile = bool(performance_profile)
+        self.amp_mode = amp_mode
         self.hierarchical_combat_hp = bool(hierarchical_combat_hp)
         self.combat_hp_gamma = float(combat_hp_gamma)
         self.combat_hp_gae_lambda = float(combat_hp_gae_lambda)
         self._performance_rollout = None
         self._hierarchical_rollout_stats = None
         super().__init__(*args, **kwargs)
+        if self.amp_mode != "off" and self.device.type != "cuda":
+            raise ValueError("bf16 AMP requires a CUDA device")
+
+    def autocast_context(self):
+        if self.amp_mode == "bf16":
+            return th.autocast(device_type="cuda", dtype=th.bfloat16)
+        return nullcontext()
 
     def _sync_device(self) -> None:
         if self.device.type == "cuda":
@@ -317,6 +329,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def collect_rollouts(self, env, callback, rollout_buffer,
                          n_rollout_steps, use_masking=True):
+        if self.amp_mode == "bf16" and not getattr(
+            self.policy, "supports_bf16_rollout", False
+        ):
+            raise TypeError(
+                "bf16 rollout requires a policy that returns float32 values "
+                "and log-probabilities"
+            )
         captured = []
         uncaptured_step_wait = env.step_wait
 
@@ -338,14 +357,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_wait = MethodType(capture_step_wait, env)
 
         try:
-            if not self.performance_profile:
-                result = super().collect_rollouts(
-                    env, callback, rollout_buffer, n_rollout_steps, use_masking
-                )
-            else:
-                result = self._collect_profiled_rollouts(
-                    env, callback, rollout_buffer, n_rollout_steps, use_masking
-                )
+            with self.autocast_context():
+                if not self.performance_profile:
+                    result = super().collect_rollouts(
+                        env, callback, rollout_buffer, n_rollout_steps, use_masking
+                    )
+                else:
+                    result = self._collect_profiled_rollouts(
+                        env, callback, rollout_buffer, n_rollout_steps, use_masking
+                    )
         finally:
             if self.hierarchical_combat_hp:
                 env.step_wait = uncaptured_step_wait
@@ -464,11 +484,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if isinstance(self.action_space, spaces.Discrete):
                     actions = rollout_data.actions.long().flatten()
 
-                values, log_prob, entropy = self.policy.evaluate_actions(
-                    rollout_data.observations,
-                    actions,
-                    action_masks=rollout_data.action_masks,
-                )
+                with self.autocast_context():
+                    values, log_prob, entropy = self.policy.evaluate_actions(
+                        rollout_data.observations,
+                        actions,
+                        action_masks=rollout_data.action_masks,
+                    )
                 values = values.flatten()
 
                 components = ppo_loss_components(

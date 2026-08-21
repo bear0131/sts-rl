@@ -1059,6 +1059,8 @@ class CombatStSPolicyCore(nn.Module):
 class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
     """SB3 adapter for :class:`SplitStSPolicyCore`."""
 
+    supports_bf16_rollout = True
+
     def __init__(
         self,
         observation_space,
@@ -1099,14 +1101,18 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
         actions = actions.reshape((-1, *self.action_space.shape))
-        return actions, values, log_prob
+        return actions, values.float(), log_prob.float()
 
     def evaluate_actions(self, obs, actions, action_masks=None):
         logits, values = self.core.actor_critic(obs)
         distribution = self.action_dist.proba_distribution(action_logits=logits)
         if action_masks is not None:
             distribution.apply_masking(action_masks)
-        return values, distribution.log_prob(actions), distribution.entropy()
+        return (
+            values.float(),
+            distribution.log_prob(actions).float(),
+            distribution.entropy().float(),
+        )
 
     def get_distribution(self, obs, action_masks=None):
         distribution = self.action_dist.proba_distribution(
@@ -1117,7 +1123,7 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         return distribution
 
     def predict_values(self, obs):
-        return self.core.value(obs)
+        return self.core.value(obs).float()
 
 
 class CombatStSPointerPolicy(SplitStSPointerPolicy):

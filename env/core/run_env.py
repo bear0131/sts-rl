@@ -50,6 +50,9 @@ from . import game_actions as ga
 from .game_env import SimGameEnv
 
 
+_UNCACHED = object()
+
+
 class SlayTheSpireEnv(gym.Env):
     """Thin gym.Env over a thick whole-run backend.
 
@@ -88,6 +91,10 @@ class SlayTheSpireEnv(gym.Env):
         # selected hand indices awaiting CONFIRM_SELECT. None when not on a MULTI
         # screen. Thin-layer only; reconciled against the live screen each step.
         self._multi = None
+        self._cached_phase = _UNCACHED
+        self._cached_legal = _UNCACHED
+        self._cached_multi_desc = _UNCACHED
+        self._cached_action_mask = None
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
@@ -106,18 +113,48 @@ class SlayTheSpireEnv(gym.Env):
         self.thick.reset(seed=seed)
         self._pending = None
         self._multi = None
+        self._invalidate_backend_cache()
         return self._obs(), self._info()
+
+    def _invalidate_thin_cache(self):
+        self._cached_action_mask = None
+
+    def _invalidate_backend_cache(self):
+        self._cached_phase = _UNCACHED
+        self._cached_legal = _UNCACHED
+        self._cached_multi_desc = _UNCACHED
+        self._invalidate_thin_cache()
+
+    def _phase(self):
+        if self._cached_phase is _UNCACHED:
+            self._cached_phase = self.thick.phase()
+        return self._cached_phase
+
+    def _legal(self):
+        if self._cached_legal is _UNCACHED:
+            self._cached_legal = tuple(self.thick.legal_semantic_actions())
+        return self._cached_legal
+
+    def _backend_step(self, semantic):
+        result = self.thick.step(semantic)
+        self._invalidate_backend_cache()
+        return result
 
     def _multi_desc(self):
         """The live combat MULTI card-select descriptor, or None. Also the single
         place that RECONCILES the accumulator with the screen: a MULTI screen ->
         ensure _multi is a set; anything else -> clear it (we left the screen)."""
-        desc = self.thick.select_descriptor()
+        if self._cached_multi_desc is _UNCACHED:
+            self._cached_multi_desc = self.thick.select_descriptor()
+        desc = self._cached_multi_desc
         if A.is_multi_select(desc):
             if self._multi is None:
                 self._multi = set()
+                self._invalidate_thin_cache()
             return desc
-        self._multi = None
+        if self._multi is not None:
+            self._multi = None
+            self._invalidate_thin_cache()
         return None
 
     def _no_legal_action(self):
@@ -134,8 +171,7 @@ class SlayTheSpireEnv(gym.Env):
         also has no legal action, but that is a `terminated`, not a dead screen."""
         if self._multi_desc() is not None:
             return False
-        legal = self.thick.legal_semantic_actions()
-        return len(A.legal_ids(legal, self._pending, self.thick.phase())) == 0
+        return not self.action_masks().any()
 
     def _truncate_dead(self):
         """The clean 5-tuple for truncating on a dead screen: a valid (current)
@@ -162,6 +198,7 @@ class SlayTheSpireEnv(gym.Env):
         truncated)` and break here too — so action_masks() is never handed to a
         policy as an all-False array for any consumer."""
         self._pending = None
+        self._invalidate_thin_cache()
         if not terminated and self._no_legal_action():
             return self._truncate_dead()
         return self._obs(), reward, terminated, False, self._info()
@@ -180,8 +217,8 @@ class SlayTheSpireEnv(gym.Env):
         if not self.thick.is_over and self._no_legal_action():
             return self._truncate_dead()
 
-        legal = self.thick.legal_semantic_actions()
-        phase = self.thick.phase()
+        legal = self._legal()
+        phase = self._phase()
         desc = self._multi_desc()
 
         # ---- combat MULTI card-select (monotonic select + confirm) ----
@@ -191,10 +228,13 @@ class SlayTheSpireEnv(gym.Env):
                 info["illegal"] = True
                 return self._obs(), -0.1, False, False, info
             self._multi, commit = A.multi_toggle(aid, self._multi)
+            self._invalidate_thin_cache()
             if commit is None:
                 # Selected a hand card; stay on the screen with no backend call.
                 return self._obs(), 0.0, False, False, self._info()
-            _canon, reward, terminated, _tinfo = self.thick.step(ga.multi_select(commit))
+            _canon, reward, terminated, _tinfo = self._backend_step(
+                ga.multi_select(commit)
+            )
             self._multi = None
             return self._post_step(reward, terminated)
 
@@ -208,6 +248,7 @@ class SlayTheSpireEnv(gym.Env):
             return self._obs(), -0.1, False, False, info
 
         semantic, self._pending = A.resolve(aid, legal, self._pending, phase)
+        self._invalidate_thin_cache()
 
         if semantic is None:
             # Parameter step: a partial action (targeted play awaiting its target).
@@ -215,7 +256,7 @@ class SlayTheSpireEnv(gym.Env):
             return self._obs(), 0.0, False, False, self._info()
 
         # Complete semantic action -> drive the thick backend one decision.
-        _canon, reward, terminated, _tinfo = self.thick.step(semantic)
+        _canon, reward, terminated, _tinfo = self._backend_step(semantic)
         return self._post_step(reward, terminated)
 
     # ---------------------------------------------------------------- obs/mask
@@ -224,8 +265,7 @@ class SlayTheSpireEnv(gym.Env):
         # autoregressive play machine (they never overlap — different screens).
         if self._multi is not None:
             return A.PICK_HAND
-        legal = self.thick.legal_semantic_actions()
-        return A.arg_step_name(self._pending, legal, self.thick.phase())
+        return A.arg_step_name(self._pending, self._legal(), self._phase())
 
     def _obs(self):
         """Structured Dict obs (encode v3): the thick layer's assembled canonical
@@ -259,21 +299,23 @@ class SlayTheSpireEnv(gym.Env):
     def action_masks(self):
         """Bool[N_ACTIONS] legal mask for the CURRENT (phase, arg_step). Name
         matches sb3-contrib's ActionMasker convention."""
+        if self._cached_action_mask is not None:
+            return self._cached_action_mask.copy()
         mask = np.zeros(A.N_ACTIONS, dtype=bool)
         desc = self._multi_desc()
         if desc is not None:
             for i in A.multi_legal_ids(desc, self._multi):
                 mask[i] = True
-            return mask
-        legal = self.thick.legal_semantic_actions()
-        for i in A.legal_ids(legal, self._pending, self.thick.phase()):
-            mask[i] = True
-        return mask
+        else:
+            for i in A.legal_ids(self._legal(), self._pending, self._phase()):
+                mask[i] = True
+        self._cached_action_mask = mask
+        return mask.copy()
 
     def _info(self):
         info = {
             "action_mask": self.action_masks(),
-            "phase": self.thick.phase(),
+            "phase": self._phase(),
             "arg_step": self._arg_step(),
             "pending": self._pending,
             "multi_selected": (sorted(self._multi)
@@ -301,8 +343,8 @@ class SlayTheSpireEnv(gym.Env):
         """Human-readable label for a thin action id in the current state — used
         by the interactive player and for debugging."""
         aid = int(action_id)
-        legal = self.thick.legal_semantic_actions()
-        phase = self.thick.phase()
+        legal = self._legal()
+        phase = self._phase()
 
         # combat MULTI screen: CONFIRM commits; PICK_CARD adds an unselected card.
         if self._multi is not None:
