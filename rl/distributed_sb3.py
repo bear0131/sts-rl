@@ -190,6 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record per-micro-batch CUDA allocated/reserved peaks and the "
              "observation mix that produced the largest peak.",
     )
+    parser.add_argument(
+        "--phasewise-backward",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Backpropagate combat and overworld halves of one logical "
+             "minibatch sequentially. This preserves the phase-balanced PPO "
+             "objective while releasing one specialist's activations early.",
+    )
     return parser
 
 
@@ -532,6 +540,7 @@ def ppo_microbatch_backward(
     clip_range_vf: float | None,
     *,
     profile_cuda_memory: bool = False,
+    phasewise_backward: bool = False,
 ) -> dict[str, object]:
     cuda_profile = None
     if profile_cuda_memory:
@@ -543,60 +552,99 @@ def ppo_microbatch_backward(
             "reserved_before": th.cuda.memory_reserved(model.device),
         }
 
-    actions = rollout_data.actions
-    if isinstance(model.action_space, spaces.Discrete):
-        actions = rollout_data.actions.long().flatten()
+    phase = rollout_data.observations["phase"].long().reshape(-1)
+    valid = th.isfinite(rollout_data.advantages) & th.isfinite(
+        rollout_data.returns
+    )
+    combat = phase == V.PHASE_VOCAB_INDEX["combat"]
+    if phasewise_backward and model.hierarchical_combat_hp:
+        index_groups = [
+            th.nonzero(valid & group, as_tuple=False).flatten()
+            for group in (combat, ~combat)
+        ]
+        index_groups = [indices for indices in index_groups if indices.numel()]
+    else:
+        index_groups = [None]
 
-    with model.autocast_context():
-        values, log_prob, entropy = model.policy.evaluate_actions(
-            rollout_data.observations,
-            actions,
-            action_masks=rollout_data.action_masks,
+    if not index_groups:
+        raise RuntimeError("PPO minibatch has no valid hierarchical samples")
+
+    group_scale = 1.0 / len(index_groups)
+    loss_value = 0.0
+    combat_value_loss = None
+    overworld_value_loss = None
+    peak_forward_allocated = 0
+    peak_observation_mix = None
+    for indices in index_groups:
+        observations = (
+            rollout_data.observations
+            if indices is None
+            else {
+                key: value.index_select(0, indices)
+                for key, value in rollout_data.observations.items()
+            }
         )
-    if cuda_profile is not None:
-        cuda_profile["allocated_after_forward"] = th.cuda.memory_allocated(
-            model.device
+
+        def select(value):
+            return value if indices is None else value.index_select(0, indices)
+
+        actions = select(rollout_data.actions)
+        if isinstance(model.action_space, spaces.Discrete):
+            actions = actions.long().flatten()
+
+        with model.autocast_context():
+            values, log_prob, entropy = model.policy.evaluate_actions(
+                observations,
+                actions,
+                action_masks=select(rollout_data.action_masks),
+            )
+        if cuda_profile is not None:
+            allocated = th.cuda.memory_allocated(model.device)
+            if allocated > peak_forward_allocated:
+                peak_forward_allocated = allocated
+                peak_observation_mix = cuda_observation_mix(observations)
+        components = ppo_loss_components(
+            hierarchical=model.hierarchical_combat_hp,
+            normalize_advantage=model.normalize_advantage,
+            observations=observations,
+            advantages=select(rollout_data.advantages),
+            returns=select(rollout_data.returns),
+            old_values=select(rollout_data.old_values),
+            old_log_prob=select(rollout_data.old_log_prob),
+            values=values.flatten(),
+            log_prob=log_prob,
+            entropy=entropy,
+            clip_range=clip_range,
+            clip_range_vf=clip_range_vf,
         )
-    values = values.flatten()
-    components = ppo_loss_components(
-        hierarchical=model.hierarchical_combat_hp,
-        normalize_advantage=model.normalize_advantage,
-        observations=rollout_data.observations,
-        advantages=rollout_data.advantages,
-        returns=rollout_data.returns,
-        old_values=rollout_data.old_values,
-        old_log_prob=rollout_data.old_log_prob,
-        values=values,
-        log_prob=log_prob,
-        entropy=entropy,
-        clip_range=clip_range,
-        clip_range_vf=clip_range_vf,
-    )
-    loss = (
-        components.policy_loss
-        + model.ent_coef * components.entropy_loss
-        + model.vf_coef * components.value_loss
-    )
-    loss.backward()
+        loss = group_scale * (
+            components.policy_loss
+            + model.ent_coef * components.entropy_loss
+            + model.vf_coef * components.value_loss
+        )
+        loss_value += float(loss.detach().cpu())
+        if components.combat_value_loss is not None:
+            combat_value_loss = float(
+                components.combat_value_loss.detach().cpu()
+            )
+        if components.overworld_value_loss is not None:
+            overworld_value_loss = float(
+                components.overworld_value_loss.detach().cpu()
+            )
+        loss.backward()
+
     if cuda_profile is not None:
         cuda_profile.update({
             "allocated_after_backward": th.cuda.memory_allocated(model.device),
+            "allocated_after_forward": peak_forward_allocated,
             "peak_allocated": th.cuda.max_memory_allocated(model.device),
             "peak_reserved": th.cuda.max_memory_reserved(model.device),
-            "observation_mix": cuda_observation_mix(
-                rollout_data.observations
-            ),
+            "observation_mix": peak_observation_mix,
         })
     return {
-        "loss": float(loss.detach().cpu()),
-        "combat_value_loss": (
-            float(components.combat_value_loss.detach().cpu())
-            if components.combat_value_loss is not None else None
-        ),
-        "overworld_value_loss": (
-            float(components.overworld_value_loss.detach().cpu())
-            if components.overworld_value_loss is not None else None
-        ),
+        "loss": loss_value,
+        "combat_value_loss": combat_value_loss,
+        "overworld_value_loss": overworld_value_loss,
         "cuda_profile": cuda_profile,
     }
 
@@ -894,6 +942,7 @@ def main() -> None:
                         clip_range,
                         clip_range_vf,
                         profile_cuda_memory=args.profile_cuda_memory,
+                        phasewise_backward=args.phasewise_backward,
                     )
                     batch_cuda_profile = batch_result["cuda_profile"]
                     if (

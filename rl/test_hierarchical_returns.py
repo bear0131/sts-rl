@@ -1,9 +1,15 @@
 import unittest
+from contextlib import nullcontext
+from copy import deepcopy
+from types import SimpleNamespace
 
 import numpy as np
 import torch
+from gymnasium import spaces
 
+from env.core import vocab as V
 from rl.accumulating_ppo import ppo_loss_components
+from rl.distributed_sb3 import ppo_microbatch_backward
 from rl.hierarchical_returns import compute_hierarchical_returns
 
 
@@ -128,6 +134,84 @@ class HierarchicalReturnsTest(unittest.TestCase):
         self.assertEqual(components.combat_samples, 2)
         self.assertEqual(components.overworld_samples, 1)
         self.assertAlmostEqual(components.value_loss.item(), 2.25)
+
+    def test_phasewise_backward_matches_combined_minibatch_gradient(self):
+        class Policy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.projection = torch.nn.Linear(3, 3)
+
+            def evaluate_actions(self, obs, actions, action_masks=None):
+                del actions, action_masks
+                output = self.projection(obs["features"])
+                return output[:, :1], output[:, 1], output[:, 2]
+
+        class Model:
+            def __init__(self, policy):
+                self.policy = policy
+                self.action_space = spaces.Discrete(2)
+                self.device = torch.device("cpu")
+                self.hierarchical_combat_hp = True
+                self.normalize_advantage = True
+                self.ent_coef = 0.01
+                self.vf_coef = 0.5
+
+            @staticmethod
+            def autocast_context():
+                return nullcontext()
+
+        torch.manual_seed(7)
+        combined_policy = Policy()
+        phasewise_policy = deepcopy(combined_policy)
+        combat = V.PHASE_VOCAB_INDEX["combat"]
+        map_phase = V.PHASE_VOCAB_INDEX["map"]
+        rollout = SimpleNamespace(
+            observations={
+                "phase": torch.tensor([
+                    [combat], [map_phase], [combat], [map_phase], [combat],
+                    [map_phase],
+                ]),
+                "features": torch.randn(6, 3),
+            },
+            actions=torch.tensor([[0], [1], [0], [1], [0], [1]]),
+            action_masks=torch.ones(6, 2, dtype=torch.bool),
+            advantages=torch.tensor([1.2, -0.4, -0.7, 0.9, 0.3, float("nan")]),
+            returns=torch.tensor([0.8, 1.1, 0.2, -0.3, 0.5, float("nan")]),
+            old_values=torch.tensor([0.1, 0.2, 0.3, -0.1, 0.4, 0.0]),
+            old_log_prob=torch.tensor([-0.2, -0.3, -0.1, -0.4, -0.2, 0.0]),
+        )
+
+        combined = ppo_microbatch_backward(
+            Model(combined_policy), rollout, 0.2, None
+        )
+        phasewise = ppo_microbatch_backward(
+            Model(phasewise_policy),
+            rollout,
+            0.2,
+            None,
+            phasewise_backward=True,
+        )
+
+        self.assertAlmostEqual(combined["loss"], phasewise["loss"], places=6)
+        self.assertAlmostEqual(
+            combined["combat_value_loss"],
+            phasewise["combat_value_loss"],
+            places=6,
+        )
+        self.assertAlmostEqual(
+            combined["overworld_value_loss"],
+            phasewise["overworld_value_loss"],
+            places=6,
+        )
+        for combined_parameter, phasewise_parameter in zip(
+            combined_policy.parameters(), phasewise_policy.parameters(), strict=True
+        ):
+            torch.testing.assert_close(
+                combined_parameter.grad,
+                phasewise_parameter.grad,
+                atol=1e-6,
+                rtol=1e-6,
+            )
 
 
 if __name__ == "__main__":
