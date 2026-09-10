@@ -7,6 +7,9 @@
 
 #include <vector>
 #include <array>
+#ifdef STS_ENABLE_RULE_TRACE
+#include <functional>
+#endif
 
 #include "sts_common.h"
 
@@ -90,6 +93,11 @@ namespace sts {
         CardManager cards;
 
         CardQueueItem curCardQueueItem;
+
+#ifdef STS_ENABLE_RULE_TRACE
+        // Synchronous hook compiled only into the dedicated rule-data build.
+        std::function<void(const BattleContext &)> atomicStepObserver;
+#endif
 
         std::bitset<32> miscBits; // 0 stolen gold check,
 

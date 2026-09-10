@@ -50,11 +50,11 @@ def random_act1_factory(np_random, pool="normal", ascension=0):
     return factory
 
 
-# Ironclad's obtainable colored card pool (sim enum strings; the 72 cards of
-# TransformCardPool.colorCardPool[0] in CardPools.h). Starter Strikes/Defends and
-# curses/colorless are intentionally excluded — these are the cards a real run can
-# add to the deck. We sample from here to build random training decks.
+# Ironclad training card pool. Starter types are included with equal slot odds;
+# shuffling still randomizes the initial hand. Curses and colorless cards remain
+# outside this uniform pool.
 _IRONCLAD_CARDS = [
+    "STRIKE_RED", "DEFEND_RED", "BASH",
     "ANGER", "CLEAVE", "WARCRY", "FLEX", "IRON_WAVE", "BODY_SLAM", "TRUE_GRIT",
     "SHRUG_IT_OFF", "CLASH", "THUNDERCLAP", "POMMEL_STRIKE", "TWIN_STRIKE",
     "CLOTHESLINE", "ARMAMENTS", "HAVOC", "HEADBUTT", "WILD_STRIKE", "HEAVY_BLADE",
@@ -73,6 +73,22 @@ _IRONCLAD_CARDS = [
 
 # Ironclad starter deck in sim enum strings: 5x Strike, 4x Defend, 1x Bash.
 _STARTER_DECK = ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4 + ["BASH"]
+
+
+def _uniform_ironclad_deck(np_random, size: int) -> list[tuple[str, int]]:
+    """Build a random deck using every Ironclad card with equal slot odds.
+
+    Sampling is with replacement because a training deck represents a random
+    legal loadout, not a draft without duplicates. Curses are deliberately
+    excluded from this distribution.
+    """
+    return [
+        (
+            _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))],
+            int(np_random.integers(0, 2)),
+        )
+        for _ in range(size)
+    ]
 
 # The "common" obtainable curses (events / Cursed Key). Excludes the special ones
 # tied to ascension/relics/card-gen (Ascender's Bane, Curse of the Bell,
@@ -182,14 +198,17 @@ def random_combat_factory(np_random, pool="normal", ascension=0,
     return factory
 
 
-def _build_gauntlet_gc(np_random, floor, ascension, hp_frac):
+def _build_gauntlet_gc(
+    np_random, floor, ascension, hp_frac, *, uniform_ironclad_deck: bool = False,
+):
     """A GameContext for a gauntlet episode, anchored on `floor` (= level L): the
     act, encounter pool, and loadout richness all derive from it, so the loadout is
     a plausible (if randomized) snapshot of a real run AT that floor — in-domain but
     with wide spread. Floor is FIXED for the whole episode (stable obs feature).
 
-      - deck: starter minus random Strike/Defend removals (mean 0.10*L, kept Bash),
-        plus random Ironclad cards (mean _mean_added(L), saturating to ~15 by f50),
+      - deck: by default, starter minus random Strike/Defend removals plus random
+        Ironclad cards; with ``uniform_ironclad_deck``, every slot is sampled
+        uniformly from the Ironclad card pool and the starter is omitted,
       - relics: a common subset (mean 0.20*L) + one boss relic per act-boss passed
         (act-1), and ~10% of runs swap Burning Blood for an extra boss relic,
       - starting HP: a random fraction of max_hp (carries across the gauntlet).
@@ -200,20 +219,25 @@ def _build_gauntlet_gc(np_random, floor, ascension, hp_frac):
     gc.floor_num = floor
     gc.act = act
 
-    # deck = (starter Strikes/Defends minus random removals) + Bash + random adds.
+    # Keep the old floor-dependent deck-size distribution while changing the
+    # card identity distribution for rule-data collection.
     starters = ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4
     n_remove = _around(np_random, 0.10 * floor, hi=len(starters))
-    if n_remove:
-        drop = set(np_random.choice(len(starters), size=n_remove, replace=False).tolist())
-        starters = [c for i, c in enumerate(starters) if i not in drop]
-    deck = [(c, 0) for c in starters] + [("BASH", 0)]
     n_add = _around(np_random, _mean_added(floor))
-    for _ in range(n_add):
-        card = _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))]
-        deck.append((card, int(np_random.integers(0, 2))))
-    # ~5% of runs carry a random curse (events / Cursed Key in a real run).
-    if float(np_random.uniform(0.0, 1.0)) < 0.05:
-        deck.append((_CURSE_POOL[int(np_random.integers(0, len(_CURSE_POOL)))], 0))
+    if uniform_ironclad_deck:
+        deck_size = len(starters) - n_remove + 1 + n_add
+        deck = _uniform_ironclad_deck(np_random, deck_size)
+    else:
+        if n_remove:
+            drop = set(np_random.choice(len(starters), size=n_remove, replace=False).tolist())
+            starters = [c for i, c in enumerate(starters) if i not in drop]
+        deck = [(c, 0) for c in starters] + [("BASH", 0)]
+        for _ in range(n_add):
+            card = _IRONCLAD_CARDS[int(np_random.integers(0, len(_IRONCLAD_CARDS)))]
+            deck.append((card, int(np_random.integers(0, 2))))
+        # ~5% of runs carry a random curse (events / Cursed Key in a real run).
+        if float(np_random.uniform(0.0, 1.0)) < 0.05:
+            deck.append((_CURSE_POOL[int(np_random.integers(0, len(_CURSE_POOL)))], 0))
     gc.set_deck(deck)
 
     # relics: Burning Blood (90%) + common subset + boss relics (one per boss passed,
@@ -238,7 +262,8 @@ def _build_gauntlet_gc(np_random, floor, ascension, hp_frac):
 def random_gauntlet_factory(np_random, ascension=0, hp_frac=(0.2, 1.0),
                             floor_range=(1, 50),
                             type_probs=(("normal", 0.75), ("elite", 0.20),
-                                        ("boss", 0.05))):
+                                        ("boss", 0.05)),
+                            *, uniform_ironclad_deck: bool = False):
     """For the combat GAUNTLET (SimCombatBackend): ONE random loadout fights an
     endless stream of random encounters until it dies (HP carries over, no heal).
 
@@ -261,7 +286,10 @@ def random_gauntlet_factory(np_random, ascension=0, hp_frac=(0.2, 1.0),
 
     def make_gc():
         floor = int(np_random.integers(flo, fhi + 1))
-        return _build_gauntlet_gc(np_random, floor, ascension, hp_frac)
+        return _build_gauntlet_gc(
+            np_random, floor, ascension, hp_frac,
+            uniform_ironclad_deck=uniform_ironclad_deck,
+        )
 
     def next_encounter(gc):
         pool = encounters.ACT_POOLS[_act_of(gc.floor_num)][
@@ -270,6 +298,37 @@ def random_gauntlet_factory(np_random, ascension=0, hp_frac=(0.2, 1.0),
         return pool[int(np_random.integers(0, len(pool)))]
 
     return make_gc, next_encounter
+
+
+def random_rule_combat_factory(
+    np_random,
+    ascension=0,
+    hp_frac=(0.2, 1.0),
+    floor_range=(1, 50),
+    type_probs=(("normal", 0.60), ("elite", 0.25), ("boss", 0.15)),
+):
+    """Return independent random combats for rule-data collection.
+
+    Loadouts intentionally reuse the combat-gauntlet distribution, but every
+    call creates a new loadout and exactly one encounter. There is no HP carry
+    or repeated-fight episode. Bosses are oversampled relative to PPO combat
+    training because rule coverage, rather than realistic room frequency, is
+    the objective here.
+    """
+    make_gc, next_encounter = random_gauntlet_factory(
+        np_random,
+        ascension=ascension,
+        hp_frac=hp_frac,
+        floor_range=floor_range,
+        type_probs=type_probs,
+        uniform_ironclad_deck=True,
+    )
+
+    def factory():
+        gc = make_gc()
+        return gc, next_encounter(gc)
+
+    return factory
 
 
 def fixed_factory(seed, encounter, floor=1, ascension=0):

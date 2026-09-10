@@ -65,6 +65,7 @@ OBS_VERSION = 11
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14
+INTERACTIVE_REASONING_OBS_VERSION = 15
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -160,7 +161,8 @@ _SCALAR = np.float32
 
 def obs_space(*, global_map_view=False, card_language=False,
               combat_language=False, deck_size_observation=False,
-              neow_observation=False, event_option_observation=False):
+              neow_observation=False, event_option_observation=False,
+              interactive_reasoning=False):
     """The gymnasium spaces.Dict matching encode()'s output. Train with SB3
     MultiInputPolicy (decision C). Categorical groups are integer Boxes bounded
     by their vocabulary capacity; the model embeds them (env stays parameter-free)."""
@@ -299,6 +301,11 @@ def obs_space(*, global_map_view=False, card_language=False,
         })
     if deck_size_observation:
         groups["deck_size"] = scal((1,), high=1.0)
+    if interactive_reasoning:
+        # 0 means no pending card; h+1 points to hand slot h.  A targeted card
+        # play spans PLAY_CARD then PICK_TARGET, so the second feed-forward step
+        # needs this pointer to retain the anonymous card surface it is resolving.
+        groups["pending_card_slot"] = cat((1,), HAND_SLOTS + 1)
     return spaces.Dict(groups)
 
 
@@ -362,7 +369,8 @@ def _encode_card_sequence(o, pile, cards):
 
 def _empty(*, global_map_view=False, card_language=False,
            combat_language=False, deck_size_observation=False,
-           neow_observation=False, event_option_observation=False):
+           neow_observation=False, event_option_observation=False,
+           interactive_reasoning=False):
     """A zero/PAD-filled obs dict (every absent group encodes to this)."""
     o = {
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
@@ -461,6 +469,74 @@ def _empty(*, global_map_view=False, card_language=False,
         )
     if deck_size_observation:
         o["deck_size"] = np.zeros(1, _SCALAR)
+    if interactive_reasoning:
+        o["pending_card_slot"] = np.zeros(1, _CAT)
+    return o
+
+
+def _empty_combat(*, card_language=False, combat_language=False):
+    """Allocate only the fields consumed by the split combat specialist.
+
+    This is an internal transport representation for neural search leaves.  It
+    deliberately does not change ``obs_space()`` or the public environment
+    observation contract, so existing checkpoints remain compatible.
+    """
+    o = {
+        "arg_step": np.zeros(1, _CAT),
+        "ascension": np.zeros(1, _SCALAR),
+        "can_pick_any": np.zeros(1, _SCALAR),
+        "can_pick_zero": np.zeros(1, _SCALAR),
+        "character": np.zeros(1, _CAT),
+        "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
+        "discard_counts": np.zeros(N_CARDS, _SCALAR),
+        "draw_counts": np.zeros(N_CARDS, _SCALAR),
+        "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
+        "gold": np.zeros(1, _SCALAR),
+        "hand_block": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_costs": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_damage": np.zeros(HAND_SLOTS, _SCALAR),
+        "hand_ids": np.zeros(HAND_SLOTS, _CAT),
+        "hand_upgrades": np.zeros(HAND_SLOTS, _SCALAR),
+        "monster_buffs": np.zeros(
+            (MAX_MONSTERS, V.MONSTER_BUFF_VEC), _SCALAR
+        ),
+        "monster_id": np.zeros(MAX_MONSTERS, _CAT),
+        "monster_intent_cat": np.zeros(MAX_MONSTERS, _CAT),
+        "monster_move": np.zeros(MAX_MONSTERS, _CAT),
+        "monster_scalars": np.zeros(
+            (MAX_MONSTERS, MON_SCALARS), _SCALAR
+        ),
+        "pick_remaining": np.zeros(1, _SCALAR),
+        "player_buffs": np.zeros(V.PLAYER_BUFF_VEC, _SCALAR),
+        "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
+        "potions": np.zeros(P_MAX, _CAT),
+        "relic_counters": np.zeros(R_MAX, _SCALAR),
+        "relics": np.zeros(R_MAX, _CAT),
+        "select_context": np.zeros(1, _CAT),
+        "select_hand_mask": np.zeros(HAND_SLOTS, _SCALAR),
+    }
+    if card_language:
+        for pile in ("draw", "discard"):
+            o[f"{pile}_card_ids"] = np.zeros(PILE_LANGUAGE_SLOTS, _CAT)
+            o[f"{pile}_card_upgrades"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
+            o[f"{pile}_card_counts"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
+            o[f"{pile}_card_upgraded_counts"] = np.zeros(
+                PILE_LANGUAGE_SLOTS, _SCALAR
+            )
+    if combat_language:
+        o["player_status_language"] = np.zeros(
+            CL.MAX_PLAYER_STATUS_TOKENS, _CAT
+        )
+        o["monster_status_language"] = np.zeros(
+            (MAX_MONSTERS, CL.MAX_MONSTER_STATUS_TOKENS), _CAT
+        )
+        o["monster_intent_language"] = np.zeros(
+            (MAX_MONSTERS, CL.MAX_LIVE_INTENT_TOKENS), _CAT
+        )
     return o
 
 
@@ -562,6 +638,48 @@ def _encode_combat(o, canon):
             o[key][_card_idx(c)] += 1.0
     _encode_card_sequence(o, "draw", canon.get("draw", []))
     _encode_card_sequence(o, "discard", canon.get("discard", []))
+
+
+def _encode_combat_global(o, canon):
+    """Fill the run fields that the combat specialist actually consumes."""
+    o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(
+        canon.get("arg_step", "root"), 0
+    )
+    g = canon.get("global")
+    if g is None:
+        return
+    o["character"][0] = V.CHARACTER_VOCAB_INDEX.get(
+        g.get("character", "INVALID"), 0
+    )
+    o["ascension"][0] = g.get("ascension", 0) / ASCENSION_SCALE
+    gold = g.get("gold", 0)
+    if canon.get("phase") == "combat" and canon.get("player") is not None:
+        gold = canon["player"].get("gold", gold)
+    o["gold"][0] = gold / GOLD_SCALE
+
+    relics = g.get("relics", [])
+    relic_counters = g.get("relic_counters", [])
+    _require_capacity("global.relics", relics, R_MAX)
+    _require_capacity("global.relic_counters", relic_counters, R_MAX)
+    live_counters = canon.get("player", {}).get("combat_counters", {})
+    for i, rid in enumerate(relics):
+        o["relics"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
+        if i < len(relic_counters):
+            o["relic_counters"][i] = relic_counters[i] / COUNTER_SCALE
+        live_key = _LIVE_RELIC_COUNTER.get(rid)
+        if (
+            canon.get("phase") == "combat"
+            and live_key is not None
+            and live_key in live_counters
+        ):
+            live_value = live_counters[live_key]
+            o["relic_counters"][i] = (
+                float(bool(live_value))
+                if rid in _BINARY_LIVE_RELICS
+                else live_value / COUNTER_SCALE
+            )
+    for i, pid in enumerate(g.get("potions", [])[:P_MAX]):
+        o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
 
 
 def _encode_global(o, canon):
@@ -744,7 +862,7 @@ def _encode_options(o, canon):
 def encode(
     canon, *, global_map_view=False, card_language=False,
     combat_language=False, deck_size_observation=False, neow_observation=False,
-    event_option_observation=False,
+    event_option_observation=False, interactive_reasoning=False,
 ):
     """obs canonical dict -> obs dict (numpy arrays matching obs_space()).
 
@@ -757,10 +875,30 @@ def encode(
         deck_size_observation=deck_size_observation,
         neow_observation=neow_observation,
         event_option_observation=event_option_observation,
+        interactive_reasoning=interactive_reasoning,
     )
+    if "pending_card_slot" in o:
+        o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)
+    _encode_select(o, (canon.get("options") or {}).get("select"))
+    return o
+
+
+def encode_combat(canon, *, card_language=False, combat_language=False):
+    """Encode only fields consumed by the split combat specialist.
+
+    This compact representation is used only to transport neural-search
+    leaves.  The public Gym observation space and its version stay unchanged,
+    so existing policy checkpoints keep exactly the same parameter shapes.
+    """
+    o = _empty_combat(
+        card_language=card_language,
+        combat_language=combat_language,
+    )
+    _encode_combat(o, canon)
+    _encode_combat_global(o, canon)
     _encode_select(o, (canon.get("options") or {}).get("select"))
     return o
 
@@ -778,10 +916,13 @@ def _encode_select(o, sel):
     o["can_pick_any"][0] = 1.0 if sel.get("can_pick_any") else 0.0
     selected = sel.get("selected", [])
     _require_capacity("options.select.selected", selected, SELECT_PICK_SLOTS)
-    for i, card in enumerate(selected):
-        cid, up = _card_tuple(card)
-        o["selected_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
-        o["selected_card_upgrades"][i] = up / UPGRADE_SCALE
+    if "selected_card_ids" in o:
+        for i, card in enumerate(selected):
+            cid, up = _card_tuple(card)
+            o["selected_card_ids"][i] = CARD_INDEX.get(
+                cid, CARD_INDEX[EMPTY]
+            )
+            o["selected_card_upgrades"][i] = up / UPGRADE_SCALE
     # combat MULTI screen: thin-env selected hand indices -> hand-aligned 0/1.
     for h in sel.get("hand_selected", []):
         if 0 <= h < HAND_SLOTS:

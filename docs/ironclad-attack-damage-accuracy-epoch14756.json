@@ -1,0 +1,5333 @@
+{
+  "settings": {
+    "run": "rl\\runs\\rules-anon-v5-structure-reweight-dist4-20260826-current",
+    "checkpoint": "rl\\runs\\rules-anon-v5-structure-reweight-dist4-20260826-current\\last-strike-plus.pt",
+    "checkpoint_epoch": 14756,
+    "device": "cuda",
+    "player_energy": 4,
+    "player_block": 10,
+    "enemy": "Cultist",
+    "seed": 42
+  },
+  "summary": {
+    "attack_cards": 32,
+    "versions": 64,
+    "base_read_correct": 49,
+    "base_read_total": 84,
+    "base_only_read_correct": 24,
+    "base_only_read_total": 41,
+    "base_only_version_correct": 12,
+    "base_only_version_total": 29,
+    "upgraded_read_correct": 25,
+    "upgraded_read_total": 43,
+    "upgraded_version_correct": 11,
+    "upgraded_version_total": 29,
+    "base_version_correct": 23,
+    "base_version_total": 58,
+    "base_card_correct": 4,
+    "base_card_total": 29,
+    "hp_damage_correct": 90,
+    "hp_damage_total": 90,
+    "hp_version_correct": 64,
+    "hp_version_total": 64,
+    "dynamic_version_total": 6
+  },
+  "rows": [
+    {
+      "card_id": "Bash",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "8",
+      "target_tokens": 640,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Bash",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "10",
+      "target_tokens": 650,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Strike_R",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "6",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 6,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 6,
+          "predicted": 6,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Strike_R",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "9",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 9,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 9,
+          "predicted": 9,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Anger",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "6",
+      "target_tokens": 575,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 6,
+          "predicted": 6,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 226,
+          "expected": 6,
+          "predicted": 6,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "NUM_END"
+          ],
+          "field_position": 225,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Anger",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "8",
+      "target_tokens": 575,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 8,
+          "predicted": 2,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 226,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 225,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Body Slam",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "dynamic",
+      "target_tokens": 500,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 170,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 169,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Body Slam",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "dynamic",
+      "target_tokens": 460,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 130,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 129,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Clash",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "14",
+      "target_tokens": 565,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 14,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 235,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 234,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Clash",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "18",
+      "target_tokens": 565,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 18,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 235,
+          "expected": 18,
+          "predicted": 18,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 234,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Cleave",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "8",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Cleave",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "11",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 11,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_1",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 11,
+          "predicted": 11,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Clothesline",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "12",
+      "target_tokens": 650,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 12,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 12,
+          "predicted": 12,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Clothesline",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "14",
+      "target_tokens": 650,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 14,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Headbutt",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "9",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 9,
+          "predicted": 9,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 9,
+          "predicted": 9,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Headbutt",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "12",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 12,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 12,
+          "predicted": 12,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Heavy Blade",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "14",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Heavy Blade",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "14",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 14,
+          "predicted": 14,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Iron Wave",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "5",
+      "target_tokens": 637,
+      "base_checks": [
+        {
+          "position": 187,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 185,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 308,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 307,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Iron Wave",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "7",
+      "target_tokens": 637,
+      "base_checks": [
+        {
+          "position": 187,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "marker_position": 185,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 308,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 307,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Perfected Strike",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "6 + dynamic",
+      "target_tokens": 500,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 170,
+          "expected": 26,
+          "predicted": 26,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 169,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Perfected Strike",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "6 + dynamic",
+      "target_tokens": 500,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 170,
+          "expected": 36,
+          "predicted": 36,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 169,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Pommel Strike",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "9",
+      "target_tokens": 614,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 9,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 9,
+          "predicted": 9,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_9",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Pommel Strike",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "10",
+      "target_tokens": 643,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Sword Boomerang",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "3 x 3",
+      "target_tokens": 885,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Sword Boomerang",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "3 x 4",
+      "target_tokens": 1030,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 3,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        },
+        {
+          "position": 580,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "marker_position": 578,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        },
+        {
+          "position": 701,
+          "expected": 3,
+          "predicted": 3,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 700,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Thunderclap",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "4",
+      "target_tokens": 640,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 4,
+          "predicted": 4,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 4,
+          "predicted": 4,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Thunderclap",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "7",
+      "target_tokens": 640,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 7,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Twin Strike",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "5 x 2",
+      "target_tokens": 740,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Twin Strike",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "7 x 2",
+      "target_tokens": 740,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 7,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Wild Strike",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "12",
+      "target_tokens": 625,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 12,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 12,
+          "predicted": 12,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Wild Strike",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "17",
+      "target_tokens": 625,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 17,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 17,
+          "predicted": 17,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Blood For Blood",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "18",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 18,
+          "predicted": 8,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 18,
+          "predicted": 18,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Blood For Blood",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "22",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 22,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 22,
+          "predicted": 22,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Carnage",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "20",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 20,
+          "predicted": 20,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 20,
+          "predicted": 20,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Carnage",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "28",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 28,
+          "predicted": 20,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 28,
+          "predicted": 28,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Dropkick",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "5",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Dropkick",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "8",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Hemokinesis",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "15",
+      "target_tokens": 687,
+      "base_checks": [
+        {
+          "position": 227,
+          "expected": 15,
+          "predicted": 5,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 225,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 357,
+          "expected": 15,
+          "predicted": 15,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 356,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Hemokinesis",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "20",
+      "target_tokens": 687,
+      "base_checks": [
+        {
+          "position": 227,
+          "expected": 20,
+          "predicted": 20,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 225,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 357,
+          "expected": 20,
+          "predicted": 20,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 356,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Pummel",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "2 x 4",
+      "target_tokens": 1030,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 2,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        },
+        {
+          "position": 580,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 578,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        },
+        {
+          "position": 701,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 700,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Pummel",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "2 x 5",
+      "target_tokens": 1175,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 2,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        },
+        {
+          "position": 580,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 578,
+          "marker_correct": true
+        },
+        {
+          "position": 725,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 723,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        },
+        {
+          "position": 701,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 700,
+          "field_correct": true
+        },
+        {
+          "position": 846,
+          "expected": 2,
+          "predicted": 2,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 845,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Rampage",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "8",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 5,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Rampage",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "8",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Reckless Charge",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "7",
+      "target_tokens": 575,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 7,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 226,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 225,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Reckless Charge",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "10",
+      "target_tokens": 585,
+      "base_checks": [
+        {
+          "position": 105,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 103,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 235,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 234,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Searing Blow",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "dynamic",
+      "target_tokens": 500,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 170,
+          "expected": 12,
+          "predicted": 12,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 169,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Searing Blow",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "dynamic",
+      "target_tokens": 500,
+      "base_checks": [],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 170,
+          "expected": 16,
+          "predicted": 16,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 169,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Sever Soul",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "16",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 16,
+          "predicted": 16,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 16,
+          "predicted": 16,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_6",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Sever Soul",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "22",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 22,
+          "predicted": 22,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 22,
+          "predicted": 22,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Uppercut",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "13",
+      "target_tokens": 695,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 13,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 13,
+          "predicted": 13,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Uppercut",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "13",
+      "target_tokens": 695,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 13,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 13,
+          "predicted": 13,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_3",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Whirlwind",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "5 x X",
+      "target_tokens": 1034,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        },
+        {
+          "position": 580,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 578,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        },
+        {
+          "position": 701,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 700,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Whirlwind",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "8 x X",
+      "target_tokens": 1034,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 8,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        },
+        {
+          "position": 290,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "marker_position": 288,
+          "marker_correct": true
+        },
+        {
+          "position": 435,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "marker_position": 433,
+          "marker_correct": true
+        },
+        {
+          "position": 580,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "marker_position": 578,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        },
+        {
+          "position": 411,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 410,
+          "field_correct": true
+        },
+        {
+          "position": 556,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 555,
+          "field_correct": true
+        },
+        {
+          "position": 701,
+          "expected": 8,
+          "predicted": 8,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "NUM_END"
+          ],
+          "field_position": 700,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Bludgeon",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "32",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 32,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 32,
+          "predicted": 32,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_3",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Bludgeon",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "42",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 42,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 42,
+          "predicted": 42,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Feed",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "10",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Feed",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "12",
+      "target_tokens": 605,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 12,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 12,
+          "predicted": 12,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_2",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Fiend Fire",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "7 + dynamic",
+      "target_tokens": 1074,
+      "base_checks": [
+        {
+          "position": 205,
+          "expected": 7,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 203,
+          "marker_correct": true
+        },
+        {
+          "position": 350,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "marker_position": 348,
+          "marker_correct": true
+        },
+        {
+          "position": 495,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "marker_position": 493,
+          "marker_correct": true
+        },
+        {
+          "position": 640,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "marker_position": 638,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 326,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 325,
+          "field_correct": true
+        },
+        {
+          "position": 471,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 470,
+          "field_correct": true
+        },
+        {
+          "position": 616,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 615,
+          "field_correct": true
+        },
+        {
+          "position": 761,
+          "expected": 7,
+          "predicted": 7,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_7",
+            "NUM_END"
+          ],
+          "field_position": 760,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Fiend Fire",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "10 + dynamic",
+      "target_tokens": 1114,
+      "base_checks": [
+        {
+          "position": 205,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 203,
+          "marker_correct": true
+        },
+        {
+          "position": 360,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 358,
+          "marker_correct": true
+        },
+        {
+          "position": 515,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 513,
+          "marker_correct": true
+        },
+        {
+          "position": 670,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "marker_position": 668,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 335,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 334,
+          "field_correct": true
+        },
+        {
+          "position": 490,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 489,
+          "field_correct": true
+        },
+        {
+          "position": 645,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 644,
+          "field_correct": true
+        },
+        {
+          "position": 800,
+          "expected": 10,
+          "predicted": 10,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_0",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "field_position": 799,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Immolate",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "21",
+      "target_tokens": 625,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 21,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_1",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 21,
+          "predicted": 21,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_1",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Immolate",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "28",
+      "target_tokens": 625,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 28,
+          "predicted": 1,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_1",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_1",
+            "NUM_END",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 275,
+          "expected": 28,
+          "predicted": 28,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_8",
+            "DIGIT_2",
+            "NUM_END"
+          ],
+          "field_position": 274,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Reaper",
+      "upgraded": false,
+      "version": "base",
+      "surface_damage": "4",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 4,
+          "predicted": 0,
+          "correct": false,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_0",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": false,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 4,
+          "predicted": 4,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_4",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    },
+    {
+      "card_id": "Reaper",
+      "upgraded": true,
+      "version": "+",
+      "surface_damage": "5",
+      "target_tokens": 595,
+      "base_checks": [
+        {
+          "position": 145,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "marker_position": 143,
+          "marker_correct": true
+        }
+      ],
+      "base_exact": true,
+      "hp_checks": [
+        {
+          "position": 266,
+          "expected": 5,
+          "predicted": 5,
+          "correct": true,
+          "expected_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "aligned_predicted_tokens": [
+            "NUM_LSD_BEGIN",
+            "SIGN_NEG",
+            "DIGIT_5",
+            "NUM_END"
+          ],
+          "field_position": 265,
+          "field_correct": true
+        }
+      ],
+      "hp_exact": true
+    }
+  ]
+}

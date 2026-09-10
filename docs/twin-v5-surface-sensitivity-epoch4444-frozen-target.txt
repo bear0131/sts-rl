@@ -1,0 +1,13 @@
+Anonymous-card surface sensitivity report
+checkpoint_epoch=4444
+The teacher target is frozen to the real Twin Strike simulator trace.
+Only the anonymous card surface in the input prefix changes.
+
+surface | teacher-forced base-damage prediction | teacher-forced target accuracy | autoregressive length | AR equal to 5x2
+surface_5x2 | target=DIGIT_5, predicted=DIGIT_5 at target position 146 | 99.683% | 434 | True
+surface_7x2 | target=DIGIT_5, predicted=DIGIT_2 at target position 146 | 99.578% | 434 | True
+surface_7x3 | target=DIGIT_5, predicted=DIGIT_2 at target position 146 | 99.578% | 434 | True
+
+Teacher-forced differences versus surface_5x2:
+surface_7x2: [(146, 'DIGIT_5', 'DIGIT_2')]
+surface_7x3: [(146, 'DIGIT_5', 'DIGIT_2')]

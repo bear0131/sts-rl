@@ -1,0 +1,231 @@
+{
+  "task": "isolated_register_name_retrieval",
+  "device": "cuda",
+  "seed": 20260831,
+  "steps": 12000,
+  "batch_size": 512,
+  "data_generation": "fresh random samples per optimization step",
+  "protocol": {
+    "register_definition": "environment-owned name plus fixed two-digit LSD value",
+    "query": "environment-owned REG_QUERY and register name",
+    "model_owned": "REG_RESULT plus NUM_LSD_BEGIN, two DIGIT tokens and NUM_END",
+    "repeated_queries": "each register is queried three times in random order"
+  },
+  "model": {
+    "d_model": 96,
+    "heads": 4,
+    "layers": 2,
+    "feedforward": 192,
+    "vocab_size": 34
+  },
+  "history": [
+    {
+      "step": 1.0,
+      "loss": 63.70131301879883,
+      "teacher_token_accuracy": 0.0625,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.0,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.0,
+      "repeated_register_consistency": 128
+    },
+    {
+      "step": 1000.0,
+      "loss": 1.2481367588043213,
+      "teacher_token_accuracy": 0.3528645833333333,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.08333333333333333,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.08333333333333333,
+      "repeated_register_consistency": 32
+    },
+    {
+      "step": 2000.0,
+      "loss": 1.1288018226623535,
+      "teacher_token_accuracy": 0.4388020833333333,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.09375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.09375,
+      "repeated_register_consistency": 4
+    },
+    {
+      "step": 3000.0,
+      "loss": 0.9842985272407532,
+      "teacher_token_accuracy": 0.5143229166666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.09375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.09375,
+      "repeated_register_consistency": 0
+    },
+    {
+      "step": 4000.0,
+      "loss": 0.9771924614906311,
+      "teacher_token_accuracy": 0.5182291666666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.109375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.109375,
+      "repeated_register_consistency": 0
+    },
+    {
+      "step": 5000.0,
+      "loss": 0.9689874649047852,
+      "teacher_token_accuracy": 0.5143229166666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.109375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.109375,
+      "repeated_register_consistency": 2
+    },
+    {
+      "step": 6000.0,
+      "loss": 0.9650423526763916,
+      "teacher_token_accuracy": 0.5065104166666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.08072916666666667,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.08072916666666667,
+      "repeated_register_consistency": 1
+    },
+    {
+      "step": 7000.0,
+      "loss": 0.9598016142845154,
+      "teacher_token_accuracy": 0.5130208333333334,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.09375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.09375,
+      "repeated_register_consistency": 1
+    },
+    {
+      "step": 8000.0,
+      "loss": 0.9645492434501648,
+      "teacher_token_accuracy": 0.5091145833333334,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.09635416666666667,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.09635416666666667,
+      "repeated_register_consistency": 1
+    },
+    {
+      "step": 9000.0,
+      "loss": 0.937903106212616,
+      "teacher_token_accuracy": 0.5338541666666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.09375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.09375,
+      "repeated_register_consistency": 2
+    },
+    {
+      "step": 10000.0,
+      "loss": 0.9249216914176941,
+      "teacher_token_accuracy": 0.5104166666666666,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.140625,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.140625,
+      "repeated_register_consistency": 2
+    },
+    {
+      "step": 11000.0,
+      "loss": 0.9054340720176697,
+      "teacher_token_accuracy": 0.5390625,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.1015625,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.1015625,
+      "repeated_register_consistency": 3
+    },
+    {
+      "step": 12000.0,
+      "loss": 0.722297191619873,
+      "teacher_token_accuracy": 0.6497395833333334,
+      "teacher_tokens": 768.0,
+      "autoregressive_query_accuracy": 0.2109375,
+      "autoregressive_queries": 384.0,
+      "autoregressive_span_accuracy": 0.2109375,
+      "repeated_register_consistency": 2
+    }
+  ],
+  "mutation_probe": {
+    "register_values": [
+      95,
+      17,
+      60,
+      98
+    ],
+    "query_registers": [
+      0,
+      1,
+      3,
+      0,
+      1,
+      2,
+      3,
+      1,
+      0,
+      3,
+      2,
+      2
+    ],
+    "target_register": 0,
+    "changed_value": 32,
+    "baseline_predictions": [
+      98,
+      95,
+      17,
+      60,
+      98,
+      95,
+      17,
+      60,
+      98,
+      60,
+      15,
+      97
+    ],
+    "changed_predictions": [
+      98,
+      17,
+      32,
+      60,
+      98,
+      17,
+      32,
+      60,
+      17,
+      98,
+      32,
+      60
+    ],
+    "target_queries_followed_mutation": 0,
+    "target_query_count": 3,
+    "other_queries_unchanged": 2,
+    "other_query_count": 9,
+    "name_swap_values": [
+      17,
+      95,
+      60,
+      98
+    ],
+    "name_swap_predictions": [
+      98,
+      95,
+      17,
+      60,
+      98,
+      95,
+      17,
+      60,
+      98,
+      60,
+      17,
+      95
+    ],
+    "name_swap_correct": 1,
+    "name_swap_query_count": 12
+  }
+}

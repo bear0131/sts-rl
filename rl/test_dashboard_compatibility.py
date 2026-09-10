@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+from pathlib import Path
+import threading
+
+import numpy as np
+import pytest
+import torch
+
+from env.core.cards_vocab import CARD_VOCAB
+from rl import dashboard
+from rl.visualize_card_vectors import _semantic_card_vectors
+
+
+def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):
+    local = tmp_path / "card-vector-run" / "last.pt"
+    local.parent.mkdir()
+    local.touch()
+
+    resolved = dashboard._resolve_card_vector_checkpoint(
+        "/root/autodl-tmp/sts-rl/card-vector-run/last.pt",
+        project_root=tmp_path,
+    )
+
+    assert resolved == local
+
+
+def test_card_vector_path_can_be_overridden_by_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    local = tmp_path / "encoder.pt"
+    local.touch()
+    monkeypatch.setenv("STS_CARD_VECTOR_CHECKPOINT", str(local))
+
+    resolved = dashboard._resolve_card_vector_checkpoint(
+        "/remote/missing/card-vector-run/last.pt",
+        project_root=tmp_path / "project",
+    )
+
+    assert resolved == local
+
+
+def test_semantic_vectors_support_encoder_without_weight_attribute():
+    class RuleEncoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.projection = torch.nn.Linear(1, 3)
+
+        def versioned_forward(self, ids, upgrades):
+            values = ids.to(torch.float32) + upgrades
+            return self.projection(values.unsqueeze(-1))
+
+    encoder = RuleEncoder()
+    vectors, upgrades = _semantic_card_vectors(encoder, upgrades=1)
+
+    assert vectors.shape == (len(CARD_VOCAB), 3)
+    assert upgrades.device == encoder.projection.weight.device
+
+
+def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        nosl_is_az_simulations = 512
+        nosl_is_az_depth = 0
+        nosl_is_az_c_puct = 1.75
+        nosl_is_az_leaf_batch_size = 16
+        nosl_is_az_master_nonce = 1234
+
+    saved = dashboard._evaluation_search_config(Model())
+    overridden = dashboard._evaluation_search_config(
+        Model(), simulations=128, depth=3
+    )
+
+    assert saved == {
+        "method": "nosl_is_az_cpp",
+        "supported": True,
+        "simulations": 512,
+        "depth": 0,
+        "prior_temperature": 1.0,
+        "c_puct": 1.75,
+        "leaf_batch_size": 16,
+        "master_nonce": 1234,
+        "stochastic": False,
+        "dirichlet_alpha": 0.0,
+        "dirichlet_epsilon": 0.0,
+    }
+    assert overridden["simulations"] == 128
+    assert overridden["depth"] == 3
+
+
+def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
+    class Core:
+        def actor_critic(self, _observation):
+            raise AssertionError("root inference is replaced by this unit test")
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+
+    class BaseEnv:
+        def __init__(self):
+            self.call = None
+
+        def nosl_is_az_cpp_begin(self, logits, **kwargs):
+            self.call = (np.asarray(logits), kwargs)
+            return {
+                "done": True,
+                "result": {"action": 17, "simulations": kwargs["simulations"]},
+            }
+
+    class Env:
+        def __init__(self):
+            self.unwrapped = BaseEnv()
+
+    config = dashboard._evaluation_search_config(
+        Model(), simulations=32, depth=0
+    )
+    runner = dashboard.EvaluationNOSLSearch(Model(), threading.Lock(), config)
+    monkeypatch.setattr(
+        runner,
+        "_root_outputs",
+        lambda _observation: (
+            np.asarray([1.0, 2.0], dtype=np.float32),
+            0.37,
+        ),
+    )
+    env = Env()
+
+    result = runner.choose_action(
+        env,
+        {"unused": np.asarray([0.0])},
+        episode_seed=7,
+        decision_index=11,
+    )
+
+    logits, call = env.unwrapped.call
+    assert logits.tolist() == [1.0, 2.0]
+    assert call["simulations"] == 32
+    assert call["depth"] == 0
+    assert call["stochastic"] is False
+    assert call["dirichlet_alpha"] == 0.0
+    assert call["dirichlet_epsilon"] == 0.0
+    assert call["root_value"] == pytest.approx(0.37)
+    assert call["prior_temperature"] == pytest.approx(1.0)
+    assert result["action"] == 17
+    assert result["leaf_evaluations"] == 0
+
+
+def test_watch_leaf_inference_uses_explicit_combat_head():
+    class Core:
+        combat_observation_keys = ("phase", "relics")
+
+        def __init__(self):
+            self.called = None
+
+        def combat_actor_critic(self, observations, *, active_relic_width):
+            self.called = (observations, active_relic_width)
+            batch = observations["phase"].shape[0]
+            return torch.zeros((batch, 200)), torch.full((batch, 1), 0.42)
+
+        def actor_critic(self, _observations):
+            raise AssertionError("Watch search leaves must use combat_actor_critic")
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        device = torch.device("cpu")
+
+    runner = dashboard.WatchSession.__new__(dashboard.WatchSession)
+    runner.model = Model()
+    runner.model_lock = threading.Lock()
+    runner.compact_observations = True
+    leaves = [{
+        "observation": {
+            "phase": np.asarray([3.0], dtype=np.float32),
+            "relics": np.asarray([1.0, 0.0, 0.0], dtype=np.float32),
+        },
+        "needs_policy": True,
+    }]
+
+    logits, values = runner._evaluate_native_leaves(leaves)
+
+    assert logits.shape == (1, 200)
+    assert values.tolist() == pytest.approx([0.42])
+    assert Model.policy.core.called[1] == 1

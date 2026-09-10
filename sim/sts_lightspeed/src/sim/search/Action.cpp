@@ -249,13 +249,127 @@ bool search::Action::isValidAction(const BattleContext &bc) const {
     }
 }
 
+std::vector<search::Action> search::Action::enumerateCombatActions(const BattleContext &bc) {
+    std::vector<search::Action> actions;
+    if (bc.outcome != Outcome::UNDECIDED) {
+        return actions;
+    }
+
+    switch (bc.inputState) {
+        case InputState::PLAYER_NORMAL: {
+            if (bc.isCardPlayAllowed()) {
+                for (int handIdx = 0; handIdx < bc.cards.cardsInHand; ++handIdx) {
+                    const auto &card = bc.cards.hand[handIdx];
+                    if (!card.canUseOnAnyTarget(bc)) {
+                        continue;
+                    }
+                    if (card.requiresTarget()) {
+                        for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
+                            if (bc.monsters.arr[targetIdx].isTargetable()) {
+                                actions.emplace_back(ActionType::CARD, handIdx, targetIdx);
+                            }
+                        }
+                    } else {
+                        actions.emplace_back(ActionType::CARD, handIdx);
+                    }
+                }
+            }
+
+            const bool hasValidTarget = bc.monsters.getTargetableCount() > 0;
+            for (int potionIdx = 0; potionIdx < bc.potionCapacity; ++potionIdx) {
+                const auto potion = bc.potions[potionIdx];
+                if (potion == Potion::INVALID || potion == Potion::EMPTY_POTION_SLOT) {
+                    continue;
+                }
+                if (potion == Potion::FAIRY_POTION ||
+                    (potionRequiresTarget(potion) && !hasValidTarget)) {
+                    actions.emplace_back(ActionType::POTION, potionIdx, -1);
+                } else if (!potionRequiresTarget(potion)) {
+                    actions.emplace_back(ActionType::POTION, potionIdx);
+                } else {
+                    for (int targetIdx = 0; targetIdx < bc.monsters.monsterCount; ++targetIdx) {
+                        if (bc.monsters.arr[targetIdx].isTargetable()) {
+                            actions.emplace_back(ActionType::POTION, potionIdx, targetIdx);
+                        }
+                    }
+                }
+            }
+            actions.emplace_back(ActionType::END_TURN);
+            break;
+        }
+
+        case InputState::CARD_SELECT:
+            actions = enumerateCardSelectActions(bc);
+            break;
+
+        default:
+            break;
+    }
+
+    return actions;
+}
+
 std::ostream& printSingleCardSelectDescHelper(std::ostream &os, const BattleContext &bc, const search::Action &a) {
     // action is known to be valid here
-    os << "{ " << cardSelectTaskStrings[static_cast<int>(bc.cardSelectInfo.cardSelectTask)];
-    os << " (" << a.getSelectIdx() << ") ";
-    // TODO we don't know if it's selecting from hand or discard
-    // const auto &c = bc.cards.hand[a.getSelectIdx()];
-    // c.printSimpleDesc(os);
+    const auto task = bc.cardSelectInfo.cardSelectTask;
+    const int index = a.getSelectIdx();
+    os << "{ " << cardSelectTaskStrings[static_cast<int>(task)]
+       << " (" << index << ") ";
+
+    // The index is interpreted in the source collection for the prompt, not
+    // necessarily in the hand.  Include the card itself in the description so
+    // lazy search-tree nodes remain understandable after actions such as
+    // Armaments reorder and upgrade the hand.
+    const CardInstance *card = nullptr;
+    switch (task) {
+        case CardSelectTask::ARMAMENTS:
+        case CardSelectTask::DUAL_WIELD:
+        case CardSelectTask::EXHAUST_ONE:
+        case CardSelectTask::FORETHOUGHT:
+        case CardSelectTask::NIGHTMARE:
+        case CardSelectTask::RECYCLE:
+        case CardSelectTask::SETUP:
+        case CardSelectTask::WARCRY:
+            if (index >= 0 && index < bc.cards.cardsInHand) {
+                card = &bc.cards.hand[index];
+            }
+            break;
+        case CardSelectTask::EXHUME:
+            if (index >= 0 && index < static_cast<int>(bc.cards.exhaustPile.size())) {
+                card = &bc.cards.exhaustPile[index];
+            }
+            break;
+        case CardSelectTask::HEADBUTT:
+        case CardSelectTask::HOLOGRAM:
+        case CardSelectTask::LIQUID_MEMORIES_POTION:
+        case CardSelectTask::MEDITATE:
+            if (index >= 0 && index < static_cast<int>(bc.cards.discardPile.size())) {
+                card = &bc.cards.discardPile[index];
+            }
+            break;
+        case CardSelectTask::SECRET_TECHNIQUE:
+        case CardSelectTask::SECRET_WEAPON:
+        case CardSelectTask::SEEK:
+            if (index >= 0 && index < static_cast<int>(bc.cards.drawPile.size())) {
+                card = &bc.cards.drawPile[index];
+            }
+            break;
+        case CardSelectTask::CODEX:
+        case CardSelectTask::DISCOVERY: {
+            const auto &ids = bc.cardSelectInfo.cards;
+            if (index >= 0 && index < static_cast<int>(ids.size())) {
+                static thread_local CardInstance option;
+                option = CardInstance(ids[index]);
+                card = &option;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    if (card != nullptr) {
+        card->printSimpleDesc(os);
+    }
     return os << " }";
 }
 

@@ -3,6 +3,7 @@
 //
 
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 #include <pybind11/functional.h>
@@ -23,6 +24,8 @@
 #include "combat/BattleContext.h"
 #include "sim/search/Action.h"
 #include "sim/search/GameAction.h"
+#include "sim/search/Nosl.h"
+#include "sim/search/NoslCombatTrainer.h"
 #include "constants/MonsterStatusEffects.h"
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterIds.h"
@@ -167,6 +170,30 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     d["draw"] = cardPileToList(bc.cards.drawPile);
     d["discard"] = cardPileToList(bc.cards.discardPile);
     d["exhaust"] = cardPileToList(bc.cards.exhaustPile);
+    py::list potions;
+    for (int i = 0; i < bc.potionCapacity; ++i) {
+        potions.append(std::string(sts::getPotionName(bc.potions[i])));
+    }
+    d["potions"] = potions;
+    py::dict select;
+    const auto task = bc.cardSelectInfo.cardSelectTask;
+    const bool multi = task == sts::CardSelectTask::EXHAUST_MANY ||
+                       task == sts::CardSelectTask::GAMBLE;
+    select["context"] = std::string(
+        sts::cardSelectTaskStrings[static_cast<int>(task)]);
+    select["pick_count"] = bc.cardSelectInfo.pickCount;
+    select["can_pick_zero"] = bc.cardSelectInfo.canPickZero;
+    select["can_pick_any"] = bc.cardSelectInfo.canPickAnyNumber;
+    select["multi"] = multi;
+    select["cards_in_hand"] = bc.cards.cardsInHand;
+    int pickMax = 0;
+    if (task == sts::CardSelectTask::EXHAUST_MANY) {
+        pickMax = bc.cardSelectInfo.pickCount;
+    } else if (task == sts::CardSelectTask::GAMBLE) {
+        pickMax = bc.cards.cardsInHand;
+    }
+    select["pick_max"] = pickMax;
+    d["select"] = select;
     return d;
 }
 
@@ -205,6 +232,65 @@ std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc
             break;
         default:
             break;
+    }
+    return out;
+}
+
+// Return the fixed combat-only action mask without crossing the Python
+// boundary once per Action. The Python environment's 71-id combat layout is
+// intentionally mirrored here. Consume the same legalCombatActions result as
+// the binding below so this optimization cannot silently change the existing
+// Action -> id convention (including its default target sentinel behavior).
+py::array_t<bool> legalCombatMask(const sts::BattleContext &bc) {
+    constexpr int HAND_SLOTS = 10;
+    constexpr int MAX_MONSTERS = 5;
+    constexpr int SELECT_BASE = 1 + HAND_SLOTS * MAX_MONSTERS + HAND_SLOTS;
+    constexpr int N_ACTIONS = SELECT_BASE + HAND_SLOTS;
+    py::array_t<bool> out(static_cast<py::ssize_t>(N_ACTIONS));
+    auto mask = out.mutable_unchecked<1>();
+    for (int i = 0; i < N_ACTIONS; ++i) {
+        mask(i) = false;
+    }
+
+    if (bc.outcome != sts::Outcome::UNDECIDED) {
+        return out;
+    }
+
+    for (const auto &a : legalCombatActions(bc)) {
+        switch (a.getActionType()) {
+            case sts::search::ActionType::END_TURN:
+                mask(0) = true;
+                break;
+            case sts::search::ActionType::CARD: {
+                const int source = a.getSourceIdx();
+                if (source < 0 || source >= HAND_SLOTS) {
+                    break;
+                }
+                int target = a.getTargetIdx();
+                if (target < 0 || target >= MAX_MONSTERS) {
+                    target = -1;
+                }
+                const int id = target >= 0
+                    ? 1 + source * MAX_MONSTERS + target
+                    : 1 + HAND_SLOTS * MAX_MONSTERS + source;
+                mask(id) = true;
+                break;
+            }
+            case sts::search::ActionType::SINGLE_CARD_SELECT: {
+                const int source = a.getSourceIdx();
+                if (source >= 0 && source < HAND_SLOTS) {
+                    mask(SELECT_BASE + source) = true;
+                }
+                break;
+            }
+            case sts::search::ActionType::MULTI_CARD_SELECT:
+                // The thin layer represents the simulator's single forced
+                // multi-select action as SELECT slot 0.
+                mask(SELECT_BASE) = true;
+                break;
+            default:
+                break;
+        }
     }
     return out;
 }
@@ -352,6 +438,131 @@ py::list gcRelics(const sts::GameContext &gc) {
     return out;
 }
 
+std::vector<sts::search::Action> legalRuleCombatActions(const sts::BattleContext &bc) {
+    using SA = sts::search::Action;
+    using AT = sts::search::ActionType;
+    if (bc.inputState != sts::InputState::CARD_SELECT
+        || (bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::EXHAUST_MANY
+            && bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::GAMBLE)) {
+        return legalCombatActions(bc);
+    }
+
+    std::vector<SA> out;
+    const int combinationCount = 1 << bc.cards.cardsInHand;
+    for (int selectedBits = 0; selectedBits < combinationCount; ++selectedBits) {
+        int selectedCount = 0;
+        for (int bits = selectedBits; bits; bits >>= 1) {
+            selectedCount += bits & 1;
+        }
+        if (bc.cardSelectInfo.cardSelectTask == sts::CardSelectTask::EXHAUST_MANY
+            && selectedCount > bc.cardSelectInfo.pickCount) {
+            continue;
+        }
+        out.emplace_back(AT::MULTI_CARD_SELECT, selectedBits);
+    }
+    return out;
+}
+
+#ifdef STS_ENABLE_RULE_TRACE
+template <PlayerStatus status>
+void setRulePlayerStatus(Player &player, int amount) {
+    player.setStatusValueNoChecks<status>(amount);
+    player.setHasStatus<status>(amount != 0);
+    if constexpr (status == PlayerStatus::COMBUST) {
+        // Combust stores its HP payment outside statusMap. A directly injected
+        // power must initialize both pieces just as playing the card does.
+        player.combustHpLoss = amount != 0 ? 1 : 0;
+    }
+    if constexpr (
+        status == PlayerStatus::DOUBLE_DAMAGE
+        || status == PlayerStatus::FRAIL
+        || status == PlayerStatus::INTANGIBLE
+        || status == PlayerStatus::VULNERABLE
+        || status == PlayerStatus::WEAK
+    ) {
+        player.setJustApplied<status>(false);
+    }
+}
+
+void setRulePlayerStatusByName(
+    BattleContext &bc, const std::string &name, int amount
+) {
+    if (amount < 0) {
+        throw std::invalid_argument("player status amount must be non-negative");
+    }
+#define SET_PLAYER_STATUS(value) \
+    if (name == #value) { \
+        setRulePlayerStatus<PlayerStatus::value>(bc.player, amount); \
+        return; \
+    }
+    SET_PLAYER_STATUS(STRENGTH)
+    SET_PLAYER_STATUS(DEXTERITY)
+    SET_PLAYER_STATUS(WEAK)
+    SET_PLAYER_STATUS(FRAIL)
+    SET_PLAYER_STATUS(VULNERABLE)
+    SET_PLAYER_STATUS(ARTIFACT)
+    SET_PLAYER_STATUS(DOUBLE_DAMAGE)
+    SET_PLAYER_STATUS(INTANGIBLE)
+    SET_PLAYER_STATUS(BARRICADE)
+    SET_PLAYER_STATUS(CORRUPTION)
+    SET_PLAYER_STATUS(DOUBLE_TAP)
+    SET_PLAYER_STATUS(BRUTALITY)
+    SET_PLAYER_STATUS(COMBUST)
+    SET_PLAYER_STATUS(DARK_EMBRACE)
+    SET_PLAYER_STATUS(DEMON_FORM)
+    SET_PLAYER_STATUS(EVOLVE)
+    SET_PLAYER_STATUS(FEEL_NO_PAIN)
+    SET_PLAYER_STATUS(FIRE_BREATHING)
+    SET_PLAYER_STATUS(FLAME_BARRIER)
+    SET_PLAYER_STATUS(JUGGERNAUT)
+    SET_PLAYER_STATUS(METALLICIZE)
+    SET_PLAYER_STATUS(RAGE)
+    SET_PLAYER_STATUS(RUPTURE)
+    SET_PLAYER_STATUS(THORNS)
+    SET_PLAYER_STATUS(VIGOR)
+#undef SET_PLAYER_STATUS
+    throw std::invalid_argument("unsupported player status for rule data: " + name);
+}
+
+template <MonsterStatus status>
+void setRuleMonsterStatus(Monster &monster, int amount) {
+    monster.setStatus<status>(amount);
+    monster.setHasStatus<status>(amount != 0);
+    if constexpr (
+        status == MonsterStatus::VULNERABLE
+        || status == MonsterStatus::WEAK
+    ) {
+        monster.setJustApplied<status>(false);
+    }
+}
+
+void setRuleMonsterStatusByName(
+    BattleContext &bc, int target, const std::string &name, int amount
+) {
+    if (target < 0 || target >= bc.monsters.monsterCount) {
+        throw std::out_of_range("monster target is out of range");
+    }
+    if (amount < 0) {
+        throw std::invalid_argument("monster status amount must be non-negative");
+    }
+    auto &monster = bc.monsters.arr[target];
+#define SET_MONSTER_STATUS(value) \
+    if (name == #value) { \
+        setRuleMonsterStatus<MonsterStatus::value>(monster, amount); \
+        return; \
+    }
+    SET_MONSTER_STATUS(STRENGTH)
+    SET_MONSTER_STATUS(VULNERABLE)
+    SET_MONSTER_STATUS(WEAK)
+    SET_MONSTER_STATUS(ARTIFACT)
+    SET_MONSTER_STATUS(METALLICIZE)
+    SET_MONSTER_STATUS(PLATED_ARMOR)
+    SET_MONSTER_STATUS(POISON)
+#undef SET_MONSTER_STATUS
+    throw std::invalid_argument("unsupported monster status for rule data: " + name);
+}
+#endif
+
 // the cards offered on a CARD_SELECT (grid) screen, in the sim's order
 py::list selectCards(const sts::GameContext &gc) {
     py::list out;
@@ -385,7 +596,11 @@ void setDeck(sts::GameContext &gc, const std::vector<std::pair<std::string, int>
     gc.deck.upgradeableCount = 0;
     gc.deck.transformableCount = 0;
     for (const auto &[name, up] : cards) {
-        gc.deck.obtainRaw(sts::Card(cardIdFromEnum(name), up));
+        sts::Card card(cardIdFromEnum(name));
+        for (int upgrade = 0; upgrade < up; ++upgrade) {
+            card.upgrade();
+        }
+        gc.deck.obtainRaw(card);
     }
 }
 
@@ -1526,9 +1741,14 @@ PYBIND11_MODULE(slaythespire, m) {
         .def(pybind11::init<search::ActionType>())
         .def(pybind11::init<search::ActionType, int>())
         .def(pybind11::init<search::ActionType, int, int>())
+        .def(pybind11::init<std::uint32_t>())
         .def_property_readonly("action_type", &search::Action::getActionType)
         .def_property_readonly("source_idx", &search::Action::getSourceIdx)
         .def_property_readonly("target_idx", &search::Action::getTargetIdx)
+        .def_property_readonly("selected_indices", [](const search::Action &a) {
+            const auto selected = a.getSelectedIdxs();
+            return std::vector<int>(selected.begin(), selected.end());
+        })
         .def("__repr__", [](const search::Action &a) {
             std::ostringstream oss;
             oss << "<Action type=" << static_cast<int>(a.getActionType())
@@ -1536,9 +1756,239 @@ PYBIND11_MODULE(slaythespire, m) {
             return oss.str();
         });
 
+    // Incremental neural NOSL/AlphaZero search.  The C++ session keeps all
+    // hidden-state clones and tree statistics; Python only exchanges public
+    // leaf states and batched policy/value predictions.
+    pybind11::class_<search::NoslNeuralSearchSession,
+                     std::shared_ptr<search::NoslNeuralSearchSession>>(
+        m, "NoslNeuralSearchSession")
+        .def("next_batch", [](search::NoslNeuralSearchSession &session,
+                               int max_leaves) {
+            pybind11::list out;
+            for (const auto &request : session.nextBatch(max_leaves)) {
+                pybind11::dict item;
+                item["request_id"] = request.requestId;
+                item["state"] = rawCombatState(request.state);
+                std::vector<std::uint32_t> legal;
+                legal.reserve(request.legalActions.size());
+                for (const auto &action : request.legalActions) {
+                    legal.push_back(action.bits);
+                }
+                item["legal_action_bits"] = legal;
+                item["needs_policy"] = request.needsPolicy;
+                out.append(item);
+            }
+            return out;
+        }, pybind11::arg("max_leaves") = 16,
+           "select a batch of NOSL leaf states using virtual visits")
+        .def("backprop", [](search::NoslNeuralSearchSession &session,
+                            std::uint64_t request_id,
+                            double value,
+                            pybind11::array_t<double,
+                                pybind11::array::c_style |
+                                pybind11::array::forcecast> policy_logits) {
+            std::vector<double> logits;
+            auto view = policy_logits.unchecked<1>();
+            logits.reserve(static_cast<std::size_t>(view.shape(0)));
+            for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
+                logits.push_back(view(i));
+            }
+            session.backprop(request_id, value, logits);
+        }, pybind11::arg("request_id"), pybind11::arg("value"),
+           pybind11::arg("policy_logits"),
+           "install leaf policy/value and backpropagate one simulation")
+        .def("done", &search::NoslNeuralSearchSession::done)
+        .def("simulations_completed",
+             &search::NoslNeuralSearchSession::simulationsCompleted)
+        .def("result", [](const search::NoslNeuralSearchSession &session) {
+            const auto decision = session.result();
+            pybind11::dict result;
+            result["action_bits"] = decision.action.bits;
+            result["total_root_visits"] = decision.totalRootVisits;
+            result["root_value"] = decision.rootValue;
+            result["root_visits"] = decision.rootVisits;
+            result["root_policy"] = decision.rootPolicy;
+            result["selected_target"] = decision.selectedTarget;
+            result["selected_action_targeted"] = decision.selectedActionTargeted;
+            result["simulations"] = decision.totalRootVisits;
+            return result;
+        })
+        .def("tree_snapshot", [](const search::NoslNeuralSearchSession &session,
+                                  pybind11::sequence path,
+                                  int max_children) {
+            std::vector<int> indexes;
+            indexes.reserve(static_cast<std::size_t>(pybind11::len(path)));
+            for (const auto item : path) {
+                indexes.push_back(pybind11::cast<int>(item));
+            }
+            const auto snapshot = session.treeSnapshot(indexes, max_children);
+            pybind11::dict result;
+            result["valid"] = snapshot.valid;
+            result["visits"] = snapshot.visits;
+            result["value"] = snapshot.value;
+            pybind11::list children;
+            for (const auto &edge : snapshot.children) {
+                pybind11::dict item;
+                item["edge_index"] = edge.edgeIndex;
+                item["action_bits"] = edge.actionBits;
+                item["visits"] = edge.visits;
+                item["child_visits"] = edge.childVisits;
+                item["child_states"] = edge.childStates;
+                item["prior"] = edge.prior;
+                item["value"] = edge.value;
+                item["raw_q"] = edge.rawQ;
+                item["normalized_q"] = edge.normalizedQ;
+                item["completed_q"] = edge.completedQ;
+                item["gumbel"] = edge.gumbel;
+                item["gumbel_score"] = edge.gumbelScore;
+                item["completed_score"] = edge.completedScore;
+                item["candidate"] = edge.candidate;
+                item["active_candidate"] = edge.activeCandidate;
+                item["expandable"] = edge.expandable;
+                item["targeted"] = edge.targeted;
+                item["label"] = edge.label;
+                children.append(item);
+            }
+            result["children"] = children;
+            return result;
+        }, pybind11::arg("path") = std::vector<int>{},
+           pybind11::arg("max_children") = 64,
+           "return lazy outgoing edge statistics for a root-to-node path");
+
     pybind11::class_<BattleContext>(m, "BattleContext")
+        .def("clone", [](const BattleContext &bc) {
+            auto copy = std::make_unique<BattleContext>(bc);
+#ifdef STS_ENABLE_RULE_TRACE
+            copy->atomicStepObserver = {};
+#endif
+            return copy;
+        }, "return an independent deep copy of the complete combat state")
+        .def("is_targeted_action", [](const BattleContext &bc,
+                                       std::uint32_t action_bits) {
+            const search::Action action(action_bits);
+            switch (action.getActionType()) {
+                case search::ActionType::CARD:
+                    return action.getSourceIdx() >= 0 &&
+                           action.getSourceIdx() < bc.cards.cardsInHand &&
+                           bc.cards.hand[action.getSourceIdx()].requiresTarget();
+                case search::ActionType::POTION:
+                    return action.getSourceIdx() >= 0 &&
+                           action.getSourceIdx() < bc.potionCapacity &&
+                           potionRequiresTarget(bc.potions[action.getSourceIdx()]);
+                default:
+                    return false;
+            }
+        }, pybind11::arg("action_bits"),
+           "whether a complete action uses an enemy target in this state")
+        .def("nosl_redeterminize", &sts::search::noslRedeterminize,
+             pybind11::arg("nonce"),
+             "replace future RNG streams and resample hidden draw-pile order")
+        .def("nosl_native_search", [](const BattleContext &bc,
+                                       int simulations,
+                                       int depth,
+                                       double c_puct,
+                                       std::uint64_t nonce) {
+            sts::search::NoslCombatSearchConfig config;
+            config.simulations = simulations;
+            config.maxDepth = depth;
+            config.cPuct = c_puct;
+            config.seed = nonce;
+            sts::search::NoslCombatTrainer trainer(config);
+            sts::search::NoslCombatSearchStats stats;
+            const auto decision = trainer.search(bc, nonce, &stats);
+
+            pybind11::dict result;
+            result["action_bits"] = decision.action.bits;
+            result["action_valid"] = decision.action.isValidAction(bc);
+            result["root_value"] = decision.rootValue;
+            result["total_root_visits"] = decision.totalRootVisits;
+            result["root_visits"] = decision.rootVisits;
+            result["selected_target"] = decision.selectedTarget;
+            result["selected_action_targeted"] = decision.selectedActionTargeted;
+            result["simulations"] = stats.simulations;
+            result["transitions"] = stats.transitions;
+            result["expanded_nodes"] = stats.expandedNodes;
+            return result;
+        }, pybind11::arg("simulations") = 128,
+           pybind11::arg("depth") = 3,
+           pybind11::arg("c_puct") = 1.5,
+           pybind11::arg("nonce") = 1,
+           "run a native NOSL combat search from this public state; each "
+           "simulation clones and independently redeterminizes the root")
+        .def("nosl_neural_search_begin",
+             [](const BattleContext &bc,
+                pybind11::array_t<double,
+                    pybind11::array::c_style |
+                    pybind11::array::forcecast> root_policy_logits,
+                int simulations,
+                int depth,
+                double c_puct,
+                std::uint64_t nonce,
+                double dirichlet_alpha,
+                double dirichlet_epsilon,
+                double root_value,
+                double prior_temperature,
+                int root_search_mode,
+                int gumbel_candidates,
+                double gumbel_scale,
+                double gumbel_value_scale,
+                double gumbel_max_visit_init,
+                bool gumbel_rescale_q,
+                bool gumbel_use_mixed_value) {
+                 std::vector<double> logits;
+                 auto view = root_policy_logits.unchecked<1>();
+                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
+                 for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
+                     logits.push_back(view(i));
+                 }
+                 sts::search::NoslCombatSearchConfig config;
+                 config.simulations = simulations;
+                 config.maxDepth = depth;
+                 config.cPuct = c_puct;
+                 config.priorTemperature = prior_temperature;
+                 config.dirichletAlpha = dirichlet_alpha;
+                 config.dirichletEpsilon = dirichlet_epsilon;
+                 config.rootSearchMode = root_search_mode;
+                 config.gumbelCandidates = gumbel_candidates;
+                 config.gumbelScale = gumbel_scale;
+                 config.gumbelValueScale = gumbel_value_scale;
+                 config.gumbelMaxVisitInit = gumbel_max_visit_init;
+                 config.gumbelRescaleQ = gumbel_rescale_q;
+                 config.gumbelUseMixedValue = gumbel_use_mixed_value;
+                 config.seed = nonce;
+                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
+                     bc, logits, config, nonce, root_value);
+             },
+             pybind11::arg("root_policy_logits"),
+             pybind11::arg("simulations") = 128,
+             pybind11::arg("depth") = 3,
+             pybind11::arg("c_puct") = 1.5,
+             pybind11::arg("nonce") = 1,
+             pybind11::arg("dirichlet_alpha") = 0.0,
+             pybind11::arg("dirichlet_epsilon") = 0.0,
+             pybind11::arg("root_value") = 0.0,
+             pybind11::arg("prior_temperature") = 1.0,
+             pybind11::arg("root_search_mode") = 0,
+             pybind11::arg("gumbel_candidates") = 0,
+             pybind11::arg("gumbel_scale") = 1.0,
+             pybind11::arg("gumbel_value_scale") = 0.1,
+             pybind11::arg("gumbel_max_visit_init") = 50.0,
+             pybind11::arg("gumbel_rescale_q") = true,
+             pybind11::arg("gumbel_use_mixed_value") = true,
+             "start a neural-guided C++ NOSL AlphaZero session")
+        .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
+            GameContext projected = gc;
+            projected.curHp = bc.player.curHp;
+            projected.maxHp = bc.player.maxHp;
+            bc.updateRelicsOnExit(projected);
+            return projected.curHp;
+        }, "HP after applying combat-exit relic healing to a temporary GameContext")
         .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
+        .def("legal_combat_mask", &legalCombatMask,
+             "return the fixed 71-id combat mask, constructed in C++")
+        .def("rule_actions", &legalRuleCombatActions,
+             "legal complete actions for rule collection, including multi-card subsets")
         .def("legal_potions", &legalCombatPotions,
              "authoritative legal in-combat potion uses as [{slot, requires_target, targets}]; "
              "requires_target true == needs a monster target (Fire/Fear/Poison/Weak) and targets "
@@ -1548,6 +1998,78 @@ PYBIND11_MODULE(slaythespire, m) {
              "combat card-select sub-screen semantics+progress: {context (CardSelectTask name), "
              "pick_count, can_pick_zero, can_pick_any}")
         .def("execute", [](BattleContext &bc, const search::Action &a) { a.execute(bc); }, "apply an action and pump to the next input state")
+#ifdef STS_ENABLE_RULE_TRACE
+        .def("set_player_strength", [](BattleContext &bc, int amount) {
+            if (amount < 0) {
+                throw std::invalid_argument("strength must be non-negative");
+           }
+           bc.player.setStatusValueNoChecks<PlayerStatus::STRENGTH>(amount);
+        }, pybind11::arg("amount"),
+           "set player Strength for controlled rule-model experiments")
+        .def("set_player_block", [](BattleContext &bc, int amount) {
+            if (amount < 0) {
+                throw std::invalid_argument("player block must be non-negative");
+            }
+            bc.player.block = amount;
+        }, pybind11::arg("amount"),
+           "set player Block for controlled rule-model experiments")
+        .def("set_player_energy", [](BattleContext &bc, int amount) {
+            if (amount < 0) {
+                throw std::invalid_argument("player energy must be non-negative");
+            }
+            bc.player.energy = amount;
+        }, pybind11::arg("amount"),
+           "set player Energy for controlled rule-model experiments")
+        .def("set_player_status", &setRulePlayerStatusByName,
+             pybind11::arg("status"), pybind11::arg("amount"),
+             "set a supported player status by enum name for rule data")
+        .def("set_monster_block", [](BattleContext &bc, int target, int amount) {
+            if (target < 0 || target >= bc.monsters.monsterCount) {
+                throw std::out_of_range("monster target is out of range");
+            }
+            if (amount < 0) {
+                throw std::invalid_argument("monster block must be non-negative");
+            }
+            bc.monsters.arr[target].block = amount;
+        }, pybind11::arg("target"), pybind11::arg("amount"),
+           "set monster Block for controlled rule-model experiments")
+        .def("set_monster_vulnerable", [](BattleContext &bc, int target, int amount) {
+            if (target < 0 || target >= bc.monsters.monsterCount) {
+                throw std::out_of_range("monster target is out of range");
+            }
+            if (amount < 0) {
+                throw std::invalid_argument("monster Vulnerable must be non-negative");
+            }
+            auto &monster = bc.monsters.arr[target];
+            monster.setStatus<MonsterStatus::VULNERABLE>(amount);
+            monster.setHasStatus<MonsterStatus::VULNERABLE>(amount > 0);
+        }, pybind11::arg("target"), pybind11::arg("amount"),
+           "set monster Vulnerable for controlled rule-model experiments")
+        .def("set_monster_status", &setRuleMonsterStatusByName,
+             pybind11::arg("target"), pybind11::arg("status"),
+             pybind11::arg("amount"),
+             "set a supported monster status by enum name for rule data")
+        .def("execute_with_trace", [](BattleContext &bc, const search::Action &a) {
+            pybind11::dict result;
+            result["before"] = rawCombatState(bc);
+            pybind11::list steps;
+            bc.atomicStepObserver = [&steps](const BattleContext &step) {
+                steps.append(rawCombatState(step));
+            };
+            try {
+                a.execute(bc);
+            } catch (...) {
+                bc.atomicStepObserver = {};
+                throw;
+            }
+            bc.atomicStepObserver = {};
+            pybind11::dict after = rawCombatState(bc);
+            steps.append(after);
+            result["steps"] = steps;
+            result["after"] = after;
+            return result;
+        }, "apply an action and return state snapshots after each atomic simulator step")
+#endif
         .def_property_readonly("turn", [](const BattleContext &bc) { return bc.turn; })
         .def_property_readonly("outcome", [](const BattleContext &bc) { return static_cast<int>(bc.outcome); })
         .def_property_readonly("input_state", [](const BattleContext &bc) { return static_cast<int>(bc.inputState); })

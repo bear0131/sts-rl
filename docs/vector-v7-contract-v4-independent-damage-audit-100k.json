@@ -1,0 +1,132 @@
+{
+  "schema_version": 7,
+  "executor_contract_version": 4,
+  "samples": 100000,
+  "seed": 4901,
+  "vocab_samples": 4000,
+  "vocab_seed": 4900,
+  "vocab_size": 613,
+  "total_nodes": 593727,
+  "total_delta_slots": 331184,
+  "max_outer_input": {
+    "decoder_input_length": 150,
+    "token_length": 151,
+    "record_index": 17493
+  },
+  "max_node_local_input": {
+    "decoder_input_length": 186,
+    "token_length": 187,
+    "record_index": 69195,
+    "path": "root/1/0",
+    "kind": "DAMAGE"
+  },
+  "max_model_owned_body": {
+    "length": 143,
+    "record_index": 16509,
+    "path": "root/1/0",
+    "kind": "DAMAGE"
+  },
+  "max_repeat_static_body": {
+    "length": 528,
+    "record_index": 83978
+  },
+  "max_flat_diagnostic_tree": {
+    "length": 1024,
+    "record_index": 24987
+  },
+  "node_kinds": {
+    "AOE_DAMAGE_ROUND": {
+      "count": 1357,
+      "max_decoder_input_length": 17,
+      "max_token_length": 18
+    },
+    "ATTACK": {
+      "count": 42765,
+      "max_decoder_input_length": 15,
+      "max_token_length": 16
+    },
+    "CALL": {
+      "count": 5413,
+      "max_decoder_input_length": 39,
+      "max_token_length": 40
+    },
+    "CARD_DESTINATION": {
+      "count": 105380,
+      "max_decoder_input_length": 45,
+      "max_token_length": 46
+    },
+    "CARD_PAYMENT": {
+      "count": 100000,
+      "max_decoder_input_length": 104,
+      "max_token_length": 105
+    },
+    "CARD_PLAY": {
+      "count": 100000,
+      "max_decoder_input_length": 15,
+      "max_token_length": 16
+    },
+    "COMPLETE": {
+      "count": 100000,
+      "max_decoder_input_length": 11,
+      "max_token_length": 12
+    },
+    "DAMAGE": {
+      "count": 49401,
+      "max_decoder_input_length": 186,
+      "max_token_length": 187
+    },
+    "DRAW": {
+      "count": 11719,
+      "max_decoder_input_length": 42,
+      "max_token_length": 43
+    },
+    "ENERGY": {
+      "count": 7096,
+      "max_decoder_input_length": 45,
+      "max_token_length": 46
+    },
+    "PILE_SHUFFLE": {
+      "count": 5226,
+      "max_decoder_input_length": 62,
+      "max_token_length": 63
+    },
+    "QUERY": {
+      "count": 1327,
+      "max_decoder_input_length": 17,
+      "max_token_length": 18
+    },
+    "RANDOM_HIT": {
+      "count": 1327,
+      "max_decoder_input_length": 15,
+      "max_token_length": 16
+    },
+    "RELIC_COUNTER": {
+      "count": 8082,
+      "max_decoder_input_length": 132,
+      "max_token_length": 133
+    },
+    "REPEAT": {
+      "count": 5413,
+      "max_decoder_input_length": 31,
+      "max_token_length": 32
+    },
+    "SELF_DAMAGE": {
+      "count": 4028,
+      "max_decoder_input_length": 54,
+      "max_token_length": 55
+    },
+    "STATE_CHANGE": {
+      "count": 45193,
+      "max_decoder_input_length": 48,
+      "max_token_length": 49
+    }
+  },
+  "unknown_token_occurrences": 0,
+  "unknown_tokens": {},
+  "invariants": {
+    "delta_slot_alignment": "passed",
+    "environment_response_masking": "passed",
+    "calculation_result_ownership": "passed",
+    "one_logical_token_per_item": "passed"
+  }
+}

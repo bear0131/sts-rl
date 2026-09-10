@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>STS-RL 参数检验台</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20260910-full-gumbel">
 </head>
 <body>
   <header class="topbar">
@@ -24,6 +24,29 @@
     <section id="watchView" class="view active">
       <div class="watch-toolbar">
         <label>Seed <input id="watchSeed" type="number" value="0"></label>
+        <label title="Neural NOSL simulations per combat decision">Simulations <input id="watchSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
+        <label title="Node expansion depth; 0 means expand until terminal or a new leaf">Depth <input id="watchDepth" type="number" min="0" max="256" step="1" value="0"></label>
+        <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="watchPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
+        <label title="Combat search algorithm">Search
+          <select id="watchSearchMode">
+            <option value="direct">Direct policy</option>
+            <option value="puct" selected>PUCT</option>
+            <option value="gumbel">Simplified Gumbel</option>
+            <option value="full_gumbel">Full Gumbel AZ</option>
+          </select>
+        </label>
+        <label class="gumbel-control" title="Maximum root actions retained by Gumbel top-k; 0 means all">Candidates <input id="watchGumbelCandidates" type="number" min="0" max="4096" step="1" value="0"></label>
+        <label class="gumbel-control" title="Gumbel noise scale">Gumbel <input id="watchGumbelScale" type="number" min="0" max="100" step="0.05" value="1"></label>
+        <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="watchGumbelValueScale" type="number" min="0" max="100" step="0.01" value="0.1"></label>
+        <label class="gumbel-control" title="Initial visit offset in the completed-Q transform">Visit init <input id="watchGumbelMaxVisitInit" type="number" min="0" max="1000000" step="1" value="50"></label>
+        <label class="gumbel-check gumbel-control" title="Rescale completed Q values to [0,1]"><input id="watchGumbelRescaleQ" type="checkbox" checked> Q norm</label>
+        <label class="gumbel-check gumbel-control" title="Use the prior-weighted mixed value for unvisited actions"><input id="watchGumbelMixedValue" type="checkbox" checked> Mixed Q</label>
+        <button id="watchSearchApply" type="button" title="Apply neural NOSL search settings">Apply</button>
+        <div id="watchPolicyMode" class="segmented watch-policy-mode" role="group" aria-label="动作选择模式">
+          <button type="button" data-stochastic="false" class="active">确定性</button>
+          <button type="button" data-stochastic="true">非确定性</button>
+        </div>
+        <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
         <button id="resetButton">重开</button>
         <button id="undoButton" class="icon-command" title="撤销上一步"><span>↶</span>撤销</button>
         <button id="stepButton" class="primary">单步</button>
@@ -41,6 +64,16 @@
           <div class="run-hud">
             <span id="floorStat">第 1 层</span><span id="actStat">Act 1</span>
             <span id="goldStat">0 金币</span><span id="deckStat">10 张牌</span>
+          </div>
+          <div id="relicViewer" class="relic-viewer">
+            <button id="relicButton" class="deck-button relic-button" type="button" aria-label="查看当前遗物" aria-expanded="false">
+              <span class="relic-icon" aria-hidden="true">◈</span>
+              <b id="relicButtonCount">0</b>
+            </button>
+            <section id="relicPopover" class="relic-popover" aria-label="当前遗物">
+              <div class="deck-popover-heading"><strong>当前遗物</strong><span>按持有顺序</span></div>
+              <div id="relicCards" class="relic-cards"></div>
+            </section>
           </div>
           <div id="phaseBanner" class="phase-banner">等待 checkpoint</div>
           <div id="deckViewer" class="deck-viewer">
@@ -63,7 +96,16 @@
         <aside class="decision-panel">
           <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
+          <div id="searchStatus" class="search-status"></div>
           <div id="actionList" class="action-list"></div>
+          <section id="searchTreePanel" class="search-tree-panel" aria-label="MCTS search tree">
+            <div class="search-tree-heading">
+              <span>搜索树</span>
+              <button id="searchTreeToggle" class="search-tree-toggle" type="button" aria-expanded="true">隐藏</button>
+            </div>
+            <div id="searchTreeSummary" class="search-tree-summary"></div>
+            <div id="searchTreeRoot" class="search-tree-root"></div>
+          </section>
           <section id="rewardChoicesPanel" class="reward-choices-panel" aria-label="战斗选牌历史">
             <div class="reward-choices-heading">
               <span>战斗选牌</span>
@@ -127,10 +169,27 @@
 
     <section id="evaluationView" class="view">
       <div class="section-heading eval-heading">
-        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，确定性策略，不设置步数上限</p></div>
+        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，战斗使用 NOSL AlphaZero 搜索，外层使用冻结策略</p></div>
         <div class="eval-controls">
           <label>局数 <input id="evalEpisodes" type="number" min="1" max="10000" value="50"></label>
           <label>Seed <input id="evalSeed" type="number" value="0"></label>
+          <label title="每个战斗决策的 neural NOSL 模拟次数；0 为 direct policy">Simulations <input id="evalSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
+          <label title="搜索深度；0 为 AlphaZero 式自动展开">Depth <input id="evalDepth" type="number" min="0" max="256" step="1" value="0"></label>
+          <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="evalPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
+          <label title="Combat search algorithm">Search
+            <select id="evalSearchMode">
+              <option value="direct">Direct policy</option>
+              <option value="puct" selected>PUCT</option>
+              <option value="gumbel">Simplified Gumbel</option>
+              <option value="full_gumbel">Full Gumbel AZ</option>
+            </select>
+          </label>
+          <label class="gumbel-control" title="Maximum root actions retained by Gumbel top-k; 0 means all">Candidates <input id="evalGumbelCandidates" type="number" min="0" max="4096" step="1" value="0"></label>
+          <label class="gumbel-control" title="Gumbel noise scale">Gumbel <input id="evalGumbelScale" type="number" min="0" max="100" step="0.05" value="1"></label>
+          <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="evalGumbelValueScale" type="number" min="0" max="100" step="0.01" value="0.1"></label>
+          <label class="gumbel-control" title="Initial visit offset in the completed-Q transform">Visit init <input id="evalGumbelMaxVisitInit" type="number" min="0" max="1000000" step="1" value="50"></label>
+          <label class="gumbel-check gumbel-control" title="Rescale completed Q values to [0,1]"><input id="evalGumbelRescaleQ" type="checkbox" checked> Q norm</label>
+          <label class="gumbel-check gumbel-control" title="Use the prior-weighted mixed value for unvisited actions"><input id="evalGumbelMixedValue" type="checkbox" checked> Mixed Q</label>
           <button id="evalButton">重新评测</button>
         </div>
       </div>
@@ -206,6 +265,6 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260910-full-gumbel"></script>
 </body>
 </html>

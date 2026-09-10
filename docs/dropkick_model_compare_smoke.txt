@@ -1,0 +1,33 @@
+=== 单卡单怪结算解释 ===
+卡牌：飞身踢 / Dropkick（基础版）
+敌人：Cultist
+初始：玩家能量 3、力量 2；敌人生命 52、格挡 3、易伤 2。
+
+=== 原始规则词元 ===
+CARD Dropkick VERSION base PROGRAM CARD_BEGIN TYPE_ATTACK RARITY_UNCOMMON COST NUM_BEGIN DIGIT_1 NUM_END DO DEAL_DAMAGE NUM_BEGIN DIGIT_5 NUM_END TARGET_ENEMY STMT_END IF TARGET_HAS_VULNERABLE DO GAIN_ENERGY NUM_BEGIN DIGIT_1 NUM_END SELF STMT_END DO DRAW NUM_BEGIN DIGIT_1 NUM_END SELF STMT_END BLOCK_END CARD_END
+
+=== 规则自然语言 ===
+造成5/8点伤害。若目标有易伤，获得1点能量并抽1张牌。
+
+=== 实际计算 ===
+1. 支付费用 1：能量 3 -> 2。
+2. 读取牌面基础伤害：5。
+3. 加入力量：5 + 2 = 7。
+4. 目标有 2 层易伤：floor(7 x 3 / 2) = 10 点攻击伤害。
+5. 格挡吸收 min(3, 10) = 3。
+6. 穿透格挡的生命伤害为 7；敌人生命 52 -> 45。
+7. 条件 TARGET_HAS_VULNERABLE：2 > 0，为真。
+8. 条件奖励回能 1：能量 2 -> 3；随后抽 1 张牌。
+9. 结算后：玩家能量 3；敌人生命 45、格挡 0。
+
+=== 原子影响（模拟器真实 trace） ===
+[原子步骤 0] 玩家能量：3 -1 -> 2。
+[原子步骤 0] 本回合已打出的攻击牌数：0 +1 -> 1。
+[原子步骤 0] 本回合已打出的卡牌数：0 +1 -> 1。
+[原子步骤 0] Dropkick：从手牌移出，进入出牌结算。
+[原子步骤 1] 敌人生命：52 -7 -> 45。
+[原子步骤 1] 敌人格挡：3 -3 -> 0。
+[原子步骤 2] 玩家能量：2 +1 -> 3。
+[原子步骤 3] Dropkick：从抽牌堆移动到手牌。
+[原子步骤 4] Dropkick：加入弃牌堆。
+动作结束，共 5 个产生状态变化的原子步骤。

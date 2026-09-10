@@ -11,12 +11,30 @@ let distributionBars = [];
 let miniMapScreenNodes = [];
 let uploadManuallyOpen = false;
 let watchSeedDirty = false;
+let watchSimulationsDirty = false;
+let watchDepthDirty = false;
+let watchPriorTemperatureDirty = false;
+let watchSearchModeDirty = false;
+let watchGumbelParamsDirty = false;
+let watchPolicyModeDirty = false;
+let watchPrecomputeDirty = false;
+let evalSimulationsDirty = false;
+let evalDepthDirty = false;
+let evalPriorTemperatureDirty = false;
+let evalSearchModeDirty = false;
+let evalGumbelParamsDirty = false;
 let seeking = false;
 let selectedMapAct = null;
 let mapPreviewing = false;
 let previewedMapKeys = new Set();
 let hybridRoutePhaseDirty = false;
 let rewardChoicesCollapsed = false;
+let searchTreeCollapsed = false;
+let searchTreeKey = "";
+let searchTreeCache = new Map();
+let searchTreeOpen = new Set();
+let searchTreeLoading = new Set();
+let searchTreeSearchMode = "puct";
 
 const zhCards = {
   Strike_R: "打击", Defend_R: "防御", Bash: "痛击", Anger: "愤怒",
@@ -82,6 +100,81 @@ function decisionActionText(action, event) {
   return option
     ? `${option.label_zh}：${option.description_zh}`
     : action?.label;
+}
+
+function actionDisplayText(action, event) {
+  const text = decisionActionText(action, event);
+  const target = action?.target_slot;
+  return target == null || Number(target) < 0
+    ? text
+    : `${text} -> target monster #${Number(target) + 1}`;
+}
+
+function treePathKey(path) { return (path || []).join("/"); }
+
+function treeEdgeHtml(edge, path) {
+  const childPath = [...path, Number(edge.edge_index)];
+  const key = treePathKey(childPath);
+  const expandable = Boolean(edge.expandable);
+  const open = expandable && searchTreeOpen.has(key);
+  const cached = searchTreeCache.get(key);
+  const childStates = Number(edge.child_states || 0);
+  const childVisits = Number(edge.child_visits || 0);
+  const childSummary = childStates > 1
+    ? ` · ${childStates} public states · child N ${childVisits}`
+    : "";
+  const gumbelMetrics = searchTreeSearchMode !== "full_gumbel" || edge.completed_q == null
+    ? ""
+    : ` · CQ ${Number(edge.completed_q || 0).toFixed(3)} · score ${Number(edge.completed_score || 0).toFixed(3)}`;
+  const visits = Number(edge.visits || 0);
+  const valueLabel = visits > 0 ? "Q" : "FPU";
+  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}`;
+  const branch = open
+    ? `<div class="search-tree-branch${searchTreeLoading.has(key) ? " loading" : ""}">${cached ? treeNodeHtml(cached, childPath) : "loading..."}</div>`
+    : "";
+  return `<div class="search-tree-edge-wrap">
+    <button type="button" class="search-tree-edge${edge.selected ? " selected" : ""}" data-tree-expand="${escapeHtml(key)}" data-expandable="${expandable ? "true" : "false"}" ${expandable ? "" : "disabled"}>
+      <span class="search-tree-caret">${expandable ? (open ? "▾" : "▸") : "·"}</span>
+      <span class="search-tree-edge-label">${escapeHtml(edge.label || "native action")}</span>
+      <span class="search-tree-edge-metrics">${metrics}</span>
+    </button>${branch}
+  </div>`;
+}
+
+function treeNodeHtml(snapshot, path) {
+  const label = path.length ? `node ${path.join("/")}` : "root";
+  const children = snapshot?.children || [];
+  return `<div class="search-tree-node">
+    <div class="search-tree-node-heading">${label} · visits ${Number(snapshot?.visits || 0)} · V ${Number(snapshot?.value || 0).toFixed(3)}</div>
+    <div class="search-tree-children">${children.length ? children.map(edge => treeEdgeHtml(edge, path)).join("") : `<div class="search-tree-empty">no expanded children</div>`}</div>
+  </div>`;
+}
+
+function renderSearchTree(search) {
+  const panel = $("searchTreePanel");
+  if (!search || search.method !== "nosl_is_az_cpp" || !search.tree?.valid) {
+    panel.classList.add("hidden");
+    searchTreeSearchMode = "puct";
+    searchTreeCache.clear(); searchTreeOpen.clear(); searchTreeKey = "";
+    return;
+  }
+  searchTreeSearchMode = search.search_mode || "puct";
+  panel.classList.remove("hidden");
+  const key = String(search.tree_id || `${search.simulations}:${search.native_action_bits}`);
+  if (key !== searchTreeKey) {
+    searchTreeKey = key;
+    searchTreeCache = new Map([["", search.tree]]);
+    searchTreeOpen.clear(); searchTreeLoading.clear();
+  } else if (!searchTreeCache.has("")) {
+    searchTreeCache.set("", search.tree);
+  }
+  const root = searchTreeCache.get("") || search.tree;
+  $("searchTreeSummary").textContent = `root visits ${Number(root.visits || 0)} · ${root.children?.length || 0} immediate edges · click an expandable edge to inspect descendants`;
+  $("searchTreeRoot").innerHTML = searchTreeCollapsed ? "" : treeNodeHtml(root, []);
+  $("searchTreeRoot").style.display = searchTreeCollapsed ? "none" : "grid";
+  const toggle = $("searchTreeToggle");
+  toggle.textContent = searchTreeCollapsed ? "展开" : "隐藏";
+  toggle.setAttribute("aria-expanded", String(!searchTreeCollapsed));
 }
 
 function escapeHtml(value) {
@@ -188,15 +281,77 @@ async function uploadFile(file) {
   } finally { dropzone.style.pointerEvents = ""; }
 }
 
+function gumbelSearchParams(prefix) {
+  return {
+    search_mode: $(`${prefix}SearchMode`).value,
+    gumbel_candidates: Number($(`${prefix}GumbelCandidates`).value),
+    gumbel_scale: Number($(`${prefix}GumbelScale`).value),
+    gumbel_value_scale: Number($(`${prefix}GumbelValueScale`).value),
+    gumbel_max_visit_init: Number($(`${prefix}GumbelMaxVisitInit`).value),
+    gumbel_rescale_q: $(`${prefix}GumbelRescaleQ`).checked,
+    gumbel_use_mixed_value: $(`${prefix}GumbelMixedValue`).checked,
+  };
+}
+
+function setGumbelControlsVisible(prefix) {
+  const mode = $(`${prefix}SearchMode`).value;
+  const visible = mode === "gumbel" || mode === "full_gumbel";
+  document.querySelectorAll(".gumbel-control").forEach(control => {
+    const input = control.querySelector("[id]");
+    if (input?.id.startsWith(prefix)) control.classList.toggle("unavailable", !visible);
+  });
+}
+
+function restoreGumbelControls(prefix, source, modeDirty, paramsDirty) {
+  const fieldPrefix = prefix === "watch" ? "mcts_" : "";
+  if (!modeDirty) {
+    const mode = source?.[`${fieldPrefix}search_mode`];
+    if (mode != null) $(`${prefix}SearchMode`).value = mode;
+  }
+  if (!paramsDirty) {
+    const values = {
+      GumbelCandidates: source?.[`${fieldPrefix}gumbel_candidates`],
+      GumbelScale: source?.[`${fieldPrefix}gumbel_scale`],
+      GumbelValueScale: source?.[`${fieldPrefix}gumbel_value_scale`],
+      GumbelMaxVisitInit: source?.[`${fieldPrefix}gumbel_max_visit_init`],
+    };
+    Object.entries(values).forEach(([suffix, value]) => {
+      const node = $(`${prefix}${suffix}`);
+      if (value != null && document.activeElement !== node) node.value = value;
+    });
+    const rescale = source?.[`${fieldPrefix}gumbel_rescale_q`];
+    const mixed = source?.[`${fieldPrefix}gumbel_use_mixed_value`];
+    if (rescale != null) $(`${prefix}GumbelRescaleQ`).checked = Boolean(rescale);
+    if (mixed != null) $(`${prefix}GumbelMixedValue`).checked = Boolean(mixed);
+  }
+  setGumbelControlsVisible(prefix);
+}
+
 $("resetButton").addEventListener("click", async () => {
   pause();
   const button = $("resetButton");
   button.disabled = true;
-  button.textContent = "预处理中…";
-  $("watchMeta").textContent = "正在预处理完整路线…";
+  const precompute = $("watchPrecompute").checked;
+  button.textContent = precompute ? "Precomputing..." : "Resetting...";
+  $("watchMeta").textContent = precompute ? "Precomputing route..." : "Resetting...";
   try {
-    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed: Number($("watchSeed").value), precompute: true}), headers:{"Content-Type":"application/json"}});
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({
+      seed: Number($("watchSeed").value),
+      simulations: Number($("watchSimulations").value),
+      depth: Number($("watchDepth").value),
+      prior_temperature: Number($("watchPriorTemperature").value),
+      ...gumbelSearchParams("watch"),
+      stochastic: watchStochasticValue(),
+      precompute,
+    }), headers:{"Content-Type":"application/json"}});
     watchSeedDirty = false;
+    watchSimulationsDirty = false;
+    watchDepthDirty = false;
+    watchPriorTemperatureDirty = false;
+    watchSearchModeDirty = false;
+    watchGumbelParamsDirty = false;
+    watchPolicyModeDirty = false;
+    watchPrecomputeDirty = false;
     selectedMapAct = null;
     previewedMapKeys.clear();
     renderWatch();
@@ -205,8 +360,104 @@ $("resetButton").addEventListener("click", async () => {
   finally { button.disabled = false; button.textContent = "重开"; }
 });
 $("watchSeed").addEventListener("input", () => { watchSeedDirty = true; });
+$("watchSimulations").addEventListener("input", () => { watchSimulationsDirty = true; });
+$("watchDepth").addEventListener("input", () => { watchDepthDirty = true; });
+$("watchPriorTemperature").addEventListener("input", () => { watchPriorTemperatureDirty = true; });
+$("watchSearchMode").addEventListener("change", () => {
+  watchSearchModeDirty = true;
+  setGumbelControlsVisible("watch");
+});
+for (const id of ["watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit"]) {
+  $(id).addEventListener("input", () => { watchGumbelParamsDirty = true; });
+}
+for (const id of ["watchGumbelRescaleQ", "watchGumbelMixedValue"]) {
+  $(id).addEventListener("change", () => { watchGumbelParamsDirty = true; });
+}
+$("watchPrecompute").addEventListener("change", () => { watchPrecomputeDirty = true; });
+function watchStochasticValue() {
+  return $("watchPolicyMode").querySelector("button.active")?.dataset.stochastic !== "false";
+}
+function setWatchPolicyMode(stochastic, dirty = true) {
+  const value = Boolean(stochastic);
+  $("watchPolicyMode").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.stochastic === String(value));
+  });
+  if (dirty) watchPolicyModeDirty = true;
+}
+$("watchPolicyMode").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setWatchPolicyMode(button.dataset.stochastic === "true"));
+});
 $("watchSeed").addEventListener("keydown", event => {
   if (event.key === "Enter") $("resetButton").click();
+});
+for (const id of ["watchSimulations", "watchDepth", "watchPriorTemperature", "watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit"]) {
+  $(id).addEventListener("keydown", event => {
+    if (event.key === "Enter") $("watchSearchApply").click();
+  });
+}
+$("watchSearchApply").addEventListener("click", async () => {
+  if (!appState?.watch) return;
+  const button = $("watchSearchApply");
+  pause();
+  button.disabled = true;
+  try {
+    appState.watch = await api("/api/watch/apply", {
+      method: "POST",
+      body: JSON.stringify({
+        simulations: Number($("watchSimulations").value),
+        depth: Number($("watchDepth").value),
+        prior_temperature: Number($("watchPriorTemperature").value),
+        ...gumbelSearchParams("watch"),
+        stochastic: watchStochasticValue(),
+      }),
+      headers: {"Content-Type": "application/json"},
+    });
+    watchSimulationsDirty = false;
+    watchDepthDirty = false;
+    watchPriorTemperatureDirty = false;
+    watchSearchModeDirty = false;
+    watchGumbelParamsDirty = false;
+    watchPolicyModeDirty = false;
+    renderWatch();
+    toast("Neural NOSL search settings applied");
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("searchTreeToggle").addEventListener("click", () => {
+  searchTreeCollapsed = !searchTreeCollapsed;
+  renderSearchTree(appState?.watch?.decision?.search);
+});
+$("searchTreeRoot").addEventListener("click", async event => {
+  const button = event.target.closest("[data-tree-expand]");
+  if (!button || button.dataset.expandable !== "true") return;
+  const key = button.dataset.treeExpand || "";
+  const path = key ? key.split("/").map(Number).filter(Number.isInteger) : [];
+  if (!path.length || searchTreeLoading.has(key)) return;
+  if (searchTreeOpen.has(key)) {
+    searchTreeOpen.delete(key);
+    renderSearchTree(appState?.watch?.decision?.search);
+    return;
+  }
+  searchTreeOpen.add(key);
+  searchTreeLoading.add(key);
+  renderSearchTree(appState?.watch?.decision?.search);
+  try {
+    const tree = await api("/api/watch/search-tree", {
+      method: "POST",
+      body: JSON.stringify({path, max_children: 64}),
+      headers: {"Content-Type": "application/json"},
+    });
+    searchTreeCache.set(key, tree);
+  } catch (error) {
+    searchTreeOpen.delete(key);
+    toast(error.message);
+  } finally {
+    searchTreeLoading.delete(key);
+    renderSearchTree(appState?.watch?.decision?.search);
+  }
 });
 $("undoButton").addEventListener("click", async () => {
   pause();
@@ -270,10 +521,40 @@ async function autoplay() {
 
 $("evalButton").addEventListener("click", async () => {
   try {
-    appState.evaluation = await api("/api/eval/start", {method:"POST", body:JSON.stringify({episodes:Number($("evalEpisodes").value), seed:Number($("evalSeed").value)}), headers:{"Content-Type":"application/json"}});
+    appState.evaluation = await api("/api/eval/start", {method:"POST", body:JSON.stringify({
+      episodes: Number($("evalEpisodes").value),
+      seed: Number($("evalSeed").value),
+      simulations: Number($("evalSimulations").value),
+      depth: Number($("evalDepth").value),
+      prior_temperature: Number($("evalPriorTemperature").value),
+      ...gumbelSearchParams("eval"),
+    }), headers:{"Content-Type":"application/json"}});
+    evalSimulationsDirty = false;
+    evalDepthDirty = false;
+    evalPriorTemperatureDirty = false;
+    evalSearchModeDirty = false;
+    evalGumbelParamsDirty = false;
     renderEvaluation();
   } catch (e) { toast(e.message); }
 });
+$("evalSimulations").addEventListener("input", () => { evalSimulationsDirty = true; });
+$("evalDepth").addEventListener("input", () => { evalDepthDirty = true; });
+$("evalPriorTemperature").addEventListener("input", () => { evalPriorTemperatureDirty = true; });
+$("evalSearchMode").addEventListener("change", () => {
+  evalSearchModeDirty = true;
+  setGumbelControlsVisible("eval");
+});
+for (const id of ["evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
+  $(id).addEventListener("input", () => { evalGumbelParamsDirty = true; });
+}
+for (const id of ["evalGumbelRescaleQ", "evalGumbelMixedValue"]) {
+  $(id).addEventListener("change", () => { evalGumbelParamsDirty = true; });
+}
+for (const id of ["evalSimulations", "evalDepth", "evalPriorTemperature", "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
+  $(id).addEventListener("keydown", event => {
+    if (event.key === "Enter") $("evalButton").click();
+  });
+}
 $("winSeedList").addEventListener("click", async event => {
   const button = event.target.closest(".seed-pill");
   if (!button) return;
@@ -281,7 +562,22 @@ $("winSeedList").addEventListener("click", async event => {
   watchSeedDirty = false;
   document.querySelector('.tab[data-tab="watch"]').click();
   try {
-    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({seed:Number(button.dataset.seed), precompute:true}), headers:{"Content-Type":"application/json"}});
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({
+      seed: Number(button.dataset.seed),
+      simulations: Number($("watchSimulations").value),
+      depth: Number($("watchDepth").value),
+      prior_temperature: Number($("watchPriorTemperature").value),
+      ...gumbelSearchParams("watch"),
+      stochastic: watchStochasticValue(),
+      precompute: $("watchPrecompute").checked,
+    }), headers:{"Content-Type":"application/json"}});
+    watchSimulationsDirty = false;
+    watchDepthDirty = false;
+    watchPriorTemperatureDirty = false;
+    watchSearchModeDirty = false;
+    watchGumbelParamsDirty = false;
+    watchPolicyModeDirty = false;
+    watchPrecomputeDirty = false;
     renderWatch();
   } catch (e) { toast(e.message); }
 });
@@ -433,6 +729,22 @@ function renderDeck(deck) {
   }).join("");
 }
 
+function relicName(id) {
+  return appState?.relic_catalog?.[id]?.name_zh || id;
+}
+
+function renderRelics(relics) {
+  const items = (relics || []).filter(id => id && id !== "PAD");
+  $("relicButtonCount").textContent = items.length;
+  $("relicCards").innerHTML = items.length
+    ? items.map((id, index) => `<div class="relic-chip" title="${escapeHtml(id)}">
+        <span>${index + 1}</span>
+        <strong>${escapeHtml(relicName(id))}</strong>
+        <small>${escapeHtml(id)}</small>
+      </div>`).join("")
+    : `<div class="relic-empty">暂无遗物</div>`;
+}
+
 function setRewardChoicesCollapsed(collapsed) {
   rewardChoicesCollapsed = Boolean(collapsed);
   const panel = $("rewardChoicesPanel");
@@ -503,6 +815,10 @@ $("deckButton").addEventListener("click", () => {
   const open = $("deckViewer").classList.toggle("open");
   $("deckButton").setAttribute("aria-expanded", String(open));
 });
+$("relicButton").addEventListener("click", () => {
+  const open = $("relicViewer").classList.toggle("open");
+  $("relicButton").setAttribute("aria-expanded", String(open));
+});
 if ($("rewardChoicesToggle")) {
   $("rewardChoicesToggle").addEventListener("click", () => {
     setRewardChoicesCollapsed(!rewardChoicesCollapsed);
@@ -513,6 +829,10 @@ document.addEventListener("click", event => {
   if (!$("deckViewer").contains(event.target)) {
     $("deckViewer").classList.remove("open");
     $("deckButton").setAttribute("aria-expanded", "false");
+  }
+  if (!$("relicViewer").contains(event.target)) {
+    $("relicViewer").classList.remove("open");
+    $("relicButton").setAttribute("aria-expanded", "false");
   }
 });
 function intentLabel(monster) {
@@ -563,8 +883,9 @@ function renderMiniMap(map, watch) {
 
 function captureCombatTransition(w) {
   const canon = w?.canon || {}, animation = w?.decision?.animation || null;
-  const target = animation?.kind === "target"
-    ? document.querySelector(`.monster[data-slot="${animation.slot}"]`)
+  const targetSlot = animation?.target_slot ?? (animation?.kind === "target" ? animation.slot : null);
+  const target = targetSlot != null
+    ? document.querySelector(`.monster[data-slot="${targetSlot}"]`)
     : null;
   const targetRect = target?.getBoundingClientRect();
   return {
@@ -621,7 +942,8 @@ function playCombatOutcome(before, after) {
     if (!next) return;
     const hpLost = Math.max(0, monster.hp - next.hp);
     const blockLost = Math.max(0, monster.block - next.block);
-    const wasTargeted = before.animation?.kind === "target" && before.animation.slot === slot;
+    const wasTargeted = before.animation?.target_slot === slot
+      || (before.animation?.kind === "target" && before.animation.slot === slot);
     if (!hpLost && !blockLost && !wasTargeted) return;
     const target = document.querySelector(`.monster[data-slot="${slot}"]`);
     target?.classList.add("monster-hit");
@@ -642,6 +964,20 @@ function renderWatch() {
   if (!watchSeedDirty && document.activeElement !== $("watchSeed")) {
     $("watchSeed").value = w.seed;
   }
+  if (!watchSimulationsDirty && document.activeElement !== $("watchSimulations")) {
+    $("watchSimulations").value = w.mcts_simulations ?? 0;
+  }
+  if (!watchDepthDirty && document.activeElement !== $("watchDepth")) {
+    $("watchDepth").value = w.mcts_depth ?? 0;
+  }
+  if (!watchPriorTemperatureDirty && document.activeElement !== $("watchPriorTemperature")) {
+    $("watchPriorTemperature").value = w.mcts_prior_temperature ?? 1;
+  }
+  restoreGumbelControls("watch", w, watchSearchModeDirty, watchGumbelParamsDirty);
+  if (!watchPolicyModeDirty) setWatchPolicyMode(w.stochastic !== false, false);
+  if (!watchPrecomputeDirty && document.activeElement !== $("watchPrecompute")) {
+    $("watchPrecompute").checked = Boolean(w.precompute_enabled);
+  }
   const stepProgress = w.precomputed_steps ? `${w.step} / ${w.precomputed_steps}` : `${w.step}`;
   $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}`;
   $("undoButton").disabled = !w.can_undo;
@@ -654,6 +990,7 @@ function renderWatch() {
   $("goldStat").textContent = `${global.gold ?? canon.gold ?? 0} 金币`;
   $("deckStat").textContent = `${(global.deck || canon.deck || []).length} 张牌`;
   renderDeck(global.deck || canon.deck || []);
+  renderRelics(global.relics || canon.relics || []);
   $("phaseBanner").textContent = w.done ? (w.won ? "胜利" : "本局结束") : (phaseNames[w.phase] || w.phase || "等待");
   const combat = w.phase === "combat" && canon.player;
   $("monsters").innerHTML = combat ? (canon.monsters || []).map((m, slot) => ({m, slot})).filter(({m}) => !m.gone).map(({m, slot}) => {
@@ -693,16 +1030,36 @@ function renderWatch() {
     }
   }
   const d = w.decision;
-  $("chosenAction").textContent = decisionActionText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
+  $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
-  $("actionList").innerHTML = (d?.top_actions || []).map(a => `<div class="action-row"><b>${a.prob == null ? "—" : (a.prob*100).toFixed(1)+"%"}</b><span>${escapeHtml(decisionActionText(a, w.event))}</span><div class="prob-track"><i style="width:${a.prob == null ? 0 : a.prob*100}%"></i></div></div>`).join("");
+  const search = d?.search;
+  const actions = search?.root_actions?.length ? search.root_actions : (d?.top_actions || []);
+  $("actionList").innerHTML = actions.map(a => {
+    const selected = a.selected || (!search && a.action === d?.action);
+    // For native search, show the acting distribution (root visits).  Full
+    // Gumbel also returns an improved policy target for training; keep that
+    // target visible as a secondary annotation instead of presenting it as
+    // the probability of the action that will actually be executed.
+    const actingProb = search && a.visit_prob != null ? a.visit_prob : a.prob;
+    const probability = actingProb == null ? "—" : `${(actingProb * 100).toFixed(1)}%`;
+    const detail = search
+      ? `${selected ? "实际执行 · " : ""}N ${Number(a.visits || 0)}${a.improved_prob != null ? ` · 策略目标 ${(Number(a.improved_prob) * 100).toFixed(1)}%` : ""}`
+      : "";
+    return `<div class="action-row${selected ? " selected" : ""}"><b>${probability}</b><span>${escapeHtml(actionDisplayText(a, w.event))}${detail ? `<small>${detail}</small>` : ""}</span><div class="prob-track"><i style="width:${actingProb == null ? 0 : actingProb*100}%"></i></div></div>`;
+  }).join("");
+  $("searchStatus").textContent = search
+    ? (search.method === "nosl_is_az_cpp"
+      ? `${search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
+      : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
+    : `${w.stochastic ? "stochastic" : "deterministic"} direct policy${w.mcts_simulations > 0 && w.phase !== "combat" ? " (search is combat-only)" : ""}`;
+  renderSearchTree(search);
   $("lastAction").textContent = w.last_action?.label || "—";
   $("lastReward").textContent = `${Number(w.last_reward).toFixed(3)}`;
   const selectedMap = (w.maps || []).find(map => map.act === selectedMapAct) || {act:selectedMapAct, nodes:[], visited:[], current:null, boss:""};
   renderMiniMap(selectedMap, w);
   renderRewardChoices();
   const routeCount = (w.timeline || []).filter(node => node.act === selectedMapAct).length;
-  if (routeCount < 15 && !w.timeline_exhausted) setTimeout(() => previewMapAct(selectedMapAct), 0);
+  if (w.precompute_enabled && routeCount < 15 && !w.timeline_exhausted) setTimeout(() => previewMapAct(selectedMapAct), 0);
 }
 
 $("miniMapCanvas").addEventListener("mousemove",event=>{const canvas=event.currentTarget,rect=canvas.getBoundingClientRect(),x=event.clientX-rect.left,y=event.clientY-rect.top;let best=null,dist=Infinity;miniMapScreenNodes.forEach(n=>{const d=Math.hypot(n.sx-x,n.sy-y);if(d<dist){dist=d;best=n;}});const tip=$("miniMapTooltip");if(!best||dist>15){tip.style.display="none";canvas.style.cursor="default";return;}canvas.style.cursor=best.pathStep==null?"default":"pointer";tip.innerHTML=`<strong>${escapeHtml(mapRoomNames[best.room]||best.room)}</strong><br>地图节点 ${best.y+1} · 列 ${best.x+1}${best.current?"<br>当前位置":best.pathStep!=null?(best.reached?"<br>已走路线 · 点击跳转":"<br>未来路线 · 点击跳转"):best.choice?"<br>下一步可选":""}`;tip.style.display="block";tip.style.left=`${Math.max(6,Math.min(x+12,canvas.clientWidth-125))}px`;tip.style.top=`${Math.max(32,y-48)}px`;});
@@ -779,10 +1136,18 @@ $("tokenCanvas").addEventListener("mouseleave",()=>$("tokenTooltip").style.displ
 
 function renderEvaluation() {
   const e=appState?.evaluation || {}, done=e.completed||0, total=e.episodes||0, results=e.results||{};
+  if (!evalSimulationsDirty && e.simulations != null) $("evalSimulations").value = e.simulations;
+  if (!evalDepthDirty && e.depth != null) $("evalDepth").value = e.depth;
+  if (!evalPriorTemperatureDirty && e.prior_temperature != null) $("evalPriorTemperature").value = e.prior_temperature;
+  restoreGumbelControls("eval", e, evalSearchModeDirty, evalGumbelParamsDirty);
   $("evalProgress").textContent=`${done} / ${total}`; $("meanFloor").textContent=e.floor_mean==null?"—":Number(e.floor_mean).toFixed(2);
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
-  $("evalStatus").textContent=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
+  const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
+  const searchLabel=e.search_method==="nosl_is_az_cpp"
+    ? `${e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
+    : e.search_method==="direct_policy"?"Direct policy":"";
+  $("evalStatus").textContent=searchLabel?`${stateLabel} · ${searchLabel}`:stateLabel;
   const winSeeds = evaluationWinSeeds(e);
   $("winSeedCount").textContent = String(winSeeds.length);
   $("winSeedList").innerHTML = winSeeds.length
@@ -931,7 +1296,7 @@ $("distributionCanvas").addEventListener("mousemove", event => {
 $("distributionCanvas").addEventListener("mouseleave",()=>$("distributionTooltip").style.display="none");
 
 async function poll() {
-  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.checkpoint_format=fresh.checkpoint_format;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.capabilities=fresh.capabilities;appState.evaluation=fresh.evaluation;appState.hybrid_evaluation=fresh.hybrid_evaluation;} renderAll(); }
+  try { const fresh=await api("/api/state"); if(!appState)appState=fresh; else {appState.checkpoint=fresh.checkpoint;appState.checkpoint_format=fresh.checkpoint_format;appState.embedding=fresh.embedding;appState.token_embeddings=fresh.token_embeddings;appState.card_catalog=fresh.card_catalog;appState.relic_catalog=fresh.relic_catalog;appState.capabilities=fresh.capabilities;appState.evaluation=fresh.evaluation;appState.hybrid_evaluation=fresh.hybrid_evaluation;} renderAll(); }
   catch (_) {}
   const fastPoll = appState?.evaluation?.state==="running" || ["starting","running","stopping"].includes(appState?.hybrid_evaluation?.state);
   setTimeout(poll, fastPoll?1000:3000);
@@ -946,4 +1311,6 @@ if (initialParams.get("upload") === "1") {
   uploadManuallyOpen = true;
   $("uploadOverlay").classList.remove("hidden");
 }
+setGumbelControlsVisible("watch");
+setGumbelControlsVisible("eval");
 poll();

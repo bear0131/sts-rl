@@ -19,6 +19,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import torch as th
 from stable_baselines3.common.callbacks import (
     BaseCallback,
@@ -32,7 +33,10 @@ from stable_baselines3.common.vec_env import (
 
 from rl.tasks import TASKS
 from rl.accumulating_ppo import AccumulatingMaskablePPO
-from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
+from rl.cached_mask_vec_env import (
+    CachedMaskSubprocVecEnv,
+    GroupedCachedMaskSubprocVecEnv,
+)
 
 
 class WandbStepMetricCallback(BaseCallback):
@@ -89,9 +93,12 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     """Return the trainer architecture name represented by a loaded policy."""
     from rl.model import StSMLPExtractor, StSTransformerExtractor
     from rl.pointer_policy import StSPointerPolicy
+    from rl.semantic_reasoning_policy import SemanticReasoningPolicy
     from rl.split_policy import CombatStSPointerPolicy, SplitStSPointerPolicy
 
     policy = model.policy
+    if isinstance(policy, SemanticReasoningPolicy):
+        return "semantic-reasoning"
     if isinstance(policy, CombatStSPointerPolicy):
         return "combat-pointer"
     if isinstance(policy, SplitStSPointerPolicy):
@@ -117,6 +124,26 @@ def _checkpoint_hierarchical_settings(path) -> tuple[bool, float, float]:
     )
     del data, _params, _pytorch_variables
     return settings
+
+
+def _checkpoint_nosl_is_az(path) -> bool:
+    """Read the optional combat-search mode from a saved trainer config."""
+    from stable_baselines3.common.save_util import load_from_zip_file
+
+    data, _params, _pytorch_variables = load_from_zip_file(path, device="cpu")
+    enabled = bool(data.get("nosl_is_az", False))
+    del data, _params, _pytorch_variables
+    return enabled
+
+
+def _checkpoint_nosl_is_az_replay_enabled(path) -> bool:
+    """Read the replay toggle, defaulting on for legacy checkpoints."""
+    from stable_baselines3.common.save_util import load_from_zip_file
+
+    data, _params, _pytorch_variables = load_from_zip_file(path, device="cpu")
+    enabled = bool(data.get("nosl_is_az_replay_enabled", True))
+    del data, _params, _pytorch_variables
+    return enabled
 
 
 def _warm_start_policy(
@@ -284,9 +311,18 @@ def build_parser(task) -> argparse.ArgumentParser:
         "--vec",
         choices=["subproc", "dummy"],
         default="subproc",
-        help="VecEnv backend. subproc = one process per env (true multi-core "
-             "sampling; default). dummy = all envs in this process, serial "
+        help="VecEnv backend. subproc = multiple worker processes (true "
+             "multi-core sampling; default). dummy = all envs in this process, serial "
              "(single core — use only for debugging).",
+    )
+
+    parser.add_argument(
+        "--envs-per-worker",
+        type=int,
+        default=1,
+        help="Independent environments/search trees hosted by one subprocess. "
+             "1 preserves one-env-per-worker; values above 1 reduce IPC "
+             "overhead (for example 4 with 24 envs uses 6 workers).",
     )
 
     # --- PPO hyperparameters (all CLI-configurable) ----------------------------
@@ -446,6 +482,98 @@ def main() -> None:
         if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
             raise ValueError("--combat-hp-gae-lambda must be in [0, 1]")
 
+    if hasattr(args, "nosl_is_az") and args.nosl_is_az is None:
+        args.nosl_is_az = (
+            _checkpoint_nosl_is_az(args.resume) if args.resume else False
+        )
+
+    if hasattr(args, "nosl_is_az_replay_enabled"):
+        if args.nosl_is_az_replay_enabled is None:
+            args.nosl_is_az_replay_enabled = (
+                _checkpoint_nosl_is_az_replay_enabled(args.resume)
+                if args.resume and getattr(args, "nosl_is_az", False)
+                else True
+            )
+
+    if getattr(args, "nosl_is_az", False):
+        if args.card_language:
+            raise ValueError(
+                "--nosl-is-az requires card_language=false so ordered hidden "
+                "draw-pile information is not present in the policy observation"
+            )
+        if hasattr(args, "hierarchical_combat_hp") and not args.hierarchical_combat_hp:
+            print(
+                "[trainer] enabled hierarchical combat returns because "
+                "--nosl-is-az replaces the combat PPO objective"
+            )
+            args.hierarchical_combat_hp = True
+        for name in (
+            "nosl_is_az_simulations",
+            "nosl_is_az_batch_size",
+            "nosl_is_az_micro_batch_size",
+            "nosl_is_az_replay_capacity",
+            "nosl_is_az_replay_min_size",
+            "nosl_is_az_leaf_batch_size",
+            "nosl_is_az_updates",
+        ):
+            if getattr(args, name) < 1:
+                raise ValueError(f"--{name.replace('_', '-')} must be positive")
+        if args.nosl_is_az_replay_min_size > args.nosl_is_az_replay_capacity:
+            raise ValueError(
+                "--nosl-is-az-replay-min-size cannot exceed replay capacity"
+            )
+        if args.nosl_is_az_depth < 0:
+            raise ValueError("--nosl-is-az-depth must be non-negative")
+        if args.nosl_is_az_temperature < 0.0 or args.nosl_is_az_c_puct < 0.0:
+            raise ValueError("NOSL-IS-AZ c_puct and temperature must be non-negative")
+        if not np.isfinite(args.nosl_is_az_prior_temperature) or args.nosl_is_az_prior_temperature <= 0.0:
+            raise ValueError("--nosl-is-az-prior-temperature must be positive and finite")
+        if args.nosl_is_az_gumbel_candidates < 0:
+            raise ValueError("--nosl-is-az-gumbel-candidates must be non-negative")
+        for name in (
+            "nosl_is_az_gumbel_scale",
+            "nosl_is_az_gumbel_value_scale",
+            "nosl_is_az_gumbel_max_visit_init",
+        ):
+            value = getattr(args, name)
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    f"--{name.replace('_', '-')} must be non-negative and finite"
+                )
+        if args.nosl_is_az_search_mode != "puct" and not args.nosl_is_az_cpp:
+            raise ValueError("Gumbel NOSL-IS-AZ modes require --nosl-is-az-cpp")
+        if args.nosl_is_az_dirichlet_alpha < 0.0:
+            raise ValueError("--nosl-is-az-dirichlet-alpha must be non-negative")
+        if not 0.0 <= args.nosl_is_az_dirichlet_epsilon <= 1.0:
+            raise ValueError("--nosl-is-az-dirichlet-epsilon must be in [0, 1]")
+        if args.nosl_is_az_dirichlet_epsilon > 0.0 and args.nosl_is_az_dirichlet_alpha <= 0.0:
+            raise ValueError("Dirichlet alpha must be positive when epsilon > 0")
+        if args.nosl_is_az_rollout_steps < 0:
+            raise ValueError("--nosl-is-az-rollout-steps must be non-negative")
+    if getattr(args, "nosl_is_az_cpp", False) and not getattr(
+        args, "nosl_is_az", False
+    ):
+        raise ValueError("--nosl-is-az-cpp requires --nosl-is-az")
+    if getattr(args, "nosl_is_az_inner_only", False):
+        if not getattr(args, "nosl_is_az", False):
+            raise ValueError("--nosl-is-az-inner-only requires --nosl-is-az")
+        if not (args.init_from or args.resume):
+            raise ValueError(
+                "--nosl-is-az-inner-only requires --init-from or --resume "
+                "to provide the frozen outer policy"
+            )
+        if args.freeze_encoder:
+            raise ValueError(
+                "--nosl-is-az-inner-only and --freeze-encoder are mutually exclusive"
+            )
+    if getattr(args, "nosl_is_az_reset_combat", False):
+        if not getattr(args, "nosl_is_az_inner_only", False):
+            raise ValueError(
+                "--nosl-is-az-reset-combat requires --nosl-is-az-inner-only"
+            )
+        if not args.init_from:
+            raise ValueError("--nosl-is-az-reset-combat requires --init-from")
+
     # Whole-run training uses the split specialist architecture. When warm-
     # starting, a combat-only specialist is copied into the split model's
     # shared tokenizer and combat branch. Keep the loaded object for transfer.
@@ -554,6 +682,12 @@ def main() -> None:
             print(f"[trainer] enabled --combat-language from {args.resume}")
         del resume_data, _params, _pytorch_variables
 
+    if getattr(args, "nosl_is_az", False) and args.card_language:
+        raise ValueError(
+            "--nosl-is-az requires card_language=false so ordered hidden "
+            "draw-pile information is not present in the policy observation"
+        )
+
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
             args.arch = "split-pointer"
@@ -571,6 +705,12 @@ def main() -> None:
             print(
                 f"[trainer] inferred --arch {args.arch} from {args.init_from}"
             )
+
+    if getattr(args, "nosl_is_az", False) and args.arch == "semantic-reasoning":
+        raise ValueError(
+            "NOSL-IS-AZ currently requires split-pointer observations; the "
+            "semantic-reasoning policy exposes ordered card-language fields"
+        )
 
     if pretrained is not None and hasattr(args, "arch"):
         source_arch = _checkpoint_policy_arch(pretrained)
@@ -592,6 +732,8 @@ def main() -> None:
         raise ValueError("--batch-size must be at least 1")
     if args.gradient_accumulation_steps < 1:
         raise ValueError("--gradient-accumulation-steps must be at least 1")
+    if args.envs_per_worker < 1:
+        raise ValueError("--envs-per-worker must be at least 1")
 
     rollout_size = args.n_envs * args.n_steps
     if rollout_size % args.batch_size != 0:
@@ -625,7 +767,17 @@ def main() -> None:
         # SB3 selects forkserver where available and spawn on Windows. Both
         # avoid forking a process that already imported the native sim and
         # torch, which can otherwise inherit unsafe thread/CUDA state.
-        venv = CachedMaskSubprocVecEnv(env_fns)
+        if args.envs_per_worker == 1:
+            venv = CachedMaskSubprocVecEnv(env_fns)
+        else:
+            venv = GroupedCachedMaskSubprocVecEnv(
+                env_fns,
+                envs_per_worker=args.envs_per_worker,
+            )
+        print(
+            f"[trainer] subprocess workers={len(venv.remotes)} "
+            f"logical_envs={args.n_envs} envs_per_worker={args.envs_per_worker}"
+        )
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv, filename=str(out_dir / "monitor.csv"))
@@ -676,6 +828,7 @@ def main() -> None:
         str(out_dir / "tensorboard") if (args.tensorboard or args.wandb) else None
     )
 
+    random_combat_state = None
     if not args.resume:
         policy, policy_kwargs = task.build_policy(args)
         model = AccumulatingMaskablePPO(
@@ -694,6 +847,81 @@ def main() -> None:
             combat_hp_gae_lambda=getattr(
                 args, "combat_hp_gae_lambda", 0.95
             ),
+            reasoning_coef=(
+                getattr(args, "reasoning_coef", 0.0)
+                if getattr(args, "arch", None) == "semantic-reasoning"
+                else 0.0
+            ),
+            reasoning_batch_size=getattr(args, "reasoning_batch_size", 16),
+            reasoning_updates=getattr(args, "reasoning_updates", 1),
+            nosl_is_az=getattr(args, "nosl_is_az", False),
+            nosl_is_az_replay_enabled=getattr(
+                args, "nosl_is_az_replay_enabled", True
+            ),
+            nosl_is_az_inner_only=getattr(
+                args, "nosl_is_az_inner_only", False
+            ),
+            nosl_is_az_cpp=getattr(args, "nosl_is_az_cpp", False),
+            nosl_is_az_simulations=getattr(args, "nosl_is_az_simulations", 8),
+            nosl_is_az_depth=getattr(args, "nosl_is_az_depth", 3),
+            nosl_is_az_rollout_steps=getattr(
+                args, "nosl_is_az_rollout_steps", 0
+            ),
+            nosl_is_az_c_puct=getattr(args, "nosl_is_az_c_puct", 1.5),
+            nosl_is_az_temperature=getattr(
+                args, "nosl_is_az_temperature", 1.0
+            ),
+            nosl_is_az_prior_temperature=getattr(
+                args, "nosl_is_az_prior_temperature", 1.0
+            ),
+            nosl_is_az_search_mode=getattr(
+                args, "nosl_is_az_search_mode", "puct"
+            ),
+            nosl_is_az_gumbel_candidates=getattr(
+                args, "nosl_is_az_gumbel_candidates", 0
+            ),
+            nosl_is_az_gumbel_scale=getattr(
+                args, "nosl_is_az_gumbel_scale", 1.0
+            ),
+            nosl_is_az_gumbel_value_scale=getattr(
+                args, "nosl_is_az_gumbel_value_scale", 0.1
+            ),
+            nosl_is_az_gumbel_max_visit_init=getattr(
+                args, "nosl_is_az_gumbel_max_visit_init", 50.0
+            ),
+            nosl_is_az_gumbel_rescale_q=getattr(
+                args, "nosl_is_az_gumbel_rescale_q", True
+            ),
+            nosl_is_az_gumbel_use_mixed_value=getattr(
+                args, "nosl_is_az_gumbel_use_mixed_value", True
+            ),
+            nosl_is_az_dirichlet_alpha=getattr(
+                args, "nosl_is_az_dirichlet_alpha", 0.0
+            ),
+            nosl_is_az_dirichlet_epsilon=getattr(
+                args, "nosl_is_az_dirichlet_epsilon", 0.0
+            ),
+            nosl_is_az_master_nonce=getattr(
+                args, "nosl_is_az_master_nonce", 0x4E4F534C4953415A
+            ),
+            nosl_is_az_batch_size=getattr(args, "nosl_is_az_batch_size", 64),
+            nosl_is_az_micro_batch_size=getattr(
+                args, "nosl_is_az_micro_batch_size", 2048
+            ),
+            nosl_is_az_replay_capacity=getattr(
+                args, "nosl_is_az_replay_capacity", 131072
+            ),
+            nosl_is_az_replay_min_size=getattr(
+                args, "nosl_is_az_replay_min_size", 1
+            ),
+            nosl_is_az_leaf_batch_size=getattr(
+                args, "nosl_is_az_leaf_batch_size", 64
+            ),
+            nosl_is_az_updates=getattr(args, "nosl_is_az_updates", 1),
+            nosl_is_az_policy_coef=getattr(
+                args, "nosl_is_az_policy_coef", 1.0
+            ),
+            nosl_is_az_value_coef=getattr(args, "nosl_is_az_value_coef", 0.5),
             n_epochs=args.n_epochs,
             gamma=args.gamma,
             gae_lambda=args.gae_lambda,
@@ -706,6 +934,16 @@ def main() -> None:
             tensorboard_log=tensorboard_log,
             policy_kwargs=policy_kwargs,
         )
+        if getattr(args, "nosl_is_az_reset_combat", False):
+            combat = getattr(getattr(model.policy, "core", None), "combat", None)
+            if combat is None:
+                raise ValueError(
+                    "--nosl-is-az-reset-combat requires a split specialist policy"
+                )
+            random_combat_state = {
+                key: value.detach().clone()
+                for key, value in combat.state_dict().items()
+            }
     else:
         # Resume: restore weights + optimizer state (continuous Adam momentum /
         # lr schedule) from the checkpoint. Network geometry and most hyper-
@@ -738,6 +976,89 @@ def main() -> None:
                 "combat_hp_gamma": getattr(args, "combat_hp_gamma", 1.0),
                 "combat_hp_gae_lambda": getattr(
                     args, "combat_hp_gae_lambda", 0.95
+                ),
+                "reasoning_coef": (
+                    getattr(args, "reasoning_coef", 0.0)
+                    if getattr(args, "arch", None) == "semantic-reasoning"
+                    else 0.0
+                ),
+                "reasoning_batch_size": getattr(
+                    args, "reasoning_batch_size", 16
+                ),
+                "reasoning_updates": getattr(args, "reasoning_updates", 1),
+                "nosl_is_az": getattr(args, "nosl_is_az", False),
+                "nosl_is_az_replay_enabled": getattr(
+                    args, "nosl_is_az_replay_enabled", True
+                ),
+                "nosl_is_az_inner_only": getattr(
+                    args, "nosl_is_az_inner_only", False
+                ),
+                "nosl_is_az_cpp": getattr(args, "nosl_is_az_cpp", False),
+                "nosl_is_az_simulations": getattr(
+                    args, "nosl_is_az_simulations", 8
+                ),
+                "nosl_is_az_depth": getattr(args, "nosl_is_az_depth", 3),
+                "nosl_is_az_rollout_steps": getattr(
+                    args, "nosl_is_az_rollout_steps", 0
+                ),
+                "nosl_is_az_c_puct": getattr(args, "nosl_is_az_c_puct", 1.5),
+                "nosl_is_az_temperature": getattr(
+                    args, "nosl_is_az_temperature", 1.0
+                ),
+                "nosl_is_az_prior_temperature": getattr(
+                    args, "nosl_is_az_prior_temperature", 1.0
+                ),
+                "nosl_is_az_search_mode": getattr(
+                    args, "nosl_is_az_search_mode", "puct"
+                ),
+                "nosl_is_az_gumbel_candidates": getattr(
+                    args, "nosl_is_az_gumbel_candidates", 0
+                ),
+                "nosl_is_az_gumbel_scale": getattr(
+                    args, "nosl_is_az_gumbel_scale", 1.0
+                ),
+                "nosl_is_az_gumbel_value_scale": getattr(
+                    args, "nosl_is_az_gumbel_value_scale", 0.1
+                ),
+                "nosl_is_az_gumbel_max_visit_init": getattr(
+                    args, "nosl_is_az_gumbel_max_visit_init", 50.0
+                ),
+                "nosl_is_az_gumbel_rescale_q": getattr(
+                    args, "nosl_is_az_gumbel_rescale_q", True
+                ),
+                "nosl_is_az_gumbel_use_mixed_value": getattr(
+                    args, "nosl_is_az_gumbel_use_mixed_value", True
+                ),
+                "nosl_is_az_dirichlet_alpha": getattr(
+                    args, "nosl_is_az_dirichlet_alpha", 0.0
+                ),
+                "nosl_is_az_dirichlet_epsilon": getattr(
+                    args, "nosl_is_az_dirichlet_epsilon", 0.0
+                ),
+                "nosl_is_az_master_nonce": getattr(
+                    args, "nosl_is_az_master_nonce", 0x4E4F534C4953415A
+                ),
+                "nosl_is_az_batch_size": getattr(
+                    args, "nosl_is_az_batch_size", 64
+                ),
+                "nosl_is_az_micro_batch_size": getattr(
+                    args, "nosl_is_az_micro_batch_size", 2048
+                ),
+                "nosl_is_az_replay_capacity": getattr(
+                    args, "nosl_is_az_replay_capacity", 131072
+                ),
+                "nosl_is_az_replay_min_size": getattr(
+                    args, "nosl_is_az_replay_min_size", 1
+                ),
+                "nosl_is_az_leaf_batch_size": getattr(
+                    args, "nosl_is_az_leaf_batch_size", 64
+                ),
+                "nosl_is_az_updates": getattr(args, "nosl_is_az_updates", 1),
+                "nosl_is_az_policy_coef": getattr(
+                    args, "nosl_is_az_policy_coef", 1.0
+                ),
+                "nosl_is_az_value_coef": getattr(
+                    args, "nosl_is_az_value_coef", 0.5
                 ),
             },
         )
@@ -801,6 +1122,10 @@ def main() -> None:
             print(
                 f"[trainer] initialized {initialized} new semantic parameter tensors"
             )
+        if random_combat_state is not None:
+            model.policy.core.combat.load_state_dict(random_combat_state)
+            random_combat_state = None
+            print("[trainer] reset combat specialist to its random initialization")
 
     if hasattr(args, "hierarchical_combat_hp"):
         has_source_checkpoint = bool(args.resume or args.init_from)
@@ -820,6 +1145,13 @@ def main() -> None:
                 "[trainer] combat value objective changed; reset "
                 f"{reset_count} combat value parameter tensors"
             )
+
+    if getattr(args, "nosl_is_az_inner_only", False):
+        frozen, trainable = model.configure_nosl_is_az_inner_only()
+        print(
+            "[trainer] NOSL-IS-AZ inner-only: skipped overworld PPO and froze "
+            f"{frozen:,} parameters; {trainable:,} combat parameters trainable"
+        )
 
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)
@@ -853,6 +1185,16 @@ def main() -> None:
         f"card_language={args.card_language} "
         f"combat_language={args.combat_language} "
         f"hierarchical_combat_hp={getattr(args, 'hierarchical_combat_hp', False)} "
+        f"nosl_is_az={getattr(args, 'nosl_is_az', False)} "
+        f"nosl_replay_enabled={getattr(args, 'nosl_is_az_replay_enabled', True)} "
+        f"nosl_inner_only={getattr(args, 'nosl_is_az_inner_only', False)} "
+        f"nosl_cpp={getattr(args, 'nosl_is_az_cpp', False)} "
+        f"nosl_sims={getattr(args, 'nosl_is_az_simulations', 0)} "
+        f"nosl_depth={getattr(args, 'nosl_is_az_depth', 0)} "
+        f"nosl_search={getattr(args, 'nosl_is_az_search_mode', 'puct')} "
+        f"nosl_replay={getattr(args, 'nosl_is_az_replay_capacity', 0)} "
+        f"nosl_batch={getattr(args, 'nosl_is_az_batch_size', 0)} "
+        f"nosl_micro={getattr(args, 'nosl_is_az_micro_batch_size', 0)} "
         f"ent_coef={args.ent_coef} lr={args.learning_rate}"
     )
 

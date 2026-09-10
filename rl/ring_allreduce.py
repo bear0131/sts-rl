@@ -138,44 +138,67 @@ class SshRingAllReduce(RingAllReduce):
                 probe.bind(("127.0.0.1", 0))
                 local_port = probe.getsockname()[1]
 
-            tunnel = subprocess.Popen(
-                [
-                    "ssh",
-                    "-i", str(ssh_key),
-                    "-o", "BatchMode=yes",
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "UserKnownHostsFile=/dev/null",
-                    "-o", "LogLevel=ERROR",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "ExitOnForwardFailure=yes",
-                    "-o", "ServerAliveInterval=30",
-                    "-o", "ServerAliveCountMax=3",
-                    "-o", "Compression=no",
-                    "-N",
-                    "-L", f"127.0.0.1:{local_port}:127.0.0.1:{listen_port}",
-                    "-p", str(next_port),
-                    f"{next_user}@{next_host}",
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
             deadline = time.perf_counter() + timeout
-            while time.perf_counter() < deadline:
-                if tunnel.poll() is not None:
-                    raise RuntimeError(
-                        f"SSH ring tunnel exited with code {tunnel.returncode}"
-                    )
-                try:
-                    outgoing = socket.create_connection(
-                        ("127.0.0.1", local_port), timeout=1.0
-                    )
+            last_error = None
+            while time.perf_counter() < deadline and outgoing is None:
+                tunnel = subprocess.Popen(
+                    [
+                        "ssh",
+                        "-i", str(ssh_key),
+                        "-o", "BatchMode=yes",
+                        "-o", "StrictHostKeyChecking=no",
+                        "-o", "UserKnownHostsFile=/dev/null",
+                        "-o", "LogLevel=ERROR",
+                        "-o", "ConnectTimeout=10",
+                        "-o", "ExitOnForwardFailure=yes",
+                        "-o", "ServerAliveInterval=30",
+                        "-o", "ServerAliveCountMax=3",
+                        "-o", "Compression=no",
+                        "-N",
+                        "-L", f"127.0.0.1:{local_port}:127.0.0.1:{listen_port}",
+                        "-p", str(next_port),
+                        f"{next_user}@{next_host}",
+                    ],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                attempt_deadline = min(
+                    deadline, time.perf_counter() + 15.0
+                )
+                while time.perf_counter() < attempt_deadline:
+                    if tunnel.poll() is not None:
+                        last_error = RuntimeError(
+                            "SSH ring tunnel exited with code "
+                            f"{tunnel.returncode}"
+                        )
+                        tunnel = None
+                        break
+                    try:
+                        outgoing = socket.create_connection(
+                            ("127.0.0.1", local_port), timeout=1.0
+                        )
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                if outgoing is not None:
                     break
-                except OSError:
-                    time.sleep(0.1)
+                if tunnel is not None:
+                    tunnel.terminate()
+                    try:
+                        tunnel.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        tunnel.kill()
+                # Public SSH endpoints can briefly reject a burst of rank
+                # startup connections (MaxStartups/kex).  Retrying here is
+                # safe because the local listener remains open.
+                time.sleep(min(1.0, max(0.0, deadline - time.perf_counter())))
             if outgoing is None:
-                raise TimeoutError("timed out connecting to SSH ring tunnel")
+                if last_error is not None:
+                    raise last_error
+                raise TimeoutError(
+                    "timed out connecting to SSH ring tunnel"
+                )
 
             incoming, _address = server.accept()
             for sock in (outgoing, incoming):

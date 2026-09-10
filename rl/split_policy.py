@@ -25,6 +25,7 @@ from rl.model import (
     _embedding_dim_for,
 )
 from rl.pointer_policy import _NullExtractor
+from rl.rule_vector_model import load_frozen_card_rule_encoder
 
 
 def _space_width(observation_space: spaces.Dict, key: str) -> int:
@@ -159,18 +160,59 @@ class SharedSemanticTokenizer(nn.Module):
         d_model: int,
         *,
         card_language: bool,
+        card_dim: int = 64,
+        card_embedding: nn.Module | None = None,
     ) -> None:
         super().__init__()
         n_cards = _vocab_size(observation_space, "deck_ids")
         n_relics = _vocab_size(observation_space, "relics")
         n_potions = _vocab_size(observation_space, "potions")
-        card_dim, relic_dim = 64, 48
+        if card_dim < 1:
+            raise ValueError("card_dim must be positive")
+        relic_dim = 48
         potion_dim = _embedding_dim_for(n_potions)
 
-        self.card = (
-            CardLanguageEmbedding(n_cards, card_dim)
-            if card_language
-            else nn.Embedding(n_cards, card_dim, padding_idx=0)
+        if card_embedding is not None:
+            embedding_width = getattr(card_embedding, "embedding_dim", None)
+            if embedding_width is None or int(embedding_width) != card_dim:
+                raise ValueError(
+                    "card_embedding width must match card_dim "
+                    f"({card_dim}), got {embedding_width}"
+                )
+            if getattr(card_embedding, "num_embeddings", n_cards) != n_cards:
+                raise ValueError(
+                    "card_embedding must cover the environment card vocabulary "
+                    f"({n_cards} rows)"
+                )
+            self.card = card_embedding
+        else:
+            self.card = (
+                CardLanguageEmbedding(n_cards, card_dim)
+                if card_language
+                else nn.Embedding(n_cards, card_dim, padding_idx=0)
+            )
+        # A frozen rule encoder is independent of the current observation and
+        # never receives gradients in wholerun.  Materialize both card
+        # versions once so every policy forward only performs a table lookup;
+        # the trainable projection below is intentionally kept outside this
+        # cache and is still evaluated each step.
+        card_cache = None
+        self.card_vector_cache_enabled = False
+        card_parameters = tuple(self.card.parameters())
+        if (
+            hasattr(self.card, "versioned_forward")
+            and card_parameters
+            and all(not parameter.requires_grad for parameter in card_parameters)
+        ):
+            card_ids = torch.arange(n_cards, dtype=torch.long)
+            versions = torch.tensor([0, 1], dtype=torch.long).view(1, 2)
+            card_ids = card_ids.view(-1, 1).expand(-1, 2)
+            with torch.no_grad():
+                card_cache = self.card.versioned_forward(card_ids, versions.expand_as(card_ids))
+            card_cache = card_cache.detach()
+            self.card_vector_cache_enabled = True
+        self.register_buffer(
+            "card_vector_cache", card_cache, persistent=False
         )
         self.relic = nn.Embedding(n_relics, relic_dim, padding_idx=0)
         self.potion = nn.Embedding(n_potions, potion_dim, padding_idx=0)
@@ -178,13 +220,52 @@ class SharedSemanticTokenizer(nn.Module):
         self.relic_projection = nn.Linear(relic_dim + 1, d_model)
         self.potion_projection = nn.Linear(potion_dim, d_model)
 
-    def cards(self, ids: torch.Tensor, upgrades: torch.Tensor) -> torch.Tensor:
+    def card_rule_vectors(
+        self, ids: torch.Tensor, upgrades: torch.Tensor
+    ) -> torch.Tensor:
+        """Return frozen or live rule vectors for physical card instances."""
+
         ids = ids.long()
+        versions = upgrades.long().gt(0).long().clamp(0, 1)
+        if self.card_vector_cache is not None:
+            return self.card_vector_cache[ids, versions]
+        if hasattr(self.card, "versioned_forward"):
+            return self.card.versioned_forward(ids, upgrades)
+        return self.card(ids)
+
+    def card_effect_vectors(
+        self, ids: torch.Tensor, upgrades: torch.Tensor
+    ) -> torch.Tensor:
+        """Return vectors used by pile-level semantic summaries.
+
+        ``CardLanguageEmbedding`` historically exposed effect-only vectors for
+        piles, while the v7 frozen encoder's entire vector is its rule effect.
+        The cache is valid for the latter and avoids re-running its Transformer.
+        """
+
+        ids = ids.long()
+        versions = upgrades.long().gt(0).long().clamp(0, 1)
+        if self.card_vector_cache is not None:
+            return self.card_vector_cache[ids, versions]
+        if hasattr(self.card, "version_effect_vectors"):
+            return self.card.version_effect_vectors(ids, upgrades)
+        return self.card_rule_vectors(ids, upgrades)
+
+    def effective_card_weight(self) -> torch.Tensor:
+        """Return base-version vectors for count-weighted pile summaries."""
+
+        if self.card_vector_cache is not None:
+            return self.card_vector_cache[:, 0]
+        if hasattr(self.card, "effective_weight"):
+            return self.card.effective_weight()
+        return self.card_rule_vectors(
+            torch.arange(self.card.num_embeddings, device=self.card.weight.device),
+            torch.zeros(self.card.num_embeddings, device=self.card.weight.device),
+        )
+
+    def cards(self, ids: torch.Tensor, upgrades: torch.Tensor) -> torch.Tensor:
         upgrades = upgrades.float()
-        if isinstance(self.card, CardLanguageEmbedding):
-            embedding = self.card.versioned_forward(ids, upgrades)
-        else:
-            embedding = self.card(ids)
+        embedding = self.card_rule_vectors(ids, upgrades)
         return self.card_projection(
             torch.cat([embedding, upgrades.unsqueeze(-1)], dim=-1)
         )
@@ -279,6 +360,7 @@ class CombatEncoder(_SpecialistEncoder):
         n_heads: int,
         features_dim: int,
         combat_language: bool,
+        card_dim: int = 64,
     ) -> None:
         super().__init__(
             d_model=d_model,
@@ -334,7 +416,7 @@ class CombatEncoder(_SpecialistEncoder):
         )
         self.pile_card_language = (
             PileCardLanguageEncoder(
-                64,
+                card_dim,
                 d_model,
                 observation_space["draw_card_ids"].shape[0],
             )
@@ -342,10 +424,15 @@ class CombatEncoder(_SpecialistEncoder):
             else None
         )
         self.exhaust_card_language = (
-            nn.Linear(64, d_model, bias=False)
+            nn.Linear(card_dim, d_model, bias=False)
             if self.pile_card_language is not None
             else None
         )
+        # SemanticReasoningPolicyCore can disable pile semantics while keeping
+        # these modules present for checkpoint/state-dict compatibility. Hand
+        # cards remain the only card programs consumed by the combat encoder.
+        self.pile_card_language_enabled = True
+        self.exhaust_card_language_enabled = True
         self.hand_context = nn.Linear(4, d_model, bias=False)
         self.position = nn.ParameterDict({
             "pile": nn.Parameter(torch.zeros(len(self.pile_keys), d_model)),
@@ -368,7 +455,11 @@ class CombatEncoder(_SpecialistEncoder):
         )
 
     def forward(
-        self, obs: dict[str, torch.Tensor], shared: SharedSemanticTokenizer
+        self,
+        obs: dict[str, torch.Tensor],
+        shared: SharedSemanticTokenizer,
+        *,
+        active_relic_width: int | None = None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         batch_size = obs["player_scalars"].shape[0]
         global_parts = [
@@ -389,18 +480,24 @@ class CombatEncoder(_SpecialistEncoder):
         for i, key in enumerate(self.pile_keys):
             token = self.pile_projection(obs[key].float())
             pile_name = key.removesuffix("_counts")
-            if self.pile_card_language is not None and pile_name != "exhaust":
+            if (
+                self.pile_card_language_enabled
+                and self.pile_card_language is not None
+                and pile_name != "exhaust"
+            ):
                 token = token + self.pile_card_language(
                     obs[f"{pile_name}_card_ids"].long(),
                     obs[f"{pile_name}_card_upgrades"].float(),
                     obs[f"{pile_name}_card_counts"].float(),
                     obs[f"{pile_name}_card_upgraded_counts"].float(),
                     shared.card,
+                    card_vector_provider=shared.card_effect_vectors,
                 )
-            elif self.exhaust_card_language is not None:
-                semantic_counts = (
-                    obs[key].float() @ shared.card.effective_weight()
-                )
+            elif (
+                self.exhaust_card_language_enabled
+                and self.exhaust_card_language is not None
+            ):
+                semantic_counts = obs[key].float() @ shared.effective_card_weight()
                 token = token + self.exhaust_card_language(semantic_counts)
             pile_tokens.append(token + self.position["pile"][i])
         pile = torch.stack(pile_tokens, dim=1)
@@ -432,7 +529,11 @@ class CombatEncoder(_SpecialistEncoder):
             dim=-1,
         )
         hand = hand + self.hand_context(hand_extra.float()) + self.position["hand"]
-        relic_width = _active_prefix_width(obs["relics"])
+        relic_width = (
+            _active_prefix_width(obs["relics"])
+            if active_relic_width is None
+            else max(1, min(int(active_relic_width), obs["relics"].shape[1]))
+        )
         relic_ids = obs["relics"][:, :relic_width]
         relic = shared.relics(
             relic_ids, obs["relic_counters"][:, :relic_width]
@@ -824,9 +925,13 @@ class _SpecialistActorCritic(nn.Module):
         base = A.seg_base("MAP_NODE")
         logits[:, base:base + A.N_COLS] = map_scores
 
-    def forward(self, obs, shared, phase_id=None):
+    def forward(
+        self, obs, shared, phase_id=None, *, active_relic_width=None
+    ):
         if self.kind == "combat":
-            global_token, blocks = self.encoder(obs, shared)
+            global_token, blocks = self.encoder(
+                obs, shared, active_relic_width=active_relic_width
+            )
         else:
             global_token, blocks = self.encoder(obs, shared, phase_id)
         blocks["__global__"] = global_token
@@ -874,10 +979,23 @@ class SplitStSPolicyCore(nn.Module):
         card_language: bool = False,
         combat_language: bool = False,
         map_dag: bool = False,
+        card_dim: int = 64,
+        card_embedding: nn.Module | None = None,
+        card_vector_checkpoint: str | None = None,
         features_dim: int = 256,
         vf_arch: tuple[int, ...] = (256,),
     ) -> None:
         super().__init__()
+        if card_vector_checkpoint is not None:
+            if card_embedding is not None:
+                raise ValueError(
+                    "pass card_vector_checkpoint or card_embedding, not both"
+                )
+            card_embedding = load_frozen_card_rule_encoder(
+                card_vector_checkpoint,
+                expected_num_cards=_vocab_size(observation_space, "deck_ids"),
+            )
+            card_dim = card_embedding.embedding_dim
         if n_layers < 2:
             raise ValueError(
                 "split policy requires --n-layers >= 2 so each specialist "
@@ -900,7 +1018,11 @@ class SplitStSPolicyCore(nn.Module):
         overworld_layers = max(1, n_layers // 2)
         self.specialist_layers = (combat_layers, overworld_layers)
         self.shared = SharedSemanticTokenizer(
-            observation_space, d_model, card_language=card_language
+            observation_space,
+            d_model,
+            card_language=card_language,
+            card_dim=card_dim,
+            card_embedding=card_embedding,
         )
         combat_encoder = CombatEncoder(
             observation_space,
@@ -909,6 +1031,7 @@ class SplitStSPolicyCore(nn.Module):
             n_heads=n_heads,
             features_dim=features_dim,
             combat_language=combat_language,
+            card_dim=card_dim,
         )
         overworld_encoder = OverworldEncoder(
             observation_space,
@@ -935,6 +1058,10 @@ class SplitStSPolicyCore(nn.Module):
         self._combat_phase = V.PHASE_VOCAB_INDEX["combat"]
         self.map_dag_enabled = overworld_encoder.map_dag_enabled
 
+    # Search-leaf observations can use this public, model-owned contract
+    # without importing a policy implementation into the environment.
+    combat_observation_keys = COMBAT_OBSERVATION_KEYS
+
     @staticmethod
     def _subset(obs, indices, allowed_keys):
         return {
@@ -943,29 +1070,55 @@ class SplitStSPolicyCore(nn.Module):
             if key in obs
         }
 
-    def actor_critic(self, obs):
+    @staticmethod
+    def _keys_only(obs, allowed_keys):
+        return {key: obs[key] for key in allowed_keys if key in obs}
+
+    def combat_actor_critic(self, obs, *, active_relic_width=None):
+        """Evaluate a known all-combat batch without phase routing copies."""
+        return self.combat(
+            self._keys_only(obs, COMBAT_OBSERVATION_KEYS),
+            self.shared,
+            active_relic_width=active_relic_width,
+        )
+
+    def actor_critic(self, obs, *, combat_relic_width=None):
         phase = obs["phase"].long().reshape(-1)
+        # The old router scanned every entry in the phase vocabulary and then
+        # copied even homogeneous batches with index_select.  Search leaves are
+        # overwhelmingly all combat, while ordinary rollout batches contain
+        # only a handful of distinct phases.  Synchronize the small unique-id
+        # list once and route only phases that are actually present.
+        phase_ids = [int(value) for value in torch.unique(phase).tolist()]
+        if len(phase_ids) == 1:
+            phase_id = phase_ids[0]
+            if phase_id == self._combat_phase:
+                return self.combat_actor_critic(
+                    obs, active_relic_width=combat_relic_width
+                )
+            allowed_keys = (
+                OVERWORLD_OBSERVATION_KEYS
+                | OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase_id, frozenset())
+            )
+            return self.overworld(
+                self._keys_only(obs, allowed_keys), self.shared, phase_id
+            )
+
         indices_parts = []
         logits_parts = []
         value_parts = []
 
-        combat_indices = torch.nonzero(
-            phase == self._combat_phase, as_tuple=False
-        ).flatten()
-        if combat_indices.numel():
-            logits, values = self.combat(
-                self._subset(obs, combat_indices, COMBAT_OBSERVATION_KEYS),
-                self.shared,
-            )
-            indices_parts.append(combat_indices)
-            logits_parts.append(logits)
-            value_parts.append(values)
-
-        for phase_id in range(len(V.PHASE_VOCAB)):
-            if phase_id == self._combat_phase:
-                continue
+        for phase_id in phase_ids:
             indices = torch.nonzero(phase == phase_id, as_tuple=False).flatten()
-            if not indices.numel():
+            if phase_id == self._combat_phase:
+                logits, values = self.combat(
+                    self._subset(obs, indices, COMBAT_OBSERVATION_KEYS),
+                    self.shared,
+                    active_relic_width=combat_relic_width,
+                )
+                indices_parts.append(indices)
+                logits_parts.append(logits)
+                value_parts.append(values)
                 continue
             allowed_keys = (
                 OVERWORLD_OBSERVATION_KEYS
@@ -1003,11 +1156,24 @@ class CombatStSPolicyCore(nn.Module):
         n_heads: int = 8,
         card_language: bool = False,
         combat_language: bool = False,
+        card_dim: int = 64,
+        card_embedding: nn.Module | None = None,
+        card_vector_checkpoint: str | None = None,
         features_dim: int = 256,
         vf_arch: tuple[int, ...] = (256,),
         **_unused,
     ) -> None:
         super().__init__()
+        if card_vector_checkpoint is not None:
+            if card_embedding is not None:
+                raise ValueError(
+                    "pass card_vector_checkpoint or card_embedding, not both"
+                )
+            card_embedding = load_frozen_card_rule_encoder(
+                card_vector_checkpoint,
+                expected_num_cards=_vocab_size(observation_space, "deck_ids"),
+            )
+            card_dim = card_embedding.embedding_dim
         pile_language_fields = all(
             f"{pile}_card_ids" in observation_space.spaces
             for pile in ("draw", "discard", "deck")
@@ -1022,7 +1188,11 @@ class CombatStSPolicyCore(nn.Module):
                 "combat_language must match the environment observation layout"
             )
         self.shared = SharedSemanticTokenizer(
-            observation_space, d_model, card_language=card_language
+            observation_space,
+            d_model,
+            card_language=card_language,
+            card_dim=card_dim,
+            card_embedding=card_embedding,
         )
         encoder = CombatEncoder(
             observation_space,
@@ -1031,6 +1201,7 @@ class CombatStSPolicyCore(nn.Module):
             n_heads=n_heads,
             features_dim=features_dim,
             combat_language=combat_language,
+            card_dim=card_dim,
         )
         self.combat = _SpecialistActorCritic(
             encoder,
@@ -1073,6 +1244,7 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         card_language: bool = False,
         combat_language: bool = False,
         map_dag: bool = False,
+        card_vector_checkpoint: str | None = None,
         **kwargs,
     ) -> None:
         self._core_cfg = dict(
@@ -1082,6 +1254,7 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
             card_language=card_language,
             combat_language=combat_language,
             map_dag=map_dag,
+            card_vector_checkpoint=card_vector_checkpoint,
         )
         kwargs["features_extractor_class"] = _NullExtractor
         kwargs.pop("features_extractor_kwargs", None)

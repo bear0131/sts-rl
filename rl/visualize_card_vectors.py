@@ -177,10 +177,15 @@ def resolve_encoder(model: Any) -> Any:
 
 
 def _semantic_card_vectors(
-    embedding: torch.nn.Embedding,
+    embedding: torch.nn.Module,
     upgrades: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    device = embedding.weight.device
+    parameter = next(embedding.parameters(), None)
+    if parameter is not None:
+        device = parameter.device
+    else:
+        buffer = next(embedding.buffers(), None)
+        device = buffer.device if buffer is not None else torch.device("cpu")
     ids = torch.arange(len(CARD_VOCAB), device=device)
     normalized = torch.full(
         (len(CARD_VOCAB),),
@@ -196,7 +201,7 @@ def _semantic_card_vectors(
 
 
 def _vectors_from_components(
-    embedding: torch.nn.Embedding,
+    embedding: torch.nn.Module,
     card_projection: torch.nn.Linear,
     hand_context: torch.nn.Linear,
     source: str,

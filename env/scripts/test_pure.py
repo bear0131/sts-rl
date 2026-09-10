@@ -287,6 +287,43 @@ def test_obs_matches_space():
     print("card-language pile sequences preserve ids, order, and upgrades")
 
 
+def test_compact_combat_matches_full_encoding():
+    from rl.split_policy import COMBAT_OBSERVATION_KEYS
+
+    canon = _fake_combat()
+    canon["options"] = {
+        "select": {
+            "context": V.SELECT_CONTEXT_VOCAB[1],
+            "pick_remaining": 1,
+            "can_pick_zero": True,
+            "can_pick_any": False,
+            "selected": [("Strike_R", 0)],
+            "hand_selected": [0, 2],
+        }
+    }
+    for card_language in (False, True):
+        for combat_language in (False, True):
+            full = encode.encode(
+                canon,
+                global_map_view=True,
+                card_language=card_language,
+                combat_language=combat_language,
+                deck_size_observation=True,
+                neow_observation=True,
+                event_option_observation=True,
+            )
+            compact = encode.encode_combat(
+                canon,
+                card_language=card_language,
+                combat_language=combat_language,
+            )
+            expected_keys = COMBAT_OBSERVATION_KEYS & set(full)
+            assert set(compact) == expected_keys
+            for key, value in compact.items():
+                assert np.array_equal(value, full[key]), key
+    print("compact combat encoding exactly matches the full combat subset")
+
+
 def test_combat_fields_land():
     from env.core.cards_vocab import CARD_INDEX
     o = encode.encode(_fake_combat())
@@ -535,6 +572,7 @@ if __name__ == "__main__":
     test_status_card_language_model_paths()
     test_intent_derivation()
     test_obs_matches_space()
+    test_compact_combat_matches_full_encoding()
     test_combat_fields_land()
     test_fixed_monster_slots_no_drift()
     test_global_and_options()

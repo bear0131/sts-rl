@@ -236,6 +236,25 @@ def test_mixed_batch_matches_individual_routes():
     torch.testing.assert_close(mixed[1], expected_values, atol=1e-6, rtol=1e-6)
 
 
+def test_combat_fast_path_matches_router_and_explicit_relic_width():
+    observation_space = _space()
+    core = _core(observation_space)
+    combat = _fixture(observation_space, "combat")
+    compact = {
+        key: value
+        for key, value in combat.items()
+        if key in COMBAT_OBSERVATION_KEYS
+    }
+
+    with torch.no_grad():
+        routed = core.actor_critic(combat)
+        automatic = core.combat_actor_critic(compact)
+        explicit = core.combat_actor_critic(compact, active_relic_width=1)
+
+    _assert_same(routed, automatic)
+    _assert_same(automatic, explicit)
+
+
 def test_specialist_gradients_are_isolated_but_tokens_are_shared():
     observation_space = _space()
     core = _core(observation_space)
@@ -363,6 +382,7 @@ def test_policy_metadata_and_layer_budget():
 if __name__ == "__main__":
     test_strict_field_routing()
     test_mixed_batch_matches_individual_routes()
+    test_combat_fast_path_matches_router_and_explicit_relic_width()
     test_specialist_gradients_are_isolated_but_tokens_are_shared()
     test_overworld_card_upgrades_affect_value_and_pointer()
     test_combat_receives_all_held_relics()

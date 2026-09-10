@@ -58,7 +58,13 @@ int Player::getStatusRuntime(PlayerStatus s) const {
             return strength;
         default:
             if (hasStatusRuntime(s)) {
-                return statusMap.at(s);
+                // Boolean powers (for example Barricade/Corruption/Pen Nib)
+                // are represented by the status bitset and intentionally do
+                // not have an entry in statusMap.  Search-state hashing asks
+                // for every active status, so an unchecked .at() here can
+                // abort an otherwise valid NOSL branch with map::at.
+                const auto it = statusMap.find(s);
+                return it == statusMap.end() ? 0 : it->second;
             } else {
                 return 0;
             }

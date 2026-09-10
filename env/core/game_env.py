@@ -99,10 +99,20 @@ class SimGameEnv:
     step(action) -> (canonical, reward, terminated, info).
     """
 
-    def __init__(self, character=None, ascension=0, global_map_view=False):
+    def __init__(self, character=None, ascension=0, global_map_view=False,
+                 interactive_reasoning=False):
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
+        self._interactive_reasoning = bool(interactive_reasoning)
+        if self._interactive_reasoning and not hasattr(
+            sts.BattleContext, "execute_with_trace"
+        ):
+            raise RuntimeError(
+                "interactive reasoning requires a trace-enabled simulator; "
+                "rebuild slaythespire with -DSTS_ENABLE_RULE_TRACE=ON"
+            )
+        self._last_reasoning_trace = None
         self.gc = None
         self.bc = None            # live BattleContext while in combat, else None
         self.rmap = None          # RunMap for the current act
@@ -123,6 +133,12 @@ class SimGameEnv:
         self._prev_hp = self.gc.cur_hp
         # GameContext starts on the Neow event; that IS the first decision point.
         return self._canonical(), self._info()
+
+    def fork_combat(self):
+        """Clone only the live combat state for inference-time lookahead."""
+        if self.bc is None or self.bc.is_battle_over:
+            raise RuntimeError("combat state can only be forked during a live battle")
+        return _CombatBranchGameEnv(self)
 
     def _rebuild_map(self):
         self.rmap = spiremap.RunMap(self.gc.seed, self._ascension, self.gc.act,
@@ -340,8 +356,29 @@ class SimGameEnv:
     def step(self, action):
         if self.is_over:
             raise RuntimeError("run is over; call reset()")
-        self._apply(action)
+        self._last_reasoning_trace = None
+        reasoning_before = (
+            self.obs_canonical() if self._interactive_reasoning else None
+        )
+        executed = False
+        if self._interactive_reasoning and self.bc is not None:
+            executed, self._last_reasoning_trace = self._apply_with_reasoning_trace(
+                action
+            )
+        if not executed:
+            self._apply(action)
         self._settle()  # pump through any auto-resolving screens to next decision
+
+        if self._interactive_reasoning and self._last_reasoning_trace is None:
+            self._last_reasoning_trace = {
+                "version": 1,
+                "precision": "semantic_only",
+                "semantic_action": tuple(action),
+                "action_card": self._semantic_action_card(
+                    action, reasoning_before
+                ),
+                "events": [{"type": "ACTION_COMPLETE"}],
+            }
 
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp
@@ -350,7 +387,116 @@ class SimGameEnv:
             cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
+        info = self._info()
+        if self._last_reasoning_trace is not None:
+            info["reasoning_trace"] = self._last_reasoning_trace
+        return self._canonical(), reward, terminated, info
+
+    def step_native_combat(self, action_bits: int):
+        """Apply one complete bit-packed native combat Action.
+
+        This is used only by the C++ NOSL adapter.  Python semantic combat
+        actions are 71-id indices and must continue through ``step``; decoding
+        a native bit pattern as such an index would silently select the wrong
+        card.  Keep the same settle, terminal reward, and info contract as
+        ``step`` while bypassing that decoder.
+        """
+        if self.is_over or self.bc is None:
+            raise RuntimeError("native combat action requires a live combat")
+        self._last_reasoning_trace = None
+        self.bc.execute(sts.Action(int(action_bits)))
+        self._settle()
+        terminated = self.is_over
+        self._prev_hp = self.gc.cur_hp
+        reward = 0.0
+        if terminated:
+            cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
+            won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
+            reward = 1.0 if (cleared_run or won) else -1.0
         return self._canonical(), reward, terminated, self._info()
+
+    @staticmethod
+    def _semantic_action_card(action, before):
+        """Card surface selected by a non-combat semantic action, if any."""
+        if before is None:
+            return None
+        verb = action[0]
+        options = before.get("options") or {}
+        try:
+            if verb == ga.REWARD_CARD:
+                card = options["cards"][int(action[1])]
+            elif verb == ga.SELECT:
+                card = options["cards"][int(action[1])]
+            elif verb == ga.SHOP_BUY and action[1] == ga.SHOP_CARD:
+                card = options["shop_cards"][int(action[2])]
+            else:
+                return None
+        except (IndexError, KeyError, TypeError):
+            return None
+        if isinstance(card, dict):
+            return dict(card)
+        if len(card) < 2:
+            return None
+        result = {"id": str(card[0]), "up": int(card[1])}
+        if len(card) >= 3 and int(card[2]) >= 0:
+            # Shop tuples carry price rather than runtime energy cost.  Do not
+            # serialize it as RUNTIME_COST.
+            result["price"] = int(card[2])
+        return result
+
+    def _apply_with_reasoning_trace(self, action):
+        """Execute a combat action and retain atomic simulator snapshots.
+
+        Reasoning training is deliberately tied to the trace-enabled simulator.
+        A coarse before/after fallback would make the transcript look like a
+        calculation while hiding the real execution order, so it is rejected.
+        """
+        verb = action[0]
+        sts_action = None
+        if verb == ga.COMBAT:
+            kind = actions.decode(action[1])
+            sts_action = combat_env.to_sts_action(kind, self.bc)
+        elif verb == ga.MULTI_SELECT:
+            mask = 0
+            for hand_index in action[1]:
+                mask |= 1 << int(hand_index)
+            sts_action = sts.Action(sts.ActionType.MULTI_CARD_SELECT, mask)
+        elif verb == ga.USE_POTION:
+            slot, target = action[1], action[2]
+            sts_action = sts.Action(
+                sts.ActionType.POTION,
+                int(slot),
+                0 if target is None else int(target),
+            )
+        if sts_action is None:
+            return False, None
+
+        before = normalize_sim(self.bc.to_dict())
+        action_card = None
+        if verb == ga.COMBAT:
+            kind = actions.decode(action[1])
+            if kind[0] == actions.KIND_PLAY:
+                hand_index = int(kind[1])
+                if 0 <= hand_index < len(before.get("hand", ())):
+                    action_card = dict(before["hand"][hand_index])
+
+        if not hasattr(self.bc, "execute_with_trace"):
+            # This should already have been caught in __init__, but keeping the
+            # guard here protects custom backend factories and forked envs.
+            raise RuntimeError(
+                "interactive reasoning requires BattleContext.execute_with_trace()"
+            )
+        raw_trace = self.bc.execute_with_trace(sts_action)
+        snapshots = [normalize_sim(raw_trace["before"])]
+        snapshots.extend(normalize_sim(raw) for raw in raw_trace["steps"])
+        precision = "atomic"
+        return True, {
+            "version": 1,
+            "precision": precision,
+            "semantic_action": tuple(action),
+            "action_card": action_card,
+            "snapshots": snapshots,
+        }
 
     def _apply(self, action):
         """Dispatch one semantic action against the sim. Mirrors replay.Driver
@@ -489,3 +635,46 @@ class SimGameEnv:
     def describe_action(self, action):
         canon = normalize_sim(self.bc.to_dict()) if self.bc is not None else self._canonical()
         return ga.describe(action, canon)
+
+
+class _CombatBranchGameEnv(SimGameEnv):
+    """A combat-only branch that never writes its result back to GameContext."""
+
+    def __init__(self, source):
+        self.__dict__ = source.__dict__.copy()
+        self.bc = source.bc.clone()
+
+    @property
+    def is_over(self):
+        return self.bc.is_battle_over
+
+    def fork_combat(self):
+        if self.is_over:
+            raise RuntimeError("cannot fork a terminal combat branch")
+        return _CombatBranchGameEnv(self)
+
+    def step(self, action):
+        if self.is_over:
+            raise RuntimeError("combat branch is terminal")
+        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+            raise ValueError(f"combat branch received overworld action: {action!r}")
+        self._apply(action)
+        terminated = self.bc.is_battle_over
+        return self._canonical(), 0.0, terminated, self._info()
+
+    def step_fast(self, action):
+        """Apply a combat semantic action without rebuilding observations.
+
+        Search rollouts only need the terminal flag and inspect the branch's
+        BattleContext directly for terminal HP.  The regular ``step`` method is
+        intentionally unchanged for Gym callers that need canonical state and
+        info.  This method is restricted to combat branches, so ``_apply``
+        dispatches directly to the native BattleContext and never needs the
+        whole-run settle/observation path.
+        """
+        if self.is_over:
+            raise RuntimeError("combat branch is terminal")
+        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+            raise ValueError(f"combat branch received overworld action: {action!r}")
+        self._apply(action)
+        return bool(self.bc.is_battle_over)

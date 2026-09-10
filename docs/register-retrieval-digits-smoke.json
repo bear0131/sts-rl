@@ -1,0 +1,131 @@
+{
+  "task": "isolated_register_name_retrieval",
+  "device": "cuda",
+  "seed": 20260831,
+  "steps": 20,
+  "batch_size": 256,
+  "data_generation": "fresh random samples per optimization step",
+  "protocol": {
+    "register_definition": "environment-owned name plus fixed two-digit LSD value",
+    "query": "environment-owned REG_QUERY and register name",
+    "model_owned": "REG_RESULT plus NUM_LSD_BEGIN, two DIGIT tokens and NUM_END",
+    "repeated_queries": "at least four queries to one randomly selected register"
+  },
+  "model": {
+    "d_model": 96,
+    "heads": 4,
+    "layers": 2,
+    "feedforward": 192,
+    "vocab_size": 34
+  },
+  "history": [
+    {
+      "step": 1.0,
+      "loss": 65.26854705810547,
+      "teacher_token_accuracy": 0.036458333333333336,
+      "teacher_tokens": 384.0,
+      "autoregressive_query_accuracy": 0.0,
+      "autoregressive_queries": 192.0,
+      "autoregressive_span_accuracy": 0.0,
+      "repeated_register_consistency": 43
+    },
+    {
+      "step": 10.0,
+      "loss": 51.83393859863281,
+      "teacher_token_accuracy": 0.06510416666666667,
+      "teacher_tokens": 384.0,
+      "autoregressive_query_accuracy": 0.0,
+      "autoregressive_queries": 192.0,
+      "autoregressive_span_accuracy": 0.0,
+      "repeated_register_consistency": 49
+    },
+    {
+      "step": 20.0,
+      "loss": 33.936798095703125,
+      "teacher_token_accuracy": 0.08333333333333333,
+      "teacher_tokens": 384.0,
+      "autoregressive_query_accuracy": 0.005208333333333333,
+      "autoregressive_queries": 192.0,
+      "autoregressive_span_accuracy": 0.005208333333333333,
+      "repeated_register_consistency": 2
+    }
+  ],
+  "mutation_probe": {
+    "register_values": [
+      95,
+      17,
+      60,
+      98
+    ],
+    "query_registers": [
+      3,
+      3,
+      3,
+      2,
+      1,
+      3,
+      3,
+      3,
+      3,
+      3,
+      0,
+      3
+    ],
+    "target_register": 3,
+    "changed_value": 35,
+    "baseline_predictions": [
+      99,
+      66,
+      66,
+      null,
+      88,
+      null,
+      99,
+      99,
+      66,
+      44,
+      99,
+      null
+    ],
+    "changed_predictions": [
+      99,
+      66,
+      66,
+      null,
+      88,
+      null,
+      99,
+      99,
+      66,
+      44,
+      99,
+      null
+    ],
+    "target_queries_followed_mutation": 0,
+    "target_query_count": 9,
+    "other_queries_unchanged": 3,
+    "other_query_count": 3,
+    "name_swap_values": [
+      98,
+      17,
+      60,
+      95
+    ],
+    "name_swap_predictions": [
+      99,
+      66,
+      66,
+      null,
+      88,
+      null,
+      99,
+      99,
+      66,
+      44,
+      99,
+      null
+    ],
+    "name_swap_correct": 0,
+    "name_swap_query_count": 12
+  }
+}

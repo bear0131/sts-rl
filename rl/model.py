@@ -337,14 +337,23 @@ class PileCardLanguageEncoder(nn.Module):
         counts: torch.Tensor,
         upgraded_counts: torch.Tensor,
         card_embedding: CardLanguageEmbedding,
+        card_vector_provider=None,
     ) -> torch.Tensor:
         mask = card_ids.long() != 0
-        base_vectors = card_embedding.version_effect_vectors(
-            card_ids, torch.zeros_like(card_ids)
-        )
-        upgraded_vectors = card_embedding.version_effect_vectors(
-            card_ids, torch.ones_like(card_ids)
-        )
+        if card_vector_provider is None:
+            base_vectors = card_embedding.version_effect_vectors(
+                card_ids, torch.zeros_like(card_ids)
+            )
+            upgraded_vectors = card_embedding.version_effect_vectors(
+                card_ids, torch.ones_like(card_ids)
+            )
+        else:
+            base_vectors = card_vector_provider(
+                card_ids, torch.zeros_like(card_ids)
+            )
+            upgraded_vectors = card_vector_provider(
+                card_ids, torch.ones_like(card_ids)
+            )
         base_counts = (counts - upgraded_counts).clamp_min(0)
         version_vectors = (
             base_vectors * base_counts.unsqueeze(-1)

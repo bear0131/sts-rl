@@ -44,8 +44,24 @@ _OUTCOME_LOSS = 2
 # (RNG-verified) has a single source of truth.
 
 def legal_mask(bc):
-    """Boolean mask over the fixed action space, built from the sim's own
-    legal_actions so abstract ids line up exactly with what bc.execute accepts."""
+    """Return the fixed combat mask using the native path when available.
+
+    The C++ binding and the fallback both use the simulator's legal-actions
+    contract, so the abstract ids still line up with ``bc.execute``.
+    """
+    # Newer simulator builds perform the same mapping in C++ and return one
+    # freshly allocated NumPy array. Keep the Python path for older builds and
+    # alternate backends so the environment remains backwards compatible.
+    native_mask = getattr(bc, "legal_combat_mask", None)
+    if native_mask is not None:
+        mask = np.asarray(native_mask(), dtype=bool)
+        if mask.shape != (actions.N_ACTIONS,):
+            raise RuntimeError(
+                "legal_combat_mask returned unexpected shape "
+                f"{mask.shape}; expected {(actions.N_ACTIONS,)}"
+            )
+        return mask
+
     mask = np.zeros(actions.N_ACTIONS, dtype=bool)
     for a in bc.legal_actions():
         t = a.action_type

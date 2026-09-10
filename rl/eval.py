@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import time
 from collections import Counter
 from pathlib import Path
@@ -27,6 +28,11 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 
 from env.core import action_space as A
 from rl.eval_starter_policy import _dp_route_choices
+from rl.combat_value_search import (
+    CombatValueSearch,
+    add_combat_search_args,
+    config_from_args as combat_search_config_from_args,
+)
 
 # Register both custom policy families before SB3 unpickles a checkpoint.
 from . import model as _model  # noqa: F401
@@ -45,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
         "checkpoint",
         type=Path,
         help="Path to a MaskablePPO .zip checkpoint.",
+    )
+    parser.add_argument(
+        "--card-vector-checkpoint",
+        type=Path,
+        default=None,
+        help="Local frozen card-vector encoder for checkpoints moved from a remote host.",
     )
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--ascension", type=int, default=0)
@@ -81,7 +93,45 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optionally save one row per run for seed-level analysis.",
     )
+    add_combat_search_args(parser)
     return parser
+
+
+def _checkpoint_custom_objects(
+    checkpoint: Path, card_vector_checkpoint: Path | None
+) -> dict[str, object]:
+    """Rewrite a moved checkpoint's absolute card-vector dependency."""
+    from stable_baselines3.common.save_util import load_from_zip_file
+
+    data, _params, _variables = load_from_zip_file(
+        checkpoint, device="cpu", load_data=True
+    )
+    policy_kwargs = dict((data or {}).get("policy_kwargs") or {})
+    saved = policy_kwargs.get("card_vector_checkpoint")
+    if not saved:
+        return {}
+    candidates = []
+    if card_vector_checkpoint is not None:
+        candidates.append(card_vector_checkpoint)
+    configured = os.environ.get("STS_CARD_VECTOR_CHECKPOINT")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    normalized = str(saved).replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) >= 2:
+        candidates.append(checkpoint.parent / parts[-2] / parts[-1])
+    candidates.append(
+        checkpoint.parent / ".tmp-vector-rule-v7-contract-v10-step10000" / "last.pt"
+    )
+    resolved = next((path for path in candidates if path.is_file()), None)
+    if resolved is None:
+        raise FileNotFoundError(
+            "checkpoint depends on a missing card-vector encoder: "
+            f"{saved!s}; pass --card-vector-checkpoint or set "
+            "STS_CARD_VECTOR_CHECKPOINT"
+        )
+    policy_kwargs["card_vector_checkpoint"] = str(resolved.resolve())
+    return {"policy_kwargs": policy_kwargs}
 
 
 def _run_stats(env: SlayTheSpireEnv) -> dict:
@@ -116,7 +166,13 @@ def main() -> None:
 
     load_started = time.monotonic()
     print(f"[eval] loading checkpoint: {args.checkpoint}", flush=True)
-    model = MaskablePPO.load(args.checkpoint, device=args.device)
+    model = MaskablePPO.load(
+        args.checkpoint,
+        device=args.device,
+        custom_objects=_checkpoint_custom_objects(
+            args.checkpoint, args.card_vector_checkpoint
+        ),
+    )
     env = SlayTheSpireEnv(
         ascension=args.ascension,
         global_map_view=_model.uses_global_map_observation(model),
@@ -127,6 +183,12 @@ def main() -> None:
         event_option_observation=_model.uses_event_option_observation(model),
     )
     model.set_random_seed(args.seed)
+    search_config = combat_search_config_from_args(args)
+    combat_search = (
+        CombatValueSearch(model, search_config)
+        if search_config is not None
+        else None
+    )
     print(
         f"[eval] loaded {args.checkpoint.name} in "
         f"{time.monotonic() - load_started:.1f}s; starting {args.episodes} "
@@ -139,6 +201,10 @@ def main() -> None:
     dead_screen_floors: Counter[int] = Counter()
     returns: list[float] = []
     lengths: list[int] = []
+    search_decisions = 0
+    search_changes = 0
+    search_nodes = 0
+    search_seconds = 0.0
     started = time.monotonic()
     last_report = started
 
@@ -150,6 +216,8 @@ def main() -> None:
             episode_return = 0.0
             episode_length = 0
             route_choices = 0
+            episode_search_decisions = 0
+            episode_search_changes = 0
             route_rng = np.random.default_rng(episode_seed ^ 0x51A7_7E12)
 
             while not (terminated or truncated):
@@ -172,6 +240,18 @@ def main() -> None:
                     )
                     action = int(route_rng.choice(optimal))
                     route_choices += 1
+                elif combat_search is not None and info.get("phase") == "combat":
+                    search_result = combat_search.search(
+                        env, obs, action_masks
+                    )
+                    action = search_result.action
+                    episode_search_decisions += 1
+                    search_decisions += 1
+                    changed = search_result.action != search_result.model_action
+                    episode_search_changes += int(changed)
+                    search_changes += int(changed)
+                    search_nodes += search_result.expanded_nodes
+                    search_seconds += search_result.elapsed_seconds
                 else:
                     action, _ = model.predict(
                         obs,
@@ -226,6 +306,8 @@ def main() -> None:
                     "final_act": act,
                     "steps": episode_length,
                     "route_choices": route_choices,
+                    "combat_search_decisions": episode_search_decisions,
+                    "combat_search_changes": episode_search_changes,
                     "raw_return": episode_return,
                     "outcome": stats["outcome"],
                 }
@@ -288,6 +370,15 @@ def main() -> None:
         f"[eval] episode_length={np.mean(lengths):.1f} +/- "
         f"{np.std(lengths):.1f} elapsed={elapsed:.1f}s"
     )
+    if combat_search is not None:
+        print(
+            f"[eval] combat_search decisions={search_decisions} "
+            f"changed_argmax={search_changes} "
+            f"({search_changes / max(search_decisions, 1):.2%}) "
+            f"nodes={search_nodes} search_seconds={search_seconds:.1f} "
+            f"ms_per_decision="
+            f"{search_seconds * 1000 / max(search_decisions, 1):.1f}"
+        )
 
     if args.output_csv is not None:
         _write_csv(args.output_csv, rows)

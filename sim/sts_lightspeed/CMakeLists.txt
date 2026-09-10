@@ -5,6 +5,8 @@ project(
         DESCRIPTION "High Performance, rng accurate implementation of Slay the Spire with tools for tree search and ml."
         LANGUAGES CXX)
 
+option(STS_ENABLE_RULE_TRACE "Enable atomic combat snapshots for rule-data collection" ON)
+
 file (GLOB_RECURSE sts_lightspeed_SOURCES CONFIGURE_DEPENDS "src/*.cpp")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -14,6 +16,9 @@ add_subdirectory(json)
 add_subdirectory(pybind11)
 
 pybind11_add_module(slaythespire bindings/slaythespire.cpp bindings/bindings-util.cpp ${sts_lightspeed_SOURCES})
+if (STS_ENABLE_RULE_TRACE)
+    target_compile_definitions(slaythespire PRIVATE STS_ENABLE_RULE_TRACE)
+endif()
 target_include_directories(slaythespire PUBLIC include)
 target_include_directories(slaythespire PUBLIC json/single_include)
 target_include_directories(slaythespire PUBLIC bindings)
@@ -34,3 +39,10 @@ target_link_directories(small-test PRIVATE json::nlohmann_json)
 target_include_directories(small-test PUBLIC include)
 target_include_directories(small-test PUBLIC json/include)
 target_include_directories(small-test PUBLIC bindings)
+
+# Native NOSL combat search/training prototype. This target intentionally has
+# no Python or Torch dependency, so it can be benchmarked on CPU workers.
+add_executable(nosl-combat-train apps/nosl-combat-train.cpp ${sts_lightspeed_SOURCES})
+target_link_directories(nosl-combat-train PRIVATE json::nlohmann_json)
+target_include_directories(nosl-combat-train PUBLIC include)
+target_include_directories(nosl-combat-train PUBLIC json/include)

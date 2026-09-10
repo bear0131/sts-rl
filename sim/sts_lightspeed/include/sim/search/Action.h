@@ -57,6 +57,10 @@ namespace sts::search {
         void execute(BattleContext &bc) const;
 
 
+        // Enumerate the simulator-authoritative actions available in a combat
+        // decision state. This is shared by native search and bindings so the
+        // C++ trainer does not need to reconstruct the action layout itself.
+        static std::vector<Action> enumerateCombatActions(const BattleContext &bc);
         static std::vector<Action> enumerateCardSelectActions(const BattleContext &bc);
     };
 

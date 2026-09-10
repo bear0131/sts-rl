@@ -1,0 +1,4494 @@
+{
+  "checkpoint": ".tmp-vector-rule-v7-contract-v5-wide-wandb-ga8-20260831/last.pt",
+  "checkpoint_step": 500,
+  "device": "cuda",
+  "records": 500,
+  "scope_examples": 4085,
+  "tokens": 115866,
+  "token_accuracy": 0.9727961610826299,
+  "delta_events": 1493,
+  "scope_error_rates": [
+    {
+      "key": "LOCAL_QUERY",
+      "count": 60,
+      "errors": 24,
+      "error_rate": 0.4
+    },
+    {
+      "key": "LOCAL_SELF_DAMAGE",
+      "count": 1601,
+      "errors": 552,
+      "error_rate": 0.3447845096814491
+    },
+    {
+      "key": "LOCAL_STATE_CHANGE",
+      "count": 8505,
+      "errors": 1826,
+      "error_rate": 0.21469723691945913
+    },
+    {
+      "key": "LOCAL_PILE_SHUFFLE",
+      "count": 1166,
+      "errors": 236,
+      "error_rate": 0.20240137221269297
+    },
+    {
+      "key": "LOCAL_ENERGY",
+      "count": 924,
+      "errors": 181,
+      "error_rate": 0.1958874458874459
+    },
+    {
+      "key": "LOCAL_DAMAGE",
+      "count": 24426,
+      "errors": 4637,
+      "error_rate": 0.18983869647097354
+    },
+    {
+      "key": "LOCAL_CALL",
+      "count": 1350,
+      "errors": 256,
+      "error_rate": 0.18962962962962962
+    },
+    {
+      "key": "LOCAL_CARD_DESTINATION",
+      "count": 17359,
+      "errors": 3164,
+      "error_rate": 0.18226856385736506
+    },
+    {
+      "key": "LOCAL_DRAW",
+      "count": 1650,
+      "errors": 285,
+      "error_rate": 0.17272727272727273
+    },
+    {
+      "key": "LOCAL_CARD_PAYMENT",
+      "count": 13110,
+      "errors": 2116,
+      "error_rate": 0.16140350877192983
+    },
+    {
+      "key": "OUTER_HEADERS",
+      "count": 43456,
+      "errors": 4357,
+      "error_rate": 0.10026233431516937
+    },
+    {
+      "key": "LOCAL_RELIC_COUNTER",
+      "count": 8242,
+      "errors": 807,
+      "error_rate": 0.09791312788158214
+    },
+    {
+      "key": "LOCAL_REPEAT",
+      "count": 624,
+      "errors": 43,
+      "error_rate": 0.06891025641025642
+    },
+    {
+      "key": "LOCAL_AOE_DAMAGE_ROUND",
+      "count": 60,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "LOCAL_ATTACK",
+      "count": 2020,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "LOCAL_CARD_COMMIT",
+      "count": 4000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "LOCAL_CARD_PLAY",
+      "count": 4000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "LOCAL_COMPLETE",
+      "count": 3000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "LOCAL_RANDOM_HIT",
+      "count": 60,
+      "errors": 0,
+      "error_rate": 0.0
+    }
+  ],
+  "parameter_error_rates": [
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_VALUE",
+      "count": 4,
+      "errors": 4,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_result",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_right",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_VALUE",
+      "count": 90,
+      "errors": 75,
+      "error_rate": 0.8333333333333334
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE",
+      "count": 944,
+      "errors": 753,
+      "error_rate": 0.7976694915254238
+    },
+    {
+      "key": "READ_VALUE",
+      "count": 6429,
+      "errors": 5045,
+      "error_rate": 0.784725462746928
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_VALUE",
+      "count": 87,
+      "errors": 66,
+      "error_rate": 0.7586206896551724
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_VALUE",
+      "count": 4,
+      "errors": 3,
+      "error_rate": 0.75
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_VALUE",
+      "count": 185,
+      "errors": 138,
+      "error_rate": 0.745945945945946
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_BIND",
+      "count": 2,
+      "errors": 1,
+      "error_rate": 0.5
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE",
+      "count": 966,
+      "errors": 444,
+      "error_rate": 0.45962732919254656
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE",
+      "count": 137,
+      "errors": 61,
+      "error_rate": 0.44525547445255476
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_VALUE",
+      "count": 835,
+      "errors": 310,
+      "error_rate": 0.3712574850299401
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_VALUE",
+      "count": 109,
+      "errors": 37,
+      "error_rate": 0.3394495412844037
+    },
+    {
+      "key": "TRIGGER_EFFECT",
+      "count": 123,
+      "errors": 40,
+      "error_rate": 0.3252032520325203
+    },
+    {
+      "key": "BASE_DAMAGE",
+      "count": 797,
+      "errors": 230,
+      "error_rate": 0.28858218318695106
+    },
+    {
+      "key": "FIELD_OR_STATUS",
+      "count": 255,
+      "errors": 72,
+      "error_rate": 0.2823529411764706
+    },
+    {
+      "key": "CHANGE_AMOUNT",
+      "count": 810,
+      "errors": 178,
+      "error_rate": 0.21975308641975308
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_VALUE",
+      "count": 188,
+      "errors": 41,
+      "error_rate": 0.21808510638297873
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_VALUE",
+      "count": 788,
+      "errors": 163,
+      "error_rate": 0.2068527918781726
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_VALUE",
+      "count": 178,
+      "errors": 36,
+      "error_rate": 0.20224719101123595
+    },
+    {
+      "key": "DRAW_COUNT",
+      "count": 150,
+      "errors": 27,
+      "error_rate": 0.18
+    },
+    {
+      "key": "REPEAT_COUNT",
+      "count": 117,
+      "errors": 18,
+      "error_rate": 0.15384615384615385
+    },
+    {
+      "key": "ENERGY_AMOUNT",
+      "count": 84,
+      "errors": 12,
+      "error_rate": 0.14285714285714285
+    },
+    {
+      "key": "COUNTER_THRESHOLD",
+      "count": 399,
+      "errors": 55,
+      "error_rate": 0.13784461152882205
+    },
+    {
+      "key": "READ_BIND",
+      "count": 4126,
+      "errors": 506,
+      "error_rate": 0.12263693650024236
+    },
+    {
+      "key": "COUNTER_REF",
+      "count": 123,
+      "errors": 15,
+      "error_rate": 0.12195121951219512
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/CALC_FIELD_field",
+      "count": 304,
+      "errors": 32,
+      "error_rate": 0.10526315789473684
+    },
+    {
+      "key": "TRIGGER_AMOUNT",
+      "count": 369,
+      "errors": 33,
+      "error_rate": 0.08943089430894309
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_VALUE",
+      "count": 698,
+      "errors": 59,
+      "error_rate": 0.08452722063037249
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_VALUE",
+      "count": 84,
+      "errors": 7,
+      "error_rate": 0.08333333333333333
+    },
+    {
+      "key": "PAYMENT_COST",
+      "count": 1482,
+      "errors": 120,
+      "error_rate": 0.08097165991902834
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE",
+      "count": 2539,
+      "errors": 203,
+      "error_rate": 0.07995273729814888
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_BIND",
+      "count": 58,
+      "errors": 4,
+      "error_rate": 0.06896551724137931
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_BIND",
+      "count": 96,
+      "errors": 6,
+      "error_rate": 0.0625
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_BIND",
+      "count": 48,
+      "errors": 2,
+      "error_rate": 0.041666666666666664
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_SOURCE",
+      "count": 24,
+      "errors": 1,
+      "error_rate": 0.041666666666666664
+    },
+    {
+      "key": "COUNTER_EVENT",
+      "count": 123,
+      "errors": 5,
+      "error_rate": 0.04065040650406504
+    },
+    {
+      "key": "PILE_OPERATION",
+      "count": 26,
+      "errors": 1,
+      "error_rate": 0.038461538461538464
+    },
+    {
+      "key": "COUNTER_INCREMENT",
+      "count": 369,
+      "errors": 8,
+      "error_rate": 0.02168021680216802
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_SOURCE",
+      "count": 48,
+      "errors": 1,
+      "error_rate": 0.020833333333333332
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_VALUE",
+      "count": 369,
+      "errors": 7,
+      "error_rate": 0.018970189701897018
+    },
+    {
+      "key": "COUNTER_RESET",
+      "count": 369,
+      "errors": 7,
+      "error_rate": 0.018970189701897018
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_SOURCE",
+      "count": 227,
+      "errors": 3,
+      "error_rate": 0.013215859030837005
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_VALUE",
+      "count": 1311,
+      "errors": 15,
+      "error_rate": 0.011441647597254004
+    },
+    {
+      "key": "DESTINATION",
+      "count": 526,
+      "errors": 6,
+      "error_rate": 0.011406844106463879
+    },
+    {
+      "key": "READ_SOURCE",
+      "count": 2063,
+      "errors": 23,
+      "error_rate": 0.011148812409112942
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_damage",
+      "count": 227,
+      "errors": 1,
+      "error_rate": 0.004405286343612335
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_left",
+      "count": 227,
+      "errors": 1,
+      "error_rate": 0.004405286343612335
+    },
+    {
+      "key": "CARD_COUNT",
+      "count": 1614,
+      "errors": 6,
+      "error_rate": 0.0037174721189591076
+    },
+    {
+      "key": "PLAY_KIND",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "ARG_DECREMENT",
+      "count": 135,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_field",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_left",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_result",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_right",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_VALUE",
+      "count": 370,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_field",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_left",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_result",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_right",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_left",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_result",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_right",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_absorbed",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_block",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_decrement",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_remaining",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_result",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_VALUE",
+      "count": 135,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_left",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_result",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_threshold",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/CALC_FIELD_result",
+      "count": 304,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_SOURCE",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_ATTACK_CHILDREN/CALC_FIELD_scope",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_ATTACK_CHILDREN/CALC_FIELD_targets",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_CHILDREN/CALC_FIELD_scope",
+      "count": 1000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_RANDOM_HIT_CHILDREN/CALC_FIELD_scope",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_RANDOM_HIT_CHILDREN/CALC_FIELD_target",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_FIELD_left",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_FIELD_result",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_body",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_count",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_result",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ITERATE_ENEMY_MASK/CALC_FIELD_order",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ITERATE_ENEMY_MASK/CALC_FIELD_targets",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_left",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_SOURCE",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_FIELD_left",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_FIELD_result",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_advanced",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_reset",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_result",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_triggered",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_VALUE",
+      "count": 369,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_left",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_result",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_right",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_result",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_right",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_BIND",
+      "count": 454,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_field",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_left",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_result",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_right",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_left",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_result",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_right",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_left",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_result",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_right",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination_count",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination_result",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source_count",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source_result",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_WRITE_RELIC_COUNTER/CALC_FIELD_field",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_WRITE_RELIC_COUNTER/CALC_FIELD_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALL_TARGET",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CARD_ACTION",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_MULTIPLIER_SOURCE",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_SOURCE",
+      "count": 3,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_SOURCE_KIND",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENEMY_ORDER",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENERGY_OP",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "PAYMENT_SOURCE",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "QUERY_KIND",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REPEAT_SOURCE",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    }
+  ],
+  "parameter_position_error_rates": [
+    {
+      "key": "READ_VALUE/number_begin",
+      "count": 2063,
+      "errors": 2063,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE/number_begin",
+      "count": 227,
+      "errors": 227,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_VALUE/number_begin",
+      "count": 48,
+      "errors": 48,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_VALUE/digit_offset_1",
+      "count": 41,
+      "errors": 41,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_VALUE/number_begin",
+      "count": 29,
+      "errors": 29,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_VALUE/number_begin",
+      "count": 24,
+      "errors": 24,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_VALUE/digit_offset_1",
+      "count": 17,
+      "errors": 17,
+      "error_rate": 1.0
+    },
+    {
+      "key": "READ_VALUE/digit_offset_2",
+      "count": 3,
+      "errors": 3,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE/digit_offset_2",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_result/atomic_value",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_right/atomic_value",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_VALUE/digit_offset_0",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_VALUE/digit_offset_1",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_VALUE/number_end",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_VALUE/digit_offset_0",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_VALUE/digit_offset_1",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_VALUE/number_begin",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_VALUE/number_end",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE/digit_offset_2",
+      "count": 1,
+      "errors": 1,
+      "error_rate": 1.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_VALUE/digit_offset_0",
+      "count": 29,
+      "errors": 28,
+      "error_rate": 0.9655172413793104
+    },
+    {
+      "key": "READ_VALUE/digit_offset_1",
+      "count": 237,
+      "errors": 227,
+      "error_rate": 0.9578059071729957
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE/digit_offset_1",
+      "count": 227,
+      "errors": 215,
+      "error_rate": 0.947136563876652
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_VALUE/digit_offset_1",
+      "count": 18,
+      "errors": 17,
+      "error_rate": 0.9444444444444444
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_VALUE/digit_offset_0",
+      "count": 48,
+      "errors": 45,
+      "error_rate": 0.9375
+    },
+    {
+      "key": "READ_VALUE/digit_offset_0",
+      "count": 2063,
+      "errors": 1914,
+      "error_rate": 0.9277750848279205
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE/digit_offset_0",
+      "count": 227,
+      "errors": 209,
+      "error_rate": 0.920704845814978
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE/digit_offset_2",
+      "count": 36,
+      "errors": 33,
+      "error_rate": 0.9166666666666666
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE/digit_offset_1",
+      "count": 232,
+      "errors": 212,
+      "error_rate": 0.9137931034482759
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE/digit_offset_0",
+      "count": 233,
+      "errors": 211,
+      "error_rate": 0.9055793991416309
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_VALUE/digit_offset_0",
+      "count": 29,
+      "errors": 26,
+      "error_rate": 0.896551724137931
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE/digit_offset_0",
+      "count": 34,
+      "errors": 30,
+      "error_rate": 0.8823529411764706
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE/digit_offset_1",
+      "count": 34,
+      "errors": 29,
+      "error_rate": 0.8529411764705882
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_VALUE/digit_offset_1",
+      "count": 154,
+      "errors": 131,
+      "error_rate": 0.8506493506493507
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_VALUE/digit_offset_0",
+      "count": 24,
+      "errors": 20,
+      "error_rate": 0.8333333333333334
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE/digit_offset_1",
+      "count": 75,
+      "errors": 62,
+      "error_rate": 0.8266666666666667
+    },
+    {
+      "key": "BASE_DAMAGE/digit_offset_0",
+      "count": 230,
+      "errors": 190,
+      "error_rate": 0.8260869565217391
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_VALUE/digit_offset_0",
+      "count": 227,
+      "errors": 160,
+      "error_rate": 0.7048458149779736
+    },
+    {
+      "key": "CHANGE_AMOUNT/digit_offset_0",
+      "count": 237,
+      "errors": 167,
+      "error_rate": 0.7046413502109705
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_VALUE/digit_offset_0",
+      "count": 227,
+      "errors": 140,
+      "error_rate": 0.6167400881057269
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_VALUE/digit_offset_0",
+      "count": 48,
+      "errors": 29,
+      "error_rate": 0.6041666666666666
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_VALUE/number_end",
+      "count": 24,
+      "errors": 14,
+      "error_rate": 0.5833333333333334
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_VALUE/digit_offset_0",
+      "count": 48,
+      "errors": 27,
+      "error_rate": 0.5625
+    },
+    {
+      "key": "DRAW_COUNT/digit_offset_0",
+      "count": 50,
+      "errors": 27,
+      "error_rate": 0.54
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_BIND/atomic_value",
+      "count": 2,
+      "errors": 1,
+      "error_rate": 0.5
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE/digit_offset_2",
+      "count": 35,
+      "errors": 17,
+      "error_rate": 0.4857142857142857
+    },
+    {
+      "key": "REPEAT_COUNT/digit_offset_0",
+      "count": 39,
+      "errors": 18,
+      "error_rate": 0.46153846153846156
+    },
+    {
+      "key": "COUNTER_THRESHOLD/digit_offset_0",
+      "count": 123,
+      "errors": 55,
+      "error_rate": 0.44715447154471544
+    },
+    {
+      "key": "ENERGY_AMOUNT/digit_offset_0",
+      "count": 28,
+      "errors": 12,
+      "error_rate": 0.42857142857142855
+    },
+    {
+      "key": "READ_VALUE/number_end",
+      "count": 2063,
+      "errors": 838,
+      "error_rate": 0.4062045564711585
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_VALUE/number_end",
+      "count": 29,
+      "errors": 11,
+      "error_rate": 0.3793103448275862
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_VALUE/digit_offset_1",
+      "count": 22,
+      "errors": 8,
+      "error_rate": 0.36363636363636365
+    },
+    {
+      "key": "TRIGGER_EFFECT/atomic_value",
+      "count": 123,
+      "errors": 40,
+      "error_rate": 0.3252032520325203
+    },
+    {
+      "key": "BASE_DAMAGE/digit_offset_1",
+      "count": 107,
+      "errors": 34,
+      "error_rate": 0.3177570093457944
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_VALUE/number_end",
+      "count": 227,
+      "errors": 69,
+      "error_rate": 0.3039647577092511
+    },
+    {
+      "key": "FIELD_OR_STATUS/atomic_value",
+      "count": 255,
+      "errors": 72,
+      "error_rate": 0.2823529411764706
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_VALUE/digit_offset_1",
+      "count": 44,
+      "errors": 12,
+      "error_rate": 0.2727272727272727
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_VALUE/digit_offset_1",
+      "count": 34,
+      "errors": 9,
+      "error_rate": 0.2647058823529412
+    },
+    {
+      "key": "TRIGGER_AMOUNT/digit_offset_0",
+      "count": 123,
+      "errors": 32,
+      "error_rate": 0.2601626016260163
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_VALUE/digit_offset_0",
+      "count": 28,
+      "errors": 7,
+      "error_rate": 0.25
+    },
+    {
+      "key": "PAYMENT_COST/digit_offset_0",
+      "count": 494,
+      "errors": 120,
+      "error_rate": 0.242914979757085
+    },
+    {
+      "key": "CHANGE_AMOUNT/digit_offset_1",
+      "count": 45,
+      "errors": 10,
+      "error_rate": 0.2222222222222222
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_VALUE/digit_offset_1",
+      "count": 107,
+      "errors": 20,
+      "error_rate": 0.18691588785046728
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_VALUE/digit_offset_0",
+      "count": 227,
+      "errors": 42,
+      "error_rate": 0.18502202643171806
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE/digit_offset_0",
+      "count": 821,
+      "errors": 140,
+      "error_rate": 0.1705237515225335
+    },
+    {
+      "key": "READ_BIND/atomic_value",
+      "count": 4126,
+      "errors": 506,
+      "error_rate": 0.12263693650024236
+    },
+    {
+      "key": "COUNTER_REF/atomic_value",
+      "count": 123,
+      "errors": 15,
+      "error_rate": 0.12195121951219512
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/CALC_FIELD_field/atomic_value",
+      "count": 304,
+      "errors": 32,
+      "error_rate": 0.10526315789473684
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_VALUE/number_end",
+      "count": 227,
+      "errors": 19,
+      "error_rate": 0.08370044052863436
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_VALUE/number_end",
+      "count": 48,
+      "errors": 4,
+      "error_rate": 0.08333333333333333
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_BIND/atomic_value",
+      "count": 58,
+      "errors": 4,
+      "error_rate": 0.06896551724137931
+    },
+    {
+      "key": "COUNTER_INCREMENT/digit_offset_0",
+      "count": 123,
+      "errors": 8,
+      "error_rate": 0.06504065040650407
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_BIND/atomic_value",
+      "count": 96,
+      "errors": 6,
+      "error_rate": 0.0625
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_VALUE/digit_offset_0",
+      "count": 123,
+      "errors": 7,
+      "error_rate": 0.056910569105691054
+    },
+    {
+      "key": "CHANGE_AMOUNT/sign",
+      "count": 18,
+      "errors": 1,
+      "error_rate": 0.05555555555555555
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_BIND/atomic_value",
+      "count": 48,
+      "errors": 2,
+      "error_rate": 0.041666666666666664
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/READ_SOURCE/atomic_value",
+      "count": 24,
+      "errors": 1,
+      "error_rate": 0.041666666666666664
+    },
+    {
+      "key": "COUNTER_EVENT/atomic_value",
+      "count": 123,
+      "errors": 5,
+      "error_rate": 0.04065040650406504
+    },
+    {
+      "key": "COUNTER_RESET/digit_offset_0",
+      "count": 123,
+      "errors": 5,
+      "error_rate": 0.04065040650406504
+    },
+    {
+      "key": "PILE_OPERATION/atomic_value",
+      "count": 26,
+      "errors": 1,
+      "error_rate": 0.038461538461538464
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_VALUE/number_end",
+      "count": 29,
+      "errors": 1,
+      "error_rate": 0.034482758620689655
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_VALUE/digit_offset_0",
+      "count": 437,
+      "errors": 15,
+      "error_rate": 0.034324942791762014
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE/number_end",
+      "count": 34,
+      "errors": 1,
+      "error_rate": 0.029411764705882353
+    },
+    {
+      "key": "BASE_DAMAGE/number_end",
+      "count": 230,
+      "errors": 6,
+      "error_rate": 0.02608695652173913
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/READ_SOURCE/atomic_value",
+      "count": 48,
+      "errors": 1,
+      "error_rate": 0.020833333333333332
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE/number_end",
+      "count": 233,
+      "errors": 4,
+      "error_rate": 0.017167381974248927
+    },
+    {
+      "key": "COUNTER_RESET/number_end",
+      "count": 123,
+      "errors": 2,
+      "error_rate": 0.016260162601626018
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_VALUE/number_end",
+      "count": 227,
+      "errors": 3,
+      "error_rate": 0.013215859030837005
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_SOURCE/atomic_value",
+      "count": 227,
+      "errors": 3,
+      "error_rate": 0.013215859030837005
+    },
+    {
+      "key": "DESTINATION/atomic_value",
+      "count": 526,
+      "errors": 6,
+      "error_rate": 0.011406844106463879
+    },
+    {
+      "key": "CARD_COUNT/digit_offset_0",
+      "count": 538,
+      "errors": 6,
+      "error_rate": 0.011152416356877323
+    },
+    {
+      "key": "READ_SOURCE/atomic_value",
+      "count": 2063,
+      "errors": 23,
+      "error_rate": 0.011148812409112942
+    },
+    {
+      "key": "TRIGGER_AMOUNT/number_end",
+      "count": 123,
+      "errors": 1,
+      "error_rate": 0.008130081300813009
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_damage/atomic_value",
+      "count": 227,
+      "errors": 1,
+      "error_rate": 0.004405286343612335
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_left/atomic_value",
+      "count": 227,
+      "errors": 1,
+      "error_rate": 0.004405286343612335
+    },
+    {
+      "key": "PLAY_KIND/atomic_value",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "ARG_DECREMENT/digit_offset_0",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ARG_DECREMENT/number_begin",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ARG_DECREMENT/number_end",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "BASE_DAMAGE/number_begin",
+      "count": 230,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_field/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_left/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_result/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_FIELD_right/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_VALUE/digit_offset_0",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_VALUE/digit_offset_1",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_VALUE/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER/CALC_VALUE/number_end",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_field/atomic_value",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_left/atomic_value",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_result/atomic_value",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_FIELD_right/atomic_value",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE/number_begin",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD/CALC_VALUE/number_end",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_left/atomic_value",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_result/atomic_value",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_FIELD_right/atomic_value",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH/CALC_VALUE/number_begin",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_absorbed/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_FIELD_block/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB/CALC_VALUE/number_begin",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_decrement/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_remaining/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_FIELD_result/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_VALUE/digit_offset_0",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_VALUE/number_begin",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF/CALC_VALUE/number_end",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_left/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_result/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_FIELD_threshold/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_VALUE/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD/CALC_VALUE/number_end",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/CALC_FIELD_result/atomic_value",
+      "count": 304,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE/READ_SOURCE/atomic_value",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_ATTACK_CHILDREN/CALC_FIELD_scope/atomic_value",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_ATTACK_CHILDREN/CALC_FIELD_targets/atomic_value",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_CHILDREN/CALC_FIELD_scope/atomic_value",
+      "count": 1000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_RANDOM_HIT_CHILDREN/CALC_FIELD_scope/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_RANDOM_HIT_CHILDREN/CALC_FIELD_target/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_FIELD_left/atomic_value",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_FIELD_result/atomic_value",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_VALUE/number_begin",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE/CALC_VALUE/number_end",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_body/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_count/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT/CALC_FIELD_result/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ITERATE_ENEMY_MASK/CALC_FIELD_order/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ITERATE_ENEMY_MASK/CALC_FIELD_targets/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_FIELD_left/atomic_value",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/CALC_VALUE/number_begin",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_DAMAGE/READ_SOURCE/atomic_value",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_FIELD_left/atomic_value",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_FIELD_result/atomic_value",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_VALUE/number_begin",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE/CALC_VALUE/number_end",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_advanced/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_reset/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_result/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_FIELD_triggered/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_VALUE/digit_offset_0",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_VALUE/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT/CALC_VALUE/number_end",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_left/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_result/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_FIELD_right/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK/CALC_VALUE/number_begin",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_result/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_FIELD_right/atomic_value",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_VALUE/number_begin",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/CALC_VALUE/number_end",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE/READ_BIND/atomic_value",
+      "count": 454,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_field/atomic_value",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_left/atomic_value",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_result/atomic_value",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_FIELD_right/atomic_value",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_VALUE/number_begin",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD/CALC_VALUE/number_end",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_left/atomic_value",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_result/atomic_value",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_FIELD_right/atomic_value",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP/CALC_VALUE/number_begin",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_left/atomic_value",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_result/atomic_value",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_FIELD_right/atomic_value",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP/CALC_VALUE/number_begin",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination_count/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_destination_result/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source_count/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_FIELD_source_result/atomic_value",
+      "count": 14,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_VALUE/number_begin",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_TRANSFER_PILE/CALC_VALUE/number_end",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_WRITE_RELIC_COUNTER/CALC_FIELD_field/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_WRITE_RELIC_COUNTER/CALC_FIELD_value/atomic_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALL_TARGET/atomic_value",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CARD_ACTION/atomic_value",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CARD_COUNT/number_begin",
+      "count": 538,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CARD_COUNT/number_end",
+      "count": 538,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CHANGE_AMOUNT/number_begin",
+      "count": 255,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CHANGE_AMOUNT/number_end",
+      "count": 255,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_INCREMENT/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_INCREMENT/number_end",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_RESET/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_THRESHOLD/digit_offset_1",
+      "count": 30,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_THRESHOLD/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_THRESHOLD/number_end",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_MULTIPLIER_SOURCE/atomic_value",
+      "count": 1,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_SOURCE/atomic_value",
+      "count": 3,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DAMAGE_SOURCE_KIND/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DRAW_COUNT/number_begin",
+      "count": 50,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DRAW_COUNT/number_end",
+      "count": 50,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENEMY_ORDER/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENERGY_AMOUNT/number_begin",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENERGY_AMOUNT/number_end",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENERGY_OP/atomic_value",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "PAYMENT_COST/number_begin",
+      "count": 494,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "PAYMENT_COST/number_end",
+      "count": 494,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "PAYMENT_SOURCE/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "QUERY_KIND/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REPEAT_COUNT/number_begin",
+      "count": 39,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REPEAT_COUNT/number_end",
+      "count": 39,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REPEAT_SOURCE/atomic_value",
+      "count": 6,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "TRIGGER_AMOUNT/number_begin",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    }
+  ],
+  "token_error_rates_min_20": [
+    {
+      "key": "<READ_RESPONSE_BEGIN>",
+      "count": 2392,
+      "errors": 2392,
+      "error_rate": 1.0
+    },
+    {
+      "key": "<READ_RESPONSE_END>",
+      "count": 2392,
+      "errors": 2392,
+      "error_rate": 1.0
+    },
+    {
+      "key": "READ_VALUE",
+      "count": 2392,
+      "errors": 2392,
+      "error_rate": 1.0
+    },
+    {
+      "key": "DIGIT_9",
+      "count": 217,
+      "errors": 207,
+      "error_rate": 0.9539170506912442
+    },
+    {
+      "key": "DIGIT_7",
+      "count": 304,
+      "errors": 276,
+      "error_rate": 0.9078947368421053
+    },
+    {
+      "key": "ENTITY_ENEMY_SLOT_1",
+      "count": 90,
+      "errors": 74,
+      "error_rate": 0.8222222222222222
+    },
+    {
+      "key": "DIGIT_8",
+      "count": 257,
+      "errors": 211,
+      "error_rate": 0.8210116731517509
+    },
+    {
+      "key": "ENTITY_ENEMY_SLOT_2",
+      "count": 45,
+      "errors": 35,
+      "error_rate": 0.7777777777777778
+    },
+    {
+      "key": "REGION_PILE_SHUFFLE",
+      "count": 26,
+      "errors": 19,
+      "error_rate": 0.7307692307692307
+    },
+    {
+      "key": "DIGIT_5",
+      "count": 810,
+      "errors": 585,
+      "error_rate": 0.7222222222222222
+    },
+    {
+      "key": "DIGIT_4",
+      "count": 805,
+      "errors": 572,
+      "error_rate": 0.7105590062111802
+    },
+    {
+      "key": "DIGIT_3",
+      "count": 957,
+      "errors": 680,
+      "error_rate": 0.7105538140020898
+    },
+    {
+      "key": "DIGIT_2",
+      "count": 1281,
+      "errors": 855,
+      "error_rate": 0.667447306791569
+    },
+    {
+      "key": "REGION_DRAW",
+      "count": 50,
+      "errors": 31,
+      "error_rate": 0.62
+    },
+    {
+      "key": "DIGIT_6",
+      "count": 438,
+      "errors": 269,
+      "error_rate": 0.6141552511415526
+    },
+    {
+      "key": "REGION_RELIC_COUNTER",
+      "count": 123,
+      "errors": 69,
+      "error_rate": 0.5609756097560976
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_1",
+      "count": 244,
+      "errors": 122,
+      "error_rate": 0.5
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_0",
+      "count": 32,
+      "errors": 16,
+      "error_rate": 0.5
+    },
+    {
+      "key": "REGION_SELF_DAMAGE",
+      "count": 34,
+      "errors": 16,
+      "error_rate": 0.47058823529411764
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_6",
+      "count": 30,
+      "errors": 13,
+      "error_rate": 0.43333333333333335
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_2",
+      "count": 176,
+      "errors": 60,
+      "error_rate": 0.3409090909090909
+    },
+    {
+      "key": "VALUE_reg_player_hp",
+      "count": 102,
+      "errors": 34,
+      "error_rate": 0.3333333333333333
+    },
+    {
+      "key": "VALUE_reg_trigger_damage",
+      "count": 102,
+      "errors": 34,
+      "error_rate": 0.3333333333333333
+    },
+    {
+      "key": "VALUE_player_buff_Demon_Form",
+      "count": 21,
+      "errors": 7,
+      "error_rate": 0.3333333333333333
+    },
+    {
+      "key": "NUM_LSD_BEGIN",
+      "count": 7337,
+      "errors": 2392,
+      "error_rate": 0.32601880877742945
+    },
+    {
+      "key": "DIGIT_1",
+      "count": 2412,
+      "errors": 782,
+      "error_rate": 0.324212271973466
+    },
+    {
+      "key": "READ_BIND",
+      "count": 4784,
+      "errors": 1520,
+      "error_rate": 0.3177257525083612
+    },
+    {
+      "key": "VALUE_enemy_1_buff_Weakened",
+      "count": 48,
+      "errors": 15,
+      "error_rate": 0.3125
+    },
+    {
+      "key": "REGION_REPEAT",
+      "count": 45,
+      "errors": 13,
+      "error_rate": 0.28888888888888886
+    },
+    {
+      "key": "VALUE_enemy_2_buff_Vulnerable",
+      "count": 26,
+      "errors": 7,
+      "error_rate": 0.2692307692307692
+    },
+    {
+      "key": "VALUE_player_buff_Strength",
+      "count": 127,
+      "errors": 34,
+      "error_rate": 0.2677165354330709
+    },
+    {
+      "key": "DIGIT_0",
+      "count": 1341,
+      "errors": 356,
+      "error_rate": 0.26547352721849365
+    },
+    {
+      "key": "VALUE_reg_relic_counter",
+      "count": 369,
+      "errors": 93,
+      "error_rate": 0.25203252032520324
+    },
+    {
+      "key": "REGION_STATE_CHANGE",
+      "count": 255,
+      "errors": 49,
+      "error_rate": 0.19215686274509805
+    },
+    {
+      "key": "VALUE_enemy_2_buff_Weakened",
+      "count": 21,
+      "errors": 4,
+      "error_rate": 0.19047619047619047
+    },
+    {
+      "key": "VALUE_player_buff_Feel_No_Pain",
+      "count": 21,
+      "errors": 4,
+      "error_rate": 0.19047619047619047
+    },
+    {
+      "key": "ENTITY_RELIC_SLOT_2",
+      "count": 27,
+      "errors": 5,
+      "error_rate": 0.18518518518518517
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_5",
+      "count": 38,
+      "errors": 7,
+      "error_rate": 0.18421052631578946
+    },
+    {
+      "key": "VALUE_reg_draw_count",
+      "count": 78,
+      "errors": 14,
+      "error_rate": 0.1794871794871795
+    },
+    {
+      "key": "VALUE_relic_5_counter",
+      "count": 39,
+      "errors": 7,
+      "error_rate": 0.1794871794871795
+    },
+    {
+      "key": "REGION_ENERGY",
+      "count": 28,
+      "errors": 5,
+      "error_rate": 0.17857142857142858
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_3",
+      "count": 108,
+      "errors": 17,
+      "error_rate": 0.1574074074074074
+    },
+    {
+      "key": "VALUE_relic_7_counter",
+      "count": 26,
+      "errors": 4,
+      "error_rate": 0.15384615384615385
+    },
+    {
+      "key": "ENERGY_OP",
+      "count": 28,
+      "errors": 4,
+      "error_rate": 0.14285714285714285
+    },
+    {
+      "key": "NUM_END",
+      "count": 7337,
+      "errors": 975,
+      "error_rate": 0.13288810140384352
+    },
+    {
+      "key": "VALUE_enemy_1_buff_Vulnerable",
+      "count": 41,
+      "errors": 5,
+      "error_rate": 0.12195121951219512
+    },
+    {
+      "key": "REGION_CALL",
+      "count": 45,
+      "errors": 5,
+      "error_rate": 0.1111111111111111
+    },
+    {
+      "key": "ENTITY_ENEMY_SLOT_0",
+      "count": 209,
+      "errors": 22,
+      "error_rate": 0.10526315789473684
+    },
+    {
+      "key": "VALUE_reg_target_block",
+      "count": 908,
+      "errors": 80,
+      "error_rate": 0.0881057268722467
+    },
+    {
+      "key": "VALUE_enemy_0_buff_Weakened",
+      "count": 93,
+      "errors": 8,
+      "error_rate": 0.08602150537634409
+    },
+    {
+      "key": "VALUE_player_buff_Juggernaut",
+      "count": 24,
+      "errors": 2,
+      "error_rate": 0.08333333333333333
+    },
+    {
+      "key": "PILE_OPERATION",
+      "count": 26,
+      "errors": 2,
+      "error_rate": 0.07692307692307693
+    },
+    {
+      "key": "VALUE_relic_6_counter",
+      "count": 43,
+      "errors": 3,
+      "error_rate": 0.06976744186046512
+    },
+    {
+      "key": "VALUE_player_buff_Rage",
+      "count": 33,
+      "errors": 2,
+      "error_rate": 0.06060606060606061
+    },
+    {
+      "key": "VALUE_enemy_1_hp",
+      "count": 61,
+      "errors": 3,
+      "error_rate": 0.04918032786885246
+    },
+    {
+      "key": "COUNTER_RESET",
+      "count": 123,
+      "errors": 6,
+      "error_rate": 0.04878048780487805
+    },
+    {
+      "key": "COUNTER_THRESHOLD",
+      "count": 123,
+      "errors": 6,
+      "error_rate": 0.04878048780487805
+    },
+    {
+      "key": "VALUE_reg_strength",
+      "count": 87,
+      "errors": 4,
+      "error_rate": 0.04597701149425287
+    },
+    {
+      "key": "REGION_ATTACK",
+      "count": 202,
+      "errors": 9,
+      "error_rate": 0.04455445544554455
+    },
+    {
+      "key": "VALUE_ATTACK_PLAY",
+      "count": 73,
+      "errors": 3,
+      "error_rate": 0.0410958904109589
+    },
+    {
+      "key": "VALUE_relic_2_counter",
+      "count": 196,
+      "errors": 8,
+      "error_rate": 0.04081632653061224
+    },
+    {
+      "key": "VALUE_enemy_2_block_present",
+      "count": 26,
+      "errors": 1,
+      "error_rate": 0.038461538461538464
+    },
+    {
+      "key": "VALUE_enemy_2_hp",
+      "count": 26,
+      "errors": 1,
+      "error_rate": 0.038461538461538464
+    },
+    {
+      "key": "CALCULATION_ADD_STRENGTH",
+      "count": 29,
+      "errors": 1,
+      "error_rate": 0.034482758620689655
+    },
+    {
+      "key": "VALUE_enemy_0_hp",
+      "count": 146,
+      "errors": 5,
+      "error_rate": 0.03424657534246575
+    },
+    {
+      "key": "REGION_CARD_DESTINATION",
+      "count": 526,
+      "errors": 18,
+      "error_rate": 0.034220532319391636
+    },
+    {
+      "key": "<REGION_END>",
+      "count": 7170,
+      "errors": 242,
+      "error_rate": 0.03375174337517434
+    },
+    {
+      "key": "VALUE_enemy_1_block",
+      "count": 60,
+      "errors": 2,
+      "error_rate": 0.03333333333333333
+    },
+    {
+      "key": "VALUE_enemy_1_block_present",
+      "count": 60,
+      "errors": 2,
+      "error_rate": 0.03333333333333333
+    },
+    {
+      "key": "VALUE_EXHAUST",
+      "count": 153,
+      "errors": 5,
+      "error_rate": 0.032679738562091505
+    },
+    {
+      "key": "TRIGGER_EFFECT",
+      "count": 123,
+      "errors": 4,
+      "error_rate": 0.032520325203252036
+    },
+    {
+      "key": "VALUE_CARD_PLAY",
+      "count": 34,
+      "errors": 1,
+      "error_rate": 0.029411764705882353
+    },
+    {
+      "key": "VALUE_NONE",
+      "count": 34,
+      "errors": 1,
+      "error_rate": 0.029411764705882353
+    },
+    {
+      "key": "<EFFECT_TREE_END>",
+      "count": 500,
+      "errors": 14,
+      "error_rate": 0.028
+    },
+    {
+      "key": "BASE_DAMAGE",
+      "count": 230,
+      "errors": 6,
+      "error_rate": 0.02608695652173913
+    },
+    {
+      "key": "REGION_DAMAGE",
+      "count": 233,
+      "errors": 6,
+      "error_rate": 0.02575107296137339
+    },
+    {
+      "key": "VALUE_enemy_0_buff_Vulnerable",
+      "count": 83,
+      "errors": 2,
+      "error_rate": 0.024096385542168676
+    },
+    {
+      "key": "ENTITY_RELIC_SLOT_1",
+      "count": 42,
+      "errors": 1,
+      "error_rate": 0.023809523809523808
+    },
+    {
+      "key": "VALUE_relic_0_counter",
+      "count": 48,
+      "errors": 1,
+      "error_rate": 0.020833333333333332
+    },
+    {
+      "key": "VALUE_runtime_relic_counter_4",
+      "count": 98,
+      "errors": 2,
+      "error_rate": 0.02040816326530612
+    },
+    {
+      "key": "DRAW_COUNT",
+      "count": 50,
+      "errors": 1,
+      "error_rate": 0.02
+    },
+    {
+      "key": "VALUE_relic_3_counter",
+      "count": 106,
+      "errors": 2,
+      "error_rate": 0.018867924528301886
+    },
+    {
+      "key": "VALUE_player_block",
+      "count": 225,
+      "errors": 4,
+      "error_rate": 0.017777777777777778
+    },
+    {
+      "key": "CALCULATION_BEGIN",
+      "count": 4946,
+      "errors": 79,
+      "error_rate": 0.01597250303275374
+    },
+    {
+      "key": "<REGION_BEGIN>",
+      "count": 3585,
+      "errors": 56,
+      "error_rate": 0.015620641562064157
+    },
+    {
+      "key": "VALUE_relic_4_counter",
+      "count": 105,
+      "errors": 1,
+      "error_rate": 0.009523809523809525
+    },
+    {
+      "key": "ENTITY_PILES",
+      "count": 561,
+      "errors": 5,
+      "error_rate": 0.008912655971479501
+    },
+    {
+      "key": "VALUE_reg_target_hp",
+      "count": 699,
+      "errors": 6,
+      "error_rate": 0.008583690987124463
+    },
+    {
+      "key": "TRIGGER_AMOUNT",
+      "count": 123,
+      "errors": 1,
+      "error_rate": 0.008130081300813009
+    },
+    {
+      "key": "<RUNTIME_CONTEXT_END>",
+      "count": 500,
+      "errors": 4,
+      "error_rate": 0.008
+    },
+    {
+      "key": "VALUE_SKILL",
+      "count": 214,
+      "errors": 1,
+      "error_rate": 0.004672897196261682
+    },
+    {
+      "key": "ENTITY_SELF",
+      "count": 2269,
+      "errors": 10,
+      "error_rate": 0.004407227853680035
+    },
+    {
+      "key": "CHANGE_AMOUNT",
+      "count": 255,
+      "errors": 1,
+      "error_rate": 0.00392156862745098
+    },
+    {
+      "key": "VALUE_relic_1_counter",
+      "count": 290,
+      "errors": 1,
+      "error_rate": 0.0034482758620689655
+    },
+    {
+      "key": "VALUE_DISCARD",
+      "count": 373,
+      "errors": 1,
+      "error_rate": 0.002680965147453083
+    },
+    {
+      "key": "VALUE_piles_discard_count",
+      "count": 787,
+      "errors": 2,
+      "error_rate": 0.0025412960609911056
+    },
+    {
+      "key": "PAYMENT_COST",
+      "count": 494,
+      "errors": 1,
+      "error_rate": 0.0020242914979757085
+    },
+    {
+      "key": "CARD_ACTION",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "PLAY_KIND",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "REGION_CARD_COMMIT",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "REGION_CARD_PLAY",
+      "count": 500,
+      "errors": 1,
+      "error_rate": 0.002
+    },
+    {
+      "key": "CALC_FIELD_right",
+      "count": 2132,
+      "errors": 2,
+      "error_rate": 0.0009380863039399625
+    },
+    {
+      "key": "<READ_REQUEST_END>",
+      "count": 2392,
+      "errors": 1,
+      "error_rate": 0.0004180602006688963
+    },
+    {
+      "key": "<CALCULATIONS_BEGIN>",
+      "count": 3585,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<CALCULATIONS_END>",
+      "count": 3585,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<EFFECT_TREE_BEGIN>",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<OUTPUT_END>",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<READ_REQUEST_BEGIN>",
+      "count": 2392,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<RUNTIME_CONTEXT_BEGIN>",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<TRANSITION_BEGIN>",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "<TRANSITION_END>",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ARG_DECREMENT",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_COUNTER",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_ADD_FIELD",
+      "count": 821,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_BLOCK_ABSORB",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CALL_SELF",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_COUNTER_THRESHOLD",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_CHECK_PRESENCE",
+      "count": 304,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_COMPLETE_ACTION",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_END",
+      "count": 4946,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_ATTACK_CHILDREN",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_EXECUTE_CHILDREN",
+      "count": 1000,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_FLOOR_DIVIDE_VULNERABLE",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_INITIALIZE_REPEAT",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_MULTIPLY_VULNERABLE",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SELECT_COUNTER_RESULT",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_BLOCK_DAMAGE",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_FIELD",
+      "count": 437,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_HP",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_SUBTRACT_PLAYER_HP",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALCULATION_WRITE_RELIC_COUNTER",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_absorbed",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_advanced",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_block",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_body",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_count",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_damage",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_decrement",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_field",
+      "count": 1808,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_left",
+      "count": 2351,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_remaining",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_reset",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_result",
+      "count": 2868,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_scope",
+      "count": 1208,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_targets",
+      "count": 208,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_threshold",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_triggered",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_FIELD_value",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALC_VALUE",
+      "count": 2774,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CALL_TARGET",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "CARD_COUNT",
+      "count": 538,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_EVENT",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_INCREMENT",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "COUNTER_REF",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DELTA_SLOT",
+      "count": 1493,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "DESTINATION",
+      "count": 526,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENERGY_AMOUNT",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENTITY_ENEMY_MASK",
+      "count": 198,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "ENTITY_REF",
+      "count": 3495,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "FIELD_OR_STATUS",
+      "count": 255,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "READ_SOURCE",
+      "count": 2392,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REGION_CARD_PAYMENT",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REGION_COMPLETE",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REGION_KIND",
+      "count": 3585,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "REPEAT_COUNT",
+      "count": 39,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_ANONYMOUS_RULE_VECTOR",
+      "count": 500,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_ATTACK",
+      "count": 202,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_ENTITY_ENEMY_MASK",
+      "count": 192,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_GAIN",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_POWER",
+      "count": 84,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_SELF",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_call_frame_remaining",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_enemy_0_block",
+      "count": 141,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_enemy_0_block_present",
+      "count": 141,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_enemy_2_block",
+      "count": 26,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_ARG_DECREMENT",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_BASE_DAMAGE",
+      "count": 383,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_CARD_COUNT",
+      "count": 538,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_CHANGE_AMOUNT",
+      "count": 255,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_COUNTER_INCREMENT",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_COUNTER_RESET",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_COUNTER_THRESHOLD",
+      "count": 123,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_DRAW_COUNT",
+      "count": 50,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_ENERGY_AMOUNT",
+      "count": 28,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_PAYMENT_COST",
+      "count": 381,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_header_REPEAT_COUNT",
+      "count": 39,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_node_children",
+      "count": 1253,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_parent_trigger_damage",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_piles_draw_count",
+      "count": 138,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_piles_exhaust_count",
+      "count": 306,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_player_buff_Double_Tap",
+      "count": 51,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_player_energy",
+      "count": 830,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_player_hp",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_absorbed_damage",
+      "count": 681,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_call_frame",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_call_frame_after",
+      "count": 45,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_call_remaining",
+      "count": 135,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_counter_advanced",
+      "count": 369,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_counter_triggered",
+      "count": 246,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_damage_after_strength",
+      "count": 81,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_damage_after_vulnerable",
+      "count": 143,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_damage_vulnerable_numerator",
+      "count": 96,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_discard_count",
+      "count": 42,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_draw_count_after",
+      "count": 26,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_field_after_0",
+      "count": 1246,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_field_before_0",
+      "count": 3744,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_has_block",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_has_strength",
+      "count": 29,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_has_vulnerable",
+      "count": 48,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_player_hp_after",
+      "count": 34,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_relic_counter_after",
+      "count": 246,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_target_block_after",
+      "count": 227,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_target_hp_after",
+      "count": 233,
+      "errors": 0,
+      "error_rate": 0.0
+    },
+    {
+      "key": "VALUE_reg_unblocked_damage",
+      "count": 454,
+      "errors": 0,
+      "error_rate": 0.0
+    }
+  ],
+  "top_confusions": [
+    {
+      "expected": "READ_VALUE",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 2103
+    },
+    {
+      "expected": "<READ_RESPONSE_END>",
+      "predicted": "CALCULATION_END",
+      "count": 2025
+    },
+    {
+      "expected": "<READ_RESPONSE_BEGIN>",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 1481
+    },
+    {
+      "expected": "READ_BIND",
+      "predicted": "<READ_RESPONSE_BEGIN>",
+      "count": 937
+    },
+    {
+      "expected": "NUM_LSD_BEGIN",
+      "predicted": "READ_VALUE",
+      "count": 896
+    },
+    {
+      "expected": "<READ_RESPONSE_BEGIN>",
+      "predicted": "VALUE_reg_relic_counter",
+      "count": 526
+    },
+    {
+      "expected": "NUM_LSD_BEGIN",
+      "predicted": "READ_BIND",
+      "count": 373
+    },
+    {
+      "expected": "NUM_LSD_BEGIN",
+      "predicted": "<REGION_BEGIN>",
+      "count": 330
+    },
+    {
+      "expected": "DIGIT_2",
+      "predicted": "DIGIT_0",
+      "count": 330
+    },
+    {
+      "expected": "NUM_LSD_BEGIN",
+      "predicted": "DIGIT_6",
+      "count": 246
+    },
+    {
+      "expected": "DIGIT_3",
+      "predicted": "DIGIT_0",
+      "count": 243
+    },
+    {
+      "expected": "<READ_RESPONSE_END>",
+      "predicted": "<REGION_END>",
+      "count": 240
+    },
+    {
+      "expected": "NUM_LSD_BEGIN",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 237
+    },
+    {
+      "expected": "DIGIT_1",
+      "predicted": "DIGIT_0",
+      "count": 233
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 233
+    },
+    {
+      "expected": "<REGION_END>",
+      "predicted": "<REGION_BEGIN>",
+      "count": 218
+    },
+    {
+      "expected": "<READ_RESPONSE_BEGIN>",
+      "predicted": "FIELD_OR_STATUS",
+      "count": 210
+    },
+    {
+      "expected": "DIGIT_5",
+      "predicted": "DIGIT_0",
+      "count": 179
+    },
+    {
+      "expected": "READ_BIND",
+      "predicted": "CALC_FIELD_result",
+      "count": 155
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "CALC_FIELD_count",
+      "count": 145
+    },
+    {
+      "expected": "DIGIT_6",
+      "predicted": "DIGIT_0",
+      "count": 143
+    },
+    {
+      "expected": "READ_BIND",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 140
+    },
+    {
+      "expected": "DIGIT_4",
+      "predicted": "DIGIT_0",
+      "count": 140
+    },
+    {
+      "expected": "DIGIT_1",
+      "predicted": "NUM_END",
+      "count": 140
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "REGION_CARD_PAYMENT",
+      "count": 136
+    },
+    {
+      "expected": "DIGIT_8",
+      "predicted": "DIGIT_0",
+      "count": 130
+    },
+    {
+      "expected": "<READ_RESPONSE_END>",
+      "predicted": "<REGION_BEGIN>",
+      "count": 124
+    },
+    {
+      "expected": "DIGIT_7",
+      "predicted": "DIGIT_0",
+      "count": 117
+    },
+    {
+      "expected": "DIGIT_2",
+      "predicted": "DIGIT_1",
+      "count": 104
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "DIGIT_1",
+      "count": 104
+    },
+    {
+      "expected": "DIGIT_9",
+      "predicted": "DIGIT_0",
+      "count": 103
+    },
+    {
+      "expected": "READ_BIND",
+      "predicted": "CALC_FIELD_left",
+      "count": 96
+    },
+    {
+      "expected": "DIGIT_4",
+      "predicted": "NUM_END",
+      "count": 95
+    },
+    {
+      "expected": "VALUE_reg_relic_counter",
+      "predicted": "VALUE_reg_target_hp",
+      "count": 93
+    },
+    {
+      "expected": "DIGIT_1",
+      "predicted": "DIGIT_4",
+      "count": 91
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "DIGIT_2",
+      "count": 91
+    },
+    {
+      "expected": "DIGIT_2",
+      "predicted": "<READ_REQUEST_END>",
+      "count": 90
+    },
+    {
+      "expected": "NUM_END",
+      "predicted": "DIGIT_3",
+      "count": 90
+    },
+    {
+      "expected": "DIGIT_3",
+      "predicted": "NUM_END",
+      "count": 84
+    },
+    {
+      "expected": "VALUE_reg_target_block",
+      "predicted": "VALUE_reg_target_hp",
+      "count": 80
+    }
+  ],
+  "delta_slots_by_active_mae": [
+    {
+      "index": 143,
+      "name": "enemy[0].present",
+      "active_count": 1,
+      "active_mae": 0.9976500235497952,
+      "active_rmse": 0.9976500235497952,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.001302520522146939
+    },
+    {
+      "index": 151,
+      "name": "enemy[0].gone",
+      "active_count": 1,
+      "active_mae": 0.9953755987808108,
+      "active_rmse": 0.9953755987808108,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.0009681233616880374
+    },
+    {
+      "index": 3,
+      "name": "player.block_present",
+      "active_count": 2,
+      "active_mae": 0.991087076254189,
+      "active_rmse": 0.9910871720752656,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1491,
+      "zero_target_abs_prediction_mean": 0.0018396024605650317
+    },
+    {
+      "index": 81,
+      "name": "player.buff.Rage",
+      "active_count": 11,
+      "active_mae": 0.9738843347877264,
+      "active_rmse": 0.973884698768111,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1482,
+      "zero_target_abs_prediction_mean": 0.0041199038536526645
+    },
+    {
+      "index": 55,
+      "name": "player.buff.Demon Form",
+      "active_count": 6,
+      "active_mae": 0.9713577690223852,
+      "active_rmse": 0.9713580112979285,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.0047381277352862875
+    },
+    {
+      "index": 64,
+      "name": "player.buff.Fire Breathing",
+      "active_count": 4,
+      "active_mae": 0.9698239015415311,
+      "active_rmse": 0.9699672837784233,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1489,
+      "zero_target_abs_prediction_mean": 0.007543987022866692
+    },
+    {
+      "index": 69,
+      "name": "player.buff.Juggernaut",
+      "active_count": 7,
+      "active_mae": 0.9697007683238813,
+      "active_rmse": 0.9697008839304069,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1486,
+      "zero_target_abs_prediction_mean": 0.007822898086028807
+    },
+    {
+      "index": 10,
+      "name": "player.buff.Dexterity",
+      "active_count": 1,
+      "active_mae": 0.9666019529104233,
+      "active_rmse": 0.9666019529104233,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.005407321235385346
+    },
+    {
+      "index": 74,
+      "name": "player.buff.Metallicize",
+      "active_count": 4,
+      "active_mae": 0.9623901238664985,
+      "active_rmse": 0.9623905873184792,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1489,
+      "zero_target_abs_prediction_mean": 0.0054248812732889075
+    },
+    {
+      "index": 63,
+      "name": "player.buff.Feel No Pain",
+      "active_count": 5,
+      "active_mae": 0.9611412793397903,
+      "active_rmse": 0.9611424899679484,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.005655839738044237
+    },
+    {
+      "index": 247,
+      "name": "enemy[2].block_present",
+      "active_count": 6,
+      "active_mae": 0.9571947070459524,
+      "active_rmse": 0.9573447374738425,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.006444679378552542
+    },
+    {
+      "index": 265,
+      "name": "enemy[2].buff.Weakened",
+      "active_count": 6,
+      "active_mae": 0.9516134355217218,
+      "active_rmse": 0.9516136713782872,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.007496500948295887
+    },
+    {
+      "index": 264,
+      "name": "enemy[2].buff.Vulnerable",
+      "active_count": 5,
+      "active_mae": 0.9492297239601613,
+      "active_rmse": 0.9492297902761833,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.012493617407995107
+    },
+    {
+      "index": 197,
+      "name": "enemy[1].block_present",
+      "active_count": 13,
+      "active_mae": 0.9374409552950126,
+      "active_rmse": 0.9376654770273671,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1480,
+      "zero_target_abs_prediction_mean": 0.012229300546695831
+    },
+    {
+      "index": 214,
+      "name": "enemy[1].buff.Vulnerable",
+      "active_count": 8,
+      "active_mae": 0.9031449435278773,
+      "active_rmse": 0.9031488523680146,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1485,
+      "zero_target_abs_prediction_mean": 0.013345689173185765
+    },
+    {
+      "index": 215,
+      "name": "enemy[1].buff.Weakened",
+      "active_count": 12,
+      "active_mae": 0.900312460338076,
+      "active_rmse": 0.9003175690283999,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1481,
+      "zero_target_abs_prediction_mean": 0.010615810659474452
+    },
+    {
+      "index": 147,
+      "name": "enemy[0].block_present",
+      "active_count": 27,
+      "active_mae": 0.8476662933826447,
+      "active_rmse": 0.8483704962222888,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1466,
+      "zero_target_abs_prediction_mean": 0.02151254062969009
+    },
+    {
+      "index": 164,
+      "name": "enemy[0].buff.Vulnerable",
+      "active_count": 14,
+      "active_mae": 0.8299863593918937,
+      "active_rmse": 0.8299923229306965,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1479,
+      "zero_target_abs_prediction_mean": 0.021367946590343835
+    },
+    {
+      "index": 165,
+      "name": "enemy[0].buff.Weakened",
+      "active_count": 19,
+      "active_mae": 0.8194200169099005,
+      "active_rmse": 0.819423507748588,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1474,
+      "zero_target_abs_prediction_mean": 0.02196999285098423
+    },
+    {
+      "index": 9,
+      "name": "player.buff.Strength",
+      "active_count": 19,
+      "active_mae": 0.7639266981890327,
+      "active_rmse": 0.7639725020142605,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1474,
+      "zero_target_abs_prediction_mean": 0.0227147041923018
+    },
+    {
+      "index": 41,
+      "name": "player.buff.Double Tap",
+      "active_count": 5,
+      "active_mae": 0.5884974956512451,
+      "active_rmse": 0.5884983755425878,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.006542645021498527
+    },
+    {
+      "index": 246,
+      "name": "enemy[2].block",
+      "active_count": 26,
+      "active_mae": 0.09992636557525167,
+      "active_rmse": 0.13935673360327672,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1467,
+      "zero_target_abs_prediction_mean": 0.003169684288652092
+    },
+    {
+      "index": 196,
+      "name": "enemy[1].block",
+      "active_count": 60,
+      "active_mae": 0.06902322135865688,
+      "active_rmse": 0.08162427940585032,
+      "within_0.005": 0.05000000074505806,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1433,
+      "zero_target_abs_prediction_mean": 0.006208728685601701
+    },
+    {
+      "index": 146,
+      "name": "enemy[0].block",
+      "active_count": 141,
+      "active_mae": 0.058853902226538524,
+      "active_rmse": 0.07985590737258094,
+      "within_0.005": 0.07801418751478195,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1352,
+      "zero_target_abs_prediction_mean": 0.008944949474269744
+    },
+    {
+      "index": 194,
+      "name": "enemy[1].hp",
+      "active_count": 14,
+      "active_mae": 0.05745172139722854,
+      "active_rmse": 0.07265060109707007,
+      "within_0.005": 0.0714285746216774,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1479,
+      "zero_target_abs_prediction_mean": 0.001443673718180394
+    },
+    {
+      "index": 144,
+      "name": "enemy[0].hp",
+      "active_count": 32,
+      "active_mae": 0.050444319524103776,
+      "active_rmse": 0.06408613130786706,
+      "within_0.005": 0.0625,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1461,
+      "zero_target_abs_prediction_mean": 0.0011436658260345742
+    },
+    {
+      "index": 2,
+      "name": "player.block",
+      "active_count": 74,
+      "active_mae": 0.04172925747981345,
+      "active_rmse": 0.08135929891827691,
+      "within_0.005": 0.13513512909412384,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1419,
+      "zero_target_abs_prediction_mean": 0.006248396379614565
+    },
+    {
+      "index": 244,
+      "name": "enemy[2].hp",
+      "active_count": 5,
+      "active_mae": 0.03871002718806267,
+      "active_rmse": 0.06461123980892221,
+      "within_0.005": 0.20000000298023224,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.0006079373832557961
+    },
+    {
+      "index": 4,
+      "name": "player.energy",
+      "active_count": 415,
+      "active_mae": 0.03192657483629433,
+      "active_rmse": 0.0638594483229139,
+      "within_0.005": 0.3108433783054352,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1078,
+      "zero_target_abs_prediction_mean": 0.012951152782526744
+    },
+    {
+      "index": 8,
+      "name": "player.hp_frac",
+      "active_count": 34,
+      "active_mae": 0.01740676659049795,
+      "active_rmse": 0.025240593731816235,
+      "within_0.005": 0.3235294222831726,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1459,
+      "zero_target_abs_prediction_mean": 0.0009941749137569655
+    },
+    {
+      "index": 393,
+      "name": "piles.draw_count",
+      "active_count": 76,
+      "active_mae": 0.015488391622631369,
+      "active_rmse": 0.01913579310982499,
+      "within_0.005": 0.05263157933950424,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1417,
+      "zero_target_abs_prediction_mean": 0.0010166384679510228
+    },
+    {
+      "index": 395,
+      "name": "piles.exhaust_count",
+      "active_count": 153,
+      "active_mae": 0.009063686000706714,
+      "active_rmse": 0.009987798384070929,
+      "within_0.005": 0.0,
+      "sign_accuracy": 0.9934640526771545,
+      "zero_target_count": 1340,
+      "zero_target_abs_prediction_mean": 0.002165852215596294
+    },
+    {
+      "index": 0,
+      "name": "player.hp",
+      "active_count": 34,
+      "active_mae": 0.00730677557123058,
+      "active_rmse": 0.01072361148038562,
+      "within_0.005": 0.7058823704719543,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1459,
+      "zero_target_abs_prediction_mean": 0.0007760315507801699
+    },
+    {
+      "index": 394,
+      "name": "piles.discard_count",
+      "active_count": 396,
+      "active_mae": 0.002407406863634183,
+      "active_rmse": 0.004481120975121783,
+      "within_0.005": 0.9520202279090881,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1097,
+      "zero_target_abs_prediction_mean": 0.001249184743259289
+    }
+  ],
+  "delta_slots_by_total_active_error": [
+    {
+      "index": 147,
+      "name": "enemy[0].block_present",
+      "active_count": 27,
+      "active_mae": 0.8476662933826447,
+      "active_rmse": 0.8483704962222888,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1466,
+      "zero_target_abs_prediction_mean": 0.02151254062969009
+    },
+    {
+      "index": 165,
+      "name": "enemy[0].buff.Weakened",
+      "active_count": 19,
+      "active_mae": 0.8194200169099005,
+      "active_rmse": 0.819423507748588,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1474,
+      "zero_target_abs_prediction_mean": 0.02196999285098423
+    },
+    {
+      "index": 9,
+      "name": "player.buff.Strength",
+      "active_count": 19,
+      "active_mae": 0.7639266981890327,
+      "active_rmse": 0.7639725020142605,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1474,
+      "zero_target_abs_prediction_mean": 0.0227147041923018
+    },
+    {
+      "index": 4,
+      "name": "player.energy",
+      "active_count": 415,
+      "active_mae": 0.03192657483629433,
+      "active_rmse": 0.0638594483229139,
+      "within_0.005": 0.3108433783054352,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1078,
+      "zero_target_abs_prediction_mean": 0.012951152782526744
+    },
+    {
+      "index": 197,
+      "name": "enemy[1].block_present",
+      "active_count": 13,
+      "active_mae": 0.9374409552950126,
+      "active_rmse": 0.9376654770273671,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1480,
+      "zero_target_abs_prediction_mean": 0.012229300546695831
+    },
+    {
+      "index": 164,
+      "name": "enemy[0].buff.Vulnerable",
+      "active_count": 14,
+      "active_mae": 0.8299863593918937,
+      "active_rmse": 0.8299923229306965,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1479,
+      "zero_target_abs_prediction_mean": 0.021367946590343835
+    },
+    {
+      "index": 215,
+      "name": "enemy[1].buff.Weakened",
+      "active_count": 12,
+      "active_mae": 0.900312460338076,
+      "active_rmse": 0.9003175690283999,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1481,
+      "zero_target_abs_prediction_mean": 0.010615810659474452
+    },
+    {
+      "index": 81,
+      "name": "player.buff.Rage",
+      "active_count": 11,
+      "active_mae": 0.9738843347877264,
+      "active_rmse": 0.973884698768111,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1482,
+      "zero_target_abs_prediction_mean": 0.0041199038536526645
+    },
+    {
+      "index": 146,
+      "name": "enemy[0].block",
+      "active_count": 141,
+      "active_mae": 0.058853902226538524,
+      "active_rmse": 0.07985590737258094,
+      "within_0.005": 0.07801418751478195,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1352,
+      "zero_target_abs_prediction_mean": 0.008944949474269744
+    },
+    {
+      "index": 214,
+      "name": "enemy[1].buff.Vulnerable",
+      "active_count": 8,
+      "active_mae": 0.9031449435278773,
+      "active_rmse": 0.9031488523680146,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1485,
+      "zero_target_abs_prediction_mean": 0.013345689173185765
+    },
+    {
+      "index": 69,
+      "name": "player.buff.Juggernaut",
+      "active_count": 7,
+      "active_mae": 0.9697007683238813,
+      "active_rmse": 0.9697008839304069,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1486,
+      "zero_target_abs_prediction_mean": 0.007822898086028807
+    },
+    {
+      "index": 55,
+      "name": "player.buff.Demon Form",
+      "active_count": 6,
+      "active_mae": 0.9713577690223852,
+      "active_rmse": 0.9713580112979285,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.0047381277352862875
+    },
+    {
+      "index": 247,
+      "name": "enemy[2].block_present",
+      "active_count": 6,
+      "active_mae": 0.9571947070459524,
+      "active_rmse": 0.9573447374738425,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.006444679378552542
+    },
+    {
+      "index": 265,
+      "name": "enemy[2].buff.Weakened",
+      "active_count": 6,
+      "active_mae": 0.9516134355217218,
+      "active_rmse": 0.9516136713782872,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1487,
+      "zero_target_abs_prediction_mean": 0.007496500948295887
+    },
+    {
+      "index": 63,
+      "name": "player.buff.Feel No Pain",
+      "active_count": 5,
+      "active_mae": 0.9611412793397903,
+      "active_rmse": 0.9611424899679484,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.005655839738044237
+    },
+    {
+      "index": 264,
+      "name": "enemy[2].buff.Vulnerable",
+      "active_count": 5,
+      "active_mae": 0.9492297239601613,
+      "active_rmse": 0.9492297902761833,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.012493617407995107
+    },
+    {
+      "index": 196,
+      "name": "enemy[1].block",
+      "active_count": 60,
+      "active_mae": 0.06902322135865688,
+      "active_rmse": 0.08162427940585032,
+      "within_0.005": 0.05000000074505806,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1433,
+      "zero_target_abs_prediction_mean": 0.006208728685601701
+    },
+    {
+      "index": 64,
+      "name": "player.buff.Fire Breathing",
+      "active_count": 4,
+      "active_mae": 0.9698239015415311,
+      "active_rmse": 0.9699672837784233,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1489,
+      "zero_target_abs_prediction_mean": 0.007543987022866692
+    },
+    {
+      "index": 74,
+      "name": "player.buff.Metallicize",
+      "active_count": 4,
+      "active_mae": 0.9623901238664985,
+      "active_rmse": 0.9623905873184792,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1489,
+      "zero_target_abs_prediction_mean": 0.0054248812732889075
+    },
+    {
+      "index": 2,
+      "name": "player.block",
+      "active_count": 74,
+      "active_mae": 0.04172925747981345,
+      "active_rmse": 0.08135929891827691,
+      "within_0.005": 0.13513512909412384,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1419,
+      "zero_target_abs_prediction_mean": 0.006248396379614565
+    },
+    {
+      "index": 41,
+      "name": "player.buff.Double Tap",
+      "active_count": 5,
+      "active_mae": 0.5884974956512451,
+      "active_rmse": 0.5884983755425878,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.006542645021498527
+    },
+    {
+      "index": 246,
+      "name": "enemy[2].block",
+      "active_count": 26,
+      "active_mae": 0.09992636557525167,
+      "active_rmse": 0.13935673360327672,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1467,
+      "zero_target_abs_prediction_mean": 0.003169684288652092
+    },
+    {
+      "index": 3,
+      "name": "player.block_present",
+      "active_count": 2,
+      "active_mae": 0.991087076254189,
+      "active_rmse": 0.9910871720752656,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1491,
+      "zero_target_abs_prediction_mean": 0.0018396024605650317
+    },
+    {
+      "index": 144,
+      "name": "enemy[0].hp",
+      "active_count": 32,
+      "active_mae": 0.050444319524103776,
+      "active_rmse": 0.06408613130786706,
+      "within_0.005": 0.0625,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1461,
+      "zero_target_abs_prediction_mean": 0.0011436658260345742
+    },
+    {
+      "index": 395,
+      "name": "piles.exhaust_count",
+      "active_count": 153,
+      "active_mae": 0.009063686000706714,
+      "active_rmse": 0.009987798384070929,
+      "within_0.005": 0.0,
+      "sign_accuracy": 0.9934640526771545,
+      "zero_target_count": 1340,
+      "zero_target_abs_prediction_mean": 0.002165852215596294
+    },
+    {
+      "index": 393,
+      "name": "piles.draw_count",
+      "active_count": 76,
+      "active_mae": 0.015488391622631369,
+      "active_rmse": 0.01913579310982499,
+      "within_0.005": 0.05263157933950424,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1417,
+      "zero_target_abs_prediction_mean": 0.0010166384679510228
+    },
+    {
+      "index": 143,
+      "name": "enemy[0].present",
+      "active_count": 1,
+      "active_mae": 0.9976500235497952,
+      "active_rmse": 0.9976500235497952,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.001302520522146939
+    },
+    {
+      "index": 151,
+      "name": "enemy[0].gone",
+      "active_count": 1,
+      "active_mae": 0.9953755987808108,
+      "active_rmse": 0.9953755987808108,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.0009681233616880374
+    },
+    {
+      "index": 10,
+      "name": "player.buff.Dexterity",
+      "active_count": 1,
+      "active_mae": 0.9666019529104233,
+      "active_rmse": 0.9666019529104233,
+      "within_0.005": 0.0,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1492,
+      "zero_target_abs_prediction_mean": 0.005407321235385346
+    },
+    {
+      "index": 394,
+      "name": "piles.discard_count",
+      "active_count": 396,
+      "active_mae": 0.002407406863634183,
+      "active_rmse": 0.004481120975121783,
+      "within_0.005": 0.9520202279090881,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1097,
+      "zero_target_abs_prediction_mean": 0.001249184743259289
+    },
+    {
+      "index": 194,
+      "name": "enemy[1].hp",
+      "active_count": 14,
+      "active_mae": 0.05745172139722854,
+      "active_rmse": 0.07265060109707007,
+      "within_0.005": 0.0714285746216774,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1479,
+      "zero_target_abs_prediction_mean": 0.001443673718180394
+    },
+    {
+      "index": 8,
+      "name": "player.hp_frac",
+      "active_count": 34,
+      "active_mae": 0.01740676659049795,
+      "active_rmse": 0.025240593731816235,
+      "within_0.005": 0.3235294222831726,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1459,
+      "zero_target_abs_prediction_mean": 0.0009941749137569655
+    },
+    {
+      "index": 0,
+      "name": "player.hp",
+      "active_count": 34,
+      "active_mae": 0.00730677557123058,
+      "active_rmse": 0.01072361148038562,
+      "within_0.005": 0.7058823704719543,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1459,
+      "zero_target_abs_prediction_mean": 0.0007760315507801699
+    },
+    {
+      "index": 244,
+      "name": "enemy[2].hp",
+      "active_count": 5,
+      "active_mae": 0.03871002718806267,
+      "active_rmse": 0.06461123980892221,
+      "within_0.005": 0.20000000298023224,
+      "sign_accuracy": 1.0,
+      "zero_target_count": 1488,
+      "zero_target_abs_prediction_mean": 0.0006079373832557961
+    }
+  ]
+}

@@ -32,6 +32,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from env.core import vocab as V
 from rl.accumulating_ppo import (
     AccumulatingMaskablePPO,
+    NOSL_IS_AZ_SEARCH_MODES,
     ppo_loss_components,
 )
 from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
@@ -41,6 +42,7 @@ from rl.tasks.wholerun import WholeRunTask
 # Register custom policies before loading checkpoints.
 from rl import pointer_policy as _pointer_policy  # noqa: F401
 from rl import split_policy as _split_policy  # noqa: F401
+from rl import semantic_reasoning_policy as _semantic_reasoning_policy  # noqa: F401
 from rl import model as model_utils
 
 
@@ -85,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--remote-root", default="/tmp/sts_dist_sb3")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--card-vector-checkpoint",
+        type=Path,
+        default=None,
+        help="Freeze the anonymous card-rule encoder loaded from this v7 "
+        "checkpoint while initializing the WholeRun policy.",
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--updates", type=int, default=1)
     parser.add_argument(
@@ -119,6 +128,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ascension", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
+        "--card-language",
+        action="store_true",
+        help="Expose tokenized anonymous card programs in observations.",
+    )
+    parser.add_argument(
+        "--combat-language",
+        action="store_true",
+        help="Expose tokenized enemy intents and live combat status bars.",
+    )
+    parser.add_argument(
         "--float32-matmul-precision",
         choices=("highest", "high", "medium"),
         default="high",
@@ -143,6 +162,115 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
     parser.add_argument("--wandb-name", default=None)
+    parser.add_argument(
+        "--reasoning-coef", type=float, default=0.2,
+        help="Auxiliary autoregressive reasoning loss coefficient.",
+    )
+    parser.add_argument(
+        "--interactive-reasoning",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override trace capture for the environment. Use --no-"
+        "interactive-reasoning for the split-pointer card-vector run.",
+    )
+    parser.add_argument("--reasoning-batch-size", type=int, default=128)
+    parser.add_argument("--reasoning-updates", type=int, default=4)
+    parser.add_argument(
+        "--nosl-is-az-simulations",
+        type=int,
+        default=None,
+        help="Override checkpoint NOSL simulation budget.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-depth",
+        type=int,
+        default=None,
+        help="Override the checkpoint's NOSL search depth; 0 enables unlimited "
+        "AlphaZero-style node expansion.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-prior-temperature",
+        type=float,
+        default=None,
+        help="Override checkpoint policy-logit temperature for native search.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-search-mode",
+        choices=tuple(NOSL_IS_AZ_SEARCH_MODES),
+        default=None,
+        help="Override native search with puct, gumbel, or full_gumbel.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-candidates",
+        type=int,
+        default=None,
+        help="Override root Gumbel top-k size; 0 means all legal actions.",
+    )
+    parser.add_argument("--nosl-is-az-gumbel-scale", type=float, default=None)
+    parser.add_argument(
+        "--nosl-is-az-gumbel-value-scale", type=float, default=None
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-max-visit-init", type=float, default=None
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-rescale-q",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-use-mixed-value",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+    )
+    parser.add_argument(
+        "--nosl-is-az-batch-size",
+        type=int,
+        default=None,
+        help="Override the number of replay roots sampled per AlphaZero update.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-replay",
+        dest="nosl_is_az_replay_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable the labelled-combat replay buffer. Omission preserves "
+             "the checkpoint setting; legacy checkpoints default to enabled.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-micro-batch-size",
+        type=int,
+        default=None,
+        help="Maximum replay roots in one forward/backward pass; gradients are "
+        "sample-weighted and accumulated into one effective AZ batch.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-replay-capacity",
+        type=int,
+        default=None,
+        help="Per-rank FIFO replay capacity in labelled combat roots.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-replay-min-size",
+        type=int,
+        default=None,
+        help="Minimum local replay roots required before AZ updates begin.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-leaf-batch-size",
+        type=int,
+        default=None,
+        help="Override C++ leaves returned per worker round; larger values "
+             "reduce worker synchronization and increase GPU batch size.",
+    )
+    parser.add_argument("--nosl-is-az-dirichlet-alpha", type=float, default=0.0)
+    parser.add_argument("--nosl-is-az-dirichlet-epsilon", type=float, default=0.0)
+    parser.add_argument(
+        "--reasoning-gradient-accumulation-steps",
+        type=int,
+        default=4,
+        help="Number of reasoning microbatches accumulated before one optimizer step.",
+    )
     parser.add_argument(
         "--wandb-step-base",
         type=int,
@@ -201,6 +329,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def normalize_checkpoint_path(path: Path) -> Path:
+    """SB3's loader appends .zip itself; accept either spelling at the CLI."""
+    return path.with_suffix("") if path.suffix.lower() == ".zip" else path
+
+
 def run_cmd(cmd: list[str], *, timeout: float | None = None) -> None:
     subprocess.run(cmd, check=True, timeout=timeout)
 
@@ -236,17 +369,25 @@ def ssh_cmd(
     *,
     timeout: float | None = None,
 ) -> None:
-    run_cmd(
-        [
-            "ssh",
-            *ssh_options(peer, key, control_dir),
-            "-p",
-            str(peer.port),
-            f"{peer.user}@{peer.host}",
-            command,
-        ],
-        timeout=timeout,
-    )
+    cmd = [
+        "ssh",
+        *ssh_options(peer, key, control_dir),
+        "-p",
+        str(peer.port),
+        f"{peer.user}@{peer.host}",
+        command,
+    ]
+    # Peer SSH daemons occasionally reject a burst of rank-startup sessions
+    # (kex_exchange_identification). Retry transient setup/file-barrier calls
+    # without changing the steady-state persistent ring transport.
+    for attempt in range(4):
+        try:
+            run_cmd(cmd, timeout=timeout)
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == 3:
+                raise
+            time.sleep(min(2 ** attempt, 8))
 
 
 def scp_to(
@@ -287,6 +428,8 @@ def wait_for_sized_file(path: Path, timeout: float, expected_size: int) -> None:
 
 
 def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
+    core = getattr(model.policy, "core", None)
+    interactive_reasoning = hasattr(core, "reasoning_loss")
     return {
         "global_map_view": model_utils.uses_global_map_observation(model),
         "card_language": model_utils.uses_card_language(model),
@@ -296,6 +439,7 @@ def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
         "event_option_observation": (
             model_utils.uses_event_option_observation(model)
         ),
+        "interactive_reasoning": interactive_reasoning,
     }
 
 
@@ -313,6 +457,15 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.deck_size_observation = flags["deck_size_observation"]
     env_args.neow_observation = flags["neow_observation"]
     env_args.event_option_observation = flags["event_option_observation"]
+    interactive_reasoning = (
+        flags["interactive_reasoning"]
+        if args.interactive_reasoning is None
+        else bool(args.interactive_reasoning)
+    )
+    env_args.arch = (
+        "semantic-reasoning" if interactive_reasoning else "split-pointer"
+    )
+    env_args.interactive_reasoning = interactive_reasoning
     env_args.map_dag = True
 
     env_fns = [WholeRunTask().make_env_fn(env_args) for _ in range(args.n_envs)]
@@ -498,7 +651,9 @@ def prune_checkpoints(directory: Path, prefix: str, limit: int) -> None:
 def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
-        if key.startswith(("game/", "rollout/", "speed/", "hierarchical/")):
+        if key.startswith((
+            "game/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
+        )):
             if isinstance(value, np.generic):
                 value = value.item()
             if isinstance(value, (int, float, np.integer, np.floating)):
@@ -693,8 +848,480 @@ def cuda_observation_mix(
     return {"phase_counts": phase_counts, "active_widths": widths}
 
 
+def reasoning_microbatch_backward(
+    model: AccumulatingMaskablePPO, batch_size: int, loss_scale: float = 1.0,
+) -> dict[str, float] | None:
+    """Backpropagate one local reasoning batch without stepping the optimizer."""
+    # Trace transcripts are compiled on a CPU helper thread during PPO
+    # backward.  Join here at the last consumer so that compilation overlaps
+    # the GPU-heavy phase without changing the sampled examples.
+    compile_wait_started = time.perf_counter()
+    model._wait_for_reasoning_samples()
+    compile_wait_seconds = time.perf_counter() - compile_wait_started
+    samples = model._reasoning_rollout_samples
+    core = getattr(model.policy, "core", None)
+    if (
+        not samples
+        or model.reasoning_coef <= 0.0
+        or not hasattr(core, "reasoning_loss")
+    ):
+        return None
+    # Long transcripts are valid supervision.  The decoder extends positions
+    # beyond its initial learned table instead of dropping these samples.
+    eligible = list(samples)
+    if not eligible:
+        return None
+    count = min(int(batch_size), len(eligible))
+    indices = np.random.choice(len(eligible), size=count, replace=False)
+    batch = [eligible[int(index)] for index in indices]
+    observations = {
+        key: th.as_tensor(
+            np.stack([sample["observation"][key] for sample in batch]),
+            device=model.device,
+        )
+        for key in batch[0]["observation"]
+    }
+    actions = th.as_tensor(
+        [sample["action"] for sample in batch],
+        dtype=th.long,
+        device=model.device,
+    )
+    length = max(len(sample["inputs"]) for sample in batch)
+    from rl.wholerun_reasoning import IGNORE_INDEX, VOCAB
+
+    input_ids = th.full(
+        (count, length), VOCAB.pad_id, dtype=th.long, device=model.device
+    )
+    labels = th.full(
+        (count, length), IGNORE_INDEX, dtype=th.long, device=model.device
+    )
+    for row, sample in enumerate(batch):
+        width = len(sample["inputs"])
+        input_ids[row, :width] = th.as_tensor(
+            sample["inputs"], dtype=th.long, device=model.device
+        )
+        labels[row, :width] = th.as_tensor(
+            sample["labels"], dtype=th.long, device=model.device
+        )
+    if model.device.type == "cuda":
+        th.cuda.synchronize(model.device)
+    compute_started = time.perf_counter()
+    with model.autocast_context():
+        loss, stats = core.reasoning_loss(
+            observations, actions, input_ids, labels
+        )
+        (model.reasoning_coef * loss * loss_scale).backward()
+    if model.device.type == "cuda":
+        th.cuda.synchronize(model.device)
+    compute_seconds = time.perf_counter() - compute_started
+    return {
+        "loss": float(loss.detach().cpu()),
+        "token_accuracy": float(stats["token_accuracy"]),
+        "supervised_tokens": float(stats["supervised_tokens"]),
+        "sampled_samples": float(count),
+        "samples": float(len(samples)),
+        "eligible_samples": float(len(eligible)),
+        "dropped_too_long": float(len(samples) - len(eligible)),
+        "environment_tokens": float(sum(
+            sample["environment_tokens"] for sample in batch
+        )),
+        "atomic_trace_rate": float(sum(
+            sample["precision"] == "atomic" for sample in batch
+        ) / len(batch)),
+        "sequence_length_mean": float(np.mean(
+            [len(sample["inputs"]) for sample in eligible]
+        )),
+        "sequence_length_max": float(max(
+            len(sample["inputs"]) for sample in eligible
+        )),
+        "compile_wait_sec": float(compile_wait_seconds),
+        "compute_sec": float(compute_seconds),
+    }
+
+
+def synchronize_gradient_step(
+    model: AccumulatingMaskablePPO,
+    *,
+    rank: int,
+    world_size: int,
+    peers: list[Peer],
+    key: Path,
+    control_dir: Path,
+    local_root: Path,
+    remote_root: str,
+    run_id: str,
+    tag: str,
+    ring_transport,
+    barrier_timeout: float,
+) -> dict[str, float]:
+    """Average current gradients over all ranks using the selected transport."""
+    local_flat = pack_gradients(model)
+    grad_bytes = local_flat.numel() * local_flat.element_size()
+    sync_started = time.perf_counter()
+    sync_mbps = 0.0
+    paths_to_remove = []
+    if ring_transport is not None:
+        local_flat, bytes_sent = ring_transport.average(local_flat)
+        sync_mbps = bytes_sent / 1024 / 1024 / max(
+            time.perf_counter() - sync_started, 1e-9
+        )
+        install_flat_gradients(model, local_flat)
+    else:
+        grad_path = local_root / f"grad_rank{rank}_{tag}.pt"
+        save_gradients(local_flat, grad_path)
+        remote_name = f"rank{rank}/grad_rank{rank}_{tag}.pt"
+        _elapsed, sync_mbps = sync_file_to_peers(
+            local_file=grad_path,
+            remote_name=remote_name,
+            peers=peers,
+            key=key,
+            control_dir=control_dir,
+            remote_root=f"{remote_root}/{run_id}",
+            timeout=barrier_timeout,
+        )
+        peer_paths = [
+            Path(remote_root) / run_id / f"rank{peer.rank}"
+            / f"grad_rank{peer.rank}_{tag}.pt"
+            for peer in peers
+        ]
+        for path in peer_paths:
+            wait_for_sized_file(path, timeout=barrier_timeout, expected_size=grad_bytes)
+        average_peer_gradients(
+            model,
+            local_flat,
+            list(zip((peer.rank for peer in peers), peer_paths, strict=True)),
+            rank=rank,
+            world_size=world_size,
+        )
+        paths_to_remove = [grad_path, *peer_paths]
+    for path in paths_to_remove:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    return {
+        "sync_sec": time.perf_counter() - sync_started,
+        "sync_mbps": sync_mbps,
+        "grad_bytes": float(grad_bytes),
+    }
+
+
+def average_scalar_dict(
+    values: dict[str, float], ring_transport,
+) -> dict[str, float]:
+    """Average a fixed scalar schema over ranks when the SSH ring is active."""
+    if ring_transport is None or not values:
+        return values
+    keys = tuple(sorted(values))
+    tensor = th.tensor([values[key] for key in keys], dtype=th.float32)
+    averaged, _bytes = ring_transport.average(tensor)
+    return {key: float(value) for key, value in zip(keys, averaged.tolist())}
+
+
+def distributed_nosl_is_az_update(
+    model: AccumulatingMaskablePPO,
+    *,
+    rank: int,
+    world_size: int,
+    peers: list[Peer],
+    key: Path,
+    control_dir: Path,
+    local_root: Path,
+    remote_root: str,
+    run_id: str,
+    update: int,
+    ring_transport,
+    barrier_timeout: float,
+) -> dict[str, object]:
+    """Run one synchronized inner-only NOSL update.
+
+    Each rank first accumulates its local AZ loss gradient without stepping
+    Adam.  The flat gradient is then averaged through the same ring used by
+    ordinary PPO before every rank takes one identical optimizer step.  The
+    sample-count weighting keeps ranks with fewer completed combats from
+    contributing an oversized mean gradient.
+    """
+    if not model.nosl_is_az or not model.nosl_is_az_inner_only:
+        raise ValueError("distributed NOSL update requires inner-only mode")
+    if int(model.nosl_is_az_updates) != 1:
+        raise ValueError(
+            "distributed NOSL currently requires --nosl-is-az-updates=1"
+        )
+
+    model._prepare_nosl_is_az_replay()
+    local_count = model._nosl_is_az_replay_train_count()
+    count_average = average_scalar_dict(
+        {"nosl_is_az_valid_roots": float(local_count)}, ring_transport
+    )
+    # ``average_scalar_dict`` is a collective only for the SSH ring.  The
+    # legacy file transport has no scalar collective, so do not pretend its
+    # local count was already averaged across ranks (that would inflate every
+    # diagnostic by ``world_size``).
+    scalar_world = float(world_size if ring_transport is not None else 1)
+    global_count = float(
+        count_average["nosl_is_az_valid_roots"] * scalar_world
+    )
+    gradient_scale = (
+        float(scalar_world * local_count / global_count)
+        if global_count > 0.0
+        else 0.0
+    )
+
+    if model.device.type == "cuda":
+        th.cuda.synchronize(model.device)
+    backward_started = time.perf_counter()
+    az_stats = model._train_nosl_is_az(
+        step_optimizer=False,
+        gradient_scale=gradient_scale,
+        prepare_replay=False,
+    )
+    if model.device.type == "cuda":
+        th.cuda.synchronize(model.device)
+    backward_seconds = time.perf_counter() - backward_started
+
+    # The local trainer keeps exact per-sample sums for diagnostics.  Reduce
+    # those small vectors once so loss/entropy/value statistics are weighted by
+    # the number of roots contributed by each rank.  This is separate from the
+    # large parameter-gradient reduction below and is negligible in size.
+    diagnostic_names = (
+        "target_entropy",
+        "policy_entropy",
+        "target_policy_kl",
+        "policy_cross_entropy",
+        "target_effective_actions",
+        "target_top1_agreement",
+        "legal_actions",
+        "illegal_target_mass",
+        "target_sum_error",
+        "value_target",
+        "pred_value",
+        "value_mae",
+        "value_bias",
+        "finite_fraction",
+    )
+    local_metric_sums = getattr(model, "_nosl_is_az_metric_sums", {})
+    local_metric_sumsq = getattr(model, "_nosl_is_az_metric_sumsq", {})
+    local_metric_count = float(
+        getattr(model, "_nosl_is_az_metric_count", 0.0)
+    )
+    diagnostic_payload = {}
+    for name in diagnostic_names:
+        diagnostic_payload[f"sum:{name}"] = float(local_metric_sums.get(name, 0.0))
+        diagnostic_payload[f"sumsq:{name}"] = float(
+            local_metric_sumsq.get(name, 0.0)
+        )
+    diagnostic_payload["count"] = local_metric_count
+    diagnostic_global = average_scalar_dict(diagnostic_payload, ring_transport)
+    diagnostic_count = float(diagnostic_global["count"] * scalar_world)
+
+    def diagnostic_mean(name: str) -> float:
+        if diagnostic_count <= 0.0:
+            return 0.0
+        return float(
+            diagnostic_global[f"sum:{name}"] * scalar_world / diagnostic_count
+        )
+
+    def diagnostic_std(name: str) -> float:
+        if diagnostic_count <= 0.0:
+            return 0.0
+        mean = diagnostic_mean(name)
+        second = float(
+            diagnostic_global[f"sumsq:{name}"] * scalar_world / diagnostic_count
+        )
+        return float(np.sqrt(max(0.0, second - mean * mean)))
+
+    diagnostic_values = {
+        "metric_count": diagnostic_count,
+        "target_entropy": diagnostic_mean("target_entropy"),
+        "policy_entropy": diagnostic_mean("policy_entropy"),
+        "target_policy_kl": diagnostic_mean("target_policy_kl"),
+        "policy_cross_entropy": diagnostic_mean("policy_cross_entropy"),
+        "target_effective_actions": diagnostic_mean("target_effective_actions"),
+        "target_top1_agreement": diagnostic_mean("target_top1_agreement"),
+        "legal_actions_mean": diagnostic_mean("legal_actions"),
+        "illegal_target_mass": diagnostic_mean("illegal_target_mass"),
+        "target_sum_error": diagnostic_mean("target_sum_error"),
+        "value_target_mean": diagnostic_mean("value_target"),
+        "value_target_std": diagnostic_std("value_target"),
+        "value_target_min": float(az_stats.get("value_target_min", 0.0)),
+        "value_target_max": float(az_stats.get("value_target_max", 0.0)),
+        "pred_value_mean": diagnostic_mean("pred_value"),
+        "pred_value_std": diagnostic_std("pred_value"),
+        "value_mae": diagnostic_mean("value_mae"),
+        "value_bias": diagnostic_mean("value_bias"),
+        "finite_fraction": diagnostic_mean("finite_fraction"),
+    }
+
+    sync_seconds = 0.0
+    sync_mbps = 0.0
+    grad_bytes = 0
+    optimizer_step_seconds = 0.0
+    gradient_norm_preclip = 0.0
+    if global_count > 0.0:
+        sync = synchronize_gradient_step(
+            model,
+            rank=rank,
+            world_size=world_size,
+            peers=peers,
+            key=key,
+            control_dir=control_dir,
+            local_root=local_root,
+            remote_root=remote_root,
+            run_id=run_id,
+            tag=f"u{update:06d}_nosl",
+            ring_transport=ring_transport,
+            barrier_timeout=barrier_timeout,
+        )
+        sync_seconds = float(sync["sync_sec"])
+        sync_mbps = float(sync["sync_mbps"])
+        grad_bytes = int(sync["grad_bytes"])
+        if model.device.type == "cuda":
+            th.cuda.synchronize(model.device)
+        step_started = time.perf_counter()
+        gradient_norm = th.nn.utils.clip_grad_norm_(
+            model.policy.parameters(), model.max_grad_norm
+        )
+        gradient_norm_preclip = float(gradient_norm.detach().float().cpu())
+        model.policy.optimizer.step()
+        model.policy.optimizer.zero_grad()
+        if model.device.type == "cuda":
+            th.cuda.synchronize(model.device)
+        optimizer_step_seconds = time.perf_counter() - step_started
+
+    # Record the value installed in the optimizer rather than only the CLI
+    # request.  This catches accidental schedule/checkpoint overrides in a
+    # resumed distributed run.
+    effective_learning_rate = float(
+        model.policy.optimizer.param_groups[0].get("lr", 0.0)
+    )
+
+    result = {
+        "roots": float(az_stats["roots"]),
+        "policy_loss": float(az_stats["policy_loss"]),
+        "value_loss": float(az_stats["value_loss"]),
+        "updates": 1.0 if global_count > 0.0 else 0.0,
+        "gradient_batches": float(az_stats.get("gradient_batches", 0.0)),
+        "global_roots": global_count,
+        "backward_sec": backward_seconds,
+        "sync_sec": sync_seconds,
+        "sync_mbps": sync_mbps,
+        "grad_bytes": grad_bytes,
+        "optimizer_step_sec": optimizer_step_seconds,
+        "gradient_norm_preclip": gradient_norm_preclip,
+        "learning_rate": effective_learning_rate,
+    }
+    result.update(diagnostic_values)
+    # Aggregate the objective scalars with the same root weighting used by the
+    # diagnostic values.  The gradient itself is already weighted before the
+    # parameter ring reduction.
+    local_policy_loss_sum = float(
+        getattr(model, "_nosl_is_az_policy_loss_sum", 0.0)
+    )
+    local_value_loss_sum = float(
+        getattr(model, "_nosl_is_az_value_loss_sum", 0.0)
+    )
+    loss_payload = average_scalar_dict(
+        {
+            "policy_sum": local_policy_loss_sum,
+            "value_sum": local_value_loss_sum,
+            "count": float(az_stats.get("metric_count", diagnostic_count)),
+        },
+        ring_transport,
+    )
+    loss_count = float(loss_payload["count"] * scalar_world)
+    if loss_count > 0.0:
+        result["policy_loss"] = float(
+            loss_payload["policy_sum"] * scalar_world / loss_count
+        )
+        result["value_loss"] = float(
+            loss_payload["value_sum"] * scalar_world / loss_count
+        )
+    result.update({
+        key: float(az_stats[key])
+        for key in (
+            "fresh_roots",
+            "dropped_unlabeled_roots",
+            "gradient_batches",
+            "replay_allocated_mb",
+            "replay_capacity",
+            "replay_fill_ratio",
+            "replay_old_fraction",
+            "replay_ready",
+            "replay_sampled_roots",
+            "replay_size",
+            "replay_enabled",
+        )
+        if key in az_stats
+    })
+    return result
+
+
+# These keys are intentionally fixed.  A ring all-reduce is a collective
+# operation, so every rank must contribute the same vector even when one rank
+# has not completed an episode during the current rollout.
+_DISTRIBUTED_GAME_METRIC_KEYS = (
+    "game/win_rate",
+    "game/floor_mean",
+    "game/act_1_won_mean",
+    "game/act_2_won_mean",
+    "game/act_3_won_mean",
+    *(f"game/floor_won/{floor:02d}" for floor in range(5, 55, 5)),
+)
+
+# NOSL metrics are emitted by the local collector/trainer.  Keep a fixed key
+# set so every rank participates in the same scalar all-reduce even when a
+# rank has no completed combat in a particular rollout.
+_DISTRIBUTED_NOSL_METRIC_KEYS = (
+    "nosl_is_az/combat_roots",
+    "nosl_is_az/completed_combat_roots",
+    "nosl_is_az/completed_combats",
+    "nosl_is_az/incomplete_combat_roots",
+    "nosl_is_az/pending_combat_roots",
+    "nosl_is_az/cpp_leaf_batches",
+    "nosl_is_az/cpp_leaf_evaluations",
+    "nosl_is_az/collection_seconds",
+    "nosl_is_az/dropped_unlabeled_roots",
+    "nosl_is_az/roots",
+    "nosl_is_az/policy_loss",
+    "nosl_is_az/value_loss",
+    "nosl_is_az/updates",
+    "nosl_is_az/fresh_roots",
+    "nosl_is_az/gradient_batches",
+    "nosl_is_az/replay_allocated_mb",
+    "nosl_is_az/replay_capacity",
+    "nosl_is_az/replay_fill_ratio",
+    "nosl_is_az/replay_old_fraction",
+    "nosl_is_az/replay_ready",
+    "nosl_is_az/replay_sampled_roots",
+    "nosl_is_az/replay_size",
+    "nosl_is_az/replay_enabled",
+    "nosl_is_az/metric_count",
+    "nosl_is_az/target_entropy",
+    "nosl_is_az/policy_entropy",
+    "nosl_is_az/target_policy_kl",
+    "nosl_is_az/policy_cross_entropy",
+    "nosl_is_az/target_effective_actions",
+    "nosl_is_az/target_top1_agreement",
+    "nosl_is_az/legal_actions_mean",
+    "nosl_is_az/illegal_target_mass",
+    "nosl_is_az/target_sum_error",
+    "nosl_is_az/value_target_mean",
+    "nosl_is_az/value_target_std",
+    "nosl_is_az/value_target_min",
+    "nosl_is_az/value_target_max",
+    "nosl_is_az/pred_value_mean",
+    "nosl_is_az/pred_value_std",
+    "nosl_is_az/value_mae",
+    "nosl_is_az/value_bias",
+    "nosl_is_az/finite_fraction",
+    "nosl_is_az/gradient_norm_preclip",
+    "nosl_is_az/learning_rate",
+)
+
+
 def main() -> None:
     args = build_parser().parse_args()
+    args.checkpoint = normalize_checkpoint_path(args.checkpoint)
     th.set_float32_matmul_precision(args.float32_matmul_precision)
     if args.world_size < 1:
         raise ValueError("--world-size must be positive")
@@ -706,6 +1333,67 @@ def main() -> None:
         raise ValueError("--gradient-transport ssh-ring requires world_size >= 2")
     if not 1 <= args.ring_port <= 65535:
         raise ValueError("--ring-port must be in [1, 65535]")
+    if args.reasoning_gradient_accumulation_steps < 1:
+        raise ValueError(
+            "--reasoning-gradient-accumulation-steps must be at least 1"
+        )
+    if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:
+        raise ValueError("--nosl-is-az-simulations must be positive")
+    if args.nosl_is_az_depth is not None and args.nosl_is_az_depth < 0:
+        raise ValueError("--nosl-is-az-depth must be non-negative")
+    if (
+        args.nosl_is_az_prior_temperature is not None
+        and (
+            not np.isfinite(args.nosl_is_az_prior_temperature)
+            or args.nosl_is_az_prior_temperature <= 0.0
+        )
+    ):
+        raise ValueError(
+            "--nosl-is-az-prior-temperature must be positive and finite"
+        )
+    if (
+        args.nosl_is_az_gumbel_candidates is not None
+        and args.nosl_is_az_gumbel_candidates < 0
+    ):
+        raise ValueError("--nosl-is-az-gumbel-candidates must be non-negative")
+    for name in (
+        "nosl_is_az_gumbel_scale",
+        "nosl_is_az_gumbel_value_scale",
+        "nosl_is_az_gumbel_max_visit_init",
+    ):
+        value = getattr(args, name)
+        if value is not None and (not np.isfinite(value) or value < 0.0):
+            raise ValueError(
+                f"--{name.replace('_', '-')} must be non-negative and finite"
+            )
+    if args.nosl_is_az_batch_size is not None and args.nosl_is_az_batch_size < 1:
+        raise ValueError("--nosl-is-az-batch-size must be positive")
+    if (
+        args.nosl_is_az_micro_batch_size is not None
+        and args.nosl_is_az_micro_batch_size < 1
+    ):
+        raise ValueError("--nosl-is-az-micro-batch-size must be positive")
+    if (
+        args.nosl_is_az_replay_capacity is not None
+        and args.nosl_is_az_replay_capacity < 1
+    ):
+        raise ValueError("--nosl-is-az-replay-capacity must be positive")
+    if (
+        args.nosl_is_az_replay_min_size is not None
+        and args.nosl_is_az_replay_min_size < 1
+    ):
+        raise ValueError("--nosl-is-az-replay-min-size must be positive")
+    if (
+        args.nosl_is_az_leaf_batch_size is not None
+        and args.nosl_is_az_leaf_batch_size < 1
+    ):
+        raise ValueError("--nosl-is-az-leaf-batch-size must be positive")
+    if args.nosl_is_az_dirichlet_alpha < 0.0:
+        raise ValueError("--nosl-is-az-dirichlet-alpha must be non-negative")
+    if not 0.0 <= args.nosl_is_az_dirichlet_epsilon <= 1.0:
+        raise ValueError("--nosl-is-az-dirichlet-epsilon must be in [0, 1]")
+    if args.nosl_is_az_dirichlet_epsilon > 0.0 and args.nosl_is_az_dirichlet_alpha <= 0.0:
+        raise ValueError("Dirichlet alpha must be positive when epsilon > 0")
 
     peers = sorted((parse_peer(p) for p in args.peer), key=lambda p: p.rank)
     peer_ranks = {p.rank for p in peers}
@@ -740,6 +1428,18 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    source_nosl_is_az = bool(getattr(probe_model, "nosl_is_az", False))
+    source_nosl_is_az_replay_enabled = bool(
+        getattr(probe_model, "nosl_is_az_replay_enabled", True)
+    )
+    source_nosl_inner_only = bool(
+        getattr(probe_model, "nosl_is_az_inner_only", False)
+    )
+    if source_nosl_is_az and not source_nosl_inner_only:
+        raise RuntimeError(
+            "Distributed NOSL-IS-AZ currently supports inner-only combat "
+            "training; enable --nosl-is-az-inner-only in the checkpoint."
+        )
     source_hierarchical = bool(
         getattr(probe_model, "hierarchical_combat_hp", False)
     )
@@ -755,10 +1455,27 @@ def main() -> None:
         args.combat_hp_gamma = source_combat_gamma
     if args.combat_hp_gae_lambda is None:
         args.combat_hp_gae_lambda = source_combat_gae_lambda
+    if args.nosl_is_az_replay_enabled is None:
+        args.nosl_is_az_replay_enabled = source_nosl_is_az_replay_enabled
     if not 0.0 <= args.combat_hp_gamma <= 1.0:
         raise ValueError("--combat-hp-gamma must be in [0, 1]")
     if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
         raise ValueError("--combat-hp-gae-lambda must be in [0, 1]")
+    # Preserve the checkpoint's policy geometry while allowing a fresh/random
+    # split-pointer checkpoint to replace its card table with the frozen v7
+    # anonymous rule encoder.  This is intentionally a policy-construction
+    # option, not a trainable warm-start.
+    policy_kwargs = dict(getattr(probe_model, "policy_kwargs", {}) or {})
+    if not policy_kwargs:
+        checkpoint_core_cfg = getattr(
+            getattr(probe_model, "policy", None), "_core_cfg", None
+        )
+        if isinstance(checkpoint_core_cfg, dict):
+            policy_kwargs = dict(checkpoint_core_cfg)
+    if args.card_vector_checkpoint is not None:
+        policy_kwargs["card_vector_checkpoint"] = str(
+            args.card_vector_checkpoint
+        )
     env = make_env(probe_model, args)
     del probe_model
     model = AccumulatingMaskablePPO.load(
@@ -769,6 +1486,7 @@ def main() -> None:
         custom_objects={
             "n_steps": args.n_steps,
             "batch_size": args.batch_size,
+            "policy_kwargs": policy_kwargs,
             "gradient_accumulation_steps": args.gradient_accumulation_steps,
             "n_epochs": args.n_epochs,
             "learning_rate": args.learning_rate,
@@ -780,6 +1498,13 @@ def main() -> None:
             "hierarchical_combat_hp": args.hierarchical_combat_hp,
             "combat_hp_gamma": args.combat_hp_gamma,
             "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
+            "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,
+            "reasoning_coef": args.reasoning_coef,
+            "reasoning_batch_size": args.reasoning_batch_size,
+            "reasoning_updates": args.reasoning_updates,
+            "reasoning_gradient_accumulation_steps": (
+                args.reasoning_gradient_accumulation_steps
+            ),
         },
     )
     reset_count = model.configure_hierarchical_combat_hp(
@@ -795,6 +1520,160 @@ def main() -> None:
         print(
             f"[rank {args.rank}] combat value objective changed; reset "
             f"{reset_count} value parameter tensors",
+            flush=True,
+        )
+    if source_nosl_inner_only:
+        frozen, trainable = model.configure_nosl_is_az_inner_only()
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ inner-only: froze "
+            f"{frozen:,} parameters; {trainable:,} combat parameters trainable",
+            flush=True,
+        )
+    model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
+    print(
+        f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "
+        f"{model.nosl_is_az_replay_enabled}",
+        flush=True,
+    )
+    if args.nosl_is_az_simulations is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError("--nosl-is-az-simulations requires a NOSL checkpoint")
+        model.nosl_is_az_simulations = int(args.nosl_is_az_simulations)
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ simulations override: "
+            f"{model.nosl_is_az_simulations}",
+            flush=True,
+        )
+    model.nosl_is_az_dirichlet_alpha = float(args.nosl_is_az_dirichlet_alpha)
+    model.nosl_is_az_dirichlet_epsilon = float(args.nosl_is_az_dirichlet_epsilon)
+    print(
+        f"[rank {args.rank}] NOSL root Dirichlet noise: "
+        f"alpha={model.nosl_is_az_dirichlet_alpha} "
+        f"epsilon={model.nosl_is_az_dirichlet_epsilon}",
+        flush=True,
+    )
+    if args.nosl_is_az_depth is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError(
+                "--nosl-is-az-depth requires a NOSL-IS-AZ checkpoint"
+            )
+        model.nosl_is_az_depth = int(args.nosl_is_az_depth)
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ depth override: "
+            f"{model.nosl_is_az_depth} "
+            "(0=unlimited node expansion)",
+            flush=True,
+        )
+    gumbel_overrides = (
+        args.nosl_is_az_prior_temperature,
+        args.nosl_is_az_search_mode,
+        args.nosl_is_az_gumbel_candidates,
+        args.nosl_is_az_gumbel_scale,
+        args.nosl_is_az_gumbel_value_scale,
+        args.nosl_is_az_gumbel_max_visit_init,
+        args.nosl_is_az_gumbel_rescale_q,
+        args.nosl_is_az_gumbel_use_mixed_value,
+    )
+    if any(value is not None for value in gumbel_overrides) and not bool(
+        getattr(model, "nosl_is_az", False)
+    ):
+        raise ValueError("NOSL search overrides require a NOSL-IS-AZ checkpoint")
+    mode = (
+        args.nosl_is_az_search_mode
+        if args.nosl_is_az_search_mode is not None
+        else str(getattr(model, "nosl_is_az_search_mode", "puct"))
+    )
+    if mode not in NOSL_IS_AZ_SEARCH_MODES:
+        mode = "puct"
+    if mode != "puct" and not bool(getattr(model, "nosl_is_az_cpp", False)):
+        raise ValueError("Gumbel NOSL modes require a C++ NOSL checkpoint")
+    model.nosl_is_az_search_mode = mode
+    model.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[mode]
+    gumbel_fields = (
+        ("nosl_is_az_prior_temperature", 1.0, float),
+        ("nosl_is_az_gumbel_candidates", 0, int),
+        ("nosl_is_az_gumbel_scale", 1.0, float),
+        ("nosl_is_az_gumbel_value_scale", 0.1, float),
+        ("nosl_is_az_gumbel_max_visit_init", 50.0, float),
+        ("nosl_is_az_gumbel_rescale_q", True, bool),
+        ("nosl_is_az_gumbel_use_mixed_value", True, bool),
+    )
+    for name, default, convert in gumbel_fields:
+        requested = getattr(args, name)
+        value = getattr(model, name, default) if requested is None else requested
+        value = convert(value)
+        setattr(model, name, value)
+        setattr(args, name, value)
+    args.nosl_is_az_search_mode = mode
+    if bool(getattr(model, "nosl_is_az", False)):
+        print(
+            f"[rank {args.rank}] NOSL search: mode={mode} "
+            f"root_mode={model.nosl_is_az_root_search_mode} "
+            f"prior_temperature={model.nosl_is_az_prior_temperature} "
+            f"candidates={model.nosl_is_az_gumbel_candidates} "
+            f"gumbel_scale={model.nosl_is_az_gumbel_scale} "
+            f"value_scale={model.nosl_is_az_gumbel_value_scale} "
+            f"max_visit_init={model.nosl_is_az_gumbel_max_visit_init} "
+            f"rescale_q={model.nosl_is_az_gumbel_rescale_q} "
+            f"mixed_value={model.nosl_is_az_gumbel_use_mixed_value}",
+            flush=True,
+        )
+    if args.nosl_is_az_batch_size is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError(
+                "--nosl-is-az-batch-size requires a NOSL-IS-AZ checkpoint"
+            )
+        model.nosl_is_az_batch_size = int(args.nosl_is_az_batch_size)
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ batch size override: "
+            f"{model.nosl_is_az_batch_size}",
+            flush=True,
+        )
+    model.nosl_is_az_micro_batch_size = int(
+        getattr(model, "nosl_is_az_micro_batch_size", 2048)
+    )
+    model.nosl_is_az_replay_capacity = int(
+        getattr(model, "nosl_is_az_replay_capacity", 131072)
+    )
+    model.nosl_is_az_replay_min_size = int(
+        getattr(model, "nosl_is_az_replay_min_size", 1)
+    )
+    if args.nosl_is_az_micro_batch_size is not None:
+        model.nosl_is_az_micro_batch_size = int(args.nosl_is_az_micro_batch_size)
+    if args.nosl_is_az_replay_capacity is not None:
+        model.nosl_is_az_replay_capacity = int(args.nosl_is_az_replay_capacity)
+    if args.nosl_is_az_replay_min_size is not None:
+        model.nosl_is_az_replay_min_size = int(args.nosl_is_az_replay_min_size)
+    if model.nosl_is_az_replay_min_size > model.nosl_is_az_replay_capacity:
+        raise ValueError(
+            "NOSL replay min size cannot exceed replay capacity"
+        )
+    if bool(getattr(model, "nosl_is_az", False)):
+        # W&B should record the effective checkpoint-or-CLI values rather than
+        # nullable override arguments.
+        args.nosl_is_az_batch_size = model.nosl_is_az_batch_size
+        args.nosl_is_az_micro_batch_size = model.nosl_is_az_micro_batch_size
+        args.nosl_is_az_replay_capacity = model.nosl_is_az_replay_capacity
+        args.nosl_is_az_replay_min_size = model.nosl_is_az_replay_min_size
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ replay: "
+            f"capacity={model.nosl_is_az_replay_capacity} "
+            f"min_size={model.nosl_is_az_replay_min_size} "
+            f"effective_batch={model.nosl_is_az_batch_size} "
+            f"micro_batch={model.nosl_is_az_micro_batch_size}",
+            flush=True,
+        )
+    if args.nosl_is_az_leaf_batch_size is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError(
+                "--nosl-is-az-leaf-batch-size requires a NOSL-IS-AZ checkpoint"
+            )
+        model.nosl_is_az_leaf_batch_size = int(
+            args.nosl_is_az_leaf_batch_size
+        )
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ leaf batch size override: "
+            f"{model.nosl_is_az_leaf_batch_size}",
             flush=True,
         )
     model.set_random_seed(args.seed + args.rank * 1_000_003)
@@ -865,23 +1744,28 @@ def main() -> None:
             allow_val_change=True,
         )
         wandb.define_metric("time/total_timesteps")
-        if args.wandb_step_base is not None:
-            wandb.define_metric("legacy_step")
-            for metric in (
-                "game/*",
-                "rollout/*",
-                "speed/*",
-                "hierarchical/*",
-                "train/*",
-                "dist/*",
-                "global_step",
-                "time/total_timesteps",
-            ):
-                wandb.define_metric(metric, step_metric="legacy_step")
+        # Keep the legacy workspace charts usable even for fresh runs that do
+        # not provide an explicit --wandb-step-base anchor.  W&B workspaces
+        # remember a chart's custom x-axis; without this field those charts
+        # show "no data" for otherwise valid metrics.
+        wandb.define_metric("legacy_step")
+        for metric in (
+            "game/*",
+            "rollout/*",
+            "speed/*",
+            "hierarchical/*",
+            "train/*",
+            "dist/*",
+            "reasoning/*",
+            "nosl_is_az/*",
+            "global_step",
+            "time/total_timesteps",
+            "env_steps_per_second",
+            "rule_prediction_accuracy",
+        ):
+            wandb.define_metric(metric, step_metric="legacy_step")
 
-    callback = CallbackList(
-        [WholeRunTask().metrics_callback(args)] if args.rank == 0 else [NoopCallback()]
-    )
+    callback = CallbackList([WholeRunTask().metrics_callback(args)])
     total_timesteps, callback = model._setup_learn(
         total_timesteps=args.updates * rollout_size,
         callback=callback,
@@ -931,7 +1815,27 @@ def main() -> None:
             optimizer_steps = 0
             cuda_memory_peak = None
 
-            for epoch in range(args.n_epochs):
+            distributed_nosl = bool(
+                model.nosl_is_az and model.nosl_is_az_inner_only
+            )
+            nosl_update = None
+            if distributed_nosl:
+                nosl_update = distributed_nosl_is_az_update(
+                    model,
+                    rank=args.rank,
+                    world_size=args.world_size,
+                    peers=peers,
+                    key=key,
+                    control_dir=control_dir,
+                    local_root=local_root,
+                    remote_root=args.remote_root,
+                    run_id=run_id,
+                    update=update,
+                    ring_transport=ring_transport,
+                    barrier_timeout=args.barrier_timeout,
+                )
+
+            for epoch in range(0 if distributed_nosl else args.n_epochs):
                 accumulated = 0
                 model.policy.optimizer.zero_grad()
                 for rollout_data in model.rollout_buffer.get(args.batch_size):
@@ -1067,6 +1971,139 @@ def main() -> None:
                     accumulated = 0
                     optimizer_steps += 1
 
+            if nosl_update is not None:
+                losses.append(
+                    nosl_update["policy_loss"]
+                    + model.nosl_is_az_value_coef * nosl_update["value_loss"]
+                )
+                optimizer_steps = int(nosl_update["updates"])
+                backward_seconds = float(nosl_update["backward_sec"])
+                sync_seconds = float(nosl_update["sync_sec"])
+                sync_mbps.append(float(nosl_update["sync_mbps"]))
+                grad_bytes = int(nosl_update["grad_bytes"])
+                step_seconds = float(nosl_update["optimizer_step_sec"])
+
+            reasoning_records = []
+            reasoning_sync_seconds = 0.0
+            reasoning_sync_mbps = []
+            reasoning_compile_wait_seconds = 0.0
+            reasoning_compute_seconds = 0.0
+            reasoning_step_seconds = 0.0
+            reasoning_grad_bytes = 0
+            reasoning_optimizer_steps = 0
+            reasoning_accumulation_steps = max(
+                1, int(args.reasoning_gradient_accumulation_steps)
+            )
+            model.policy.optimizer.zero_grad()
+            for reasoning_update in range(args.reasoning_updates):
+                group_position = reasoning_update % reasoning_accumulation_steps
+                group_size = min(
+                    reasoning_accumulation_steps,
+                    args.reasoning_updates - reasoning_update + group_position,
+                )
+                reasoning_result = reasoning_microbatch_backward(
+                    model,
+                    args.reasoning_batch_size,
+                    loss_scale=1.0 / group_size,
+                )
+                if reasoning_result is None:
+                    reasoning_result = {
+                        "loss": 0.0,
+                        "token_accuracy": 0.0,
+                        "supervised_tokens": 0.0,
+                        "sampled_samples": 0.0,
+                        "samples": 0.0,
+                        "eligible_samples": 0.0,
+                        "dropped_too_long": 0.0,
+                        "environment_tokens": 0.0,
+                        "atomic_trace_rate": 0.0,
+                        "sequence_length_mean": 0.0,
+                        "sequence_length_max": 0.0,
+                        "compile_wait_sec": 0.0,
+                        "compute_sec": 0.0,
+                    }
+                reasoning_compile_wait_seconds += reasoning_result.get(
+                    "compile_wait_sec", 0.0
+                )
+                reasoning_compute_seconds += reasoning_result.get(
+                    "compute_sec", 0.0
+                )
+                reasoning_records.append(reasoning_result)
+                group_finished = (
+                    group_position + 1 >= reasoning_accumulation_steps
+                    or reasoning_update + 1 >= args.reasoning_updates
+                )
+                if group_finished:
+                    reasoning_sync = synchronize_gradient_step(
+                        model,
+                        rank=args.rank,
+                        world_size=args.world_size,
+                        peers=peers,
+                        key=key,
+                        control_dir=control_dir,
+                        local_root=local_root,
+                        remote_root=args.remote_root,
+                        run_id=run_id,
+                        tag=(
+                            f"u{update:06d}_reasoning"
+                            f"{reasoning_optimizer_steps:03d}"
+                        ),
+                        ring_transport=ring_transport,
+                        barrier_timeout=args.barrier_timeout,
+                    )
+                    reasoning_sync_seconds += reasoning_sync["sync_sec"]
+                    reasoning_sync_mbps.append(reasoning_sync["sync_mbps"])
+                    reasoning_grad_bytes = int(reasoning_sync["grad_bytes"])
+                    if model.device.type == "cuda":
+                        th.cuda.synchronize(model.device)
+                    reasoning_step_started = time.perf_counter()
+                    th.nn.utils.clip_grad_norm_(
+                        model.policy.parameters(), model.max_grad_norm
+                    )
+                    model.policy.optimizer.step()
+                    model.policy.optimizer.zero_grad()
+                    if model.device.type == "cuda":
+                        th.cuda.synchronize(model.device)
+                    reasoning_step_seconds += (
+                        time.perf_counter() - reasoning_step_started
+                    )
+                    reasoning_optimizer_steps += 1
+
+            reasoning_mean = {
+                key: float(np.mean([row[key] for row in reasoning_records]))
+                for key in (
+                    "loss",
+                    "token_accuracy",
+                    "supervised_tokens",
+                    "sampled_samples",
+                    "samples",
+                    "eligible_samples",
+                    "dropped_too_long",
+                    "environment_tokens",
+                    "atomic_trace_rate",
+                    "sequence_length_mean",
+                    "sequence_length_max",
+                )
+            } if reasoning_records else {
+                key: 0.0 for key in (
+                    "loss",
+                    "token_accuracy",
+                    "supervised_tokens",
+                    "sampled_samples",
+                    "samples",
+                    "eligible_samples",
+                    "dropped_too_long",
+                    "environment_tokens",
+                    "atomic_trace_rate",
+                    "sequence_length_mean",
+                    "sequence_length_max",
+                )
+            }
+            reasoning_mean["optimizer_steps"] = float(reasoning_optimizer_steps)
+            reasoning_sampled_samples_total = float(
+                sum(row["sampled_samples"] for row in reasoning_records)
+            )
+
             record = {
                 "rank": args.rank,
                 "world_size": args.world_size,
@@ -1087,6 +2124,64 @@ def main() -> None:
                 "avg_grad_sec": avg_seconds,
                 "optimizer_step_sec": step_seconds,
                 "grad_bytes": grad_bytes,
+                "reasoning_loss": reasoning_mean["loss"],
+                "reasoning_token_accuracy": reasoning_mean["token_accuracy"],
+                "reasoning_supervised_tokens": reasoning_mean[
+                    "supervised_tokens"
+                ],
+                "reasoning_sampled_samples": reasoning_mean[
+                    "sampled_samples"
+                ],
+                "reasoning_sampled_samples_total": (
+                    reasoning_sampled_samples_total
+                ),
+                "reasoning_batch_size": float(args.reasoning_batch_size),
+                "reasoning_updates_requested": float(args.reasoning_updates),
+                "reasoning_gradient_accumulation_steps": float(
+                    args.reasoning_gradient_accumulation_steps
+                ),
+                "reasoning_effective_batch_size": float(
+                    args.reasoning_batch_size
+                    * args.reasoning_gradient_accumulation_steps
+                    * args.world_size
+                ),
+                "reasoning_samples": reasoning_mean["samples"],
+                "reasoning_eligible_samples": reasoning_mean[
+                    "eligible_samples"
+                ],
+                "reasoning_dropped_too_long": reasoning_mean[
+                    "dropped_too_long"
+                ],
+                "reasoning_environment_tokens": reasoning_mean[
+                    "environment_tokens"
+                ],
+                "reasoning_atomic_trace_rate": reasoning_mean[
+                    "atomic_trace_rate"
+                ],
+                "reasoning_sequence_length_mean": reasoning_mean[
+                    "sequence_length_mean"
+                ],
+                "reasoning_sequence_length_max": reasoning_mean[
+                    "sequence_length_max"
+                ],
+                "reasoning_optimizer_steps": reasoning_mean[
+                    "optimizer_steps"
+                ],
+                "reasoning_sync_sec": reasoning_sync_seconds,
+                "reasoning_sync_mbps_mean": (
+                    float(np.mean(reasoning_sync_mbps))
+                    if reasoning_sync_mbps else 0.0
+                ),
+                "reasoning_compile_wait_sec": reasoning_compile_wait_seconds,
+                "reasoning_compute_sec": reasoning_compute_seconds,
+                "reasoning_step_sec": reasoning_step_seconds,
+                "reasoning_grad_bytes": reasoning_grad_bytes,
+                "reasoning_total_sec": (
+                    reasoning_sync_seconds
+                    + reasoning_compile_wait_seconds
+                    + reasoning_compute_seconds
+                    + reasoning_step_seconds
+                ),
                 "total_sec_rank": (
                     rollout_sec
                     + backward_seconds
@@ -1094,8 +2189,16 @@ def main() -> None:
                     + sync_seconds
                     + avg_seconds
                     + step_seconds
+                    + reasoning_sync_seconds
+                    + reasoning_compile_wait_seconds
+                    + reasoning_compute_seconds
+                    + reasoning_step_seconds
                 ),
             }
+            record["reasoning_time_fraction"] = (
+                record["reasoning_total_sec"]
+                / max(record["total_sec_rank"], 1e-9)
+            )
             if args.hierarchical_combat_hp:
                 record["combat_value_loss_mean"] = (
                     float(np.mean(combat_value_losses))
@@ -1107,6 +2210,67 @@ def main() -> None:
                 )
             if cuda_memory_peak is not None:
                 record["cuda_memory_peak"] = cuda_memory_peak
+
+            # Episode metrics are maintained independently by each callback.
+            # Average the fixed set across ranks before printing or sending it
+            # to W&B, so the dashboard represents the global rollout rather
+            # than rank 0's local subset.
+            callback_scalars = logger_scalars(model)
+            if nosl_update is not None:
+                callback_scalars.update({
+                    f"nosl_is_az/{key}": float(value)
+                    for key, value in nosl_update.items()
+                    if isinstance(value, (int, float))
+                })
+            aggregate_scalars = {
+                key: float(record[key])
+                for key in (
+                    "reasoning_loss",
+                    "reasoning_token_accuracy",
+                    "reasoning_supervised_tokens",
+                    "reasoning_sampled_samples",
+                    "reasoning_sampled_samples_total",
+                    "reasoning_batch_size",
+                    "reasoning_updates_requested",
+                    "reasoning_gradient_accumulation_steps",
+                    "reasoning_effective_batch_size",
+                    "reasoning_samples",
+                    "reasoning_eligible_samples",
+                    "reasoning_dropped_too_long",
+                    "reasoning_environment_tokens",
+                    "reasoning_atomic_trace_rate",
+                    "reasoning_sequence_length_mean",
+                    "reasoning_sequence_length_max",
+                    "reasoning_optimizer_steps",
+                    "reasoning_compile_wait_sec",
+                    "reasoning_compute_sec",
+                    "reasoning_step_sec",
+                    "reasoning_sync_sec",
+                    "reasoning_total_sec",
+                    "reasoning_time_fraction",
+                )
+            }
+            aggregate_scalars.update({
+                key: float(callback_scalars.get(key, 0.0))
+                for key in _DISTRIBUTED_GAME_METRIC_KEYS
+            })
+            aggregate_scalars.update({
+                key: float(callback_scalars.get(key, 0.0))
+                for key in _DISTRIBUTED_NOSL_METRIC_KEYS
+            })
+            if args.hierarchical_combat_hp:
+                aggregate_scalars.update({
+                    "combat_value_loss_mean": float(
+                        record["combat_value_loss_mean"]
+                    ),
+                    "overworld_value_loss_mean": float(
+                        record["overworld_value_loss_mean"]
+                    ),
+                })
+            aggregate_scalars = average_scalar_dict(
+                aggregate_scalars, ring_transport
+            )
+            record.update(aggregate_scalars)
             records.append(record)
             print(json.dumps(record, sort_keys=True), flush=True)
 
@@ -1132,6 +2296,14 @@ def main() -> None:
                             record["transitions_global"]
                             / max(record["total_sec_rank"], 1e-9)
                         ),
+                        "env_steps_per_second": (
+                            record["transitions_global"]
+                            / max(record["total_sec_rank"], 1e-9)
+                        ),
+                        "speed/env_steps_per_second": (
+                            record["transitions_global"]
+                            / max(record["total_sec_rank"], 1e-9)
+                        ),
                         "train/loss": record["loss_mean"],
                         "train/optimizer_steps": record["optimizer_steps"],
                         "train/gradient_accumulation_steps": (
@@ -1147,6 +2319,71 @@ def main() -> None:
                             * args.gradient_accumulation_steps
                             * args.world_size
                         ),
+                        "reasoning/loss": record["reasoning_loss"],
+                        "reasoning/token_accuracy": record[
+                            "reasoning_token_accuracy"
+                        ],
+                        "rule_prediction_accuracy": record[
+                            "reasoning_token_accuracy"
+                        ],
+                        "reasoning/supervised_tokens": record[
+                            "reasoning_supervised_tokens"
+                        ],
+                        "reasoning/sampled_samples": record[
+                            "reasoning_sampled_samples"
+                        ],
+                        "reasoning/sampled_samples_total": record[
+                            "reasoning_sampled_samples_total"
+                        ],
+                        "reasoning/batch_size": record["reasoning_batch_size"],
+                        "reasoning/updates_requested": record[
+                            "reasoning_updates_requested"
+                        ],
+                        "reasoning/gradient_accumulation_steps": record[
+                            "reasoning_gradient_accumulation_steps"
+                        ],
+                        "reasoning/effective_batch_size": record[
+                            "reasoning_effective_batch_size"
+                        ],
+                        "reasoning/samples": record["reasoning_samples"],
+                        "reasoning/eligible_samples": record[
+                            "reasoning_eligible_samples"
+                        ],
+                        "reasoning/dropped_too_long": record[
+                            "reasoning_dropped_too_long"
+                        ],
+                        "reasoning/environment_tokens": record[
+                            "reasoning_environment_tokens"
+                        ],
+                        "reasoning/atomic_trace_rate": record[
+                            "reasoning_atomic_trace_rate"
+                        ],
+                        "reasoning/sequence_length_mean": record[
+                            "reasoning_sequence_length_mean"
+                        ],
+                        "reasoning/sequence_length_max": record[
+                            "reasoning_sequence_length_max"
+                        ],
+                        "reasoning/optimizer_steps": record[
+                            "reasoning_optimizer_steps"
+                        ],
+                        "reasoning/compile_wait_sec": record[
+                            "reasoning_compile_wait_sec"
+                        ],
+                        "reasoning/compute_sec": record[
+                            "reasoning_compute_sec"
+                        ],
+                        "reasoning/step_sec": record[
+                            "reasoning_step_sec"
+                        ],
+                        "reasoning/sync_sec": record["reasoning_sync_sec"],
+                        "reasoning/sync_mbps": record[
+                            "reasoning_sync_mbps_mean"
+                        ],
+                        "reasoning/total_sec": record["reasoning_total_sec"],
+                        "reasoning/time_fraction": record[
+                            "reasoning_time_fraction"
+                        ],
                     }
                 if args.hierarchical_combat_hp:
                     wandb_payload.update({
@@ -1157,7 +2394,22 @@ def main() -> None:
                             "overworld_value_loss_mean"
                         ],
                     })
-                wandb_payload.update(logger_scalars(model))
+                wandb_payload.update({
+                    key: record[key]
+                    for key in _DISTRIBUTED_GAME_METRIC_KEYS
+                })
+                wandb_payload.update({
+                    key: record[key]
+                    for key in _DISTRIBUTED_NOSL_METRIC_KEYS
+                })
+                for floor in range(5, 55, 5):
+                    wandb_payload[f"game/layer_{floor}_win_rate"] = record[
+                        f"game/floor_won/{floor:02d}"
+                    ]
+                for layer in (1, 2, 3):
+                    value = wandb_payload.get(f"game/act_{layer}_won_mean")
+                    if value is not None:
+                        wandb_payload[f"game/layer_{layer}_win_rate"] = value
                 legacy_step = wandb_step_for_timesteps(
                     global_timesteps=global_timesteps,
                     global_rollout_size=global_rollout_size,
@@ -1165,12 +2417,15 @@ def main() -> None:
                     base_timesteps=args.wandb_step_base_timesteps,
                     step_per_update=args.wandb_step_per_update,
                 )
-                if legacy_step is not None:
-                    # W&B's internal _step is append-only and cannot be moved
-                    # backwards when resuming an existing run. A custom step
-                    # metric preserves the legacy chart axis without changing
-                    # the real global environment-step counters.
-                    wandb_payload["legacy_step"] = legacy_step
+                if legacy_step is None:
+                    # Use a monotonic global update index for fresh runs.  An
+                    # explicit anchor still takes precedence above.
+                    legacy_step = global_timesteps // global_rollout_size
+                # W&B's internal _step is append-only and cannot be moved
+                # backwards when resuming an existing run. A custom step
+                # metric preserves the legacy chart axis without changing
+                # the real global environment-step counters.
+                wandb_payload["legacy_step"] = int(legacy_step)
                 wandb.log(wandb_payload)
 
             if args.output is not None and (

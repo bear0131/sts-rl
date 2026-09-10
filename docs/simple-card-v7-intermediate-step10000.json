@@ -1,0 +1,824 @@
+{
+  "source_checkpoint": ".tmp-vector-rule-v7-contract-v10-step10000\\last.pt",
+  "source_checkpoint_step": 10000,
+  "source_executor_contract_version": 10,
+  "summary": {
+    "calculation_results": 71,
+    "calculation_results_correct": 71,
+    "calculation_result_accuracy": 1.0,
+    "calculation_result_mae": 0.0,
+    "non_terminal_results": {
+      "results": 55,
+      "correct": 55,
+      "accuracy": 1.0,
+      "mae": 0.0
+    },
+    "damage_amount_results": {
+      "results": 11,
+      "correct": 11,
+      "accuracy": 1.0,
+      "mae": 0.0
+    },
+    "by_operation": {
+      "ADD": {
+        "results": 14,
+        "correct": 14,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "FLOOR_DIVIDE": {
+        "results": 3,
+        "correct": 3,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "MIN": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "MULTIPLY": {
+        "results": 3,
+        "correct": 3,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "RELU": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "SUBTRACT": {
+        "results": 35,
+        "correct": 35,
+        "accuracy": 1.0,
+        "mae": 0.0
+      }
+    },
+    "by_result_register": {
+      "reg_absorbed_damage": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_damage_after_vulnerable": {
+        "results": 3,
+        "correct": 3,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_damage_vulnerable_numerator": {
+        "results": 3,
+        "correct": 3,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_field_after_0": {
+        "results": 25,
+        "correct": 25,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_target_block_after": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_target_hp_after": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_target_hp_after_subtract": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      },
+      "reg_unblocked_damage": {
+        "results": 8,
+        "correct": 8,
+        "accuracy": 1.0,
+        "mae": 0.0
+      }
+    },
+    "wrong_results": []
+  },
+  "results": [
+    {
+      "case": "strike_base",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/1/0/0",
+      "block_index": 3,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 6.0,
+      "predicted": 6.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "strike_base",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MULTIPLY",
+      "result_register": "reg_damage_vulnerable_numerator",
+      "expected": 18.0,
+      "predicted": 18.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "FLOOR_DIVIDE",
+      "result_register": "reg_damage_after_vulnerable",
+      "expected": 9.0,
+      "predicted": 9.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 6,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 9.0,
+      "predicted": 9.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 7,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 91.0,
+      "predicted": 91.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 8,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 91.0,
+      "predicted": 91.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/1/0/0",
+      "block_index": 3,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 2.0,
+      "predicted": 2.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 98.0,
+      "predicted": 98.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 98.0,
+      "predicted": 98.0,
+      "correct": true
+    },
+    {
+      "case": "strike_block",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MULTIPLY",
+      "result_register": "reg_damage_vulnerable_numerator",
+      "expected": 18.0,
+      "predicted": 18.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "FLOOR_DIVIDE",
+      "result_register": "reg_damage_after_vulnerable",
+      "expected": 9.0,
+      "predicted": 9.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 6,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 5.0,
+      "predicted": 5.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 7,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 95.0,
+      "predicted": 95.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/1/0/0",
+      "block_index": 8,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 95.0,
+      "predicted": 95.0,
+      "correct": true
+    },
+    {
+      "case": "strike_vulnerable_block",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 4.0,
+      "predicted": 4.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/1/0/0",
+      "block_index": 3,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 12.0,
+      "predicted": 12.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 88.0,
+      "predicted": 88.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 88.0,
+      "predicted": 88.0,
+      "correct": true
+    },
+    {
+      "case": "strike_tampered_6_to_12",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/1/0/0",
+      "block_index": 3,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 6.0,
+      "predicted": 6.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_zero_strikes",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/1/0/0",
+      "block_index": 3,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 6.0,
+      "predicted": 6.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 94.0,
+      "predicted": 94.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_three_strikes",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 1,
+      "operation": "MULTIPLY",
+      "result_register": "reg_damage_vulnerable_numerator",
+      "expected": 18.0,
+      "predicted": 18.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 2,
+      "operation": "FLOOR_DIVIDE",
+      "result_register": "reg_damage_after_vulnerable",
+      "expected": 9.0,
+      "predicted": 9.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 4,
+      "operation": "MIN",
+      "result_register": "reg_absorbed_damage",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 5,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_block_after",
+      "expected": 0.0,
+      "predicted": 0.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 6,
+      "operation": "SUBTRACT",
+      "result_register": "reg_unblocked_damage",
+      "expected": 9.0,
+      "predicted": 9.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 7,
+      "operation": "SUBTRACT",
+      "result_register": "reg_target_hp_after_subtract",
+      "expected": 91.0,
+      "predicted": 91.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/1/0/0",
+      "block_index": 8,
+      "operation": "RELU",
+      "result_register": "reg_target_hp_after",
+      "expected": 91.0,
+      "predicted": 91.0,
+      "correct": true
+    },
+    {
+      "case": "perfected_strike_vulnerable",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_base",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_base",
+      "path": "root/1/0",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 30.0,
+      "predicted": 30.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_base",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_frail",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_frail",
+      "path": "root/1/0",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 30.0,
+      "predicted": 30.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_frail",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_tampered_30_to_60",
+      "path": "root/0",
+      "block_index": 0,
+      "operation": "SUBTRACT",
+      "result_register": "reg_field_after_0",
+      "expected": 3.0,
+      "predicted": 3.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_tampered_30_to_60",
+      "path": "root/1/0",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 60.0,
+      "predicted": 60.0,
+      "correct": true
+    },
+    {
+      "case": "impervious_tampered_30_to_60",
+      "path": "root/2",
+      "block_index": 0,
+      "operation": "ADD",
+      "result_register": "reg_field_after_0",
+      "expected": 1.0,
+      "predicted": 1.0,
+      "correct": true
+    }
+  ]
+}

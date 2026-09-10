@@ -6,7 +6,10 @@ from gymnasium import spaces
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import VecMonitor
 
-from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
+from rl.cached_mask_vec_env import (
+    CachedMaskSubprocVecEnv,
+    GroupedCachedMaskSubprocVecEnv,
+)
 
 
 class _MaskInfoEnv(gym.Env):
@@ -52,5 +55,39 @@ def test_cached_masks_follow_step_and_autoreset_info():
         _obs, _reward, done, _info = env.step(np.array([1]))
         assert done.tolist() == [True]
         np.testing.assert_array_equal(get_action_masks(env), [[True, False]])
+    finally:
+        env.close()
+
+
+def test_grouped_cached_masks_preserve_logical_order():
+    base = GroupedCachedMaskSubprocVecEnv(
+        [_make_mask_info_env, _make_mask_info_env, _make_mask_info_env],
+        envs_per_worker=2,
+        start_method="spawn",
+    )
+    env = VecMonitor(base)
+    try:
+        assert len(base.processes) == 2
+        env.reset()
+        np.testing.assert_array_equal(
+            get_action_masks(env),
+            [[True, False], [True, False], [True, False]],
+        )
+        env.step(np.array([0, 0, 0]))
+        np.testing.assert_array_equal(
+            get_action_masks(env),
+            [[False, True], [False, True], [False, True]],
+        )
+        # Distinct calls in one group must be routed back to their logical
+        # indices without exposing the group's local numbering.
+        values = base.env_method_batch(
+            "get_wrapper_attr",
+            {
+                0: (("position",), {}),
+                1: (("position",), {}),
+                2: (("position",), {}),
+            },
+        )
+        assert values == {0: 1, 1: 1, 2: 1}
     finally:
         env.close()

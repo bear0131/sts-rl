@@ -26,14 +26,27 @@ if _BRIDGE not in sys.path:
     sys.path.insert(0, _BRIDGE)
 
 # The built sim module (.so/.pyd) normally lives in the default build dir.
-# A separate build can be selected without replacing a module that is currently
-# loaded by another Windows process (for example, a running dashboard).
+# The current Full-Gumbel/NOSL build is kept separately so it can be rebuilt
+# without replacing a module that is currently loaded by another Windows
+# process (for example, a running dashboard).  Prefer that build for the
+# no-configuration path, while retaining the older NOSL build as a fallback
+# for clean checkouts and remote environments.
 _DEFAULT_BUILD = os.path.join(_REPO, "sim", "sts_lightspeed", "build")
-_BUILD = os.path.abspath(
-    os.path.expanduser(
-        os.environ.get("STS_LIGHTSPEED_BUILD_DIR", _DEFAULT_BUILD)
-    )
+_PREFERRED_BUILD = os.path.join(
+    _REPO, "sim", "sts_lightspeed", "build-gumbel-current"
 )
+_LEGACY_PREFERRED_BUILD = os.path.join(
+    _REPO, "sim", "sts_lightspeed", "build-nosl311"
+)
+_configured_build = os.environ.get("STS_LIGHTSPEED_BUILD_DIR")
+if _configured_build is None:
+    if os.path.isdir(_PREFERRED_BUILD):
+        _configured_build = _PREFERRED_BUILD
+    elif os.path.isdir(_LEGACY_PREFERRED_BUILD):
+        _configured_build = _LEGACY_PREFERRED_BUILD
+    else:
+        _configured_build = _DEFAULT_BUILD
+_BUILD = os.path.abspath(os.path.expanduser(_configured_build))
 if "STS_LIGHTSPEED_BUILD_DIR" in os.environ and not os.path.isdir(_BUILD):
     raise RuntimeError(
         f"STS_LIGHTSPEED_BUILD_DIR does not exist or is not a directory: {_BUILD}"

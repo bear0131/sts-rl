@@ -183,11 +183,38 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer"],
+            choices=["auto", "split-pointer", "semantic-reasoning"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
                  "combined layer budget split between both specialists.",
+        )
+        parser.add_argument(
+            "--interactive-reasoning",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Capture post-action simulator traces and train the anonymous "
+                 "autoregressive reasoning decoder. Enabled automatically by "
+                 "--arch semantic-reasoning.",
+        )
+        parser.add_argument("--reasoning-coef", type=float, default=0.2)
+        parser.add_argument("--reasoning-batch-size", type=int, default=16)
+        parser.add_argument("--reasoning-updates", type=int, default=1)
+        parser.add_argument("--reasoning-layers", type=int, default=4)
+        parser.add_argument("--card-program-layers", type=int, default=2)
+        parser.add_argument(
+            "--card-vector-checkpoint",
+            default=None,
+            help="Load the standalone v7 anonymous card vectors and freeze the "
+                 "card-rule encoder for non-reasoning split-pointer wholerun "
+                 "training. The checkpoint must contain card_encoder weights.",
+        )
+        parser.add_argument(
+            "--max-reasoning-tokens",
+            type=int,
+            default=None,
+            help="Deprecated initial learned-position capacity; reasoning "
+            "transcripts are no longer length-limited.",
         )
         parser.add_argument(
             "--hierarchical-combat-hp",
@@ -210,23 +237,165 @@ class WholeRunTask(Task):
             type=float,
             default=None,
             help="Fight-local GAE lambda (default 0.95, or the checkpoint "
-                 "value on resume).",
+            "value on resume).",
         )
+        parser.add_argument(
+            "--nosl-is-az",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Replace combat PPO updates and combat action sampling with "
+                 "worker-side NOSL information-set PUCT targets. Overworld "
+                 "continues to use PPO.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-inner-only",
+            action="store_true",
+            help="Freeze the shared and overworld policy and skip overworld "
+                 "PPO updates; train only the combat specialist from search targets.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-cpp",
+            action="store_true",
+            help="Use the native C++ NOSL combat search/simulator while keeping "
+                 "the Python whole-run learner and HP-labelled inner update.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-reset-combat",
+            action="store_true",
+            help="With --init-from, restore the trained outer policy but keep "
+                 "the freshly initialized combat specialist.",
+        )
+        parser.add_argument("--nosl-is-az-simulations", type=int, default=8)
+        parser.add_argument(
+            "--nosl-is-az-depth",
+            type=int,
+            default=3,
+            help="Maximum search depth; 0 removes the artificial depth cutoff "
+                 "and expands until terminal/new-leaf states.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-rollout-steps",
+            type=int,
+            default=0,
+            help="Deprecated compatibility option; AlphaZero-style NOSL uses "
+                 "the value network at the leaf and performs no rollout.",
+        )
+        parser.add_argument("--nosl-is-az-c-puct", type=float, default=1.5)
+        parser.add_argument("--nosl-is-az-temperature", type=float, default=1.0)
+        parser.add_argument(
+            "--nosl-is-az-prior-temperature",
+            type=float,
+            default=1.0,
+            help="Temperature applied to policy logits before native search.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-search-mode",
+            choices=("puct", "gumbel", "full_gumbel"),
+            default="puct",
+            help="Native tree policy: PUCT, legacy root Gumbel, or Full Gumbel AZ.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-candidates",
+            type=int,
+            default=0,
+            help="Root Gumbel top-k size; 0 keeps all legal root actions.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-scale", type=float, default=1.0,
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-value-scale", type=float, default=0.1,
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-max-visit-init", type=float, default=50.0,
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-rescale-q",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-use-mixed-value",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+        )
+        parser.add_argument(
+            "--nosl-is-az-dirichlet-alpha", type=float, default=0.0,
+            help="Dirichlet concentration for root noise; 0 disables noise.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-dirichlet-epsilon", type=float, default=0.0,
+            help="Root-prior noise mixture weight in [0, 1].",
+        )
+        parser.add_argument(
+            "--nosl-is-az-master-nonce",
+            type=lambda value: int(value, 0),
+            default=0x4E4F534C4953415A,
+        )
+        parser.add_argument(
+            "--nosl-is-az-batch-size",
+            type=int,
+            default=64,
+            help="Effective number of replay roots sampled per AZ update.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-replay",
+            dest="nosl_is_az_replay_enabled",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Store labelled combat roots in a replay buffer before AZ "
+                 "updates. Omission preserves the checkpoint setting; an "
+                 "older checkpoint without this field defaults to enabled.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-micro-batch-size",
+            type=int,
+            default=2048,
+            help="Maximum roots per replay forward/backward pass.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-replay-capacity",
+            type=int,
+            default=131072,
+            help="FIFO replay capacity in labelled combat roots.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-replay-min-size",
+            type=int,
+            default=1,
+            help="Minimum replay roots required before AZ updates begin.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-leaf-batch-size",
+            type=int,
+            default=64,
+            help="Number of C++ AlphaZero leaf states returned per worker round; "
+                 "larger values reduce IPC synchronization and use larger GPU batches.",
+        )
+        parser.add_argument("--nosl-is-az-updates", type=int, default=1)
+        parser.add_argument("--nosl-is-az-policy-coef", type=float, default=1.0)
+        parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
     def make_env_fn(self, args):
         from rl.reward import ShapedRewardWrapper
 
         ascension = args.ascension
+        interactive_reasoning = (
+            args.arch == "semantic-reasoning"
+            if args.interactive_reasoning is None
+            else bool(args.interactive_reasoning)
+        )
 
         def _thunk():
             env = SlayTheSpireEnv(
                 ascension=ascension,
                 global_map_view=args.global_map_view,
-                card_language=args.card_language,
+                card_language=(args.card_language or interactive_reasoning),
                 combat_language=args.combat_language,
                 deck_size_observation=args.deck_size_observation,
                 neow_observation=args.neow_observation,
                 event_option_observation=args.event_option_observation,
+                interactive_reasoning=interactive_reasoning,
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
@@ -259,6 +428,24 @@ class WholeRunTask(Task):
                 card_language=args.card_language,
                 combat_language=args.combat_language,
                 map_dag=args.map_dag,
+                card_vector_checkpoint=args.card_vector_checkpoint,
+            )
+        if args.arch == "semantic-reasoning":
+            if args.interactive_reasoning is False:
+                raise ValueError(
+                    "semantic-reasoning requires interactive trace capture"
+                )
+            from rl.semantic_reasoning_policy import SemanticReasoningPolicy
+
+            return SemanticReasoningPolicy, dict(
+                d_model=args.d_model,
+                n_layers=args.n_layers,
+                n_heads=args.n_heads,
+                card_program_layers=args.card_program_layers,
+                reasoning_layers=args.reasoning_layers,
+                max_reasoning_tokens=args.max_reasoning_tokens,
+                combat_language=args.combat_language,
+                map_dag=args.map_dag,
             )
         raise ValueError(f"unsupported whole-run architecture: {args.arch}")
 
@@ -272,8 +459,22 @@ class WholeRunTask(Task):
         deck_tag = "-decksize" if args.deck_size_observation else ""
         event_tag = "-eventopt" if args.event_option_observation else ""
         hierarchy_tag = "-hier-hp" if args.hierarchical_combat_hp else ""
+        az_tag = "-nosl-is-az" if getattr(args, "nosl_is_az", False) else ""
+        if getattr(args, "nosl_is_az_inner_only", False):
+            az_tag += "-inner-only"
+        if getattr(args, "nosl_is_az_cpp", False):
+            az_tag += "-cpp"
+        if getattr(args, "nosl_is_az_reset_combat", False):
+            az_tag += "-reset-combat"
+        reasoning_tag = (
+            "-semantic-reasoning" if args.arch == "semantic-reasoning" else ""
+        )
+        card_vector_tag = (
+            "-cardvec" if getattr(args, "card_vector_checkpoint", None) else ""
+        )
         return (
-            f"whole-run{map_tag}{card_tag}{deck_tag}{event_tag}{hierarchy_tag}"
+            f"whole-run{map_tag}{card_tag}{deck_tag}{event_tag}{hierarchy_tag}{az_tag}"
+            f"{reasoning_tag}{card_vector_tag}"
             f"-asc{args.ascension}"
             f"-s{args.seed}-{run_id}"
         )

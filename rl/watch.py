@@ -30,6 +30,11 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 from . import model as _model  # noqa: F401
 from . import split_policy as _split_policy  # noqa: F401
 from .eval import is_win
+from .combat_value_search import (
+    CombatValueSearch,
+    add_combat_search_args,
+    config_from_args as combat_search_config_from_args,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -68,6 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Scroll instead of clearing the screen each step.",
     )
+    add_combat_search_args(parser)
     return parser
 
 
@@ -96,7 +102,9 @@ def _action_dist(model, obs, action_masks):
         return None, None
 
 
-def _decision_panel(env, *, header, probs, value, topk, chosen):
+def _decision_panel(
+    env, *, header, probs, value, topk, chosen, search_result=None
+):
     """Render the CURRENT decision point: state, the model's distribution over
     the (current) legal actions, and the chosen one. Must be called BEFORE
     env.step() — every env read here (render/action_masks/describe_action) and
@@ -116,12 +124,21 @@ def _decision_panel(env, *, header, probs, value, topk, chosen):
         if len(legal) > topk:
             lines.append(f"   ... (+{len(legal) - topk} more legal)")
 
+    if search_result is not None:
+        changed = "override" if chosen != search_result.model_action else "agree"
+        lines.append(
+            f"search: {changed}, leaf V={search_result.value:+.3f}, "
+            f"depth={search_result.depth_reached}, "
+            f"nodes={search_result.expanded_nodes}, "
+            f"{search_result.elapsed_seconds * 1000:.1f} ms"
+        )
+
     lines.append(f"--> {env.describe_action(chosen)}")
     return "\n".join(lines)
 
 
 def watch_episode(model, env, *, seed, stochastic, delay, step_mode, topk, clear,
-                  ep_idx, ep_total):
+                  ep_idx, ep_total, combat_search=None):
     obs, info = env.reset(seed=seed)
     terminated = truncated = False
     ep_return = 0.0
@@ -131,8 +148,15 @@ def watch_episode(model, env, *, seed, stochastic, delay, step_mode, topk, clear
         masks = get_action_masks(env)
         probs, value = _action_dist(model, obs, masks)
 
-        action, _ = model.predict(obs, action_masks=masks, deterministic=not stochastic)
-        action = int(np.asarray(action).item())
+        search_result = None
+        if combat_search is not None and info.get("phase") == "combat":
+            search_result = combat_search.search(env, obs, masks)
+            action = search_result.action
+        else:
+            action, _ = model.predict(
+                obs, action_masks=masks, deterministic=not stochastic
+            )
+            action = int(np.asarray(action).item())
 
         stats = info.get("run_stats", {})
         header = (
@@ -145,7 +169,8 @@ def watch_episode(model, env, *, seed, stochastic, delay, step_mode, topk, clear
         # action must all describe this same pre-step state. reward is the only
         # thing known only after the step, so it's appended on its own line.
         panel = _decision_panel(env, header=header, probs=probs, value=value,
-                                topk=topk, chosen=action)
+                                topk=topk, chosen=action,
+                                search_result=search_result)
 
         obs, reward, terminated, truncated, info = env.step(action)
         ep_return += float(reward)
@@ -176,6 +201,12 @@ def main() -> None:
         raise ValueError("--episodes must be at least 1")
 
     model = MaskablePPO.load(args.checkpoint, device=args.device)
+    search_config = combat_search_config_from_args(args)
+    combat_search = (
+        CombatValueSearch(model, search_config)
+        if search_config is not None
+        else None
+    )
     env = SlayTheSpireEnv(
         ascension=args.ascension,
         global_map_view=_model.uses_global_map_observation(model),
@@ -198,6 +229,7 @@ def main() -> None:
             clear=not args.no_clear,
             ep_idx=ep + 1,
             ep_total=args.episodes,
+            combat_search=combat_search,
         )
         wins += int(won)
         if args.episodes > 1 and not args.step:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
+from threading import Thread
 from types import MethodType
 
 import numpy as np
@@ -12,10 +13,31 @@ import torch as th
 import torch.nn.functional as F
 from gymnasium import spaces
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_supported
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
 from rl.hierarchical_returns import compute_hierarchical_returns
+from rl.nosl_replay import NOSLISAZReplayBuffer
+
+
+NOSL_IS_AZ_SEARCH_MODES = {
+    "puct": 0,
+    "gumbel": 1,
+    "full_gumbel": 2,
+}
+
+
+def _fill_nosl_combat_value_targets(
+    samples: list[dict], final_hp: float
+) -> int:
+    """Assign one normalized terminal-HP target to every root in a fight."""
+    target = float(np.clip(final_hp, 0.0, 1.0))
+    if not np.isfinite(target):
+        raise ValueError("final combat HP must be finite")
+    for sample in samples:
+        sample["value_target"] = target
+    return len(samples)
 
 
 @dataclass(frozen=True)
@@ -61,6 +83,7 @@ def ppo_loss_components(
     entropy: th.Tensor | None,
     clip_range: float,
     clip_range_vf: float | None,
+    skip_combat: bool = False,
 ) -> PPOLossComponents:
     """Compute the shared native/distributed PPO objective.
 
@@ -113,6 +136,22 @@ def ppo_loss_components(
     phase = observations["phase"].long().reshape(-1)
     combat = phase == V.PHASE_VOCAB_INDEX["combat"]
     valid = th.isfinite(advantages) & th.isfinite(returns)
+    if skip_combat:
+        valid = valid & ~combat
+    if not bool(valid.any()):
+        zero = values.sum() * 0.0
+        return PPOLossComponents(
+            policy_loss=zero,
+            value_loss=zero,
+            entropy_loss=zero,
+            approx_kl=zero.detach(),
+            clip_fraction=zero.detach(),
+            valid_samples=0,
+            combat_samples=0,
+            overworld_samples=0,
+            combat_value_loss=None,
+            overworld_value_loss=None,
+        )
     normalized_advantages = th.where(valid, advantages, th.zeros_like(advantages))
     if normalize_advantage:
         normalized_advantages = normalized_advantages.clone()
@@ -179,6 +218,38 @@ class AccumulatingMaskablePPO(MaskablePPO):
         hierarchical_combat_hp: bool = False,
         combat_hp_gamma: float = 1.0,
         combat_hp_gae_lambda: float = 0.95,
+        reasoning_coef: float = 0.0,
+        reasoning_batch_size: int = 16,
+        reasoning_updates: int = 1,
+        reasoning_gradient_accumulation_steps: int = 1,
+        nosl_is_az: bool = False,
+        nosl_is_az_inner_only: bool = False,
+        nosl_is_az_cpp: bool = False,
+        nosl_is_az_simulations: int = 8,
+        nosl_is_az_depth: int = 3,
+        nosl_is_az_rollout_steps: int = 0,
+        nosl_is_az_c_puct: float = 1.5,
+        nosl_is_az_temperature: float = 1.0,
+        nosl_is_az_prior_temperature: float = 1.0,
+        nosl_is_az_search_mode: str = "puct",
+        nosl_is_az_gumbel_candidates: int = 0,
+        nosl_is_az_gumbel_scale: float = 1.0,
+        nosl_is_az_gumbel_value_scale: float = 0.1,
+        nosl_is_az_gumbel_max_visit_init: float = 50.0,
+        nosl_is_az_gumbel_rescale_q: bool = True,
+        nosl_is_az_gumbel_use_mixed_value: bool = True,
+        nosl_is_az_dirichlet_alpha: float = 0.0,
+        nosl_is_az_dirichlet_epsilon: float = 0.0,
+        nosl_is_az_master_nonce: int = 0x4E4F534C4953415A,
+        nosl_is_az_batch_size: int = 64,
+        nosl_is_az_micro_batch_size: int = 2048,
+        nosl_is_az_replay_enabled: bool = True,
+        nosl_is_az_replay_capacity: int = 131072,
+        nosl_is_az_replay_min_size: int = 1,
+        nosl_is_az_leaf_batch_size: int = 64,
+        nosl_is_az_updates: int = 1,
+        nosl_is_az_policy_coef: float = 1.0,
+        nosl_is_az_value_coef: float = 0.5,
         **kwargs,
     ) -> None:
         if gradient_accumulation_steps < 1:
@@ -189,22 +260,274 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("combat_hp_gamma must be in [0, 1]")
         if not 0.0 <= combat_hp_gae_lambda <= 1.0:
             raise ValueError("combat_hp_gae_lambda must be in [0, 1]")
+        if reasoning_coef < 0.0:
+            raise ValueError("reasoning_coef must be non-negative")
+        if reasoning_batch_size < 1:
+            raise ValueError("reasoning_batch_size must be at least 1")
+        if reasoning_updates < 0:
+            raise ValueError("reasoning_updates must be non-negative")
+        if reasoning_gradient_accumulation_steps < 1:
+            raise ValueError(
+                "reasoning_gradient_accumulation_steps must be at least 1"
+            )
+        if nosl_is_az_simulations < 1 or nosl_is_az_depth < 0:
+            raise ValueError(
+                "NOSL-IS-AZ simulations must be positive and depth must be "
+                "non-negative (0 means unlimited node expansion)"
+            )
+        if nosl_is_az_rollout_steps < 0:
+            raise ValueError("NOSL-IS-AZ rollout steps must be non-negative")
+        if nosl_is_az_c_puct < 0.0 or nosl_is_az_temperature < 0.0:
+            raise ValueError("NOSL-IS-AZ c_puct/temperature must be non-negative")
+        if not np.isfinite(nosl_is_az_prior_temperature) or nosl_is_az_prior_temperature <= 0.0:
+            raise ValueError("NOSL-IS-AZ prior temperature must be positive and finite")
+        if nosl_is_az_search_mode not in NOSL_IS_AZ_SEARCH_MODES:
+            raise ValueError(
+                "NOSL-IS-AZ search mode must be puct, gumbel, or full_gumbel"
+            )
+        if nosl_is_az_search_mode != "puct" and not nosl_is_az_cpp:
+            raise ValueError("Gumbel NOSL-IS-AZ search requires the C++ backend")
+        if nosl_is_az_gumbel_candidates < 0:
+            raise ValueError("NOSL-IS-AZ Gumbel candidates must be non-negative")
+        for name, value in (
+            ("Gumbel scale", nosl_is_az_gumbel_scale),
+            ("Gumbel value scale", nosl_is_az_gumbel_value_scale),
+            ("Gumbel max visit init", nosl_is_az_gumbel_max_visit_init),
+        ):
+            if not np.isfinite(value) or value < 0.0:
+                raise ValueError(f"NOSL-IS-AZ {name} must be non-negative and finite")
+        if nosl_is_az_dirichlet_alpha < 0.0:
+            raise ValueError("NOSL-IS-AZ Dirichlet alpha must be non-negative")
+        if not 0.0 <= nosl_is_az_dirichlet_epsilon <= 1.0:
+            raise ValueError("NOSL-IS-AZ Dirichlet epsilon must be in [0, 1]")
+        if nosl_is_az_dirichlet_epsilon > 0.0 and nosl_is_az_dirichlet_alpha <= 0.0:
+            raise ValueError(
+                "NOSL-IS-AZ Dirichlet alpha must be positive when epsilon > 0"
+            )
+        if nosl_is_az_batch_size < 1 or nosl_is_az_updates < 1:
+            raise ValueError("NOSL-IS-AZ batch size/updates must be positive")
+        if nosl_is_az_micro_batch_size < 1:
+            raise ValueError("NOSL-IS-AZ micro batch size must be positive")
+        if nosl_is_az_replay_capacity < 1:
+            raise ValueError("NOSL-IS-AZ replay capacity must be positive")
+        if not 1 <= nosl_is_az_replay_min_size <= nosl_is_az_replay_capacity:
+            raise ValueError(
+                "NOSL-IS-AZ replay min size must be in [1, replay capacity]"
+            )
+        if nosl_is_az_leaf_batch_size < 1:
+            raise ValueError("NOSL-IS-AZ leaf batch size must be positive")
+        if nosl_is_az_policy_coef < 0.0 or nosl_is_az_value_coef < 0.0:
+            raise ValueError("NOSL-IS-AZ loss coefficients must be non-negative")
+        if nosl_is_az_inner_only and not nosl_is_az:
+            raise ValueError("NOSL-IS-AZ inner-only mode requires nosl_is_az")
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
-        self.hierarchical_combat_hp = bool(hierarchical_combat_hp)
+        # Combat AZ targets are fight-local terminal-HP values.  Keep the
+        # overworld/combat return split enabled automatically so combat PPO can
+        # be removed without changing the strategic return calculation.
+        self.nosl_is_az = bool(nosl_is_az)
+        self.nosl_is_az_inner_only = bool(nosl_is_az_inner_only)
+        self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
+        self.hierarchical_combat_hp = bool(
+            hierarchical_combat_hp or self.nosl_is_az
+        )
         self.combat_hp_gamma = float(combat_hp_gamma)
         self.combat_hp_gae_lambda = float(combat_hp_gae_lambda)
+        self.reasoning_coef = float(reasoning_coef)
+        self.reasoning_batch_size = int(reasoning_batch_size)
+        self.reasoning_updates = int(reasoning_updates)
+        self.reasoning_gradient_accumulation_steps = int(
+            reasoning_gradient_accumulation_steps
+        )
+        self.nosl_is_az_simulations = int(nosl_is_az_simulations)
+        self.nosl_is_az_depth = int(nosl_is_az_depth)
+        self.nosl_is_az_rollout_steps = int(nosl_is_az_rollout_steps)
+        self.nosl_is_az_c_puct = float(nosl_is_az_c_puct)
+        self.nosl_is_az_temperature = float(nosl_is_az_temperature)
+        self.nosl_is_az_prior_temperature = float(nosl_is_az_prior_temperature)
+        self.nosl_is_az_search_mode = str(nosl_is_az_search_mode)
+        self.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[
+            self.nosl_is_az_search_mode
+        ]
+        self.nosl_is_az_gumbel_candidates = int(nosl_is_az_gumbel_candidates)
+        self.nosl_is_az_gumbel_scale = float(nosl_is_az_gumbel_scale)
+        self.nosl_is_az_gumbel_value_scale = float(nosl_is_az_gumbel_value_scale)
+        self.nosl_is_az_gumbel_max_visit_init = float(
+            nosl_is_az_gumbel_max_visit_init
+        )
+        self.nosl_is_az_gumbel_rescale_q = bool(nosl_is_az_gumbel_rescale_q)
+        self.nosl_is_az_gumbel_use_mixed_value = bool(
+            nosl_is_az_gumbel_use_mixed_value
+        )
+        self.nosl_is_az_dirichlet_alpha = float(nosl_is_az_dirichlet_alpha)
+        self.nosl_is_az_dirichlet_epsilon = float(nosl_is_az_dirichlet_epsilon)
+        self.nosl_is_az_master_nonce = int(nosl_is_az_master_nonce)
+        self.nosl_is_az_batch_size = int(nosl_is_az_batch_size)
+        self.nosl_is_az_micro_batch_size = int(nosl_is_az_micro_batch_size)
+        self.nosl_is_az_replay_enabled = bool(nosl_is_az_replay_enabled)
+        self.nosl_is_az_replay_capacity = int(nosl_is_az_replay_capacity)
+        self.nosl_is_az_replay_min_size = int(nosl_is_az_replay_min_size)
+        self.nosl_is_az_leaf_batch_size = int(nosl_is_az_leaf_batch_size)
+        self.nosl_is_az_updates = int(nosl_is_az_updates)
+        self.nosl_is_az_policy_coef = float(nosl_is_az_policy_coef)
+        self.nosl_is_az_value_coef = float(nosl_is_az_value_coef)
+        self._nosl_is_az_samples = []
+        # When replay is disabled, this transient list is the complete
+        # effective batch for the current update.  It is intentionally not
+        # serialized into checkpoints.
+        self._nosl_is_az_fresh_samples = []
+        self._nosl_is_az_pending_fights = []
+        self._nosl_is_az_replay = None
+        self._nosl_is_az_replay_prepare_stats = {}
+        self._reasoning_rollout_samples = []
+        self._reasoning_compile_thread: Thread | None = None
+        self._reasoning_compile_error: BaseException | None = None
         self._performance_rollout = None
         self._hierarchical_rollout_stats = None
         super().__init__(*args, **kwargs)
         if self.amp_mode != "off" and self.device.type != "cuda":
             raise ValueError("bf16 AMP requires a CUDA device")
 
+    def _excluded_save_params(self) -> list[str]:
+        """Exclude transient reasoning transcripts from SB3 checkpoints.
+
+        The captured rollout traces are regenerated after every rollout.  They
+        can contain hundreds of thousands of long token sequences and are not
+        needed to resume the policy, so serializing them makes checkpoints
+        needlessly multi-gigabyte.
+        """
+        return [
+            *super()._excluded_save_params(),
+            "_reasoning_rollout_samples",
+            "_nosl_is_az_samples",
+            "_nosl_is_az_fresh_samples",
+            "_nosl_is_az_pending_fights",
+            "_nosl_is_az_replay",
+            "_nosl_is_az_replay_prepare_stats",
+            "_nosl_is_az_metric_sums",
+            "_nosl_is_az_metric_sumsq",
+            "_nosl_is_az_metric_count",
+            "_nosl_is_az_policy_loss_sum",
+            "_nosl_is_az_value_loss_sum",
+        ]
+
+    def _ensure_nosl_is_az_replay(self) -> NOSLISAZReplayBuffer:
+        """Create runtime replay state, including when loading an old checkpoint."""
+        # A disabled replay path must never allocate the large fixed-capacity
+        # arrays.  Keep this guard explicit so an accidental call from a new
+        # code path fails loudly instead of silently changing the experiment.
+        if not bool(getattr(self, "nosl_is_az_replay_enabled", True)):
+            raise RuntimeError("NOSL-IS-AZ replay is disabled")
+        capacity = int(getattr(self, "nosl_is_az_replay_capacity", 131072))
+        self.nosl_is_az_replay_capacity = capacity
+        self.nosl_is_az_replay_min_size = int(
+            getattr(self, "nosl_is_az_replay_min_size", 1)
+        )
+        self.nosl_is_az_micro_batch_size = int(
+            getattr(self, "nosl_is_az_micro_batch_size", 2048)
+        )
+        replay = getattr(self, "_nosl_is_az_replay", None)
+        if replay is not None:
+            if replay.capacity != capacity:
+                raise RuntimeError(
+                    "cannot resize a populated NOSL replay buffer at runtime"
+                )
+            return replay
+
+        core = getattr(self.policy, "core", None)
+        observation_keys = getattr(
+            core, "combat_observation_keys", self.observation_space.spaces.keys()
+        )
+        action_dim = int(getattr(self.action_space, "n", 0))
+        replay = NOSLISAZReplayBuffer(
+            capacity=capacity,
+            observation_space=self.observation_space,
+            observation_keys=observation_keys,
+            action_dim=action_dim,
+        )
+        self._nosl_is_az_replay = replay
+        return replay
+
+    def _nosl_is_az_observation_keys(self) -> tuple[str, ...]:
+        """Return the combat observation contract without creating replay."""
+        core = getattr(self.policy, "core", None)
+        keys = getattr(core, "combat_observation_keys", None)
+        if keys is None:
+            keys = self.observation_space.spaces.keys()
+        return tuple(
+            key for key in keys if key in self.observation_space.spaces
+        )
+
+    def _nosl_samples_to_batch(self, samples: list[dict]) -> dict[str, object]:
+        """Materialize fresh labelled roots in the replay batch contract."""
+        if not samples:
+            raise ValueError("cannot materialize an empty NOSL sample batch")
+        keys = self._nosl_is_az_observation_keys()
+        action_dim = int(getattr(self.action_space, "n", 0))
+        observations = {
+            key: np.stack([sample["observation"][key] for sample in samples])
+            for key in keys
+        }
+        action_masks = np.stack(
+            [np.asarray(sample["action_mask"], dtype=bool) for sample in samples]
+        )
+        policy_targets = np.stack(
+            [np.asarray(sample["policy_target"], dtype=np.float32) for sample in samples]
+        )
+        value_targets = np.asarray(
+            [sample["value_target"] for sample in samples], dtype=np.float32
+        )
+        expected = (len(samples), action_dim)
+        if action_masks.shape != expected or policy_targets.shape != expected:
+            raise ValueError(
+                "invalid fresh NOSL action/policy shape: "
+                f"{action_masks.shape}/{policy_targets.shape}; expected {expected}"
+            )
+        return {
+            "observations": observations,
+            "action_masks": action_masks,
+            "policy_targets": policy_targets,
+            "value_targets": value_targets,
+            # The no-replay path has no persistent sample ids.  Keeping a
+            # local ordinal makes diagnostics and compatibility callers easy.
+            "sample_ids": np.arange(len(samples), dtype=np.uint64),
+        }
+
     def autocast_context(self):
         if self.amp_mode == "bf16":
             return th.autocast(device_type="cuda", dtype=th.bfloat16)
         return nullcontext()
+
+    def configure_nosl_is_az_inner_only(self) -> tuple[int, int]:
+        """Freeze everything except the combat specialist.
+
+        Shared tokenizers must stay frozen as well: changing them through the
+        combat loss would also change the supposedly fixed overworld policy.
+        """
+        if not self.nosl_is_az or not self.nosl_is_az_inner_only:
+            raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
+        core = getattr(self.policy, "core", None)
+        combat = getattr(core, "combat", None)
+        if combat is None or getattr(core, "overworld", None) is None:
+            raise ValueError(
+                "NOSL-IS-AZ inner-only mode requires a split specialist policy"
+            )
+        for parameter in self.policy.parameters():
+            parameter.requires_grad_(False)
+        for parameter in combat.parameters():
+            parameter.requires_grad_(True)
+        frozen = sum(
+            parameter.numel()
+            for parameter in self.policy.parameters()
+            if not parameter.requires_grad
+        )
+        trainable = sum(
+            parameter.numel()
+            for parameter in self.policy.parameters()
+            if parameter.requires_grad
+        )
+        return frozen, trainable
 
     def _sync_device(self) -> None:
         if self.device.type == "cuda":
@@ -223,7 +546,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("combat_gamma must be in [0, 1]")
         if not 0.0 <= combat_gae_lambda <= 1.0:
             raise ValueError("combat_gae_lambda must be in [0, 1]")
-        self.hierarchical_combat_hp = bool(enabled)
+        if self.nosl_is_az and not enabled:
+            raise ValueError(
+                "NOSL-IS-AZ requires hierarchical combat returns; disabling "
+                "the combat phase would re-enable the PPO objective"
+            )
+        self.hierarchical_combat_hp = bool(enabled or self.nosl_is_az)
         self.combat_hp_gamma = float(combat_gamma)
         self.combat_hp_gae_lambda = float(combat_gae_lambda)
         if not reset_combat_value:
@@ -329,6 +657,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def collect_rollouts(self, env, callback, rollout_buffer,
                          n_rollout_steps, use_masking=True):
+        # A previous update normally joins before starting the next rollout;
+        # keep this guard so an early callback/error cannot leave a compiler
+        # thread racing with a later buffer reuse.
+        self._wait_for_reasoning_samples()
         if self.amp_mode == "bf16" and not getattr(
             self.policy, "supports_bf16_rollout", False
         ):
@@ -337,6 +669,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "and log-probabilities"
             )
         captured = []
+        reasoning_samples = []
+        original_step_wait = env.step_wait
+        original_step_async = env.step_async
         uncaptured_step_wait = env.step_wait
 
         if self.hierarchical_combat_hp:
@@ -356,9 +691,48 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
             env.step_wait = MethodType(capture_step_wait, env)
 
+        reasoning_enabled = (
+            self.reasoning_coef > 0.0
+            and self.reasoning_updates > 0
+            and hasattr(getattr(self.policy, "core", None), "reasoning_loss")
+        )
+        pending_reasoning = {}
+        # Keep only the small action/trace side channel during collection.  A
+        # previous implementation copied every observation field for all
+        # environments in step_async, even though SB3 writes the same
+        # pre-action observations into rollout_buffer immediately afterwards.
+        # That copy was pure CPU/memory-bandwidth overhead on every vector step.
+        raw_reasoning_steps = []
+        if reasoning_enabled:
+            captured_step_wait = env.step_wait
+
+            def capture_reasoning_step_async(_env, actions):
+                pending_reasoning["actions"] = (
+                    np.asarray(actions).reshape(-1).copy()
+                )
+                return original_step_async(actions)
+
+            def capture_reasoning_step_wait(_env):
+                result = captured_step_wait()
+                _new_obs, _rewards, _dones, infos = result
+                actions = pending_reasoning.pop("actions", None)
+                if actions is None:
+                    raise RuntimeError("reasoning step_wait has no matching step_async")
+                raw_reasoning_steps.append(
+                    (actions, [info.get("reasoning_trace") for info in infos])
+                )
+                return result
+
+            env.step_async = MethodType(capture_reasoning_step_async, env)
+            env.step_wait = MethodType(capture_reasoning_step_wait, env)
+
         try:
             with self.autocast_context():
-                if not self.performance_profile:
+                if self.nosl_is_az:
+                    result = self._collect_nosl_is_az_rollouts(
+                        env, callback, rollout_buffer, n_rollout_steps, use_masking
+                    )
+                elif not self.performance_profile:
                     result = super().collect_rollouts(
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
@@ -367,12 +741,574 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         env, callback, rollout_buffer, n_rollout_steps, use_masking
                     )
         finally:
-            if self.hierarchical_combat_hp:
-                env.step_wait = uncaptured_step_wait
+            env.step_wait = original_step_wait
+            env.step_async = original_step_async
 
         if result and self.hierarchical_combat_hp:
             self._apply_hierarchical_returns(rollout_buffer, captured)
+        if result and reasoning_enabled:
+            if len(raw_reasoning_steps) != rollout_buffer.buffer_size:
+                raise RuntimeError(
+                    "reasoning transition capture length mismatch: "
+                    f"{len(raw_reasoning_steps)} != "
+                    f"{rollout_buffer.buffer_size}"
+                )
+            # RolloutBuffer stores the observation that preceded each action;
+            # snapshot it before RolloutBuffer.get() swaps/ flattens the
+            # arrays in place.  The compiler is pure CPU work, so run it while
+            # PPO performs its GPU backward pass and join only immediately
+            # before the reasoning loss consumes it.  One batch copy is much
+            # cheaper than copying every field for every env at every step.
+            observation_snapshot = {
+                key: np.array(value, copy=True)
+                for key, value in rollout_buffer.observations.items()
+            }
+            self._reasoning_rollout_samples = []
+            self._reasoning_compile_error = None
+            self._reasoning_compile_thread = Thread(
+                target=self._compile_reasoning_samples,
+                args=(raw_reasoning_steps, observation_snapshot),
+                name="reasoning-trace-compile",
+                daemon=True,
+            )
+            self._reasoning_compile_thread.start()
+        else:
+            self._reasoning_rollout_samples = []
         return result
+
+    def _collect_nosl_is_az_rollouts(
+        self, env, callback, rollout_buffer, n_rollout_steps, use_masking=True
+    ):
+        """Collect a whole-run rollout with worker-side combat search.
+
+        This is intentionally close to sb3-contrib's MaskablePPO collector.
+        The only extra work is (1) obtaining public policy logits, (2) asking
+        each combat worker for a NOSL search decision, and (3) retaining the
+        search target for the AZ update.  Overworld actions remain ordinary PPO
+        samples.
+        """
+        from stable_baselines3.common.vec_env import VecEnv
+
+        if not isinstance(env, VecEnv):
+            raise TypeError("NOSL-IS-AZ collection requires a VecEnv")
+        if not is_masking_supported(env):
+            raise ValueError("NOSL-IS-AZ requires an action-masking VecEnv")
+        assert self._last_obs is not None
+        self.policy.set_training_mode(False)
+        rollout_buffer.reset()
+        callback.on_rollout_start()
+        self._nosl_is_az_samples = []
+        combat_phase = V.PHASE_VOCAB_INDEX["combat"]
+        # AlphaZero value labels are only known when the current fight ends.
+        # Keep each environment's roots across rollout boundaries and label the
+        # whole sequence only when the real fight ends.
+        active_combat_samples = getattr(
+            self, "_nosl_is_az_pending_fights", None
+        )
+        if (
+            not isinstance(active_combat_samples, list)
+            or len(active_combat_samples) != env.num_envs
+        ):
+            active_combat_samples = [[] for _ in range(env.num_envs)]
+        self._nosl_is_az_pending_fights = active_combat_samples
+        incomplete_combat_roots = 0
+        completed_combat_roots = 0
+        completed_combats = 0
+        cpp_leaf_batches = 0
+        cpp_leaf_evaluations = 0
+        n_steps = 0
+        action_masks = None
+        started = time.perf_counter()
+
+        while n_steps < n_rollout_steps:
+            with th.no_grad():
+                obs_tensor = obs_as_tensor(self._last_obs, self.device)
+                if use_masking:
+                    action_masks = get_action_masks(env)
+                # Whole-run policies expose this core API.  Keeping a strict
+                # check here makes failures explicit for unsupported policies.
+                core = getattr(self.policy, "core", None)
+                if core is None or not hasattr(core, "actor_critic"):
+                    raise TypeError(
+                        "NOSL-IS-AZ requires a policy exposing core.actor_critic"
+                    )
+                compact_cpp_observations = bool(
+                    self.nosl_is_az_cpp
+                    and hasattr(core, "combat_actor_critic")
+                    and hasattr(core, "combat_observation_keys")
+                )
+                logits, values = core.actor_critic(obs_tensor)
+                distribution = self.policy.action_dist.proba_distribution(
+                    action_logits=logits
+                )
+                if action_masks is not None:
+                    distribution.apply_masking(action_masks)
+                actions = distribution.get_actions(deterministic=False)
+                values = values.float()
+
+            actions_np = actions.cpu().numpy().reshape(-1)
+            # BF16 autocast tensors do not have a numpy representation on
+            # several PyTorch versions; IPC always receives public FP32 logits.
+            logits_np = logits.detach().float().cpu().numpy()
+            values_np = values.detach().float().cpu().numpy().reshape(-1)
+            phase = np.asarray(self._last_obs["phase"]).reshape(
+                env.num_envs, -1
+            )[:, 0]
+            for env_index, phase_id in enumerate(phase):
+                if int(phase_id) == combat_phase or not active_combat_samples[env_index]:
+                    continue
+                # The environment can be externally reset between collectors.
+                # Such roots have no objective terminal HP and must not leak
+                # into the next fight.
+                incomplete_combat_roots += len(active_combat_samples[env_index])
+                active_combat_samples[env_index] = []
+            if action_masks is None:
+                action_masks = np.ones(
+                    (env.num_envs, int(self.action_space.n)), dtype=bool
+                )
+            # Run NOSL PUCT simulations in the workers, but evaluate every
+            # non-terminal leaf with the current learner network in batches.
+            # ``env_method`` broadcasts one argument tuple; the batch helper
+            # sends distinct logits/nonces to all combat workers concurrently.
+            combat_indices = [
+                index for index in range(env.num_envs)
+                if int(phase[index]) == combat_phase
+            ]
+            result_by_index = {}
+            if combat_indices:
+                def call_workers(method_name, calls):
+                    batch_call = getattr(env, "env_method_batch", None)
+                    if batch_call is not None:
+                        return batch_call(method_name, calls)
+                    return {
+                        index: env.env_method(
+                            method_name,
+                            *args,
+                            indices=index,
+                            **kwargs,
+                        )[0]
+                        for index, (args, kwargs) in calls.items()
+                    }
+
+                begin_calls = {}
+                for env_index in combat_indices:
+                    state_nonce = (
+                        int(self.nosl_is_az_master_nonce)
+                        ^ (int(self.num_timesteps) * 0x9E3779B97F4A7C15)
+                        ^ (int(n_steps) * 0xD1B54A32D192ED03)
+                        ^ int(env_index)
+                    )
+                    if self.nosl_is_az_cpp:
+                        begin_calls[env_index] = (
+                            (logits_np[env_index],),
+                            {
+                                "state_nonce": state_nonce,
+                                "simulations": self.nosl_is_az_simulations,
+                                "depth": self.nosl_is_az_depth,
+                                "c_puct": self.nosl_is_az_c_puct,
+                                "leaf_batch_size": self.nosl_is_az_leaf_batch_size,
+                                "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,
+                                "dirichlet_epsilon": self.nosl_is_az_dirichlet_epsilon,
+                                "root_value": float(values_np[env_index]),
+                                "prior_temperature": self.nosl_is_az_prior_temperature,
+                                "root_search_mode": self.nosl_is_az_root_search_mode,
+                                "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
+                                "gumbel_scale": self.nosl_is_az_gumbel_scale,
+                                "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
+                                "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
+                                "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
+                                "gumbel_use_mixed_value": self.nosl_is_az_gumbel_use_mixed_value,
+                                "compact_observation": compact_cpp_observations,
+                            },
+                        )
+                    else:
+                        begin_calls[env_index] = (
+                            (logits_np[env_index],),
+                            {
+                                "state_nonce": state_nonce,
+                                "master_nonce": self.nosl_is_az_master_nonce,
+                                "simulations": self.nosl_is_az_simulations,
+                                "depth": self.nosl_is_az_depth,
+                                "rollout_steps": self.nosl_is_az_rollout_steps,
+                                "c_puct": self.nosl_is_az_c_puct,
+                                "temperature": self.nosl_is_az_temperature,
+                                "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,
+                                "dirichlet_epsilon": self.nosl_is_az_dirichlet_epsilon,
+                            },
+                        )
+
+                if self.nosl_is_az_cpp:
+                    # C++ owns one tree per worker environment.  It returns a
+                    # batch of public leaves; all leaves from all workers are
+                    # evaluated in one learner/GPU forward, then each worker
+                    # receives its updates in one grouped IPC call.
+                    responses = call_workers(
+                        "nosl_is_az_cpp_begin", begin_calls
+                    )
+                    active = {
+                        index: response
+                        for index, response in responses.items()
+                        if not response.get("done", False)
+                    }
+                    for index, response in responses.items():
+                        if response.get("done", False):
+                            result_by_index[index] = response["result"]
+
+                    while active:
+                        leaf_records = []
+                        for index in sorted(active):
+                            for leaf in active[index].get("leaves", ()):
+                                leaf_records.append((index, leaf))
+                        if not leaf_records:
+                            raise RuntimeError(
+                                "native NOSL AlphaZero returned no leaves before completion"
+                            )
+                        cpp_leaf_batches += 1
+                        cpp_leaf_evaluations += len(leaf_records)
+                        leaf_observations = {
+                            key: np.stack([
+                                np.asarray(leaf["observation"][key])
+                                for _index, leaf in leaf_records
+                            ])
+                            for key in leaf_records[0][1]["observation"]
+                        }
+                        relic_width = None
+                        if compact_cpp_observations:
+                            relic_ids = leaf_observations["relics"]
+                            active_columns = np.flatnonzero(
+                                np.any(relic_ids != 0, axis=0)
+                            )
+                            relic_width = (
+                                int(active_columns[-1]) + 1
+                                if active_columns.size else 1
+                            )
+                        leaf_tensor = obs_as_tensor(leaf_observations, self.device)
+                        with th.no_grad():
+                            with self.autocast_context():
+                                if compact_cpp_observations:
+                                    leaf_logits, leaf_values = (
+                                        core.combat_actor_critic(
+                                            leaf_tensor,
+                                            active_relic_width=relic_width,
+                                        )
+                                    )
+                                else:
+                                    leaf_logits, leaf_values = core.actor_critic(
+                                        leaf_tensor
+                                    )
+                        leaf_logits_np = leaf_logits.detach().float().cpu().numpy()
+                        leaf_values_np = (
+                            leaf_values.detach().float().cpu().numpy().reshape(-1)
+                        )
+                        update_payloads = {}
+                        for position, (index, leaf) in enumerate(leaf_records):
+                            policy = (
+                                leaf_logits_np[position]
+                                if leaf.get("needs_policy", True)
+                                else np.zeros(0, dtype=np.float64)
+                            )
+                            update_payloads.setdefault(index, []).append(
+                                (
+                                    int(leaf["request_id"]),
+                                    float(leaf_values_np[position]),
+                                    policy,
+                                )
+                            )
+                        next_calls = {
+                            index: (
+                                (updates,),
+                                {
+                                    "max_leaves": self.nosl_is_az_leaf_batch_size
+                                },
+                            )
+                            for index, updates in update_payloads.items()
+                        }
+                        next_responses = call_workers(
+                            "nosl_is_az_cpp_backprop_and_leaf_batch",
+                            next_calls,
+                        )
+                        active = {
+                            index: response
+                            for index, response in next_responses.items()
+                            if not response.get("done", False)
+                        }
+                        for index, response in next_responses.items():
+                            if response.get("done", False):
+                                result_by_index[index] = response["result"]
+                else:
+                    requests = call_workers("nosl_is_az_begin", begin_calls)
+                    active = {
+                        index: request
+                        for index, request in requests.items()
+                        if not request.get("done", False)
+                    }
+                    for index, request in requests.items():
+                        if request.get("done", False):
+                            result_by_index[index] = request["result"]
+
+                    while active:
+                        active_indices = sorted(active)
+                        leaf_observations = {
+                            key: np.stack([
+                                np.asarray(active[index]["observation"][key])
+                                for index in active_indices
+                            ])
+                            for key in active[active_indices[0]]["observation"]
+                        }
+                        leaf_tensor = obs_as_tensor(leaf_observations, self.device)
+                        with th.no_grad():
+                            with self.autocast_context():
+                                leaf_logits, leaf_values = core.actor_critic(
+                                    leaf_tensor
+                                )
+                        leaf_logits_np = (
+                            leaf_logits.detach().float().cpu().numpy()
+                        )
+                        leaf_values_np = (
+                            leaf_values.detach().float().cpu().numpy().reshape(-1)
+                        )
+                        backprop_calls = {
+                            index: (
+                                (float(leaf_values_np[position]),
+                                 leaf_logits_np[position]),
+                                {},
+                            )
+                            for position, index in enumerate(active_indices)
+                        }
+                        responses = call_workers(
+                            "nosl_is_az_backprop", backprop_calls
+                        )
+                        active = {
+                            index: response
+                            for index, response in responses.items()
+                            if not response.get("done", False)
+                        }
+                        for index, response in responses.items():
+                            if response.get("done", False):
+                                result_by_index[index] = response["result"]
+
+            for env_index in range(env.num_envs):
+                if int(phase[env_index]) != combat_phase:
+                    continue
+                result = result_by_index[env_index]
+                actions_np[env_index] = int(result["action"])
+                active_combat_samples[env_index].append(
+                    {
+                        # Replay outlives the PPO rollout buffer, so retain an
+                        # independent combat-only observation at every root.
+                        "observation": {
+                            key: np.asarray(self._last_obs[key][env_index]).copy()
+                            for key in getattr(
+                                core,
+                                "combat_observation_keys",
+                                self._last_obs.keys(),
+                            )
+                            if key in self._last_obs
+                        },
+                        "action_mask": np.asarray(
+                            action_masks[env_index], dtype=bool
+                        ).copy(),
+                        "policy_target": np.asarray(
+                            result["visit_policy"], dtype=np.float32
+                        ).copy(),
+                        # Filled with objective final combat HP below.  The
+                        # search root value remains diagnostic only.
+                        "value_target": np.nan,
+                        "search_value": float(result["root_value"]),
+                    }
+                )
+            actions = th.as_tensor(actions_np, dtype=th.long, device=self.device)
+            # Search may replace sampled combat actions.  Recompute their old
+            # log-probability so the rollout remains internally consistent even
+            # though combat samples are excluded from the PPO objective below.
+            log_probs = distribution.log_prob(actions).float()
+            new_obs, rewards, dones, infos = env.step(actions_np)
+            self.num_timesteps += env.num_envs
+
+            next_phases, next_hp, interrupted = self._next_phase_hp(
+                new_obs, dones, infos
+            )
+            for env_index in range(env.num_envs):
+                if int(phase[env_index]) != combat_phase:
+                    continue
+                local_terminal = bool(
+                    dones[env_index]
+                    or next_phases[env_index] != combat_phase
+                )
+                if not local_terminal:
+                    continue
+                pending = active_combat_samples[env_index]
+                active_combat_samples[env_index] = []
+                if interrupted[env_index]:
+                    incomplete_combat_roots += len(pending)
+                    continue
+                completed = _fill_nosl_combat_value_targets(
+                    pending, next_hp[env_index]
+                )
+                self._nosl_is_az_samples.extend(pending)
+                completed_combat_roots += completed
+                completed_combats += 1
+
+            callback.update_locals(locals())
+            if not callback.on_step():
+                return False
+            self._update_info_buffer(infos, dones)
+            n_steps += 1
+
+            actions_for_buffer = actions_np
+            if isinstance(self.action_space, spaces.Discrete):
+                actions_for_buffer = actions_for_buffer.reshape(-1, 1)
+            for idx, done in enumerate(dones):
+                if (
+                    done
+                    and infos[idx].get("terminal_observation") is not None
+                    and infos[idx].get("TimeLimit.truncated", False)
+                ):
+                    terminal_obs = self.policy.obs_to_tensor(
+                        infos[idx]["terminal_observation"]
+                    )[0]
+                    with th.no_grad():
+                        terminal_value = self.policy.predict_values(terminal_obs)[0]
+                    # ``predict_values`` returns a one-element tensor for a
+                    # single terminal observation.  Convert it to a Python
+                    # scalar before adding it to the scalar reward slot;
+                    # assigning a shape-(1,) array can fail when the reward
+                    # buffer uses a NumPy scalar dtype.
+                    terminal_value_scalar = float(
+                        terminal_value.detach().float().reshape(-1)[0].cpu()
+                    )
+                    rewards[idx] += self.gamma * terminal_value_scalar
+
+            rollout_buffer.add(
+                self._last_obs,
+                actions_for_buffer,
+                rewards,
+                self._last_episode_starts,
+                values,
+                log_probs,
+                action_masks=action_masks,
+            )
+            self._last_obs = new_obs
+            self._last_episode_starts = dones
+
+        with th.no_grad():
+            values = self.policy.predict_values(
+                obs_as_tensor(new_obs, self.device)
+            )
+        rollout_buffer.compute_returns_and_advantage(
+            last_values=values, dones=dones
+        )
+        callback.on_rollout_end()
+        pending_combat_roots = sum(len(pending) for pending in active_combat_samples)
+        self.logger.record(
+            "nosl_is_az/incomplete_combat_roots", incomplete_combat_roots
+        )
+        self.logger.record(
+            "nosl_is_az/pending_combat_roots", pending_combat_roots
+        )
+        self.logger.record(
+            "nosl_is_az/completed_combat_roots", completed_combat_roots
+        )
+        if self.nosl_is_az_cpp:
+            self.logger.record("nosl_is_az/cpp_leaf_batches", cpp_leaf_batches)
+            self.logger.record(
+                "nosl_is_az/cpp_leaf_evaluations", cpp_leaf_evaluations
+            )
+        self.logger.record(
+            "nosl_is_az/completed_combats", completed_combats
+        )
+        self.logger.record(
+            "nosl_is_az/collection_seconds", time.perf_counter() - started
+        )
+        if self.performance_profile:
+            total = time.perf_counter() - started
+            self._performance_rollout = {
+                "policy": 0.0,
+                "env": total,
+                "mask": 0.0,
+                "overhead": 0.0,
+                "total": total,
+                "transitions": n_rollout_steps * env.num_envs,
+                "calls": {"policy": n_rollout_steps, "env": n_rollout_steps, "mask": 0},
+            }
+        self.logger.record("nosl_is_az/combat_roots", len(self._nosl_is_az_samples))
+        return True
+
+    def _compile_reasoning_samples(self, raw_reasoning_steps, buffer_observations):
+        """Materialize captured traces without blocking the next GPU phase."""
+        try:
+            reasoning_samples = []
+            for step_index, (actions, traces) in enumerate(raw_reasoning_steps):
+                observations = {
+                    key: np.asarray(value[step_index])
+                    for key, value in buffer_observations.items()
+                }
+                for env_index, trace in enumerate(traces):
+                    if trace is None:
+                        continue
+                    sample = self._reasoning_sample(
+                        observations,
+                        env_index,
+                        int(actions[env_index]),
+                        trace,
+                    )
+                    if sample is not None:
+                        reasoning_samples.append(sample)
+            self._reasoning_rollout_samples = reasoning_samples
+        except BaseException as error:
+            self._reasoning_compile_error = error
+
+    def _wait_for_reasoning_samples(self) -> None:
+        thread = self._reasoning_compile_thread
+        if thread is None:
+            return
+        thread.join()
+        self._reasoning_compile_thread = None
+        error = self._reasoning_compile_error
+        self._reasoning_compile_error = None
+        if error is not None:
+            raise error
+
+    @staticmethod
+    def _reasoning_sample(observations, env_index, action, trace):
+        """Compile one simulator trace and immediately discard its snapshots."""
+        from env.core import action_space as A
+        from rl.wholerun_reasoning import (
+            build_interactive_transcript,
+            card_stochastic_flags,
+            events_from_snapshots,
+        )
+
+        snapshots = trace.get("snapshots") or ()
+        events = trace.get("events")
+        if events is None:
+            if len(snapshots) < 2:
+                return None
+            events = events_from_snapshots(snapshots)
+        action_card = trace.get("action_card")
+        flags = card_stochastic_flags(action_card)
+        segment, offset = A.segment_of(action)
+        transcript = build_interactive_transcript(
+            events=events,
+            action_segment=segment,
+            action_offset=offset,
+            action_card=action_card,
+            **flags,
+        )
+        inputs, labels = transcript.teacher_labels()
+        return {
+            "observation": {
+                key: np.asarray(value[env_index]).copy()
+                for key, value in observations.items()
+            },
+            "action": int(action),
+            "inputs": np.asarray(inputs, dtype=np.int64),
+            "labels": np.asarray(labels, dtype=np.int64),
+            "precision": str(trace.get("precision", "atomic")),
+            "environment_tokens": int(sum(
+                owner == 0 for owner in transcript.owners
+            )),
+        }
 
     def _collect_profiled_rollouts(self, env, callback, rollout_buffer,
                                    n_rollout_steps, use_masking):
@@ -439,7 +1375,413 @@ class AccumulatingMaskablePPO(MaskablePPO):
         }
         return result
 
-    def _optimizer_step(self, micro_batches: int) -> None:
+    def _materialize_legacy_nosl_observations(self, samples: list[dict]) -> None:
+        """Resolve pre-replay buffer indices used by older callers and tests."""
+        missing = [sample for sample in samples if "observation" not in sample]
+        if not missing:
+            return
+        if self.rollout_buffer.generator_ready:
+            observations = self.rollout_buffer.observations
+        else:
+            observations = {
+                key: self.rollout_buffer.swap_and_flatten(value)
+                for key, value in self.rollout_buffer.observations.items()
+            }
+        keys = self._nosl_is_az_observation_keys()
+        for sample in missing:
+            index = int(sample.get("buffer_index", -1))
+            if index < 0:
+                raise ValueError("NOSL sample has neither observation nor buffer index")
+            sample["observation"] = {
+                key: np.asarray(observations[key][index]).copy()
+                for key in keys
+            }
+
+    def _prepare_nosl_is_az_replay(self) -> dict[str, float]:
+        """Prepare newly labelled fights for the next AZ update.
+
+        The historical default is replay-enabled for checkpoint
+        compatibility.  With replay explicitly disabled, samples remain in a
+        short-lived fresh list and are consumed exactly once by the update.
+        """
+        raw_samples = list(getattr(self, "_nosl_is_az_samples", []))
+        samples = [
+            sample
+            for sample in raw_samples
+            if np.isfinite(float(sample.get("value_target", np.nan)))
+        ]
+        dropped = len(raw_samples) - len(samples)
+        self._materialize_legacy_nosl_observations(samples)
+        replay_enabled = bool(getattr(self, "nosl_is_az_replay_enabled", True))
+        if not replay_enabled:
+            self._nosl_is_az_fresh_samples = samples
+            self._nosl_is_az_samples = []
+            stats = {
+                "fresh_roots": float(len(samples)),
+                "dropped_unlabeled_roots": float(dropped),
+                "replay_size": 0.0,
+                "replay_capacity": 0.0,
+                "replay_fill_ratio": 0.0,
+                "replay_allocated_mb": 0.0,
+                "replay_ready": float(bool(samples)),
+                "replay_enabled": 0.0,
+                "fresh_start_id": 0.0,
+            }
+            self._nosl_is_az_replay_prepare_stats = stats
+            logger = getattr(self, "_logger", None)
+            if logger is not None:
+                logger.record("nosl_is_az/dropped_unlabeled_roots", dropped)
+            return stats
+
+        self._nosl_is_az_fresh_samples = []
+        replay = self._ensure_nosl_is_az_replay()
+        fresh_start_id = replay.total_added
+        added = replay.add_samples(samples)
+        self._nosl_is_az_samples = []
+        ready = replay.size >= int(self.nosl_is_az_replay_min_size)
+        stats = {
+            "fresh_roots": float(added),
+            "dropped_unlabeled_roots": float(dropped),
+            "replay_size": float(replay.size),
+            "replay_capacity": float(replay.capacity),
+            "replay_fill_ratio": float(replay.size / replay.capacity),
+            "replay_allocated_mb": float(replay.allocated_bytes / (1024**2)),
+            "replay_ready": float(ready),
+            "replay_enabled": 1.0,
+            "fresh_start_id": float(fresh_start_id),
+        }
+        self._nosl_is_az_replay_prepare_stats = stats
+        logger = getattr(self, "_logger", None)
+        if logger is not None:
+            logger.record("nosl_is_az/dropped_unlabeled_roots", dropped)
+        return stats
+
+    def _nosl_is_az_replay_train_count(self) -> int:
+        if not bool(getattr(self, "nosl_is_az_replay_enabled", True)):
+            return len(getattr(self, "_nosl_is_az_fresh_samples", ()))
+        replay = self._ensure_nosl_is_az_replay()
+        if replay.size < int(self.nosl_is_az_replay_min_size):
+            return 0
+        return min(int(self.nosl_is_az_batch_size), replay.size)
+
+    def _train_nosl_is_az(
+        self,
+        *,
+        step_optimizer: bool = True,
+        gradient_scale: float = 1.0,
+        prepare_replay: bool = True,
+    ) -> dict[str, object]:
+        """Train the combat specialist from a recent self-play replay window.
+
+        One effective batch is sampled without replacement per requested AZ
+        update. It is split into bounded microbatches for memory, accumulated as
+        an exact sample-weighted mean, and stepped once. Distributed training
+        leaves that mean gradient installed for the ring all-reduce.
+        """
+        if prepare_replay:
+            prepare_stats = self._prepare_nosl_is_az_replay()
+        else:
+            prepare_stats = dict(
+                getattr(self, "_nosl_is_az_replay_prepare_stats", {})
+            )
+        replay_enabled = bool(getattr(self, "nosl_is_az_replay_enabled", True))
+        replay = (
+            self._ensure_nosl_is_az_replay() if replay_enabled else None
+        )
+        train_count = self._nosl_is_az_replay_train_count()
+        if train_count < 1:
+            if not step_optimizer:
+                self.policy.optimizer.zero_grad()
+            self._nosl_is_az_metric_sums = {}
+            self._nosl_is_az_metric_sumsq = {}
+            self._nosl_is_az_metric_count = 0.0
+            self._nosl_is_az_policy_loss_sum = 0.0
+            self._nosl_is_az_value_loss_sum = 0.0
+            return {
+                "roots": 0.0,
+                "policy_loss": 0.0,
+                "value_loss": 0.0,
+                "updates": 0.0,
+                "gradient_batches": 0.0,
+                "replay_sampled_roots": 0.0,
+                "replay_old_fraction": 0.0,
+                "replay_enabled": float(replay_enabled),
+                "metric_count": 0.0,
+                "gradient_norm_preclip": 0.0,
+                **{
+                    key: value
+                    for key, value in prepare_stats.items()
+                    if key != "fresh_start_id"
+                },
+            }
+
+        core = getattr(self.policy, "core", None)
+        if core is None or not hasattr(core, "actor_critic"):
+            raise TypeError("NOSL-IS-AZ requires policy core.actor_critic")
+        actor_critic = getattr(core, "combat_actor_critic", core.actor_critic)
+        micro_batch_size = int(
+            getattr(self, "nosl_is_az_micro_batch_size", 2048)
+        )
+        fresh_start_id = int(
+            prepare_stats.get(
+                "fresh_start_id", replay.total_added if replay is not None else 0
+            )
+        )
+        fresh_samples = list(
+            getattr(self, "_nosl_is_az_fresh_samples", ())
+        ) if not replay_enabled else None
+        policy_loss_sum = 0.0
+        value_loss_sum = 0.0
+        sampled_roots = 0
+        sampled_old = 0
+        gradient_batches = 0
+        optimizer_steps = 0
+        gradient_norms = []
+
+        monitor_names = (
+            "target_entropy",
+            "policy_entropy",
+            "target_policy_kl",
+            "policy_cross_entropy",
+            "target_effective_actions",
+            "target_top1_agreement",
+            "legal_actions",
+            "illegal_target_mass",
+            "target_sum_error",
+            "value_target",
+            "pred_value",
+            "value_mae",
+            "value_bias",
+            "finite_fraction",
+        )
+        monitor_sum = {name: 0.0 for name in monitor_names}
+        monitor_sumsq = {name: 0.0 for name in monitor_names}
+        monitor_min = {name: float("inf") for name in monitor_names}
+        monitor_max = {name: float("-inf") for name in monitor_names}
+        monitor_count = 0
+
+        def accumulate_monitor(name: str, values: th.Tensor) -> None:
+            nonlocal monitor_count
+            array = values.detach().float().reshape(-1).cpu().numpy()
+            finite = np.isfinite(array)
+            if not np.any(finite):
+                return
+            array = array[finite].astype(np.float64, copy=False)
+            monitor_sum[name] += float(array.sum(dtype=np.float64))
+            monitor_sumsq[name] += float(np.square(array).sum(dtype=np.float64))
+            monitor_min[name] = min(monitor_min[name], float(array.min()))
+            monitor_max[name] = max(monitor_max[name], float(array.max()))
+
+        for _update in range(int(self.nosl_is_az_updates)):
+            indices = replay.sample_indices(train_count) if replay_enabled else None
+            self.policy.optimizer.zero_grad()
+            for start in range(0, train_count, micro_batch_size):
+                if replay_enabled:
+                    assert indices is not None and replay is not None
+                    micro_indices = indices[start : start + micro_batch_size]
+                    batch = replay.get_batch(micro_indices)
+                    micro_count = len(micro_indices)
+                else:
+                    assert fresh_samples is not None
+                    micro_samples = fresh_samples[start : start + micro_batch_size]
+                    batch = self._nosl_samples_to_batch(micro_samples)
+                    micro_count = len(micro_samples)
+                observations = {
+                    key: th.as_tensor(
+                        np.asarray(
+                            value, dtype=self.observation_space[key].dtype
+                        ),
+                        device=self.device,
+                    )
+                    for key, value in batch["observations"].items()
+                }
+                masks = th.as_tensor(
+                    batch["action_masks"], dtype=th.bool, device=self.device
+                )
+                targets = th.as_tensor(
+                    batch["policy_targets"],
+                    dtype=th.float32,
+                    device=self.device,
+                )
+                value_targets = th.as_tensor(
+                    batch["value_targets"],
+                    dtype=th.float32,
+                    device=self.device,
+                )
+                with self.autocast_context():
+                    logits, values = actor_critic(observations)
+                    masked_logits = th.where(
+                        masks, logits, th.full_like(logits, -1.0e8)
+                    )
+                    log_probs = F.log_softmax(masked_logits, dim=-1)
+                    target_sum = targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+                    target_sum_error = (target_sum.squeeze(-1) - 1.0).abs()
+                    targets = targets / target_sum
+                    target_positive = targets > 0.0
+                    target_log = th.where(
+                        target_positive,
+                        th.log(targets.clamp_min(1e-8)),
+                        th.zeros_like(targets),
+                    )
+                    target_entropy_per_sample = -(targets * target_log).sum(dim=-1)
+                    masked_probs = th.where(
+                        masks, th.exp(log_probs), th.zeros_like(log_probs)
+                    )
+                    prob_sum = masked_probs.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+                    masked_probs = masked_probs / prob_sum
+                    policy_log = th.where(
+                        masked_probs > 0.0,
+                        th.log(masked_probs.clamp_min(1e-8)),
+                        th.zeros_like(masked_probs),
+                    )
+                    policy_entropy_per_sample = -(
+                        masked_probs * policy_log
+                    ).sum(dim=-1)
+                    policy_cross_entropy_per_sample = -(
+                        targets * log_probs
+                    ).sum(dim=-1)
+                    policy_kl_per_sample = (
+                        policy_cross_entropy_per_sample
+                        - target_entropy_per_sample
+                    )
+                    illegal_target_mass = (
+                        targets * (~masks).to(dtype=targets.dtype)
+                    ).sum(dim=-1)
+                    legal_actions = masks.sum(dim=-1).float()
+                    target_top1 = targets.argmax(dim=-1)
+                    policy_top1 = masked_probs.argmax(dim=-1)
+                    target_top1_agreement = (
+                        target_top1 == policy_top1
+                    ).float()
+                    policy_loss = policy_cross_entropy_per_sample.mean()
+                    value_loss = F.mse_loss(
+                        values.float().flatten(), value_targets
+                    )
+                    loss = (
+                        self.nosl_is_az_policy_coef * policy_loss
+                        + self.nosl_is_az_value_coef * value_loss
+                    )
+
+                # Every microbatch contributes its exact fraction of the
+                # effective replay batch, including the shorter final chunk.
+                backward_loss = loss * (float(micro_count) / float(train_count))
+                if not step_optimizer:
+                    backward_loss = backward_loss * float(gradient_scale)
+                backward_loss.backward()
+                policy_loss_sum += float(policy_loss.detach().cpu()) * micro_count
+                value_loss_sum += float(value_loss.detach().cpu()) * micro_count
+                sampled_roots += micro_count
+                if replay_enabled:
+                    sampled_old += int(
+                        np.count_nonzero(batch["sample_ids"] < fresh_start_id)
+                    )
+                gradient_batches += 1
+
+                pred_values = values.float().flatten()
+                target_values = value_targets.float().flatten()
+                monitor_values = {
+                    "target_entropy": target_entropy_per_sample,
+                    "policy_entropy": policy_entropy_per_sample,
+                    "target_policy_kl": policy_kl_per_sample,
+                    "policy_cross_entropy": policy_cross_entropy_per_sample,
+                    "target_effective_actions": th.exp(
+                        target_entropy_per_sample
+                    ),
+                    "target_top1_agreement": target_top1_agreement,
+                    "legal_actions": legal_actions,
+                    "illegal_target_mass": illegal_target_mass,
+                    "target_sum_error": target_sum_error,
+                    "value_target": target_values,
+                    "pred_value": pred_values,
+                    "value_mae": (pred_values - target_values).abs(),
+                    "value_bias": pred_values - target_values,
+                    "finite_fraction": (
+                        th.isfinite(logits).all(dim=-1)
+                        & th.isfinite(pred_values)
+                    ).float(),
+                }
+                for name, values_for_metric in monitor_values.items():
+                    accumulate_monitor(name, values_for_metric)
+                monitor_count += micro_count
+            if step_optimizer:
+                gradient_norms.append(self._optimizer_step(1))
+                optimizer_steps += 1
+
+        if not replay_enabled:
+            # Fresh roots are deliberately one-shot.  This also bounds memory
+            # when a fight spans many collection updates.
+            self._nosl_is_az_fresh_samples = []
+
+        def metric_mean(name: str) -> float:
+            return (
+                float(monitor_sum[name] / monitor_count)
+                if monitor_count else 0.0
+            )
+
+        def metric_std(name: str) -> float:
+            if not monitor_count:
+                return 0.0
+            mean = monitor_sum[name] / monitor_count
+            return float(
+                np.sqrt(max(0.0, monitor_sumsq[name] / monitor_count - mean * mean))
+            )
+
+        def metric_minimum(name: str) -> float:
+            return 0.0 if not np.isfinite(monitor_min[name]) else float(monitor_min[name])
+
+        def metric_maximum(name: str) -> float:
+            return 0.0 if not np.isfinite(monitor_max[name]) else float(monitor_max[name])
+
+        result = {
+            "roots": float(sampled_roots),
+            "policy_loss": float(policy_loss_sum / sampled_roots),
+            "value_loss": float(value_loss_sum / sampled_roots),
+            "updates": float(optimizer_steps),
+            "gradient_batches": float(gradient_batches),
+            "replay_sampled_roots": float(sampled_roots if replay_enabled else 0.0),
+            "replay_old_fraction": float(sampled_old / sampled_roots),
+            "replay_enabled": float(replay_enabled),
+            "metric_count": float(monitor_count),
+            "target_entropy": metric_mean("target_entropy"),
+            "policy_entropy": metric_mean("policy_entropy"),
+            "target_policy_kl": metric_mean("target_policy_kl"),
+            "policy_cross_entropy": metric_mean("policy_cross_entropy"),
+            "target_effective_actions": metric_mean("target_effective_actions"),
+            "target_top1_agreement": metric_mean("target_top1_agreement"),
+            "legal_actions_mean": metric_mean("legal_actions"),
+            "illegal_target_mass": metric_mean("illegal_target_mass"),
+            "target_sum_error": metric_mean("target_sum_error"),
+            "value_target_mean": metric_mean("value_target"),
+            "value_target_std": metric_std("value_target"),
+            "value_target_min": metric_minimum("value_target"),
+            "value_target_max": metric_maximum("value_target"),
+            "pred_value_mean": metric_mean("pred_value"),
+            "pred_value_std": metric_std("pred_value"),
+            "value_mae": metric_mean("value_mae"),
+            "value_bias": metric_mean("value_bias"),
+            "finite_fraction": metric_mean("finite_fraction"),
+            "gradient_norm_preclip": float(
+                np.mean(gradient_norms) if gradient_norms else 0.0
+            ),
+        }
+        result.update(
+            {
+                key: value
+                for key, value in prepare_stats.items()
+                if key != "fresh_start_id"
+            }
+        )
+        # Keep exact sums on the runtime object for the distributed caller.
+        # They must not be returned in the logger-facing dict: TensorBoard and
+        # W&B expect scalar values and reject nested dictionaries.
+        self._nosl_is_az_metric_sums = monitor_sum
+        self._nosl_is_az_metric_sumsq = monitor_sumsq
+        self._nosl_is_az_metric_count = float(monitor_count)
+        self._nosl_is_az_policy_loss_sum = float(policy_loss_sum)
+        self._nosl_is_az_value_loss_sum = float(value_loss_sum)
+        return result
+
+    def _optimizer_step(self, micro_batches: int) -> float:
         """Average accumulated gradients, clip once, and update parameters."""
         if micro_batches < 1:
             return
@@ -447,9 +1789,121 @@ class AccumulatingMaskablePPO(MaskablePPO):
         for parameter in self.policy.parameters():
             if parameter.grad is not None:
                 parameter.grad.mul_(scale)
-        th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+        gradient_norm = th.nn.utils.clip_grad_norm_(
+            self.policy.parameters(), self.max_grad_norm
+        )
         self.policy.optimizer.step()
         self.policy.optimizer.zero_grad()
+        return float(gradient_norm.detach().float().cpu())
+
+    def _train_reasoning(self) -> dict[str, float]:
+        self._wait_for_reasoning_samples()
+        samples = self._reasoning_rollout_samples
+        core = getattr(self.policy, "core", None)
+        if (
+            not samples
+            or self.reasoning_coef <= 0.0
+            or self.reasoning_updates <= 0
+            or not hasattr(core, "reasoning_loss")
+        ):
+            return {}
+
+        # All captured transcripts participate.  The decoder can extend its
+        # positional representation beyond the initial learned table, so a
+        # long trace is no longer silently removed from the auxiliary loss.
+        eligible = list(samples)
+        dropped = 0
+        if not eligible:
+            return {
+                "samples": float(len(samples)),
+                "eligible_samples": 0.0,
+                "dropped_too_long": float(dropped),
+                "sequence_length_mean": 0.0,
+                "sequence_length_max": 0.0,
+            }
+
+        losses = []
+        accuracies = []
+        supervised = 0.0
+        sampled_samples = 0
+        optimizer_steps = 0
+        accumulation_steps = self.reasoning_gradient_accumulation_steps
+        self.policy.optimizer.zero_grad()
+        for reasoning_update in range(self.reasoning_updates):
+            count = min(self.reasoning_batch_size, len(eligible))
+            indices = np.random.choice(len(eligible), size=count, replace=False)
+            batch = [eligible[int(index)] for index in indices]
+            observations = {
+                key: th.as_tensor(
+                    np.stack([sample["observation"][key] for sample in batch]),
+                    device=self.device,
+                )
+                for key in batch[0]["observation"]
+            }
+            actions = th.as_tensor(
+                [sample["action"] for sample in batch],
+                dtype=th.long,
+                device=self.device,
+            )
+            length = max(len(sample["inputs"]) for sample in batch)
+            from rl.wholerun_reasoning import IGNORE_INDEX, VOCAB
+
+            input_ids = th.full(
+                (count, length), VOCAB.pad_id, dtype=th.long, device=self.device
+            )
+            labels = th.full(
+                (count, length), IGNORE_INDEX, dtype=th.long, device=self.device
+            )
+            for row, sample in enumerate(batch):
+                width = len(sample["inputs"])
+                input_ids[row, :width] = th.as_tensor(
+                    sample["inputs"], dtype=th.long, device=self.device
+                )
+                labels[row, :width] = th.as_tensor(
+                    sample["labels"], dtype=th.long, device=self.device
+                )
+
+            with self.autocast_context():
+                reasoning_loss, stats = core.reasoning_loss(
+                    observations, actions, input_ids, labels
+                )
+                weighted_loss = self.reasoning_coef * reasoning_loss
+            weighted_loss.backward()
+            sampled_samples += count
+            group_finished = (
+                (reasoning_update + 1) % accumulation_steps == 0
+                or reasoning_update + 1 >= self.reasoning_updates
+            )
+            if group_finished:
+                group_size = min(
+                    accumulation_steps,
+                    reasoning_update + 1
+                    - (reasoning_update // accumulation_steps) * accumulation_steps,
+                )
+                self._optimizer_step(group_size)
+                optimizer_steps += 1
+            losses.append(float(reasoning_loss.detach().cpu()))
+            accuracies.append(stats["token_accuracy"])
+            supervised += stats["supervised_tokens"]
+
+        atomic = sum(sample["precision"] == "atomic" for sample in eligible)
+        environment_tokens = sum(sample["environment_tokens"] for sample in eligible)
+        lengths = [len(sample["inputs"]) for sample in eligible]
+        return {
+            "loss": float(np.mean(losses)),
+            "token_accuracy": float(np.mean(accuracies)),
+            "supervised_tokens": supervised,
+            "sampled_samples": float(sampled_samples),
+            "samples": float(len(samples)),
+            "eligible_samples": float(len(eligible)),
+            "dropped_too_long": float(dropped),
+            "atomic_trace_rate": atomic / len(eligible),
+            "environment_tokens": float(environment_tokens),
+            "optimizer_steps": float(optimizer_steps),
+            "gradient_accumulation_steps": float(accumulation_steps),
+            "sequence_length_mean": float(np.mean(lengths)),
+            "sequence_length_max": float(max(lengths)),
+        }
 
     def train(self) -> None:
         """Update the policy, accumulating gradients across micro-batches."""
@@ -474,7 +1928,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         loss = th.zeros((), device=self.device)
         approx_kl_divs = []
 
-        for epoch in range(self.n_epochs):
+        inner_only = bool(getattr(self, "nosl_is_az_inner_only", False))
+        ppo_epochs = 0 if inner_only else self.n_epochs
+        for epoch in range(ppo_epochs):
             approx_kl_divs = []
             accumulated = 0
             self.policy.optimizer.zero_grad()
@@ -508,6 +1964,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         clip_range_vf
                         if self.clip_range_vf is not None else None
                     ),
+                    skip_combat=self.nosl_is_az,
                 )
                 policy_loss = components.policy_loss
                 value_loss = components.value_loss
@@ -566,6 +2023,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
             if not continue_training:
                 break
 
+        reasoning_stats = {} if inner_only else self._train_reasoning()
+        nosl_is_az_stats = (
+            self._train_nosl_is_az() if self.nosl_is_az else {}
+        )
+
         flat_values = self.rollout_buffer.values.flatten()
         flat_returns = self.rollout_buffer.returns.flatten()
         valid_returns = np.isfinite(flat_returns)
@@ -574,11 +2036,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             flat_returns[valid_returns],
         )
 
-        self.logger.record("train/entropy_loss", np.mean(entropy_losses))
-        self.logger.record("train/policy_gradient_loss", np.mean(pg_losses))
-        self.logger.record("train/value_loss", np.mean(value_losses))
-        self.logger.record("train/approx_kl", np.mean(approx_kl_divs))
-        self.logger.record("train/clip_fraction", np.mean(clip_fractions))
+        mean_or_nan = lambda values: np.mean(values) if values else np.nan
+        self.logger.record("train/entropy_loss", mean_or_nan(entropy_losses))
+        self.logger.record("train/policy_gradient_loss", mean_or_nan(pg_losses))
+        self.logger.record("train/value_loss", mean_or_nan(value_losses))
+        self.logger.record("train/approx_kl", mean_or_nan(approx_kl_divs))
+        self.logger.record("train/clip_fraction", mean_or_nan(clip_fractions))
         self.logger.record("train/loss", loss.item())
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/n_updates", self._n_updates, exclude="tensorboard")
@@ -592,6 +2055,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.batch_size * self.gradient_accumulation_steps,
         )
         self.logger.record("train/optimizer_steps", optimizer_steps)
+        self.logger.record("train/outer_updates_enabled", float(not inner_only))
+        for key, value in reasoning_stats.items():
+            self.logger.record(f"reasoning/{key}", value)
+        for key, value in nosl_is_az_stats.items():
+            self.logger.record(f"nosl_is_az/{key}", value)
         if self.hierarchical_combat_hp:
             flat_phases = np.asarray(
                 self.rollout_buffer.observations["phase"]

@@ -758,6 +758,11 @@ void BattleContext::executeActions() {
             // do a action
             auto a = std::move(actionQueue.popFront());
             a(*this);
+#ifdef STS_ENABLE_RULE_TRACE
+            if (atomicStepObserver) {
+                atomicStepObserver(*this);
+            }
+#endif
             continue;
         }
 
@@ -769,6 +774,11 @@ void BattleContext::executeActions() {
             // play a card queue item
             auto item = cardQueue.popFront();
             playCardQueueItem(item);
+#ifdef STS_ENABLE_RULE_TRACE
+            if (atomicStepObserver) {
+                atomicStepObserver(*this);
+            }
+#endif
             continue;
         }
 
@@ -821,6 +831,11 @@ void BattleContext::executeActions() {
         if (monsterTurnIdx < monsters.monsterCount) {
             // do a monster turn
             monsters.doMonsterTurn(*this);
+#ifdef STS_ENABLE_RULE_TRACE
+            if (atomicStepObserver) {
+                atomicStepObserver(*this);
+            }
+#endif
             continue;
         }
         monsters.skipTurn.reset();
@@ -832,6 +847,11 @@ void BattleContext::executeActions() {
         if (turnHasEnded) {
             // after all monster turns
             afterMonsterTurns();
+#ifdef STS_ENABLE_RULE_TRACE
+            if (atomicStepObserver) {
+                atomicStepObserver(*this);
+            }
+#endif
             continue;
 
         }
@@ -839,6 +859,11 @@ void BattleContext::executeActions() {
         if (endTurnQueued) {
             endTurnQueued = false;
             onTurnEnding();
+#ifdef STS_ENABLE_RULE_TRACE
+            if (atomicStepObserver) {
+                atomicStepObserver(*this);
+            }
+#endif
             continue;
 
         }
@@ -853,10 +878,20 @@ void BattleContext::executeActions() {
 
             if (cards.cardsInHand == 0) {
                 drawCards(1);
+#ifdef STS_ENABLE_RULE_TRACE
+                if (atomicStepObserver) {
+                    atomicStepObserver(*this);
+                }
+#endif
             }
         }
 
         setState(InputState::PLAYER_NORMAL);
+#ifdef STS_ENABLE_RULE_TRACE
+        if (atomicStepObserver) {
+            atomicStepObserver(*this);
+        }
+#endif
         break;
     }
 }

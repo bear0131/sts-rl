@@ -256,62 +256,73 @@ def legal_ids(legal_semantic, pending, phase):
       - otherwise (ROOT or a card-select screen): every main action on offer,
         each mapped to its segment id.
     """
-    ids = set()
+    # A fixed-size byte mask avoids repeatedly allocating sets while walking
+    # the semantic action list.  The public result remains a sorted list for
+    # compatibility with the original implementation.
+    ids = bytearray(N_ACTIONS)
+
+    def mark(action_id):
+        if 0 <= action_id < N_ACTIONS:
+            ids[action_id] = 1
 
     if pending is not None and pending[0] == "play":
         h = pending[1]
-        _, targets = _play_targeting(legal_semantic)
-        for t in targets.get(h, ()):
-            ids.add(_TARGET + t)
-        return sorted(ids)
+        for a in legal_semantic:
+            if a[0] != ga.COMBAT:
+                continue
+            kind = actions.decode(a[1])
+            if (kind[0] == actions.KIND_PLAY and kind[1] == h
+                    and kind[2] is not None):
+                mark(_TARGET + kind[2])
+        return [index for index, present in enumerate(ids) if present]
 
     if pending is not None and pending[0] == "potion":
         slot = pending[1]
-        _, targets = _potion_targeting(legal_semantic)
-        for t in targets.get(slot, ()):
-            ids.add(_TARGET + t)
-        return sorted(ids)
+        for a in legal_semantic:
+            if (a[0] == ga.USE_POTION and a[1] == slot
+                    and a[2] is not None):
+                mark(_TARGET + a[2])
+        return [index for index, present in enumerate(ids) if present]
 
-    untargeted, targets = _play_targeting(legal_semantic)
     for a in legal_semantic:
         verb = a[0]
         if verb == ga.COMBAT:
             kind = actions.decode(a[1])
             if kind[0] == actions.KIND_END:
-                ids.add(END_TURN)
+                mark(END_TURN)
             elif kind[0] == actions.KIND_PLAY:
-                ids.add(_PLAY + kind[1])          # one root id per hand slot
+                mark(_PLAY + kind[1])             # one root id per hand slot
             elif kind[0] == actions.KIND_SELECT:
-                ids.add(_PICK + kind[1])          # in-combat card-select pick
+                mark(_PICK + kind[1])              # in-combat card-select pick
         elif verb == ga.NEOW:
-            ids.add(_NEOW + a[1])
+            mark(_NEOW + a[1])
         elif verb == ga.MAP:
-            ids.add(_MAP + a[1])
+            mark(_MAP + a[1])
         elif verb == ga.CLAIM:
             kind, idx = a[1], a[2]
             base = {ga.CLAIM_GOLD: _RGOLD, ga.CLAIM_RELIC: _RRELIC,
                     ga.CLAIM_POTION: _RPOTION}[kind]
-            ids.add(base + idx)
+            mark(base + idx)
         elif verb == ga.REWARD_CARD:
-            ids.add(_RCARD + a[1])
+            mark(_RCARD + a[1])
         elif verb == ga.SKIP_CARDS:
-            ids.add(_RSKIP)
+            mark(_RSKIP)
         elif verb == ga.SELECT:
-            ids.add(_PICK + a[1])                 # overworld grid pick
+            mark(_PICK + a[1])                    # overworld grid pick
         elif verb == ga.CAMPFIRE:
-            ids.add(_CAMP + ga.CAMPFIRE_OPTIONS[a[1]])
+            mark(_CAMP + ga.CAMPFIRE_OPTIONS[a[1]])
         elif verb == ga.EVENT:
-            ids.add(_EVENT + a[1])
+            mark(_EVENT + a[1])
         elif verb == ga.CHEST:
-            ids.add(_CHEST + (0 if a[1] else 1))
+            mark(_CHEST + (0 if a[1] else 1))
         elif verb == ga.BOSS_RELIC:
-            ids.add(_BOSS + a[1])
+            mark(_BOSS + a[1])
         elif verb in (ga.PROCEED, ga.SHOP_PROCEED):
-            ids.add(_PROCEED)
+            mark(_PROCEED)
         elif verb == ga.SHOP_BUY:
-            ids.add(_SHOP_BASE_BY_KIND[a[1]] + a[2])   # (kind, slot) -> segment id
+            mark(_SHOP_BASE_BY_KIND[a[1]] + a[2])   # (kind, slot) -> segment id
         elif verb == ga.SHOP_REMOVE:
-            ids.add(_SHOP_REMOVE)
+            mark(_SHOP_REMOVE)
         elif verb == ga.USE_POTION:
             # One ROOT id per potion SLOT (USE_POTION segment), regardless of
             # whether it is targeted: a targeted potion picks its monster in the
@@ -319,9 +330,9 @@ def legal_ids(legal_semantic, pending, phase):
             # emits one PLAY_CARD[h] root id and defers the target. The thick layer
             # may list several (slot, t) actions for one targeted slot; they all
             # collapse to the single _POTION+slot root id here (the set dedupes).
-            ids.add(_POTION + a[1])
+            mark(_POTION + a[1])
         # all enumerated verbs are now handled above.
-    return sorted(ids)
+    return [index for index, present in enumerate(ids) if present]
 
 
 # ============================== resolve ==============================

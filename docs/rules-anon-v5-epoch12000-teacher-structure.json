@@ -1,0 +1,2425 @@
+{
+  "checkpoint": "rl\\runs\\rules-anon-v5-followup-dist4-20260826\\last.pt",
+  "checkpoint_epoch": 12000,
+  "data_samples": 512,
+  "greedy": {
+    "samples": 0
+  },
+  "seed": 20260826,
+  "split_unit": "combat",
+  "teacher_forced": {
+    "calculation_type_accuracy": {
+      "ADD_STRENGTH": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 602,
+          "total": 602
+        }
+      },
+      "APPLY_DELTA": {
+        "exact": {
+          "accuracy": 0.8227146814404432,
+          "correct": 297,
+          "total": 361
+        },
+        "token": {
+          "accuracy": 0.9867559987535057,
+          "correct": 6333,
+          "total": 6418
+        }
+      },
+      "BLOCK_ABSORB": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 601,
+          "total": 601
+        }
+      },
+      "NO_VULNERABLE": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 458,
+          "total": 458
+        }
+      },
+      "READ_BASE_DAMAGE": {
+        "exact": {
+          "accuracy": 0.9444444444444444,
+          "correct": 34,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 0.9929328621908127,
+          "correct": 281,
+          "total": 283
+        }
+      },
+      "READ_STRENGTH": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 252,
+          "total": 252
+        }
+      },
+      "READ_TARGET_BLOCK": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 268,
+          "total": 268
+        }
+      },
+      "READ_TARGET_HP": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 14,
+          "total": 14
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 112,
+          "total": 112
+        }
+      },
+      "SUBTRACT_BLOCK": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 36,
+          "total": 36
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 580,
+          "total": 580
+        }
+      },
+      "SUBTRACT_BLOCK_DAMAGE": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 14,
+          "total": 14
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 233,
+          "total": 233
+        }
+      },
+      "SUBTRACT_HP": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 14,
+          "total": 14
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 247,
+          "total": 247
+        }
+      }
+    },
+    "critical_region_accuracy": {
+      "calculation_number": {
+        "accuracy": 0.9757785467128027,
+        "correct": 2256,
+        "total": 2312
+      },
+      "causal": {
+        "accuracy": 0.9971131639722863,
+        "correct": 1727,
+        "total": 1732
+      },
+      "counter": {
+        "accuracy": 0.9832402234636871,
+        "correct": 176,
+        "total": 179
+      },
+      "effect_number": {
+        "accuracy": 1.0,
+        "correct": 407,
+        "total": 407
+      },
+      "next_number": {
+        "accuracy": 1.0,
+        "correct": 288,
+        "total": 288
+      },
+      "other": {
+        "accuracy": 0.9868592083474297,
+        "correct": 55423,
+        "total": 56161
+      }
+    },
+    "effect_aggregate_accuracy": {
+      "COUNTER_CHANGE:attacks_played": {
+        "accuracy": 0.9032258064516129,
+        "correct": 28,
+        "total": 31
+      },
+      "COUNTER_CHANGE:cards_discarded": {
+        "accuracy": 0.5,
+        "correct": 5,
+        "total": 10
+      },
+      "COUNTER_CHANGE:cards_played": {
+        "accuracy": 0.975,
+        "correct": 39,
+        "total": 40
+      },
+      "COUNTER_CHANGE:last_attack_unblocked_damage": {
+        "accuracy": 0.9090909090909091,
+        "correct": 10,
+        "total": 11
+      },
+      "COUNTER_CHANGE:nunchaku": {
+        "accuracy": 1.0,
+        "correct": 26,
+        "total": 26
+      },
+      "COUNTER_CHANGE:skills_played": {
+        "accuracy": 1.0,
+        "correct": 8,
+        "total": 8
+      },
+      "COUNTER_CHANGE:times_damaged": {
+        "accuracy": 1.0,
+        "correct": 11,
+        "total": 11
+      },
+      "MONSTER_VALUE_CHANGE:block": {
+        "accuracy": 0.7096774193548387,
+        "correct": 22,
+        "total": 31
+      },
+      "MONSTER_VALUE_CHANGE:hp": {
+        "accuracy": 1.0,
+        "correct": 14,
+        "total": 14
+      },
+      "PLAYER_VALUE_CHANGE:block": {
+        "accuracy": 0.375,
+        "correct": 6,
+        "total": 16
+      },
+      "PLAYER_VALUE_CHANGE:energy": {
+        "accuracy": 0.9705882352941176,
+        "correct": 33,
+        "total": 34
+      },
+      "PLAYER_VALUE_CHANGE:hp": {
+        "accuracy": 0.36363636363636365,
+        "correct": 4,
+        "total": 11
+      },
+      "STATUS_CHANGE:Metallicize": {
+        "accuracy": 1.0,
+        "correct": 2,
+        "total": 2
+      },
+      "STATUS_CHANGE:Plated Armor": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 14
+      },
+      "STATUS_CHANGE:Strength": {
+        "accuracy": 0.125,
+        "correct": 1,
+        "total": 8
+      },
+      "counter:attacks_played": {
+        "accuracy": 0.9032258064516129,
+        "correct": 28,
+        "total": 31
+      },
+      "counter:cards_discarded": {
+        "accuracy": 0.5,
+        "correct": 5,
+        "total": 10
+      },
+      "counter:cards_played": {
+        "accuracy": 0.975,
+        "correct": 39,
+        "total": 40
+      },
+      "counter:last_attack_unblocked_damage": {
+        "accuracy": 0.9090909090909091,
+        "correct": 10,
+        "total": 11
+      },
+      "counter:nunchaku": {
+        "accuracy": 1.0,
+        "correct": 26,
+        "total": 26
+      },
+      "counter:skills_played": {
+        "accuracy": 1.0,
+        "correct": 8,
+        "total": 8
+      },
+      "counter:times_damaged": {
+        "accuracy": 1.0,
+        "correct": 11,
+        "total": 11
+      },
+      "effect_parse": {
+        "accuracy": 0.7926829268292683,
+        "correct": 65,
+        "total": 82
+      },
+      "monster_0_block_delta": {
+        "accuracy": 0.7096774193548387,
+        "correct": 22,
+        "total": 31
+      },
+      "monster_0_hp_delta": {
+        "accuracy": 1.0,
+        "correct": 14,
+        "total": 14
+      },
+      "player_block_delta": {
+        "accuracy": 0.375,
+        "correct": 6,
+        "total": 16
+      },
+      "player_energy_delta": {
+        "accuracy": 0.9705882352941176,
+        "correct": 33,
+        "total": 34
+      },
+      "player_hp_delta": {
+        "accuracy": 0.36363636363636365,
+        "correct": 4,
+        "total": 11
+      },
+      "status:monster_0:Plated Armor": {
+        "accuracy": 0.0,
+        "correct": 0,
+        "total": 14
+      },
+      "status:monster_0:Strength": {
+        "accuracy": 0.125,
+        "correct": 1,
+        "total": 8
+      },
+      "status:player:Metallicize": {
+        "accuracy": 1.0,
+        "correct": 2,
+        "total": 2
+      }
+    },
+    "errors": [
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "<OUTPUT_BEGIN>",
+          "<EFFECTS_BEGIN>",
+          "<EFFECTS_END>",
+          "<NEXT_STATE_BEGIN>",
+          "STATE_BEGIN",
+          "GLOBAL_ASCENSION",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "GLOBAL_ACT",
+          "NUM_LSD_BEGIN",
+          "DIGIT_3",
+          "NUM_END",
+          "GLOBAL_FLOOR",
+          "NUM_LSD_BEGIN",
+          "DIGIT_6",
+          "DIGIT_3",
+          "NUM_END"
+        ],
+        "first_mismatch": 2,
+        "predicted_context": [
+          "<OUTPUT_BEGIN>",
+          "<EFFECTS_BEGIN>",
+          "EFFECT_BEGIN",
+          "<NEXT_STATE_BEGIN>",
+          "STATE_BEGIN",
+          "GLOBAL_ASCENSION",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "GLOBAL_ACT",
+          "NUM_LSD_BEGIN",
+          "DIGIT_3",
+          "NUM_END",
+          "GLOBAL_FLOOR",
+          "NUM_LSD_BEGIN",
+          "DIGIT_6",
+          "DIGIT_3",
+          "NUM_END"
+        ],
+        "sample": 0,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_3",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "<EFFECTS_END>",
+          "<NEXT_STATE_BEGIN>",
+          "STATE_BEGIN",
+          "GLOBAL_ASCENSION",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0"
+        ],
+        "first_mismatch": 22,
+        "predicted_context": [
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_3",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "<EFFECTS_END>",
+          "<NEXT_STATE_BEGIN>",
+          "STATE_BEGIN",
+          "GLOBAL_ASCENSION",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0"
+        ],
+        "sample": 1,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_8"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_2",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_8"
+        ],
+        "sample": 2,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_6",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_3"
+        ],
+        "first_mismatch": 41,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_3",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_3"
+        ],
+        "sample": 3,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_4"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_3",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_4"
+        ],
+        "sample": 4,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_9",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_6"
+        ],
+        "first_mismatch": 26,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_6",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_6"
+        ],
+        "sample": 5,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_4"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_8",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_8"
+        ],
+        "sample": 6,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_0",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_9"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_2",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_9"
+        ],
+        "sample": 8,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_3",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_8"
+        ],
+        "first_mismatch": 26,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_8",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_draw",
+          "FIELD_destination",
+          "VALUE_hand",
+          "FIELD_card",
+          "CARD_REF_1"
+        ],
+        "sample": 9,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_7",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_0"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_4",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_9"
+        ],
+        "sample": 10,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_1",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_0",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5"
+        ],
+        "sample": 11,
+        "section": "effects"
+      },
+      {
+        "action_type": "MULTI_CARD_SELECT",
+        "card": null,
+        "expected_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_0",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_4"
+        ],
+        "first_mismatch": 11,
+        "predicted_context": [
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_8",
+          "FIELD_up",
+          "NUM_LSD_BEGIN",
+          "DIGIT_1",
+          "NUM_END",
+          "EFFECT_END",
+          "EFFECT_BEGIN",
+          "EFFECT_CARD_MOVE",
+          "STEP_CAUSE",
+          "VALUE_CARD_ZONE",
+          "FIELD_source",
+          "VALUE_hand",
+          "FIELD_destination",
+          "VALUE_discard",
+          "FIELD_card",
+          "CARD_REF_5"
+        ],
+        "sample": 12,
+        "section": "effects"
+      }
+    ],
+    "event_type_accuracy": {
+      "CARD_ADD": {
+        "exact": {
+          "accuracy": 0.3595505617977528,
+          "correct": 32,
+          "total": 89
+        },
+        "token": {
+          "accuracy": 0.9222126188418324,
+          "correct": 1067,
+          "total": 1157
+        }
+      },
+      "CARD_MOVE": {
+        "exact": {
+          "accuracy": 0.558282208588957,
+          "correct": 182,
+          "total": 326
+        },
+        "token": {
+          "accuracy": 0.9650306748466257,
+          "correct": 4719,
+          "total": 4890
+        }
+      },
+      "CARD_REMOVE": {
+        "exact": {
+          "accuracy": 0.7111111111111111,
+          "correct": 32,
+          "total": 45
+        },
+        "token": {
+          "accuracy": 0.9692307692307692,
+          "correct": 567,
+          "total": 585
+        }
+      },
+      "COUNTER_CHANGE": {
+        "exact": {
+          "accuracy": 0.8212290502793296,
+          "correct": 147,
+          "total": 179
+        },
+        "token": {
+          "accuracy": 0.9924920589084608,
+          "correct": 6874,
+          "total": 6926
+        }
+      },
+      "MONSTER_MOVE_CHANGE": {
+        "exact": {
+          "accuracy": 0.0,
+          "correct": 0,
+          "total": 9
+        },
+        "token": {
+          "accuracy": 0.8547008547008547,
+          "correct": 100,
+          "total": 117
+        }
+      },
+      "MONSTER_VALUE_CHANGE": {
+        "exact": {
+          "accuracy": 0.5194805194805194,
+          "correct": 40,
+          "total": 77
+        },
+        "token": {
+          "accuracy": 0.9936932779572374,
+          "correct": 6460,
+          "total": 6501
+        }
+      },
+      "PLAYER_VALUE_CHANGE": {
+        "exact": {
+          "accuracy": 0.4421052631578947,
+          "correct": 42,
+          "total": 95
+        },
+        "token": {
+          "accuracy": 0.9769430051813471,
+          "correct": 3771,
+          "total": 3860
+        }
+      },
+      "STATUS_CHANGE": {
+        "exact": {
+          "accuracy": 0.6129032258064516,
+          "correct": 19,
+          "total": 31
+        },
+        "token": {
+          "accuracy": 0.9884080370942813,
+          "correct": 1279,
+          "total": 1294
+        }
+      },
+      "TURN_CHANGE": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 15,
+          "total": 15
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 480,
+          "total": 480
+        }
+      }
+    },
+    "first_mismatch_sections": {
+      "calculations": 7,
+      "effects": 62,
+      "next_state": 3
+    },
+    "largest_groups": [
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_powers:1",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_status:Generic Strength Up",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_status:Plated Armor",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Anchor",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Burning Blood",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Gambling Chip",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Lantern",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Letter Opener",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Mercury Hourglass",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Nunchaku",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Ornamental Fan",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Paper Crane",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Paper Frog",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Sozu",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic_count:4+",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9885943905507976,
+        "correct": 48712,
+        "name": "monster_block:1",
+        "total": 49274
+      },
+      {
+        "accuracy": 0.9892414860681115,
+        "correct": 38343,
+        "name": "player_powers:0",
+        "total": 38760
+      },
+      {
+        "accuracy": 0.9841163152681477,
+        "correct": 27819,
+        "name": "monster_status:Strength",
+        "total": 28268
+      },
+      {
+        "accuracy": 0.9979356887653831,
+        "correct": 25138,
+        "name": "action:CARD",
+        "total": 25190
+      },
+      {
+        "accuracy": 0.9827501232134056,
+        "correct": 21934,
+        "name": "player_powers:1",
+        "total": 22319
+      },
+      {
+        "accuracy": 0.9827501232134056,
+        "correct": 21934,
+        "name": "player_status:Metallicize",
+        "total": 22319
+      },
+      {
+        "accuracy": 0.9722944974462754,
+        "correct": 20179,
+        "name": "action:END_TURN",
+        "total": 20754
+      },
+      {
+        "accuracy": 0.9884373967624711,
+        "correct": 14960,
+        "name": "action:MULTI_CARD_SELECT",
+        "total": 15135
+      },
+      {
+        "accuracy": 0.9972857696781698,
+        "correct": 12860,
+        "name": "card:Wild Strike",
+        "total": 12895
+      },
+      {
+        "accuracy": 0.9796696315120712,
+        "correct": 11565,
+        "name": "monster_block:0",
+        "total": 11805
+      },
+      {
+        "accuracy": 0.9973843998131714,
+        "correct": 10677,
+        "name": "card_up:Wild Strike+1",
+        "total": 10705
+      },
+      {
+        "accuracy": 0.9974210186976145,
+        "correct": 3094,
+        "name": "card:Reckless Charge",
+        "total": 3102
+      },
+      {
+        "accuracy": 0.9974210186976145,
+        "correct": 3094,
+        "name": "card_up:Reckless Charge+0",
+        "total": 3102
+      },
+      {
+        "accuracy": 0.9968036529680365,
+        "correct": 2183,
+        "name": "card_up:Wild Strike+0",
+        "total": 2190
+      },
+      {
+        "accuracy": 0.9979317476732161,
+        "correct": 1930,
+        "name": "card:Immolate",
+        "total": 1934
+      }
+    ],
+    "number_accuracy": {
+      "all": {
+        "accuracy": 0.9837945911817321,
+        "correct": 9349,
+        "mae_on_wrong_parseable": 6.630252100840337,
+        "total": 9503,
+        "unparseable": 35
+      },
+      "marker:ADJUSTED_DAMAGE": {
+        "accuracy": 0.8170731707317073,
+        "correct": 67,
+        "mae_on_wrong_parseable": 6.2,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:BASE_DAMAGE": {
+        "accuracy": 0.9634146341463414,
+        "correct": 79,
+        "mae_on_wrong_parseable": 10.0,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:BLOCK": {
+        "accuracy": 1.0,
+        "correct": 164,
+        "mae_on_wrong_parseable": null,
+        "total": 164,
+        "unparseable": 0
+      },
+      "marker:CALC_FIELD_delta": {
+        "accuracy": 0.8310249307479224,
+        "correct": 300,
+        "mae_on_wrong_parseable": 4.828571428571428,
+        "total": 361,
+        "unparseable": 26
+      },
+      "marker:CALC_FIELD_input": {
+        "accuracy": 1.0,
+        "correct": 36,
+        "mae_on_wrong_parseable": null,
+        "total": 36,
+        "unparseable": 0
+      },
+      "marker:CALC_FIELD_left": {
+        "accuracy": 0.993963782696177,
+        "correct": 494,
+        "mae_on_wrong_parseable": null,
+        "total": 497,
+        "unparseable": 3
+      },
+      "marker:CALC_FIELD_result": {
+        "accuracy": 1.0,
+        "correct": 533,
+        "mae_on_wrong_parseable": null,
+        "total": 533,
+        "unparseable": 0
+      },
+      "marker:CALC_FIELD_right": {
+        "accuracy": 1.0,
+        "correct": 136,
+        "mae_on_wrong_parseable": null,
+        "total": 136,
+        "unparseable": 0
+      },
+      "marker:CALC_FIELD_value": {
+        "accuracy": 1.0,
+        "correct": 122,
+        "mae_on_wrong_parseable": null,
+        "total": 122,
+        "unparseable": 0
+      },
+      "marker:COST": {
+        "accuracy": 0.8567164179104477,
+        "correct": 287,
+        "mae_on_wrong_parseable": 11.261904761904763,
+        "total": 335,
+        "unparseable": 6
+      },
+      "marker:COUNTER_attacks_played": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_bomb_1": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_bomb_2": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_bomb_3": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_cards_discarded": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_cards_played": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_centennial_puzzle_active": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_combust_hp_loss": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_deva_form_energy_per_turn": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_echo_form_cards_doubled": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_happy_flower": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_incense_burner": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_ink_bottle": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_inserter": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_last_attack_unblocked_damage": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_lizard_tail_active": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_necronomicon_used": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_nunchaku": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_orange_attack": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_orange_power": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_orange_skill": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_panache_counter": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_pen_nib": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_skills_played": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_sundial": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:COUNTER_times_damaged": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:ENERGY": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:FIELD_after": {
+        "accuracy": 1.0,
+        "correct": 397,
+        "mae_on_wrong_parseable": null,
+        "total": 397,
+        "unparseable": 0
+      },
+      "marker:FIELD_before": {
+        "accuracy": 1.0,
+        "correct": 397,
+        "mae_on_wrong_parseable": null,
+        "total": 397,
+        "unparseable": 0
+      },
+      "marker:FIELD_delta": {
+        "accuracy": 1.0,
+        "correct": 382,
+        "mae_on_wrong_parseable": null,
+        "total": 382,
+        "unparseable": 0
+      },
+      "marker:FIELD_slot": {
+        "accuracy": 1.0,
+        "correct": 86,
+        "mae_on_wrong_parseable": null,
+        "total": 86,
+        "unparseable": 0
+      },
+      "marker:FIELD_up": {
+        "accuracy": 0.9739130434782609,
+        "correct": 448,
+        "mae_on_wrong_parseable": 1.0,
+        "total": 460,
+        "unparseable": 0
+      },
+      "marker:GLOBAL_ACT": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:GLOBAL_ASCENSION": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:GLOBAL_FLOOR": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:GOLD": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:HITS": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:HP": {
+        "accuracy": 1.0,
+        "correct": 164,
+        "mae_on_wrong_parseable": null,
+        "total": 164,
+        "unparseable": 0
+      },
+      "marker:MAX_HP": {
+        "accuracy": 1.0,
+        "correct": 164,
+        "mae_on_wrong_parseable": null,
+        "total": 164,
+        "unparseable": 0
+      },
+      "marker:RELIC_COUNTER": {
+        "accuracy": 1.0,
+        "correct": 902,
+        "mae_on_wrong_parseable": null,
+        "total": 902,
+        "unparseable": 0
+      },
+      "marker:STATUS_Generic_Strength_Up": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:STATUS_Metallicize": {
+        "accuracy": 1.0,
+        "correct": 24,
+        "mae_on_wrong_parseable": null,
+        "total": 24,
+        "unparseable": 0
+      },
+      "marker:STATUS_Plated_Armor": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:STATUS_Strength": {
+        "accuracy": 1.0,
+        "correct": 35,
+        "mae_on_wrong_parseable": null,
+        "total": 35,
+        "unparseable": 0
+      },
+      "marker:TURN": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "mae_on_wrong_parseable": null,
+        "total": 82,
+        "unparseable": 0
+      },
+      "marker:UP": {
+        "accuracy": 0.9905808477237049,
+        "correct": 1262,
+        "mae_on_wrong_parseable": 1.0,
+        "total": 1274,
+        "unparseable": 0
+      },
+      "region:calculation_number": {
+        "accuracy": 0.9620178041543027,
+        "correct": 1621,
+        "mae_on_wrong_parseable": 4.828571428571428,
+        "total": 1685,
+        "unparseable": 29
+      },
+      "region:effect_number": {
+        "accuracy": 1.0,
+        "correct": 231,
+        "mae_on_wrong_parseable": null,
+        "total": 231,
+        "unparseable": 0
+      },
+      "region:next_number": {
+        "accuracy": 1.0,
+        "correct": 164,
+        "mae_on_wrong_parseable": null,
+        "total": 164,
+        "unparseable": 0
+      },
+      "region:other": {
+        "accuracy": 0.9878755220261349,
+        "correct": 7333,
+        "mae_on_wrong_parseable": 7.380952380952381,
+        "total": 7423,
+        "unparseable": 6
+      },
+      "section:calculations": {
+        "accuracy": 0.9620178041543027,
+        "correct": 1621,
+        "mae_on_wrong_parseable": 4.828571428571428,
+        "total": 1685,
+        "unparseable": 29
+      },
+      "section:effects": {
+        "accuracy": 0.9930313588850174,
+        "correct": 1710,
+        "mae_on_wrong_parseable": 1.0,
+        "total": 1722,
+        "unparseable": 0
+      },
+      "section:next_state": {
+        "accuracy": 0.9872047244094488,
+        "correct": 6018,
+        "mae_on_wrong_parseable": 8.444444444444445,
+        "total": 6096,
+        "unparseable": 6
+      }
+    },
+    "section_accuracy": {
+      "calculations": {
+        "accuracy": 0.9919800884955752,
+        "correct": 10761,
+        "total": 10848
+      },
+      "effects": {
+        "accuracy": 0.9720349067830226,
+        "correct": 14703,
+        "total": 15126
+      },
+      "next_state": {
+        "accuracy": 0.9916626217057363,
+        "correct": 34731,
+        "total": 35023
+      },
+      "other": {
+        "accuracy": 1.0,
+        "correct": 82,
+        "total": 82
+      }
+    },
+    "step_event_accuracy": {
+      "ATTACK_HIT": {
+        "exact": {
+          "accuracy": 0.8571428571428571,
+          "correct": 12,
+          "total": 14
+        },
+        "token": {
+          "accuracy": 0.9990710636321412,
+          "correct": 2151,
+          "total": 2153
+        }
+      },
+      "CARD_COST": {
+        "exact": {
+          "accuracy": 0.8421052631578947,
+          "correct": 32,
+          "total": 38
+        },
+        "token": {
+          "accuracy": 0.992676431424767,
+          "correct": 1491,
+          "total": 1502
+        }
+      },
+      "CARD_COUNTER": {
+        "exact": {
+          "accuracy": 0.7908496732026143,
+          "correct": 121,
+          "total": 153
+        },
+        "token": {
+          "accuracy": 0.9912428427079825,
+          "correct": 5886,
+          "total": 5938
+        }
+      },
+      "CARD_PLAY": {
+        "exact": {
+          "accuracy": 0.7111111111111111,
+          "correct": 32,
+          "total": 45
+        },
+        "token": {
+          "accuracy": 0.9692307692307692,
+          "correct": 567,
+          "total": 585
+        }
+      },
+      "CARD_ZONE": {
+        "exact": {
+          "accuracy": 0.5156626506024097,
+          "correct": 214,
+          "total": 415
+        },
+        "token": {
+          "accuracy": 0.9568381015379527,
+          "correct": 5786,
+          "total": 6047
+        }
+      },
+      "RELIC_TRIGGER": {
+        "exact": {
+          "accuracy": 1.0,
+          "correct": 26,
+          "total": 26
+        },
+        "token": {
+          "accuracy": 1.0,
+          "correct": 988,
+          "total": 988
+        }
+      },
+      "STATE_UPDATE": {
+        "exact": {
+          "accuracy": 0.3680555555555556,
+          "correct": 53,
+          "total": 144
+        },
+        "token": {
+          "accuracy": 0.981651376146789,
+          "correct": 7169,
+          "total": 7303
+        }
+      },
+      "STATUS_RULE": {
+        "exact": {
+          "accuracy": 0.6129032258064516,
+          "correct": 19,
+          "total": 31
+        },
+        "token": {
+          "accuracy": 0.9884080370942813,
+          "correct": 1279,
+          "total": 1294
+        }
+      }
+    },
+    "token_metrics": {
+      "calculation_accuracy": 0.0,
+      "calculation_number_accuracy": 0.9757785467128027,
+      "card_name_accuracy": 0.0,
+      "causal_accuracy": 0.9971131639722863,
+      "consistency_loss": 1.1914306438595678e-08,
+      "counter_accuracy": 0.9832402234636871,
+      "counts": {
+        "calculation_correct": 0,
+        "calculation_number_correct": 2256,
+        "calculation_number_tokens": 2312,
+        "calculation_tokens": 0,
+        "card_name_correct": 0,
+        "card_name_tokens": 0,
+        "causal_correct": 1727,
+        "causal_tokens": 1732,
+        "correct": 60277,
+        "counter_correct": 176,
+        "counter_tokens": 179,
+        "critical_correct": 4854,
+        "critical_tokens": 4918,
+        "effect_number_correct": 407,
+        "effect_number_tokens": 407,
+        "event_correct": 25546,
+        "event_tokens": 26056,
+        "loss_weight": 94949.0,
+        "next_correct": 34731,
+        "next_number_correct": 288,
+        "next_number_tokens": 288,
+        "next_tokens": 35023,
+        "step_number_correct": 0,
+        "step_number_tokens": 0,
+        "tokens": 61079
+      },
+      "critical_number_accuracy": 0.9869865799105327,
+      "cross_entropy_loss": 0.04269213236134772,
+      "effect_accuracy": 0.9804267731040835,
+      "effect_number_accuracy": 1.0,
+      "loss": 0.04269213236134772,
+      "next_number_accuracy": 1.0,
+      "next_state_accuracy": 0.9916626217057363,
+      "perplexity": 1.0436165496244614,
+      "step_number_accuracy": 0.0,
+      "token_accuracy": 0.9868694641366099
+    },
+    "top_critical_confusions": [
+      {
+        "count": 8,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 4,
+        "expected": "VALUE_CARD_COST",
+        "predicted": "VALUE_STATE_UPDATE"
+      },
+      {
+        "count": 4,
+        "expected": "DIGIT_4",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 4,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_4"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_0",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_3",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_8",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_2",
+        "predicted": "SIGN_NEG"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_1",
+        "predicted": "DIGIT_2"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_3"
+      },
+      {
+        "count": 3,
+        "expected": "VALUE_cards_discarded",
+        "predicted": "VALUE_attacks_played"
+      },
+      {
+        "count": 3,
+        "expected": "DIGIT_0",
+        "predicted": "SIGN_NEG"
+      },
+      {
+        "count": 2,
+        "expected": "DIGIT_6",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 2,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_0"
+      },
+      {
+        "count": 2,
+        "expected": "DIGIT_9",
+        "predicted": "SIGN_NEG"
+      },
+      {
+        "count": 2,
+        "expected": "DIGIT_1",
+        "predicted": "DIGIT_3"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_6",
+        "predicted": "DIGIT_0"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_3",
+        "predicted": "DIGIT_2"
+      },
+      {
+        "count": 1,
+        "expected": "VALUE_STATE_UPDATE",
+        "predicted": "VALUE_ATTACK_HIT"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_7",
+        "predicted": "DIGIT_3"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_6"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_1",
+        "predicted": "DIGIT_9"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_7",
+        "predicted": "SIGN_NEG"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_3",
+        "predicted": "DIGIT_9"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_3",
+        "predicted": "DIGIT_6"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_7",
+        "predicted": "DIGIT_5"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_6",
+        "predicted": "DIGIT_3"
+      },
+      {
+        "count": 1,
+        "expected": "DIGIT_8",
+        "predicted": "DIGIT_2"
+      }
+    ],
+    "top_token_confusions": [
+      {
+        "count": 29,
+        "expected": "NUM_END",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 23,
+        "expected": "CARD",
+        "predicted": "ZONE_DISCARD_END"
+      },
+      {
+        "count": 19,
+        "expected": "DIGIT_1",
+        "predicted": "DIGIT_0"
+      },
+      {
+        "count": 19,
+        "expected": "EFFECT_MONSTER_VALUE_CHANGE",
+        "predicted": "EFFECT_CARD_MOVE"
+      },
+      {
+        "count": 19,
+        "expected": "SIGN_NEG",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 17,
+        "expected": "<EFFECTS_END>",
+        "predicted": "EFFECT_BEGIN"
+      },
+      {
+        "count": 17,
+        "expected": "DIGIT_2",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 15,
+        "expected": "VALUE_discard",
+        "predicted": "VALUE_hand"
+      },
+      {
+        "count": 15,
+        "expected": "VALUE_draw",
+        "predicted": "VALUE_discard"
+      },
+      {
+        "count": 15,
+        "expected": "EFFECT_CARD_ADD",
+        "predicted": "EFFECT_PLAYER_VALUE_CHANGE"
+      },
+      {
+        "count": 13,
+        "expected": "VALUE_draw",
+        "predicted": "VALUE_hand"
+      },
+      {
+        "count": 13,
+        "expected": "DIGIT_3",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 13,
+        "expected": "EFFECT_PLAYER_VALUE_CHANGE",
+        "predicted": "EFFECT_COUNTER_CHANGE"
+      },
+      {
+        "count": 12,
+        "expected": "DIGIT_0",
+        "predicted": "DIGIT_1"
+      },
+      {
+        "count": 11,
+        "expected": "CARD_REF_7",
+        "predicted": "CARD_REF_4"
+      },
+      {
+        "count": 11,
+        "expected": "ZONE_DRAW_END",
+        "predicted": "CARD"
+      },
+      {
+        "count": 11,
+        "expected": "EFFECT_CARD_ADD",
+        "predicted": "EFFECT_MONSTER_MOVE_CHANGE"
+      },
+      {
+        "count": 11,
+        "expected": "EFFECT_STATUS_CHANGE",
+        "predicted": "EFFECT_TURN_CHANGE"
+      },
+      {
+        "count": 10,
+        "expected": "VALUE_hand",
+        "predicted": "VALUE_draw"
+      },
+      {
+        "count": 10,
+        "expected": "EFFECT_MONSTER_VALUE_CHANGE",
+        "predicted": "EFFECT_COUNTER_CHANGE"
+      },
+      {
+        "count": 9,
+        "expected": "EFFECT_PLAYER_VALUE_CHANGE",
+        "predicted": "EFFECT_STATUS_CHANGE"
+      },
+      {
+        "count": 8,
+        "expected": "EFFECT_COUNTER_CHANGE",
+        "predicted": "EFFECT_PLAYER_VALUE_CHANGE"
+      },
+      {
+        "count": 7,
+        "expected": "CARD_REF_4",
+        "predicted": "CARD_REF_5"
+      },
+      {
+        "count": 6,
+        "expected": "CARD_REF_1",
+        "predicted": "CARD_REF_9"
+      },
+      {
+        "count": 6,
+        "expected": "CARD_REF_1",
+        "predicted": "CARD_REF_8"
+      },
+      {
+        "count": 6,
+        "expected": "EFFECT_PLAYER_VALUE_CHANGE",
+        "predicted": "EFFECT_MONSTER_MOVE_CHANGE"
+      },
+      {
+        "count": 6,
+        "expected": "EFFECT_CARD_REMOVE",
+        "predicted": "EFFECT_COUNTER_CHANGE"
+      },
+      {
+        "count": 6,
+        "expected": "EFFECT_CARD_REMOVE",
+        "predicted": "EFFECT_MONSTER_MOVE_CHANGE"
+      },
+      {
+        "count": 5,
+        "expected": "CARD_REF_5",
+        "predicted": "CARD_REF_8"
+      },
+      {
+        "count": 5,
+        "expected": "CARD_REF_4",
+        "predicted": "CARD_REF_8"
+      }
+    ],
+    "worst_groups": [
+      {
+        "accuracy": 0.9722944974462754,
+        "correct": 20179,
+        "name": "action:END_TURN",
+        "total": 20754
+      },
+      {
+        "accuracy": 0.9796696315120712,
+        "correct": 11565,
+        "name": "monster_block:0",
+        "total": 11805
+      },
+      {
+        "accuracy": 0.9827501232134056,
+        "correct": 21934,
+        "name": "player_powers:1",
+        "total": 22319
+      },
+      {
+        "accuracy": 0.9827501232134056,
+        "correct": 21934,
+        "name": "player_status:Metallicize",
+        "total": 22319
+      },
+      {
+        "accuracy": 0.9841163152681477,
+        "correct": 27819,
+        "name": "monster_status:Strength",
+        "total": 28268
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_powers:1",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_status:Generic Strength Up",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "monster_status:Plated Armor",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic_count:4+",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Burning Blood",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Ornamental Fan",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Letter Opener",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Mercury Hourglass",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Paper Crane",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Nunchaku",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Paper Frog",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Lantern",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Anchor",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Sozu",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9868694641366099,
+        "correct": 60277,
+        "name": "relic:Gambling Chip",
+        "total": 61079
+      },
+      {
+        "accuracy": 0.9884373967624711,
+        "correct": 14960,
+        "name": "action:MULTI_CARD_SELECT",
+        "total": 15135
+      },
+      {
+        "accuracy": 0.9885943905507976,
+        "correct": 48712,
+        "name": "monster_block:1",
+        "total": 49274
+      },
+      {
+        "accuracy": 0.9892414860681115,
+        "correct": 38343,
+        "name": "player_powers:0",
+        "total": 38760
+      },
+      {
+        "accuracy": 0.9938931297709923,
+        "correct": 651,
+        "name": "card:Armaments",
+        "total": 655
+      },
+      {
+        "accuracy": 0.9938931297709923,
+        "correct": 651,
+        "name": "card_up:Armaments+1",
+        "total": 655
+      },
+      {
+        "accuracy": 0.9968036529680365,
+        "correct": 2183,
+        "name": "card_up:Wild Strike+0",
+        "total": 2190
+      },
+      {
+        "accuracy": 0.9972857696781698,
+        "correct": 12860,
+        "name": "card:Wild Strike",
+        "total": 12895
+      },
+      {
+        "accuracy": 0.9973843998131714,
+        "correct": 10677,
+        "name": "card_up:Wild Strike+1",
+        "total": 10705
+      },
+      {
+        "accuracy": 0.9974210186976145,
+        "correct": 3094,
+        "name": "card:Reckless Charge",
+        "total": 3102
+      },
+      {
+        "accuracy": 0.9974210186976145,
+        "correct": 3094,
+        "name": "card_up:Reckless Charge+0",
+        "total": 3102
+      }
+    ]
+  },
+  "teacher_samples": 82,
+  "unknown_tokens": 0,
+  "validation_fraction": 0.05,
+  "validation_samples": 82
+}

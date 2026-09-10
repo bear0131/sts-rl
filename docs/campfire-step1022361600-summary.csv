@@ -1,0 +1,2 @@
+step,states,raw_side_actions,rest_count,rest_pct,smith_count,smith_pct,recall_count,recall_pct,lift_count,lift_pct,toke_count,toke_pct,dig_count,dig_pct,proceed_count,proceed_pct,different_from_newest_count,different_from_newest_pct
+1022361600,416,0,389,0.9350961538461539,17,0.040865384615384616,7,0.016826923076923076,3,0.007211538461538462,0,0.0,0,0.0,0,0.0,0,0.0

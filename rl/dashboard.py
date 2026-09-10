@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 from sb3_contrib import MaskablePPO
+from stable_baselines3.common.save_util import load_from_zip_file
 
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
@@ -34,6 +35,7 @@ from rl.visualize_card_vectors import (
     resolve_encoder,
 )
 from rl.watch import _action_dist
+from rl.nosl_sampler import NOSLSampler
 from env.core.cards_vocab import CARD_INDEX
 from env.core.card_language import (
     TOKEN_DOC as CARD_LANGUAGE_DOC,
@@ -43,6 +45,7 @@ from env.core.combat_language import TOKEN_VOCAB as COMBAT_LANGUAGE_TOKENS
 from env.core.event_descriptions import describe_event
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from env.core.card_language import STATUS_CARDS
+from env.core.relics import RELIC_NAME_ZH
 from rl.rllib_inference import RLLibInferenceModel
 
 # Register custom policy classes before checkpoint loading.
@@ -69,7 +72,73 @@ DEFAULT_HYBRID_COMBAT_CHECKPOINT = Path(
 )
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
+# Interactive combat search follows the C++ neural NOSL-IS-AZ configuration
+# saved in the checkpoint.  The browser can raise the simulation count for a
+# slower, wider test, or set it to zero to use the policy directly.  Route
+# preprocessing remains opt-in because it executes the whole policy-controlled
+# run before the first frame is shown.
+DEFAULT_MCTS_SIMULATIONS = 512
+MAX_MCTS_SIMULATIONS = 4096
+DEFAULT_MCTS_DEPTH = 0
+MAX_MCTS_DEPTH = 256
+DEFAULT_MCTS_PRIOR_TEMPERATURE = 1.0
+MIN_MCTS_PRIOR_TEMPERATURE = 0.05
+MAX_MCTS_PRIOR_TEMPERATURE = 20.0
+MAX_GUMBEL_CANDIDATES = 4096
+MAX_GUMBEL_SCALE = 100.0
+MAX_GUMBEL_VALUE_SCALE = 100.0
+MAX_GUMBEL_MAX_VISIT_INIT = 1_000_000.0
+MCTS_MASTER_NONCE = 0x4E4F534C_64617368
+
+# Search modes exposed by the dashboard.  ``direct`` is deliberately a
+# separate mode from PUCT with zero simulations: it keeps the user's choice
+# stable when simulation counts are edited and makes the effective algorithm
+# unambiguous in the API/status panel.
+SEARCH_MODE_IDS = {
+    "puct": 0,
+    "gumbel": 1,
+    "full_gumbel": 2,
+}
+SEARCH_MODE_LABELS = {
+    "direct": "Direct policy",
+    "puct": "PUCT",
+    "gumbel": "Simplified Gumbel",
+    "full_gumbel": "Full Gumbel AZ",
+}
+
+
+def _normalize_search_mode(value: Any, default: str = "puct") -> str:
+    """Normalize a persisted/API search mode without accepting ambiguity."""
+    if isinstance(value, (int, np.integer)):
+        return {0: "puct", 1: "gumbel", 2: "full_gumbel"}.get(
+            int(value), default
+        )
+    if isinstance(value, str):
+        candidate = value.strip().lower().replace("-", "_")
+        aliases = {
+            "direct_policy": "direct",
+            "policy": "direct",
+            "mcts": "puct",
+            "gumbel_sequential_halving": "gumbel",
+            "full": "full_gumbel",
+            "full_gumbel_az": "full_gumbel",
+        }
+        candidate = aliases.get(candidate, candidate)
+        if candidate in SEARCH_MODE_LABELS:
+            return candidate
+    return default if default in SEARCH_MODE_LABELS else "puct"
+
+
+def _model_search_bool(model: Any, name: str, default: bool) -> bool:
+    value = _model_search_param(model, name, default)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off"}
+    return bool(value)
+
 IRONCLAD_VECTOR_CARDS = list(IRONCLAD_CARDS)
+DEFAULT_CARD_VECTOR_RELATIVE_PATH = (
+    Path(".tmp-vector-rule-v7-contract-v10-step10000") / "last.pt"
+)
 
 
 def _jsonable(value):
@@ -88,6 +157,73 @@ def _clamp_int(value, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(parsed, maximum))
+
+
+def _clamp_float(value, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = float(default)
+    if not np.isfinite(parsed):
+        parsed = float(default)
+    return max(float(minimum), min(parsed, float(maximum)))
+
+
+def _resolve_card_vector_checkpoint(
+    saved_path: str | os.PathLike[str],
+    *,
+    project_root: Path = PROJECT_ROOT,
+) -> Path:
+    """Resolve a frozen card encoder after moving an SB3 checkpoint."""
+
+    original = Path(saved_path)
+    if original.is_file():
+        return original
+
+    normalized = str(saved_path).replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    filename = parts[-1] if parts else "last.pt"
+    parent_name = parts[-2] if len(parts) >= 2 else ""
+
+    candidates: list[Path] = []
+    configured = os.environ.get("STS_CARD_VECTOR_CHECKPOINT")
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    if parent_name:
+        candidates.append(project_root / parent_name / filename)
+    candidates.append(project_root / DEFAULT_CARD_VECTOR_RELATIVE_PATH)
+
+    checked: list[Path] = []
+    for candidate in candidates:
+        if candidate in checked:
+            continue
+        checked.append(candidate)
+        if candidate.is_file():
+            return candidate
+
+    locations = ", ".join(str(candidate) for candidate in checked)
+    raise FileNotFoundError(
+        "checkpoint depends on a frozen card-vector encoder that is not "
+        f"available locally: {saved_path!s}. Checked: {locations}. Set "
+        "STS_CARD_VECTOR_CHECKPOINT to its local path."
+    )
+
+
+def _sb3_load_custom_objects(path: Path) -> dict[str, Any]:
+    """Rewrite external checkpoint dependencies without changing the ZIP."""
+
+    data, _params, _variables = load_from_zip_file(
+        path, device="cpu", load_data=True
+    )
+    policy_kwargs = dict((data or {}).get("policy_kwargs") or {})
+    saved_card_vectors = policy_kwargs.get("card_vector_checkpoint")
+    if not saved_card_vectors:
+        return {}
+    resolved = _resolve_card_vector_checkpoint(saved_card_vectors)
+    if os.path.abspath(str(resolved)) == os.path.abspath(str(saved_card_vectors)):
+        return {}
+    policy_kwargs["card_vector_checkpoint"] = str(resolved)
+    return {"policy_kwargs": policy_kwargs}
 
 
 def _file_info(path: Path) -> dict:
@@ -146,10 +282,329 @@ def _parse_hybrid_progress(stdout_tail: str) -> dict:
     }
 
 
+def _model_search_param(model: Any, name: str, default: Any) -> Any:
+    """Read a saved search setting from an algorithm or its policy."""
+    for owner in (model, getattr(model, "policy", None)):
+        if owner is not None and hasattr(owner, name):
+            return getattr(owner, name)
+    return default
+
+
+def _model_search_float(model: Any, name: str, default: float) -> float:
+    try:
+        value = float(_model_search_param(model, name, default))
+    except (TypeError, ValueError):
+        value = float(default)
+    return value if np.isfinite(value) and value >= 0.0 else float(default)
+
+
+def _supports_neural_nosl(model: Any) -> bool:
+    core = getattr(getattr(model, "policy", None), "core", None)
+    return core is not None and hasattr(core, "actor_critic")
+
+
+def _evaluation_search_config(
+    model: Any,
+    *,
+    simulations: int | None = None,
+    depth: int | None = None,
+    prior_temperature: float | None = None,
+    search_mode: str | None = None,
+    gumbel_candidates: int | None = None,
+    gumbel_scale: float | None = None,
+    gumbel_value_scale: float | None = None,
+    gumbel_max_visit_init: float | None = None,
+    gumbel_rescale_q: bool | None = None,
+    gumbel_use_mixed_value: bool | None = None,
+) -> dict[str, Any]:
+    supported = _supports_neural_nosl(model)
+    default_simulations = _clamp_int(
+        _model_search_param(
+            model,
+            "nosl_is_az_simulations",
+            DEFAULT_MCTS_SIMULATIONS if supported else 0,
+        ),
+        DEFAULT_MCTS_SIMULATIONS if supported else 0,
+        0,
+        MAX_MCTS_SIMULATIONS,
+    )
+    selected_simulations = _clamp_int(
+        default_simulations if simulations is None else simulations,
+        default_simulations,
+        0,
+        MAX_MCTS_SIMULATIONS,
+    )
+    default_depth = _clamp_int(
+        _model_search_param(model, "nosl_is_az_depth", DEFAULT_MCTS_DEPTH),
+        DEFAULT_MCTS_DEPTH,
+        0,
+        MAX_MCTS_DEPTH,
+    )
+    selected_depth = _clamp_int(
+        default_depth if depth is None else depth,
+        default_depth,
+        0,
+        MAX_MCTS_DEPTH,
+    )
+    default_prior_temperature = _clamp_float(
+        _model_search_param(
+            model,
+            "nosl_is_az_prior_temperature",
+            DEFAULT_MCTS_PRIOR_TEMPERATURE,
+        ),
+        DEFAULT_MCTS_PRIOR_TEMPERATURE,
+        MIN_MCTS_PRIOR_TEMPERATURE,
+        MAX_MCTS_PRIOR_TEMPERATURE,
+    )
+    selected_prior_temperature = _clamp_float(
+        default_prior_temperature
+        if prior_temperature is None else prior_temperature,
+        default_prior_temperature,
+        MIN_MCTS_PRIOR_TEMPERATURE,
+        MAX_MCTS_PRIOR_TEMPERATURE,
+    )
+    saved_mode = _normalize_search_mode(_model_search_param(
+        model,
+        "nosl_is_az_search_mode",
+        _model_search_param(model, "nosl_is_az_root_search_mode", "puct"),
+    ))
+    selected_mode = _normalize_search_mode(
+        saved_mode if search_mode is None else search_mode,
+        saved_mode,
+    )
+    if selected_simulations <= 0:
+        selected_mode = "direct"
+    selected_candidates = _clamp_int(
+        _model_search_param(model, "nosl_is_az_gumbel_candidates", 0)
+        if gumbel_candidates is None else gumbel_candidates,
+        0,
+        0,
+        MAX_GUMBEL_CANDIDATES,
+    )
+    selected_gumbel_scale = _clamp_float(
+        _model_search_param(model, "nosl_is_az_gumbel_scale", 1.0)
+        if gumbel_scale is None else gumbel_scale,
+        1.0,
+        0.0,
+        MAX_GUMBEL_SCALE,
+    )
+    selected_gumbel_value_scale = _clamp_float(
+        _model_search_param(model, "nosl_is_az_gumbel_value_scale", 0.1)
+        if gumbel_value_scale is None else gumbel_value_scale,
+        0.1,
+        0.0,
+        MAX_GUMBEL_VALUE_SCALE,
+    )
+    selected_gumbel_max_visit_init = _clamp_float(
+        _model_search_param(model, "nosl_is_az_gumbel_max_visit_init", 50.0)
+        if gumbel_max_visit_init is None else gumbel_max_visit_init,
+        50.0,
+        0.0,
+        MAX_GUMBEL_MAX_VISIT_INIT,
+    )
+    selected_rescale_q = _model_search_bool(
+        model, "nosl_is_az_gumbel_rescale_q", True
+    ) if gumbel_rescale_q is None else bool(gumbel_rescale_q)
+    selected_mixed_value = _model_search_bool(
+        model, "nosl_is_az_gumbel_use_mixed_value", True
+    ) if gumbel_use_mixed_value is None else bool(gumbel_use_mixed_value)
+    if selected_simulations > 0 and not supported and selected_mode != "direct":
+        raise ValueError(
+            "this checkpoint does not expose the combat policy/value heads "
+            "required by neural NOSL MCTS; set simulations to 0 for direct policy"
+        )
+    return {
+        "method": (
+            "nosl_is_az_cpp"
+            if selected_simulations > 0 and selected_mode != "direct"
+            else "direct_policy"
+        ),
+        "supported": supported,
+        "search_mode": selected_mode,
+        "search_mode_label": SEARCH_MODE_LABELS[selected_mode],
+        "root_search_mode": SEARCH_MODE_IDS.get(selected_mode, 0),
+        "simulations": selected_simulations,
+        "depth": selected_depth,
+        "c_puct": _model_search_float(model, "nosl_is_az_c_puct", 1.5),
+        "prior_temperature": selected_prior_temperature,
+        "leaf_batch_size": _clamp_int(
+            _model_search_param(model, "nosl_is_az_leaf_batch_size", 64),
+            64,
+            1,
+            256,
+        ),
+        "master_nonce": int(
+            _model_search_param(model, "nosl_is_az_master_nonce", MCTS_MASTER_NONCE)
+        ),
+        "gumbel_candidates": selected_candidates,
+        "gumbel_scale": selected_gumbel_scale,
+        "gumbel_value_scale": selected_gumbel_value_scale,
+        "gumbel_max_visit_init": selected_gumbel_max_visit_init,
+        "gumbel_rescale_q": selected_rescale_q,
+        "gumbel_use_mixed_value": selected_mixed_value,
+        # Evaluation selects the root visit argmax and never injects training noise.
+        "stochastic": False,
+        "dirichlet_alpha": 0.0,
+        "dirichlet_epsilon": 0.0,
+    }
+
+
+class EvaluationNOSLSearch:
+    """Training-aligned C++ neural NOSL search for full-run evaluation."""
+
+    def __init__(self, model: Any, model_lock: threading.Lock, config: dict[str, Any]):
+        self.model = model
+        self.model_lock = model_lock
+        self.config = dict(config)
+        self.policy = getattr(model, "policy", None)
+        self.core = getattr(self.policy, "core", None)
+        if self.policy is None or self.core is None or not hasattr(
+            self.core, "actor_critic"
+        ):
+            raise ValueError("neural NOSL MCTS requires core.actor_critic")
+        self.compact_observations = bool(
+            hasattr(self.core, "combat_actor_critic")
+            and hasattr(self.core, "combat_observation_keys")
+        )
+
+    def _root_outputs(self, observation) -> tuple[np.ndarray, float]:
+        import torch
+
+        obs_tensor, _ = self.policy.obs_to_tensor(observation)
+        with self.model_lock, torch.inference_mode():
+            logits, values = self.core.actor_critic(obs_tensor)
+        return (
+            logits.detach().float().reshape(-1).cpu().numpy(),
+            float(values.detach().float().reshape(-1)[0].cpu().item()),
+        )
+
+    def _leaf_updates(self, leaves) -> list[tuple[int, float, np.ndarray]]:
+        import torch
+        from stable_baselines3.common.utils import obs_as_tensor
+
+        observations = {
+            key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
+            for key in leaves[0]["observation"]
+        }
+        obs_tensor = obs_as_tensor(observations, self.model.device)
+        with self.model_lock, torch.inference_mode():
+            if self.compact_observations:
+                relic_ids = observations["relics"]
+                active_columns = np.flatnonzero(np.any(relic_ids != 0, axis=0))
+                relic_width = int(active_columns[-1]) + 1 if active_columns.size else 1
+                logits, values = self.core.combat_actor_critic(
+                    obs_tensor,
+                    active_relic_width=relic_width,
+                )
+            else:
+                logits, values = self.core.actor_critic(obs_tensor)
+        logits_np = logits.detach().float().cpu().numpy()
+        values_np = values.detach().float().reshape(-1).cpu().numpy()
+        return [
+            (
+                int(leaf["request_id"]),
+                float(values_np[index]),
+                (
+                    np.asarray(logits_np[index], dtype=np.float64)
+                    if leaf.get("needs_policy", True)
+                    else np.zeros(0, dtype=np.float64)
+                ),
+            )
+            for index, leaf in enumerate(leaves)
+        ]
+
+    @staticmethod
+    def _abort(env: SlayTheSpireEnv) -> None:
+        base = env.unwrapped
+        base._nosl_cpp_az_session = None
+        base._nosl_cpp_global_template = None
+        base._nosl_cpp_pending = None
+        base._nosl_cpp_compact_observation = False
+
+    def choose_action(
+        self,
+        env: SlayTheSpireEnv,
+        observation,
+        *,
+        episode_seed: int,
+        decision_index: int,
+    ) -> dict[str, Any]:
+        base = env.unwrapped
+        state_nonce = (
+            int(self.config["master_nonce"])
+            ^ (int(episode_seed) & ((1 << 64) - 1))
+            ^ (int(decision_index) * 0x9E3779B97F4A7C15)
+        ) & ((1 << 64) - 1)
+        started = time.monotonic()
+        leaf_evaluations = 0
+        try:
+            root_logits, root_value = self._root_outputs(observation)
+            response = base.nosl_is_az_cpp_begin(
+                root_logits,
+                state_nonce=state_nonce,
+                simulations=int(self.config["simulations"]),
+                depth=int(self.config["depth"]),
+                c_puct=float(self.config["c_puct"]),
+                leaf_batch_size=int(self.config["leaf_batch_size"]),
+                prior_temperature=float(self.config["prior_temperature"]),
+                dirichlet_alpha=0.0,
+                dirichlet_epsilon=0.0,
+                root_value=root_value,
+                root_search_mode=int(self.config.get("root_search_mode", 0)),
+                gumbel_candidates=int(self.config.get("gumbel_candidates", 0)),
+                gumbel_scale=float(self.config.get("gumbel_scale", 1.0)),
+                gumbel_value_scale=float(
+                    self.config.get("gumbel_value_scale", 0.1)
+                ),
+                gumbel_max_visit_init=float(
+                    self.config.get("gumbel_max_visit_init", 50.0)
+                ),
+                gumbel_rescale_q=bool(
+                    self.config.get("gumbel_rescale_q", True)
+                ),
+                gumbel_use_mixed_value=bool(
+                    self.config.get("gumbel_use_mixed_value", True)
+                ),
+                stochastic=False,
+                decision_index=int(decision_index),
+                compact_observation=self.compact_observations,
+            )
+            while not response.get("done", False):
+                leaves = response.get("leaves", ())
+                if not leaves:
+                    raise RuntimeError(
+                        "neural NOSL returned no leaves before search completion"
+                    )
+                leaf_evaluations += len(leaves)
+                response = base.nosl_is_az_cpp_backprop_and_leaf_batch(
+                    self._leaf_updates(leaves),
+                    max_leaves=int(self.config["leaf_batch_size"]),
+                )
+        except Exception:
+            self._abort(env)
+            raise
+        result = dict(response["result"])
+        result["elapsed_seconds"] = time.monotonic() - started
+        result["leaf_evaluations"] = leaf_evaluations
+        return result
+
+
 class WatchSession:
     def __init__(self, model: Any, model_lock: threading.Lock, seed: int = 0):
         self.model = model
         self.model_lock = model_lock
+        set_training_mode = getattr(getattr(model, "policy", None), "set_training_mode", None)
+        if set_training_mode is not None:
+            set_training_mode(False)
+        core = getattr(getattr(model, "policy", None), "core", None)
+        # Match training/full-run evaluation for search leaves.  The root
+        # still uses the routed whole-run actor_critic because it is a full
+        # observation; all native search leaves are combat states.
+        self.compact_observations = bool(
+            core is not None
+            and hasattr(core, "combat_actor_critic")
+            and hasattr(core, "combat_observation_keys")
+        )
         self.env = SlayTheSpireEnv(
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
@@ -160,6 +615,7 @@ class WatchSession:
         )
         self.seed = seed
         self.history: list[int] = []
+        self.native_history: list[int | None] = []
         self.position = 0
         self.timeline: list[dict] = []
         self.timeline_exhausted = False
@@ -174,14 +630,152 @@ class WatchSession:
         self.map_state: dict | None = None
         self.map_states: dict[int, dict] = {}
         self.card_reward_choices: list[dict] = []
+        self._search_generation = 0
+        self.mcts_simulations = _clamp_int(
+            self._model_search_param("nosl_is_az_simulations", DEFAULT_MCTS_SIMULATIONS),
+            DEFAULT_MCTS_SIMULATIONS, 0, MAX_MCTS_SIMULATIONS,
+        )
+        self.mcts_depth = _clamp_int(
+            self._model_search_param("nosl_is_az_depth", DEFAULT_MCTS_DEPTH),
+            DEFAULT_MCTS_DEPTH, 0, MAX_MCTS_DEPTH,
+        )
+        self.mcts_prior_temperature = _clamp_float(
+            self._model_search_param(
+                "nosl_is_az_prior_temperature",
+                DEFAULT_MCTS_PRIOR_TEMPERATURE,
+            ),
+            DEFAULT_MCTS_PRIOR_TEMPERATURE,
+            MIN_MCTS_PRIOR_TEMPERATURE,
+            MAX_MCTS_PRIOR_TEMPERATURE,
+        )
+        self.mcts_c_puct = self._model_search_float("nosl_is_az_c_puct", 1.5)
+        self.mcts_search_mode = _normalize_search_mode(
+            self._model_search_param(
+                "nosl_is_az_search_mode",
+                self._model_search_param("nosl_is_az_root_search_mode", "puct"),
+            )
+        )
+        self.mcts_root_search_mode = SEARCH_MODE_IDS.get(
+            self.mcts_search_mode, 0
+        )
+        self.mcts_gumbel_candidates = _clamp_int(
+            self._model_search_param("nosl_is_az_gumbel_candidates", 0),
+            0, 0, MAX_GUMBEL_CANDIDATES,
+        )
+        self.mcts_gumbel_scale = _clamp_float(
+            self._model_search_param("nosl_is_az_gumbel_scale", 1.0),
+            1.0, 0.0, MAX_GUMBEL_SCALE,
+        )
+        self.mcts_gumbel_value_scale = _clamp_float(
+            self._model_search_param("nosl_is_az_gumbel_value_scale", 0.1),
+            0.1, 0.0, MAX_GUMBEL_VALUE_SCALE,
+        )
+        self.mcts_gumbel_max_visit_init = _clamp_float(
+            self._model_search_param("nosl_is_az_gumbel_max_visit_init", 50.0),
+            50.0, 0.0, MAX_GUMBEL_MAX_VISIT_INIT,
+        )
+        self.mcts_gumbel_rescale_q = _model_search_bool(
+            model, "nosl_is_az_gumbel_rescale_q", True
+        )
+        self.mcts_gumbel_use_mixed_value = _model_search_bool(
+            model, "nosl_is_az_gumbel_use_mixed_value", True
+        )
+        self.mcts_leaf_batch_size = _clamp_int(
+            self._model_search_param("nosl_is_az_leaf_batch_size", 64),
+            64, 1, 256,
+        )
+        self.mcts_master_nonce = int(
+            self._model_search_param("nosl_is_az_master_nonce", MCTS_MASTER_NONCE)
+        )
+        self.stochastic = False
+        self.precompute_enabled = False
+        self._mcts_sampler = NOSLSampler(MCTS_MASTER_NONCE)
         self.reset(seed)
+
+    def _model_search_param(self, name: str, default: Any) -> Any:
+        """Read a saved search setting from the algorithm or policy object."""
+        return _model_search_param(self.model, name, default)
+
+    def _model_search_float(self, name: str, default: float) -> float:
+        return _model_search_float(self.model, name, default)
 
     def close(self):
         self.env.close()
 
-    def reset(self, seed: int, precompute: bool = False):
+    def reset(
+        self,
+        seed: int,
+        precompute: bool = False,
+        simulations: int | None = None,
+        depth: int | None = None,
+        prior_temperature: float | None = None,
+        search_mode: str | None = None,
+        gumbel_candidates: int | None = None,
+        gumbel_scale: float | None = None,
+        gumbel_value_scale: float | None = None,
+        gumbel_max_visit_init: float | None = None,
+        gumbel_rescale_q: bool | None = None,
+        gumbel_use_mixed_value: bool | None = None,
+        stochastic: bool | None = None,
+    ):
         self.seed = int(seed)
+        if simulations is not None:
+            self.mcts_simulations = _clamp_int(
+                simulations,
+                DEFAULT_MCTS_SIMULATIONS,
+                0,
+                MAX_MCTS_SIMULATIONS,
+            )
+        if depth is not None:
+            self.mcts_depth = _clamp_int(
+                depth,
+                DEFAULT_MCTS_DEPTH,
+                0,
+                MAX_MCTS_DEPTH,
+            )
+        if prior_temperature is not None:
+            self.mcts_prior_temperature = _clamp_float(
+                prior_temperature,
+                self.mcts_prior_temperature,
+                MIN_MCTS_PRIOR_TEMPERATURE,
+                MAX_MCTS_PRIOR_TEMPERATURE,
+            )
+        if search_mode is not None:
+            self.mcts_search_mode = _normalize_search_mode(
+                search_mode, self.mcts_search_mode
+            )
+            self.mcts_root_search_mode = SEARCH_MODE_IDS.get(
+                self.mcts_search_mode, 0
+            )
+        if gumbel_candidates is not None:
+            self.mcts_gumbel_candidates = _clamp_int(
+                gumbel_candidates, self.mcts_gumbel_candidates,
+                0, MAX_GUMBEL_CANDIDATES,
+            )
+        if gumbel_scale is not None:
+            self.mcts_gumbel_scale = _clamp_float(
+                gumbel_scale, self.mcts_gumbel_scale,
+                0.0, MAX_GUMBEL_SCALE,
+            )
+        if gumbel_value_scale is not None:
+            self.mcts_gumbel_value_scale = _clamp_float(
+                gumbel_value_scale, self.mcts_gumbel_value_scale,
+                0.0, MAX_GUMBEL_VALUE_SCALE,
+            )
+        if gumbel_max_visit_init is not None:
+            self.mcts_gumbel_max_visit_init = _clamp_float(
+                gumbel_max_visit_init, self.mcts_gumbel_max_visit_init,
+                0.0, MAX_GUMBEL_MAX_VISIT_INIT,
+            )
+        if gumbel_rescale_q is not None:
+            self.mcts_gumbel_rescale_q = bool(gumbel_rescale_q)
+        if gumbel_use_mixed_value is not None:
+            self.mcts_gumbel_use_mixed_value = bool(gumbel_use_mixed_value)
+        if stochastic is not None:
+            self.stochastic = bool(stochastic)
+        self.precompute_enabled = bool(precompute)
         self.history = []
+        self.native_history = []
         self.position = 0
         self.timeline = []
         self.timeline_exhausted = False
@@ -193,9 +787,87 @@ class WatchSession:
         self.map_state = None
         self.map_states = {}
         self.card_reward_choices = []
+        self._search_generation = 0
         self._prepare_decision()
         if precompute:
             return self.precompute_run()
+        return self.snapshot()
+
+    def configure_search(
+        self,
+        simulations: int | None = None,
+        depth: int | None = None,
+        prior_temperature: float | None = None,
+        search_mode: str | None = None,
+        gumbel_candidates: int | None = None,
+        gumbel_scale: float | None = None,
+        gumbel_value_scale: float | None = None,
+        gumbel_max_visit_init: float | None = None,
+        gumbel_rescale_q: bool | None = None,
+        gumbel_use_mixed_value: bool | None = None,
+        stochastic: bool | None = None,
+    ):
+        """Apply search settings without resetting the current run."""
+        if simulations is not None:
+            self.mcts_simulations = _clamp_int(
+                simulations,
+                self.mcts_simulations,
+                0,
+                MAX_MCTS_SIMULATIONS,
+            )
+        if depth is not None:
+            self.mcts_depth = _clamp_int(
+                depth,
+                self.mcts_depth,
+                0,
+                MAX_MCTS_DEPTH,
+            )
+        if prior_temperature is not None:
+            self.mcts_prior_temperature = _clamp_float(
+                prior_temperature,
+                self.mcts_prior_temperature,
+                MIN_MCTS_PRIOR_TEMPERATURE,
+                MAX_MCTS_PRIOR_TEMPERATURE,
+            )
+        if search_mode is not None:
+            self.mcts_search_mode = _normalize_search_mode(
+                search_mode, self.mcts_search_mode
+            )
+            self.mcts_root_search_mode = SEARCH_MODE_IDS.get(
+                self.mcts_search_mode, 0
+            )
+        if gumbel_candidates is not None:
+            self.mcts_gumbel_candidates = _clamp_int(
+                gumbel_candidates, self.mcts_gumbel_candidates,
+                0, MAX_GUMBEL_CANDIDATES,
+            )
+        if gumbel_scale is not None:
+            self.mcts_gumbel_scale = _clamp_float(
+                gumbel_scale, self.mcts_gumbel_scale,
+                0.0, MAX_GUMBEL_SCALE,
+            )
+        if gumbel_value_scale is not None:
+            self.mcts_gumbel_value_scale = _clamp_float(
+                gumbel_value_scale, self.mcts_gumbel_value_scale,
+                0.0, MAX_GUMBEL_VALUE_SCALE,
+            )
+        if gumbel_max_visit_init is not None:
+            self.mcts_gumbel_max_visit_init = _clamp_float(
+                gumbel_max_visit_init, self.mcts_gumbel_max_visit_init,
+                0.0, MAX_GUMBEL_MAX_VISIT_INIT,
+            )
+        if gumbel_rescale_q is not None:
+            self.mcts_gumbel_rescale_q = bool(gumbel_rescale_q)
+        if gumbel_use_mixed_value is not None:
+            self.mcts_gumbel_use_mixed_value = bool(gumbel_use_mixed_value)
+        if stochastic is not None:
+            self.stochastic = bool(stochastic)
+        # A previous neural decision may have retained a complete native
+        # action until its thin root id is submitted.  Changing settings means
+        # that pending action is no longer the displayed decision and must not
+        # leak into the next direct-policy/search step.
+        self.env.unwrapped._nosl_cpp_pending = None
+        self._prepare_decision()
         return self.snapshot()
 
     def precompute_run(self):
@@ -253,31 +925,389 @@ class WatchSession:
             self.seek(original_position)
         return self.snapshot()
 
+    def _policy_outputs(self, observation, mask):
+        """Return masked root probabilities, value, and raw policy logits.
+
+        The C++ search consumes the same unmasked logits that the training
+        collector passes to ``nosl_is_az_cpp_begin``.  Keeping this forward in
+        one helper prevents the dashboard from accidentally using a different
+        policy head or a second, stale value path.
+        """
+        import torch
+
+        policy = getattr(self.model, "policy", None)
+        core = getattr(policy, "core", None)
+        if policy is None or core is None or not hasattr(core, "actor_critic"):
+            with self.model_lock:
+                probs, value = _action_dist(self.model, observation, mask)
+            return probs, value, None
+        obs_tensor, _ = policy.obs_to_tensor(observation)
+        with self.model_lock, torch.inference_mode():
+            logits, values = core.actor_critic(obs_tensor)
+        logits = logits.detach().float().reshape(-1)
+        raw_logits = logits.cpu().numpy()
+        legal = np.flatnonzero(np.asarray(mask, dtype=bool))
+        probs = np.zeros(raw_logits.size, dtype=np.float32)
+        if legal.size:
+            selected = raw_logits[legal].astype(np.float64, copy=False)
+            selected = selected - np.max(selected)
+            weights = np.exp(np.clip(selected, -80.0, 80.0))
+            total = float(weights.sum())
+            if not np.isfinite(total) or total <= 0.0:
+                weights = np.ones(legal.size, dtype=np.float64)
+                total = float(legal.size)
+            probs[legal] = (weights / total).astype(np.float32)
+        value = float(values.detach().float().reshape(-1)[0].cpu().item())
+        return probs, value, raw_logits
+
+    def _evaluate_native_leaves(self, leaves):
+        """Batch current-model policy/value inference for C++ leaf requests."""
+        import torch
+        from stable_baselines3.common.utils import obs_as_tensor
+
+        if not leaves:
+            return np.empty((0, 0), dtype=np.float64), np.empty(0, dtype=np.float32)
+        observations = {
+            key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
+            for key in leaves[0]["observation"]
+        }
+        policy = getattr(self.model, "policy", None)
+        core = getattr(policy, "core", None)
+        if policy is None or core is None or not hasattr(core, "actor_critic"):
+            raise RuntimeError(
+                "C++ neural NOSL requires a policy exposing core.actor_critic"
+            )
+        obs_tensor = obs_as_tensor(observations, self.model.device)
+        with self.model_lock, torch.inference_mode():
+            if self.compact_observations:
+                relic_ids = observations["relics"]
+                active_columns = np.flatnonzero(np.any(relic_ids != 0, axis=0))
+                relic_width = int(active_columns[-1]) + 1 if active_columns.size else 1
+                logits, values = core.combat_actor_critic(
+                    obs_tensor,
+                    active_relic_width=relic_width,
+                )
+            else:
+                # Older checkpoints may expose only the routed whole-run
+                # actor_critic. Keep those usable while preferring the
+                # explicit combat head whenever it exists.
+                logits, values = core.actor_critic(obs_tensor)
+        return (
+            logits.detach().float().cpu().numpy(),
+            values.detach().float().reshape(-1).cpu().numpy(),
+        )
+
+    def _run_native_search(self, root_logits, root_value):
+        """Run one C++ neural NOSL-IS-AZ session for the live combat root."""
+        base = self.env.unwrapped
+        begin = getattr(base, "nosl_is_az_cpp_begin", None)
+        if begin is None:
+            raise RuntimeError("simulator build lacks neural NOSL search")
+        state_nonce = (
+            int(self.mcts_master_nonce)
+            ^ (int(self.seed) & ((1 << 64) - 1))
+            ^ (int(self.position) * 0x9E3779B97F4A7C15)
+        ) & ((1 << 64) - 1)
+        response = begin(
+            root_logits,
+            state_nonce=state_nonce,
+            simulations=self.mcts_simulations,
+            depth=self.mcts_depth,
+            c_puct=self.mcts_c_puct,
+            leaf_batch_size=self.mcts_leaf_batch_size,
+            root_value=float(root_value),
+            prior_temperature=self.mcts_prior_temperature,
+            root_search_mode=self.mcts_root_search_mode,
+            gumbel_candidates=self.mcts_gumbel_candidates,
+            gumbel_scale=self.mcts_gumbel_scale,
+            gumbel_value_scale=self.mcts_gumbel_value_scale,
+            gumbel_max_visit_init=self.mcts_gumbel_max_visit_init,
+            gumbel_rescale_q=self.mcts_gumbel_rescale_q,
+            gumbel_use_mixed_value=self.mcts_gumbel_use_mixed_value,
+            stochastic=self.stochastic,
+            decision_index=self.position,
+            compact_observation=self.compact_observations,
+        )
+        while not response.get("done", False):
+            leaves = response.get("leaves", ())
+            if not leaves:
+                raise RuntimeError("neural NOSL returned no leaves before completion")
+            logits, values = self._evaluate_native_leaves(leaves)
+            updates = [
+                (
+                    int(leaf["request_id"]),
+                    float(values[index]),
+                    np.asarray(logits[index], dtype=np.float64),
+                )
+                for index, leaf in enumerate(leaves)
+            ]
+            base.nosl_is_az_cpp_backprop_batch(updates)
+            response = base.nosl_is_az_cpp_leaf_batch(
+                self.mcts_leaf_batch_size,
+                stochastic=self.stochastic,
+                state_nonce=state_nonce,
+                decision_index=self.position,
+            )
+        return response["result"]
+
+    def _abort_native_search(self):
+        """Release a partially evaluated worker session after a search error."""
+        base = self.env.unwrapped
+        base._nosl_cpp_az_session = None
+        base._nosl_cpp_global_template = None
+        base._nosl_cpp_pending = None
+
     def _prepare_decision(self):
         if self.terminated or self.truncated:
             self.decision = None
             return
         mask = self.env.action_masks()
-        with self.model_lock:
-            probs, value = _action_dist(self.model, self.obs, mask)
+        base = self.env.unwrapped
+        probs, value, root_logits = self._policy_outputs(self.obs, mask)
         legal = np.flatnonzero(mask)
+        if legal.size == 0:
+            self.decision = None
+            return
         if probs is None:
-            chosen = int(legal[0])
-            ranked = [(chosen, None)]
+            model_action = int(legal[0])
+            ranked = [(model_action, None)]
         else:
-            chosen = int(max(legal, key=lambda i: probs[i]))
+            model_action = int(max(legal, key=lambda i: probs[i]))
             ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[:6]
             ranked = [(int(i), float(probs[i])) for i in ranked]
+        chosen = model_action
+        search = None
+        is_combat = self.info.get("phase") == "combat"
+        native_root = getattr(self.env.unwrapped, "_pending", None) is None
+        if (
+            is_combat
+            and native_root
+            and self.mcts_search_mode != "direct"
+            and self.mcts_simulations > 0
+            and root_logits is not None
+        ):
+            try:
+                result = self._run_native_search(root_logits, value)
+            except (
+                RuntimeError,
+                ValueError,
+                AttributeError,
+                IndexError,
+                KeyError,
+            ) as exc:
+                # Keep the run usable with an old simulator build, but never
+                # silently fall back to the historical random-rollout MCTS.
+                # pybind11 translates std::out_of_range from the native
+                # simulator (notably ``map::at``) into IndexError.  A failed
+                # leaf must not strand the watch session after the backend
+                # has already advanced to the next state.
+                self._abort_native_search()
+                result = None
+                search = {
+                    "method": "direct_policy",
+                    "requested_method": "nosl_is_az_cpp",
+                    "error": str(exc),
+                }
+            if result is not None:
+                chosen = int(result["action"])
+                selected_target = int(result.get("selected_target", -1))
+                selected_targeted = bool(result.get("selected_action_targeted", False))
+                native_action_bits = int(result.get("native_action_bits", 0xFFFFFFFF))
+                root_visits = np.asarray(result.get("root_visits", ()), dtype=np.int32)
+                total_visits = int(root_visits.sum())
+                root_visit_policy = np.asarray(
+                    result.get("root_visit_policy", ()), dtype=np.float64
+                ).reshape(-1)
+                improved_policy = np.asarray(
+                    result.get("improved_policy", result.get("visit_policy", ())),
+                    dtype=np.float64,
+                ).reshape(-1)
+                used_completed_policy = bool(
+                    result.get("used_completed_policy", False)
+                )
+                search_actions = []
+                for aid in legal:
+                    visits = max(0, int(root_visits[int(aid)])) if int(aid) < root_visits.size else 0
+                    visit_prob = (
+                        float(root_visit_policy[int(aid)])
+                        if int(aid) < root_visit_policy.size
+                        else (float(visits) / total_visits if total_visits > 0 else 0.0)
+                    )
+                    policy_prob = (
+                        float(improved_policy[int(aid)])
+                        if used_completed_policy and int(aid) < improved_policy.size
+                        else visit_prob
+                    )
+                    search_actions.append({
+                        "action": int(aid),
+                        "label": self.env.describe_action(int(aid)),
+                        "visits": visits,
+                        "value": float(result.get("root_value", 0.0)),
+                        # ``prob`` is the policy used by Full Gumbel's target;
+                        # retain visit_prob for diagnosing sparse visits.
+                        "prob": policy_prob,
+                        "visit_prob": visit_prob,
+                        "improved_prob": policy_prob if used_completed_policy else None,
+                        "target_slot": (
+                            selected_target if selected_targeted and int(aid) == chosen else None
+                        ),
+                        "selected": int(aid) == chosen,
+                    })
+                search_actions.sort(
+                    key=lambda item: (item["prob"], item["visits"], -item["action"]),
+                    reverse=True,
+                )
+                search = {
+                    "method": "nosl_is_az_cpp",
+                    "search": (
+                        "full_gumbel_alpha_zero"
+                        if self.mcts_search_mode == "full_gumbel"
+                        else "gumbel_sequential_halving"
+                        if self.mcts_search_mode == "gumbel"
+                        else "neural_puct"
+                    ),
+                    "search_mode": self.mcts_search_mode,
+                    "search_mode_label": SEARCH_MODE_LABELS.get(
+                        self.mcts_search_mode, self.mcts_search_mode
+                    ),
+                    "simulations": int(result.get("simulations", self.mcts_simulations)),
+                    "depth": self.mcts_depth,
+                    "prior_temperature": self.mcts_prior_temperature,
+                    "c_puct": self.mcts_c_puct,
+                    "leaf_batch_size": self.mcts_leaf_batch_size,
+                    "root_search_mode": self.mcts_root_search_mode,
+                    "gumbel_candidates": self.mcts_gumbel_candidates,
+                    "gumbel_scale": self.mcts_gumbel_scale,
+                    "gumbel_value_scale": self.mcts_gumbel_value_scale,
+                    "gumbel_max_visit_init": self.mcts_gumbel_max_visit_init,
+                    "gumbel_rescale_q": self.mcts_gumbel_rescale_q,
+                    "gumbel_use_mixed_value": self.mcts_gumbel_use_mixed_value,
+                    "used_completed_policy": used_completed_policy,
+                    "nosl": True,
+                    "stochastic": self.stochastic,
+                    "model_action": model_action,
+                    "action": chosen,
+                    "native_action_bits": native_action_bits,
+                    "selected_target": selected_target if selected_targeted else None,
+                    "selected_action_targeted": selected_targeted,
+                    "tree_id": f"{self.position}:{self._search_generation + 1}",
+                    "root_value": float(result.get("root_value", 0.0)),
+                    "selection": (
+                        "root_visits_sample" if self.stochastic
+                        else "gumbel_completed_score"
+                        if self.mcts_search_mode == "full_gumbel"
+                        else "root_visits_argmax"
+                    ),
+                    "root_actions": search_actions,
+                }
+                self._search_generation += 1
+                search["tree_id"] = f"{self.position}:{self._search_generation}"
+                tree = base.nosl_is_az_cpp_tree_snapshot((), max_children=64)
+                search["tree"] = self._format_native_tree_snapshot(
+                    tree, native_action_bits
+                )
+        elif probs is not None and self.stochastic:
+            weights = np.asarray([max(float(probs[i]), 0.0) for i in legal], dtype=np.float64)
+            total = float(weights.sum())
+            if not np.isfinite(total) or total <= 0.0:
+                weights = np.ones(len(legal), dtype=np.float64)
+                total = float(len(legal))
+            chosen = int(np.random.default_rng(
+                self._mcts_sampler.nonce(
+                    state_nonce=self.seed & ((1 << 64) - 1),
+                    simulation_index=self.position * 1_000_000 + 777_777,
+                )
+            ).choice(legal, p=weights / total))
+        selected_target = (
+            int(search.get("selected_target"))
+            if search and search.get("selected_target") is not None
+            else -1
+        )
+        selected_targeted = bool(search and search.get("selected_action_targeted"))
+        label = self.env.describe_action(chosen)
+        if selected_targeted and selected_target >= 0:
+            label = f"{label} -> target monster #{selected_target + 1}"
+        animation = self._action_animation(chosen)
+        if selected_targeted and selected_target >= 0 and animation is not None:
+            animation["target_slot"] = selected_target
         self.decision = {
             "action": chosen,
-            "label": self.env.describe_action(chosen),
+            "label": label,
             "value": value,
-            "animation": self._action_animation(chosen),
+            "model_action": model_action,
+            "search": search,
+            "animation": animation,
             "top_actions": [
                 {"action": aid, "label": self.env.describe_action(aid), "prob": prob}
                 for aid, prob in ranked
             ],
         }
+
+    def _format_native_tree_snapshot(self, snapshot, selected_native_bits=None):
+        """Add stable UI labels to the compact C++ lazy-tree response."""
+        if not snapshot:
+            return {"valid": False, "path": [], "visits": 0, "value": 0.0, "children": []}
+        root_level = not snapshot.get("path")
+        children = []
+        for item in snapshot.get("children", ()):
+            bits = int(item.get("action_bits", 0))
+            action_type = int(item.get("action_type", (bits >> 29) & 0xF))
+            thin = self.env.unwrapped._native_action_to_thin(bits)
+            native_label = str(item.get("label", "")).strip()
+            if not root_level and native_label:
+                # The C++ edge was expanded against this hypothetical branch
+                # state, so its label reflects upgrades, hand reordering, and
+                # the branch's monster names. Never decode it from live root
+                # slots at deeper levels.
+                label = native_label
+            elif thin is not None:
+                label = self.env.describe_action(thin)
+            else:
+                label = native_label or f"native action 0x{bits:08x}"
+            if root_level and bool(item.get("targeted", False)):
+                target = int(item.get("target_idx", -1))
+                if target >= 0 and target < A.MAX_MONSTERS:
+                    label = f"{label} -> target monster #{target + 1}"
+            if action_type == 4:
+                label = "end turn"
+            elif action_type == 2:
+                label = f"select card #{int(item.get('source_idx', 0)) + 1}"
+            elif action_type == 3:
+                label = "confirm card selection"
+            children.append({
+                **item,
+                "label": label,
+                "thin_action": thin,
+                "selected": (
+                    root_level
+                    and
+                    selected_native_bits is not None
+                    and bits == int(selected_native_bits)
+                ),
+            })
+        return {
+            "valid": bool(snapshot.get("valid", False)),
+            "path": [int(x) for x in snapshot.get("path", ())],
+            "visits": int(snapshot.get("visits", 0)),
+            "value": float(snapshot.get("value", 0.0)),
+            "children": children,
+        }
+
+    def search_tree(self, path=(), max_children: int = 64):
+        """Read one node from the currently displayed completed search tree."""
+        search = self.decision.get("search") if self.decision else None
+        if not search or search.get("method") != "nosl_is_az_cpp":
+            return self._format_native_tree_snapshot(None)
+        indexes = [int(index) for index in (path or ())]
+        if len(indexes) > 128:
+            raise ValueError("search tree path is too deep")
+        max_children = _clamp_int(max_children, 64, 1, 128)
+        raw = self.env.unwrapped.nosl_is_az_cpp_tree_snapshot(
+            indexes, max_children=max_children
+        )
+        return self._format_native_tree_snapshot(
+            raw, search.get("native_action_bits")
+        )
 
     def _action_animation(self, action: int):
         play_base = A.seg_base("PLAY_CARD")
@@ -299,12 +1329,52 @@ class WatchSession:
     def _advance_one(self):
         if self.decision is None:
             return
-        if self.position < len(self.history):
-            action = self.history[self.position]
+        decision_before = self.decision
+        displayed_action = int(decision_before["action"])
+        pending = self.env.unwrapped._nosl_cpp_pending
+        pending_native = (
+            int(pending[1])
+            if pending is not None and int(pending[0]) == displayed_action
+            else None
+        )
+
+        # ``seek``/``undo`` rebuild the current decision but historically left
+        # the future action history intact.  Replaying that suffix blindly can
+        # execute an action different from the one currently shown in the UI
+        # (especially after changing search settings or a native target).  Only
+        # reuse a historical transition when both the thin action and complete
+        # native action still match the freshly prepared decision; otherwise
+        # branch from the current state and discard the stale suffix.
+        replaying = self.position < len(self.history)
+        historical_action = (
+            int(self.history[self.position]) if replaying else None
+        )
+        historical_native = (
+            int(self.native_history[self.position])
+            if replaying and self.position < len(self.native_history)
+            and self.native_history[self.position] is not None
+            else None
+        )
+        same_action = replaying and historical_action == displayed_action
+        same_native = historical_native == pending_native
+        if replaying and same_action and same_native:
+            action = historical_action
+            if historical_native is not None:
+                self.env.unwrapped._nosl_cpp_pending = (
+                    int(action), int(historical_native)
+                )
         else:
-            action = int(self.decision["action"])
+            if replaying:
+                del self.history[self.position:]
+                del self.native_history[self.position:]
+            action = displayed_action
             self.history.append(action)
-        label = self.env.describe_action(action)
+            self.native_history.append(pending_native)
+        label = (
+            decision_before.get("label")
+            if int(decision_before.get("action", -1)) == int(action)
+            else self.env.describe_action(action)
+        )
         animation = self._action_animation(action)
         canon_before = self.env.unwrapped.thick.obs_canonical()
         self._record_card_reward_choice(action, canon_before)
@@ -343,7 +1413,11 @@ class WatchSession:
         self.position = 0
         self.map_state = None
         self.card_reward_choices = []
-        for action in self.history[:target_step]:
+        for index, action in enumerate(self.history[:target_step]):
+            if index < len(self.native_history):
+                native = self.native_history[index]
+                if native is not None:
+                    self.env.unwrapped._nosl_cpp_pending = (int(action), int(native))
             label = self.env.describe_action(action)
             canon_before = self.env.unwrapped.thick.obs_canonical()
             self._record_card_reward_choice(
@@ -511,6 +1585,29 @@ class WatchSession:
             "step": self.position,
             "max_step": len(self.history),
             "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
+            "precompute_enabled": self.precompute_enabled,
+            "mcts_simulations": self.mcts_simulations,
+            "mcts_depth": self.mcts_depth,
+            "mcts_c_puct": self.mcts_c_puct,
+            "mcts_prior_temperature": self.mcts_prior_temperature,
+            "mcts_leaf_batch_size": self.mcts_leaf_batch_size,
+            "mcts_search_mode": self.mcts_search_mode,
+            "mcts_search_mode_label": SEARCH_MODE_LABELS.get(
+                self.mcts_search_mode, self.mcts_search_mode
+            ),
+            "mcts_root_search_mode": self.mcts_root_search_mode,
+            "mcts_gumbel_candidates": self.mcts_gumbel_candidates,
+            "mcts_gumbel_scale": self.mcts_gumbel_scale,
+            "mcts_gumbel_value_scale": self.mcts_gumbel_value_scale,
+            "mcts_gumbel_max_visit_init": self.mcts_gumbel_max_visit_init,
+            "mcts_gumbel_rescale_q": self.mcts_gumbel_rescale_q,
+            "mcts_gumbel_use_mixed_value": self.mcts_gumbel_use_mixed_value,
+            "search_backend": (
+                "nosl_is_az_cpp"
+                if self.mcts_simulations > 0 and self.mcts_search_mode != "direct"
+                else "direct_policy"
+            ),
+            "stochastic": self.stochastic,
             "can_undo": self.position > 0,
             "done": self.terminated or self.truncated,
             "terminated": self.terminated,
@@ -614,6 +1711,12 @@ class DashboardState:
                     }
                     for card_id, info in STATUS_CARDS.items()
                 },
+                "relic_catalog": {
+                    relic_id: {
+                        "name_zh": name_zh,
+                    }
+                    for relic_id, name_zh in RELIC_NAME_ZH.items()
+                },
                 "watch": self.watch.snapshot() if self.watch else None,
                 "evaluation": self.eval_status,
                 "hybrid_evaluation": self._hybrid_eval_public_locked(),
@@ -633,7 +1736,11 @@ class DashboardState:
     def load_checkpoint(self, path: Path, episodes: int):
         suffix = path.suffix.lower()
         if suffix == ".zip":
-            model = MaskablePPO.load(path, device="auto")
+            model = MaskablePPO.load(
+                path,
+                device="auto",
+                custom_objects=_sb3_load_custom_objects(path),
+            )
             checkpoint_format = "sb3"
         elif suffix == ".pkl":
             model = RLLibInferenceModel(path, device="auto")
@@ -764,13 +1871,40 @@ class DashboardState:
             }
         return result
 
-    def start_evaluation(self, episodes: int, seed: int):
+    def start_evaluation(
+        self,
+        episodes: int,
+        seed: int,
+        simulations: int | None = None,
+        depth: int | None = None,
+        prior_temperature: float | None = None,
+        search_mode: str | None = None,
+        gumbel_candidates: int | None = None,
+        gumbel_scale: float | None = None,
+        gumbel_value_scale: float | None = None,
+        gumbel_max_visit_init: float | None = None,
+        gumbel_rescale_q: bool | None = None,
+        gumbel_use_mixed_value: bool | None = None,
+    ):
         episodes = max(1, min(int(episodes), 10_000))
         token = uuid.uuid4().hex
         with self.lock:
             if self.model is None:
                 raise RuntimeError("no checkpoint loaded")
             model = self.model
+            search_config = _evaluation_search_config(
+                model,
+                simulations=simulations,
+                depth=depth,
+                prior_temperature=prior_temperature,
+                search_mode=search_mode,
+                gumbel_candidates=gumbel_candidates,
+                gumbel_scale=gumbel_scale,
+                gumbel_value_scale=gumbel_value_scale,
+                gumbel_max_visit_init=gumbel_max_visit_init,
+                gumbel_rescale_q=gumbel_rescale_q,
+                gumbel_use_mixed_value=gumbel_use_mixed_value,
+            )
             self.eval_token = token
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
@@ -778,15 +1912,44 @@ class DashboardState:
                 "death_seeds": {}, "win_seeds": [], "current_episode": 1,
                 "current_steps": 0, "current_floor": 0,
                 "current_phase": None, "current_action": None,
+                "search_method": search_config["method"],
+                "search_supported": search_config["supported"],
+                "search_mode": search_config["search_mode"],
+                "search_mode_label": search_config["search_mode_label"],
+                "root_search_mode": search_config["root_search_mode"],
+                "simulations": search_config["simulations"],
+                "depth": search_config["depth"],
+                "prior_temperature": search_config["prior_temperature"],
+                "c_puct": search_config["c_puct"],
+                "leaf_batch_size": search_config["leaf_batch_size"],
+                "gumbel_candidates": search_config["gumbel_candidates"],
+                "gumbel_scale": search_config["gumbel_scale"],
+                "gumbel_value_scale": search_config["gumbel_value_scale"],
+                "gumbel_max_visit_init": search_config["gumbel_max_visit_init"],
+                "gumbel_rescale_q": search_config["gumbel_rescale_q"],
+                "gumbel_use_mixed_value": search_config["gumbel_use_mixed_value"],
+                "stochastic": False,
+                "root_noise": False,
+                "search_decisions": 0,
+                "search_simulations": 0,
+                "search_leaf_evaluations": 0,
+                "search_seconds": 0.0,
             }
         threading.Thread(
             target=self._evaluate,
-            args=(token, model, episodes, int(seed)),
+            args=(token, model, episodes, int(seed), search_config),
             daemon=True,
             name="dashboard-eval",
         ).start()
 
-    def _evaluate(self, token: str, model: Any, episodes: int, seed: int):
+    def _evaluate(
+        self,
+        token: str,
+        model: Any,
+        episodes: int,
+        seed: int,
+        search_config: dict[str, Any],
+    ):
         env = SlayTheSpireEnv(
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
@@ -801,9 +1964,19 @@ class DashboardState:
         result_counts: Counter[str] = Counter()
         floors: list[int] = []
         lengths: list[int] = []
+        search_decisions = 0
+        search_simulations = 0
+        search_leaf_evaluations = 0
+        search_seconds = 0.0
         try:
+            search = (
+                EvaluationNOSLSearch(model, self.model_lock, search_config)
+                if search_config.get("method") == "nosl_is_az_cpp"
+                else None
+            )
             for episode in range(episodes):
-                obs, info = env.reset(seed=seed + episode)
+                episode_seed = seed + episode
+                obs, info = env.reset(seed=episode_seed)
                 terminated = truncated = False
                 steps = 0
                 while not (terminated or truncated):
@@ -812,9 +1985,33 @@ class DashboardState:
                             return
                     mask = env.action_masks()
                     phase_before = info.get("phase")
-                    with self.model_lock:
-                        action, _ = model.predict(obs, action_masks=mask, deterministic=True)
-                    action_id = int(np.asarray(action).item())
+                    native_root = getattr(env.unwrapped, "_pending", None) is None
+                    if search is not None and phase_before == "combat" and native_root:
+                        result = search.choose_action(
+                            env,
+                            obs,
+                            episode_seed=episode_seed,
+                            decision_index=steps,
+                        )
+                        action_id = int(result["action"])
+                        action_source = "nosl_is_az_cpp"
+                        search_decisions += 1
+                        search_simulations += int(
+                            result.get("simulations", search_config["simulations"])
+                        )
+                        search_leaf_evaluations += int(
+                            result.get("leaf_evaluations", 0)
+                        )
+                        search_seconds += float(result.get("elapsed_seconds", 0.0))
+                    else:
+                        with self.model_lock:
+                            action, _ = model.predict(
+                                obs,
+                                action_masks=mask,
+                                deterministic=True,
+                            )
+                        action_id = int(np.asarray(action).item())
+                        action_source = "direct_policy"
                     action_label = env.describe_action(action_id)
                     obs, _reward, terminated, truncated, info = env.step(
                         action_id
@@ -835,6 +2032,11 @@ class DashboardState:
                                 "current_action_label": action_label,
                                 "current_action_legal": bool(mask[action_id]),
                                 "current_legal_actions": np.flatnonzero(mask).tolist(),
+                                "current_action_source": action_source,
+                                "search_decisions": search_decisions,
+                                "search_simulations": search_simulations,
+                                "search_leaf_evaluations": search_leaf_evaluations,
+                                "search_seconds": search_seconds,
                                 "last_progress_at": time.time(),
                             })
                 stats = env.unwrapped.thick.run_stats()
@@ -872,6 +2074,10 @@ class DashboardState:
                         "steps_mean": float(np.mean(lengths)),
                         "elapsed_seconds": elapsed,
                         "eta_seconds": elapsed / done * (episodes - done),
+                        "search_decisions": search_decisions,
+                        "search_simulations": search_simulations,
+                        "search_leaf_evaluations": search_leaf_evaluations,
+                        "search_seconds": search_seconds,
                     })
             with self.lock:
                 if token == self.eval_token:
@@ -1192,6 +2398,46 @@ class Handler(BaseHTTPRequestHandler):
                     result = APP.watch.reset(
                         int(body.get("seed", 0)),
                         precompute=bool(body.get("precompute", False)),
+                        simulations=body.get("simulations"),
+                        depth=body.get("depth"),
+                        prior_temperature=body.get("prior_temperature"),
+                        search_mode=body.get("search_mode"),
+                        gumbel_candidates=body.get("gumbel_candidates"),
+                        gumbel_scale=body.get("gumbel_scale"),
+                        gumbel_value_scale=body.get("gumbel_value_scale"),
+                        gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
+                        gumbel_rescale_q=body.get("gumbel_rescale_q"),
+                        gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                        stochastic=body.get("stochastic"),
+                    )
+                self._send_json(result)
+            elif path == "/api/watch/apply":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.configure_search(
+                        simulations=body.get("simulations"),
+                        depth=body.get("depth"),
+                        prior_temperature=body.get("prior_temperature"),
+                        search_mode=body.get("search_mode"),
+                        gumbel_candidates=body.get("gumbel_candidates"),
+                        gumbel_scale=body.get("gumbel_scale"),
+                        gumbel_value_scale=body.get("gumbel_value_scale"),
+                        gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
+                        gumbel_rescale_q=body.get("gumbel_rescale_q"),
+                        gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                        stochastic=body.get("stochastic"),
+                    )
+                self._send_json(result)
+            elif path == "/api/watch/search-tree":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.search_tree(
+                        body.get("path", ()),
+                        max_children=body.get("max_children", 64),
                     )
                 self._send_json(result)
             elif path == "/api/watch/step":
@@ -1229,7 +2475,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(result)
             elif path == "/api/eval/start":
                 body = self._read_json()
-                APP.start_evaluation(body.get("episodes", 50), body.get("seed", 0))
+                APP.start_evaluation(
+                    body.get("episodes", 50),
+                    body.get("seed", 0),
+                    simulations=body.get("simulations"),
+                    depth=body.get("depth"),
+                    prior_temperature=body.get("prior_temperature"),
+                    search_mode=body.get("search_mode"),
+                    gumbel_candidates=body.get("gumbel_candidates"),
+                    gumbel_scale=body.get("gumbel_scale"),
+                    gumbel_value_scale=body.get("gumbel_value_scale"),
+                    gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
+                    gumbel_rescale_q=body.get("gumbel_rescale_q"),
+                    gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                )
                 self._send_json(APP.public_state()["evaluation"])
             elif path == "/api/hybrid-eval/start":
                 body = self._read_json()

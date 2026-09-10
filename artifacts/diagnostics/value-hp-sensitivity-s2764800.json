@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "checkpoint": "D:\\sts-rl\\artifacts\\latest-nosl-lr1e4-s2764800\\nosl_az_2764800_steps.zip",
+  "seed": 36,
+  "scenario": "Cultist / Bash+ + Strike",
+  "original_enemy_hp": 50,
+  "enemy_max_hp": 50,
+  "intervention": "only monster_scalars[0,1] and [0,2]",
+  "all_other_observation_fields_identical": true,
+  "rows": [
+    {
+      "enemy_hp": 1,
+      "enemy_max_hp": 50,
+      "value": 0.29383307695388794,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.004999999888241291,
+        0.019999999552965164,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 5,
+      "enemy_max_hp": 50,
+      "value": 0.2937455475330353,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.02500000037252903,
+        0.10000000149011612,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 10,
+      "enemy_max_hp": 50,
+      "value": 0.29363372921943665,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.05000000074505806,
+        0.20000000298023224,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 20,
+      "enemy_max_hp": 50,
+      "value": 0.29340219497680664,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.10000000149011612,
+        0.4000000059604645,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 30,
+      "enemy_max_hp": 50,
+      "value": 0.293160617351532,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.15000000596046448,
+        0.6000000238418579,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 40,
+      "enemy_max_hp": 50,
+      "value": 0.29290902614593506,
+      "changed_fields": [
+        "monster_scalars"
+      ],
+      "changed_monster_scalars": [
+        1.0,
+        0.20000000298023224,
+        0.800000011920929,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "enemy_hp": 50,
+      "enemy_max_hp": 50,
+      "value": 0.29264771938323975,
+      "changed_fields": [],
+      "changed_monster_scalars": [
+        1.0,
+        0.25,
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "summary": {
+    "value_at_min_hp": 0.29383307695388794,
+    "value_at_max_hp": 0.29264771938323975,
+    "delta_min_minus_max": 0.0011853575706481934,
+    "slope_per_hp": -2.4133933549412325e-05,
+    "monotonic_increasing_with_enemy_hp": false,
+    "monotonic_decreasing_with_enemy_hp": true
+  }
+}
