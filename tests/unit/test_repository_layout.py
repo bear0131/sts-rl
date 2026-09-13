@@ -59,3 +59,8 @@ def test_source_and_test_files_stay_in_their_packages():
     for legacy, canonical in MIGRATION.items():
         assert (ROOT / (canonical.replace(".", "/") + ".py")).is_file()
         assert (ROOT / "rl/_compat" / (legacy.split(".")[-1] + ".py")).is_file()
+
+
+def test_historical_artifacts_keep_their_original_bytes():
+    from tools.validation.locate_legacy import verify_archive
+    assert verify_archive(ROOT) > 0

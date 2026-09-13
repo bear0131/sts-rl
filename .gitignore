@@ -32,3 +32,16 @@ rl/bughunt_out/
 artifacts/local/
 .pytest_cache/
 sim/sts_lightspeed/build-*/
+
+# New local outputs stay out of the source/documentation tree
+/.tmp-*
+/dashboard-*.log
+/dashboard-*.err
+/dashboard-*.out
+/prof
+/prof2
+/prof3
+/wandb/
+/checkpoints/
+/logs/
+/data/local/

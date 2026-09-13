@@ -13,7 +13,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("doc/ironclad_card_language.md"),
+        default=Path("docs/reference/ironclad_card_language.md"),
     )
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)

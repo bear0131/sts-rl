@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output", type=Path,
-        default=Path("docs/card-relic-rule-descriptions-v6.txt"),
+        default=Path("artifacts/local/card-relic-rule-descriptions-v6.txt"),
     )
     return parser
 

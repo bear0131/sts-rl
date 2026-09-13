@@ -31,7 +31,7 @@ def _c(name_zh, kind, cost, damage=(0, 0), block=(0, 0), en="", zh=""):
 
 
 # CommunicationMod card id -> wiki-backed annotation. This is the single
-# machine-readable card-information table; docs/ironclad_card_table.md is its
+# machine-readable card-information table; docs/reference/ironclad_card_table.md is its
 # human-readable bilingual rendering.
 IRONCLAD_CARDS: dict[str, CardInfo] = {
     "Bash": _c("痛击", ATTACK, (2, 2), (8, 10), en="Deal 8/10 damage. Apply 2/3 Vulnerable.", zh="造成8/10点伤害。施加2/3层易伤。"),

@@ -1,0 +1,2 @@
+# Archived source material retains original bytes, including terminal blank lines.
+worklog/archive/** -whitespace

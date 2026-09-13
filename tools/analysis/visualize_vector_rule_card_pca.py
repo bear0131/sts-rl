@@ -8,9 +8,9 @@ Example::
 
     .venv\\Scripts\\python.exe -m tools.analysis.visualize_vector_rule_card_pca \\
         --checkpoint .tmp-remote-v6-wide/last.pt \\
-        --output-png docs/card-representations-v6-wide-step7500-pca.png \\
-        --output-json docs/card-representations-v6-wide-step7500-pca.json \\
-        --output-markdown docs/card-representations-v6-wide-step7500-pca.md
+        --output-png artifacts/archive/docs/card-representations-v6-wide-step7500-pca.png \\
+        --output-json artifacts/archive/docs/card-representations-v6-wide-step7500-pca.json \\
+        --output-markdown worklog/archive/docs/card-representations-v6-wide-step7500-pca.md
 """
 
 from __future__ import annotations
