@@ -3,19 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import json
-import math
 import mimetypes
 import os
 import re
-import subprocess
-import sys
 import threading
 import time
 import uuid
 import zipfile
-from collections import Counter
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,13 +19,12 @@ from urllib.parse import urlparse
 
 import numpy as np
 from sb3_contrib import MaskablePPO
-from stable_baselines3.common.save_util import load_from_zip_file
 
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
 from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
-from rl.evaluation.eval import is_win
+from rl.evaluation.runner import is_win
 from rl.evaluation.strategies import PolicyStrategy, NativeStrategy, PhaseStrategy
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
 from dataclasses import fields
@@ -159,9 +153,6 @@ def _model_search_bool(model: Any, name: str, default: bool) -> bool:
     return bool(value)
 
 IRONCLAD_VECTOR_CARDS = list(IRONCLAD_CARDS)
-DEFAULT_CARD_VECTOR_RELATIVE_PATH = (
-    Path(".tmp-vector-rule-v7-contract-v10-step10000") / "last.pt"
-)
 
 
 def _jsonable(value):

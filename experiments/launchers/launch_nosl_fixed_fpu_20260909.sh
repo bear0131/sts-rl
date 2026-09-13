@@ -49,7 +49,7 @@ cmd=(env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   STS_ENABLE_RULE_TRACE=ON \
   STS_LIGHTSPEED_BUILD_DIR="$build" \
   PYTHONPATH="$build:$repo" \
-  "$python" -u -m rl.distributed_sb3 \
+  "$python" -u -m rl.training.distributed_sb3 \
   --rank "$rank" --world-size 4 \
   --ssh-key "$ssh_key" --ssh-control-dir "$control_dir" \
   --remote-root "$remote_root" --run-id "$run_id" \

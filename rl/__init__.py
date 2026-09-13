@@ -1,6 +1,6 @@
 """Learning runtime on env/. New imports use the owning subpackage.
 
-Legacy checkpoint and CLI module names resolve lazily through _compat/.
+Legacy checkpoint library module names resolve lazily through _compat/.
 That directory contains aliases only; canonical modules never import it.
 """
 from pathlib import Path as _Path

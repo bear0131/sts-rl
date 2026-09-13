@@ -37,11 +37,11 @@ jobs:
       - name: Module syntax and launcher syntax (without launching experiments)
         run: |
           python -m compileall -q rl env tools apps configs tests bridge
-          for script in experiments/launchers/*.sh rl/launch_nosl_*.sh tools/operations/*.sh; do
+          for script in experiments/launchers/*.sh tools/operations/*.sh; do
             bash -n "$script"
           done
       - name: Real training, optimizer persistence and CPU bitwise checks
-        run: python -m pytest tests/integration/test_training_smoke.py -q --junitxml=runs/local/training.xml
+        run: python -m pytest -q -m training --junitxml=runs/local/training.xml
       - name: Bounded performance smoke (no hardware-specific speed gate)
         run: python -m rl.benchmarks.train --device cpu --output runs/local/ci-benchmark.json --timeout 180
       - name: Whitespace checks

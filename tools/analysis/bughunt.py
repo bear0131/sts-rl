@@ -36,7 +36,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 # Import custom model code before loading a checkpoint (see eval.py).
 from rl.policies import model as _model  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
-from rl.evaluation.eval import is_win
+from rl.evaluation.runner import is_win
 
 
 def build_parser() -> argparse.ArgumentParser:

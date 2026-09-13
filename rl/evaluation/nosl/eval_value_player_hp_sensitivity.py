@@ -22,22 +22,22 @@ import torch
 from sb3_contrib import MaskablePPO
 
 from env.core import _BUILD  # noqa: F401
-from rl.evaluation.nosl.collect_nosl_corpus import _load_custom_objects
-from rl.evaluation.nosl.eval_nosl_order_sensitivity import SCENARIOS, _make_env
+from rl.policies.checkpoint import custom_objects as _load_custom_objects
+from rl.evaluation.nosl.scenarios import SCENARIOS, make_env
 
 from rl.policies import pointer_policy as _pointer_policy  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
 
 
-def _jsonable(value: Any) -> Any:
+def jsonable(value: Any) -> Any:
     if isinstance(value, np.ndarray):
         return value.tolist()
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, dict):
-        return {str(k): _jsonable(v) for k, v in value.items()}
+        return {str(k): jsonable(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
-        return [_jsonable(v) for v in value]
+        return [jsonable(v) for v in value]
     return value
 
 
@@ -72,7 +72,7 @@ def main() -> None:
         device="cpu",
         custom_objects=_load_custom_objects(args.checkpoint, None),
     )
-    env = _make_env(
+    env = make_env(
         model, SCENARIOS["bash_plus_strike"], False, int(args.seed)
     )
     base = env._obs()
@@ -145,10 +145,10 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        json.dumps(_jsonable(output), ensure_ascii=False, indent=2),
+        json.dumps(jsonable(output), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(json.dumps(_jsonable(output["summary"]), ensure_ascii=False, indent=2))
+    print(json.dumps(jsonable(output["summary"]), ensure_ascii=False, indent=2))
     print(f"[value-player-hp] wrote {args.output.resolve()}")
 
 

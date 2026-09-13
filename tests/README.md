@@ -74,7 +74,10 @@ replay (default 2,048 rows). Search runs fail if no completed-fight labels reach
 replay: merely running the overworld PPO must not masquerade as an AZ update.
 The training tests enter short fights through the real run state machine and
 verify native PUCT/strict Full Gumbel targets reach the learner. Neither these
-tests nor benchmarks cover Ray, remote synchronization or long-term convergence.
+tests nor benchmarks cover real multi-machine synchronization or long-term convergence.
+The `training` marker also includes a real replay/Adam comparison between the
+local learner and a single-rank loopback ring adapter; CI selects the complete
+marker group so new training regressions are not omitted by a fixed file list.
 
 JSON records configuration, commit/dirty state, actual native path/hash, dependency
 versions and hardware, setup/warmup/process/measurement time, rollout and
@@ -118,7 +121,7 @@ checkouts (no remote operations, same 8-simulation seed-219 fixture):
     python -m tools.validation.eval_revisions --baseline-repo ABS_BASELINE --candidate-repo . --checkpoint CHECKPOINT --output-dir runs/local/real-eval
 
 The evaluator requires the legacy evaluation entrypoint in the baseline
-(`rl.eval_full_gumbel_bash_clash`). JSON bytes must match. The output directory must be new.
+(`rl.evaluation.nosl.eval_full_gumbel_bash_clash`). JSON bytes must match. The output directory must be new.
 An absolute shared native build is required. This validates CPU inference/search
 for this fixture, not four-rank SSH training, bf16 GPU equality, or resume-state
 continuity of a live remote experiment.

@@ -37,15 +37,14 @@ def test_runtime_does_not_depend_on_apps_tools_tests_or_legacy_modules():
 @pytest.mark.parametrize("legacy", [
     "rl.accumulating_ppo", "rl.model", "rl.pointer_policy", "rl.split_policy",
     "rl.semantic_reasoning_policy", "rl.rule_vector_model",
-    "rl.nosl_is_az", "rl.nosl_replay", "rl.nosl_sampler", "rl.distributed_sb3",
-    "rl.eval", "rl.dashboard", "rl.watch",
+    "rl.nosl_is_az", "rl.nosl_replay", "rl.nosl_sampler",
 ])
 def test_legacy_import_is_same_module_object(legacy):
     assert importlib.import_module(legacy) is importlib.import_module(MIGRATION[legacy])
 
 
-@pytest.mark.parametrize("module", ["rl.distributed_sb3", "rl.eval", "rl.dashboard"])
-def test_legacy_cli_still_exposes_parser(module):
+@pytest.mark.parametrize("module", ["rl.training.distributed_sb3", "rl.evaluation.eval", "apps.dashboard"])
+def test_canonical_cli_exposes_parser(module):
     result = subprocess.run([sys.executable, "-m", module, "--help"], cwd=ROOT,
                             capture_output=True, text=True, timeout=45)
     assert result.returncode == 0, result.stderr

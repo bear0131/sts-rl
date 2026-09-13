@@ -64,3 +64,10 @@
 - 日期只标记记录时间，不能代替文件标题或问题身份。问题引用必须给具体文件路径/稳定锚点，不写“见某日审计”而没有可定位来源。
 - 阶段方案、盘点、交接是工作记录，放 docs/YYYY-MM-DD/；持久规范/接口用法收在所属模块 README，避免 refactor-stage1、current、latest 作为长期文档身份。
 - 修改组织方式的目标是减少入口和重复事实来源。能合并进已有 CLI/README/pyproject.toml 的，不再新建包装脚本、索引文档或 requirements 文件；新增入口必须说明现有入口为什么不能承载。
+
+## 面向后续策略开发
+
+- 新策略先实现 evaluation/strategies.py 的 DecisionStrategy，环境/预算/结果复用 runner；需要组合时使用 PhaseStrategy。不要向 runner 塞模型名或搜索模式分支，不要求新策略继承 SB3。
+- 训练算法显式拥有其探索、采样和监督目标；复用 algorithms/updates.py 的更新原语与训练传输层，不能为新增策略复制整个 trainer。统计目标变化应有独立语义测试。
+- 共用 fixture、推理、outcome 应放无 CLI 的所属库模块，不能从另一个 eval/train 入口导入私有实现。测试用任意自定义策略覆盖扩展接口，防止接口只对当前 checkpoint 偶然成立。
+- 有继任者且已确认退役的入口直接删除，迁移说明进入 tools/validation/migrations.json；历史实现从 Git 查找。_compat 只留读取现役 checkpoint 真正需要的库名，禁止新增旧 CLI 包装。

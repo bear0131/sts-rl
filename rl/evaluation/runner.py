@@ -27,9 +27,14 @@ class EvaluationConfig:
             raise ValueError('timeout must be finite and positive')
 
 
+def is_win(env):
+    stats = env.unwrapped.thick.run_stats()
+    return stats['act'] > 3 or stats['outcome'] == 'PLAYER_VICTORY'
+
+
 def run_outcome(env, info, terminated, truncated):
     stats = env.unwrapped.thick.run_stats()
-    win = stats['act'] > 3 or stats['outcome'] == 'PLAYER_VICTORY'
+    win = is_win(env)
     result = ('win' if win else 'dead_screen' if truncated and info.get('dead_screen')
               else 'other_truncation' if truncated else 'death')
     return dict(result=result, floor=int(stats['floor']), act=int(stats['act']), outcome=stats['outcome'])

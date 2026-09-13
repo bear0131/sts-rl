@@ -13,5 +13,5 @@
 | rules | 规则表示、teacher 数据、模型及其专用训练 |
 | benchmarks | 固定预算训练及资源采样（旧低层探针在 tools/benchmarks） |
 
-新代码使用 canonical 包路径。旧 `rl.<module>` 在 `_compat/` 懒加载别名，服务旧 checkpoint/CLI；不会导入两套类，不在这里实现新功能。映射见 ../tools/validation/migrations.json。
+新代码使用 canonical 包路径。`_compat/` 仅保留历史 checkpoint 所需的 20 个库别名；旧 CLI 包装已删除。不会导入两套类，不在这里实现新功能。映射/退役说明见 ../tools/validation/migrations.json。
 训练/评估参数放 ../configs；启动环境放 ../experiments/launchers；输出放 ../runs/local。不要在 rl 根目录增加实验脚本或测试。

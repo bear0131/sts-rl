@@ -18,9 +18,7 @@ import csv
 import math
 import time
 from collections import Counter, defaultdict
-from functools import lru_cache
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 
@@ -28,7 +26,6 @@ from env.core import action_space as A
 from env.core import game_actions as ga
 from env.core.game_env import SimGameEnv
 from env.core.run_env import SlayTheSpireEnv
-from env.core.spiremap import MAX_Y
 
 
 CARD_PRIORITY = ("Bash", "Strike_R", "Defend_R")
@@ -131,48 +128,7 @@ def _lowest_hp_target(
     return min(choices, key=key)[1]
 
 
-def _route_values(rmap) -> Callable[[int, int], tuple[int, int]]:
-    """Return a cached (elite_count, rest_count) value for each map node."""
-
-    @lru_cache(maxsize=None)
-    def value(x: int, y: int) -> tuple[int, int]:
-        if y > MAX_Y:
-            return 0, 0
-        room = rmap.room_type(x, y)
-        own_elites = int(room == "ELITE")
-        own_rests = int(room == "REST")
-        if y == MAX_Y:
-            return own_elites, own_rests
-        children = rmap.reachable(x, y)
-        if not children:
-            return own_elites, own_rests
-        child_elites, child_rests = min(
-            (value(child, y + 1) for child in children),
-            key=lambda score: (score[0], -score[1]),
-        )
-        return own_elites + child_elites, own_rests + child_rests
-
-    return value
-
-
-def _dp_route_choices(
-    choices: list[tuple[int, int]],
-    rmap,
-    current_y: int,
-) -> tuple[list[int], tuple[int, int]]:
-    """Return all lexicographically optimal legal actions and their value."""
-    next_y = 0 if current_y < 0 else current_y + 1
-    value = _route_values(rmap)
-    scored = [
-        ((0, 0) if next_y > MAX_Y else value(column, next_y), action_id)
-        for column, action_id in choices
-    ]
-    best_score = min(
-        (score for score, _action_id in scored),
-        key=lambda score: (score[0], -score[1]),
-    )
-    optimal = [action_id for score, action_id in scored if score == best_score]
-    return optimal, best_score
+from rl.evaluation.baselines.routes import optimal_route_choices as _dp_route_choices
 
 
 def choose_action(

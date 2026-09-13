@@ -156,7 +156,7 @@ class MapRouteStrategy:
 
     def decide(self, requests, *, check=lambda: None):
         from env.core import action_space as A
-        from rl.evaluation.baselines.eval_starter_policy import _dp_route_choices
+        from rl.evaluation.baselines.routes import optimal_route_choices
         result = []
         for request in requests:
             check()
@@ -164,7 +164,7 @@ class MapRouteStrategy:
             choices = [(offset, action) for action in legal for segment, offset in [A.segment_of(action)]
                        if segment == 'MAP_NODE']
             base = request.env.unwrapped.thick
-            optimal, _ = _dp_route_choices(choices, base.rmap, base.gc.cur_map_node_y)
+            optimal, _ = optimal_route_choices(choices, base.rmap, base.gc.cur_map_node_y)
             rng = self.random.setdefault(request.seed, np.random.default_rng(request.seed ^ 0x51A7_7E12))
             result.append(Decision(int(rng.choice(optimal)), self.name, {'route_choices': 1}))
         return result

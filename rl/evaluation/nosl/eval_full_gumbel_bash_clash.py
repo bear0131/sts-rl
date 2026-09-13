@@ -24,15 +24,15 @@ from typing import Any
 from sb3_contrib import MaskablePPO
 
 from env.core import _BUILD  # noqa: F401
-from rl.evaluation.nosl.collect_nosl_corpus import _load_custom_objects
-from rl.evaluation.nosl.eval_gumbel_bash_clash_trials import (
-    FILLER_PROFILES,
-    _hand,
-    _legal_cards,
-    _make_trial_env,
+from rl.policies.checkpoint import custom_objects as _load_custom_objects
+from rl.evaluation.nosl.scenarios import (
+    combat_hand,
+    legal_cards,
+    make_trial_env,
 )
-from rl.evaluation.nosl.eval_nosl_order_sensitivity import _jsonable, _run_search
-from rl.evaluation.nosl.eval_strict_bash_clash_sequence import _execute_selected
+from rl.evaluation.nosl.scenarios import jsonable, run_search
+from rl.evaluation.nosl.scenarios import execute_selected
+from configs.eval.nosl_scenarios import FILLER_PROFILES
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -53,8 +53,8 @@ def _strict_root(env) -> tuple[list[dict[str, Any]], list[str]]:
     raw = env.thick.bc.to_dict()
     if int(raw["player"]["energy"]) != 2:
         raise RuntimeError("strict root energy is not two")
-    hand = _hand(env)
-    legal = _legal_cards(env, hand)
+    hand = combat_hand(env)
+    legal = legal_cards(env, hand)
     if sorted(legal) != ["BASH", "CLASH"]:
         raise RuntimeError(f"unexpected legal cards: {legal}")
     return hand, legal
@@ -85,7 +85,7 @@ def _edge_rows(search: dict[str, Any]) -> list[dict[str, Any]]:
             "candidate", "active_candidate", "normalized_q",
         ):
             if key in child:
-                row[key] = _jsonable(child[key])
+                row[key] = jsonable(child[key])
         rows.append(row)
     return rows
 
@@ -171,9 +171,9 @@ def _run_one(
     gumbel_use_mixed_value: bool,
     paper_full_gumbel: bool,
 ) -> dict[str, Any]:
-    env = _make_trial_env(model, seed=seed, swapped=swapped, fillers=fillers)
+    env = make_trial_env(model, seed=seed, swapped=swapped, fillers=fillers)
     hand, legal = _strict_root(env)
-    first_result = _run_search(
+    first_result = run_search(
         model,
         env,
         simulations=simulations,
@@ -232,15 +232,15 @@ def _run_one(
     }
     if sequence and first in {"bash", "clash"}:
         expected = "clash" if first == "bash" else "bash"
-        _execute_selected(env, first_result)
-        remaining = _legal_cards(env, _hand(env))
+        execute_selected(env, first_result)
+        remaining = legal_cards(env, hand(env))
         # The strict fixture is expected to leave only the other card.  Keep
         # malformed states visible rather than silently calling them failures.
         if remaining != [expected.upper()]:
             row["sequence"] = "invalid_remaining"
             row["remaining_cards"] = remaining
         else:
-            second_result = _run_search(
+            second_result = run_search(
                 model,
                 env,
                 simulations=simulations,
@@ -322,7 +322,7 @@ def main() -> None:
     for seed in args.seeds:
         for swapped in (False, True):
             # Validate and retain only the requested strict fixture states.
-            env = _make_trial_env(model, seed=int(seed), swapped=swapped, fillers=fillers)
+            env = make_trial_env(model, seed=int(seed), swapped=swapped, fillers=fillers)
             try:
                 _strict_root(env)
             except RuntimeError:
@@ -407,7 +407,7 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
-        json.dumps(_jsonable(payload), ensure_ascii=False, indent=2),
+        json.dumps(jsonable(payload), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     print(f"rows={len(rows)} output={args.output.resolve()}")

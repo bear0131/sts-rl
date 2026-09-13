@@ -30,15 +30,18 @@ def main():
     checkpoint = args.checkpoint.resolve(strict=True)
     env = dict(os.environ, PYTHONHASHSEED="0", OMP_NUM_THREADS="1",
                MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
-    command = [sys.executable, "-c",
-               "import torch,runpy; torch.set_num_threads(1); "
-               "torch.use_deterministic_algorithms(True); "
-               "runpy.run_module('rl.eval_full_gumbel_bash_clash',run_name='__main__')",
-               str(checkpoint), "--seeds", "219", "--repeats", "1", "--simulations", "8",
+    arguments = [str(checkpoint), "--seeds", "219", "--repeats", "1", "--simulations", "8",
                "--depth", "0", "--leaf-batch", "1", "--modes", "full", "--paper-full-gumbel"]
     manifests = {}
     try:
         for name, repo in (("baseline", args.baseline_repo), ("candidate", args.candidate_repo)):
+            module = ('rl.evaluation.nosl.eval_full_gumbel_bash_clash'
+                      if (repo / 'rl/evaluation/nosl/eval_full_gumbel_bash_clash.py').is_file()
+                      else 'rl.eval_full_gumbel_bash_clash')
+            command = [sys.executable, '-c',
+                       'import torch,runpy; torch.set_num_threads(1); '
+                       'torch.use_deterministic_algorithms(True); '
+                       f'runpy.run_module({module!r},run_name="__main__")', *arguments]
             with (output / f"{name}.log").open("w", encoding="utf-8") as log:
                 subprocess.run(command + ["--output", str(output / f"{name}.json")],
                                cwd=repo.resolve(strict=True), env=env, stdout=log,

@@ -9,7 +9,7 @@ import time
 
 from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
-from rl.policies.checkpoint import load_checkpoint, custom_objects as _checkpoint_custom_objects
+from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
 from rl.evaluation.strategies import STRATEGIES, MapRouteStrategy, PhaseStrategy
 from rl.search.combat_value_search import add_combat_search_args
@@ -42,11 +42,6 @@ def build_parser():
     parser.add_argument('--leaf-batch-size', type=int)
     add_combat_search_args(parser)
     return parser
-
-
-def is_win(env):
-    stats = env.unwrapped.thick.run_stats()
-    return stats['act'] > 3 or stats['outcome'] == 'PLAYER_VICTORY'
 
 
 def make_scenario(model, args):

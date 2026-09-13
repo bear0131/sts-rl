@@ -29,7 +29,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 # classes are available to cloudpickle (same reason as eval.py).
 from rl.policies import model as _model  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
-from rl.evaluation.eval import is_win
+from rl.evaluation.runner import is_win
 from rl.search.combat_value_search import (
     CombatValueSearch,
     add_combat_search_args,

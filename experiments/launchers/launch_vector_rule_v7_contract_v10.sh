@@ -92,7 +92,7 @@ PY
   fi
 fi
 if [[ "$vocab_ok" -ne 1 ]]; then
-  "$python_bin" -m rl.make_vector_rule_v7_data \
+  "$python_bin" -m rl.rules.data.make_vector_rule_v7_data \
     --out "$vocab_data" --samples "$vocab_samples" --seed "$vocab_seed"
 fi
 
@@ -120,9 +120,9 @@ if [[ "$wandb_enabled" == "1" ]]; then
   fi
 fi
 
-nohup "$python_bin" -m rl.train_rule_vectors_v7 \
+nohup "$python_bin" -m rl.rules.training.train_rule_vectors_v7 \
   --vocab-data "$vocab_data" \
-  --stream-command "$python_bin -m rl.make_vector_rule_v7_data --stdout --stream --seed $train_seed" \
+  --stream-command "$python_bin -m rl.rules.data.make_vector_rule_v7_data --stdout --stream --seed $train_seed" \
   --stream-cwd "$repo_dir" \
   --stream-steps "$stream_steps" \
   --batch-size "$batch_size" \
@@ -135,7 +135,7 @@ nohup "$python_bin" -m rl.train_rule_vectors_v7 \
   --max-relics 32 \
   --max-tokens 2048 \
   --decoder-max-tokens 512 \
-  --validation-stream-command "$python_bin -m rl.make_vector_rule_v7_data --stdout --stream --seed $validation_seed" \
+  --validation-stream-command "$python_bin -m rl.rules.data.make_vector_rule_v7_data --stdout --stream --seed $validation_seed" \
   --validation-stream-steps "$validation_stream_steps" \
   --validation-batch-size "$validation_batch_size" \
   --validation-every-steps "$validation_every_steps" \

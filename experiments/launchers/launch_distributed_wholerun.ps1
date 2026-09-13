@@ -225,7 +225,7 @@ if [ -s $pidFile ] && kill -0 "`$(cat $pidFile)" 2>/dev/null; then
 fi
 cmd=(env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   STS_ENABLE_RULE_TRACE=ON STS_LIGHTSPEED_BUILD_DIR=$build PYTHONPATH=${build}:${repo} \
-  $python -u -m rl.distributed_sb3 --rank $($Peer.Rank) --world-size 4 \
+  $python -u -m rl.training.distributed_sb3 --rank $($Peer.Rank) --world-size 4 \
   --ssh-key /root/.ssh/sts_dist_shared_ed25519 --ssh-control-dir $ControlDir \
   --remote-root $root --run-id $RunId --checkpoint $checkpoint \
   --card-vector-checkpoint $cardVectorCheckpoint --no-interactive-reasoning \
@@ -299,7 +299,7 @@ for pid_file in "`$log_dir"/rank*.pid; do
   fi
   cmdline=`$(tr '\0' ' ' < "/proc/`$pid/cmdline" 2>/dev/null)
   case "`$cmdline" in
-    *rl.distributed_sb3*--run-id*"`$run_id"*) ;;
+    *rl.training.distributed_sb3*--run-id*"`$run_id"*) ;;
     *) echo "`$pid_file: refusing unverified pid=`$pid" >&2; continue ;;
   esac
   pgid=`$(ps -o pgid= -p "`$pid" 2>/dev/null | tr -d ' ')
@@ -333,7 +333,7 @@ for candidate in `$(pgrep -f "[r]l.distributed_sb3.*--run-id.*`$run_id" 2>/dev/n
   [ -r "/proc/`$candidate/cmdline" ] || continue
   cmdline=`$(tr '\0' ' ' < "/proc/`$candidate/cmdline" 2>/dev/null)
   case "`$cmdline" in
-    *rl.distributed_sb3*--run-id*"`$run_id"*) ;;
+    *rl.training.distributed_sb3*--run-id*"`$run_id"*) ;;
     *) continue ;;
   esac
   pgid=`$(ps -o pgid= -p "`$candidate" 2>/dev/null | tr -d ' ')

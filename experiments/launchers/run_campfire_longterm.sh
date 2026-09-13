@@ -50,7 +50,7 @@ mkdir -p "$output_dir"
 
 echo "[campfire-longterm] checkpoint=$checkpoint"
 echo "[campfire-longterm] output_dir=$output_dir"
-exec "$PYTHON" -u -m rl.probe_campfire \
+exec "$PYTHON" -u -m tools.analysis.probe_campfire \
   "$checkpoint" \
   --episodes "$EPISODES" \
   --seed "$SEED" \

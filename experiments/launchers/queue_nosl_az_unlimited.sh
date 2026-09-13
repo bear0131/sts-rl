@@ -57,7 +57,7 @@ launch_worker() {
     # shellcheck disable=SC2086
     nohup env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
         STS_ENABLE_RULE_TRACE=ON STS_LIGHTSPEED_BUILD_DIR="$BUILD" \
-        PYTHONPATH="$BUILD:$REPO" "$PYTHON" -u -m rl.distributed_sb3 \
+        PYTHONPATH="$BUILD:$REPO" "$PYTHON" -u -m rl.training.distributed_sb3 \
         --rank "$rank" --world-size 4 \
         --ssh-key "$SSH_KEY" --ssh-control-dir "$CONTROL_DIR" \
         --remote-root "$REMOTE_ROOT" --run-id "$UNLIMITED_RUN_ID" \
