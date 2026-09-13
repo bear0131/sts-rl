@@ -48,4 +48,5 @@ python -m apps.dashboard --help
 实验预设说明见 configs/README.md，原始说明快照见 docs/archive/input；它不是远端实时状态。启动命令统一使用归属包；旧 CLI 已退役，仅保留历史 checkpoint 所需的库模块别名。旧路径用 tools.validation.locate_legacy 查询。
 
 规范：[AGENTS](AGENTS.md)；问题与完整证据：[TODO](TODO.md)。阶段报告从 [docs](docs/README.md) 按文件标题查阅。
+四机训练启动、每轮 learner 保存和监测用法见 [运维说明](tools/operations/README.md)；性能测量与恢复边界见 [NOSL 性能/恢复交接](docs/2026-09-14/nosl-performance-recovery-handoff.md)。
 仅剩一个未归类源码传输包在 artifacts/，详见该目录 README。

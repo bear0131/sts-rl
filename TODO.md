@@ -23,10 +23,10 @@
 | [F17](docs/2026-09-13/codebase-audit.md#f17) | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
-| CI01 | Linux 首轮失败已复修 | 首轮暴露 checkpoint 历史路径 PermissionError，自动候选回退已修；新增权限合同后本地 232 passed / 8 strict xfail，含真实训练；托管 CI 重跑结果待确认。原干净安装/重建与 bitwise 证据见 worklog |
-| PERF01 | 已有局部证据 | 进程树 CPU/RSS、GPU 监测与训练预算工具就绪；resident eval 1→4 env 固定 CPU 小预算中位提速 1.54×/1.43×；稳定硬件训练/GPU 基准仍待建立，证据见 docs/2026-09-13/shared-backend-handoff.md |
+| CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
+| PERF01 | GPU 采样实测已建立 | 固定 RTX 5090/512 simulations，CUDA graph 采样提速 1.46×且摘要逐位相同；叶推理 6.51×；含 CPU/RSS/显存/设备采样，见 docs/2026-09-14/nosl-performance-recovery-handoff.md。多 seed 长程吞吐/收敛和 IPC 优化仍待验证 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
-| R02 | 部分完成 | PPO 目标、reasoning batch/backward、optimizer、梯度同步已共享；仍需拆 accumulating_ppo collector/learner 与 distributed main 生命周期，验证 fresh/replay/RNG/Adam 契约 |
+| R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见性能/恢复交接。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
 | R03 | 共享后端已落实 | episode runner/策略组合、native eval/rollout/watch、固定场景库已共享并合批；仍需 corpus/历史基准协议迁接、完整评测集与统计定义，关联 F05/F16/PERF01 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
