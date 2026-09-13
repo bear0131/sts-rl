@@ -22,8 +22,16 @@ def test_replay_rng_and_next_update_match_after_recovery(tmp_path, short_combat_
         model._prepare_nosl_is_az_replay()
         model.configure_nosl_is_az_inner_only()
         model.nosl_is_az_updates = 1
+        # Simulate a process killed during the next generation's write, before
+        # manifest publication; recovery must not get stuck at this step.
+        interrupted = tmp_path / 'rank0' / f'step-{model.num_timesteps:012d}'
+        interrupted.mkdir(parents=True)
+        (interrupted/'model.zip').write_bytes(b'incomplete previous write')
         path = save_bundle(model, tmp_path, rank=0, world_size=1,
             run_id='test', wandb_id='same', config={})
+        abandoned = list((tmp_path/'rank0').glob('.incomplete-*'))
+        assert len(abandoned) == 1
+        assert (abandoned[0]/'model.zip').read_bytes() == b'incomplete previous write'
         expected_random = (random.random(), np.random.random(), torch.rand(4))
         model._train_nosl_is_az(prepare_replay=False)
         recovered = AccumulatingMaskablePPO.load(path/'model.zip', device='cpu')

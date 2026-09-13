@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import random
 import shutil
+import uuid
 
 import numpy as np
 import torch
@@ -39,12 +40,24 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
     step = int(model.num_timesteps)
     destination = root / f'step-{step:012d}'
     if destination.exists():
-        read_bundle(destination, rank=rank, world_size=world_size)
-        return destination
+        if (destination / 'manifest.json').exists():
+            read_bundle(destination, rank=rank, world_size=world_size)
+            return destination
+        # A killed writer may leave files without its final commit marker.
+        # Preserve that evidence, then allow recovery from the previous step
+        # to reach and publish this step again.
+        abandoned = root / f'.incomplete-{destination.name}-{uuid.uuid4().hex}'
+        if destination.resolve().parent != root.resolve() or abandoned.resolve().parent != root.resolve():
+            raise ValueError('incomplete recovery generation escaped its directory')
+        abandoned.mkdir()
+        for partial in destination.iterdir():
+            if not partial.is_file() or partial.resolve().parent != destination.resolve():
+                raise ValueError('unexpected content in incomplete recovery generation')
+            partial.replace(abandoned / partial.name)
     # A generation becomes visible to readers only when its manifest appears.
     # Publishing a file avoids Windows directory-rename races with file scanners.
     temporary = destination
-    temporary.mkdir()
+    temporary.mkdir(exist_ok=True)
     try:
         model.save(temporary / 'model.zip')
         replay = getattr(model, '_nosl_is_az_replay', None)
