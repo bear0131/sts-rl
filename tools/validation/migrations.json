@@ -1935,7 +1935,7 @@
     "rl/launch_distributed_wholerun.ps1": "experiments/launchers/launch_distributed_wholerun.ps1",
     "rl/launch_nosl_fixed_fpu_20260909.sh": "experiments/launchers/launch_nosl_fixed_fpu_20260909.sh",
     "rl/launch_nosl_paper_noetl_noreplay_e288_20260913.sh": "experiments/launchers/launch_nosl_paper_noetl_noreplay_e288_20260913.sh",
-    "rl/launch_nosl_paper_replay_fresh10_20260913.sh": "experiments/launchers/launch_nosl_paper_replay_fresh10_20260913.sh",
+    "rl/launch_nosl_paper_replay_fresh10_20260913.sh": "experiments/launchers/launch_nosl_replay.sh",
     "rl/launch_vector_rule_v7_contract_v10.sh": "experiments/launchers/launch_vector_rule_v7_contract_v10.sh",
     "rl/launch_vector_rule_v7_contract_v4.sh": "experiments/launchers/launch_vector_rule_v7_contract_v4.sh",
     "rl/launch_vector_rule_v7_contract_v9.sh": "experiments/launchers/launch_vector_rule_v7_contract_v9.sh",
@@ -2052,6 +2052,6 @@
     "rl.watch": "Legacy CLI alias removed; use python -m apps.watch.",
     "rl/launch_nosl_fixed_fpu_20260909.sh": "Legacy shell wrapper removed; use experiments/launchers/launch_nosl_fixed_fpu_20260909.sh.",
     "rl/launch_nosl_paper_noetl_noreplay_e288_20260913.sh": "Legacy shell wrapper removed; use experiments/launchers/launch_nosl_paper_noetl_noreplay_e288_20260913.sh.",
-    "rl/launch_nosl_paper_replay_fresh10_20260913.sh": "Legacy shell wrapper removed; use experiments/launchers/launch_nosl_paper_replay_fresh10_20260913.sh."
+    "rl/launch_nosl_paper_replay_fresh10_20260913.sh": "Legacy shell wrapper removed; use experiments/launchers/launch_nosl_replay.sh."
   }
 }

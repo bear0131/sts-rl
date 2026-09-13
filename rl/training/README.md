@@ -22,6 +22,9 @@ RNG 恢复，global step 连续。完整性或 rank/world 不匹配立即拒绝�
 丢弃尚未结束战斗的 pending labels。已完成的 replay 不丢。只有同一下一训练 batch
 的 learner/Adam/RNG 有 bitwise 回归，不能称作原生游戏轨迹的逐位续跑。
 每轮完整快照包含每 rank 的 replay，写盘成本需计入实际生产吞吐。
+`dist/iteration_wall_sec` 与吞吐分母包含指标聚合、恢复点写盘和跨 rank 发布等待，
+`dist/checkpoint_sec` 单独记录保存/发布等待；不包含随后 W&B 客户端排队的时间。
+原 `dist/rank0_total_sec` 保留旧计时口径，避免误当作新端到端口径。
 
 `--stop-file PATH` 在下一次更新/跨 rank 同步后触发保存并协同结束；多机要求 ssh-ring。
 正常维护创建所有 rank 的 stop 文件并等待全部退出、核对同一恢复代数，再删除这些

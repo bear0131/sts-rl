@@ -73,7 +73,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     assert (bundle/'learner.pt').is_file()
     monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
-    assert [p['global_step'] for p in payloads] == [32, 64, 96]
-    assert payloads[-1]['legacy_step'] == 3
+    assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
+    assert payloads[-1]['legacy_step'] == 4
     assert finished == [True, True]
-    assert (tmp_path/'state'/'rank0'/'step-000000000096'/'manifest.json').is_file()
+    assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
+    assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)

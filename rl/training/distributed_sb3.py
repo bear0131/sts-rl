@@ -2380,13 +2380,26 @@ def main() -> None:
                 aggregate_scalars, ring_transport
             )
             record.update(aggregate_scalars)
-            records.append(record)
-            print(json.dumps(record, sort_keys=True), flush=True)
 
             global_timesteps = int(record["global_timesteps"])
             # Keep saved checkpoints/resumes on the global env-step axis rather
             # than SB3's local rank counter.
             model.num_timesteps = global_timesteps
+            stop_requested = bool(average_scalar_dict(
+                {'stop_requested': float(args.stop_file is not None and args.stop_file.exists())},
+                ring_transport)['stop_requested'])
+            save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
+            checkpoint_started = time.perf_counter()
+            if args.training_state_dir is not None and (save_due or stop_requested):
+                save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
+                    run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
+                prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
+                # Do not start the next collection until every rank published its generation.
+                average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
+            record['checkpoint_sec'] = time.perf_counter() - checkpoint_started
+            record['iteration_wall_sec'] = time.perf_counter() - started
+            records.append(record)
+            print(json.dumps(record, sort_keys=True), flush=True)
             if wandb_run is not None:
                 import wandb
 
@@ -2394,6 +2407,8 @@ def main() -> None:
                         "global_step": global_timesteps,
                         "time/total_timesteps": global_timesteps,
                         "dist/rank0_total_sec": record["total_sec_rank"],
+                        "dist/iteration_wall_sec": record["iteration_wall_sec"],
+                        "dist/checkpoint_sec": record["checkpoint_sec"],
                         "dist/rollout_sec": record["rollout_sec"],
                         "dist/backward_sec": record["backward_sec"],
                         "dist/sync_sec": record["sync_sec"],
@@ -2403,15 +2418,15 @@ def main() -> None:
                         "dist/sync_mbps": record["sync_mbps_mean"],
                         "dist/global_steps_per_second": (
                             record["transitions_global"]
-                            / max(record["total_sec_rank"], 1e-9)
+                            / max(record["iteration_wall_sec"], 1e-9)
                         ),
                         "env_steps_per_second": (
                             record["transitions_global"]
-                            / max(record["total_sec_rank"], 1e-9)
+                            / max(record["iteration_wall_sec"], 1e-9)
                         ),
                         "speed/env_steps_per_second": (
                             record["transitions_global"]
-                            / max(record["total_sec_rank"], 1e-9)
+                            / max(record["iteration_wall_sec"], 1e-9)
                         ),
                         "train/loss": record["loss_mean"],
                         "train/optimizer_steps": record["optimizer_steps"],
@@ -2537,14 +2552,6 @@ def main() -> None:
                 wandb_payload["legacy_step"] = int(legacy_step)
                 wandb.log(wandb_payload)
 
-            stop_requested = bool(average_scalar_dict(
-                {'stop_requested': float(args.stop_file is not None and args.stop_file.exists())},
-                ring_transport)['stop_requested'])
-            save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
-            if args.training_state_dir is not None and (save_due or stop_requested):
-                save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
-                    run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
-                prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
             if args.output is not None and (
                 args.save_every_updates
                 and (update + 1) % args.save_every_updates == 0
@@ -2609,7 +2616,8 @@ def main() -> None:
     summary = {
         "rank": args.rank,
         "world_size": args.world_size,
-        "updates": args.updates,
+        "updates": len(records),
+        "updates_requested": args.updates,
         "mean_total_sec_rank": float(np.mean([r["total_sec_rank"] for r in records])),
         "mean_rollout_sec": float(np.mean([r["rollout_sec"] for r in records])),
         "mean_backward_sec": float(np.mean([r["backward_sec"] for r in records])),
