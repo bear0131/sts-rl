@@ -19,6 +19,25 @@ from env.core.card_language import (
 from env.core.combat_language import TOKEN_VOCAB as COMBAT_TOKEN_VOCAB
 
 
+def observation_for_policy(model, observation: dict) -> dict:
+    """Project newer observations onto a checkpoint's declared input fields.
+
+    This handles additive fields only; missing fields and changed shapes are
+    errors, not invented inputs or a semantic checkpoint migration.
+    """
+    space = getattr(model, "observation_space", None)
+    fields = getattr(space, "spaces", None)
+    if not fields:
+        policy = getattr(model, "policy", None)
+        fields = getattr(getattr(policy, "observation_space", None), "spaces", None)
+    if not fields:
+        return observation
+    missing = set(fields) - set(observation)
+    if missing:
+        raise ValueError(f"checkpoint observation fields missing: {sorted(missing)}")
+    return {key: observation[key] for key in fields}
+
+
 def uses_global_map_observation(model_or_space) -> bool:
     """Whether a model/space expects the optional full-map observation fields."""
     space = getattr(model_or_space, "observation_space", model_or_space)

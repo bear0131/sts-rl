@@ -254,7 +254,7 @@ class RealPolicyAgent:
         self, obs: dict[str, np.ndarray], mask: np.ndarray, *, pending: tuple | None
     ) -> tuple[int, tuple[tuple[int, float, str], ...]]:
         action, _ = self.model.predict(
-            obs,
+            _model.observation_for_policy(self.model, obs),
             action_masks=mask,
             deterministic=not self.stochastic,
         )
@@ -281,7 +281,9 @@ class RealPolicyAgent:
         try:
             import torch
 
-            obs_tensor, _ = self.model.policy.obs_to_tensor(obs)
+            obs_tensor, _ = self.model.policy.obs_to_tensor(
+                _model.observation_for_policy(self.model, obs)
+            )
             with torch.no_grad():
                 dist = self.model.policy.get_distribution(obs_tensor, action_masks=mask)
                 probs = dist.distribution.probs[0].detach().cpu().numpy()

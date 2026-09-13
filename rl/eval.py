@@ -254,7 +254,7 @@ def main() -> None:
                     search_seconds += search_result.elapsed_seconds
                 else:
                     action, _ = model.predict(
-                        obs,
+                        _model.observation_for_policy(model, obs),
                         action_masks=action_masks,
                         deterministic=not args.stochastic,
                     )

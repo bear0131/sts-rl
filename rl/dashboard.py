@@ -96,23 +96,8 @@ def _default_dashboard_checkpoint() -> Path | None:
 
 
 def _observation_for_policy(model: Any, observation: dict) -> dict:
-    """Drop fields introduced after a legacy checkpoint was saved.
-
-    SB3's ``obs_to_tensor`` indexes every key in the checkpoint observation
-    space and therefore rejects an otherwise harmless extra field.  The live
-    environment may expose newer fields (currently the end-turn boundary
-    marker), so filter at this boundary while preserving all keys expected by
-    the loaded model.  New checkpoints simply pass through unchanged.
-    """
-    space = getattr(model, "observation_space", None)
-    spaces_dict = getattr(space, "spaces", None)
-    if not spaces_dict:
-        policy = getattr(model, "policy", None)
-        policy_space = getattr(policy, "observation_space", None)
-        spaces_dict = getattr(policy_space, "spaces", None)
-    if not spaces_dict:
-        return observation
-    return {key: value for key, value in observation.items() if key in spaces_dict}
+    """Compatibility alias for the shared inference boundary."""
+    return _model.observation_for_policy(model, observation)
 
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024

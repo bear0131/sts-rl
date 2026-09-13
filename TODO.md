@@ -21,7 +21,7 @@
 | F15 | 待重构 | bridge schema 故障分类、有界重试和可重放帧 |
 | F16 | 待重构 | 统一 solver 身份、固定评测集和 timeout 口径 |
 | F17 | 进行中 | 规范、小提交、正式测试/基准与 CI；大 artifact 外置尚未迁移 |
-| F18 | 待修 | 新 obs 字段不破坏旧 checkpoint 的正式预测入口 |
+| F18 | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | F19 | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | CI01 | 进行中 | 从源码构建、核心回归、固定预算训练/保存恢复、严格已知失败列表 |
 | PERF01 | 进行中 | 可复用 CPU/GPU 资源监测和端到端训练基准；受控硬件基线 |

@@ -23,6 +23,7 @@ import torch
 
 from env.core import encode
 from rl.nosl_sampler import NOSLSampler
+from rl.model import observation_for_policy
 
 
 @dataclass(frozen=True)
@@ -238,7 +239,7 @@ class CombatValueSearch:
         batch = self._stack_observations([node.obs for node in nodes])
         masks = np.stack([node.mask for node in nodes])
         with self._lock_context():
-            obs_tensor, _ = self.policy.obs_to_tensor(batch)
+            obs_tensor, _ = self.policy.obs_to_tensor(observation_for_policy(self.policy, batch))
             with torch.inference_mode():
                 core = getattr(self.policy, "core", None)
                 if core is not None and hasattr(core, "actor_critic"):

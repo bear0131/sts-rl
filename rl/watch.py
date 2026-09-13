@@ -92,7 +92,7 @@ def _action_dist(model, obs, action_masks):
     import torch
 
     try:
-        obs_tensor, _ = model.policy.obs_to_tensor(obs)
+        obs_tensor, _ = model.policy.obs_to_tensor(_model.observation_for_policy(model, obs))
         with torch.no_grad():
             dist = model.policy.get_distribution(obs_tensor, action_masks=action_masks)
             probs = dist.distribution.probs[0].cpu().numpy()
@@ -154,7 +154,8 @@ def watch_episode(model, env, *, seed, stochastic, delay, step_mode, topk, clear
             action = search_result.action
         else:
             action, _ = model.predict(
-                obs, action_masks=masks, deterministic=not stochastic
+                _model.observation_for_policy(model, obs),
+                action_masks=masks, deterministic=not stochastic
             )
             action = int(np.asarray(action).item())
 
