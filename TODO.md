@@ -23,7 +23,7 @@
 | F17 | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | F18 | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | F19 | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
-| CI01 | 本地通过 | 显式源码构建、219 passed / 8 strict xfail、PPO/NOSL 真实更新及保存恢复/CPU bitwise；托管 Actions 首次运行待 push |
+| CI01 | 本地通过 | 显式源码构建、248 passed / 8 strict xfail、PPO/NOSL 真实更新及保存恢复/CPU bitwise；托管 Actions 首次运行待 push |
 | PERF01 | 工具就绪 | CPU/GPU 进程树资源监测和 PPO/NOSL 预算基准已实测；笔记本复测波动大，稳定硬件性能基线仍待建立 |
 
 | R01 | 一阶段已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；旧模块/CLI/checkpoint 可用；跨版本 bitwise 与全量回归记录在 worklog |
