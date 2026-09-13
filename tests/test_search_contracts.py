@@ -3,15 +3,14 @@ import pytest
 
 from env.core.run_env import unpack_nosl_observation_buffer
 from schemas.combat_state import normalize_sim_global
-from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSession
+from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSession, NOSLISAZSearch
 from rl.nosl_sampler import NOSLSampler
-from rl.test_nosl_is_az import _Branch
+from rl.test_nosl_is_az import _Branch, _DeepBranch
 
 
-@pytest.mark.xfail(reason="F09: depth zero currently executes no Python transition",
-                   strict=True, raises=AssertionError)
-def test_python_unbounded_depth_advances_beyond_root():
-    env = _Branch()
+@pytest.mark.parametrize("branch_type", [_Branch, _DeepBranch])
+def test_python_unbounded_depth_advances_beyond_root(branch_type):
+    env = branch_type()
     session = NOSLISAZSession(env, env.action_masks(), prior_logits=np.zeros(3),
                              sampler=NOSLSampler(1), state_nonce=2, decision_index=0,
                              config=NOSLISAZConfig(simulations=8, depth=0))
@@ -24,6 +23,21 @@ def test_python_unbounded_depth_advances_beyond_root():
         response = session.backprop(0.5, np.zeros(3))
     assert response["done"]
     assert steps and max(steps) > 0
+
+
+def test_synchronous_unbounded_search_expands_one_new_edge_per_simulation():
+    env = _DeepBranch()
+    steps = []
+    def value(branch):
+        steps.append(branch.thick.bc.steps)
+        return 0.5
+    result = NOSLISAZSearch(NOSLISAZConfig(simulations=8, depth=0)).choose(
+        env, env.action_masks(), prior_logits=np.zeros(3), sampler=NOSLSampler(1),
+        state_nonce=2, decision_index=0, value_fn=value,
+    )
+    assert steps == list(range(1, 9))
+    assert result.simulations == 8
+    assert env.thick.bc.steps == 0
 
 
 @pytest.mark.native

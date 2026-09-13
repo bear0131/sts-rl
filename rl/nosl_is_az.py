@@ -10,6 +10,7 @@ future RNG of the current world line.
 from __future__ import annotations
 
 import math
+from itertools import count
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -190,7 +191,7 @@ class NOSLISAZSession:
         )
         path: list[int] = []
         mask = np.asarray(branch.action_masks(), dtype=bool)
-        for _depth in range(self.config.depth):
+        for _depth in (count() if self.config.depth == 0 else range(self.config.depth)):
             prefix = tuple(path)
             node_prior = self.node_priors.get(prefix)
             if node_prior is None:
@@ -356,7 +357,7 @@ class NOSLISAZSearch:
             )
             path: list[int] = []
             mask = np.asarray(branch.action_masks(), dtype=bool)
-            for depth in range(self.config.depth):
+            for depth in (count() if self.config.depth == 0 else range(self.config.depth)):
                 current_legal = [int(a) for a in np.flatnonzero(mask)]
                 if not current_legal:
                     break
@@ -409,6 +410,11 @@ class NOSLISAZSearch:
                 if terminated:
                     break
                 mask = np.asarray(next_mask, dtype=bool)
+
+                # With no depth cap, expand one unseen edge then evaluate it.
+                # This also bounds a simulation in non-terminating toy worlds.
+                if self.config.depth == 0 and candidates:
+                    break
 
             if branch.thick.bc.is_battle_over:
                 value = _terminal_value(branch)

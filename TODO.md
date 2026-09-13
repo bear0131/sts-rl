@@ -12,7 +12,7 @@
 | F06 | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |
 | F07 | 待重构 | Gauntlet 提交 max HP、药水、遗物计数等持久状态 |
 | F08 | 已修 | 显式 seed 后的自动 reset 序列可复现；普通/分层 PPO CPU 重复训练逐位对齐 |
-| F09 | 待修 | Python NOSL depth=0 真正推进搜索 |
+| F09 | 已修 | Python NOSL depth=0 真正推进搜索；同步和分批入口在新叶处停止 |
 | F10 | 待修 | Impatience 条件抽牌及 exhaust unique-ID fallback 正确 |
 | F11 | 待设计 | rollout 切点不选择性漏掉上层 macro transition |
 | F12 | 待设计 | 明确 PPO normalization/phase weighting 的统计边界；累积不是自动等价 |
