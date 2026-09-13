@@ -72,7 +72,7 @@ class BasicWholeRunTask(WholeRunTask):
     defaults = {
         "steps": 100_000,
         "metrics_window": 100,
-        "out": "rl/runs/whole-run-basic",
+        "out": "runs/whole-run-basic",
     }
 
     def make_env_fn(self, args):

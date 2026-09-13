@@ -14,7 +14,7 @@ MaskablePPO checkpoint drive the same gauntlet autoregressively.
 Run from repo root (needs the sim built):
     python -m apps.play_gauntlet
     python -m apps.play_gauntlet --seed 42 --floor-lo 1 --floor-hi 50
-    python -m apps.play_gauntlet --watch rl/runs/combat/.../final.zip --delay 0.4
+    python -m apps.play_gauntlet --watch runs/combat/.../final.zip --delay 0.4
 """
 
 import argparse

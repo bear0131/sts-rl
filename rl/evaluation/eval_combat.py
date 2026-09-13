@@ -7,7 +7,7 @@ comparable across checkpoints.
 
 Examples:
 
-    python -m rl.evaluation.eval_combat rl/runs/combat/run/final.zip
+    python -m rl.evaluation.eval_combat runs/combat/run/final.zip
     python -m rl.evaluation.eval_combat a.zip b.zip --episodes 1000 --output-csv results.csv
 """
 

@@ -12,7 +12,7 @@ tail (e.g. an unmapped monster id at an act boss) by sheer volume of play.
 
 Examples:
 
-    python -m tools.analysis.bughunt rl/runs/.../maskable_ppo_1000000_steps.zip
+    python -m tools.analysis.bughunt runs/.../maskable_ppo_1000000_steps.zip
     python -m tools.analysis.bughunt <ckpt> --episodes 5000 --seed 0
     python -m tools.analysis.bughunt <ckpt> --episodes 5000 --mode stochastic
 """

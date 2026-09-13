@@ -8,12 +8,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def verify_archive(root=ROOT):
-    entries = json.loads((root / "docs/path-migration.json").read_text(encoding="utf-8"))
+    entries = json.loads((root / "tools/validation/migrations.json").read_text(encoding="utf-8"))["files"]
+    checked = 0
     for old, entry in entries.items():
+        if entry.get("local_only") or "sha256" not in entry:
+            continue
         path = (root / entry["path"]).resolve()
         assert path.is_relative_to(root.resolve()), entry["path"]
         assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["sha256"], old
-    return len(entries)
+        checked += 1
+    return checked
 
 
 def main():
@@ -25,8 +29,8 @@ def main():
         print(f"verified {verify_archive()} archived files")
     if args.old_path:
         key = args.old_path.replace("\\", "/")
-        for name in ("path-migration", "launcher-migration", "module-migration"):
-            mapping = json.loads((ROOT / f"docs/{name}.json").read_text(encoding="utf-8"))
+        registry = json.loads((ROOT / "tools/validation/migrations.json").read_text(encoding="utf-8"))
+        for mapping in (registry["files"], registry["launchers"], registry["modules"]):
             if key in mapping:
                 entry = mapping[key]
                 print(entry["path"] if isinstance(entry, dict) else entry)

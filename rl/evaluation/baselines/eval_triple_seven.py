@@ -31,7 +31,7 @@ from rl.rules.rule_data import (
 from rl.rules.rule_model import RuleWorldModel
 
 
-RUN = Path("rl/runs/rules-random-v2-large256-dist4")
+RUN = Path("runs/rules-random-v2-large256-dist4")
 CARD = {"id": "TripleSeven", "up": 0, "cost": 1}
 CARD_RULE = (
     "CARD TripleSeven VERSION base PROGRAM CARD_BEGIN TYPE_ATTACK "
@@ -298,7 +298,7 @@ def main() -> None:
         print(json.dumps({"case": sample["name"], "mode": "autoregressive",
                           "terminated": OUTPUT_END in tokens,
                           "generated_tokens": len(tokens), **values}, ensure_ascii=False))
-        Path(f"rl/runs/rules-random-v2-large256-dist4/triple_seven_{sample['name']}.json").write_text(
+        Path(f"runs/rules-random-v2-large256-dist4/triple_seven_{sample['name']}.json").write_text(
             json.dumps({"tokens": tokens, **values}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

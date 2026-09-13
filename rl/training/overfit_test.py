@@ -183,7 +183,7 @@ def build_parser():
     p.add_argument("--batch-size", type=int, default=512)
     p.add_argument("--ascension", type=int, default=0)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--out", default="rl/runs/overfit", help="checkpoint/log dir")
+    p.add_argument("--out", default="runs/overfit", help="checkpoint/log dir")
     p.add_argument("--tensorboard", action="store_true")
     p.add_argument("--eval-episodes", type=int, default=50,
                    help="post-train eval episode count")

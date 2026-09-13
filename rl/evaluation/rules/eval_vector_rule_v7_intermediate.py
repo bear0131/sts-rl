@@ -9,9 +9,9 @@ final continuous delta head without loading a checkpoint or running a model.
 Example::
 
     python -m rl.evaluation.rules.eval_vector_rule_v7_intermediate \
-        --input artifacts/archive/docs/simple-card-v7-eval-remote-latest.json \
-        --json-output artifacts/local/simple-card-v7-intermediate-remote-latest.json \
-        --markdown-output artifacts/local/simple-card-v7-intermediate-remote-latest.md
+        --input runs/legacy/docs/simple-card-v7-eval-remote-latest.json \
+        --json-output runs/local/simple-card-v7-intermediate-remote-latest.json \
+        --markdown-output runs/local/simple-card-v7-intermediate-remote-latest.md
 """
 
 from __future__ import annotations

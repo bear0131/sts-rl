@@ -10,7 +10,7 @@ Run from repo root:
     python -m rl.training.trainer --task combat
     python -m rl.training.trainer --task combat --ent-coef 0.03 --steps 5000000 --wandb
     python -m rl.training.trainer --task wholerun --arch split-pointer \
-        --init-from rl/runs/combat/<ts>/final.zip --freeze-encoder
+        --init-from runs/combat/<ts>/final.zip --freeze-encoder
 """
 
 from __future__ import annotations

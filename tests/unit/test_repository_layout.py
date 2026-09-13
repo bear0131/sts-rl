@@ -9,7 +9,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-MIGRATION = json.loads((ROOT / "docs/module-migration.json").read_text())
+MIGRATION = json.loads((ROOT / "tools/validation/migrations.json").read_text(encoding="utf-8"))["modules"]
 
 
 def test_runtime_does_not_depend_on_apps_tools_tests_or_legacy_modules():

@@ -6,6 +6,6 @@ end_of_line = lf
 insert_final_newline = true
 
 # Historical inputs retain their original bytes.
-[worklog/archive/**]
+[docs/archive/**]
 end_of_line = unset
 insert_final_newline = unset

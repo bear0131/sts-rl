@@ -278,7 +278,7 @@ def random_gauntlet_factory(np_random, ascension=0, hp_frac=(0.2, 1.0),
 
     Reward is "+1 per fight cleared, episode ends on death" — surviving longer (i.e.
     spending HP wisely) is what pays off, so HP value is learned implicitly with no
-    explicit HP/death reward term (see worklog/archive/doc/night_0625/combat_pretrain_decision.md).
+    explicit HP/death reward term (see docs/archive/doc/night_0625/combat_pretrain_decision.md).
     """
     flo, fhi = floor_range
     types = [t for t, _ in type_probs]

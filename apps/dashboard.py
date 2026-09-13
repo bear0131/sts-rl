@@ -58,8 +58,8 @@ from rl.policies import split_policy as _split_policy  # noqa: F401
 
 STATIC_DIR = Path(__file__).with_name("dashboard_static")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-UPLOAD_DIR = Path("rl/runs/dashboard/uploads")
-HYBRID_EVAL_ROOT = PROJECT_ROOT / "rl/runs/eval-hybrid"
+UPLOAD_DIR = Path("runs/dashboard/uploads")
+HYBRID_EVAL_ROOT = PROJECT_ROOT / "runs/eval-hybrid"
 DEFAULT_HYBRID_POLICY_STATE = Path(
     os.environ.get(
         "STS_RL_POLICY_STATE",
@@ -76,7 +76,7 @@ def _default_dashboard_checkpoint() -> Path | None:
     """Pick the newest local training checkpoint for a no-argument launch.
 
     An explicit ``STS_RL_CHECKPOINT`` always wins.  Otherwise prefer the
-    newest ``nosl_az_*_steps.zip`` under ``artifacts``; this keeps the normal
+    newest ``nosl_az_*_steps.zip`` under ``runs``; this keeps the normal
     ``uv run python -m apps.dashboard`` command on the latest downloaded model
     without hard-coding a step number.
     """
@@ -84,7 +84,7 @@ def _default_dashboard_checkpoint() -> Path | None:
     if configured:
         path = Path(configured).expanduser()
         return path if path.is_file() else None
-    root = PROJECT_ROOT / "artifacts"
+    root = PROJECT_ROOT / "runs"
     candidates = list(root.glob("**/nosl_az_*_steps.zip")) if root.is_dir() else []
     if not candidates:
         return None

@@ -34,7 +34,7 @@ jobs:
           cmake --build "$STS_LIGHTSPEED_BUILD_DIR" --target slaythespire --parallel 2
           python -c "from env.core import _BUILD; import slaythespire; print(_BUILD, slaythespire.__file__); assert hasattr(slaythespire.BattleContext, 'nosl_neural_search_begin')"
       - name: Existing and new correctness contracts
-        run: python -m pytest -q -m "not training" --junitxml=artifacts/local/contracts.xml
+        run: python -m pytest -q -m "not training" --junitxml=runs/local/contracts.xml
       - name: Module syntax and launcher syntax (without launching experiments)
         run: |
           python -m compileall -q rl env tools apps configs tests bridge
@@ -42,14 +42,14 @@ jobs:
             bash -n "$script"
           done
       - name: Real training, optimizer persistence and CPU bitwise checks
-        run: python -m pytest tests/integration/test_training_smoke.py -q --junitxml=artifacts/local/training.xml
+        run: python -m pytest tests/integration/test_training_smoke.py -q --junitxml=runs/local/training.xml
       - name: Bounded performance smoke (no hardware-specific speed gate)
-        run: python -m rl.benchmarks.train --device cpu --output artifacts/local/ci-benchmark.json --timeout 180
+        run: python -m rl.benchmarks.train --device cpu --output runs/local/ci-benchmark.json --timeout 180
       - name: Whitespace checks
         run: git diff --check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cpu-correctness-evidence
-          path: artifacts/local/
+          path: runs/local/
           if-no-files-found: warn

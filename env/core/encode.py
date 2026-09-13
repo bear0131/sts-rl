@@ -1,7 +1,7 @@
 """Observation encoder v3: canonical state dict -> structured Dict observation.
 
 This module is the single source of truth for the obs layout and the RL model's
-input contract (see worklog/archive/doc/day_0623/obs_design.md). It is a PURE function of the
+input contract (see docs/archive/doc/day_0623/obs_design.md). It is a PURE function of the
 canonical state — it does NOT import slaythespire — so the SAME encoder serves
 the sim backend (training) and a real-game backend (inference via bridge).
 

@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=None,
-        help="Defaults to rl/runs/eval-hybrid/<timestamp>.",
+        help="Defaults to runs/eval-hybrid/<timestamp>.",
     )
     return parser
 
@@ -472,7 +472,7 @@ def main() -> None:
     args = build_parser().parse_args()
     _validate_args(args)
     output_dir = args.output_dir or (
-        Path("rl/runs/eval-hybrid") / time.strftime("%Y%m%d-%H%M%S")
+        Path("runs/eval-hybrid") / time.strftime("%Y%m%d-%H%M%S")
     )
 
     load_started = time.monotonic()

@@ -1,7 +1,7 @@
 """CPU/CUDA PPO benchmark with a subprocess wall-time budget and JSON evidence.
 
 Run from the repo: python -m rl.benchmarks.train --help
-Output intentionally stays outside source control under artifacts/local/.
+Output intentionally stays outside source control under runs/local/.
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 """SimCombatBackend: a SimGameEnv scoped to a random-combat GAUNTLET, for combat-
-head pretraining (worklog/archive/doc/night_0625/combat_pretrain_decision.md).
+head pretraining (docs/archive/doc/night_0625/combat_pretrain_decision.md).
 
 One episode = ONE random loadout (deck/relics/starting HP) fighting an ENDLESS
 stream of random encounters. HP carries over between fights and there is no

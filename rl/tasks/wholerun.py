@@ -144,7 +144,7 @@ class WholeRunTask(Task):
     defaults = {
         "steps": 100_000,
         "metrics_window": 100,
-        "out": "rl/runs/whole-run",
+        "out": "runs/whole-run",
         "n_layers": 8,
     }
 

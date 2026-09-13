@@ -17,7 +17,8 @@ bridge/client/*.log
 bridge/client/logs/
 
 # RL training artifacts (checkpoints, tensorboard logs)
-rl/runs/
+/runs/*
+!/runs/README.md
 
 # bughunt crash captures (local crash-hunt output)
 rl/bughunt_out/
@@ -29,7 +30,6 @@ rl/bughunt_out/
 .DS_Store
 
 # Local correctness/performance evidence, never source inputs
-artifacts/local/
 .pytest_cache/
 sim/sts_lightspeed/build-*/
 

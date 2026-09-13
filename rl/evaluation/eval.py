@@ -6,7 +6,7 @@ There is deliberately no step-count TimeLimit in this evaluator.
 
 Examples:
 
-    python -m rl.evaluation.eval rl/runs/whole-run/final.zip
+    python -m rl.evaluation.eval runs/whole-run/final.zip
     python -m rl.evaluation.eval checkpoint.zip --episodes 200 --output-csv runs.csv
     python -m rl.evaluation.eval checkpoint.zip --episodes 50 --stochastic
 """

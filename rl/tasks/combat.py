@@ -1,6 +1,6 @@
 """Combat-gauntlet pretraining task.
 
-Stage 1 of the combat-pretrain plan (worklog/archive/doc/night_0625/combat_pretrain_decision.md):
+Stage 1 of the combat-pretrain plan (docs/archive/doc/night_0625/combat_pretrain_decision.md):
 each episode is ONE random loadout (random Ironclad deck, relics, starting HP)
 fighting an ENDLESS stream of random encounters; HP carries over with no healing,
 so the episode ends on death. Reward is +1 per fight cleared by default;
@@ -137,7 +137,7 @@ class CombatTask(Task):
     defaults = {
         "steps": 2_000_000,
         "metrics_window": 200,
-        "out": "rl/runs/combat",
+        "out": "runs/combat",
         "n_layers": 4,
     }
 

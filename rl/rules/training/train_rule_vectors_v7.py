@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="v7 JSONL bootstrap data used only to build the token vocabulary")
     parser.add_argument("--tokenizer", type=Path,
                         help="saved v7 tokenizer; defaults to <out>/tokenizer.json")
-    parser.add_argument("--out", type=Path, default=Path("rl/runs/rules-vector-v7"))
+    parser.add_argument("--out", type=Path, default=Path("runs/rules-vector-v7"))
     parser.add_argument("--stream-command", required=True)
     parser.add_argument("--stream-cwd", type=Path)
     parser.add_argument("--stream-steps", type=int, required=True)

@@ -70,7 +70,7 @@ RAY_RUNTIME_EXCLUDES = [
     ".venv/",
     "venv/",
     "wandb/",
-    "rl/runs/",
+    "runs/",
     "rl/bughunt_out/",
     "bridge/client/logs/",
     "**/__pycache__/",
@@ -515,7 +515,7 @@ def build_parser():
              "combat task constructs only its combat specialist.",
     )
     parser.add_argument("--freeze-encoder", action="store_true")
-    parser.add_argument("--out", type=Path, default=Path("rl/runs/rllib"))
+    parser.add_argument("--out", type=Path, default=Path("runs/rllib"))
     parser.add_argument("--checkpoint-every", type=int, default=10,
                         help="Save every N RLlib training iterations.")
     parser.add_argument(

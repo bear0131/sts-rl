@@ -1,9 +1,7 @@
-# 可复用文档
+# 工作文档
 
-- development-checks.md：构建、测试、训练/资源基准命令。
-- refactor-stage1.md：目录/兼容边界、验证方法和后续重构接续入口。
-- reference/：生成的卡牌/语言接口资料。
-- protocols/：保留的模型/实验协议；正文可能描述旧版本，必须按引用 commit 与实际代码核对。
-- module-migration.json / launcher-migration.json / path-migration.json：旧模块、启动脚本、历史文件到当前位置的机器可读映射。
+日期子目录保存审计、方案、讨论稿与交接等工作记录；archive/ 保存旧材料。日期标记记录时间，不承担标题或问题身份。
+当前完整审计：[codebase-audit.md](2026-09-13/codebase-audit.md)，原始证据：[codebase-audit-evidence.zip](2026-09-13/codebase-audit-evidence.zip)。问题状态以根 TODO.md 为准。
+历史包整理交接：[package-reorganization-handoff.md](2026-09-13/package-reorganization-handoff.md)。
 
-阶段进度与旧实验报告归 worklog/；原始测量归 artifacts/。这里不再创建日期结果报告或临时状态文件。
+长期用法/接口只维护所属模块 README；进度只写 worklog；旧路径由 tools/validation/migrations.json 查询。这里不维护另一份“当前架构入口”或 TODO。

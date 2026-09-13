@@ -1,10 +1,123 @@
-# 正确性测试
+# 开发与验证
 
-从仓库根目录运行 `python -m pytest -q`。只收集此目录，不扫实验入口或第三方源码。
+本文件是维护中的构建/测试说明；工作报告和阶段结果放 docs/日期，日常进度放 worklog。
+`unit/`、`integration/` 是唯二 pytest 收集目录，fixture 在 conftest.py。已知缺陷以 TODO 的稳定问题 ID 标识。
 
-- `unit/`：纯编码、模型张量、算法与工具契约；个别历史用例包含多模块组合，尚未声称完全隔离。
-- `integration/`：原生环境/搜索、checkpoint、训练、子进程预算。
-- `conftest.py`：确定性 native fixture 与 Torch 线程预算。当前全套入口要求显式原生构建，缺少依赖是错误。
-- `python -m tools.validation.bitwise`：跨版本 CPU 数值回归；固定步数，记录 checkpoint/Adam/rollout/replay/search，不是长程训练效果验收。
+## Runtime and native build
 
-历史测试迁移保留断言。已知缺陷使用绑定 TODO ID 的 strict xfail。训练用 `training` marker；完整原生验收见 ../docs/development-checks.md。
+Use Python 3.11 and an isolated environment. Install a Torch wheel suitable for
+your platform; CPU CI installs torch==2.12.0 from the official CPU wheel index.
+Then install requirements/ci.txt. The tested developer machine uses
+torch==2.12.0+cu132; do not replace an existing GPU environment just to run CI.
+
+From the repository root:
+
+    python -m pip install -r requirements/ci.txt cmake ninja
+    cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-ci -G Ninja -DPYBIND11_FINDPYTHON=ON -DSTS_ENABLE_RULE_TRACE=ON
+    cmake --build sim/sts_lightspeed/build-ci --target slaythespire --parallel 2
+
+Set STS_LIGHTSPEED_BUILD_DIR to that absolute build directory before running
+Python. Pass -DPython_EXECUTABLE=<your-interpreter> if CMake finds the wrong
+Python. On Windows use Git Bash via gbash, a compatible MinGW compiler and its
+runtime DLLs (beside the extension, or via STS_LIGHTSPEED_DLL_DIRS). The original
+CMake setup targets GCC/Clang flags; this is not an MSVC build recipe.
+
+## Correctness layers
+
+    python -m pytest -q
+    python -m pytest tests -q
+    python -m pytest tests/integration/test_training_smoke.py -q
+    python -m tests.integration.test_combat
+    python -m tests.integration.test_game
+    python -m tests.integration.test_run_v2 --episodes 20 --seed 0
+
+The main suite collects tests/unit and tests/integration, including the relocated
+legacy tests. Native fixtures
+require the native extension: a missing native build is an error, not a skipped
+success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
+terminate the test process, so CI also has a job timeout.
+
+Known defects have strict xfail markers restricted to their expected assertion
+type and a TODO ID. XPASS fails CI: remove the marker when fixing the contract.
+Do not expand an xfail to hide setup/import failures.
+
+CPU bitwise tests use one Torch thread, identical software/native binaries,
+fixed seeds, real PPO gradients, forced autoresets/truncation, full model and
+Adam state comparisons. Save/load checks compare both optimizer tensors and
+predictions. They do not promise cross-platform/GPU equality or exact training
+resume from a checkpoint without environment/RNG state.
+
+Packed/native leaf tests compare the complete consumed observation arrays for
+matching deterministic requests, not just shapes or total search visits. Equal
+implementations can share a bug, so separate game semantic counterexamples are
+also retained.
+
+## Bounded training and resource benchmark
+
+    python -m rl.benchmarks.train --output runs/local/cpu-small.json --device cpu
+    python -m rl.benchmarks.train --output runs/local/gpu-medium.json --device cuda --n-envs 8 --n-steps 64 --batch-size 128 --accumulation 2 --epochs 2 --updates 3 --d-model 128 --layers 4 --heads 8 --timeout 180
+    python -m rl.benchmarks.train --output runs/local/gpu-subproc.json --device cuda --vec-env subproc --n-envs 8 --n-steps 64 --batch-size 128 --d-model 128 --layers 4 --heads 8
+    python -m rl.benchmarks.train --output runs/local/nosl-cpu.json --device cpu --search puct --n-steps 64 --updates 4 --timeout 180
+
+Each command supervises a separate worker with a wall-time budget; timeout exits
+124 and kills only that worker's process tree. Reusing an output filename fails
+instead of overwriting evidence. The runner uses WholeRun wrapper ordering,
+split-pointer policy, normal or hierarchical PPO, and supports existing cached
+subprocess/grouped vector environments. --search puct/full/strict enables native
+NOSL self-play and hierarchical combat HP, with depth=0 and an explicitly bounded
+replay (default 2,048 rows). Search runs fail if no completed-fight labels reach
+replay: merely running the overworld PPO must not masquerade as an AZ update.
+The training tests enter short fights through the real run state machine and
+verify native PUCT/strict Full Gumbel targets reach the learner. Neither these
+tests nor benchmarks cover Ray, remote synchronization or long-term convergence.
+
+JSON records configuration, commit/dirty state, actual native path/hash, dependency
+versions and hardware, setup/warmup/process/measurement time, rollout and
+optimization time, actual transitions/s, buffer/replay/parameter storage, process-tree
+RSS and CPU, system available memory, and GPU device telemetry plus Torch
+allocated/reserved/peak bytes. NVIDIA device samples include other processes;
+100% process-tree CPU is one logical core and RSS can count shared pages twice.
+Short runs and sampling can miss peaks. Missing metrics are null or reported
+errors, not zero usage. Different microbatch sizes are different PPO statistical
+configurations until F12 is resolved; comparisons are not pure speed ablations.
+
+CI only checks this path runs, terminates and emits evidence. Compare speed,
+memory and utilization on identical hardware with repeated runs and matched
+workload. Exclude warmup from sustained throughput, but retain process startup
+for end-to-end cost. Use a sufficiently long run for utilization conclusions.
+
+## Across-revision bitwise gate
+
+Use the same interpreter and explicit absolute STS_LIGHTSPEED_BUILD_DIR in both
+checkouts. The pre-refactor runtime is 9d2c6e1; e42a0cd adds the capture command
+without changing that runtime. Keep that revision available as a baseline checkout.
+Do not compare compressed checkpoint bytes: zip metadata is not model semantics.
+
+    # In the baseline checkout (e42a0cd):
+    python -m tools.validation.bitwise capture --output runs/local/before.json
+    # In the candidate checkout (substitute ABS_BASELINE with the absolute path):
+    python -m tools.validation.bitwise capture --output runs/local/after.json --restore ABS_BASELINE/runs/local/before-checkpoints
+    python -m tools.validation.bitwise compare ABS_BASELINE/runs/local/before.json runs/local/after.json
+
+Each capture has a 180-second default timeout and refuses an existing JSON output.
+Four modes each train 64 transitions, then restore the baseline checkpoint and
+evaluate eight steps. CPU tensors, Adam, RNG, rollout, initialized replay slots,
+evaluation observations/actions/values and native search outputs are compared by
+dtype/shape/raw-byte SHA256. The short-combat fixture grants Strength to complete
+fights; this is a correctness workload, not a gameplay quality experiment.
+
+For the provided real checkpoint, run a bounded strict-search evaluation in both
+checkouts (no remote operations, same 8-simulation seed-219 fixture):
+
+    python -m tools.validation.eval_revisions --baseline-repo ABS_BASELINE --candidate-repo . --checkpoint CHECKPOINT --output-dir runs/local/real-eval
+
+The evaluator requires the legacy evaluation entrypoint in the baseline; 9d2c6e1
+and e42a0cd both have it. JSON bytes must match. The output directory must be new.
+An absolute shared native build is required. This validates CPU inference/search
+for this fixture, not four-rank SSH training, bf16 GPU equality, or resume-state
+continuity of a live remote experiment.
+
+    python -m tools.validation.locate_legacy --verify
+
+Archive verification hashes each file against the pre-move manifest; archived
+user material deliberately retains original whitespace via .gitattributes.

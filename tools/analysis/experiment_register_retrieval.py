@@ -384,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-every", type=int, default=200)
     parser.add_argument("--seed", type=int, default=20260831)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--output", type=str, default="artifacts/local/register-retrieval-experiment.json")
+    parser.add_argument("--output", type=str, default="runs/local/register-retrieval-experiment.json")
     # Match the intended standalone probe capacity: a four-layer causal
     # Transformer is enough to represent key/value lookup without making the
     # experiment depend on the much larger full world model.

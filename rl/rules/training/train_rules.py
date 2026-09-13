@@ -41,7 +41,7 @@ from rl.rules.rule_model import RuleModelConfig, RuleWorldModel
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("data", type=Path)
-    parser.add_argument("--out", type=Path, default=Path("rl/runs/rules"))
+    parser.add_argument("--out", type=Path, default=Path("runs/rules"))
     parser.add_argument(
         "--tokenizer", type=Path,
         help="Shared tokenizer to reuse across independently collected shards.",

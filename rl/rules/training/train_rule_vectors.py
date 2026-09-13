@@ -10,7 +10,7 @@ Transformer between the anonymous card and relic encoders; pass
 Example (small local smoke run)::
 
     python -m rl.rules.training.train_rule_vectors rl/data/vector-rule-smoke-v6.jsonl \
-        --out rl/runs/vector-smoke --epochs 2 --batch-size 4 \
+        --out runs/vector-smoke --epochs 2 --batch-size 4 \
         --card-dim 32 --relic-dim 32 --hand-dim 32 --world-dim 64 \
         --decoder-dim 64 --card-token-dim 32 --relic-token-dim 32 \
         --world-heads 4 --decoder-heads 4 --card-heads 4 --relic-heads 4
@@ -19,7 +19,7 @@ One-pass online smoke run (the producer and trainer run concurrently)::
 
     python -m rl.rules.training.train_rule_vectors \
         --stream-command "python -m rl.rules.data.make_vector_rule_smoke_data --stdout --stream" \
-        --stream-steps 100 --batch-size 8 --out rl/runs/vector-stream-smoke
+        --stream-steps 100 --batch-size 8 --out runs/vector-stream-smoke
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "data", type=Path, nargs="*",
         help="Independent schema-v5 vector-rule JSONL/JSONL.GZ files.",
     )
-    parser.add_argument("--out", type=Path, default=Path("rl/runs/rules-vector-v6"))
+    parser.add_argument("--out", type=Path, default=Path("runs/rules-vector-v6"))
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)

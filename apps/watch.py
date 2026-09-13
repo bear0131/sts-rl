@@ -6,7 +6,7 @@ model's probability over every legal action, the chosen action, and the reward.
 
 Examples:
 
-    python -m apps.watch rl/runs/whole-run/.../checkpoints/maskable_ppo_50000_steps.zip
+    python -m apps.watch runs/whole-run/.../checkpoints/maskable_ppo_50000_steps.zip
     python -m apps.watch .../final.zip --delay 0.3
     python -m apps.watch .../final.zip --step          # press Enter to advance
     python -m apps.watch .../final.zip --episodes 3 --stochastic

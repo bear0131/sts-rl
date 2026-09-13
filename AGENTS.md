@@ -14,7 +14,7 @@
 - 进度只追加到 worklog/YYYY-MM-DD.md（日期以当前工作时区为准）。同一天多件事使用小节，保留已有记录。
 - **每件事完成，或做到一半需要暂停/交接/结束一轮工作时，必须更新日志。** 记录用户原始意图（关键原话或忠实引用）、实际范围、变更、验证命令和结果、未决问题、下一步、关联 commit/分支。日志和代码一起提交；当前 commit 可写“本节随当前提交”，避免为填写自身 hash 制造递归提交。
 - TODO.md 是唯一持久仓库任务清单：记录问题 ID、状态、适用路径和验收条件。日志引用 TODO，不复制多份进度表。
-- 只有需要持续复用的资料才独立建文档：例如构建/测试入口、接口契约、数据集/实验协议。一次性进度、临时诊断、启动结果放 worklog；原始大输出放忽略的 artifacts/local/，日志记录路径和摘要。
+- 只有需要持续复用的资料才独立建文档：例如构建/测试入口、接口契约、数据集/实验协议。一次性进度、临时诊断、启动结果放 worklog；原始大输出放忽略的 runs/local/，日志记录路径和摘要。
 - 不把密钥、完整环境变量、私人凭据、游戏反编译源码或大 checkpoint 放进日志/Git。外部参考记录位置、版本/hash 和必要的事实，不复制整个文件。
 
 ## 主动提交与审查粒度
@@ -53,10 +53,14 @@
 - 仓库规范和测试入口一起维护；报告区分已复现、静态发现、设计取舍和未验证，不把本机冒烟写成多机/GPU/完整游戏验收。
 
 
-## 一阶段之后的文件归属
+## 文件归属与入口数量
 
 - 核心运行时按 rl/README.md 的包边界放置；worker 无模型搜索归 env/search。新代码不得引用 rl 的旧 flat module，_compat 只服务历史调用方。
 - train/eval 参数优先 configs/*.args 或纯数据模块；部署地址、run 身份与启动操作归 experiments/launchers；不要将有执行算法的 .py 当作 config 掩盖职责。
-- 临时输出写 artifacts/local，日期进度写 worklog/YYYY-MM-DD.md。历史记录在 worklog/archive，原始输出在 artifacts/archive；按 path-migration.json 查旧路径，不再向归档写新结果。
+- 临时输出写 runs/local，日期进度写 worklog/YYYY-MM-DD.md。历史记录在 docs/archive，运行输出在 runs；按 tools/validation/migrations.json 查旧路径，不再向归档写新结果。
 - 文件迁移同步检查 import、python -m、__file__ 相对位置、shell sibling 路径、checkpoint 模块名、文档命令和 CI。先比较跨版本行为，再移除兼容名。
 - 同一阶段继续保留有意义的小提交；大目录移动用 git diff --find-renames 审查，不夹带格式化或算法调参。
+
+- 日期只标记记录时间，不能代替文件标题或问题身份。问题引用必须给具体文件路径/稳定锚点，不写“见某日审计”而没有可定位来源。
+- 阶段方案、盘点、交接是工作记录，放 docs/YYYY-MM-DD/；持久规范/接口用法收在所属模块 README，避免 refactor-stage1、current、latest 作为长期文档身份。
+- 修改组织方式的目标是减少入口和重复事实来源。能合并进已有 CLI/README/pyproject.toml 的，不再新建包装脚本、索引文档或 requirements 文件；新增入口必须说明现有入口为什么不能承载。

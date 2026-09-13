@@ -1,2 +1,3 @@
-# Archived source material retains original bytes, including terminal blank lines.
-worklog/archive/** -whitespace
+# Archived source material retains original bytes.
+docs/archive/** -whitespace
+docs/2026-09-13/codebase-audit.md -whitespace

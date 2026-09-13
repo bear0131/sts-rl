@@ -27,9 +27,9 @@ interactive Plotly HTML file and a CSV file.
 
 Example:
     uv run python -m rl.rules.visualize_card_vectors \
-        rl/runs/combat/20260804-215612/final.zip \
+        runs/combat/20260804-215612/final.zip \
         --source hand --dim 2 \
-        --output rl/runs/combat/20260804-215612/deck_vectors_2d.html
+        --output runs/combat/20260804-215612/deck_vectors_2d.html
 """
 
 from __future__ import annotations
