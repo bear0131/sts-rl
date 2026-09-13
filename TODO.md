@@ -20,10 +20,10 @@
 | F14 | 待重构 | 显式 native build 身份/能力校验；不静默丢搜索参数 |
 | F15 | 待重构 | bridge schema 故障分类、有界重试和可重放帧 |
 | F16 | 待重构 | 统一 solver 身份、固定评测集和 timeout 口径 |
-| F17 | 进行中 | 规范、小提交、正式测试/基准与 CI；大 artifact 外置尚未迁移 |
+| F17 | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；大 artifact 外置和职责拆分尚未迁移 |
 | F18 | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | F19 | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
-| CI01 | 进行中 | 从源码构建、核心回归、固定预算训练/保存恢复、严格已知失败列表 |
-| PERF01 | 进行中 | 可复用 CPU/GPU 资源监测和端到端训练基准；受控硬件基线 |
+| CI01 | 本地通过 | 显式源码构建、219 passed / 8 strict xfail、PPO/NOSL 真实更新及保存恢复/CPU bitwise；托管 Actions 首次运行待 push |
+| PERF01 | 工具就绪 | CPU/GPU 进程树资源监测和 PPO/NOSL 预算基准已实测；笔记本复测波动大，稳定硬件性能基线仍待建立 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
