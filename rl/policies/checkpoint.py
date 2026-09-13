@@ -31,7 +31,17 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
             if len(parts) >= 2:
                 candidates.append(parent / parts[-2] / parts[-1])
             candidates.append(parent / '.tmp-vector-rule-v7-contract-v10-step10000/last.pt')
-        resolved = next((p.resolve() for p in candidates if p.is_file()), None)
+        resolved = None
+        for candidate in candidates:
+            try:
+                if candidate.is_file():
+                    resolved = candidate.resolve()
+                    break
+            except PermissionError:
+                # A checkpoint may record another machine's private /root
+                # path. Discovery must still try relocated local candidates.
+                # Explicit overrides above deliberately keep their errors.
+                continue
         if resolved is None:
             raise FileNotFoundError(f'missing card-vector encoder {saved}; pass --card-vector-checkpoint or set STS_CARD_VECTOR_CHECKPOINT')
     if not resolved.is_file():

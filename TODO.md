@@ -23,7 +23,7 @@
 | [F17](docs/2026-09-13/codebase-audit.md#f17) | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
-| CI01 | 干净环境通过 | 新工作树、uv 锁文件独立 CPU 安装、原生源码重建，228 passed / 8 strict xfail；真实训练冒烟及 7208-field 同环境 bitwise 通过；托管 Actions 状态尚未确认 |
+| CI01 | Linux 首轮失败已复修 | 首轮暴露 checkpoint 历史路径 PermissionError，自动候选回退已修；新增权限合同后本地 232 passed / 8 strict xfail，含真实训练；托管 CI 重跑结果待确认。原干净安装/重建与 bitwise 证据见 worklog |
 | PERF01 | 已有局部证据 | 进程树 CPU/RSS、GPU 监测与训练预算工具就绪；resident eval 1→4 env 固定 CPU 小预算中位提速 1.54×/1.43×；稳定硬件训练/GPU 基准仍待建立，证据见 docs/2026-09-13/shared-backend-handoff.md |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
 | R02 | 部分完成 | PPO 目标、reasoning batch/backward、optimizer、梯度同步已共享；仍需拆 accumulating_ppo collector/learner 与 distributed main 生命周期，验证 fresh/replay/RNG/Adam 契约 |
