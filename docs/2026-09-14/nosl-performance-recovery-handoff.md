@@ -24,13 +24,13 @@
 
 | 固定工作量 | eager | CUDA graph | 提速 |
 |---|---:|---:|---:|
-| 24 叶 × 300 批，单批平均 | 3.831 ms | 0.589 ms | 6.51× |
-| 128 simulations，384 transitions | 19.227 s | 12.060 s | 1.59× |
-| 512 simulations，384 transitions | 61.941 s | 42.396 s | 1.46× |
+| 初测：24 叶 × 300 批，单批平均 | 3.831 ms | 0.589 ms | 6.51× |
+| 初测：128 simulations，384 transitions | 19.227 s | 12.060 s | 1.59× |
+| 最终修复版：512 simulations，384 transitions | 61.941 s | 45.247 s | 1.37× |
 
-512 对照先运行 graph 再 eager，包含 graph 首次 capture，输出摘要均为 `926356413e0aa37ec25b92b70640beedca01803b950b99f69cff1afd2f7bccdc`。摘要覆盖最后一个 rollout 的观测、动作、奖励、value、log-prob 和完整战斗监督；本次每次只测一个 rollout。不是跨平台逐位承诺，也不是完整训练收敛或多随机种子的统计结论。
+512 初测先运行 graph 再 eager，随后 workspace 修复版再以相同工作量测得 45.247 s（初测 graph 为 42.396 s）。均包含 graph 首次 capture，三者输出摘要同为 `926356413e0aa37ec25b92b70640beedca01803b950b99f69cff1afd2f7bccdc`。摘要覆盖最后一个 rollout 的观测、动作、奖励、value、log-prob 和完整战斗监督；本次每次只测一个 rollout。不是跨平台逐位承诺，也不是完整训练收敛或多随机种子的统计结论。
 
-512 对照进程树 CPU 平均 608%→838%（100% 为一个核），采样 RSS 峰值约 15.79→15.81 GB；Torch peak allocated 93→357 MB、reserved 180→583 MB。CPU RSS 累加会重复计共享页；设备 VRAM/GPU util 是设备级采样，原始 JSON 有每 0.5 秒记录。不要把利用率数字单独当速度目标。推理 graph 用更多持久 buffer 换取更少调度。
+早期 512 对照进程树 CPU 平均 608%→838%（100% 为一个核），采样 RSS 峰值约 15.79→15.81 GB；Torch peak allocated 93→357 MB、reserved 180→583 MB。设备 GPU util 平均 7.36%→8.64%，设备 VRAM 采样峰值 831→1289 MiB。CPU RSS 累加会重复计共享页；设备指标按每 0.5 秒采样。它们是 workspace 修复前的短程测量，最终修复的补测见下方验收记录；不要把利用率数字单独当速度目标。
 
 每 worker 放 4 env 的方案将 RSS 降至约 5.7 GB，但 128-simulation workload 变慢至 24.010 s，未采用。后续效率工作优先实测 IPC/packed leaf 路径，不能靠增加并行参数猜测收益。
 
@@ -64,6 +64,14 @@
 
 修复后本地完整 suite 246 passed、4 GPU-only skip、8 既有 strict xfail（37.64s）；GPU 独立合同 5 passed，覆盖 FP32/BF16 输入/权重变化、100 次捕获/淘汰与 workspace 生命周期。完整长度原失败 workload 和正式保存的最终结果追加工作日志。
 
+原必现失败的 seed=3000009、512 simulations、24 env×128 steps 已完整通过：3072 transitions，377.268 s，46 次 capture / 64466 次 hit，摘要 `22339fe5625231677f1ab7fc5ce3cea687011f307cae0d06bc17e01be6206cd5`。Torch peak allocated 115 MB、peak reserved 1688 MB；workspace 从外部 cache 移进 graph private pool 后，allocated 不代表驱动实际保留量，应同时看 reserved/设备 VRAM。证据 `runs/local/profile/rollout-rank3-workspace-fixed2.json`。
+
+最终 seed42 短程补测 `rollout-s512-final.json`：45.247 s，CPU 树平均 837%，RSS 峰值 15.82 GB，Torch peak allocated 111 MB / reserved 489 MB，GPU util 采样均值 8.09%，设备 VRAM 峰值 1199 MiB。输出 hash 与 eager 完全一致；它替代早期 1.46× 作为最终版采样速度结论。
+
 真实四机小预算 smoke 从 0→512→2816→3328：每 rank 自有 replay 保留，ring 真实平均梯度；仅 rank 0 发 STOP 后四 rank 同步保存退出。3328 时四机权重 SHA `ff8ba0e316294e93f5c6c5a30d0c5f444275b6feda2eeb150237c2a07ff355aa`，Adam SHA `53d6bf919ac8a25ab5422921d9166476ae30b8eefb1e39e1438b36d81e6b0f85` 完全相同。W&B smoke 为 offline，不把它声称为云端 resume 验收。
 
 关键提交：dc126d9 生命周期回归；06ac056 推理；edc8b43 learner 恢复；1402fcf 旧模块遮蔽；5f83e57 运维/监测；20b120e socket 路径。正式启动结果、最终 CI 和后续干预追加工作日志。
+
+正式启动验收：runtime ffce42f、部署 manifest `273f4746e981`。四机已在 global step **12288** 完成 **40 次 optimizer updates** 并保存同一步 generation；权重 SHA `2b7a66cf294879a190a38f22fd3051fa0c9a4a04498136ce3a4a61e97e0798b4`，Adam SHA `ee8ff8fa8d5617169ce860c6a5196f70bbd7de1492f3d65207096f83193f5e0f` 四机一致。每 rank replay 分别为 2244/1972/2056/2120 条，CUDA RNG 均保存。rank 0 首轮采样 371.894 s，整轮 385.277 s，保存/屏障 0.294 s；较早进入循环的其他 rank 整轮约 394.6 s，首次还受 W&B 初始化前后起点影响，不应混称稳定吞吐。该轮开头窗口 layer 5 为 28.173%，与旧健康 run 首轮一致，尚不足以推断后续收敛。
+
+通过 W&B API 核实 [rpgr0914](https://wandb.ai/1283802076-tsinghua-university/sts-rl/runs/rpgr0914) 的云端 state=running、global_step=12288、layer_5_win_rate=.281730771。每半小时的本任务 heartbeat `nosl` 已启用，日志/状态是实时来源；此处是交接时快照。运行时代码的 [correctness CI](https://github.com/bear0131/sts-rl/actions/runs/34772929675) 全通过，含原生重建、真实训练/恢复与 CPU bitwise。

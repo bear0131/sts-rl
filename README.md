@@ -44,7 +44,7 @@ python -m apps.watch CHECKPOINT
 python -m apps.dashboard --help
 ```
 
-依赖只维护 pyproject.toml 和 uv.lock：`uv sync --locked --extra cpu --group test --no-dev --python 3.11`；GPU 开发选 `--extra cuda`。具体构建与选择方式见 tests/README。允许既有远端 Python 3.12，但此次仅验证本地 3.11；native 二进制不能跨解释器混用。
+依赖只维护 pyproject.toml 和 uv.lock：`uv sync --locked --extra cpu --group test --no-dev --python 3.11`；GPU 开发选 `--extra cuda`。具体构建与选择方式见 tests/README。CPU CI 与四机 GPU 验收覆盖 Python 3.11；既有 Python 3.12 环境需单独重建和验证，native 二进制不能跨解释器混用。
 实验预设说明见 configs/README.md，原始说明快照见 docs/archive/input；它不是远端实时状态。启动命令统一使用归属包；旧 CLI 已退役，仅保留历史 checkpoint 所需的库模块别名。旧路径用 tools.validation.locate_legacy 查询。
 
 规范：[AGENTS](AGENTS.md)；问题与完整证据：[TODO](TODO.md)。阶段报告从 [docs](docs/README.md) 按文件标题查阅。

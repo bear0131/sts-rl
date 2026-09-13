@@ -24,9 +24,9 @@
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
-| PERF01 | GPU 采样实测已建立 | 固定 RTX 5090/512 simulations，CUDA graph 采样提速 1.46×且摘要逐位相同；叶推理 6.51×；含 CPU/RSS/显存/设备采样，见 docs/2026-09-14/nosl-performance-recovery-handoff.md。多 seed 长程吞吐/收敛和 IPC 优化仍待验证 |
+| PERF01 | GPU 采样实测已建立 | 固定 RTX 5090/512 simulations，最终 CUDA graph 采样提速 1.37×且摘要逐位相同；叶推理初测 6.51×；含 CPU/RSS/显存/设备采样及完整长度故障回归，见 docs/2026-09-14/nosl-performance-recovery-handoff.md。多 seed 长程吞吐/收敛和 IPC 优化仍待验证 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
-| R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见性能/恢复交接。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
+| R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见 [恢复交接](docs/2026-09-14/nosl-performance-recovery-handoff.md)。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
 | R03 | 共享后端已落实 | episode runner/策略组合、native eval/rollout/watch、固定场景库已共享并合批；仍需 corpus/历史基准协议迁接、完整评测集与统计定义，关联 F05/F16/PERF01 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。

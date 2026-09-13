@@ -32,6 +32,7 @@
 - 规则数据的 teacher 不自动等于游戏 oracle。先核对数据来源、卡牌守恒和真实 transition，再讨论 token accuracy。
 - observation/action/reward 或冻结依赖变化须明确版本和兼容范围。至少验证保留 checkpoint 家族的加载、一步预测、环境接入；不要只修 dashboard。
 - 性能优化先过语义等价测试。要求 bitwise 时必须规定同设备、同依赖/编译器、确定性设置及比较对象；浮点误差测试使用有理由的容差，不伪称跨 GPU/平台 bitwise。
+- 引入 GPU graph/推理缓存时，除固定输入和可变权重，还要验证 shape 变化、淘汰和底层临时内存释放后的重放；验收至少覆盖一个生产长度的 collection。短热态基准和 CPU CI 不能替代 GPU 资源生命周期测试。
 - 测试预期行为而不是复制实现。新增回归放 tests/，使用共享 fixture；测试集中在 tests/unit 与 tests/integration；不得在运行时代码旁新增 test_*。已知未修缺陷可以 xfail(strict=True)，但必须绑定 TODO.md 问题 ID、具体失败断言和原因，不能用 skip 掩盖支持路径。
 - 原生测试必须加载明确的扩展构建。缺少扩展或可选依赖与测试通过是不同结果；核心 CI 不允许整批静默跳过。
 - 重构训练记录/指标时检查完整生产生命周期（采样、更新、聚合、日志 payload、保存恢复）。CI 至少让真实 PPO/NOSL 各跑两轮到上报和 checkpoint；外部 W&B 可替换为收集器，但不得替换 payload 构造或只测试 learner 来声称覆盖分布式入口。
