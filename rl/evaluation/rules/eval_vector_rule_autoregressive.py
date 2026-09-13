@@ -11,7 +11,7 @@ Example::
     python -m rl.evaluation.rules.eval_vector_rule_autoregressive \
         --checkpoint .tmp-current-vector-v6-last.pt \
         --device cpu --max-new-tokens 256 \
-        --output docs/vector-v6-autoregressive-eval.json
+        --output artifacts/local/vector-v6-autoregressive-eval.json
 """
 
 from __future__ import annotations

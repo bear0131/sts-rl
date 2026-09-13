@@ -20,10 +20,14 @@
 | F14 | 待重构 | 显式 native build 身份/能力校验；不静默丢搜索参数 |
 | F15 | 待重构 | bridge schema 故障分类、有界重试和可重放帧 |
 | F16 | 待重构 | 统一 solver 身份、固定评测集和 timeout 口径 |
-| F17 | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；大 artifact 外置和职责拆分尚未迁移 |
+| F17 | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | F18 | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | F19 | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | CI01 | 本地通过 | 显式源码构建、219 passed / 8 strict xfail、PPO/NOSL 真实更新及保存恢复/CPU bitwise；托管 Actions 首次运行待 push |
 | PERF01 | 工具就绪 | CPU/GPU 进程树资源监测和 PPO/NOSL 预算基准已实测；笔记本复测波动大，稳定硬件性能基线仍待建立 |
+
+| R01 | 一阶段已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；旧模块/CLI/checkpoint 可用；跨版本 bitwise 与全量回归记录在 worklog |
+| R02 | 下一阶段 | 拆 accumulating_ppo 的 collector/learner、distributed_sb3 的编排；保持调用顺序和 fresh/replay/optimizer 契约，逐提交跑 before/after bitwise |
+| R03 | 待设计 | 收拢 eval 私有共享 fixture/solver outcome；先固定语义与完整评测集，再做批量前推/编码/IPC 性能优化，关联 F05/F16/PERF01 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。

@@ -51,3 +51,12 @@
 - 新功能先说明支持的后端/配置组合，不无限添加无测试的布尔开关。复杂实验模式应有配置对象和入口校验。
 - 避免全仓自动格式化、重命名或顺手大重构。清理与行为修复分开；不引入只有一次调用、没有复用价值的框架。
 - 仓库规范和测试入口一起维护；报告区分已复现、静态发现、设计取舍和未验证，不把本机冒烟写成多机/GPU/完整游戏验收。
+
+
+## 一阶段之后的文件归属
+
+- 核心运行时按 rl/README.md 的包边界放置；worker 无模型搜索归 env/search。新代码不得引用 rl 的旧 flat module，_compat 只服务历史调用方。
+- train/eval 参数优先 configs/*.args 或纯数据模块；部署地址、run 身份与启动操作归 experiments/launchers；不要将有执行算法的 .py 当作 config 掩盖职责。
+- 临时输出写 artifacts/local，日期进度写 worklog/YYYY-MM-DD.md。历史记录在 worklog/archive，原始输出在 artifacts/archive；按 path-migration.json 查旧路径，不再向归档写新结果。
+- 文件迁移同步检查 import、python -m、__file__ 相对位置、shell sibling 路径、checkpoint 模块名、文档命令和 CI。先比较跨版本行为，再移除兼容名。
+- 同一阶段继续保留有意义的小提交；大目录移动用 git diff --find-renames 审查，不夹带格式化或算法调参。

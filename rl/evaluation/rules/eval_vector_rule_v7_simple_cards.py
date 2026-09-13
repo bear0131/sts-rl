@@ -13,8 +13,8 @@ Example::
     python -m rl.evaluation.rules.eval_vector_rule_v7_simple_cards \
         --checkpoint .tmp-vector-rule-v7-contract-v10-register-values-20260901/last.pt \
         --tokenizer .tmp-vector-rule-v7-contract-v10-register-values-20260901/tokenizer.json \
-        --json-output docs/simple-card-v7-eval.json \
-        --markdown-output docs/simple-card-v7-eval.md \
+        --json-output artifacts/local/simple-card-v7-eval.json \
+        --markdown-output artifacts/local/simple-card-v7-eval.md \
         --device cuda
 """
 

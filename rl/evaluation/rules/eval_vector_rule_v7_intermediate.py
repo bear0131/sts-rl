@@ -10,8 +10,8 @@ Example::
 
     python -m rl.evaluation.rules.eval_vector_rule_v7_intermediate \
         --input artifacts/archive/docs/simple-card-v7-eval-remote-latest.json \
-        --json-output artifacts/archive/docs/simple-card-v7-intermediate-remote-latest.json \
-        --markdown-output worklog/archive/docs/simple-card-v7-intermediate-remote-latest.md
+        --json-output artifacts/local/simple-card-v7-intermediate-remote-latest.json \
+        --markdown-output artifacts/local/simple-card-v7-intermediate-remote-latest.md
 """
 
 from __future__ import annotations

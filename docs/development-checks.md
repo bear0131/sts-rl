@@ -31,7 +31,8 @@ CMake setup targets GCC/Clang flags; this is not an MSVC build recipe.
     python -m tests.integration.test_game
     python -m tests.integration.test_run_v2 --episodes 20 --seed 0
 
-The main suite includes existing rl/ and env/scripts/ tests. New tests/ fixtures
+The main suite collects tests/unit and tests/integration, including the relocated
+legacy tests. Native fixtures
 require the native extension: a missing native build is an error, not a skipped
 success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
@@ -84,3 +85,39 @@ CI only checks this path runs, terminates and emits evidence. Compare speed,
 memory and utilization on identical hardware with repeated runs and matched
 workload. Exclude warmup from sustained throughput, but retain process startup
 for end-to-end cost. Use a sufficiently long run for utilization conclusions.
+
+## Across-revision bitwise gate
+
+Use the same interpreter and explicit absolute STS_LIGHTSPEED_BUILD_DIR in both
+checkouts. The pre-refactor runtime is 9d2c6e1; e42a0cd adds the capture command
+without changing that runtime. Keep that revision available as a baseline checkout.
+Do not compare compressed checkpoint bytes: zip metadata is not model semantics.
+
+    # In the baseline checkout (e42a0cd):
+    python -m tools.validation.bitwise capture --output artifacts/local/before.json
+    # In the candidate checkout (substitute ABS_BASELINE with the absolute path):
+    python -m tools.validation.bitwise capture --output artifacts/local/after.json --restore ABS_BASELINE/artifacts/local/before-checkpoints
+    python -m tools.validation.bitwise compare ABS_BASELINE/artifacts/local/before.json artifacts/local/after.json
+
+Each capture has a 180-second default timeout and refuses an existing JSON output.
+Four modes each train 64 transitions, then restore the baseline checkpoint and
+evaluate eight steps. CPU tensors, Adam, RNG, rollout, initialized replay slots,
+evaluation observations/actions/values and native search outputs are compared by
+dtype/shape/raw-byte SHA256. The short-combat fixture grants Strength to complete
+fights; this is a correctness workload, not a gameplay quality experiment.
+
+For the provided real checkpoint, run a bounded strict-search evaluation in both
+checkouts (no remote operations, same 8-simulation seed-219 fixture):
+
+    python -m tools.validation.eval_revisions --baseline-repo ABS_BASELINE --candidate-repo . --checkpoint CHECKPOINT --output-dir artifacts/local/real-eval
+
+The evaluator requires the legacy evaluation entrypoint in the baseline; 9d2c6e1
+and e42a0cd both have it. JSON bytes must match. The output directory must be new.
+An absolute shared native build is required. This validates CPU inference/search
+for this fixture, not four-rank SSH training, bf16 GPU equality, or resume-state
+continuity of a live remote experiment.
+
+    python -m tools.validation.locate_legacy --verify
+
+Archive verification hashes each file against the pre-move manifest; archived
+user material deliberately retains original whitespace via .gitattributes.
