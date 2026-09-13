@@ -19,6 +19,7 @@ from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microba
 from rl.search.native import apply_strict_training_settings
 
 import argparse
+import hashlib
 import json
 import shlex
 import subprocess
@@ -404,7 +405,16 @@ def run_cmd(cmd: list[str], *, timeout: float | None = None) -> None:
     subprocess.run(cmd, check=True, timeout=timeout)
 
 
+def ssh_control_directory(root: Path, run_id: str, rank: int) -> Path:
+    # OpenSSH adds a 40-character %C hash and a 17-character temporary suffix.
+    # Experiment names must not determine the length of a Unix socket pathname.
+    identity = hashlib.sha256(run_id.encode()).hexdigest()[:12]
+    return Path(root) / f'{identity}-r{rank}'
+
+
 def ssh_options(peer: Peer, key: Path, control_dir: Path) -> list[str]:
+    if len(str(control_dir).encode()) + 1 + 40 + 17 >= 104:
+        raise ValueError('SSH control socket path too long; use a shorter --ssh-control-dir')
     return [
         "-i",
         str(key),
@@ -1535,7 +1545,7 @@ def main() -> None:
             path.unlink()
 
     key = Path(args.ssh_key).expanduser()
-    control_dir = Path(args.ssh_control_dir) / run_id / f"rank{args.rank}"
+    control_dir = ssh_control_directory(Path(args.ssh_control_dir), run_id, args.rank)
     control_dir.mkdir(parents=True, exist_ok=True)
     for peer in peers:
         ssh_cmd(
