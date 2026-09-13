@@ -39,7 +39,8 @@ def main():
     lines += ["", "## Status Tokens / 状态 Token", ""]
     for power in sorted(set(V.PLAYER_BUFF_VOCAB) | set(V.MONSTER_BUFF_VOCAB)):
         lines.append(f"- `{power}` -> `STATUS_{power}`")
-    out = Path("docs/archive/reference/combat_entity_language.md")
+    out = Path("runs/local/combat_entity_language.md")
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(out)
 

@@ -3,7 +3,7 @@
 Automatic real-game runner:
 
 ```powershell
-uv run python -m bridge.client.agent_orchestrator path\to\final.zip --ascension 0
+uv run --no-sync python -m bridge.client.agent_orchestrator path\to\final.zip --ascension 0
 ```
 
 For CommunicationMod, point the mod to:
@@ -16,7 +16,7 @@ If the mod cannot pass arguments, set environment variables before launching the
 game:
 
 ```powershell
-$env:STS_RL_CHECKPOINT = "D:\sts-rl\rl\runs\whole-run\...\final.zip"
+$env:STS_RL_CHECKPOINT = "D:\sts-rl\runs\whole-run\...\final.zip"
 $env:STS_RL_ASCENSION = "0"
 ```
 

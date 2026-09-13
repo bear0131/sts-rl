@@ -8,7 +8,7 @@
 
 例：`python -m rl.evaluation.eval CHECKPOINT @configs/eval/policy_smoke.args`。
 严格场景：`python -m rl.evaluation.nosl.eval_full_gumbel_bash_clash CHECKPOINT @configs/eval/strict_full_gumbel_smoke.args --output runs/local/strict-eval.json`。
-这些评估自身未全部实现统一 wall timeout，自动化运行需父进程 timeout（见 tools.validation 和 docs/development-checks）。
+这些评估自身未全部实现统一 wall timeout，自动化运行需父进程 timeout（见 tools.validation 和 [tests/README.md](../tests/README.md)）。
 
 当前实验对应 `train/nosl_paper_replay_fresh10_20260913.args`：strict full_gumbel、depth=0、leaf batch=1、replay 131072、old fraction<=0.90、batch 24576、40 updates、microbatch2048、24 env/rank。冻结范围和模型结构由 checkpoint/训练代码共同决定，不能只看 .args 推断。
 

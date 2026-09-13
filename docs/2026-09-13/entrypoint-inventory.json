@@ -1,0 +1,5480 @@
+{
+  "source_commit": "ac88a42fef2747665194156d35578bb14b624a80",
+  "tracked_worktree_changes": [
+    "README.md",
+    "bridge/client/README.md",
+    "bridge/client/agent_orchestrator.bat",
+    "configs/README.md",
+    "docs/README.md",
+    "env/scripts/generate_card_language_doc.py",
+    "env/scripts/generate_combat_language_doc.py",
+    "experiments/README.md",
+    "tests/README.md"
+  ],
+  "method": "AST main guards / parse calls / imports, shell text, CMake; no imports or target execution",
+  "python_entries": [
+    {
+      "path": "apps/dashboard.py",
+      "sha256": "f13ec837f1c66277a6bc7df8214aa0fadadb1eca8091af218ce48bcc7d4633ed",
+      "module": "apps.dashboard",
+      "main_guard_lines": [
+        3034
+      ],
+      "parse_lines": [
+        3018
+      ],
+      "direct_local_imports": [
+        "apps.watch",
+        "env.core",
+        "env.core.action_space",
+        "env.core.card_language",
+        "env.core.cards_vocab",
+        "env.core.combat_language",
+        "env.core.event_descriptions",
+        "env.core.ironclad_cards",
+        "env.core.relics",
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.evaluation.eval",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.rllib_inference",
+        "rl.policies.split_policy",
+        "rl.rules.visualize_card_vectors"
+      ],
+      "dynamic_module_strings": [
+        "rl.evaluation.eval_hybrid"
+      ],
+      "legacy_module": "rl.dashboard",
+      "doc": [
+        "Local browser workbench for inspecting and evaluating sts-rl checkpoints."
+      ],
+      "functions": [
+        "_default_dashboard_checkpoint",
+        "_observation_for_policy",
+        "_normalize_search_mode",
+        "_model_search_bool",
+        "_jsonable",
+        "_clamp_int",
+        "_clamp_float",
+        "_resolve_card_vector_checkpoint",
+        "_sb3_load_custom_objects",
+        "_file_info",
+        "_tail_text",
+        "_parse_hybrid_progress",
+        "_model_search_param",
+        "_model_search_float",
+        "_supports_neural_nosl",
+        "_evaluation_search_config",
+        "main"
+      ]
+    },
+    {
+      "path": "apps/play_gauntlet.py",
+      "sha256": "9fd28ba38fe9c39ce02b86bda4c12e1480a265cfd1fc7a454782703669500f27",
+      "module": "apps.play_gauntlet",
+      "main_guard_lines": [
+        146
+      ],
+      "parse_lines": [
+        62
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.combat_backend",
+        "env.core.factories",
+        "env.core.run_env",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.play_gauntlet",
+      "doc": [
+        "Play the COMBAT GAUNTLET (manually, or watch a checkpoint), model action API.",
+        ""
+      ],
+      "functions": [
+        "_menu",
+        "_prompt",
+        "main"
+      ]
+    },
+    {
+      "path": "apps/watch.py",
+      "sha256": "5a489c17859a4d783f51aa1bef672fed0228b33aa921e0bcb47e300db35cf39e",
+      "module": "apps.watch",
+      "main_guard_lines": [
+        245
+      ],
+      "parse_lines": [
+        200
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.evaluation.eval",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.split_policy",
+        "rl.search.combat_value_search"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.watch",
+      "doc": [
+        "Watch a MaskablePPO checkpoint play whole-run SlayTheSpireEnv, live.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_clear",
+        "_action_dist",
+        "_decision_panel",
+        "watch_episode",
+        "main"
+      ]
+    },
+    {
+      "path": "bridge/client/agent_orchestrator.py",
+      "sha256": "062e3bf94188267fd9395b6ec89092242c8a05a27c7675e09fefa0891218da6a",
+      "module": "bridge.client.agent_orchestrator",
+      "main_guard_lines": [
+        365
+      ],
+      "parse_lines": [
+        326
+      ],
+      "direct_local_imports": [
+        "bridge.real_game_env",
+        "env.core",
+        "env.core.action_space",
+        "env.core.game_actions",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Automatic CommunicationMod orchestrator backed by a MaskablePPO checkpoint.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "send",
+        "_load_model",
+        "_adapter_for_model",
+        "_log_decision",
+        "main"
+      ]
+    },
+    {
+      "path": "bridge/client/orchestrator.py",
+      "sha256": "07f778bfca7c1a2721bd992d7f66315f81519b12c122b386499eb7dad8a5c302",
+      "module": "bridge.client.orchestrator",
+      "main_guard_lines": [
+        276
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Phase-0 human-in-the-loop orchestrator for CommunicationMod.",
+        ""
+      ],
+      "functions": [
+        "reader_loop",
+        "send",
+        "render",
+        "card_str",
+        "powers_str",
+        "main"
+      ]
+    },
+    {
+      "path": "bridge/replay.py",
+      "sha256": "6a9156c3b5b949d9574bbd6ca53410cc4c32f3aad2beae9c8ac2f974a7b9317f",
+      "module": "bridge.replay",
+      "main_guard_lines": [
+        484
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Replay a whole real run inside the sim and diff at every step.",
+        ""
+      ],
+      "functions": [
+        "parse_log",
+        "build_steps",
+        "_encounter_name",
+        "_find_select_idx",
+        "_report",
+        "extract_combats",
+        "build_encounter_map",
+        "_sync_gc",
+        "validate_combats",
+        "_combat_cmd",
+        "run_natural",
+        "main"
+      ]
+    },
+    {
+      "path": "bridge/schemas/combat_state.py",
+      "sha256": "0b91e7796137b4d6bf34d69e78ccb233a295191e56384157e46e526a4ca34643",
+      "module": "bridge.schemas.combat_state",
+      "main_guard_lines": [
+        592
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Canonical combat-state schema + normalizers for differential testing.",
+        ""
+      ],
+      "functions": [
+        "_powers_real",
+        "_card",
+        "_cards_real",
+        "_attack",
+        "_monster_real",
+        "normalize_real",
+        "_sim_card_id",
+        "real_to_sim_card_enum",
+        "_sim_monster_id",
+        "_sim_power_id",
+        "_powers_sim",
+        "_norm_sim_monster",
+        "normalize_sim",
+        "normalize_real_overworld",
+        "sim_phase",
+        "_sim_outcome_name",
+        "_sim_screen_options",
+        "_select_options",
+        "combat_select_options",
+        "_card_reward_entry",
+        "normalize_sim_overworld",
+        "_enum_tail",
+        "normalize_sim_global",
+        "diff_overworld",
+        "diff"
+      ]
+    },
+    {
+      "path": "env/core/_gen_vocab.py",
+      "sha256": "b1bb6d0488c033e0744fc74eb0f19f7e920a07a72262d5a331b75984320a012a",
+      "module": "env.core._gen_vocab",
+      "main_guard_lines": [
+        287
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "schemas"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Generator for env/core/vocab.py — the categorical id-space contract for obs.",
+        ""
+      ],
+      "functions": [
+        "_read",
+        "_string_table",
+        "_enum_names",
+        "_dedup_keep_order",
+        "build",
+        "_fmt_list",
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/check_gamble_probe.py",
+      "sha256": "539dced2cf025f6e573b33eb531695a9ed09d58c66c5b3a2c6aa78d64c4a0c25",
+      "module": "env.scripts.check_gamble_probe",
+      "main_guard_lines": [
+        103
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.game_env",
+        "env.core.run_env",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Forced Gamble (combat MULTI card-select) probe.",
+        ""
+      ],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/check_select_binding.py",
+      "sha256": "60d8fc217948796998c67d697b5d78b02f6dfa9fa1e23e84dcf9f43e6606dd11",
+      "module": "env.scripts.check_select_binding",
+      "main_guard_lines": [
+        222
+      ],
+      "parse_lines": [
+        195
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.run_env",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Verify the card-select bindings + obs contract (obs_design §4.1).",
+        ""
+      ],
+      "functions": [
+        "_probe_multi",
+        "_check_select",
+        "run_episode",
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/check_shop_binding.py",
+      "sha256": "fd3825792042b145e04177a5cb9c65a0896e46a29c06cea7401bce0e4cee6940",
+      "module": "env.scripts.check_shop_binding",
+      "main_guard_lines": [
+        146
+      ],
+      "parse_lines": [
+        130
+      ],
+      "direct_local_imports": [
+        "env.core.game_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Verify the shop-info bindings (gc.shop_contents / gc.legal_shop_options).",
+        ""
+      ],
+      "functions": [
+        "_check_shop",
+        "run_episode",
+        "_print_shop",
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/generate_card_language_doc.py",
+      "sha256": "8280a05f873d4cd764c176a6104a0caacff0b3e4a634fe03622a1a37a2dd02dd",
+      "module": "env.scripts.generate_card_language_doc",
+      "main_guard_lines": [
+        24
+      ],
+      "parse_lines": [
+        18
+      ],
+      "direct_local_imports": [
+        "env.core.card_language"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Regenerate the bilingual Ironclad and Status card-language reference."
+      ],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/generate_combat_language_doc.py",
+      "sha256": "5de4e38bfa01166c3a228aea35509ba1ff0cf8ad10b100a16333140ab4c3ac7d",
+      "module": "env.scripts.generate_combat_language_doc",
+      "main_guard_lines": [
+        48
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.combat_language",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/play.py",
+      "sha256": "86c0f37ea5ced443498486c66509f4bd7f579a3b85471ac1cc3c578b19b3febd",
+      "module": "env.scripts.play",
+      "main_guard_lines": [
+        96
+      ],
+      "parse_lines": [
+        69
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.combat_env",
+        "env.core.factories"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Interactive combat player — drive a SimCombatEnv by hand.",
+        ""
+      ],
+      "functions": [
+        "_build_env",
+        "_legal_menu",
+        "_prompt_choice",
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/play_run.py",
+      "sha256": "6beae3c35c93472ffd400688a6b6d05aa5f3c01de5e0f670ceaaa4f25faf5a17",
+      "module": "env.scripts.play_run",
+      "main_guard_lines": [
+        95
+      ],
+      "parse_lines": [
+        50
+      ],
+      "direct_local_imports": [
+        "env.core.game_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Interactive whole-run player — drive a SimGameEnv by hand, across screens.",
+        ""
+      ],
+      "functions": [
+        "_menu",
+        "_prompt_choice",
+        "main"
+      ]
+    },
+    {
+      "path": "env/scripts/play_run_v2.py",
+      "sha256": "b1cec701919177bce474f0c39aac698e9afa5232aa37ebbd7114226db4cdb7e2",
+      "module": "env.scripts.play_run_v2",
+      "main_guard_lines": [
+        91
+      ],
+      "parse_lines": [
+        47
+      ],
+      "direct_local_imports": [
+        "env.core.run_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Interactive whole-run player on the THIN SlayTheSpireEnv (action v2).",
+        ""
+      ],
+      "functions": [
+        "_menu",
+        "_prompt",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/benchmarks/train.py",
+      "sha256": "b8d9318e94166a50168740388817269caa8a55cc0cb533d08263e9bdbe12165e",
+      "module": "rl.benchmarks.train",
+      "main_guard_lines": [
+        243
+      ],
+      "parse_lines": [
+        190
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.algorithms.accumulating_ppo",
+        "rl.benchmarks.resources",
+        "rl.policies.split_policy",
+        "rl.training.cached_mask_vec_env",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [
+        "rl.benchmarks.train"
+      ],
+      "legacy_module": null,
+      "doc": [
+        "CPU/CUDA PPO benchmark with a subprocess wall-time budget and JSON evidence.",
+        ""
+      ],
+      "functions": [
+        "parser",
+        "make_environment",
+        "run_worker",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/baselines/eval_leftmost.py",
+      "sha256": "15b7648418b1c535204446624de9b6686b05c83ef5d428207d9223d42f494e8a",
+      "module": "rl.evaluation.baselines.eval_leftmost",
+      "main_guard_lines": [
+        158
+      ],
+      "parse_lines": [
+        87
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "rl.tasks.combat"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_leftmost",
+      "doc": [
+        "Evaluate a deterministic leftmost-play baseline on the combat gauntlet.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "choose_action",
+        "_mean_and_se",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/baselines/eval_run_leftmost.py",
+      "sha256": "2371220107bbe69efc1733eadea4c14aa0984ef88a4743b866220e0c86b5f84e",
+      "module": "rl.evaluation.baselines.eval_run_leftmost",
+      "main_guard_lines": [
+        260
+      ],
+      "parse_lines": [
+        99
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.game_actions",
+        "env.core.run_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_run_leftmost",
+      "doc": [
+        "Evaluate a simple full-run Ironclad baseline from floor 1.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "choose_action",
+        "_write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/baselines/eval_starter_policy.py",
+      "sha256": "927c6dad27cc5bc9ef75ad4f1475cb8770bc3cbe331d304c2f20da7b917bd7e2",
+      "module": "rl.evaluation.baselines.eval_starter_policy",
+      "main_guard_lines": [
+        651
+      ],
+      "parse_lines": [
+        316
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.game_actions",
+        "env.core.game_env",
+        "env.core.run_env",
+        "env.core.spiremap"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_starter_policy",
+      "doc": [
+        "Evaluate a no-card-reward Ironclad starter-deck heuristic.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_legal_by_segment",
+        "_lowest_hp_target",
+        "_route_values",
+        "_dp_route_choices",
+        "choose_action",
+        "_deck_counter",
+        "_deck_upgrades",
+        "_monster_hp",
+        "_player_hp",
+        "_hp_loss",
+        "_mean_std",
+        "_write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/baselines/eval_triple_seven.py",
+      "sha256": "e4cd5f91b872da55c14988154bdcfc336d5f3aa06f2ebbaa5e47460da0e74f44",
+      "module": "rl.evaluation.baselines.eval_triple_seven",
+      "main_guard_lines": [
+        307
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_triple_seven",
+      "doc": [
+        "Probe the latest rule checkpoint with a synthetic three-hit attack card.",
+        ""
+      ],
+      "functions": [
+        "_base_state",
+        "_action_prefix",
+        "_events",
+        "_sample",
+        "_target",
+        "_pad",
+        "_read_number",
+        "_predicted_values",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/eval.py",
+      "sha256": "546b6db6f101c01625ed5ad987821f57394413fa2aed7fe13a2396c9203ecd13",
+      "module": "rl.evaluation.eval",
+      "main_guard_lines": [
+        387
+      ],
+      "parse_lines": [
+        157
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.run_env",
+        "rl.evaluation.baselines.eval_starter_policy",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "rl.search.combat_value_search"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval",
+      "doc": [
+        "Evaluate a MaskablePPO checkpoint on complete simulated runs.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_checkpoint_custom_objects",
+        "_run_stats",
+        "is_win",
+        "_write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/eval_combat.py",
+      "sha256": "e28fc86819246183e3a972063630043e4f02c9370de71e9c1481541efcb3850c",
+      "module": "rl.evaluation.eval_combat",
+      "main_guard_lines": [
+        292
+      ],
+      "parse_lines": [
+        272
+      ],
+      "direct_local_imports": [
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "rl.tasks.combat"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_combat",
+      "doc": [
+        "Evaluate one or more MaskablePPO checkpoints on the combat task.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_mean_and_se",
+        "evaluate_checkpoint",
+        "print_result",
+        "write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/eval_hybrid.py",
+      "sha256": "76d89ad41b3166ff5b76696348f5992ff028353f930e2c142291d6ee55862f66",
+      "module": "rl.evaluation.eval_hybrid",
+      "main_guard_lines": [
+        518
+      ],
+      "parse_lines": [
+        472
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.evaluation.eval",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.rllib_inference",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_hybrid",
+      "doc": [
+        "Paired full-run evaluation of a native RLlib policy and a hybrid route mix.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_validate_args",
+        "_space_equal",
+        "_validate_model_contract",
+        "_new_env",
+        "_reset_run",
+        "_project_batch",
+        "_predict_group",
+        "_finish_row",
+        "evaluate_condition",
+        "_mean_se",
+        "summarize",
+        "paired_deltas",
+        "_print_comparison",
+        "_write_outputs",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/collect_nosl_corpus.py",
+      "sha256": "0aecce73b930f27d460e0ccdc60c511c0564e4c0dfeda9d5b17561f6598b2894",
+      "module": "rl.evaluation.nosl.collect_nosl_corpus",
+      "main_guard_lines": [
+        467
+      ],
+      "parse_lines": [
+        262
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.collect_nosl_corpus",
+      "doc": [
+        "Collect a public combat corpus and run a first NOSL Flat-MC comparison.",
+        ""
+      ],
+      "functions": [
+        "_jsonable",
+        "_sha256",
+        "_checkpoint_meta",
+        "_load_custom_objects",
+        "_public_canonical",
+        "_clone_redeterminized",
+        "_terminal_hp",
+        "flat_mc_action",
+        "_result_name",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/compare_nosl_corpus.py",
+      "sha256": "deeb683df9a3afb72264a3ec31905d3a6040425a3f26a903a4dec875470cb26e",
+      "module": "rl.evaluation.nosl.compare_nosl_corpus",
+      "main_guard_lines": [
+        110
+      ],
+      "parse_lines": [
+        87
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.compare_nosl_corpus",
+      "doc": [
+        "Aggregate the first NOSL-vs-PPO comparison from collector JSONL records."
+      ],
+      "functions": [
+        "build_parser",
+        "_finite",
+        "summarize",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_full_gumbel_bash_clash.py",
+      "sha256": "050c3ac8de0b06debf9ab5a3eff6d462ac7d04abcd045465a2612d9bb1bd703c",
+      "module": "rl.evaluation.nosl.eval_full_gumbel_bash_clash",
+      "main_guard_lines": [
+        418
+      ],
+      "parse_lines": [
+        308
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_gumbel_bash_clash_trials",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity",
+        "rl.evaluation.nosl.eval_strict_bash_clash_sequence"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_full_gumbel_bash_clash",
+      "doc": [
+        "Paired strict Bash/Clash evaluation for Gumbel-AlphaZero variants.",
+        ""
+      ],
+      "functions": [
+        "_classify",
+        "_strict_root",
+        "_edge_rows",
+        "_requested_mode",
+        "_summary",
+        "_run_one",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_gumbel_bash_clash_matrix.py",
+      "sha256": "e017cd145bbc6ddd7ee9fbf3f038a7b30b37b84b79051bec9e99c60f39c33dc6",
+      "module": "rl.evaluation.nosl.eval_gumbel_bash_clash_matrix",
+      "main_guard_lines": [
+        115
+      ],
+      "parse_lines": [
+        37
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_gumbel_bash_clash_matrix",
+      "doc": [
+        "Paired Gumbel-budget repetitions for the fixed Bash/Clash fixture.",
+        ""
+      ],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_gumbel_bash_clash_repeated.py",
+      "sha256": "dbb6b250a918cbbe1ebbe76c34fe3cc6519e8737dcca9e975748b72089410714",
+      "module": "rl.evaluation.nosl.eval_gumbel_bash_clash_repeated",
+      "main_guard_lines": [
+        197
+      ],
+      "parse_lines": [
+        77
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_gumbel_bash_clash_repeated",
+      "doc": [
+        "Repeated Bash/Clash search comparison on the 7.68M checkpoint.",
+        ""
+      ],
+      "functions": [
+        "_action_name",
+        "_action_for_semantic",
+        "_visits_for",
+        "_q_for",
+        "_build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_gumbel_bash_clash_trials.py",
+      "sha256": "0a27d35c1b257f21258d463c78911be4d31edabf00003cfd0feebcc4a80760ad",
+      "module": "rl.evaluation.nosl.eval_gumbel_bash_clash_trials",
+      "main_guard_lines": [
+        310
+      ],
+      "parse_lines": [
+        175
+      ],
+      "direct_local_imports": [
+        "configs.eval.nosl_scenarios",
+        "env.core",
+        "env.core.action_space",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_gumbel_bash_clash_trials",
+      "doc": [
+        "Repeated Bash/Clash trials across public states and NOSL worlds.",
+        ""
+      ],
+      "functions": [
+        "_hand",
+        "_has_pair",
+        "_legal_cards",
+        "_make_trial_env",
+        "_classify",
+        "_root_qs",
+        "_direct_stats",
+        "_summary",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_nosl_fullrun.py",
+      "sha256": "119d636e9819bb9afedddc56213e68df4a5c309a854666c103f0b8e5a13da001",
+      "module": "rl.evaluation.nosl.eval_nosl_fullrun",
+      "main_guard_lines": [
+        211
+      ],
+      "parse_lines": [
+        102
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.run_env",
+        "env.core.vocab",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_nosl_fullrun",
+      "doc": [
+        "Evaluate complete runs with NOSL-IS-AZ combat decisions.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_stats",
+        "_is_win",
+        "_policy_outputs",
+        "_search_with_model",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_nosl_methods.py",
+      "sha256": "8d273866628bfd9223304cf2b4df27abfafa347fa122937e5f4569b9d4b7035b",
+      "module": "rl.evaluation.nosl.eval_nosl_methods",
+      "main_guard_lines": [
+        381
+      ],
+      "parse_lines": [
+        231
+      ],
+      "direct_local_imports": [
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_single_combat",
+        "rl.policies",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "rl.search.nosl_search_methods"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_nosl_methods",
+      "doc": [
+        "Evaluate several combat policies on stratified full-combat corpus states."
+      ],
+      "functions": [
+        "_jsonable",
+        "_load_records",
+        "_floor_group",
+        "_select_stratified",
+        "_run_random",
+        "_run_search_method",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_nosl_order_sensitivity.py",
+      "sha256": "41bbb649e0dd39b059e7130e4fad3c1cb85bc8ba2243e001875d2e2a5ed9f468",
+      "module": "rl.evaluation.nosl.eval_nosl_order_sensitivity",
+      "main_guard_lines": [
+        427
+      ],
+      "parse_lines": [
+        359
+      ],
+      "direct_local_imports": [
+        "configs.eval.nosl_scenarios",
+        "env.core",
+        "env.core.action_space",
+        "env.core.game_env",
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_nosl_order_sensitivity",
+      "doc": [
+        "Measure C++ NOSL-IS-AZ sensitivity to hand-slot order and search depth.",
+        ""
+      ],
+      "functions": [
+        "_jsonable",
+        "_card_dict",
+        "_env_for_model",
+        "_make_env",
+        "_forward",
+        "_root_policy",
+        "_action_label",
+        "_root_table",
+        "_prob_table",
+        "_run_search",
+        "_build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_nosl_single_combat.py",
+      "sha256": "80b91acd4b034c38935d478ab67b7e14dbc4ac863d607986c380a641c0aabe77",
+      "module": "rl.evaluation.nosl.eval_nosl_single_combat",
+      "main_guard_lines": [
+        277
+      ],
+      "parse_lines": [
+        161
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_nosl_single_combat",
+      "doc": [
+        "Evaluate PPO and NOSL Flat-MC through one complete combat.",
+        ""
+      ],
+      "functions": [
+        "_jsonable",
+        "_env_from_model",
+        "_paired_branch",
+        "_outcome",
+        "_terminal_stats",
+        "_run_ppo",
+        "_run_flat_mc",
+        "build_parser",
+        "_load_record",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_strict_bash_clash_sequence.py",
+      "sha256": "a1fade70ca4035b49d4e6d64d881f712e572f3468dfdcd7392caf641d16cd19e",
+      "module": "rl.evaluation.nosl.eval_strict_bash_clash_sequence",
+      "main_guard_lines": [
+        295
+      ],
+      "parse_lines": [
+        148
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_gumbel_bash_clash_trials",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_strict_bash_clash_sequence",
+      "doc": [
+        "Strict two-card Bash/Clash order evaluation.",
+        ""
+      ],
+      "functions": [
+        "_classify",
+        "_strict_root",
+        "_execute_selected",
+        "_remaining_root",
+        "_summarize",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_value_hp_sensitivity.py",
+      "sha256": "5645038da685e6904573ef5834659be4c25a0b7224b4334122e67a0d26946edf",
+      "module": "rl.evaluation.nosl.eval_value_hp_sensitivity",
+      "main_guard_lines": [
+        143
+      ],
+      "parse_lines": [
+        63
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity",
+        "rl.policies",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_value_hp_sensitivity",
+      "doc": [
+        "Check whether the value head responds to enemy current HP.",
+        ""
+      ],
+      "functions": [
+        "_jsonable",
+        "_value",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/eval_value_player_hp_sensitivity.py",
+      "sha256": "f929200760f735d17ef754ecb94246ccc21f458a7afe056dff3139d9a78712f0",
+      "module": "rl.evaluation.nosl.eval_value_player_hp_sensitivity",
+      "main_guard_lines": [
+        155
+      ],
+      "parse_lines": [
+        67
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.evaluation.nosl.eval_nosl_order_sensitivity",
+        "rl.policies",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_value_player_hp_sensitivity",
+      "doc": [
+        "Measure value-head output as the player's current HP changes.",
+        ""
+      ],
+      "functions": [
+        "_jsonable",
+        "_value",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/nosl/run_parallel_nosl_eval.py",
+      "sha256": "c0b50073593958e3965541f7b42936135e23a43becdd988b1b461926b067ffec",
+      "module": "rl.evaluation.nosl.run_parallel_nosl_eval",
+      "main_guard_lines": [
+        138
+      ],
+      "parse_lines": [
+        78
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [
+        "rl.evaluation.nosl.eval_nosl_fullrun"
+      ],
+      "legacy_module": "rl.run_parallel_nosl_eval",
+      "doc": [
+        "Run independent NOSL full-run evaluations in parallel CPU workers."
+      ],
+      "functions": [
+        "build_parser",
+        "_run_one",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_attack_damage_accuracy.py",
+      "sha256": "30d6c77ec9af6808c36aaf67ed8007626658e0e074d52cd7fc951f276a4c25e2",
+      "module": "rl.evaluation.rules.eval_attack_damage_accuracy",
+      "main_guard_lines": [
+        558
+      ],
+      "parse_lines": [
+        299
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.ironclad_cards",
+        "rl.evaluation.rules.explain_card_play",
+        "rl.rules.rule_data",
+        "rl.rules.rule_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_attack_damage_accuracy",
+      "doc": [
+        "Evaluate damage predictions for every Ironclad Attack and upgrade."
+      ],
+      "functions": [
+        "_number_span",
+        "_decode_number",
+        "_aligned_number",
+        "_base_damage_checks",
+        "_effect_blocks",
+        "_hp_damage_checks",
+        "_surface_damage",
+        "_pad",
+        "_device",
+        "_rate",
+        "_values",
+        "_version_label",
+        "_sample_mixed_deck",
+        "_value_hist",
+        "build_report",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_random_deck_surface_sensitivity.py",
+      "sha256": "25ab7e3da618d4a007f92c6e4f60a5b2af82657f247fae73aa7b1a30c84f8a46",
+      "module": "rl.evaluation.rules.eval_random_deck_surface_sensitivity",
+      "main_guard_lines": [
+        370
+      ],
+      "parse_lines": [
+        306
+      ],
+      "direct_local_imports": [
+        "rl.evaluation.rules.eval_attack_damage_accuracy",
+        "rl.evaluation.rules.explain_card_play",
+        "rl.rules.rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_random_deck_surface_sensitivity",
+      "doc": [
+        "Counterfactual card-surface sensitivity on paired random decks.",
+        ""
+      ],
+      "functions": [
+        "_number_tokens",
+        "replace_surface",
+        "_surface_from_rules",
+        "_replace_deck_clause",
+        "_first_read_number",
+        "_first_difference",
+        "_model_outputs",
+        "_variant",
+        "run_pair",
+        "_accuracy",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_rules.py",
+      "sha256": "e366d9754e101d6d1467f40457ead9e6bad5e05850949ba3e6e4ae6a91cb2154",
+      "module": "rl.evaluation.rules.eval_rules",
+      "main_guard_lines": [
+        206
+      ],
+      "parse_lines": [
+        88
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_rules",
+      "doc": [
+        "Evaluate a general combat-rule checkpoint with full autoregressive decoding."
+      ],
+      "functions": [
+        "build_parser",
+        "_pad",
+        "_trim",
+        "_sections",
+        "_sample_tags",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_strength_rules.py",
+      "sha256": "7ae03ae1112526adcc6b32705b2f682c688900a90f7b9936c331b007de057483",
+      "module": "rl.evaluation.rules.eval_strength_rules",
+      "main_guard_lines": [
+        590
+      ],
+      "parse_lines": [
+        204
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model",
+        "rl.rules.training.train_rules"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_strength_rules",
+      "doc": [
+        "Evaluate rule checkpoints on controlled random-Strength attack samples."
+      ],
+      "functions": [
+        "build_parser",
+        "_device",
+        "_pad",
+        "_parse_number",
+        "_calculation_result",
+        "_calculation_checks",
+        "_number_after",
+        "_effect_loss",
+        "_aligned_damage",
+        "_aligned_next_monster_value",
+        "_aligned_next_hp",
+        "_aligned_next_block",
+        "_aligned_next_vulnerable",
+        "_greedy_damage",
+        "_expected_next_hp",
+        "_expected_next_block",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_autoregressive.py",
+      "sha256": "6c0f1c831199cec4cb43f7e5689c09d8bb9d8d05fa7ac198f65278c638853076",
+      "module": "rl.evaluation.rules.eval_vector_rule_autoregressive",
+      "main_guard_lines": [
+        398
+      ],
+      "parse_lines": [
+        387
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "rl.evaluation.rules.render_rule_vector_examples",
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_autoregressive",
+      "doc": [
+        "Evaluate a trained v6 vector-rule checkpoint autoregressively.",
+        ""
+      ],
+      "functions": [
+        "build_evaluation_cases",
+        "_device",
+        "_card_program",
+        "_padded_programs",
+        "_model_inputs",
+        "_token_names",
+        "_predicted_serialized",
+        "_token_metrics",
+        "_delta_metrics",
+        "evaluate_case",
+        "build_parser",
+        "run",
+        "_print_report",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_card_sensitivity.py",
+      "sha256": "4009e2ea997f20217fad4217e4d1a3ba0875523c45da3852449d67b7d4b555a6",
+      "module": "rl.evaluation.rules.eval_vector_rule_card_sensitivity",
+      "main_guard_lines": [
+        569
+      ],
+      "parse_lines": [
+        512
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.ironclad_cards",
+        "rl.evaluation.rules.eval_vector_rule_v7_cases",
+        "rl.evaluation.rules.render_rule_vector_examples",
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_card_sensitivity",
+      "doc": [
+        "Evaluate simple Ironclad cards against the v6-wide checkpoint.",
+        ""
+      ],
+      "functions": [
+        "_program",
+        "_num",
+        "_append_read",
+        "_append_operation",
+        "_apply_row",
+        "_header_tokens",
+        "_old_local_sequence",
+        "_old_damage",
+        "_adapt_record",
+        "_node_at_path",
+        "_patched_record",
+        "_build_specs",
+        "_target_delta",
+        "_target_metrics",
+        "_to_real",
+        "_markdown",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_v7_cases.py",
+      "sha256": "52feaf947c11b9cef4c20820e56cc6b5e0d6e472f39d169090acdc9f0074ce4c",
+      "module": "rl.evaluation.rules.eval_vector_rule_v7_cases",
+      "main_guard_lines": [
+        1099
+      ],
+      "parse_lines": [
+        1085
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.ironclad_cards",
+        "env.core.relics",
+        "rl.evaluation.rules.render_rule_vector_examples",
+        "rl.rules.data.make_vector_rule_training_data",
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.training.train_rule_vectors_v7",
+        "rl.rules.vector_rule_data",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_v7_cases",
+      "doc": [
+        "Autoregressively evaluate the current v7 executor contract on fixed and random cases.",
+        ""
+      ],
+      "functions": [
+        "_device",
+        "_vector_state_payload",
+        "_fixed_v6_record",
+        "_relic_pairs",
+        "build_cases",
+        "_token_metrics",
+        "_context",
+        "_prepare_model_inputs",
+        "_decode_outer",
+        "_world_slot_names",
+        "_delta_metrics",
+        "_decode_local",
+        "_expected_value_bindings",
+        "_decode_local_interactive",
+        "evaluate_case",
+        "_card_name",
+        "_card_rule",
+        "_format_card",
+        "_format_mapping",
+        "_describe_case",
+        "_aggregate",
+        "_render_tokens",
+        "_fmt_rate",
+        "_first_error_text",
+        "_render_markdown",
+        "build_parser",
+        "run",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_v7_error_positions.py",
+      "sha256": "6bd744191d5ce166742a8c91e6d30818c206383d961df76e9047f91521a030fa",
+      "module": "rl.evaluation.rules.eval_vector_rule_v7_error_positions",
+      "main_guard_lines": [
+        358
+      ],
+      "parse_lines": [
+        352
+      ],
+      "direct_local_imports": [
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.training.train_rule_vectors_v7",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_v7_error_positions",
+      "doc": [
+        "Profile schema-v7 teacher-forced errors by token and delta-vector position."
+      ],
+      "functions": [
+        "_device",
+        "_world_slot_names",
+        "_parameter_location",
+        "_new_stat",
+        "_update_stat",
+        "_rank_table",
+        "_batches",
+        "build_parser",
+        "run",
+        "_print",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_v7_intermediate.py",
+      "sha256": "50169e8bc32678636bdb6d615f5d69ce84edb9c1e8820d7db5e3f22f8005d42c",
+      "module": "rl.evaluation.rules.eval_vector_rule_v7_intermediate",
+      "main_guard_lines": [
+        300
+      ],
+      "parse_lines": [
+        276
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_v7_intermediate",
+      "doc": [
+        "Analyze model-owned calculation results from a v7 evaluation report.",
+        ""
+      ],
+      "functions": [
+        "_parse_number",
+        "_calculation_blocks",
+        "_pair_blocks",
+        "_result_rows",
+        "_iter_local_nodes",
+        "_aggregate",
+        "analyze",
+        "_markdown",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/eval_vector_rule_v7_simple_cards.py",
+      "sha256": "9eba9cd47f0a060af05de1b919c7e7eeca3920b7d7a6b4fd306fc41c0816e0ae",
+      "module": "rl.evaluation.rules.eval_vector_rule_v7_simple_cards",
+      "main_guard_lines": [
+        500
+      ],
+      "parse_lines": [
+        486
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.ironclad_cards",
+        "rl.evaluation.rules.eval_vector_rule_v7_cases",
+        "rl.evaluation.rules.render_rule_vector_examples",
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.eval_vector_rule_v7_simple_cards",
+      "doc": [
+        "Evaluate the previously used simple-card probes with the v7 evaluator.",
+        ""
+      ],
+      "functions": [
+        "_combat_state",
+        "_strike_piles",
+        "_three_strike_state",
+        "build_specs",
+        "_patched_card_program",
+        "_build_case",
+        "build_cases",
+        "_device",
+        "_walk_nodes",
+        "_protocol_damage_base",
+        "_field_scale",
+        "_target_result",
+        "_case_row",
+        "_summary",
+        "_markdown",
+        "build_parser",
+        "run",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/explain_card_play.py",
+      "sha256": "486a56bf08fcdf3a22cbdb83a8af39f574b68c7582c11c8e419b95af98ce3c9d",
+      "module": "rl.evaluation.rules.explain_card_play",
+      "main_guard_lines": [
+        928
+      ],
+      "parse_lines": [
+        894
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.card_language",
+        "env.core.ironclad_cards",
+        "env.core.rule_language",
+        "rl.rules.rule_data",
+        "rl.rules.rule_model",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.explain_card_play",
+      "doc": [
+        "Simulate one card against one enemy and explain the resulting transition.",
+        ""
+      ],
+      "functions": [
+        "_configure_sim_build",
+        "resolve_card_id",
+        "_number_after",
+        "direct_attack_formula",
+        "explain_effect",
+        "_first_mismatch",
+        "_section_at",
+        "_mismatch_record",
+        "_load_compatible_tokenizer",
+        "_strip_unsupported_target_sections",
+        "compare_model_outputs",
+        "_format_sequence_window",
+        "_format_sync_window",
+        "format_model_comparison",
+        "simulate_card_play",
+        "build_report",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/evaluation/rules/render_rule_vector_examples.py",
+      "sha256": "cebfa659b08bd34698a6b1181b881c6c948df020ca47dd9eb1a19beb5d5d76a3",
+      "module": "rl.evaluation.rules.render_rule_vector_examples",
+      "main_guard_lines": [
+        224
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.encode",
+        "rl.rules.data.make_vector_rule_training_data",
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.render_rule_vector_examples",
+      "doc": [
+        "Render count-only vector event examples for the standalone rule model.",
+        ""
+      ],
+      "functions": [
+        "_counter_values",
+        "_state",
+        "_with",
+        "_labels",
+        "format_delta",
+        "_serialize_generated",
+        "render_serialized",
+        "_fly_kick",
+        "_pommel_with_sundial",
+        "render_examples"
+      ]
+    },
+    {
+      "path": "rl/rules/data/build_rule_tokenizer.py",
+      "sha256": "a9838ec2e54f4c67d5eed7e000ac1cff11d3fa9711e5bab5e4d2397e302d777c",
+      "module": "rl.rules.data.build_rule_tokenizer",
+      "main_guard_lines": [
+        62
+      ],
+      "parse_lines": [
+        23
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.build_rule_tokenizer",
+      "doc": [
+        "Build or merge a shared tokenizer for sharded rule-model data."
+      ],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/collect_rule_data.py",
+      "sha256": "056cf47ddc2c3c2e795adc25bddd33f2c7dbb08c91b368fd27e5de4781934569",
+      "module": "rl.rules.data.collect_rule_data",
+      "main_guard_lines": [
+        391
+      ],
+      "parse_lines": [
+        274
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.factories",
+        "env.core.rule_language",
+        "rl.rules.rule_data",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.collect_rule_data",
+      "doc": [
+        "Collect single-combat state/action/effect/next-state rule samples.",
+        ""
+      ],
+      "functions": [
+        "_enum_tail",
+        "_state",
+        "_action_record",
+        "_choose_main_action",
+        "_sample_for_action",
+        "_sample_statuses",
+        "_random_block",
+        "_inject_random_combat_state",
+        "_open_output",
+        "_update_coverage",
+        "_update_combat_coverage",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/collect_strength_rule_data.py",
+      "sha256": "70ce7a1976f61a52d57a4a8eb18720aea9eeb825a15a868c8bf2c7bd16cc10b3",
+      "module": "rl.rules.data.collect_strength_rule_data",
+      "main_guard_lines": [
+        189
+      ],
+      "parse_lines": [
+        78
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "rl.rules.data.collect_rule_data",
+        "rl.rules.rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.collect_strength_rule_data",
+      "doc": [
+        "Collect a controlled Strike/Bash data set with random player Strength."
+      ],
+      "functions": [
+        "build_parser",
+        "_card_actions",
+        "_damage_from_effects",
+        "_strength_pool",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/convert_rule_data_anonymous.py",
+      "sha256": "276f45e30969954f5a2cadf8a893e15cc4163eda3b8eb4dc04a10dafdcf8a36c",
+      "module": "rl.rules.data.convert_rule_data_anonymous",
+      "main_guard_lines": [
+        45
+      ],
+      "parse_lines": [
+        40
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.convert_rule_data_anonymous",
+      "doc": [
+        "Convert collected rule samples to the anonymous-card v5 schema."
+      ],
+      "functions": [
+        "_open",
+        "convert",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/make_vector_rule_smoke_data.py",
+      "sha256": "2939700eecf023b305acf201657c4fa734a3057402f56c69c884eb2732c498ed",
+      "module": "rl.rules.data.make_vector_rule_smoke_data",
+      "main_guard_lines": [
+        102
+      ],
+      "parse_lines": [
+        78
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.make_vector_rule_smoke_data",
+      "doc": [
+        "Create a tiny schema-v5 vector-rule dataset for pipeline smoke tests."
+      ],
+      "functions": [
+        "build_record",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/make_vector_rule_training_data.py",
+      "sha256": "6eca427122c6f5df858476832274cc61d9a6ad8720c4f883a53bfd08121ae5cf",
+      "module": "rl.rules.data.make_vector_rule_training_data",
+      "main_guard_lines": [
+        844
+      ],
+      "parse_lines": [
+        822
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.encounters",
+        "env.core.ironclad_cards",
+        "env.core.rule_language",
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.make_vector_rule_training_data",
+      "doc": [
+        "Stream fresh, randomized schema-v5 vector-rule records.",
+        ""
+      ],
+      "functions": [
+        "_program",
+        "_relic_program",
+        "_relic_effect_tokens",
+        "_act",
+        "_encounter",
+        "_powers",
+        "_card_instance",
+        "_pile",
+        "_initial_relics",
+        "_canonical_state",
+        "_add_pile",
+        "_draw",
+        "_add_status",
+        "_damage",
+        "_power_value",
+        "_damage_calculations",
+        "_fixed_damage_calculations",
+        "_player_damage_calculations",
+        "_make_event",
+        "_advance_relic_counter",
+        "_effect_record",
+        "build_record_with_canonical",
+        "build_record",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/data/make_vector_rule_v7_data.py",
+      "sha256": "672e93187c5654b3302b61ad0b38fecf60f029bd812d7a4efc07ca76877b02ad",
+      "module": "rl.rules.data.make_vector_rule_v7_data",
+      "main_guard_lines": [
+        1245
+      ],
+      "parse_lines": [
+        1223
+      ],
+      "direct_local_imports": [
+        "env.core.ironclad_cards",
+        "rl.rules.data.make_vector_rule_training_data",
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.make_vector_rule_v7_data",
+      "doc": [
+        "Generate schema-v7 effect-tree records and local sequence statistics.",
+        ""
+      ],
+      "functions": [
+        "_action_name",
+        "_event_delta",
+        "_event_node",
+        "_damage_base",
+        "_damage_params",
+        "_call_node",
+        "_repeat_node",
+        "_has_dense_delta",
+        "_world_slot_names",
+        "_split_delta_slots",
+        "_assign_delta_slots",
+        "_header_param_tokens",
+        "_header_tokens",
+        "_calculation",
+        "_entity_field",
+        "_header_registers",
+        "_symbolic_damage",
+        "_symbolic_self_damage",
+        "_symbolic_pile_operation",
+        "_symbolic_relic_counter",
+        "_symbolic_control",
+        "_delta_binding",
+        "_symbolic_generic",
+        "_local_sequence",
+        "_tree_tokens",
+        "_outer_tree_tokens_for_record",
+        "_walk",
+        "_static_body_tokens",
+        "_lengths",
+        "_active_slots",
+        "_payment_cost",
+        "_apply_delta_rows",
+        "_play_kind",
+        "_single_field_params",
+        "_draw_params",
+        "_energy_params",
+        "_destination_params",
+        "_relic_counter_params",
+        "_pile_operation_params",
+        "_compile_tree",
+        "compile_v7_record",
+        "build_v7_record",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/training/distributed_train_rules.py",
+      "sha256": "cd31464b407e7144bc7d0665cdfb747412199696fe86a13ac9fc23652aad1590",
+      "module": "rl.rules.training.distributed_train_rules",
+      "main_guard_lines": [
+        670
+      ],
+      "parse_lines": [
+        297
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model",
+        "rl.rules.training.train_rules",
+        "rl.training.ring_allreduce",
+        "rl.training.ssh_transport"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.distributed_train_rules",
+      "doc": [
+        "Synchronous multi-machine training for sharded combat-rule data.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_gradient_parameters",
+        "_pack_gradients",
+        "_install_gradients",
+        "_average_metrics",
+        "_jsonable_args",
+        "_save_checkpoint",
+        "_historical_wandb_rows",
+        "_init_wandb",
+        "_validate_args",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/training/train_rule_vectors.py",
+      "sha256": "8a9d609a0e510d51e9a80db8838aa65c20d3b7757d3b3397d64c68f03a5bc7a5",
+      "module": "rl.rules.training.train_rule_vectors",
+      "main_guard_lines": [
+        864
+      ],
+      "parse_lines": [
+        859
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_data",
+        "rl.rules.vector_rule_stream"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.train_rule_vectors",
+      "doc": [
+        "Train the standalone anonymous vector/event rule model.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_device",
+        "_config",
+        "_resume_config_compat",
+        "_move_batch",
+        "_model_inputs",
+        "_loss",
+        "_sequence_length_stats",
+        "_new_metrics",
+        "_evaluate",
+        "_stream_examples",
+        "_stream_metrics_update",
+        "_finalize_stream_metrics",
+        "_init_wandb",
+        "_wandb_system_metrics",
+        "_evaluate_stream_batches",
+        "_train_stream",
+        "train",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/training/train_rule_vectors_v7.py",
+      "sha256": "8c66871ed561c629b36c00f780bfb6f5eb1cc8515cbda138b4aa12e0004ca587",
+      "module": "rl.rules.training.train_rule_vectors_v7",
+      "main_guard_lines": [
+        537
+      ],
+      "parse_lines": [
+        538
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_stream",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.train_rule_vectors_v7",
+      "doc": [
+        "Train the anonymous schema-v7 effect-tree language model.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "_device",
+        "_config",
+        "_move_batch",
+        "_model_inputs",
+        "_loss",
+        "_metrics",
+        "_update",
+        "_finish",
+        "_init_wandb",
+        "_wandb_system_metrics",
+        "_examples",
+        "_evaluate_stream",
+        "train"
+      ]
+    },
+    {
+      "path": "rl/rules/training/train_rules.py",
+      "sha256": "c4849dd80995c8253b80d816846233aa4c34db2df979c1527107081f8b9bf43b",
+      "module": "rl.rules.training.train_rules",
+      "main_guard_lines": [
+        718
+      ],
+      "parse_lines": [
+        435
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.train_rules",
+      "doc": [
+        "Train the standalone state+action -> effects+next-state rule model."
+      ],
+      "functions": [
+        "build_parser",
+        "_device",
+        "_loss_and_counts",
+        "_transition_consistency_loss",
+        "_evaluate",
+        "_metrics",
+        "_save_checkpoint",
+        "_split_samples",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/rules/visualize_card_vectors.py",
+      "sha256": "f584f0e1c68a7d7785ce02e46f2f6d4050abe346c2eb87aca00502aaf132f24f",
+      "module": "rl.rules.visualize_card_vectors",
+      "main_guard_lines": [
+        829
+      ],
+      "parse_lines": [
+        156
+      ],
+      "direct_local_imports": [
+        "env.core.cards_vocab",
+        "env.core.encode",
+        "env.core.ironclad_cards",
+        "rl.policies.model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.visualize_card_vectors",
+      "doc": [
+        "Visualize learned card vectors from an sts-rl MaskablePPO checkpoint.",
+        ""
+      ],
+      "functions": [
+        "parse_args",
+        "resolve_encoder",
+        "_semantic_card_vectors",
+        "_vectors_from_components",
+        "extract_vectors",
+        "_hand_description",
+        "extract_state_dict_vectors",
+        "select_cards",
+        "pca_project",
+        "choose_text_labels",
+        "save_csv",
+        "_variant_connector_coords",
+        "save_plotly_html",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/training/distributed_sb3.py",
+      "sha256": "6ca289a3191540ff4ec8cca647095fc770f2fb991ea2fa70ef58ccb73c222c4c",
+      "module": "rl.training.distributed_sb3",
+      "main_guard_lines": [
+        2895
+      ],
+      "parse_lines": [
+        1610
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.vocab",
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.semantic_reasoning_policy",
+        "rl.policies.split_policy",
+        "rl.policies.wholerun_reasoning",
+        "rl.tasks.wholerun",
+        "rl.training.cached_mask_vec_env",
+        "rl.training.ring_allreduce"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.distributed_sb3",
+      "doc": [
+        "Synchronous multi-machine SB3 PPO probe/trainer.",
+        ""
+      ],
+      "functions": [
+        "parse_peer",
+        "build_parser",
+        "normalize_checkpoint_path",
+        "run_cmd",
+        "ssh_options",
+        "ssh_cmd",
+        "scp_to",
+        "wait_for_sized_file",
+        "observation_flags",
+        "make_env",
+        "sync_file_to_peers",
+        "all_rank_file_barrier",
+        "gradient_parameters",
+        "pack_gradients",
+        "save_gradients",
+        "install_flat_gradients",
+        "average_peer_gradients",
+        "checkpoint_step",
+        "prune_checkpoints",
+        "logger_scalars",
+        "wandb_step_for_timesteps",
+        "ppo_microbatch_backward",
+        "cuda_observation_mix",
+        "reasoning_microbatch_backward",
+        "synchronize_gradient_step",
+        "average_scalar_dict",
+        "distributed_nosl_is_az_update",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/training/overfit_test.py",
+      "sha256": "82e21bf8ffe5652dd0cb37f08e3bbfeef80d41496c978a633887f96216aabfdc",
+      "module": "rl.training.overfit_test",
+      "main_guard_lines": [
+        205
+      ],
+      "parse_lines": [
+        198
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.combat_env",
+        "env.core.factories",
+        "env.core.run_env",
+        "rl.policies",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.overfit_test",
+      "doc": [
+        "Minimal MaskablePPO training loop on SimCombatEnv.",
+        ""
+      ],
+      "functions": [
+        "_mask_fn",
+        "make_run_env",
+        "make_env",
+        "train",
+        "evaluate",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/training/rllib_trainer.py",
+      "sha256": "6804148b1771256c6f2dc5a48c3f1ba3a6b5f88b2a4de4cdff9c4eb8a226fee1",
+      "module": "rl.training.rllib_trainer",
+      "main_guard_lines": [
+        1772
+      ],
+      "parse_lines": [
+        1529
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.combat_backend",
+        "env.core.factories",
+        "env.core.run_env",
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies.model",
+        "rl.policies.split_policy",
+        "rl.tasks.combat",
+        "rl.tasks.wholerun",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.rllib_trainer",
+      "doc": [
+        "Distributed RLlib PPO trainer for STS tasks.",
+        ""
+      ],
+      "functions": [
+        "_limit_torch_cpu_threads",
+        "_fragment_length",
+        "_ray_runtime_env",
+        "build_parser",
+        "_zip_has_rllib_checkpoint",
+        "_zip_has_sb3_checkpoint",
+        "_zip_checkpoint_dir",
+        "_extract_rllib_checkpoint_zip",
+        "_save_rllib_checkpoint_zip",
+        "_load_sb3_checkpoint",
+        "_freeze_pretrained_encoder",
+        "_apply_sb3_weights",
+        "_accumulating_apply_gradients",
+        "_install_gradient_accumulation",
+        "_clear_policy_training_state",
+        "_install_rllib_backprop_fix",
+        "_set_simple_optimizer",
+        "_optimizer_path",
+        "_normalize_compat_args",
+        "_plan_distribution",
+        "_set_auto_rollout_fragment_length",
+        "_sampled_steps",
+        "_trained_steps",
+        "_agent_steps",
+        "_episodes_total",
+        "_metric",
+        "_number_metric",
+        "_timesteps_this_iter",
+        "_summary",
+        "_format_value",
+        "_print_sb3_table",
+        "_apply_step_offset",
+        "main"
+      ]
+    },
+    {
+      "path": "rl/training/trainer.py",
+      "sha256": "472ad9f8efc58d719e0c7e853acec1e6c05802882aa64b012c8ae6da6d7ce9ba",
+      "module": "rl.training.trainer",
+      "main_guard_lines": [
+        1390
+      ],
+      "parse_lines": [
+        518,
+        525,
+        521
+      ],
+      "direct_local_imports": [
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.semantic_reasoning_policy",
+        "rl.policies.split_policy",
+        "rl.tasks",
+        "rl.training.cached_mask_vec_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.trainer",
+      "doc": [
+        "Unified MaskablePPO trainer for Slay the Spire.",
+        ""
+      ],
+      "functions": [
+        "_checkpoint_policy_arch",
+        "_checkpoint_hierarchical_settings",
+        "_checkpoint_nosl_is_az",
+        "_checkpoint_nosl_is_az_replay_enabled",
+        "_warm_start_policy",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/analyze_card_representations.py",
+      "sha256": "1932cbe0f69fb46bc077d49a02724bfdb1774a294caf3d4964d08a4c70a653e7",
+      "module": "tools.analysis.analyze_card_representations",
+      "main_guard_lines": [
+        214
+      ],
+      "parse_lines": [
+        112
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.rule_language",
+        "rl.rules.rule_data",
+        "rl.rules.rule_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.analyze_card_representations",
+      "doc": [
+        "Compare card representations averaged over random combat contexts.",
+        ""
+      ],
+      "functions": [
+        "_effect_flags",
+        "_rule_positions",
+        "_normalize",
+        "_encode_samples",
+        "_centroid",
+        "_cosine",
+        "_mean_cross_cosine",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/analyze_relic_reward_correlation.py",
+      "sha256": "294a256c9f567b9eb033abe4e514b8c5dfa105c632099027efacea5d9b1aade6",
+      "module": "tools.analysis.analyze_relic_reward_correlation",
+      "main_guard_lines": [
+        248
+      ],
+      "parse_lines": [
+        202
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.analyze_relic_reward_correlation",
+      "doc": [
+        "Evaluate relic-count / shaped-return correlation for a whole-run checkpoint."
+      ],
+      "functions": [
+        "_checkpoint_default",
+        "_run_worker",
+        "_pearson",
+        "_rankdata",
+        "_spearman",
+        "_residualize",
+        "_describe",
+        "_print_summary",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/audit_vector_rule_v7_contract.py",
+      "sha256": "493d5f1e178c2e49c80e8de5e63c90645777e4c8814146d80eca84fee6ecd66c",
+      "module": "tools.analysis.audit_vector_rule_v7_contract",
+      "main_guard_lines": [
+        335
+      ],
+      "parse_lines": [
+        321
+      ],
+      "direct_local_imports": [
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.audit_vector_rule_v7_contract",
+      "doc": [
+        "Audit schema-v7 contract-10 local sequences, masks, and delta alignment."
+      ],
+      "functions": [
+        "_walk",
+        "_validate_row",
+        "_validate_relic_counter_rows",
+        "audit",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/boss_relic_probe.py",
+      "sha256": "d454fc27236dab114812304fe378b2ef6f5e4a66bd17c55794b7d3f103d02dc1",
+      "module": "tools.analysis.boss_relic_probe",
+      "main_guard_lines": [
+        200
+      ],
+      "parse_lines": [
+        123
+      ],
+      "direct_local_imports": [
+        "bridge.schemas.combat_state",
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.factories",
+        "env.core.vocab",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.boss_relic_probe",
+      "doc": [],
+      "functions": [
+        "obs_flags",
+        "make_background",
+        "make_base_obs",
+        "add_boss_relics",
+        "batch_encode",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/bughunt.py",
+      "sha256": "4259c5040847897f898bf3792c26c45691ab2709609b6a755f0dbdd93ab2be50",
+      "module": "tools.analysis.bughunt",
+      "main_guard_lines": [
+        264
+      ],
+      "parse_lines": [
+        98
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.evaluation.eval",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.bughunt",
+      "doc": [
+        "Run a checkpoint for many whole-run episodes and catch every crash.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "crash_signature",
+        "_is_ours",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/diagnose_rules.py",
+      "sha256": "87ddb7f06604a81fbc97eefca6fbd694057298fe8c65b2f9e30e9df42d6c6529",
+      "module": "tools.analysis.diagnose_rules",
+      "main_guard_lines": [
+        969
+      ],
+      "parse_lines": [
+        901
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_data",
+        "rl.rules.rule_model",
+        "rl.rules.training.train_rules"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.diagnose_rules",
+      "doc": [
+        "Diagnose where a combat-rule checkpoint is making prediction errors."
+      ],
+      "functions": [
+        "build_parser",
+        "_device",
+        "_pad",
+        "_counter_rate",
+        "_top_rates",
+        "_read_run_config",
+        "_section_bounds",
+        "_section_ranges",
+        "_section_positions",
+        "_first_mismatch",
+        "_exact_section",
+        "_trim_output",
+        "_sample_tags",
+        "_parse_number_at",
+        "_number_after",
+        "_value_after",
+        "_iter_blocks",
+        "_iter_expected_numbers",
+        "_record_number_errors",
+        "_event_type",
+        "_record_block_errors",
+        "_step_event_name",
+        "_record_step_errors",
+        "_causal_step_blocks",
+        "_expected_effect_aggregate",
+        "_predicted_effect_aggregate",
+        "_record_aggregate_checks",
+        "_build_encoded",
+        "_teacher_forced_diagnostics",
+        "_greedy_diagnostics",
+        "_short_rate",
+        "_summary",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/experiment_continuous_to_number_tokens.py",
+      "sha256": "5bf3ae76e4e978720494191bf8aae1adb65fd9c3996cd45bfc556c4001760f0a",
+      "module": "tools.analysis.experiment_continuous_to_number_tokens",
+      "main_guard_lines": [
+        417
+      ],
+      "parse_lines": [
+        418
+      ],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.experiment_continuous_to_number_tokens",
+      "doc": [
+        "Test exact numeric-token recovery from a normalized continuous state vector.",
+        ""
+      ],
+      "functions": [
+        "_number_ids",
+        "_targets",
+        "_player_vectors",
+        "_sample_values",
+        "_trim_generated",
+        "_decode_tokens",
+        "_evaluate",
+        "_train_regime",
+        "run",
+        "build_parser"
+      ]
+    },
+    {
+      "path": "tools/analysis/experiment_register_retrieval.py",
+      "sha256": "09ff9a1517cd42509b6aec95b94399bc7bef957669e520ae123ca59a56fffb64",
+      "module": "tools.analysis.experiment_register_retrieval",
+      "main_guard_lines": [
+        479
+      ],
+      "parse_lines": [
+        405
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.experiment_register_retrieval",
+      "doc": [
+        "Train and probe an isolated name-to-register-value retrieval task.",
+        ""
+      ],
+      "functions": [
+        "_number_tokens",
+        "make_sample",
+        "_batch",
+        "_value_from_result",
+        "_ar_decode",
+        "_ar_decode_batch",
+        "_teacher_metrics",
+        "_evaluate",
+        "_mutation_probe",
+        "build_parser",
+        "_device",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/inspect_vector_rule_v7_self_damage.py",
+      "sha256": "6c8373edb24da374cbed85d9eeceac0bb30ab03e719da9daf64c8bc1bdfd99b5",
+      "module": "tools.analysis.inspect_vector_rule_v7_self_damage",
+      "main_guard_lines": [
+        188
+      ],
+      "parse_lines": [
+        185
+      ],
+      "direct_local_imports": [
+        "rl.evaluation.rules.eval_vector_rule_v7_cases",
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.inspect_vector_rule_v7_self_damage",
+      "doc": [
+        "Inspect one SELF_DAMAGE local decode without running the full case suite.",
+        ""
+      ],
+      "functions": [
+        "_device",
+        "_state",
+        "_find_self_damage",
+        "build_case",
+        "build_parser",
+        "run",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/measure_reasoning_lengths.py",
+      "sha256": "d57f6a7e4f5d1f0ca141a3f18c33be287661703b2c793a666169c99c50775b1f",
+      "module": "tools.analysis.measure_reasoning_lengths",
+      "main_guard_lines": [
+        642
+      ],
+      "parse_lines": [
+        636
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.run_env",
+        "rl.policies.wholerun_reasoning"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.measure_reasoning_lengths",
+      "doc": [
+        "Measure lengths of simulator-backed whole-run reasoning transcripts.",
+        ""
+      ],
+      "functions": [
+        "_configure_sim_build",
+        "_compile_trace",
+        "_trace_length",
+        "_token_category",
+        "_read_text_span",
+        "_read_number_span",
+        "_replace_fixed_text",
+        "_replace_enum_text",
+        "_replace_schema_text_pairs",
+        "_replace_small_integers",
+        "_remove_positive_signs",
+        "_compact_local_calculations",
+        "_remove_calculation_result_copy",
+        "_remove_action_complete",
+        "_remove_action_card_reference",
+        "_project_compact",
+        "_candidate_transforms",
+        "analyze_transcripts",
+        "measure",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/monitor_vector_v7_wandb.py",
+      "sha256": "a486f06444bf5d121b65772e7ccebb68517f81b3480be156eb916b9be08aa86a",
+      "module": "tools.analysis.monitor_vector_v7_wandb",
+      "main_guard_lines": [
+        148
+      ],
+      "parse_lines": [
+        149
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.monitor_vector_v7_wandb",
+      "doc": [
+        "Backfill and live-stream a running v7 trainer log to Weights & Biases."
+      ],
+      "functions": [
+        "_gpu_metrics",
+        "_alive",
+        "_payload",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/plot_card_representation_projection.py",
+      "sha256": "7ea894d84f9d895534718c0a9b54ab12b658fa0c2e9cfd0a362e6b5c565ba422",
+      "module": "tools.analysis.plot_card_representation_projection",
+      "main_guard_lines": [
+        131
+      ],
+      "parse_lines": [
+        51
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.plot_card_representation_projection",
+      "doc": [
+        "Plot a PCA projection of the merged card representations."
+      ],
+      "functions": [
+        "_group_by_key",
+        "_short_name",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/probe_campfire.py",
+      "sha256": "aa9942f326ffa63ada7610698f61aa6c0c1691b583f71924ebe648aed0c8b48a",
+      "module": "tools.analysis.probe_campfire",
+      "main_guard_lines": [
+        445
+      ],
+      "parse_lines": [
+        278
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.game_actions",
+        "env.core.run_env",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.probe_campfire",
+      "doc": [
+        "Compare campfire choices from multiple whole-run checkpoints.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "checkpoint_step",
+        "observation_flags",
+        "copy_observation",
+        "action_name",
+        "restricted_mask",
+        "hp_bin",
+        "collect_states",
+        "batch_policy",
+        "selected_card",
+        "write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/probe_cultist_bash_order.py",
+      "sha256": "fef18b71850701c2f6048d49821a0e2b9dc66c1f84a3e232a757a3e061bbe7c9",
+      "module": "tools.analysis.probe_cultist_bash_order",
+      "main_guard_lines": [
+        294
+      ],
+      "parse_lines": [
+        222
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.ironclad_cards",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.probe_cultist_bash_order",
+      "doc": [
+        "Probe whether a checkpoint plays Bash before another Ironclad Attack."
+      ],
+      "functions": [
+        "latest_checkpoint",
+        "build_parser",
+        "hand_card",
+        "make_observation",
+        "probe_layout",
+        "summarize",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/probe_overworld_upgrade_value.py",
+      "sha256": "50abd02bcbce9fc815ac712dc1a7337caddda4769db8d1707d8cb4348fe4c53f",
+      "module": "tools.analysis.probe_overworld_upgrade_value",
+      "main_guard_lines": [
+        444
+      ],
+      "parse_lines": [
+        287
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.cards_vocab",
+        "env.core.encode",
+        "env.core.ironclad_cards",
+        "env.core.run_env",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.probe_overworld_upgrade_value",
+      "doc": [
+        "Measure overworld value-head responses to counterfactual card upgrades."
+      ],
+      "functions": [
+        "build_parser",
+        "checkpoint_step",
+        "observation_flags",
+        "copy_observation",
+        "candidate_cards",
+        "collect_states",
+        "values_for_observations",
+        "counterfactual_values",
+        "describe",
+        "write_csv",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/probe_two_louse.py",
+      "sha256": "a9a00fc1e7e2f5116faca05060317d7b3fdf260ecab180c188caa78e59cd24e2",
+      "module": "tools.analysis.probe_two_louse",
+      "main_guard_lines": [
+        301
+      ],
+      "parse_lines": [
+        249
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.probe_two_louse",
+      "doc": [
+        "Probe a checkpoint on a controlled two-Louse combat observation.",
+        ""
+      ],
+      "functions": [
+        "latest_checkpoint",
+        "build_parser",
+        "_template",
+        "_monster",
+        "make_observation",
+        "_probabilities",
+        "probe_layout",
+        "_print_row",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/probe_vector_rule_v7_memory.py",
+      "sha256": "6d5f79327693f5b2a74f2dfc712497469f2491030d573b3d4a5c245a9a2edeae",
+      "module": "tools.analysis.probe_vector_rule_v7_memory",
+      "main_guard_lines": [
+        110
+      ],
+      "parse_lines": [
+        57
+      ],
+      "direct_local_imports": [
+        "rl.rules.data.make_vector_rule_v7_data",
+        "rl.rules.rule_vector_model",
+        "rl.rules.training.train_rule_vectors_v7",
+        "rl.rules.vector_rule_v7_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.probe_vector_rule_v7_memory",
+      "doc": [
+        "Run one schema-v7 optimizer step at a forced decoder padding width."
+      ],
+      "functions": [
+        "build_parser",
+        "_pad_decoder",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/render_card_relic_rules.py",
+      "sha256": "967e408fc02db678b108a717d67f1a31a28e77b071bea6bd939035583d0327c5",
+      "module": "tools.analysis.render_card_relic_rules",
+      "main_guard_lines": [
+        63
+      ],
+      "parse_lines": [
+        56
+      ],
+      "direct_local_imports": [
+        "env.core.card_language",
+        "env.core.rule_language"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.render_card_relic_rules",
+      "doc": [
+        "Export every currently supported card and combat-relic rule on one line.",
+        ""
+      ],
+      "functions": [
+        "iter_rule_lines",
+        "render_rules",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/route_dag_probe.py",
+      "sha256": "1546186c9ae06eaa2793f04d939f34020db9089b154fd2115118465bd137dcae",
+      "module": "tools.analysis.route_dag_probe",
+      "main_guard_lines": [
+        257
+      ],
+      "parse_lines": [
+        244
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.route_dag_probe",
+      "doc": [
+        "Independent route-DAG experiment.",
+        ""
+      ],
+      "functions": [
+        "generate_map",
+        "room_name",
+        "expected_optimal",
+        "sample_reward",
+        "map_tensor",
+        "choose",
+        "run_episode",
+        "train_batch",
+        "evaluate",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/route_model_probe.py",
+      "sha256": "797a11ce0e4341100a186efec298b119e36e17ed8943f254a9a24566332dff65",
+      "module": "tools.analysis.route_model_probe",
+      "main_guard_lines": [
+        950
+      ],
+      "parse_lines": [
+        788
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies.pointer_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.route_model_probe",
+      "doc": [
+        "Probe the current whole-run route-planning path on synthetic maps.",
+        ""
+      ],
+      "functions": [
+        "_non_elite_reward",
+        "_room_reward",
+        "_random_children",
+        "generate_random_map",
+        "oracle_values",
+        "make_case",
+        "_downstream",
+        "full_view",
+        "canonical",
+        "state_case",
+        "encode_cases",
+        "make_batch",
+        "masked_map_logits",
+        "evaluate_random",
+        "make_blocked_case",
+        "evaluate_blocked",
+        "_device",
+        "build_parser",
+        "run_ppo",
+        "print_random_metrics",
+        "print_blocked",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/analysis/visualize_vector_rule_card_pca.py",
+      "sha256": "e769ff1a03af4c2949ee3a9c491e6eabb2ae1c1bc7f5b0507b31a3ea72c8b7f2",
+      "module": "tools.analysis.visualize_vector_rule_card_pca",
+      "main_guard_lines": [
+        255
+      ],
+      "parse_lines": [
+        207
+      ],
+      "direct_local_imports": [
+        "env.core.cards_vocab",
+        "env.core.ironclad_cards",
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.visualize_vector_rule_card_pca",
+      "doc": [
+        "Project v6 anonymous Ironclad card-rule vectors to two PCA dimensions.",
+        ""
+      ],
+      "functions": [
+        "_load_model",
+        "_extract_vectors",
+        "_pca",
+        "_write_plot",
+        "_write_markdown",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/benchmarks/benchmark_nosl_paths.py",
+      "sha256": "95bd479fa09b66192c77ce78634a2d3fb31ff1b6d8dc17e0a2ac8a85c14b1623",
+      "module": "tools.benchmarks.benchmark_nosl_paths",
+      "main_guard_lines": [
+        321
+      ],
+      "parse_lines": [
+        269
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.game_actions",
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.benchmark_nosl_paths",
+      "doc": [
+        "Benchmark repeated NOSL paths with one root redeterminization per path.",
+        ""
+      ],
+      "functions": [
+        "_load_records",
+        "_replay",
+        "_make_invincible",
+        "_stats",
+        "_end_turn_sts_action",
+        "_choose_safe_action",
+        "_measure_paths",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/benchmarks/benchmark_nosl_step.py",
+      "sha256": "7af11403563b0610bce089449b47619b4eb745ef5b8742603b72e5eb04aa6e18",
+      "module": "tools.benchmarks.benchmark_nosl_step",
+      "main_guard_lines": [
+        287
+      ],
+      "parse_lines": [
+        247
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.game_actions",
+        "env.core.run_env",
+        "env.search.nosl_sampler",
+        "rl.evaluation.nosl.collect_nosl_corpus",
+        "rl.policies",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.benchmark_nosl_step",
+      "doc": [
+        "Benchmark one combat transition on real NOSL combat states.",
+        ""
+      ],
+      "functions": [
+        "_env_from_model",
+        "_load_records",
+        "_replay",
+        "_stats",
+        "_action_id",
+        "_native_execute_time",
+        "_measure_record",
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/checkpoints/create_semantic_checkpoint.py",
+      "sha256": "3bc7310b4fe6f3ef702b8e4049c9b12ea3ec349686963aa2e81bf73cd5a95a2c",
+      "module": "tools.checkpoints.create_semantic_checkpoint",
+      "main_guard_lines": [
+        115
+      ],
+      "parse_lines": [
+        37
+      ],
+      "direct_local_imports": [
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies",
+        "rl.policies.pointer_policy",
+        "rl.policies.semantic_reasoning_policy",
+        "rl.policies.split_policy",
+        "rl.training",
+        "rl.training.distributed_sb3"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.create_semantic_checkpoint",
+      "doc": [
+        "Create a fresh semantic whole-run checkpoint with an explicit model width.",
+        ""
+      ],
+      "functions": [
+        "build_parser",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/checkpoints/merge_card_representations.py",
+      "sha256": "a25ffed09a4229759d25e60cd21211842fa288488df0c580168aa7fe5321c775",
+      "module": "tools.checkpoints.merge_card_representations",
+      "main_guard_lines": [
+        248
+      ],
+      "parse_lines": [
+        128
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.merge_card_representations",
+      "doc": [
+        "Merge sampled card vectors and compare damage with block representations."
+      ],
+      "functions": [
+        "_normalize",
+        "_mean",
+        "_cosine",
+        "_within_cosine",
+        "_cross_cosine",
+        "_centroid",
+        "_nearest_centroid_accuracy",
+        "_cross_extremes",
+        "_same_card_upgrade_cosine",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/validation/bitwise.py",
+      "sha256": "526257bad182a2a24bb17ab3b61c1cf6e614e30d042e6f88745b673b3e1cdcae",
+      "module": "tools.validation.bitwise",
+      "main_guard_lines": [
+        195
+      ],
+      "parse_lines": [
+        174
+      ],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.algorithms.accumulating_ppo",
+        "rl.policies.split_policy",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [
+        "tools.validation.bitwise"
+      ],
+      "legacy_module": null,
+      "doc": [
+        "Capture/compare numerical behavior across revisions on one CPU runtime.",
+        ""
+      ],
+      "functions": [
+        "capture",
+        "compare",
+        "main"
+      ]
+    },
+    {
+      "path": "tools/validation/eval_revisions.py",
+      "sha256": "804c265bd1a9a2c5dac06014d88dbf5f4aa51aabe9ead9345c610ffeeb09b593",
+      "module": "tools.validation.eval_revisions",
+      "main_guard_lines": [
+        59
+      ],
+      "parse_lines": [
+        23
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Compare a real checkpoint's bounded strict-search evaluation across checkouts.",
+        ""
+      ],
+      "functions": [
+        "main"
+      ]
+    },
+    {
+      "path": "tools/validation/locate_legacy.py",
+      "sha256": "47e01c7cdcd90f5c798cf32adfc01fbae7ce71f3cd5ba28284e382adc3d27a51",
+      "module": "tools.validation.locate_legacy",
+      "main_guard_lines": [
+        44
+      ],
+      "parse_lines": [
+        27
+      ],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Locate a historical module/path or verify archived files against their hashes."
+      ],
+      "functions": [
+        "verify_archive",
+        "main"
+      ]
+    }
+  ],
+  "python_libraries": [
+    {
+      "path": "apps/__init__.py",
+      "sha256": "aa154745486dfb5028f23a7bc18d64b7d8efc809543877ef49a4b7009695025d",
+      "module": "apps.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "apps components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "bridge/real_game_env.py",
+      "sha256": "7e770d0fbab29432733809bbc0a5bf78f2ff45ba8e45f03d82c6115f912ab329",
+      "module": "bridge.real_game_env",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.actions",
+        "env.core.encode",
+        "env.core.game_actions",
+        "env.core.vocab",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Real-game bridge adapter for whole-run policy inference.",
+        ""
+      ],
+      "functions": [
+        "_norm_label",
+        "_commands",
+        "_choice_list",
+        "_screen_state",
+        "_int_or_none",
+        "_real_card_tuple",
+        "_real_card_dict",
+        "_relic_id",
+        "_potion_id",
+        "_potion_requires_target",
+        "_price",
+        "_normalize_boss",
+        "_normalize_event",
+        "_screen_cards",
+        "_screen_relics",
+        "_screen_potions",
+        "_choice_index",
+        "_map_choice",
+        "_map_room",
+        "_node_xy",
+        "_node_room",
+        "_node_children",
+        "_campfire_option"
+      ]
+    },
+    {
+      "path": "configs/__init__.py",
+      "sha256": "ddc2a9cc972c70d5e4878501cebbcbdd485a2a9fbcceb042cde8d18c4c927883",
+      "module": "configs.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Declarative experiment presets."
+      ],
+      "functions": []
+    },
+    {
+      "path": "configs/eval/__init__.py",
+      "sha256": "ddc2a9cc972c70d5e4878501cebbcbdd485a2a9fbcceb042cde8d18c4c927883",
+      "module": "configs.eval.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Declarative experiment presets."
+      ],
+      "functions": []
+    },
+    {
+      "path": "configs/eval/nosl_scenarios.py",
+      "sha256": "16222ed57513bfa6a159d7600927e7f85947f45c1f446b09b0cbc5898c9dc23f",
+      "module": "configs.eval.nosl_scenarios",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Pure public-state presets; no simulator, checkpoint or execution logic."
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/__init__.py",
+      "sha256": "6e6ab8703eafe5a2f8f4d86ef76969a11be30853b313bb45cacb4f8ebad6f32d",
+      "module": "env.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "env/ — Gymnasium environments wrapping the sts_lightspeed sim.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/__init__.py",
+      "sha256": "543a3a1c89a60a67bfaca100d6038ddf66f89f5e9b8f709aed3ee35738cb9fc3",
+      "module": "env.core.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "env.core — the env core logic (single combat + whole run).",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/action_space.py",
+      "sha256": "d78455907a854afb108574820db45ca3f1d54adbcd3f379081543586f0b3edfd",
+      "module": "env.core.action_space",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.game_actions",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Fixed-length action id space v2 — the thin layer's model contract.",
+        ""
+      ],
+      "functions": [
+        "seg_base",
+        "_play_targeting",
+        "_potion_targeting",
+        "_combat_select_only",
+        "arg_step_name",
+        "legal_ids",
+        "resolve",
+        "is_multi_select",
+        "multi_legal_ids",
+        "multi_toggle",
+        "segment_of"
+      ]
+    },
+    {
+      "path": "env/core/actions.py",
+      "sha256": "6ef73f633de6af1fc80a7106325d9c0f911db7117e63ce1b932c82123b99acc2",
+      "module": "env.core.actions",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.cards_vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Fixed combat action space: stable integer action ids <-> game actions.",
+        ""
+      ],
+      "functions": [
+        "decode",
+        "encode_play",
+        "encode_select"
+      ]
+    },
+    {
+      "path": "env/core/card_language.py",
+      "sha256": "1bbee93901f3b26f6d5ecd55f3c65c397c4aae7ba1bcc4ce0f0d856272042d6f",
+      "module": "env.core.card_language",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.cards_vocab",
+        "env.core.ironclad_cards"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Structured effect language for all Ironclad and common Status cards.",
+        ""
+      ],
+      "functions": [
+        "_n",
+        "_expand_number_tokens",
+        "_v",
+        "_do",
+        "_trigger",
+        "_if",
+        "_trait",
+        "_join",
+        "_effects",
+        "card_rarity",
+        "_simple_damage",
+        "_simple_block",
+        "_status_effects",
+        "card_program",
+        "combined_card_program",
+        "encoded_card_programs",
+        "encoded_card_version_programs",
+        "render_markdown"
+      ]
+    },
+    {
+      "path": "env/core/cards_vocab.py",
+      "sha256": "9c7ee416c556ceba5b0790c127d3d24a349f555663bf2312a53d332b453ed8cf",
+      "module": "env.core.cards_vocab",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Static card vocabulary, in CANONICAL id space (the game's stable English ids,",
+        "e.g. \"Strike_R\", \"Burning Pact\") — the same id space the bridge normalizers and"
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/combat_backend.py",
+      "sha256": "6737ed8488cebb660f40307eeaf8aba4a16b7db93d3a605e417d18ec8475d566",
+      "module": "env.core.combat_backend",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.game_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "SimCombatBackend: a SimGameEnv scoped to a random-combat GAUNTLET, for combat-",
+        "head pretraining (docs/archive/doc/night_0625/combat_pretrain_decision.md)."
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/combat_env.py",
+      "sha256": "ae3145e55a770f2b751a53c14c320bf64397e88925f04999571312a12ad1c8b4",
+      "module": "env.core.combat_env",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.encode",
+        "env.core.factories",
+        "env.core.render",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "SimCombatEnv: a Gymnasium env for a single Slay the Spire combat, backed by",
+        "the sts_lightspeed sim."
+      ],
+      "functions": [
+        "legal_mask",
+        "_is_multi_select",
+        "to_sts_action"
+      ]
+    },
+    {
+      "path": "env/core/combat_language.py",
+      "sha256": "61d5f68bfb263ccda1c263d2f81d693c2d1d1b36b9573d2f84879d30930d361c",
+      "module": "env.core.combat_language",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.intents",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Token language for monster intents and live entity status bars.",
+        ""
+      ],
+      "functions": [
+        "number_tokens",
+        "_move_effects",
+        "_effect",
+        "intent_program",
+        "status_program",
+        "live_intent_program",
+        "encoded_intent_programs"
+      ]
+    },
+    {
+      "path": "env/core/encode.py",
+      "sha256": "1415f67c00319e62461e5a9916e0713fd48dadc57f30b43a022a39bc77b773f5",
+      "module": "env.core.encode",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.card_language",
+        "env.core.cards_vocab",
+        "env.core.combat_language",
+        "env.core.intents",
+        "env.core.ironclad_cards",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Observation encoder v3: canonical state dict -> structured Dict observation.",
+        ""
+      ],
+      "functions": [
+        "obs_space",
+        "_card_idx",
+        "_idx",
+        "_card_tuple",
+        "_require_capacity",
+        "_encode_card_sequence",
+        "_empty",
+        "_empty_combat",
+        "_encode_combat",
+        "_encode_combat_global",
+        "_encode_global",
+        "_encode_options",
+        "encode",
+        "encode_combat",
+        "_encode_select"
+      ]
+    },
+    {
+      "path": "env/core/encounters.py",
+      "sha256": "e754cbf024683061ca56fd38f6940cb6ef12abc09e8645a03ebb3f2bbcc8deaa",
+      "module": "env.core.encounters",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Act-1 encounter name lists for create_battle.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/event_descriptions.py",
+      "sha256": "25b6513877b171abdf2a872e7c552bb17aef7b4904d75ca9e45febbcfb68de3b",
+      "module": "env.core.event_descriptions",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Human-facing descriptions for normal Slay the Spire events.",
+        ""
+      ],
+      "functions": [
+        "_event",
+        "describe_event"
+      ]
+    },
+    {
+      "path": "env/core/factories.py",
+      "sha256": "3238230a551305c374c5b267781cad6067ba52b8540f84b8f9191c29dc8e365d",
+      "module": "env.core.factories",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.encounters"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "gc_factory builders for SimCombatEnv.",
+        ""
+      ],
+      "functions": [
+        "random_act1_factory",
+        "_uniform_ironclad_deck",
+        "_act_of",
+        "_mean_added",
+        "_around",
+        "_build_loadout_gc",
+        "random_combat_factory",
+        "_build_gauntlet_gc",
+        "random_gauntlet_factory",
+        "random_rule_combat_factory",
+        "fixed_factory"
+      ]
+    },
+    {
+      "path": "env/core/game_actions.py",
+      "sha256": "0a8249ebaceab9c69adf81eadd7fb24f3718e793e40e7004d59bd3487afe9ce4",
+      "module": "env.core.game_actions",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.render"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Semantic action protocol for whole-run play — backend-agnostic.",
+        ""
+      ],
+      "functions": [
+        "neow",
+        "map_node",
+        "combat",
+        "claim",
+        "reward_card",
+        "skip_cards",
+        "select",
+        "multi_select",
+        "campfire",
+        "event",
+        "chest",
+        "boss_relic",
+        "proceed",
+        "shop_proceed",
+        "shop_buy",
+        "shop_remove",
+        "use_potion",
+        "describe",
+        "_card_at",
+        "_potion_at"
+      ]
+    },
+    {
+      "path": "env/core/game_env.py",
+      "sha256": "2af373c9c93414a3b7d811dcc90627bed3a528b01adc87703d1dc9a6d4a5ce3b",
+      "module": "env.core.game_env",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.encode",
+        "env.core.factories",
+        "env.core.game_actions",
+        "env.core.render",
+        "env.core.spiremap",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "SimGameEnv: a whole *run* of Slay the Spire, backed by the sts_lightspeed sim.",
+        ""
+      ],
+      "functions": [
+        "_tail",
+        "_reward_card_count",
+        "_has_card_rewards",
+        "_card_reward_state_error"
+      ]
+    },
+    {
+      "path": "env/core/intents.py",
+      "sha256": "20f63f2dd307a629531833eacf1bc2c840d1a6ba67eb55eb38cbc8c04e6aa39b",
+      "module": "env.core.intents",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Derive an INTENT_CATEGORY from a monster's current move — backend-agnostic.",
+        ""
+      ],
+      "functions": [
+        "derive"
+      ]
+    },
+    {
+      "path": "env/core/ironclad_cards.py",
+      "sha256": "0e970ce1b6b17703d90f240dced7493832e7d83ca5cd80a3df3580061a4e2c9a",
+      "module": "env.core.ironclad_cards",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Wiki-backed Ironclad card annotations used by the observation encoder.",
+        ""
+      ],
+      "functions": [
+        "_c",
+        "card_numbers"
+      ]
+    },
+    {
+      "path": "env/core/relics.py",
+      "sha256": "955eef117bba5c65e48795aa5e3240a5d10ff139ee0c78af652049b9b2e46077",
+      "module": "env.core.relics",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Relic display metadata.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/core/render.py",
+      "sha256": "1053655df86806f1b1f8754d2683e684b599a652835d2e35ff4afcd99ad38690",
+      "module": "env.core.render",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Human-readable rendering of canonical combat state + actions.",
+        ""
+      ],
+      "functions": [
+        "_card_label",
+        "_powers_str",
+        "_hand_labels",
+        "render_state",
+        "render_overworld",
+        "render_action",
+        "_hand_card_label",
+        "_foe_label"
+      ]
+    },
+    {
+      "path": "env/core/rule_language.py",
+      "sha256": "cf365650a529fa207130d39cc0a545c5b38711dddffa2657a9a0034ac891aa7e",
+      "module": "env.core.rule_language",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.card_language"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Canonical one-line rule language for rule-model supervision.",
+        ""
+      ],
+      "functions": [
+        "_card_version_name",
+        "card_rule_sentence",
+        "relic_rule_sentence",
+        "deck_rule_sentence",
+        "relic_loadout_sentence",
+        "validate_first_version_language"
+      ]
+    },
+    {
+      "path": "env/core/run_env.py",
+      "sha256": "57be8deb497de21b3e5085be08088529f46a2e2efe0fa6fd18f948ed9656e24a",
+      "module": "env.core.run_env",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.encode",
+        "env.core.game_actions",
+        "env.core.game_env",
+        "env.search.nosl_is_az",
+        "env.search.nosl_sampler",
+        "schemas.combat_state"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "SlayTheSpireEnv: the THIN, backend-agnostic Gymnasium env for a whole run.",
+        ""
+      ],
+      "functions": [
+        "unpack_nosl_observation_buffer",
+        "_nosl_compact_layout",
+        "_nosl_compact_lut",
+        "_nosl_compact_empty",
+        "_nosl_card_stats",
+        "_card_label"
+      ]
+    },
+    {
+      "path": "env/core/spiremap.py",
+      "sha256": "35cf36271387afb998236bdc8eb2f962c7801ee95b513d940265905a5e450d26",
+      "module": "env.core.spiremap",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "RunMap: a thin read-only wrapper over the sim's SpireMap for whole-run play.",
+        ""
+      ],
+      "functions": [
+        "_room_name"
+      ]
+    },
+    {
+      "path": "env/core/vocab.py",
+      "sha256": "960a7fabfd0de32f3a725ff4c528d3fa35240dca3e14547285e70535a06f2d45",
+      "module": "env.core.vocab",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Categorical id-space vocabularies for the v2 observation (AUTO-GENERATED).",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/scripts/__init__.py",
+      "sha256": "84d40df6c918380ec68cd5c60c8d7a40f20cb3699578aa9130aef64f6709c62b",
+      "module": "env.scripts.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Runnable scripts for the combat env. Run as modules from the repo root, e.g.",
+        "`python -m env.scripts.play`. These are entry points, not imported by env.core."
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/search/__init__.py",
+      "sha256": "9ecaae40bb30b6e0cb6578cbb9957efc3e29411b94e5e21b2c55f457a9f3f515",
+      "module": "env.search.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Policy-free search sessions and nonce generation for environment workers."
+      ],
+      "functions": []
+    },
+    {
+      "path": "env/search/nosl_is_az.py",
+      "sha256": "11cfe7a291f4af01c4ddd1cda83173090bf80ff0f8d228a539b4759681cc45a8",
+      "module": "env.search.nosl_is_az",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.encode",
+        "env.search.nosl_sampler"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.nosl_is_az",
+      "doc": [
+        "Information-set AlphaZero style search for whole-run combat training.",
+        ""
+      ],
+      "functions": [
+        "_redeterminized_root",
+        "_terminal_value",
+        "_masked_prior",
+        "search_result_dict"
+      ]
+    },
+    {
+      "path": "env/search/nosl_sampler.py",
+      "sha256": "17c4cce9cd5b6a4966e57c256158976a75ea4ea33d246782babc3f77093fc6e8",
+      "module": "env.search.nosl_sampler",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.nosl_sampler",
+      "doc": [
+        "No-world-line (NOSL) combat determinization helpers.",
+        ""
+      ],
+      "functions": [
+        "_pack_u64"
+      ]
+    },
+    {
+      "path": "rl/__init__.py",
+      "sha256": "bac8f6f8594c37c2862539b7aa8309bd02f891910af7c653edea1329d125bdab",
+      "module": "rl.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Learning runtime on env/. New imports use the owning subpackage.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/algorithms/__init__.py",
+      "sha256": "bc6363fc34278bca35798a94cd057b9294686e2fc958c1e3f881b859c88c7203",
+      "module": "rl.algorithms.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/algorithms components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/algorithms/accumulating_ppo.py",
+      "sha256": "297c78f86e76ddf016e2614746cfc6497785f87238f5198409e32d7c13021b65",
+      "module": "rl.algorithms.accumulating_ppo",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.run_env",
+        "env.core.vocab",
+        "rl.algorithms.hierarchical_returns",
+        "rl.algorithms.nosl_replay",
+        "rl.policies.wholerun_reasoning"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.accumulating_ppo",
+      "doc": [
+        "MaskablePPO with optimizer-level gradient accumulation."
+      ],
+      "functions": [
+        "_leaf_observation_as_tensor",
+        "_fill_nosl_combat_value_targets",
+        "_phase_balanced_mean",
+        "ppo_loss_components"
+      ]
+    },
+    {
+      "path": "rl/algorithms/hierarchical_returns.py",
+      "sha256": "5abb24db4813b61bf6ce50c75f4993bf283bc47625f8ec85cafc7e49882d0fbf",
+      "module": "rl.algorithms.hierarchical_returns",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.hierarchical_returns",
+      "doc": [
+        "Phase-local returns for hierarchical whole-run PPO.",
+        ""
+      ],
+      "functions": [
+        "_as_array",
+        "compute_hierarchical_returns"
+      ]
+    },
+    {
+      "path": "rl/algorithms/nosl_replay.py",
+      "sha256": "dc467536e2d9fd48ea58f477f7ae872f3317fac23b372901a853d67caf671724",
+      "module": "rl.algorithms.nosl_replay",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.nosl_replay",
+      "doc": [
+        "Compact FIFO replay storage for NOSL AlphaZero combat targets."
+      ],
+      "functions": [
+        "_compact_integer_dtype",
+        "_storage_dtype"
+      ]
+    },
+    {
+      "path": "rl/benchmarks/__init__.py",
+      "sha256": "b855dd146d903d85d186293e4f42fdbe2d0b708bfc006fc42deeddfe7f84a004",
+      "module": "rl.benchmarks.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Bounded, machine-readable benchmarks for the supported training paths."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/benchmarks/resources.py",
+      "sha256": "ba7c7aa7a636b8dc40502890ac7ab290d07d22d3f0684d6a1c5aacb4fe4922a5",
+      "module": "rl.benchmarks.resources",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Process-tree RSS/CPU and device-wide NVIDIA telemetry, with explicit units."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/evaluation/__init__.py",
+      "sha256": "496af266b6bc903684b1779a870ceb53f168d21c5338ce2d43f973f5faa03e78",
+      "module": "rl.evaluation.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/evaluation components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/evaluation/baselines/__init__.py",
+      "sha256": "4fc5603a50b8aa74a2dff606720eec8d6d784716e3cd1bc77f5a37ef8b746188",
+      "module": "rl.evaluation.baselines.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/evaluation/baselines components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/evaluation/nosl/__init__.py",
+      "sha256": "0a024b4238febc1821b5124d9f91d417ad2a8376eca5a84c9ba5a6bad23e2bca",
+      "module": "rl.evaluation.nosl.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/evaluation/nosl components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/evaluation/rules/__init__.py",
+      "sha256": "6a6e8b1560ade79f6fd9e5e58b7b45870614b4a4e958e58fa5b11ca001a235f2",
+      "module": "rl.evaluation.rules.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/evaluation/rules components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/policies/__init__.py",
+      "sha256": "dadd54d78697f2ac9d457f49950c2a5ee5c11f85bdeac0c8cdf86fe0b8de2206",
+      "module": "rl.policies.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/policies components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/policies/model.py",
+      "sha256": "b077c2a223d600da4a631e148be3da5bd295917bd698e2f892cde5811e5fae63",
+      "module": "rl.policies.model",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.card_language",
+        "env.core.combat_language",
+        "env.core.encode"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.model",
+      "doc": [],
+      "functions": [
+        "observation_for_policy",
+        "uses_global_map_observation",
+        "uses_map_dag",
+        "uses_deck_size_observation",
+        "uses_neow_observation",
+        "uses_event_option_observation",
+        "uses_combat_language",
+        "uses_card_language",
+        "_embedding_dim_for",
+        "derive_categorical_fields"
+      ]
+    },
+    {
+      "path": "rl/policies/pointer_policy.py",
+      "sha256": "23d6a297d663b4c19462ca192f9d402258519b4b149b959a4e31378f8467dd9e",
+      "module": "rl.policies.pointer_policy",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.vocab",
+        "rl.policies.model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.pointer_policy",
+      "doc": [
+        "Structured candidate (pointer) policy for the whole-run action space.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/policies/rllib_inference.py",
+      "sha256": "16b4244c4006b8da00dde72704de9484da7832f98486b263ba2e4adcc8ccb916",
+      "module": "rl.policies.rllib_inference",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.rllib_inference",
+      "doc": [
+        "Standalone inference adapter for RLlib ``policy_state.pkl`` checkpoints."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/policies/semantic_reasoning_policy.py",
+      "sha256": "f71a69fadde0cfbe35bc1bff2a0660e8946be5bedd7e575b1afde7b60c212ec9",
+      "module": "rl.policies.semantic_reasoning_policy",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.card_language",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.policies.split_policy",
+        "rl.policies.wholerun_reasoning"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.semantic_reasoning_policy",
+      "doc": [
+        "Whole-run policy with anonymous card programs and interactive reasoning.",
+        ""
+      ],
+      "functions": [
+        "_width",
+        "_numeric_end_annotations"
+      ]
+    },
+    {
+      "path": "rl/policies/split_policy.py",
+      "sha256": "de4e31151fe11d90d1c780691348ebf9d786f19116cd28a52a4e18567537556c",
+      "module": "rl.policies.split_policy",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.vocab",
+        "rl.policies.model",
+        "rl.policies.pointer_policy",
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.split_policy",
+      "doc": [
+        "Phase-specialized actor-critic policy for complete Slay the Spire runs.",
+        ""
+      ],
+      "functions": [
+        "_space_width",
+        "_vocab_size",
+        "_active_prefix_width"
+      ]
+    },
+    {
+      "path": "rl/policies/wholerun_reasoning.py",
+      "sha256": "68b8e08e3922b45e5b45050987ff39047d4b2b729778494fd9f5bb2d07255bab",
+      "module": "rl.policies.wholerun_reasoning",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.card_language"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.wholerun_reasoning",
+      "doc": [
+        "Anonymous, interactive reasoning protocol for whole-run training.",
+        ""
+      ],
+      "functions": [
+        "number_tokens",
+        "compact_program_numbers",
+        "text_tokens",
+        "anonymous_card_tokens",
+        "_card_key",
+        "_zone_events",
+        "_status_events",
+        "diff_combat_states",
+        "events_from_snapshots",
+        "_numeric_event_tokens",
+        "_event_tokens",
+        "_observation",
+        "build_interactive_transcript",
+        "card_stochastic_flags"
+      ]
+    },
+    {
+      "path": "rl/rules/__init__.py",
+      "sha256": "52b4e87eee0b11bebc91cd5a7e47514d5951e36882b16b9c1182f0eb0c4f8e68",
+      "module": "rl.rules.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/rules components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/rules/data/__init__.py",
+      "sha256": "7ae048092bb0ba74907e3263603d1a3653a1e30826db06ed24ebde88e89a3194",
+      "module": "rl.rules.data.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/rules/data components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/rules/rule_data.py",
+      "sha256": "df3b6eefb60660486d37ccd3fada03c6290a28588d7e959d2a514b4c9fb4a0ae",
+      "module": "rl.rules.rule_data",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.rule_language"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.rule_data",
+      "doc": [
+        "Data contract and tokenization for the standalone combat rule model."
+      ],
+      "functions": [
+        "_atom",
+        "_number",
+        "_sentence_tokens",
+        "_card_tokens",
+        "serialize_state",
+        "serialize_action",
+        "_serialize_value",
+        "serialize_effects",
+        "serialize_calculations",
+        "_status_value",
+        "_step_cause",
+        "derive_rule_steps",
+        "_first_damage_number",
+        "derive_calculations",
+        "serialize_rule_steps",
+        "controlled_attack_calculations",
+        "_numeric_transition_calculation",
+        "_attack_prefix_calculations",
+        "_linked_effect_index",
+        "_detailed_hp_calculations",
+        "_detailed_block_calculations",
+        "_controlled_local_calculations",
+        "derive_local_calculations",
+        "_collect_state_card_ids",
+        "anonymous_card_ref_map",
+        "sample_tokens",
+        "_is_structural_token",
+        "critical_target_number_regions",
+        "critical_target_number_mask",
+        "target_supervision_regions",
+        "_token_number",
+        "transition_consistency_specs",
+        "_card_key",
+        "_status_events",
+        "_zone_events",
+        "diff_atomic_states",
+        "events_from_snapshots",
+        "canonicalize_training_tokenizer",
+        "read_jsonl",
+        "action_card_group",
+        "collate_rule_batch"
+      ]
+    },
+    {
+      "path": "rl/rules/rule_model.py",
+      "sha256": "adf7e110115fa8214dab92878373c664910ecc9e219ce3616a7473876e0ea225",
+      "module": "rl.rules.rule_model",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.rule_model",
+      "doc": [
+        "Standalone encoder/decoder model for combat-rule sequence learning."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/rules/rule_vector_model.py",
+      "sha256": "4f091cca8af2fc93a8395d7609d110dcc501cacd2d03a3e44c2e4d9262a8aeeb",
+      "module": "rl.rules.rule_vector_model",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.card_language",
+        "env.core.cards_vocab",
+        "env.core.encode",
+        "env.core.rule_language",
+        "env.core.vocab"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.rule_vector_model",
+      "doc": [
+        "Vectorized anonymous rule model (standalone rule-model v6).",
+        ""
+      ],
+      "functions": [
+        "load_frozen_card_rule_encoder",
+        "relic_effect_tokens",
+        "_scaled",
+        "_counter_value",
+        "vectorize_state",
+        "vector_delta",
+        "_raw_state_values",
+        "_calculation_scalar",
+        "generic_state_calculations",
+        "hand_composition_feature_dim",
+        "summarize_hand",
+        "hand_inputs_from_state",
+        "hand_composition_from_state",
+        "hand_composition_delta",
+        "_calculation_atom",
+        "_default_calculation_value_tokens",
+        "validate_vector_token_limits",
+        "_calculation_number",
+        "_parse_calculation_number",
+        "_completed_calculation_result_values",
+        "serialize_calculations",
+        "serialize_vector_events",
+        "serialize_sword_boomerang",
+        "serialize_hand_operation",
+        "serialize_armaments_hand_operation",
+        "serialize_burning_pact_hand_operation",
+        "serialize_burning_pact_operations",
+        "serialize_havoc_skeleton",
+        "default_vector_model_config"
+      ]
+    },
+    {
+      "path": "rl/rules/training/__init__.py",
+      "sha256": "fae97b05fc5d4de399fd43e72b448da65aaa19a613d40dcbff3966398a88b1cf",
+      "module": "rl.rules.training.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/rules/training components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/rules/vector_rule_data.py",
+      "sha256": "662ed0679540afc8092f1c8ca1c85ee9dd374514aa779c55b9f288fff3da6eea",
+      "module": "rl.rules.vector_rule_data",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.vector_rule_data",
+      "doc": [
+        "Independent v6 data contract and dataset/collation helpers.",
+        ""
+      ],
+      "functions": [
+        "_read_json_lines",
+        "_vector",
+        "_program",
+        "_sparse_delta",
+        "_programs_to_padded",
+        "example_from_v6_record",
+        "collate_vector_rule_v6_batch"
+      ]
+    },
+    {
+      "path": "rl/rules/vector_rule_stream.py",
+      "sha256": "c8477de3339c23d2f66f9d4372a6189d4d44e2ece0685e012d0c5c7a45a04526",
+      "module": "rl.rules.vector_rule_stream",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model",
+        "rl.rules.vector_rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.vector_rule_stream",
+      "doc": [
+        "One-pass schema-v5 record streams used by online vector-rule training.",
+        ""
+      ],
+      "functions": [
+        "iter_jsonl_records",
+        "iter_v6_examples",
+        "take_batch"
+      ]
+    },
+    {
+      "path": "rl/rules/vector_rule_v7_data.py",
+      "sha256": "b9780ae727defa8b2cdcfd5ee5ee700df56686bbceabaa2156e4ee1daa6c88c2",
+      "module": "rl.rules.vector_rule_v7_data",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "rl.rules.rule_vector_model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.vector_rule_v7_data",
+      "doc": [
+        "Schema-v7 effect-tree records and collation helpers.",
+        ""
+      ],
+      "functions": [
+        "_read_json_lines",
+        "_vector",
+        "_program",
+        "example_from_v7_record",
+        "_header_tokens",
+        "_outer_tree_tokens",
+        "_state_from_flat",
+        "_walk_with_snapshots",
+        "_local_target",
+        "examples_from_v7_record",
+        "_programs_to_padded",
+        "collate_vector_rule_v7_batch"
+      ]
+    },
+    {
+      "path": "rl/search/__init__.py",
+      "sha256": "9f85b3e50e3dafba963a1a5978614ca42a7a915ad2097e7b6bf6ed2576367468",
+      "module": "rl.search.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/search components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/search/combat_value_search.py",
+      "sha256": "ff907627eb8cd1261c7d9db07e611881dc7bcf507fd1f9011ef16004d3cd42b7",
+      "module": "rl.search.combat_value_search",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.encode",
+        "env.search.nosl_sampler",
+        "rl.policies.model"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.combat_value_search",
+      "doc": [
+        "Inference-time combat lookahead guided by the policy's own value head.",
+        ""
+      ],
+      "functions": [
+        "add_combat_search_args",
+        "config_from_args"
+      ]
+    },
+    {
+      "path": "rl/search/nosl_search_methods.py",
+      "sha256": "a0770523affabf780e653e02d9e00a4ac920b517f8c014d0631b1b997188cb07",
+      "module": "rl.search.nosl_search_methods",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.search.nosl_sampler"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.nosl_search_methods",
+      "doc": [
+        "Model-free combat search policies built on the NOSL sampler.",
+        ""
+      ],
+      "functions": [
+        "_redet_branch",
+        "_terminal_hp",
+        "_apply",
+        "random_action",
+        "random_rollout"
+      ]
+    },
+    {
+      "path": "rl/tasks/__init__.py",
+      "sha256": "804f816e5b15df713e63199031d1f93e5056d25af568a0efb1864efc74ec822c",
+      "module": "rl.tasks.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "rl.tasks.base",
+        "rl.tasks.combat",
+        "rl.tasks.wholerun",
+        "rl.tasks.wholerun_basic"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Task registry for the unified trainer.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/tasks/base.py",
+      "sha256": "375560a1055a1d014b55e63dc4959a511774cf5f7261b38cedcddedc4582e7c1",
+      "module": "rl.tasks.base",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Task interface for the unified trainer (rl.training.trainer).",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/tasks/combat.py",
+      "sha256": "9d08f52a5e20b9a19c7735a656dd5a2780475c066c74fb589f1ea3df3ca2ddbe",
+      "module": "rl.tasks.combat",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.combat_backend",
+        "env.core.factories",
+        "env.core.run_env",
+        "rl.policies.split_policy",
+        "rl.tasks.base",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Combat-gauntlet pretraining task.",
+        ""
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/tasks/wholerun.py",
+      "sha256": "23e30d38a5e46309bff9b8c2f6773c04eafd3318ea5087068560c4239f40343f",
+      "module": "rl.tasks.wholerun",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.run_env",
+        "rl.policies.semantic_reasoning_policy",
+        "rl.policies.split_policy",
+        "rl.tasks.base",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Whole-run training task: MaskablePPO on the full 3-act SlayTheSpireEnv."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/tasks/wholerun_basic.py",
+      "sha256": "d28c16e9233e7657d4df2c5e7846ba68d31e4c642aaedbdd0bf49c078a05e409",
+      "module": "rl.tasks.wholerun_basic",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.game_actions",
+        "env.core.game_env",
+        "env.core.run_env",
+        "rl.tasks.wholerun",
+        "rl.training.reward"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Whole-run training constrained to Strike and Defend cards."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/training/__init__.py",
+      "sha256": "4627c6afea5ca3956872ef1ecf2b67fe7aea1d584d4dd93fa4ec722bc7cccef2",
+      "module": "rl.training.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "rl/training components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/training/cached_mask_vec_env.py",
+      "sha256": "40cd02d1f370726872e5e4994b420904a54ad32f3cfccaac06ed799bf5f8786e",
+      "module": "rl.training.cached_mask_vec_env",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.cached_mask_vec_env",
+      "doc": [
+        "Subprocess vector environment that reuses masks returned by each step."
+      ],
+      "functions": [
+        "_group_worker"
+      ]
+    },
+    {
+      "path": "rl/training/reward.py",
+      "sha256": "21ee9e1f5827d56d1ffb8c0a5dbe6f089f605c846fb65aded14da1742c2aee8b",
+      "module": "rl.training.reward",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.reward",
+      "doc": [],
+      "functions": [
+        "_gc_state"
+      ]
+    },
+    {
+      "path": "rl/training/ring_allreduce.py",
+      "sha256": "cbe324216dbc5504815af0c8beb907002579683e654ef644171fea1e511706ce",
+      "module": "rl.training.ring_allreduce",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.ring_allreduce",
+      "doc": [
+        "Persistent socket ring all-reduce for flat CPU FP32 gradients."
+      ],
+      "functions": []
+    },
+    {
+      "path": "rl/training/ssh_transport.py",
+      "sha256": "9c16a3219f1cc790127f1c491783fcb9835724d415cfe81d2f35463184da0ca4",
+      "module": "rl.training.ssh_transport",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": "rl.ssh_transport",
+      "doc": [
+        "Small SSH/SCP transport primitives shared by distributed experiments."
+      ],
+      "functions": [
+        "parse_peer",
+        "ssh_options",
+        "ssh_cmd",
+        "scp_to",
+        "_wait_for_file",
+        "all_rank_file_barrier"
+      ]
+    },
+    {
+      "path": "tools/__init__.py",
+      "sha256": "ad3d7074c010e3c854133c7935b9432adb8e31829bc6f1ecb434f18e413b0457",
+      "module": "tools.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Development commands; never imported by the training runtime."
+      ],
+      "functions": []
+    },
+    {
+      "path": "tools/analysis/__init__.py",
+      "sha256": "c11947dd4d11a33a8d451df58ffa320884c6d806b7f00ea087ea92688d9b3962",
+      "module": "tools.analysis.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "tools/analysis components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "tools/benchmarks/__init__.py",
+      "sha256": "d4add9d1ff5d8618f1304ec26b960b9f89cf23aa6180977da807a7fce3efd469",
+      "module": "tools.benchmarks.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "tools/benchmarks components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "tools/checkpoints/__init__.py",
+      "sha256": "4675dc0d675216c3904ac22e5aa9ebff3a67e349d0172abd22ae1af07507d662",
+      "module": "tools.checkpoints.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "tools/checkpoints components."
+      ],
+      "functions": []
+    },
+    {
+      "path": "tools/validation/__init__.py",
+      "sha256": "44f457a5532cdef8d9ea70e404fe6e6dd9a8e565fb66e3bf0d71eb42aa16d4a4",
+      "module": "tools.validation.__init__",
+      "main_guard_lines": [],
+      "parse_lines": [],
+      "direct_local_imports": [],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Bounded, repeatable validation commands."
+      ],
+      "functions": []
+    }
+  ],
+  "test_standalone_entries": [
+    {
+      "path": "tests/integration/test_combat.py",
+      "sha256": "6237f57dc87dc1f5d32ebbb3039b68df708ab02090d16cb85a9bf1bb6e0a99fd",
+      "module": "tests.integration.test_combat",
+      "main_guard_lines": [
+        182
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.encounters",
+        "env.core.factories"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "End-to-end regression test for SimCombatEnv. Requires the sim to be built",
+        "(sim/sts_lightspeed/build). Run from the repo root on the training machine:"
+      ],
+      "functions": [
+        "_check_obs",
+        "_play_one",
+        "_check_all_encounters_spawn",
+        "_check_wiki_card_corrections",
+        "_check_akabeko_vigor_export",
+        "_check_consumable_relic_state_export",
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/test_game.py",
+      "sha256": "997bc50d2f1aef33224b99a79632876e6d4db6a80ac6f9702f07904c91c9d7b9",
+      "module": "tests.integration.test_game",
+      "main_guard_lines": [
+        191
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.game_actions",
+        "env.core.game_env",
+        "env.core.spiremap"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Whole-run (SimGameEnv) regression tests — run on the box with the built sim:",
+        ""
+      ],
+      "functions": [
+        "_to_map_screen",
+        "test_map_spine",
+        "test_boss_transition_is_dag_choice",
+        "_run_episode",
+        "test_full_run",
+        "main"
+      ]
+    },
+    {
+      "path": "tests/integration/test_nosl_fast_step.py",
+      "sha256": "76a42f200c72a3aec0854cb00edf6eec5b5933557087b9078d8388e0407ee777",
+      "module": "tests.integration.test_nosl_fast_step",
+      "main_guard_lines": [
+        29
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.actions",
+        "env.core.combat_env",
+        "env.core.game_actions",
+        "env.core.game_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": []
+    },
+    {
+      "path": "tests/integration/test_run_v2.py",
+      "sha256": "6d299089aa3e22a64f8ff6f05046e57c20de2e7d642d44867445cec963b49bc8",
+      "module": "tests.integration.test_run_v2",
+      "main_guard_lines": [
+        136
+      ],
+      "parse_lines": [
+        109
+      ],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.run_env"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Smoke test for the thin SlayTheSpireEnv (action v2 / obs v3).",
+        ""
+      ],
+      "functions": [
+        "_check_obs",
+        "run_episode",
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/test_card_surface_sensitivity.py",
+      "sha256": "d1e7b630cb5365cd34623aeab375c80a7b6e0e883788678a1502eeabed1545e5",
+      "module": "tests.unit.test_card_surface_sensitivity",
+      "main_guard_lines": [
+        191
+      ],
+      "parse_lines": [
+        115
+      ],
+      "direct_local_imports": [
+        "rl.evaluation.rules.explain_card_play",
+        "rl.rules.rule_data"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Probe whether an anonymous-card rule model responds to card-surface edits."
+      ],
+      "functions": [
+        "surface",
+        "build_variant",
+        "_digit_after",
+        "main"
+      ]
+    },
+    {
+      "path": "tests/unit/test_combat_value_search.py",
+      "sha256": "ce811eac771c2986ff19e071833077f2184b4b617e2fdfdd7783df0492891859",
+      "module": "tests.unit.test_combat_value_search",
+      "main_guard_lines": [
+        184
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.combat_env",
+        "rl.search.combat_value_search"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": []
+    },
+    {
+      "path": "tests/unit/test_hierarchical_returns.py",
+      "sha256": "9bb2325c20b72d5443ed279a0008c482297ff66649629a8af3818ed91ce1a327",
+      "module": "tests.unit.test_hierarchical_returns",
+      "main_guard_lines": [
+        217
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.vocab",
+        "rl.algorithms.accumulating_ppo",
+        "rl.algorithms.hierarchical_returns",
+        "rl.training.distributed_sb3"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": [
+        "calculate"
+      ]
+    },
+    {
+      "path": "tests/unit/test_nosl_is_az.py",
+      "sha256": "5e086712a6a1606f98e646b085d6bae3c62b23824a8da0a242bd6d0db3e10c26",
+      "module": "tests.unit.test_nosl_is_az",
+      "main_guard_lines": [
+        657
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "bridge.schemas.combat_state",
+        "env.core",
+        "env.core.vocab",
+        "env.search.nosl_is_az",
+        "env.search.nosl_sampler",
+        "rl.algorithms.accumulating_ppo",
+        "rl.algorithms.nosl_replay"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": []
+    },
+    {
+      "path": "tests/unit/test_nosl_sampler.py",
+      "sha256": "668dd9061674cee5c80c688dad22daaae66a2935faca72c89d3e04bfb0f4a88b",
+      "module": "tests.unit.test_nosl_sampler",
+      "main_guard_lines": [
+        75
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core.combat_env",
+        "env.search.nosl_sampler"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [],
+      "functions": []
+    },
+    {
+      "path": "tests/unit/test_pure.py",
+      "sha256": "6e67f308156d60c318a0dba1579541077bb07f16252e569d9d8d8c34a8bd585e",
+      "module": "tests.unit.test_pure",
+      "main_guard_lines": [
+        567
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.actions",
+        "env.core.card_language",
+        "env.core.cards_vocab",
+        "env.core.combat_language",
+        "env.core.encode",
+        "env.core.intents",
+        "env.core.ironclad_cards",
+        "env.core.render",
+        "env.core.vocab",
+        "rl.policies.model",
+        "rl.policies.split_policy"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Smoke test for the v2 backend-agnostic obs layer (vocab + encode + intents +",
+        "actions + render). Runs WITHOUT the sim built: it feeds hand-made canonical dicts"
+      ],
+      "functions": [
+        "_fake_combat",
+        "_fake_map",
+        "test_vocab_invariants",
+        "test_ironclad_card_table",
+        "test_ironclad_card_language",
+        "test_status_card_language_model_paths",
+        "test_intent_derivation",
+        "test_obs_matches_space",
+        "test_compact_combat_matches_full_encoding",
+        "test_combat_fields_land",
+        "test_fixed_monster_slots_no_drift",
+        "test_global_and_options",
+        "test_optional_global_map_view",
+        "test_optional_deck_size_observation",
+        "test_lossless_deck_sequence",
+        "test_upgrade_counts_are_required_for_overworld_cards",
+        "test_complete_relic_sequence",
+        "test_combat_language",
+        "test_action_codec_roundtrip",
+        "test_monotonic_multi_select",
+        "test_render"
+      ]
+    },
+    {
+      "path": "tests/unit/test_rllib_split_policy.py",
+      "sha256": "c4728e6aed56e79f3527cb3b2fac7d5309c009b656352eebe45f42d996b3acec",
+      "module": "tests.unit.test_rllib_split_policy",
+      "main_guard_lines": [
+        174
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.encode",
+        "env.core.vocab",
+        "rl.policies.split_policy",
+        "rl.training.rllib_trainer"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Focused RLlib adapter tests for the specialized policy cores.",
+        ""
+      ],
+      "functions": [
+        "_observation_space",
+        "_wrapped_space",
+        "_observation",
+        "_model",
+        "test_rllib_constructs_the_task_specific_core_and_masks_logits",
+        "test_combat_checkpoint_initializes_only_the_matching_split_parameters"
+      ]
+    },
+    {
+      "path": "tests/unit/test_split_policy.py",
+      "sha256": "c5401f5b2b8cb73e40e3592a5f7df55e19828940067398d50dabe4ceb96b411d",
+      "module": "tests.unit.test_split_policy",
+      "main_guard_lines": [
+        382
+      ],
+      "parse_lines": [],
+      "direct_local_imports": [
+        "env.core",
+        "env.core.action_space",
+        "env.core.cards_vocab",
+        "env.core.encode",
+        "env.core.vocab",
+        "rl.policies.model",
+        "rl.policies.split_policy",
+        "rl.training.trainer"
+      ],
+      "dynamic_module_strings": [],
+      "legacy_module": null,
+      "doc": [
+        "Regression tests for the phase-specialized whole-run actor-critic.",
+        ""
+      ],
+      "functions": [
+        "_space",
+        "_core",
+        "_empty",
+        "_index",
+        "_fixture",
+        "_batch",
+        "_perturb",
+        "_assert_same",
+        "_has_nonzero_grad",
+        "_has_no_grad",
+        "test_strict_field_routing",
+        "test_mixed_batch_matches_individual_routes",
+        "test_combat_fast_path_matches_router_and_explicit_relic_width",
+        "test_specialist_gradients_are_isolated_but_tokens_are_shared",
+        "test_overworld_card_upgrades_affect_value_and_pointer",
+        "test_combat_receives_all_held_relics",
+        "test_state_dict_round_trip",
+        "test_policy_metadata_and_layer_budget"
+      ]
+    }
+  ],
+  "legacy_aliases": {
+    "rl.accumulating_ppo": "rl.algorithms.accumulating_ppo",
+    "rl.analyze_card_representations": "tools.analysis.analyze_card_representations",
+    "rl.analyze_relic_reward_correlation": "tools.analysis.analyze_relic_reward_correlation",
+    "rl.audit_vector_rule_v7_contract": "tools.analysis.audit_vector_rule_v7_contract",
+    "rl.benchmark_nosl_paths": "tools.benchmarks.benchmark_nosl_paths",
+    "rl.benchmark_nosl_step": "tools.benchmarks.benchmark_nosl_step",
+    "rl.boss_relic_probe": "tools.analysis.boss_relic_probe",
+    "rl.bughunt": "tools.analysis.bughunt",
+    "rl.build_rule_tokenizer": "rl.rules.data.build_rule_tokenizer",
+    "rl.cached_mask_vec_env": "rl.training.cached_mask_vec_env",
+    "rl.collect_nosl_corpus": "rl.evaluation.nosl.collect_nosl_corpus",
+    "rl.collect_rule_data": "rl.rules.data.collect_rule_data",
+    "rl.collect_strength_rule_data": "rl.rules.data.collect_strength_rule_data",
+    "rl.combat_value_search": "rl.search.combat_value_search",
+    "rl.compare_nosl_corpus": "rl.evaluation.nosl.compare_nosl_corpus",
+    "rl.convert_rule_data_anonymous": "rl.rules.data.convert_rule_data_anonymous",
+    "rl.create_semantic_checkpoint": "tools.checkpoints.create_semantic_checkpoint",
+    "rl.dashboard": "apps.dashboard",
+    "rl.diagnose_rules": "tools.analysis.diagnose_rules",
+    "rl.distributed_sb3": "rl.training.distributed_sb3",
+    "rl.distributed_train_rules": "rl.rules.training.distributed_train_rules",
+    "rl.eval": "rl.evaluation.eval",
+    "rl.eval_attack_damage_accuracy": "rl.evaluation.rules.eval_attack_damage_accuracy",
+    "rl.eval_combat": "rl.evaluation.eval_combat",
+    "rl.eval_full_gumbel_bash_clash": "rl.evaluation.nosl.eval_full_gumbel_bash_clash",
+    "rl.eval_gumbel_bash_clash_matrix": "rl.evaluation.nosl.eval_gumbel_bash_clash_matrix",
+    "rl.eval_gumbel_bash_clash_repeated": "rl.evaluation.nosl.eval_gumbel_bash_clash_repeated",
+    "rl.eval_gumbel_bash_clash_trials": "rl.evaluation.nosl.eval_gumbel_bash_clash_trials",
+    "rl.eval_hybrid": "rl.evaluation.eval_hybrid",
+    "rl.eval_leftmost": "rl.evaluation.baselines.eval_leftmost",
+    "rl.eval_nosl_fullrun": "rl.evaluation.nosl.eval_nosl_fullrun",
+    "rl.eval_nosl_methods": "rl.evaluation.nosl.eval_nosl_methods",
+    "rl.eval_nosl_order_sensitivity": "rl.evaluation.nosl.eval_nosl_order_sensitivity",
+    "rl.eval_nosl_single_combat": "rl.evaluation.nosl.eval_nosl_single_combat",
+    "rl.eval_random_deck_surface_sensitivity": "rl.evaluation.rules.eval_random_deck_surface_sensitivity",
+    "rl.eval_rules": "rl.evaluation.rules.eval_rules",
+    "rl.eval_run_leftmost": "rl.evaluation.baselines.eval_run_leftmost",
+    "rl.eval_starter_policy": "rl.evaluation.baselines.eval_starter_policy",
+    "rl.eval_strength_rules": "rl.evaluation.rules.eval_strength_rules",
+    "rl.eval_strict_bash_clash_sequence": "rl.evaluation.nosl.eval_strict_bash_clash_sequence",
+    "rl.eval_triple_seven": "rl.evaluation.baselines.eval_triple_seven",
+    "rl.eval_value_hp_sensitivity": "rl.evaluation.nosl.eval_value_hp_sensitivity",
+    "rl.eval_value_player_hp_sensitivity": "rl.evaluation.nosl.eval_value_player_hp_sensitivity",
+    "rl.eval_vector_rule_autoregressive": "rl.evaluation.rules.eval_vector_rule_autoregressive",
+    "rl.eval_vector_rule_card_sensitivity": "rl.evaluation.rules.eval_vector_rule_card_sensitivity",
+    "rl.eval_vector_rule_v7_cases": "rl.evaluation.rules.eval_vector_rule_v7_cases",
+    "rl.eval_vector_rule_v7_error_positions": "rl.evaluation.rules.eval_vector_rule_v7_error_positions",
+    "rl.eval_vector_rule_v7_intermediate": "rl.evaluation.rules.eval_vector_rule_v7_intermediate",
+    "rl.eval_vector_rule_v7_simple_cards": "rl.evaluation.rules.eval_vector_rule_v7_simple_cards",
+    "rl.experiment_continuous_to_number_tokens": "tools.analysis.experiment_continuous_to_number_tokens",
+    "rl.experiment_register_retrieval": "tools.analysis.experiment_register_retrieval",
+    "rl.explain_card_play": "rl.evaluation.rules.explain_card_play",
+    "rl.hierarchical_returns": "rl.algorithms.hierarchical_returns",
+    "rl.inspect_vector_rule_v7_self_damage": "tools.analysis.inspect_vector_rule_v7_self_damage",
+    "rl.make_vector_rule_smoke_data": "rl.rules.data.make_vector_rule_smoke_data",
+    "rl.make_vector_rule_training_data": "rl.rules.data.make_vector_rule_training_data",
+    "rl.make_vector_rule_v7_data": "rl.rules.data.make_vector_rule_v7_data",
+    "rl.measure_reasoning_lengths": "tools.analysis.measure_reasoning_lengths",
+    "rl.merge_card_representations": "tools.checkpoints.merge_card_representations",
+    "rl.model": "rl.policies.model",
+    "rl.monitor_vector_v7_wandb": "tools.analysis.monitor_vector_v7_wandb",
+    "rl.nosl_is_az": "env.search.nosl_is_az",
+    "rl.nosl_replay": "rl.algorithms.nosl_replay",
+    "rl.nosl_sampler": "env.search.nosl_sampler",
+    "rl.nosl_search_methods": "rl.search.nosl_search_methods",
+    "rl.overfit_test": "rl.training.overfit_test",
+    "rl.play_gauntlet": "apps.play_gauntlet",
+    "rl.plot_card_representation_projection": "tools.analysis.plot_card_representation_projection",
+    "rl.pointer_policy": "rl.policies.pointer_policy",
+    "rl.probe_campfire": "tools.analysis.probe_campfire",
+    "rl.probe_cultist_bash_order": "tools.analysis.probe_cultist_bash_order",
+    "rl.probe_overworld_upgrade_value": "tools.analysis.probe_overworld_upgrade_value",
+    "rl.probe_two_louse": "tools.analysis.probe_two_louse",
+    "rl.probe_vector_rule_v7_memory": "tools.analysis.probe_vector_rule_v7_memory",
+    "rl.render_card_relic_rules": "tools.analysis.render_card_relic_rules",
+    "rl.render_rule_vector_examples": "rl.evaluation.rules.render_rule_vector_examples",
+    "rl.reward": "rl.training.reward",
+    "rl.ring_allreduce": "rl.training.ring_allreduce",
+    "rl.rllib_inference": "rl.policies.rllib_inference",
+    "rl.rllib_trainer": "rl.training.rllib_trainer",
+    "rl.route_dag_probe": "tools.analysis.route_dag_probe",
+    "rl.route_model_probe": "tools.analysis.route_model_probe",
+    "rl.rule_data": "rl.rules.rule_data",
+    "rl.rule_model": "rl.rules.rule_model",
+    "rl.rule_vector_model": "rl.rules.rule_vector_model",
+    "rl.run_parallel_nosl_eval": "rl.evaluation.nosl.run_parallel_nosl_eval",
+    "rl.semantic_reasoning_policy": "rl.policies.semantic_reasoning_policy",
+    "rl.split_policy": "rl.policies.split_policy",
+    "rl.ssh_transport": "rl.training.ssh_transport",
+    "rl.train_rule_vectors": "rl.rules.training.train_rule_vectors",
+    "rl.train_rule_vectors_v7": "rl.rules.training.train_rule_vectors_v7",
+    "rl.train_rules": "rl.rules.training.train_rules",
+    "rl.trainer": "rl.training.trainer",
+    "rl.vector_rule_data": "rl.rules.vector_rule_data",
+    "rl.vector_rule_stream": "rl.rules.vector_rule_stream",
+    "rl.vector_rule_v7_data": "rl.rules.vector_rule_v7_data",
+    "rl.visualize_card_vectors": "rl.rules.visualize_card_vectors",
+    "rl.visualize_vector_rule_card_pca": "tools.analysis.visualize_vector_rule_card_pca",
+    "rl.watch": "apps.watch",
+    "rl.wholerun_reasoning": "rl.policies.wholerun_reasoning"
+  },
+  "shell_entries": [
+    {
+      "path": "bridge/client/agent_orchestrator.bat",
+      "sha256": "d873121d90132f62e88d57517e19b2dcfac87e8a56fdec961c45711581412994",
+      "modules": [
+        "bridge.client.agent_orchestrator"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_distributed_wholerun.ps1",
+      "sha256": "eba40a4c55f91e69f9b05834c8d2e3de2f96b2221273ecf0fbbeabca7c56f1df",
+      "modules": [
+        "rl.distributed_sb3"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_nosl_fixed_fpu_20260909.sh",
+      "sha256": "520f4876cda7cfb56740c0d26757427c144e06e38015dc8597b28a358ae40a96",
+      "modules": [
+        "rl.distributed_sb3"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_nosl_paper_noetl_noreplay_e288_20260913.sh",
+      "sha256": "a8c93beb9b7327b2c892e087ec462dbab16c7359aeb3cfd3db3bc6c3ee949fb0",
+      "modules": [
+        "rl.distributed_sb3"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_nosl_paper_replay_fresh10_20260913.sh",
+      "sha256": "04dd4b12c1dcf64a80a1d0ac23d847689861ef9246fed02901c4a557a588e6f1",
+      "modules": [
+        "rl.distributed_sb3"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_vector_rule_v7_contract_v10.sh",
+      "sha256": "b09db3ba3564e634b9714fd3dd79fe155a1483d8f7286fb390bc6ee7354518bb",
+      "modules": [],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_vector_rule_v7_contract_v4.sh",
+      "sha256": "32aff2bfdef7135283ed60cfc37a3504a0f095dd55fd18162eaea4c0088903cb",
+      "modules": [
+        "rl.make_vector_rule_v7_data",
+        "rl.train_rule_vectors_v7"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/launch_vector_rule_v7_contract_v9.sh",
+      "sha256": "2cf7b4f25797991f396c5fa5f51962438290b640314d7fa2a0002339c9e67a54",
+      "modules": [
+        "rl.make_vector_rule_v7_data",
+        "rl.train_rule_vectors_v7"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "experiments/launchers/queue_nosl_az_unlimited.sh",
+      "sha256": "c1479f660d8c3c6152b021dc52d57839c66c8b0612dbfa80caae9a977087c082",
+      "modules": [
+        "rl.distributed_sb3"
+      ],
+      "script_references": [
+        "rl/queue_nosl_az_unlimited.sh"
+      ]
+    },
+    {
+      "path": "experiments/launchers/run_campfire_longterm.sh",
+      "sha256": "6e618af8e0d5a66544389544954bf8e90f4e0075fc9f5fea6938f09359ac9802",
+      "modules": [
+        "rl.probe_campfire"
+      ],
+      "script_references": []
+    },
+    {
+      "path": "rl/launch_nosl_fixed_fpu_20260909.sh",
+      "sha256": "5949c09c6d88a37252c1fbe3258b1e0ead2f7abe20568d641e706eadba771349",
+      "modules": [],
+      "script_references": [
+        "experiments/launchers/launch_nosl_fixed_fpu_20260909.sh"
+      ]
+    },
+    {
+      "path": "rl/launch_nosl_paper_noetl_noreplay_e288_20260913.sh",
+      "sha256": "40ab253300151037ffa7de93aaf231a47653b8adc81b26022ec4a9fadd8dcce5",
+      "modules": [],
+      "script_references": [
+        "experiments/launchers/launch_nosl_paper_noetl_noreplay_e288_20260913.sh"
+      ]
+    },
+    {
+      "path": "rl/launch_nosl_paper_replay_fresh10_20260913.sh",
+      "sha256": "3c9d96061c04e81260e2a28dd561b6a304f06081748af0bc5c80b3b78962edd0",
+      "modules": [],
+      "script_references": [
+        "experiments/launchers/launch_nosl_paper_replay_fresh10_20260913.sh"
+      ]
+    },
+    {
+      "path": "sim/build_local.sh",
+      "sha256": "b4140888cdca96f30d0fca6920756212e50fffc0eddfcd8f3bab12bcf532c8bc",
+      "modules": [],
+      "script_references": [
+        "sim/build_local.sh"
+      ]
+    },
+    {
+      "path": "tools/operations/pull_latest_ckpt.sh",
+      "sha256": "210b9024d2361fb113943a787c6f9b4145308db0bc371da2b6c06b639704c516",
+      "modules": [],
+      "script_references": [
+        "rl/pull_latest_ckpt.sh"
+      ]
+    }
+  ],
+  "native_executables": [
+    [
+      "main",
+      "apps/main.cpp"
+    ],
+    [
+      "test",
+      "apps/test.cpp"
+    ],
+    [
+      "small-test",
+      "apps/small-test.cpp"
+    ],
+    [
+      "nosl-combat-train",
+      "apps/nosl-combat-train.cpp"
+    ]
+  ]
+}

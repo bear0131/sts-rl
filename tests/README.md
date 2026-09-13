@@ -6,7 +6,7 @@
 ## Runtime and native build
 
 依赖只由根 pyproject.toml 声明，uv.lock 记录解析结果。不再分别维护 CI/远端 requirements。
-本地原生回归用 Python 3.11；元数据允许既有远端的 3.12，但本次未执行 3.12/native 或远端训练验证。
+CI 原生回归用 Python 3.11；元数据允许 3.12，切换解释器时必须重建并验证原生扩展。
 
     uv sync --locked --extra cpu --group test --no-dev --python 3.11
 
@@ -14,7 +14,7 @@ GPU 开发用 `--extra cuda --group test --python 3.11`，保留默认 dev 组�
 cpu/cuda 互斥，只选择 wheel 来源；训练/评估仍使用同一套运行时版本。macOS 继续使用 PyPI Torch。
 后续命令使用该环境的 `python`（或 `uv run --no-sync`），避免运行命令隐式重选安装配置。
 不选择 extra 时使用 PyPI 来源；需要复现时必须显式选 cpu/cuda。
-已有运行中的环境不自动 sync；此次仅做锁解析和独立路径的 dry-run，没有修改用户 .venv。
+已有运行中的实验环境应在停机维护或独立环境验证后再 sync。
 
 From the repository root:
 
@@ -94,11 +94,12 @@ for end-to-end cost. Use a sufficiently long run for utilization conclusions.
 ## Across-revision bitwise gate
 
 Use the same interpreter and explicit absolute STS_LIGHTSPEED_BUILD_DIR in both
-checkouts. The pre-refactor runtime is 9d2c6e1; e42a0cd adds the capture command
-without changing that runtime. Keep that revision available as a baseline checkout.
+checkouts. Record both exact revisions and keep the baseline checkout available.
+The baseline must contain the capture command; otherwise apply the same harness
+without changing the baseline runtime and record that change in the evidence.
 Do not compare compressed checkpoint bytes: zip metadata is not model semantics.
 
-    # In the baseline checkout (e42a0cd):
+    # In the baseline checkout:
     python -m tools.validation.bitwise capture --output runs/local/before.json
     # In the candidate checkout (substitute ABS_BASELINE with the absolute path):
     python -m tools.validation.bitwise capture --output runs/local/after.json --restore ABS_BASELINE/runs/local/before-checkpoints
@@ -111,13 +112,13 @@ evaluation observations/actions/values and native search outputs are compared by
 dtype/shape/raw-byte SHA256. The short-combat fixture grants Strength to complete
 fights; this is a correctness workload, not a gameplay quality experiment.
 
-For the provided real checkpoint, run a bounded strict-search evaluation in both
+For a real checkpoint, run a bounded strict-search evaluation in both
 checkouts (no remote operations, same 8-simulation seed-219 fixture):
 
     python -m tools.validation.eval_revisions --baseline-repo ABS_BASELINE --candidate-repo . --checkpoint CHECKPOINT --output-dir runs/local/real-eval
 
-The evaluator requires the legacy evaluation entrypoint in the baseline; 9d2c6e1
-and e42a0cd both have it. JSON bytes must match. The output directory must be new.
+The evaluator requires the legacy evaluation entrypoint in the baseline
+(`rl.eval_full_gumbel_bash_clash`). JSON bytes must match. The output directory must be new.
 An absolute shared native build is required. This validates CPU inference/search
 for this fixture, not four-rank SSH training, bf16 GPU equality, or resume-state
 continuity of a live remote experiment.
