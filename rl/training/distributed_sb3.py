@@ -2306,6 +2306,9 @@ def main() -> None:
                 "sync_mbps_mean": float(np.mean(sync_mbps)) if sync_mbps else 0.0,
                 "backward_sec": backward_seconds,
                 "gradient_pack_sec": gradient_pack_seconds,
+                # Averaging is included in sync_sec by the shared transport.
+                # Retain the historical W&B field without double-counting it.
+                "avg_grad_sec": 0.0,
                 "optimizer_step_sec": step_seconds,
                 "grad_bytes": grad_bytes,
                 "reasoning_loss": reasoning_mean["loss"],
