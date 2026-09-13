@@ -27,19 +27,3 @@ def test_take_batch_consumes_once_without_padding_or_replay():
     assert take_batch(values, 2) == [2, 3]
     assert take_batch(values, 2) == [4]
     assert take_batch(values, 2) == []
-
-
-def test_fixed_file_reuse_requires_explicit_flag():
-    from rl.rules.training.train_rule_vectors import build_parser, train
-
-    args = build_parser().parse_args(["missing-v6.jsonl", "--epochs", "2"])
-    with pytest.raises(ValueError, match="allow-data-reuse"):
-        train(args)
-
-
-def test_stream_mode_requires_a_step_budget():
-    from rl.rules.training.train_rule_vectors import build_parser, train
-
-    args = build_parser().parse_args(["--stream-command", "producer"])
-    with pytest.raises(ValueError, match="stream-steps"):
-        train(args)

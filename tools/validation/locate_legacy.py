@@ -30,6 +30,9 @@ def main():
     if args.old_path:
         key = args.old_path.replace("\\", "/")
         registry = json.loads((ROOT / "tools/validation/migrations.json").read_text(encoding="utf-8"))
+        if key in registry.get("retired", {}):
+            print("retired: " + registry["retired"][key])
+            return
         for mapping in (registry["files"], registry["launchers"], registry["modules"]):
             if key in mapping:
                 entry = mapping[key]

@@ -2,7 +2,6 @@
 
 - `eval.py`：whole-run policy 评估，胜负/统计/CSV。
 - `eval_combat.py`：combat task。
-- `eval_hybrid.py`：RLlib policy_state 与 SB3 checkpoint 按 combat/map phase 路由组合。
 - `nosl/`：corpus replay、搜索方法比较、Bash/Clash 固定场景、HP 敏感性。包含真实执行逻辑，不是单元测试，也不只是 config。
 - `rules/`：规则模型 accuracy、生成、场景解释；shared fixture 尚有私有函数复用，后续按协议抽取。
 - `baselines/`：leftmost/starter 等独立基线，环境限制和玩法不等价于普通 checkpoint eval。

@@ -1,7 +1,6 @@
 """Whole-run policy with anonymous card programs and interactive reasoning.
 
-The model is initialized from scratch.  It deliberately has no dependency on
-``rl.rules.rule_model`` and offers no rule-checkpoint loading path.
+The model is initialized from scratch without a rule-checkpoint loading path.
 """
 
 from __future__ import annotations

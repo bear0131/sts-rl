@@ -36,7 +36,7 @@ def test_runtime_does_not_depend_on_apps_tools_tests_or_legacy_modules():
 
 @pytest.mark.parametrize("legacy", [
     "rl.accumulating_ppo", "rl.model", "rl.pointer_policy", "rl.split_policy",
-    "rl.semantic_reasoning_policy", "rl.rule_model", "rl.rule_vector_model",
+    "rl.semantic_reasoning_policy", "rl.rule_vector_model",
     "rl.nosl_is_az", "rl.nosl_replay", "rl.nosl_sampler", "rl.distributed_sb3",
     "rl.eval", "rl.dashboard", "rl.watch",
 ])
