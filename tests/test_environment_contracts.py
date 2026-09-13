@@ -11,8 +11,6 @@ import slaythespire as sts
 pytestmark = pytest.mark.native
 
 
-@pytest.mark.xfail(reason="F08: backend recreation loses the seeded episode stream",
-                   strict=True, raises=AssertionError)
 def test_auto_reset_reproduces_episode_seed_stream():
     streams = []
     for _ in range(2):

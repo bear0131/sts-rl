@@ -275,7 +275,9 @@ class SlayTheSpireEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
-        self.thick.reset(seed=seed)
+        # A new backend must continue Gym's seeded episode stream on autoreset.
+        backend_seed = seed if seed is not None else int(self.np_random.integers(0, 2**63))
+        self.thick.reset(seed=backend_seed)
         self._pending = None
         self._multi = None
         self._nosl_is_az_session = None

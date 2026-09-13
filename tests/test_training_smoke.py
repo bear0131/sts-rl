@@ -64,8 +64,6 @@ def test_optimizer_checkpoint_and_prediction_roundtrip(tmp_path, hierarchical):
 
 
 @pytest.mark.parametrize("hierarchical", [False, True])
-@pytest.mark.xfail(reason="F08: autoreset RNG currently breaks repeated training",
-                   strict=True, raises=AssertionError)
 def test_repeated_cpu_training_is_bitwise_equal(hierarchical):
     first, env1 = train_once(hierarchical)
     try:
