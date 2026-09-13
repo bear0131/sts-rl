@@ -104,7 +104,7 @@ def parse_peer(text: str) -> Peer:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(fromfile_prefix_chars="@", description=__doc__)
     parser.add_argument("--rank", type=int, required=True)
     parser.add_argument("--world-size", type=int, required=True)
     parser.add_argument(

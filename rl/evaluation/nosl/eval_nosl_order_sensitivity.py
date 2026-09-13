@@ -40,24 +40,7 @@ from rl.policies import pointer_policy as _pointer_policy  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
 
 
-# The first three fillers are Defends, making the initial hand contain no
-# second attack/skill that would obscure the two cards under test.  The rest of
-# the deck deliberately mixes ordinary attacks, skills, and powers so the next
-# hand can have materially different HP outcomes; this is not a curse-only
-# draw-pile probe.
-FILLER_CARDS = (
-    "DEFEND_RED", "DEFEND_RED", "DEFEND_RED", "ANGER", "CLEAVE", "WARCRY",
-    "FLEX", "IRON_WAVE", "BODY_SLAM", "TRUE_GRIT", "SHRUG_IT_OFF", "CLASH",
-    "THUNDERCLAP", "POMMEL_STRIKE", "TWIN_STRIKE", "CLOTHESLINE", "HAVOC",
-    "HEADBUTT",
-)
-SCENARIOS = {
-    "bash_plus_strike": (("BASH", 1), ("STRIKE_RED", 0)),
-    "armaments_plus_strike": (("ARMAMENTS", 1), ("STRIKE_RED", 0)),
-    # All remaining cards are attacks so Clash becomes legal immediately
-    # after Bash removes the only skill from the hand.
-    "bash_plus_clash": (("BASH", 0), ("CLASH", 0)),
-}
+from configs.eval.nosl_scenarios import FILLER_CARDS, SCENARIOS
 
 
 def _jsonable(value: Any) -> Any:

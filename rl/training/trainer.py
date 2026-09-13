@@ -349,7 +349,7 @@ def build_parser(task) -> argparse.ArgumentParser:
     """Full parser for a chosen task: shared PPO/infra args + the task's own
     args, with the task's preferred defaults applied last so an explicit CLI
     flag still wins over them."""
-    parser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(fromfile_prefix_chars="@",
         description=f"Train MaskablePPO ({task.name} task).",
     )
     # --task is consumed in the pre-parse (see main); declared here so it shows
@@ -513,7 +513,7 @@ def build_parser(task) -> argparse.ArgumentParser:
 
 def main() -> None:
     # Pre-parse only --task so we can build the task-aware full parser.
-    pre = argparse.ArgumentParser(add_help=False)
+    pre = argparse.ArgumentParser(fromfile_prefix_chars="@", add_help=False)
     pre.add_argument("--task", choices=sorted(TASKS))
     known, _ = pre.parse_known_args()
     if known.task is None:

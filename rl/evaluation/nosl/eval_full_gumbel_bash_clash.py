@@ -274,7 +274,7 @@ def _run_one(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(fromfile_prefix_chars="@", description=__doc__)
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("--seeds", nargs="+", type=int,
                         default=[219, 357, 454, 575, 605])

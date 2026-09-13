@@ -1,0 +1,99 @@
+{
+  "FILLER_CARDS": [
+    "DEFEND_RED",
+    "DEFEND_RED",
+    "DEFEND_RED",
+    "ANGER",
+    "CLEAVE",
+    "WARCRY",
+    "FLEX",
+    "IRON_WAVE",
+    "BODY_SLAM",
+    "TRUE_GRIT",
+    "SHRUG_IT_OFF",
+    "CLASH",
+    "THUNDERCLAP",
+    "POMMEL_STRIKE",
+    "TWIN_STRIKE",
+    "CLOTHESLINE",
+    "HAVOC",
+    "HEADBUTT"
+  ],
+  "SCENARIOS": {
+    "bash_plus_strike": [
+      [
+        "BASH",
+        1
+      ],
+      [
+        "STRIKE_RED",
+        0
+      ]
+    ],
+    "armaments_plus_strike": [
+      [
+        "ARMAMENTS",
+        1
+      ],
+      [
+        "STRIKE_RED",
+        0
+      ]
+    ],
+    "bash_plus_clash": [
+      [
+        "BASH",
+        0
+      ],
+      [
+        "CLASH",
+        0
+      ]
+    ]
+  },
+  "FILLER_PROFILES": {
+    "two_cards": [],
+    "strict_root_normal_draw": [
+      "BLUDGEON",
+      "BLUDGEON",
+      "BLUDGEON",
+      "BLUDGEON",
+      "BLUDGEON",
+      "BLOOD_FOR_BLOOD",
+      "BLOOD_FOR_BLOOD",
+      "BLOOD_FOR_BLOOD",
+      "BLOOD_FOR_BLOOD",
+      "BLOOD_FOR_BLOOD",
+      "STRIKE_RED",
+      "DEFEND_RED",
+      "IRON_WAVE",
+      "POMMEL_STRIKE",
+      "SHRUG_IT_OFF",
+      "ANGER",
+      "CLEAVE",
+      "TRUE_GRIT",
+      "FLEX",
+      "THUNDERCLAP"
+    ],
+    "strikes": [
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED",
+      "STRIKE_RED"
+    ],
+    "mixed_attacks": [
+      "STRIKE_RED",
+      "CLEAVE",
+      "IRON_WAVE",
+      "BODY_SLAM",
+      "HEADBUTT",
+      "POMMEL_STRIKE",
+      "TWIN_STRIKE",
+      "THUNDERCLAP"
+    ]
+  }
+}

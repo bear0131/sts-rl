@@ -41,7 +41,7 @@ from rl.policies import split_policy as _split_policy  # noqa: F401
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(fromfile_prefix_chars="@",
         description=(
             "Evaluate MaskablePPO from floor 1 on complete SlayTheSpireEnv runs "
             "and report the death-floor distribution."

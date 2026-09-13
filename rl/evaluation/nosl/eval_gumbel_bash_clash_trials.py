@@ -29,27 +29,7 @@ from rl.evaluation.nosl.eval_nosl_order_sensitivity import (
 from env.search.nosl_sampler import NOSLSampler
 
 
-FILLER_PROFILES = {
-    "two_cards": (),
-    # Keep the future draw pile non-empty while making the opening hand a
-    # strict two-choice root.  Bludgeon is an Attack (so Clash remains legal)
-    # but costs 3, hence it is masked at the controlled energy=2 root.  The
-    # remaining ordinary cards stay in the draw pile and preserve NOSL future
-    # variation after the first card.
-    "strict_root_normal_draw": (
-        "BLUDGEON", "BLUDGEON", "BLUDGEON", "BLUDGEON", "BLUDGEON",
-        "BLOOD_FOR_BLOOD", "BLOOD_FOR_BLOOD", "BLOOD_FOR_BLOOD",
-        "BLOOD_FOR_BLOOD", "BLOOD_FOR_BLOOD",
-        "STRIKE_RED", "DEFEND_RED", "IRON_WAVE", "POMMEL_STRIKE",
-        "SHRUG_IT_OFF", "ANGER", "CLEAVE", "TRUE_GRIT", "FLEX",
-        "THUNDERCLAP",
-    ),
-    "strikes": ("STRIKE_RED",) * 8,
-    "mixed_attacks": (
-        "STRIKE_RED", "CLEAVE", "IRON_WAVE", "BODY_SLAM",
-        "HEADBUTT", "POMMEL_STRIKE", "TWIN_STRIKE", "THUNDERCLAP",
-    ),
-}
+from configs.eval.nosl_scenarios import FILLER_PROFILES
 
 
 def _hand(env) -> list[dict[str, object]]:
