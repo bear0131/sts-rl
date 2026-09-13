@@ -27,3 +27,8 @@ rl/bughunt_out/
 .vscode/
 *.swp
 .DS_Store
+
+# Local correctness/performance evidence, never source inputs
+artifacts/local/
+.pytest_cache/
+sim/sts_lightspeed/build-*/
