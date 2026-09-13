@@ -28,7 +28,7 @@ python -m apps.watch CHECKPOINT
 python -m apps.dashboard --help
 ```
 
-本地 Python 3.11 与 pyproject.toml/uv.lock 对齐；远端历史训练镜像有 Python 3.12，不能混用其 .so 与本地 .pyd。Torch 和 native 构建身份属于复现条件。
+依赖只维护 pyproject.toml 和 uv.lock：`uv sync --locked --extra cpu --group test --no-dev --python 3.11`；GPU 开发选 `--extra cuda`。具体构建与选择方式见 tests/README。允许既有远端 Python 3.12，但此次仅验证本地 3.11；native 二进制不能跨解释器混用。
 当前实验的已知设置见 configs/README.md，原始说明快照见 worklog/archive/input；它不是远端实时状态。旧 `python -m rl.<module>` 和 checkpoint 模块名继续兼容，新代码使用归属包。
 
 规范：[AGENTS](AGENTS.md)；问题与完整证据：[TODO](TODO.md)。阶段报告从 [docs](docs/README.md) 按文件标题查阅。

@@ -1656,6 +1656,10 @@
       "path": "runs/legacy/root/prof3",
       "sha256": "8c345b5b083df5d3db73ceca2c843244040382af10d8942ad306de5eb2211b59"
     },
+    "requirements/ci.txt": {
+      "path": "pyproject.toml",
+      "relocated_metadata": true
+    },
     "rl/RLLIB.md": {
       "path": "docs/archive/protocols/RLLIB.md",
       "sha256": "fbda82ef0cf652fb4f0d49c8a94e14b5017ad826887a0d11ea374c1ccf75132d"
@@ -1663,6 +1667,10 @@
     "rl/RULE_MODEL.md": {
       "path": "docs/archive/protocols/RULE_MODEL.md",
       "sha256": "ba211c44bde689cbc134a15e8c15b443faa86e5a74363b79ef3fdd509e6b02d3"
+    },
+    "rl/requirements.txt": {
+      "path": "pyproject.toml",
+      "relocated_metadata": true
     },
     "rl/runs/whole-run/20260624-234126/checkpoints/maskable_ppo_1000000_steps.zip": {
       "local_only": true,

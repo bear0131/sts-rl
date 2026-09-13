@@ -5,14 +5,19 @@
 
 ## Runtime and native build
 
-Use Python 3.11 and an isolated environment. Install a Torch wheel suitable for
-your platform; CPU CI installs torch==2.12.0 from the official CPU wheel index.
-Then install requirements/ci.txt. The tested developer machine uses
-torch==2.12.0+cu132; do not replace an existing GPU environment just to run CI.
+依赖只由根 pyproject.toml 声明，uv.lock 记录解析结果。不再分别维护 CI/远端 requirements。
+本地原生回归用 Python 3.11；元数据允许既有远端的 3.12，但本次未执行 3.12/native 或远端训练验证。
+
+    uv sync --locked --extra cpu --group test --no-dev --python 3.11
+
+GPU 开发用 `--extra cuda --group test --python 3.11`，保留默认 dev 组中的 W&B/TensorBoard/Plotly。
+cpu/cuda 互斥，只选择 wheel 来源；训练/评估仍使用同一套运行时版本。macOS 继续使用 PyPI Torch。
+后续命令使用该环境的 `python`（或 `uv run --no-sync`），避免运行命令隐式重选安装配置。
+不选择 extra 时使用 PyPI 来源；需要复现时必须显式选 cpu/cuda。
+已有运行中的环境不自动 sync；此次仅做锁解析和独立路径的 dry-run，没有修改用户 .venv。
 
 From the repository root:
 
-    python -m pip install -r requirements/ci.txt cmake ninja
     cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-ci -G Ninja -DPYBIND11_FINDPYTHON=ON -DSTS_ENABLE_RULE_TRACE=ON
     cmake --build sim/sts_lightspeed/build-ci --target slaythespire --parallel 2
 

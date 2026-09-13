@@ -1,9 +1,0 @@
-# Python 3.11. Install the CPU Torch wheel separately in CI.
-numpy==2.4.6
-gymnasium==1.0.0
-stable-baselines3==2.9.0
-sb3-contrib==2.9.0
-ray[rllib]==2.48.0
-pytest==9.1.1
-pytest-timeout==2.4.0
-psutil==7.2.2
