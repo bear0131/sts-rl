@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import math
 import mimetypes
@@ -26,7 +27,8 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.save_util import load_from_zip_file
 
 from env.core import action_space as A
-from env.core.run_env import SlayTheSpireEnv
+from env.core.run_env import SlayTheSpireEnv, unpack_nosl_observation_buffer
+import slaythespire as sts
 from rl.eval import is_win
 from rl.visualize_card_vectors import (
     extract_state_dict_vectors,
@@ -70,6 +72,49 @@ DEFAULT_HYBRID_COMBAT_CHECKPOINT = Path(
         r"C:\Users\Tony2\Downloads\maskable_ppo_6400000_steps.zip",
     )
 )
+def _default_dashboard_checkpoint() -> Path | None:
+    """Pick the newest local training checkpoint for a no-argument launch.
+
+    An explicit ``STS_RL_CHECKPOINT`` always wins.  Otherwise prefer the
+    newest ``nosl_az_*_steps.zip`` under ``artifacts``; this keeps the normal
+    ``uv run python -m rl.dashboard`` command on the latest downloaded model
+    without hard-coding a step number.
+    """
+    configured = os.environ.get("STS_RL_CHECKPOINT")
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_file() else None
+    root = PROJECT_ROOT / "artifacts"
+    candidates = list(root.glob("**/nosl_az_*_steps.zip")) if root.is_dir() else []
+    if not candidates:
+        return None
+    def checkpoint_rank(path: Path) -> tuple[float, int]:
+        match = re.search(r"(\d+)_steps\.zip$", path.name)
+        step = int(match.group(1)) if match else -1
+        return path.stat().st_mtime, step
+    return max(candidates, key=checkpoint_rank)
+
+
+def _observation_for_policy(model: Any, observation: dict) -> dict:
+    """Drop fields introduced after a legacy checkpoint was saved.
+
+    SB3's ``obs_to_tensor`` indexes every key in the checkpoint observation
+    space and therefore rejects an otherwise harmless extra field.  The live
+    environment may expose newer fields (currently the end-turn boundary
+    marker), so filter at this boundary while preserving all keys expected by
+    the loaded model.  New checkpoints simply pass through unchanged.
+    """
+    space = getattr(model, "observation_space", None)
+    spaces_dict = getattr(space, "spaces", None)
+    if not spaces_dict:
+        policy = getattr(model, "policy", None)
+        policy_space = getattr(policy, "observation_space", None)
+        spaces_dict = getattr(policy_space, "spaces", None)
+    if not spaces_dict:
+        return observation
+    return {key: value for key, value in observation.items() if key in spaces_dict}
+
+
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 # Interactive combat search follows the C++ neural NOSL-IS-AZ configuration
@@ -81,6 +126,8 @@ DEFAULT_MCTS_SIMULATIONS = 512
 MAX_MCTS_SIMULATIONS = 4096
 DEFAULT_MCTS_DEPTH = 0
 MAX_MCTS_DEPTH = 256
+DEFAULT_EVAL_WORKERS = 4
+MAX_EVAL_WORKERS = 64
 DEFAULT_MCTS_PRIOR_TEMPERATURE = 1.0
 MIN_MCTS_PRIOR_TEMPERATURE = 0.05
 MAX_MCTS_PRIOR_TEMPERATURE = 20.0
@@ -308,6 +355,7 @@ def _evaluation_search_config(
     *,
     simulations: int | None = None,
     depth: int | None = None,
+    leaf_batch_size: int | None = None,
     prior_temperature: float | None = None,
     search_mode: str | None = None,
     gumbel_candidates: int | None = None,
@@ -316,6 +364,10 @@ def _evaluation_search_config(
     gumbel_max_visit_init: float | None = None,
     gumbel_rescale_q: bool | None = None,
     gumbel_use_mixed_value: bool | None = None,
+    gumbel_interior_uniformity: float | None = None,
+    gumbel_interior_coverage_fraction: float | None = None,
+    gumbel_interior_value_mode: int | None = None,
+    end_turn_as_leaf: bool | None = None,
 ) -> dict[str, Any]:
     supported = _supports_neural_nosl(model)
     default_simulations = _clamp_int(
@@ -346,6 +398,13 @@ def _evaluation_search_config(
         0,
         MAX_MCTS_DEPTH,
     )
+    selected_leaf_batch_size = _clamp_int(
+        _model_search_param(model, "nosl_is_az_leaf_batch_size", 64)
+        if leaf_batch_size is None else leaf_batch_size,
+        64,
+        1,
+        256,
+    )
     default_prior_temperature = _clamp_float(
         _model_search_param(
             model,
@@ -371,6 +430,9 @@ def _evaluation_search_config(
     selected_mode = _normalize_search_mode(
         saved_mode if search_mode is None else search_mode,
         saved_mode,
+    )
+    paper_full_gumbel = _model_search_bool(
+        model, "nosl_is_az_paper_full_gumbel", False
     )
     if selected_simulations <= 0:
         selected_mode = "direct"
@@ -408,6 +470,41 @@ def _evaluation_search_config(
     selected_mixed_value = _model_search_bool(
         model, "nosl_is_az_gumbel_use_mixed_value", True
     ) if gumbel_use_mixed_value is None else bool(gumbel_use_mixed_value)
+    selected_interior_uniformity = _clamp_float(
+        _model_search_param(model, "nosl_is_az_gumbel_interior_uniformity", 0.0)
+        if gumbel_interior_uniformity is None else gumbel_interior_uniformity,
+        0.0, 0.0, 1.0,
+    )
+    selected_coverage_fraction = _clamp_float(
+        _model_search_param(
+            model, "nosl_is_az_gumbel_interior_coverage_fraction", 0.0
+        ) if gumbel_interior_coverage_fraction is None
+        else gumbel_interior_coverage_fraction,
+        0.0, 0.0, 1.0,
+    )
+    selected_value_mode = (
+        2 if gumbel_interior_value_mode is None
+        else int(gumbel_interior_value_mode)
+    )
+    selected_end_turn_as_leaf = _model_search_bool(
+        model, "nosl_is_az_end_turn_as_leaf", False
+    ) if end_turn_as_leaf is None else bool(end_turn_as_leaf)
+    if paper_full_gumbel:
+        # Keep the dashboard's reported/requested settings identical to the
+        # native strict-paper canonicalization.  In particular, mctx's
+        # default max_num_considered_actions is 16; zero means "all legal"
+        # only in the legacy project mode.
+        selected_mode = "full_gumbel"
+        selected_candidates = 16
+        selected_prior_temperature = 1.0
+        selected_gumbel_scale = 1.0
+        selected_gumbel_value_scale = 0.1
+        selected_gumbel_max_visit_init = 50.0
+        selected_rescale_q = True
+        selected_mixed_value = True
+        selected_interior_uniformity = 0.0
+        selected_coverage_fraction = 0.0
+        selected_value_mode = 0
     if selected_simulations > 0 and not supported and selected_mode != "direct":
         raise ValueError(
             "this checkpoint does not expose the combat policy/value heads "
@@ -423,12 +520,13 @@ def _evaluation_search_config(
         "search_mode": selected_mode,
         "search_mode_label": SEARCH_MODE_LABELS[selected_mode],
         "root_search_mode": SEARCH_MODE_IDS.get(selected_mode, 0),
+        "paper_full_gumbel": paper_full_gumbel,
         "simulations": selected_simulations,
         "depth": selected_depth,
         "c_puct": _model_search_float(model, "nosl_is_az_c_puct", 1.5),
         "prior_temperature": selected_prior_temperature,
         "leaf_batch_size": _clamp_int(
-            _model_search_param(model, "nosl_is_az_leaf_batch_size", 64),
+            selected_leaf_batch_size,
             64,
             1,
             256,
@@ -442,6 +540,10 @@ def _evaluation_search_config(
         "gumbel_max_visit_init": selected_gumbel_max_visit_init,
         "gumbel_rescale_q": selected_rescale_q,
         "gumbel_use_mixed_value": selected_mixed_value,
+        "gumbel_interior_uniformity": selected_interior_uniformity,
+        "gumbel_interior_coverage_fraction": selected_coverage_fraction,
+        "gumbel_interior_value_mode": selected_value_mode,
+        "end_turn_as_leaf": selected_end_turn_as_leaf,
         # Evaluation selects the root visit argmax and never injects training noise.
         "stochastic": False,
         "dirichlet_alpha": 0.0,
@@ -456,6 +558,9 @@ class EvaluationNOSLSearch:
         self.model = model
         self.model_lock = model_lock
         self.config = dict(config)
+        self.mcts_paper_full_gumbel = bool(
+            self.config.get("paper_full_gumbel", False)
+        )
         self.policy = getattr(model, "policy", None)
         self.core = getattr(self.policy, "core", None)
         if self.policy is None or self.core is None or not hasattr(
@@ -470,7 +575,9 @@ class EvaluationNOSLSearch:
     def _root_outputs(self, observation) -> tuple[np.ndarray, float]:
         import torch
 
-        obs_tensor, _ = self.policy.obs_to_tensor(observation)
+        obs_tensor, _ = self.policy.obs_to_tensor(
+            _observation_for_policy(self.model, observation)
+        )
         with self.model_lock, torch.inference_mode():
             logits, values = self.core.actor_critic(obs_tensor)
         return (
@@ -478,14 +585,24 @@ class EvaluationNOSLSearch:
             float(values.detach().float().reshape(-1)[0].cpu().item()),
         )
 
-    def _leaf_updates(self, leaves) -> list[tuple[int, float, np.ndarray]]:
+    def _leaf_updates(self, response) -> list[tuple[int, float, np.ndarray]]:
         import torch
         from stable_baselines3.common.utils import obs_as_tensor
 
-        observations = {
-            key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-            for key in leaves[0]["observation"]
-        }
+        if isinstance(response, list):
+            response = {"leaves": response}
+        leaves = response.get("leaf_meta", ())
+        packed = unpack_nosl_observation_buffer(response)
+        if packed is not None and leaves:
+            observations = {
+                key: np.ascontiguousarray(value) for key, value in packed.items()
+            }
+        else:
+            leaves = response.get("leaves", ())
+            observations = {
+                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
+                for key in leaves[0]["observation"]
+            }
         obs_tensor = obs_as_tensor(observations, self.model.device)
         with self.model_lock, torch.inference_mode():
             if self.compact_observations:
@@ -547,6 +664,7 @@ class EvaluationNOSLSearch:
                 c_puct=float(self.config["c_puct"]),
                 leaf_batch_size=int(self.config["leaf_batch_size"]),
                 prior_temperature=float(self.config["prior_temperature"]),
+                end_turn_as_leaf=bool(self.config.get("end_turn_as_leaf", False)),
                 dirichlet_alpha=0.0,
                 dirichlet_epsilon=0.0,
                 root_value=root_value,
@@ -565,19 +683,28 @@ class EvaluationNOSLSearch:
                 gumbel_use_mixed_value=bool(
                     self.config.get("gumbel_use_mixed_value", True)
                 ),
+                gumbel_interior_uniformity=float(
+                    self.config.get("gumbel_interior_uniformity", 0.0)
+                ),
+                gumbel_interior_coverage_fraction=float(
+                    self.config.get("gumbel_interior_coverage_fraction", 0.0)
+                ),
+                paper_full_gumbel=bool(
+                    self.config.get("paper_full_gumbel", False)
+                ),
                 stochastic=False,
                 decision_index=int(decision_index),
                 compact_observation=self.compact_observations,
             )
             while not response.get("done", False):
-                leaves = response.get("leaves", ())
+                leaves = response.get("leaf_meta", ())
                 if not leaves:
                     raise RuntimeError(
                         "neural NOSL returned no leaves before search completion"
                     )
                 leaf_evaluations += len(leaves)
                 response = base.nosl_is_az_cpp_backprop_and_leaf_batch(
-                    self._leaf_updates(leaves),
+                    self._leaf_updates(response),
                     max_leaves=int(self.config["leaf_batch_size"]),
                 )
         except Exception:
@@ -639,6 +766,9 @@ class WatchSession:
             self._model_search_param("nosl_is_az_depth", DEFAULT_MCTS_DEPTH),
             DEFAULT_MCTS_DEPTH, 0, MAX_MCTS_DEPTH,
         )
+        self.mcts_end_turn_as_leaf = _model_search_bool(
+            model, "nosl_is_az_end_turn_as_leaf", True
+        )
         self.mcts_prior_temperature = _clamp_float(
             self._model_search_param(
                 "nosl_is_az_prior_temperature",
@@ -649,11 +779,9 @@ class WatchSession:
             MAX_MCTS_PRIOR_TEMPERATURE,
         )
         self.mcts_c_puct = self._model_search_float("nosl_is_az_c_puct", 1.5)
-        self.mcts_search_mode = _normalize_search_mode(
-            self._model_search_param(
-                "nosl_is_az_search_mode",
-                self._model_search_param("nosl_is_az_root_search_mode", "puct"),
-            )
+        self.mcts_search_mode = "full_gumbel"
+        self.mcts_paper_full_gumbel = _model_search_bool(
+            model, "nosl_is_az_paper_full_gumbel", False
         )
         self.mcts_root_search_mode = SEARCH_MODE_IDS.get(
             self.mcts_search_mode, 0
@@ -667,8 +795,8 @@ class WatchSession:
             1.0, 0.0, MAX_GUMBEL_SCALE,
         )
         self.mcts_gumbel_value_scale = _clamp_float(
-            self._model_search_param("nosl_is_az_gumbel_value_scale", 0.1),
-            0.1, 0.0, MAX_GUMBEL_VALUE_SCALE,
+            self._model_search_param("nosl_is_az_gumbel_value_scale", 3.0),
+            3.0, 0.0, MAX_GUMBEL_VALUE_SCALE,
         )
         self.mcts_gumbel_max_visit_init = _clamp_float(
             self._model_search_param("nosl_is_az_gumbel_max_visit_init", 50.0),
@@ -680,13 +808,27 @@ class WatchSession:
         self.mcts_gumbel_use_mixed_value = _model_search_bool(
             model, "nosl_is_az_gumbel_use_mixed_value", True
         )
+        self.mcts_gumbel_interior_uniformity = _clamp_float(
+            self._model_search_param(
+                "nosl_is_az_gumbel_interior_uniformity", 0.0
+            ), 0.0, 0.0, 1.0
+        )
+        self.mcts_gumbel_interior_coverage_fraction = _clamp_float(
+            self._model_search_param(
+                "nosl_is_az_gumbel_interior_coverage_fraction", 0.4
+            ), 0.4, 0.0, 1.0
+        )
+        self.mcts_gumbel_interior_value_mode = int(
+            self._model_search_param("nosl_is_az_gumbel_interior_value_mode", 2)
+        )
         self.mcts_leaf_batch_size = _clamp_int(
-            self._model_search_param("nosl_is_az_leaf_batch_size", 64),
-            64, 1, 256,
+            self._model_search_param("nosl_is_az_leaf_batch_size", 1),
+            1, 1, 256,
         )
         self.mcts_master_nonce = int(
             self._model_search_param("nosl_is_az_master_nonce", MCTS_MASTER_NONCE)
         )
+        self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
         self.precompute_enabled = False
         self._mcts_sampler = NOSLSampler(MCTS_MASTER_NONCE)
@@ -699,6 +841,23 @@ class WatchSession:
     def _model_search_float(self, name: str, default: float) -> float:
         return _model_search_float(self.model, name, default)
 
+    def _apply_paper_full_gumbel_defaults(self):
+        """Keep Watch's displayed/native settings on the mctx paper path."""
+        if not self.mcts_paper_full_gumbel:
+            return
+        self.mcts_search_mode = "full_gumbel"
+        self.mcts_root_search_mode = SEARCH_MODE_IDS["full_gumbel"]
+        self.mcts_prior_temperature = 1.0
+        self.mcts_gumbel_candidates = 16
+        self.mcts_gumbel_scale = 1.0
+        self.mcts_gumbel_value_scale = 0.1
+        self.mcts_gumbel_max_visit_init = 50.0
+        self.mcts_gumbel_rescale_q = True
+        self.mcts_gumbel_use_mixed_value = True
+        self.mcts_gumbel_interior_uniformity = 0.0
+        self.mcts_gumbel_interior_coverage_fraction = 0.0
+        self.mcts_gumbel_interior_value_mode = 0
+
     def close(self):
         self.env.close()
 
@@ -708,6 +867,7 @@ class WatchSession:
         precompute: bool = False,
         simulations: int | None = None,
         depth: int | None = None,
+        leaf_batch_size: int | None = None,
         prior_temperature: float | None = None,
         search_mode: str | None = None,
         gumbel_candidates: int | None = None,
@@ -716,6 +876,10 @@ class WatchSession:
         gumbel_max_visit_init: float | None = None,
         gumbel_rescale_q: bool | None = None,
         gumbel_use_mixed_value: bool | None = None,
+        gumbel_interior_uniformity: float | None = None,
+        gumbel_interior_coverage_fraction: float | None = None,
+        gumbel_interior_value_mode: int | None = None,
+        end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
     ):
         self.seed = int(seed)
@@ -732,6 +896,13 @@ class WatchSession:
                 DEFAULT_MCTS_DEPTH,
                 0,
                 MAX_MCTS_DEPTH,
+            )
+        if leaf_batch_size is not None:
+            self.mcts_leaf_batch_size = _clamp_int(
+                leaf_batch_size,
+                self.mcts_leaf_batch_size,
+                1,
+                256,
             )
         if prior_temperature is not None:
             self.mcts_prior_temperature = _clamp_float(
@@ -771,6 +942,20 @@ class WatchSession:
             self.mcts_gumbel_rescale_q = bool(gumbel_rescale_q)
         if gumbel_use_mixed_value is not None:
             self.mcts_gumbel_use_mixed_value = bool(gumbel_use_mixed_value)
+        if gumbel_interior_uniformity is not None:
+            self.mcts_gumbel_interior_uniformity = _clamp_float(
+                gumbel_interior_uniformity, self.mcts_gumbel_interior_uniformity,
+                0.0, 1.0
+            )
+        if gumbel_interior_coverage_fraction is not None:
+            self.mcts_gumbel_interior_coverage_fraction = _clamp_float(
+                gumbel_interior_coverage_fraction,
+                self.mcts_gumbel_interior_coverage_fraction, 0.0, 1.0
+            )
+        if gumbel_interior_value_mode is not None:
+            self.mcts_gumbel_interior_value_mode = max(0, min(2, int(gumbel_interior_value_mode)))
+        if end_turn_as_leaf is not None:
+            self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
         self.precompute_enabled = bool(precompute)
@@ -793,10 +978,79 @@ class WatchSession:
             return self.precompute_run()
         return self.snapshot()
 
+    def apply_custom_state(self, spec: dict):
+        """Construct a combat from an editor-supplied state and enter Watch.
+
+        The native simulator remains authoritative: encounter construction,
+        card legality, intent execution and NOSL search all operate on the
+        resulting BattleContext.  ``move`` is intentionally a one-turn
+        override; ending the turn lets the simulator roll the next intent.
+        """
+        if not isinstance(spec, dict):
+            raise ValueError("自定义状态必须是 JSON 对象")
+        thick = self.env.unwrapped.thick
+        if thick is None:
+            self.reset(self.seed)
+            thick = self.env.unwrapped.thick
+        encounter = str(spec.get("encounter") or "Cultist")
+        names = set(sts.encounter_names())
+        if encounter not in names:
+            raise ValueError(f"未知敌人/战斗：{encounter}")
+        player = spec.get("player") or {}
+        relics = spec.get("relics")
+        if relics is not None:
+            if isinstance(relics, dict):
+                relics = [
+                    {"id": str(k), "counter": int(v)}
+                    for k, v in relics.items()
+                ]
+            relic_ids = [
+                (x.get("id") if isinstance(x, dict) else str(x))
+                for x in relics
+            ]
+            # set_relics accepts stable simulator ids and preserves counters
+            # only when supplied through relic_state; use the richer API when
+            # available, otherwise fall back to ids.
+            try:
+                thick.gc.set_relic_state(relics)
+            except Exception:
+                thick.gc.set_relics(relic_ids)
+        if "hp" in player:
+            thick.gc.cur_hp = int(player["hp"])
+        if "max_hp" in player:
+            thick.gc.max_hp = int(player["max_hp"])
+        thick.bc = sts.create_battle(thick.gc, encounter)
+        thick.bc.apply_custom_state(spec)
+        # The thin wrapper caches phase/legal masks and the model observation.
+        self.env._pending = None
+        self.env._multi = None
+        self.env._nosl_cpp_az_session = None
+        self.env._nosl_cpp_last_session = None
+        self.env._nosl_cpp_pending = None
+        self.env._invalidate_backend_cache()
+        self.history = []
+        self.native_history = []
+        self.position = 0
+        self.timeline = []
+        self.timeline_exhausted = False
+        self.terminated = False
+        self.truncated = False
+        self.total_reward = 0.0
+        self.last_action = None
+        self.last_reward = 0.0
+        self.map_state = None
+        self.map_states = {}
+        self.card_reward_choices = []
+        self._search_generation += 1
+        self.obs, self.info = self.env._obs(), self.env._info()
+        self._prepare_decision()
+        return self.snapshot()
+
     def configure_search(
         self,
         simulations: int | None = None,
         depth: int | None = None,
+        leaf_batch_size: int | None = None,
         prior_temperature: float | None = None,
         search_mode: str | None = None,
         gumbel_candidates: int | None = None,
@@ -805,6 +1059,10 @@ class WatchSession:
         gumbel_max_visit_init: float | None = None,
         gumbel_rescale_q: bool | None = None,
         gumbel_use_mixed_value: bool | None = None,
+        gumbel_interior_uniformity: float | None = None,
+        gumbel_interior_coverage_fraction: float | None = None,
+        gumbel_interior_value_mode: int | None = None,
+        end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
     ):
         """Apply search settings without resetting the current run."""
@@ -821,6 +1079,13 @@ class WatchSession:
                 self.mcts_depth,
                 0,
                 MAX_MCTS_DEPTH,
+            )
+        if leaf_batch_size is not None:
+            self.mcts_leaf_batch_size = _clamp_int(
+                leaf_batch_size,
+                self.mcts_leaf_batch_size,
+                1,
+                256,
             )
         if prior_temperature is not None:
             self.mcts_prior_temperature = _clamp_float(
@@ -860,8 +1125,29 @@ class WatchSession:
             self.mcts_gumbel_rescale_q = bool(gumbel_rescale_q)
         if gumbel_use_mixed_value is not None:
             self.mcts_gumbel_use_mixed_value = bool(gumbel_use_mixed_value)
+        if gumbel_interior_uniformity is not None:
+            self.mcts_gumbel_interior_uniformity = _clamp_float(
+                gumbel_interior_uniformity,
+                self.mcts_gumbel_interior_uniformity,
+                0.0,
+                1.0,
+            )
+        if gumbel_interior_coverage_fraction is not None:
+            self.mcts_gumbel_interior_coverage_fraction = _clamp_float(
+                gumbel_interior_coverage_fraction,
+                self.mcts_gumbel_interior_coverage_fraction,
+                0.0,
+                1.0,
+            )
+        if gumbel_interior_value_mode is not None:
+            self.mcts_gumbel_interior_value_mode = max(
+                0, min(2, int(gumbel_interior_value_mode))
+            )
+        if end_turn_as_leaf is not None:
+            self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        self._apply_paper_full_gumbel_defaults()
         # A previous neural decision may have retained a complete native
         # action until its thin root id is submitted.  Changing settings means
         # that pending action is no longer the displayed decision and must not
@@ -941,7 +1227,9 @@ class WatchSession:
             with self.model_lock:
                 probs, value = _action_dist(self.model, observation, mask)
             return probs, value, None
-        obs_tensor, _ = policy.obs_to_tensor(observation)
+        obs_tensor, _ = policy.obs_to_tensor(
+            _observation_for_policy(self.model, observation)
+        )
         with self.model_lock, torch.inference_mode():
             logits, values = core.actor_critic(obs_tensor)
         logits = logits.detach().float().reshape(-1)
@@ -960,17 +1248,28 @@ class WatchSession:
         value = float(values.detach().float().reshape(-1)[0].cpu().item())
         return probs, value, raw_logits
 
-    def _evaluate_native_leaves(self, leaves):
+    def _evaluate_native_leaves(self, response):
         """Batch current-model policy/value inference for C++ leaf requests."""
         import torch
         from stable_baselines3.common.utils import obs_as_tensor
 
+        if isinstance(response, list):
+            response = {"leaves": response}
+        leaves = response.get("leaf_meta", ())
+        packed = unpack_nosl_observation_buffer(response)
+        if not leaves:
+            leaves = response.get("leaves", ())
         if not leaves:
             return np.empty((0, 0), dtype=np.float64), np.empty(0, dtype=np.float32)
-        observations = {
-            key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-            for key in leaves[0]["observation"]
-        }
+        if packed is not None:
+            observations = {
+                key: np.ascontiguousarray(value) for key, value in packed.items()
+            }
+        else:
+            observations = {
+                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
+                for key in leaves[0]["observation"]
+            }
         policy = getattr(self.model, "policy", None)
         core = getattr(policy, "core", None)
         if policy is None or core is None or not hasattr(core, "actor_critic"):
@@ -1017,6 +1316,9 @@ class WatchSession:
             leaf_batch_size=self.mcts_leaf_batch_size,
             root_value=float(root_value),
             prior_temperature=self.mcts_prior_temperature,
+            end_turn_as_leaf=bool(
+                getattr(self, "mcts_end_turn_as_leaf", False)
+            ),
             root_search_mode=self.mcts_root_search_mode,
             gumbel_candidates=self.mcts_gumbel_candidates,
             gumbel_scale=self.mcts_gumbel_scale,
@@ -1024,15 +1326,19 @@ class WatchSession:
             gumbel_max_visit_init=self.mcts_gumbel_max_visit_init,
             gumbel_rescale_q=self.mcts_gumbel_rescale_q,
             gumbel_use_mixed_value=self.mcts_gumbel_use_mixed_value,
+            gumbel_interior_uniformity=self.mcts_gumbel_interior_uniformity,
+            gumbel_interior_coverage_fraction=self.mcts_gumbel_interior_coverage_fraction,
+            gumbel_interior_value_mode=self.mcts_gumbel_interior_value_mode,
+            paper_full_gumbel=self.mcts_paper_full_gumbel,
             stochastic=self.stochastic,
             decision_index=self.position,
             compact_observation=self.compact_observations,
         )
         while not response.get("done", False):
-            leaves = response.get("leaves", ())
+            leaves = response.get("leaf_meta", ())
             if not leaves:
                 raise RuntimeError("neural NOSL returned no leaves before completion")
-            logits, values = self._evaluate_native_leaves(leaves)
+            logits, values = self._evaluate_native_leaves(response)
             updates = [
                 (
                     int(leaf["request_id"]),
@@ -1061,6 +1367,16 @@ class WatchSession:
         if self.terminated or self.truncated:
             self.decision = None
             return
+        # The native combat bridge can advance the thick simulator while the
+        # Gym wrapper returns the pre-transition observation (notably when an
+        # event action enters combat).  Refresh from the authoritative env
+        # state before constructing the next decision; otherwise the UI may
+        # retain a stale Neow/event action after the screen already shows
+        # combat.
+        try:
+            self.obs, self.info = self.env._obs(), self.env._info()
+        except Exception:
+            pass
         mask = self.env.action_masks()
         base = self.env.unwrapped
         probs, value, root_logits = self._policy_outputs(self.obs, mask)
@@ -1182,6 +1498,7 @@ class WatchSession:
                     "gumbel_max_visit_init": self.mcts_gumbel_max_visit_init,
                     "gumbel_rescale_q": self.mcts_gumbel_rescale_q,
                     "gumbel_use_mixed_value": self.mcts_gumbel_use_mixed_value,
+                    "gumbel_interior_uniformity": self.mcts_gumbel_interior_uniformity,
                     "used_completed_policy": used_completed_policy,
                     "nosl": True,
                     "stochastic": self.stochastic,
@@ -1289,7 +1606,11 @@ class WatchSession:
             "valid": bool(snapshot.get("valid", False)),
             "path": [int(x) for x in snapshot.get("path", ())],
             "visits": int(snapshot.get("visits", 0)),
+            "value_visits": int(snapshot.get("value_visits", 0)),
             "value": float(snapshot.get("value", 0.0)),
+            "sample_value": float(snapshot.get(
+                "sample_value", snapshot.get("value", 0.0)
+            )),
             "children": children,
         }
 
@@ -1588,6 +1909,7 @@ class WatchSession:
             "precompute_enabled": self.precompute_enabled,
             "mcts_simulations": self.mcts_simulations,
             "mcts_depth": self.mcts_depth,
+            "mcts_end_turn_as_leaf": self.mcts_end_turn_as_leaf,
             "mcts_c_puct": self.mcts_c_puct,
             "mcts_prior_temperature": self.mcts_prior_temperature,
             "mcts_leaf_batch_size": self.mcts_leaf_batch_size,
@@ -1595,6 +1917,7 @@ class WatchSession:
             "mcts_search_mode_label": SEARCH_MODE_LABELS.get(
                 self.mcts_search_mode, self.mcts_search_mode
             ),
+            "mcts_paper_full_gumbel": self.mcts_paper_full_gumbel,
             "mcts_root_search_mode": self.mcts_root_search_mode,
             "mcts_gumbel_candidates": self.mcts_gumbel_candidates,
             "mcts_gumbel_scale": self.mcts_gumbel_scale,
@@ -1602,6 +1925,9 @@ class WatchSession:
             "mcts_gumbel_max_visit_init": self.mcts_gumbel_max_visit_init,
             "mcts_gumbel_rescale_q": self.mcts_gumbel_rescale_q,
             "mcts_gumbel_use_mixed_value": self.mcts_gumbel_use_mixed_value,
+            "mcts_gumbel_interior_uniformity": self.mcts_gumbel_interior_uniformity,
+            "mcts_gumbel_interior_coverage_fraction": self.mcts_gumbel_interior_coverage_fraction,
+            "mcts_gumbel_interior_value_mode": self.mcts_gumbel_interior_value_mode,
             "search_backend": (
                 "nosl_is_az_cpp"
                 if self.mcts_simulations > 0 and self.mcts_search_mode != "direct"
@@ -1877,6 +2203,7 @@ class DashboardState:
         seed: int,
         simulations: int | None = None,
         depth: int | None = None,
+        leaf_batch_size: int | None = None,
         prior_temperature: float | None = None,
         search_mode: str | None = None,
         gumbel_candidates: int | None = None,
@@ -1885,8 +2212,18 @@ class DashboardState:
         gumbel_max_visit_init: float | None = None,
         gumbel_rescale_q: bool | None = None,
         gumbel_use_mixed_value: bool | None = None,
+        gumbel_interior_uniformity: float | None = None,
+        gumbel_interior_coverage_fraction: float | None = None,
+        end_turn_as_leaf: bool | None = None,
+        workers: int | None = None,
     ):
         episodes = max(1, min(int(episodes), 10_000))
+        worker_count = _clamp_int(
+            workers,
+            min(DEFAULT_EVAL_WORKERS, episodes),
+            1,
+            min(MAX_EVAL_WORKERS, episodes),
+        )
         token = uuid.uuid4().hex
         with self.lock:
             if self.model is None:
@@ -1896,6 +2233,7 @@ class DashboardState:
                 model,
                 simulations=simulations,
                 depth=depth,
+                leaf_batch_size=leaf_batch_size,
                 prior_temperature=prior_temperature,
                 search_mode=search_mode,
                 gumbel_candidates=gumbel_candidates,
@@ -1904,6 +2242,9 @@ class DashboardState:
                 gumbel_max_visit_init=gumbel_max_visit_init,
                 gumbel_rescale_q=gumbel_rescale_q,
                 gumbel_use_mixed_value=gumbel_use_mixed_value,
+                gumbel_interior_uniformity=gumbel_interior_uniformity,
+                gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
+                end_turn_as_leaf=end_turn_as_leaf,
             )
             self.eval_token = token
             self.eval_status = {
@@ -1928,16 +2269,19 @@ class DashboardState:
                 "gumbel_max_visit_init": search_config["gumbel_max_visit_init"],
                 "gumbel_rescale_q": search_config["gumbel_rescale_q"],
                 "gumbel_use_mixed_value": search_config["gumbel_use_mixed_value"],
+                "end_turn_as_leaf": search_config["end_turn_as_leaf"],
                 "stochastic": False,
                 "root_noise": False,
                 "search_decisions": 0,
                 "search_simulations": 0,
                 "search_leaf_evaluations": 0,
                 "search_seconds": 0.0,
+                "workers": worker_count,
+                "active_workers": 0,
             }
         threading.Thread(
             target=self._evaluate,
-            args=(token, model, episodes, int(seed), search_config),
+            args=(token, model, episodes, int(seed), search_config, worker_count),
             daemon=True,
             name="dashboard-eval",
         ).start()
@@ -1949,79 +2293,123 @@ class DashboardState:
         episodes: int,
         seed: int,
         search_config: dict[str, Any],
+        worker_count: int,
     ):
-        env = SlayTheSpireEnv(
-            global_map_view=_model.uses_global_map_observation(model),
-            card_language=_model.uses_card_language(model),
-            combat_language=_model.uses_combat_language(model),
-            deck_size_observation=_model.uses_deck_size_observation(model),
-            neow_observation=_model.uses_neow_observation(model),
-            event_option_observation=_model.uses_event_option_observation(model),
-        )
-        death_floors: Counter[int] = Counter()
-        death_seeds: dict[int, list[int]] = {}
-        win_seeds: list[int] = []
-        result_counts: Counter[str] = Counter()
-        floors: list[int] = []
-        lengths: list[int] = []
-        search_decisions = 0
-        search_simulations = 0
-        search_leaf_evaluations = 0
-        search_seconds = 0.0
-        try:
+        progress_lock = threading.Lock()
+        progress = {
+            "active_workers": 0,
+            "search_decisions": 0,
+            "search_simulations": 0,
+            "search_leaf_evaluations": 0,
+            "search_seconds": 0.0,
+        }
+
+        def run_episode(episode: int) -> dict[str, Any] | None:
+            episode_seed = seed + episode
+            env = SlayTheSpireEnv(
+                global_map_view=_model.uses_global_map_observation(model),
+                card_language=_model.uses_card_language(model),
+                combat_language=_model.uses_combat_language(model),
+                deck_size_observation=_model.uses_deck_size_observation(model),
+                neow_observation=_model.uses_neow_observation(model),
+                event_option_observation=_model.uses_event_option_observation(model),
+            )
             search = (
                 EvaluationNOSLSearch(model, self.model_lock, search_config)
                 if search_config.get("method") == "nosl_is_az_cpp"
                 else None
             )
-            for episode in range(episodes):
-                episode_seed = seed + episode
+            search_decisions = 0
+            search_simulations = 0
+            search_leaf_evaluations = 0
+            search_seconds = 0.0
+            try:
+                with progress_lock:
+                    progress["active_workers"] += 1
+                    active_workers = progress["active_workers"]
+                with self.lock:
+                    if token == self.eval_token:
+                        self.eval_status.update({
+                            "active_workers": active_workers,
+                            "last_progress_at": time.time(),
+                        })
                 obs, info = env.reset(seed=episode_seed)
                 terminated = truncated = False
                 steps = 0
                 while not (terminated or truncated):
                     with self.lock:
                         if token != self.eval_token:
-                            return
+                            return None
                     mask = env.action_masks()
                     phase_before = info.get("phase")
                     native_root = getattr(env.unwrapped, "_pending", None) is None
                     if search is not None and phase_before == "combat" and native_root:
-                        result = search.choose_action(
-                            env,
-                            obs,
-                            episode_seed=episode_seed,
+                        search_result = search.choose_action(
+                            env, obs, episode_seed=episode_seed,
                             decision_index=steps,
                         )
-                        action_id = int(result["action"])
+                        action_id = int(search_result["action"])
                         action_source = "nosl_is_az_cpp"
                         search_decisions += 1
                         search_simulations += int(
-                            result.get("simulations", search_config["simulations"])
+                            search_result.get("simulations", search_config["simulations"])
                         )
                         search_leaf_evaluations += int(
-                            result.get("leaf_evaluations", 0)
+                            search_result.get("leaf_evaluations", 0)
                         )
-                        search_seconds += float(result.get("elapsed_seconds", 0.0))
+                        search_seconds += float(
+                            search_result.get("elapsed_seconds", 0.0)
+                        )
+                        with progress_lock:
+                            progress["search_decisions"] += 1
+                            progress["search_simulations"] += int(
+                                search_result.get(
+                                    "simulations", search_config["simulations"]
+                                )
+                            )
+                            progress["search_leaf_evaluations"] += int(
+                                search_result.get("leaf_evaluations", 0)
+                            )
+                            progress["search_seconds"] += float(
+                                search_result.get("elapsed_seconds", 0.0)
+                            )
+                            current_progress = dict(progress)
+                        with self.lock:
+                            if token != self.eval_token:
+                                return None
+                            self.eval_status.update({
+                                "search_decisions": current_progress[
+                                    "search_decisions"
+                                ],
+                                "search_simulations": current_progress[
+                                    "search_simulations"
+                                ],
+                                "search_leaf_evaluations": current_progress[
+                                    "search_leaf_evaluations"
+                                ],
+                                "search_seconds": current_progress[
+                                    "search_seconds"
+                                ],
+                                "active_workers": current_progress[
+                                    "active_workers"
+                                ],
+                                "last_progress_at": time.time(),
+                            })
                     else:
                         with self.model_lock:
                             action, _ = model.predict(
-                                obs,
-                                action_masks=mask,
-                                deterministic=True,
+                                obs, action_masks=mask, deterministic=True
                             )
                         action_id = int(np.asarray(action).item())
                         action_source = "direct_policy"
                     action_label = env.describe_action(action_id)
-                    obs, _reward, terminated, truncated, info = env.step(
-                        action_id
-                    )
+                    obs, _reward, terminated, truncated, info = env.step(action_id)
                     steps += 1
                     if steps == 1 or steps % 25 == 0:
                         live_stats = info.get("run_stats", {})
                         with self.lock:
                             if token != self.eval_token:
-                                return
+                                return None
                             self.eval_status.update({
                                 "current_episode": episode + 1,
                                 "current_steps": steps,
@@ -2033,52 +2421,107 @@ class DashboardState:
                                 "current_action_legal": bool(mask[action_id]),
                                 "current_legal_actions": np.flatnonzero(mask).tolist(),
                                 "current_action_source": action_source,
-                                "search_decisions": search_decisions,
-                                "search_simulations": search_simulations,
-                                "search_leaf_evaluations": search_leaf_evaluations,
-                                "search_seconds": search_seconds,
                                 "last_progress_at": time.time(),
                             })
                 stats = env.unwrapped.thick.run_stats()
                 floor = int(stats["floor"])
                 if is_win(env):
-                    result = "win"
-                    win_seeds.append(seed + episode)
+                    result_name = "win"
                 elif truncated and info.get("dead_screen"):
-                    result = "dead_screen"
+                    result_name = "dead_screen"
                 elif truncated:
-                    result = "other_truncation"
+                    result_name = "other_truncation"
                 else:
-                    result = "death"
-                    death_floors[floor] += 1
-                    death_seeds.setdefault(floor, []).append(seed + episode)
-                result_counts[result] += 1
-                floors.append(floor)
-                lengths.append(steps)
-                elapsed = time.time() - self.eval_status["started_at"]
-                done = episode + 1
+                    result_name = "death"
+                return {
+                    "episode": episode,
+                    "seed": episode_seed,
+                    "floor": floor,
+                    "steps": steps,
+                    "result": result_name,
+                    "search_decisions": search_decisions,
+                    "search_simulations": search_simulations,
+                    "search_leaf_evaluations": search_leaf_evaluations,
+                    "search_seconds": search_seconds,
+                }
+            finally:
+                with progress_lock:
+                    progress["active_workers"] = max(
+                        0, progress["active_workers"] - 1
+                    )
+                    active_workers = progress["active_workers"]
                 with self.lock:
-                    if token != self.eval_token:
-                        return
-                    self.eval_status.update({
-                        "completed": done,
-                        "death_floors": dict(sorted(death_floors.items())),
-                        "death_seeds": {
-                            floor: seeds
-                            for floor, seeds in sorted(death_seeds.items())
-                        },
-                        "win_seeds": win_seeds,
-                        "results": dict(result_counts),
-                        "floor_mean": float(np.mean(floors)),
-                        "floor_median": float(np.median(floors)),
-                        "steps_mean": float(np.mean(lengths)),
-                        "elapsed_seconds": elapsed,
-                        "eta_seconds": elapsed / done * (episodes - done),
-                        "search_decisions": search_decisions,
-                        "search_simulations": search_simulations,
-                        "search_leaf_evaluations": search_leaf_evaluations,
-                        "search_seconds": search_seconds,
-                    })
+                    if token == self.eval_token:
+                        self.eval_status.update({
+                            "active_workers": active_workers,
+                            "last_progress_at": time.time(),
+                        })
+                env.close()
+
+        death_floors: Counter[int] = Counter()
+        death_seeds: dict[int, list[int]] = {}
+        win_seeds: list[int] = []
+        result_counts: Counter[str] = Counter()
+        floors: list[int] = []
+        lengths: list[int] = []
+        try:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=worker_count,
+                thread_name_prefix="dashboard-eval-worker",
+            ) as executor:
+                futures = [
+                    executor.submit(run_episode, episode)
+                    for episode in range(episodes)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    item = future.result()
+                    if item is None:
+                        continue
+                    result_name = item["result"]
+                    floor = int(item["floor"])
+                    episode_seed = int(item["seed"])
+                    result_counts[result_name] += 1
+                    floors.append(floor)
+                    lengths.append(int(item["steps"]))
+                    if result_name == "win":
+                        win_seeds.append(episode_seed)
+                    elif result_name == "death":
+                        death_floors[floor] += 1
+                        death_seeds.setdefault(floor, []).append(episode_seed)
+                    done = len(floors)
+                    with progress_lock:
+                        current_progress = dict(progress)
+                    with self.lock:
+                        if token != self.eval_token:
+                            return
+                        elapsed = time.time() - self.eval_status["started_at"]
+                        self.eval_status.update({
+                            "completed": done,
+                            "death_floors": dict(sorted(death_floors.items())),
+                            "death_seeds": {
+                                key: sorted(values)
+                                for key, values in sorted(death_seeds.items())
+                            },
+                            "win_seeds": sorted(win_seeds),
+                            "results": dict(result_counts),
+                            "floor_mean": float(np.mean(floors)),
+                            "floor_median": float(np.median(floors)),
+                            "steps_mean": float(np.mean(lengths)),
+                            "elapsed_seconds": elapsed,
+                            "eta_seconds": elapsed / done * (episodes - done),
+                            "search_decisions": current_progress[
+                                "search_decisions"
+                            ],
+                            "search_simulations": current_progress[
+                                "search_simulations"
+                            ],
+                            "search_leaf_evaluations": current_progress[
+                                "search_leaf_evaluations"
+                            ],
+                            "search_seconds": current_progress["search_seconds"],
+                            "active_workers": current_progress["active_workers"],
+                            "workers": worker_count,
+                        })
             with self.lock:
                 if token == self.eval_token:
                     self.eval_status["state"] = "complete"
@@ -2086,8 +2529,6 @@ class DashboardState:
             with self.lock:
                 if token == self.eval_token:
                     self.eval_status.update({"state": "error", "error": str(exc)})
-        finally:
-            env.close()
 
     @staticmethod
     def _request_path(value, default: Path) -> Path:
@@ -2367,6 +2808,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send_json(APP.public_state())
             return
+        if path == "/api/custom-combat/encounters":
+            self._send_json({"encounters": sts.encounter_names()})
+            return
         if path == "/api/hybrid-eval/status":
             self._send_json(APP.public_state()["hybrid_evaluation"])
             return
@@ -2382,6 +2826,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
+        # Dashboard assets are edited during local experiments.  Prevent a
+        # stale browser-cached app.js/index.html from silently dropping new
+        # search controls (for example Interior C) on Apply.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(data)
 
@@ -2400,6 +2849,7 @@ class Handler(BaseHTTPRequestHandler):
                         precompute=bool(body.get("precompute", False)),
                         simulations=body.get("simulations"),
                         depth=body.get("depth"),
+                        leaf_batch_size=body.get("leaf_batch_size"),
                         prior_temperature=body.get("prior_temperature"),
                         search_mode=body.get("search_mode"),
                         gumbel_candidates=body.get("gumbel_candidates"),
@@ -2408,6 +2858,10 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
                         gumbel_rescale_q=body.get("gumbel_rescale_q"),
                         gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                        gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
+                        gumbel_interior_coverage_fraction=body.get("gumbel_interior_coverage_fraction"),
+                        gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
+                        end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
                     )
                 self._send_json(result)
@@ -2419,6 +2873,7 @@ class Handler(BaseHTTPRequestHandler):
                     result = APP.watch.configure_search(
                         simulations=body.get("simulations"),
                         depth=body.get("depth"),
+                        leaf_batch_size=body.get("leaf_batch_size"),
                         prior_temperature=body.get("prior_temperature"),
                         search_mode=body.get("search_mode"),
                         gumbel_candidates=body.get("gumbel_candidates"),
@@ -2427,8 +2882,19 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
                         gumbel_rescale_q=body.get("gumbel_rescale_q"),
                         gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                        gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
+                        gumbel_interior_coverage_fraction=body.get("gumbel_interior_coverage_fraction"),
+                        gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
+                        end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
                     )
+                self._send_json(result)
+            elif path == "/api/custom-combat/apply":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.apply_custom_state(body)
                 self._send_json(result)
             elif path == "/api/watch/search-tree":
                 body = self._read_json()
@@ -2480,6 +2946,7 @@ class Handler(BaseHTTPRequestHandler):
                     body.get("seed", 0),
                     simulations=body.get("simulations"),
                     depth=body.get("depth"),
+                    leaf_batch_size=body.get("leaf_batch_size"),
                     prior_temperature=body.get("prior_temperature"),
                     search_mode=body.get("search_mode"),
                     gumbel_candidates=body.get("gumbel_candidates"),
@@ -2488,6 +2955,9 @@ class Handler(BaseHTTPRequestHandler):
                     gumbel_max_visit_init=body.get("gumbel_max_visit_init"),
                     gumbel_rescale_q=body.get("gumbel_rescale_q"),
                     gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
+                    gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
+                    end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                    workers=body.get("workers"),
                 )
                 self._send_json(APP.public_state()["evaluation"])
             elif path == "/api/hybrid-eval/start":
@@ -2561,8 +3031,11 @@ def main():
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--eval-episodes", type=int, default=50)
     args = parser.parse_args()
-    if args.checkpoint:
-        APP.load_checkpoint(args.checkpoint, args.eval_episodes)
+    checkpoint = args.checkpoint or _default_dashboard_checkpoint()
+    if checkpoint:
+        APP.load_checkpoint(checkpoint, args.eval_episodes)
+    else:
+        print("[dashboard] no checkpoint found; upload one from the browser", flush=True)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"[dashboard] http://{args.host}:{args.port}", flush=True)
     try:

@@ -80,18 +80,66 @@ def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
     assert saved == {
         "method": "nosl_is_az_cpp",
         "supported": True,
+        "search_mode": "puct",
+        "search_mode_label": "PUCT",
+        "root_search_mode": 0,
         "simulations": 512,
         "depth": 0,
         "prior_temperature": 1.0,
         "c_puct": 1.75,
         "leaf_batch_size": 16,
         "master_nonce": 1234,
+        "gumbel_candidates": 0,
+        "gumbel_scale": 1.0,
+        "gumbel_value_scale": 0.1,
+        "gumbel_max_visit_init": 50.0,
+        "gumbel_rescale_q": True,
+        "gumbel_use_mixed_value": True,
+        "gumbel_interior_uniformity": 0.0,
+        "gumbel_interior_coverage_fraction": 0.0,
+        "gumbel_interior_value_mode": 2,
+        "paper_full_gumbel": False,
+        "end_turn_as_leaf": False,
         "stochastic": False,
         "dirichlet_alpha": 0.0,
         "dirichlet_epsilon": 0.0,
     }
     assert overridden["simulations"] == 128
     assert overridden["depth"] == 3
+
+
+def test_paper_full_gumbel_config_uses_mctx_defaults():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        nosl_is_az_simulations = 512
+        nosl_is_az_search_mode = "full_gumbel"
+        nosl_is_az_paper_full_gumbel = True
+        nosl_is_az_gumbel_candidates = 0
+        nosl_is_az_gumbel_value_scale = 3.0
+        nosl_is_az_gumbel_interior_coverage_fraction = 0.4
+        nosl_is_az_gumbel_interior_value_mode = 2
+        nosl_is_az_dirichlet_alpha = 0.3
+        nosl_is_az_dirichlet_epsilon = 0.25
+
+    config = dashboard._evaluation_search_config(Model())
+
+    assert config["search_mode"] == "full_gumbel"
+    assert config["paper_full_gumbel"] is True
+    assert config["gumbel_candidates"] == 16
+    assert config["gumbel_scale"] == 1.0
+    assert config["gumbel_value_scale"] == 0.1
+    assert config["gumbel_max_visit_init"] == 50.0
+    assert config["gumbel_rescale_q"] is True
+    assert config["gumbel_use_mixed_value"] is True
+    assert config["gumbel_interior_uniformity"] == 0.0
+    assert config["gumbel_interior_coverage_fraction"] == 0.0
+    assert config["gumbel_interior_value_mode"] == 0
 
 
 def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):

@@ -415,6 +415,20 @@ class SimGameEnv:
             reward = 1.0 if (cleared_run or won) else -1.0
         return self._canonical(), reward, terminated, self._info()
 
+    def preview_native_end_turn_boundary(self, action_bits: int):
+        """Return the stable value boundary for a native End Turn action.
+
+        The simulator performs this on a private clone, so the live combat and
+        all of its RNG streams remain untouched.  Non-End-Turn and terminal
+        transitions have no trainable boundary and return ``None``.
+        """
+        if self.is_over or self.bc is None:
+            return None
+        preview = getattr(self.bc, "preview_end_turn_boundary", None)
+        if preview is None:
+            return None
+        return preview(int(action_bits))
+
     @staticmethod
     def _semantic_action_card(action, before):
         """Card surface selected by a non-combat semantic action, if any."""

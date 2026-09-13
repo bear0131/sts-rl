@@ -116,6 +116,7 @@ std::uint64_t publicStateKey(const BattleContext &bc) {
     hashValue(hash, bc.endTurnQueued ? 1 : 0);
     hashValue(hash, bc.turnHasEnded ? 1 : 0);
     hashValue(hash, bc.skipMonsterTurn ? 1 : 0);
+    hashValue(hash, bc.postEnemyTurnBoundary ? 1 : 0);
     hashValue(hash, bc.miscBits.to_ulong());
     hashValue(hash, bc.loopCount);
     hashValue(hash, bc.energyWasted);
@@ -616,8 +617,17 @@ NoslCombatDecision NoslCombatTrainer::search(const BattleContext &rootState,
                 }
             }
             edgePath.push_back(edge);
+            state.stopAfterEnemyTurn =
+                config_.endTurnAsLeaf &&
+                executableAction.getActionType() == ActionType::END_TURN;
             executableAction.execute(state);
             ++localStats.transitions;
+
+            if (config_.endTurnAsLeaf &&
+                executableAction.getActionType() == ActionType::END_TURN) {
+                // executeActions stopped at the post-enemy-turn boundary.
+                break;
+            }
 
             const auto childKey = publicStateKey(state);
             auto childIt = edge->children.find(childKey);
@@ -801,9 +811,36 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         !std::isfinite(config_.gumbelMaxVisitInit)) {
         config_.gumbelMaxVisitInit = 50.0;
     }
+    if (config_.paperFullGumbel) {
+        // Canonical Gumbel AlphaZero/MuZero settings.  These overrides make
+        // the experiment reproducible even when a checkpoint carries the
+        // project's exploratory extensions from an earlier run.
+        config_.rootSearchMode = 2;
+        // mctx.gumbel_muzero_policy defaults to considering at most 16 root
+        // actions. Keep this canonical paper default separate from the
+        // project's legacy `0 = all legal actions` convention.
+        config_.gumbelCandidates = 16;
+        config_.gumbelScale = 1.0;
+        // mctx.qtransform_completed_by_mix_value defaults to value_scale=0.1.
+        config_.gumbelValueScale = 0.1;
+        config_.gumbelMaxVisitInit = 50.0;
+        config_.gumbelRescaleQ = true;
+        config_.gumbelUseMixedValue = true;
+        config_.gumbelInteriorUniformity = 0.0;
+        config_.gumbelInteriorMinVisits = 0;
+        config_.gumbelInteriorCoverageFraction = 0.0;
+        config_.gumbelInteriorValueMode = 0;
+        config_.gumbelInteriorMaxMixVisits = 64.0;
+        config_.dirichletAlpha = 0.0;
+        config_.dirichletEpsilon = 0.0;
+        config_.priorTemperature = 1.0;
+    }
     root_.networkValue = std::isfinite(rootValue)
         ? std::clamp(rootValue, 0.0, 1.0)
         : hpValue(rootState_);
+    root_.networkValueValid = true;
+    root_.propagatedValue = root_.networkValue;
+    root_.propagatedValid = true;
     expandWithLogits(root_, rootState_, legalActions(rootState_), rootPolicyLogits);
     applyRootDirichletNoise();
     initializeGumbelRoot();
@@ -852,7 +889,13 @@ void NoslNeuralSearchSession::initializeGumbelRoot() {
     if (config_.gumbelCandidates > 0) {
         candidateCount = std::min(candidateCount, config_.gumbelCandidates);
     }
-    candidateCount = std::min(candidateCount, config_.simulations);
+    // mctx keeps max_num_considered_actions independent of the simulation
+    // budget (for example K=16 with only 8 simulations).  The legacy
+    // sequential-halving allocator needs the old clamp to avoid empty rounds;
+    // strict paper mode follows mctx exactly.
+    if (!config_.paperFullGumbel) {
+        candidateCount = std::min(candidateCount, config_.simulations);
+    }
     if (candidateCount < 1) {
         gumbelNoise_.clear();
         gumbelScores_.clear();
@@ -929,12 +972,8 @@ void NoslNeuralSearchSession::advanceGumbelRound() {
                   [&](int lhs, int rhs) {
             const auto &a = root_.edges[lhs];
             const auto &b = root_.edges[rhs];
-            const double qa = a.visits > 0
-                ? a.valueSum / static_cast<double>(a.visits)
-                : root_.networkValue - config_.fpuReduction;
-            const double qb = b.visits > 0
-                ? b.valueSum / static_cast<double>(b.visits)
-                : root_.networkValue - config_.fpuReduction;
+            const double qa = edgeValueForSelection(a, root_);
+            const double qb = edgeValueForSelection(b, root_);
             if (qa != qb) {
                 return qa > qb;
             }
@@ -1218,6 +1257,175 @@ void NoslNeuralSearchSession::expandWithLogits(
     }
 }
 
+void NoslNeuralSearchSession::recomputeEdgeValue(Edge &edge) const {
+    // An action can lead to several public states because each NOSL
+    // simulation redeterminizes hidden RNG independently.  Those children
+    // form a chance node: combine their propagated values by the observed
+    // world-line frequency, never by max.
+    if (!edge.children.empty()) {
+        double weightedValue = 0.0;
+        double totalWeight = 0.0;
+        for (const auto &[key, child] : edge.children) {
+            (void)key;
+            if (!child) {
+                continue;
+            }
+            if (!child->propagatedValid && child->valueVisits <= 0 &&
+                !child->networkValueValid) {
+                continue;
+            }
+            const double value = nodeValueForSelection(*child);
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            // valueVisits excludes forced coverage probes.  If a child has
+            // only such probes, its visit count still gives the best observed
+            // estimate of the chance probability.
+            double weight = static_cast<double>(child->valueVisits > 0
+                ? child->valueVisits : child->visits);
+            if (!(weight > 0.0) || !std::isfinite(weight)) {
+                weight = 1.0;
+            }
+            weightedValue += weight * value;
+            totalWeight += weight;
+        }
+        if (totalWeight > 0.0 && std::isfinite(totalWeight)) {
+            edge.propagatedValue = std::clamp(
+                weightedValue / totalWeight, 0.0, 1.0);
+            edge.propagatedValid = true;
+            return;
+        }
+    }
+
+    // End-turn leaves and terminal actions do not have a child decision node;
+    // their direct leaf samples are already the complete action value.
+    if (edge.valueVisits > 0) {
+        edge.propagatedValue = std::clamp(
+            edge.valueSum / static_cast<double>(edge.valueVisits), 0.0, 1.0);
+        edge.propagatedValid = std::isfinite(edge.propagatedValue);
+        return;
+    }
+    edge.propagatedValue = 0.0;
+    edge.propagatedValid = false;
+}
+
+void NoslNeuralSearchSession::recomputeNodeValue(Node &node) const {
+    if (config_.paperFullGumbel) {
+        // mctx backs a decision node up as the visit-weighted mean of its
+        // outgoing action values.  The experimental path below intentionally
+        // keeps its historical equal-action/progressive aggregation.
+        double weightedValue = 0.0;
+        double totalVisits = 0.0;
+        for (const auto &edge : node.edges) {
+            if (edge.visits <= 0) {
+                continue;
+            }
+            const double value = edgeValueForSelection(edge, node);
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            weightedValue += static_cast<double>(edge.visits) * value;
+            totalVisits += static_cast<double>(edge.visits);
+        }
+        if (totalVisits > 0.0 && std::isfinite(totalVisits)) {
+            node.propagatedValue = std::clamp(
+                weightedValue / totalVisits, 0.0, 1.0);
+            node.propagatedValid = std::isfinite(node.propagatedValue);
+            return;
+        }
+        node.propagatedValue = node.networkValueValid
+            ? std::clamp(node.networkValue, 0.0, 1.0) : 0.0;
+        node.propagatedValid = node.networkValueValid &&
+            std::isfinite(node.propagatedValue);
+        return;
+    }
+
+    std::vector<double> values;
+    values.reserve(node.edges.size());
+    for (const auto &edge : node.edges) {
+        if (edge.propagatedValid && std::isfinite(edge.propagatedValue)) {
+            values.push_back(edge.propagatedValue);
+        } else if (edge.valueVisits > 0) {
+            const double sampleValue = edge.valueSum /
+                static_cast<double>(edge.valueVisits);
+            if (std::isfinite(sampleValue)) {
+                values.push_back(std::clamp(sampleValue, 0.0, 1.0));
+            }
+        }
+    }
+
+    if (values.empty()) {
+        if (node.valueVisits > 0) {
+            node.propagatedValue = std::clamp(
+                node.valueSum / static_cast<double>(node.valueVisits),
+                0.0, 1.0);
+            node.propagatedValid = std::isfinite(node.propagatedValue);
+        } else if (node.networkValueValid &&
+                   std::isfinite(node.networkValue)) {
+            node.propagatedValue = std::clamp(node.networkValue, 0.0, 1.0);
+            node.propagatedValid = true;
+        } else {
+            node.propagatedValue = 0.0;
+            node.propagatedValid = false;
+        }
+        return;
+    }
+
+    const double meanValue = std::accumulate(values.begin(), values.end(), 0.0) /
+        static_cast<double>(values.size());
+    const double bestValue = *std::max_element(values.begin(), values.end());
+    double alpha = 0.0;
+    if (config_.gumbelInteriorValueMode == 1) {
+        alpha = 1.0;
+    } else if (config_.gumbelInteriorValueMode == 2) {
+        alpha = std::clamp(
+            static_cast<double>(node.visits) /
+                std::max(1.0, config_.gumbelInteriorMaxMixVisits),
+            0.0, 1.0);
+    }
+    node.propagatedValue = std::clamp(
+        (1.0 - alpha) * meanValue + alpha * bestValue, 0.0, 1.0);
+    node.propagatedValid = std::isfinite(node.propagatedValue);
+}
+
+double NoslNeuralSearchSession::edgeValueForSelection(
+    const Edge &edge, const Node &parent) const {
+    if (edge.propagatedValid && std::isfinite(edge.propagatedValue)) {
+        return edge.propagatedValue;
+    }
+    if (edge.valueVisits > 0) {
+        const double sampleValue = edge.valueSum /
+            static_cast<double>(edge.valueVisits);
+        if (std::isfinite(sampleValue)) {
+            return std::clamp(sampleValue, 0.0, 1.0);
+        }
+    }
+    // First-play urgency remains anchored to the parent's network estimate.
+    // Do not let a high-valued sibling selected by max aggregation leak into
+    // every still-unvisited action before that action receives a value probe.
+    const double fallback = (parent.networkValueValid
+        ? parent.networkValue : nodeValueForSelection(parent)) -
+        config_.fpuReduction;
+    return std::isfinite(fallback) ? std::clamp(fallback, 0.0, 1.0) : 0.0;
+}
+
+double NoslNeuralSearchSession::nodeValueForSelection(const Node &node) const {
+    if (node.propagatedValid && std::isfinite(node.propagatedValue)) {
+        return node.propagatedValue;
+    }
+    if (node.valueVisits > 0) {
+        const double sampleValue = node.valueSum /
+            static_cast<double>(node.valueVisits);
+        if (std::isfinite(sampleValue)) {
+            return std::clamp(sampleValue, 0.0, 1.0);
+        }
+    }
+    if (node.networkValueValid && std::isfinite(node.networkValue)) {
+        return std::clamp(node.networkValue, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
 int NoslNeuralSearchSession::selectPuct(const Node &node) const {
     if (node.edges.empty()) {
         return -1;
@@ -1229,9 +1437,7 @@ int NoslNeuralSearchSession::selectPuct(const Node &node) const {
     for (int i = 0; i < static_cast<int>(node.edges.size()); ++i) {
         const auto &edge = node.edges[i];
         const int effectiveVisits = edge.visits + edge.virtualVisits;
-        const double q = edge.visits > 0
-            ? edge.valueSum / static_cast<double>(edge.visits)
-            : node.networkValue - config_.fpuReduction;
+        const double q = edgeValueForSelection(edge, node);
         const double score = q + config_.cPuct * edge.prior * parentVisits /
             static_cast<double>(1 + effectiveVisits);
         if (score > bestScore ||
@@ -1255,43 +1461,52 @@ NoslNeuralSearchSession::completedQDetails(const Node &node) const {
         return details;
     }
 
-    // This is mctx._compute_mixed_value verbatim: weight only visited Qs by
-    // their prior mass, normalize by the prior mass of the visited subset,
-    // then interpolate that estimate with the network value.  In particular,
-    // do not divide by the total prior mass when only a sparse subset was
-    // sampled; doing so would bias all unvisited actions toward zero.
+    // Use the structurally propagated action values.  An action with several
+    // NOSL public-state children has already been chance-averaged by
+    // recomputeEdgeValue(); this level is the active decision node.
+    const bool paper = config_.paperFullGumbel;
     double sumVisits = 0.0;
     double sumPrior = 0.0;
     double weightedQ = 0.0;
     for (const auto &edge : node.edges) {
-        if (edge.visits <= 0) {
+        const int observedVisits = paper ? edge.visits : edge.valueVisits;
+        if (observedVisits <= 0) {
             continue;
         }
-        const double q = edge.valueSum / static_cast<double>(edge.visits);
+        const double q = edgeValueForSelection(edge, node);
         const double prior = std::max(edge.prior, 1.0e-12);
-        sumVisits += static_cast<double>(edge.visits);
+        sumVisits += static_cast<double>(observedVisits);
         sumPrior += prior;
-        weightedQ += prior * (std::isfinite(q) ? q : node.networkValue);
+        weightedQ += prior * (std::isfinite(q)
+            ? q : nodeValueForSelection(node));
     }
-    double mixedValue = node.networkValue;
+    // The paper's mixed value is bootstrapped from the network value at this
+    // node.  The non-paper path may instead use structural mean/max
+    // propagation, which is intentionally kept for existing experiments.
+    double mixedValue = paper ? node.networkValue : nodeValueForSelection(node);
     if (config_.gumbelUseMixedValue && sumVisits > 0.0) {
         const double normalizedWeightedQ = sumPrior > 0.0
             ? weightedQ / sumPrior
-            : node.networkValue;
-        mixedValue = (node.networkValue + sumVisits * normalizedWeightedQ) /
+            : (paper ? node.networkValue : nodeValueForSelection(node));
+        const double bootstrap = paper
+            ? node.networkValue : nodeValueForSelection(node);
+        mixedValue = (bootstrap +
+                      sumVisits * normalizedWeightedQ) /
             (sumVisits + 1.0);
     }
     if (!std::isfinite(mixedValue)) {
-        mixedValue = node.networkValue;
+        mixedValue = paper ? node.networkValue : nodeValueForSelection(node);
     }
 
     double minValue = std::numeric_limits<double>::infinity();
     double maxValue = -std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < count; ++i) {
         const auto &edge = node.edges[i];
-        double value = edge.visits > 0
-            ? edge.valueSum / static_cast<double>(edge.visits)
-            : (config_.gumbelUseMixedValue ? mixedValue : node.networkValue);
+        double value = edge.propagatedValid ||
+                (paper ? edge.visits > 0 : edge.valueVisits > 0)
+            ? edgeValueForSelection(edge, node)
+            : (config_.gumbelUseMixedValue
+                ? mixedValue : nodeValueForSelection(node));
         if (!std::isfinite(value)) {
             value = mixedValue;
         }
@@ -1380,9 +1595,60 @@ std::vector<double> NoslNeuralSearchSession::rootPolicyTarget() const {
 }
 
 int NoslNeuralSearchSession::selectFullGumbelInterior(
-    const Node &node) const {
+    const Node &node, bool *usedCoverage) const {
+    if (usedCoverage != nullptr) {
+        *usedCoverage = false;
+    }
     if (node.edges.empty()) {
         return -1;
+    }
+    // Prior-independent coverage phase.  This is deliberately performed
+    // before constructing completed-policy scores: a zero/near-zero prior
+    // must not be able to suppress the first real value evaluation forever.
+    const int minVisits = std::max(0, config_.gumbelInteriorMinVisits);
+    const double coverageFraction = std::clamp(
+        config_.gumbelInteriorCoverageFraction, 0.0, 1.0);
+    if (minVisits > 0 || coverageFraction > 0.0) {
+        int totalVisits = 0;
+        for (const auto &edge : node.edges) {
+            totalVisits += edge.visits + edge.virtualVisits;
+        }
+        const int edgeCount = static_cast<int>(node.edges.size());
+        const int dynamicTarget = coverageFraction > 0.0
+            ? static_cast<int>(std::ceil(
+                coverageFraction * static_cast<double>(totalVisits + 1) /
+                static_cast<double>(edgeCount)))
+            : 0;
+        const int targetVisits = std::max(minVisits, dynamicTarget);
+        int bestUnvisited = -1;
+        for (int i = 0; i < static_cast<int>(node.edges.size()); ++i) {
+            const auto &edge = node.edges[static_cast<std::size_t>(i)];
+            const int visits = edge.visits + edge.virtualVisits;
+            if (visits >= targetVisits) {
+                continue;
+            }
+            if (bestUnvisited < 0 ||
+                visits < node.edges[static_cast<std::size_t>(bestUnvisited)]
+                              .visits +
+                    node.edges[static_cast<std::size_t>(bestUnvisited)]
+                              .virtualVisits ||
+                (visits ==
+                     node.edges[static_cast<std::size_t>(bestUnvisited)]
+                             .visits +
+                         node.edges[static_cast<std::size_t>(bestUnvisited)]
+                             .virtualVisits &&
+                 edge.action.bits <
+                     node.edges[static_cast<std::size_t>(bestUnvisited)]
+                         .action.bits)) {
+                bestUnvisited = i;
+            }
+        }
+        if (bestUnvisited >= 0) {
+            if (usedCoverage != nullptr) {
+                *usedCoverage = true;
+            }
+            return bestUnvisited;
+        }
     }
     const std::vector<double> q = completedQTransform(node);
     std::vector<double> logits(node.edges.size(), 0.0);
@@ -1410,7 +1676,24 @@ int NoslNeuralSearchSession::selectFullGumbelInterior(
     for (std::size_t i = 0; i < node.edges.size(); ++i) {
         const auto &edge = node.edges[i];
         const int visits = edge.visits + edge.virtualVisits;
-        const double probability = logits[i] / probabilityTotal;
+        double probability = logits[i] / probabilityTotal;
+        // Full-Gumbel's interior selector normally follows
+        // `completed_policy - visit_fraction`.  With sparse, high-entropy
+        // combat states this can let one edge monopolize a node before other
+        // edges receive a model value.  Optionally anneal the target toward a
+        // uniform allocation as the node accumulates visits.  The default
+        // (uniformity=0) is exactly the original rule.
+        const double uniformity = std::clamp(
+            config_.gumbelInteriorUniformity, 0.0, 1.0);
+        if (uniformity > 0.0 && node.edges.size() > 1) {
+            const double visitScale = std::max(
+                1.0, config_.gumbelMaxVisitInit);
+            const double progress = std::clamp(
+                static_cast<double>(totalVisits) / visitScale, 0.0, 1.0);
+            const double mix = uniformity * progress;
+            probability = (1.0 - mix) * probability +
+                mix / static_cast<double>(node.edges.size());
+        }
         const double score = probability - static_cast<double>(visits) /
             (1.0 + static_cast<double>(totalVisits));
         if (score > bestScore ||
@@ -1438,12 +1721,40 @@ void NoslNeuralSearchSession::backup(Pending &pending, double value) {
     for (auto *node : pending.nodes) {
         node->virtualVisits = std::max(0, node->virtualVisits - 1);
         ++node->visits;
-        node->valueSum += value;
+        if (!pending.excludeValue) {
+            ++node->valueVisits;
+            node->valueSum += value;
+        }
     }
     for (auto *edge : pending.edges) {
         edge->virtualVisits = std::max(0, edge->virtualVisits - 1);
         ++edge->visits;
-        edge->valueSum += value;
+        if (!pending.excludeValue) {
+            ++edge->valueVisits;
+            edge->valueSum += value;
+        }
+    }
+
+    // Rebuild values from the bottom of this sampled path.  The raw sample
+    // sums above remain available for diagnostics, while propagated values
+    // now respect the two kinds of backward edge:
+    //   action -> children: chance average over NOSL world lines;
+    //   decision node -> actions: configured mean/max/progressive aggregate.
+    for (int i = static_cast<int>(pending.edges.size()) - 1; i >= 0; --i) {
+        const std::size_t edgeIndex = static_cast<std::size_t>(i);
+        if (edgeIndex + 1 < pending.nodes.size()) {
+            recomputeNodeValue(*pending.nodes[edgeIndex + 1]);
+        }
+        recomputeEdgeValue(*pending.edges[edgeIndex]);
+        if (edgeIndex < pending.nodes.size()) {
+            recomputeNodeValue(*pending.nodes[edgeIndex]);
+        }
+    }
+    if (pending.edges.empty()) {
+        for (auto itNode = pending.nodes.rbegin();
+             itNode != pending.nodes.rend(); ++itNode) {
+            recomputeNodeValue(**itNode);
+        }
     }
     if (config_.rootSearchMode == 1 && !gumbelActiveEdges_.empty()) {
         ++gumbelRoundCompleted_;
@@ -1509,7 +1820,9 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 !gumbelActiveEdges_.empty()) {
                 edgeIndex = selectRootEdge();
             } else if (config_.rootSearchMode == 2 && node != &root_) {
-                edgeIndex = selectFullGumbelInterior(*node);
+                bool usedCoverage = false;
+                edgeIndex = selectFullGumbelInterior(*node, &usedCoverage);
+                pending.excludeValue = pending.excludeValue || usedCoverage;
             } else {
                 edgeIndex = selectPuct(*node);
             }
@@ -1563,8 +1876,25 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             }
             pending.edges.push_back(edge);
             edge->virtualVisits++;
+            state.stopAfterEnemyTurn =
+                config_.endTurnAsLeaf &&
+                executableAction.getActionType() == ActionType::END_TURN;
             executableAction.execute(state);
             ++depth;
+
+            if (config_.endTurnAsLeaf &&
+                executableAction.getActionType() == ActionType::END_TURN) {
+                // Do not expand the hidden/random continuation of End Turn.
+                // The resulting state is evaluated by the caller's value
+                // network and backed up as a value-only leaf.
+                pending.state = state;
+                pending.leaf = nullptr;
+                pending.legalActions.clear();
+                pending.needsPolicy = false;
+                haveLeaf = true;
+                break;
+            }
+
             const auto childKey = publicStateKey(state);
             auto childIt = edge->children.find(childKey);
             if (childIt == edge->children.end()) {
@@ -1622,18 +1952,30 @@ void NoslNeuralSearchSession::backprop(
         pending.leaf->networkValue = std::isfinite(value)
             ? std::clamp(value, 0.0, 1.0)
             : 0.0;
+        pending.leaf->networkValueValid = true;
         expandWithLogits(
             *pending.leaf, pending.state, pending.legalActions, policyLogits);
     }
     backup(pending, value);
 }
 
+void NoslNeuralSearchSession::backpropBatch(
+    const std::vector<std::uint64_t> &requestIds,
+    const std::vector<double> &values,
+    const std::vector<std::vector<double>> &policyLogits) {
+    if (requestIds.size() != values.size() ||
+        requestIds.size() != policyLogits.size()) {
+        throw std::invalid_argument("NOSL backprop batch lengths differ");
+    }
+    for (std::size_t i = 0; i < requestIds.size(); ++i) {
+        backprop(requestIds[i], values[i], policyLogits[i]);
+    }
+}
+
 NoslCombatDecision NoslNeuralSearchSession::result() const {
     NoslCombatDecision result;
     result.totalRootVisits = root_.visits;
-    result.rootValue = root_.visits > 0
-        ? root_.valueSum / static_cast<double>(root_.visits)
-        : hpValue(rootState_);
+    result.rootValue = nodeValueForSelection(root_);
     if (root_.edges.empty()) {
         result.action = Action();
         return result;
@@ -1725,9 +2067,11 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
 
     snapshot.valid = true;
     snapshot.visits = node->visits;
-    snapshot.value = node->visits > 0
-        ? node->valueSum / static_cast<double>(node->visits)
-        : node->networkValue;
+    snapshot.valueVisits = node->valueVisits;
+    snapshot.value = nodeValueForSelection(*node);
+    snapshot.sampleValue = node->valueVisits > 0
+        ? node->valueSum / static_cast<double>(node->valueVisits)
+        : nodeValueForSelection(*node);
     const QTransformDetails qDetails = completedQDetails(*node);
 
     std::vector<int> order;
@@ -1756,6 +2100,7 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
         info.edgeIndex = edgeIndex;
         info.actionBits = edge.action.bits;
         info.visits = edge.visits;
+        info.valueVisits = edge.valueVisits;
         info.childStates = static_cast<int>(edge.children.size());
         for (const auto &[childKey, child] : edge.children) {
             (void)childKey;
@@ -1764,9 +2109,10 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
             }
         }
         info.prior = edge.prior;
-        info.value = edge.visits > 0
-            ? edge.valueSum / static_cast<double>(edge.visits)
-            : node->networkValue - config_.fpuReduction;
+        info.value = edgeValueForSelection(edge, *node);
+        info.sampleQ = edge.valueVisits > 0
+            ? edge.valueSum / static_cast<double>(edge.valueVisits)
+            : info.value;
         if (static_cast<std::size_t>(edgeIndex) < qDetails.raw.size()) {
             info.rawQ = qDetails.raw[static_cast<std::size_t>(edgeIndex)];
             info.normalizedQ = qDetails.normalized[
@@ -1800,6 +2146,7 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
                 return entry.second && !entry.second->edges.empty();
             });
         info.targeted = edge.targeted;
+        info.randomSplit = edge.children.size() > 1;
         info.label = edge.label;
         snapshot.children.push_back(info);
     }

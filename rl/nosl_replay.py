@@ -71,6 +71,7 @@ class NOSLISAZReplayBuffer:
         self.observations: dict[str, np.ndarray] | None = None
         self.action_masks: np.ndarray | None = None
         self.policy_targets: np.ndarray | None = None
+        self.policy_weights: np.ndarray | None = None
         self.value_targets: np.ndarray | None = None
         self.sample_ids: np.ndarray | None = None
         self.position = 0
@@ -85,6 +86,7 @@ class NOSLISAZReplayBuffer:
             for array in (
                 self.action_masks,
                 self.policy_targets,
+                self.policy_weights,
                 self.value_targets,
                 self.sample_ids,
             )
@@ -107,6 +109,7 @@ class NOSLISAZReplayBuffer:
         self.policy_targets = np.empty(
             (self.capacity, self.action_dim), dtype=np.float16
         )
+        self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
         self.sample_ids = np.empty(self.capacity, dtype=np.uint64)
 
@@ -114,12 +117,14 @@ class NOSLISAZReplayBuffer:
         assert self.observations is not None
         assert self.action_masks is not None
         assert self.policy_targets is not None
+        assert self.policy_weights is not None
         assert self.value_targets is not None
         assert self.sample_ids is not None
         for key in self.observation_keys:
             self.observations[key][destination] = batch["observations"][key][source]
         self.action_masks[destination] = batch["action_masks"][source]
         self.policy_targets[destination] = batch["policy_targets"][source]
+        self.policy_weights[destination] = batch["policy_weights"][source]
         self.value_targets[destination] = batch["value_targets"][source]
         self.sample_ids[destination] = batch["sample_ids"][source]
 
@@ -143,6 +148,10 @@ class NOSLISAZReplayBuffer:
         policy_targets = np.stack(
             [sample["policy_target"] for sample in labelled]
         )
+        policy_weights = np.asarray(
+            [sample.get("policy_weight", 1.0) for sample in labelled],
+            dtype=np.float32,
+        )
         value_targets = np.asarray(
             [sample["value_target"] for sample in labelled], dtype=np.float32
         )
@@ -156,6 +165,12 @@ class NOSLISAZReplayBuffer:
             raise ValueError(
                 f"invalid replay policy shape {policy_targets.shape}; "
                 f"expected {(count, self.action_dim)}"
+            )
+        if policy_weights.shape != (count,) or not np.all(
+            np.isfinite(policy_weights) & (policy_weights >= 0.0)
+        ):
+            raise ValueError(
+                "replay policy weights must be finite, non-negative scalars"
             )
         for key, space in self._observation_spaces.items():
             expected = (count, *space.shape)
@@ -173,6 +188,7 @@ class NOSLISAZReplayBuffer:
             observations = {key: value[offset:] for key, value in observations.items()}
             action_masks = action_masks[offset:]
             policy_targets = policy_targets[offset:]
+            policy_weights = policy_weights[offset:]
             value_targets = value_targets[offset:]
             sample_ids = sample_ids[offset:]
             count = self.capacity
@@ -182,6 +198,7 @@ class NOSLISAZReplayBuffer:
             "observations": observations,
             "action_masks": action_masks,
             "policy_targets": policy_targets,
+            "policy_weights": policy_weights,
             "value_targets": value_targets,
             "sample_ids": sample_ids,
         }
@@ -195,21 +212,85 @@ class NOSLISAZReplayBuffer:
         return len(labelled)
 
     def sample_indices(
-        self, count: int, rng: np.random.Generator | None = None
+        self,
+        count: int,
+        rng: np.random.Generator | None = None,
+        *,
+        fresh_start_id: int | None = None,
+        max_old_fraction: float = 1.0,
     ) -> np.ndarray:
+        """Sample replay slots, optionally reserving space for fresh roots.
+
+        The ring buffer is already a FIFO sliding window.  Uniform sampling
+        from that window can nevertheless make the newest collection almost
+        disappear once the buffer is full.  ``max_old_fraction`` stratifies
+        the batch by the monotonically increasing sample id.  When the fresh
+        partition is smaller than its required quota, every fresh root is
+        included once before sampling additional fresh entries with
+        replacement.  This preserves the requested batch size and guarantees
+        the configured current-collection fraction.
+        """
         if count < 1:
             raise ValueError("replay sample count must be positive")
         if self.size < 1:
             raise ValueError("cannot sample an empty replay buffer")
+        if not np.isfinite(max_old_fraction) or not 0.0 <= max_old_fraction <= 1.0:
+            raise ValueError("max_old_fraction must be finite and in [0, 1]")
         count = min(int(count), self.size)
         chooser = np.random if rng is None else rng
-        return chooser.choice(self.size, size=count, replace=False)
+        if max_old_fraction >= 1.0:
+            return chooser.choice(self.size, size=count, replace=False)
+        if fresh_start_id is None:
+            raise ValueError(
+                "fresh_start_id is required when replay freshness is protected"
+            )
+        assert self.sample_ids is not None
+        slots = np.arange(self.size, dtype=np.int64)
+        fresh_mask = self.sample_ids[:self.size] >= int(fresh_start_id)
+        fresh_slots = slots[fresh_mask]
+        old_slots = slots[~fresh_mask]
+        if fresh_slots.size == 0:
+            raise ValueError(
+                "cannot satisfy replay freshness protection without fresh roots"
+            )
+
+        max_old_count = min(
+            int(old_slots.size),
+            int(np.floor(count * float(max_old_fraction) + 1.0e-12)),
+        )
+        fresh_count = count - max_old_count
+
+        old_selected = chooser.choice(
+            old_slots, size=max_old_count, replace=False
+        ) if max_old_count else np.empty(0, dtype=np.int64)
+        if fresh_count <= fresh_slots.size:
+            fresh_selected = chooser.choice(
+                fresh_slots, size=fresh_count, replace=False
+            )
+        else:
+            # Include the complete newest collection once.  Only the quota
+            # remainder is oversampled, avoiding accidental omission of a
+            # fresh root when that partition is small.
+            fresh_selected = np.concatenate((
+                chooser.permutation(fresh_slots),
+                chooser.choice(
+                    fresh_slots,
+                    size=fresh_count - fresh_slots.size,
+                    replace=True,
+                ),
+            ))
+        selected = np.concatenate((old_selected, fresh_selected)).astype(
+            np.int64, copy=False
+        )
+        chooser.shuffle(selected)
+        return selected
 
     def get_batch(self, indices: np.ndarray) -> dict[str, object]:
         if self.observations is None:
             raise ValueError("cannot read an unallocated replay buffer")
         assert self.action_masks is not None
         assert self.policy_targets is not None
+        assert self.policy_weights is not None
         assert self.value_targets is not None
         assert self.sample_ids is not None
         indices = np.asarray(indices, dtype=np.int64)
@@ -219,6 +300,7 @@ class NOSLISAZReplayBuffer:
             },
             "action_masks": self.action_masks[indices],
             "policy_targets": self.policy_targets[indices],
+            "policy_weights": self.policy_weights[indices],
             "value_targets": self.value_targets[indices],
             "sample_ids": self.sample_ids[indices],
         }
@@ -232,6 +314,7 @@ class NOSLISAZReplayBuffer:
             obs_bytes
             + self.action_dim * np.dtype(bool).itemsize
             + self.action_dim * np.dtype(np.float16).itemsize
+            + np.dtype(np.float16).itemsize
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize
         )

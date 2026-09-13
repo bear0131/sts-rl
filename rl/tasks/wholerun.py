@@ -274,6 +274,12 @@ class WholeRunTask(Task):
                  "and expands until terminal/new-leaf states.",
         )
         parser.add_argument(
+            "--nosl-is-az-end-turn-as-leaf",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="Stop after End Turn and evaluate the resulting state with value only.",
+        )
+        parser.add_argument(
             "--nosl-is-az-rollout-steps",
             type=int,
             default=0,
@@ -293,6 +299,12 @@ class WholeRunTask(Task):
             choices=("puct", "gumbel", "full_gumbel"),
             default="puct",
             help="Native tree policy: PUCT, legacy root Gumbel, or Full Gumbel AZ.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-paper-full-gumbel",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="Use canonical paper Full Gumbel AlphaZero settings and explicit sequential halving.",
         )
         parser.add_argument(
             "--nosl-is-az-gumbel-candidates",
@@ -318,6 +330,31 @@ class WholeRunTask(Task):
             "--nosl-is-az-gumbel-use-mixed-value",
             action=argparse.BooleanOptionalAction,
             default=True,
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-interior-uniformity",
+            type=float,
+            default=0.0,
+            help="Full-Gumbel non-root smoothing strength in [0,1].",
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-interior-coverage-fraction",
+            type=float,
+            default=0.0,
+            help="Prior-independent Full-Gumbel interior coverage fraction in [0,1].",
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-interior-value-mode",
+            type=int,
+            choices=(0, 1, 2),
+            default=2,
+            help="Interior V aggregation: 0=mean, 1=max, 2=progressive mean-to-max.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-gumbel-interior-max-mix-visits",
+            type=float,
+            default=64.0,
+            help="Visit scale at which progressive interior V reaches max.",
         )
         parser.add_argument(
             "--nosl-is-az-dirichlet-alpha", type=float, default=0.0,
@@ -364,6 +401,13 @@ class WholeRunTask(Task):
             type=int,
             default=1,
             help="Minimum replay roots required before AZ updates begin.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-replay-max-old-fraction",
+            type=float,
+            default=1.0,
+            help="Maximum fraction of a replay batch drawn from before the "
+                 "current collection. 1.0 preserves uniform replay.",
         )
         parser.add_argument(
             "--nosl-is-az-leaf-batch-size",

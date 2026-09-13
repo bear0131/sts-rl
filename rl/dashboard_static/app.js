@@ -13,6 +13,7 @@ let uploadManuallyOpen = false;
 let watchSeedDirty = false;
 let watchSimulationsDirty = false;
 let watchDepthDirty = false;
+let watchLeafBatchSizeDirty = false;
 let watchPriorTemperatureDirty = false;
 let watchSearchModeDirty = false;
 let watchGumbelParamsDirty = false;
@@ -20,6 +21,7 @@ let watchPolicyModeDirty = false;
 let watchPrecomputeDirty = false;
 let evalSimulationsDirty = false;
 let evalDepthDirty = false;
+let evalLeafBatchSizeDirty = false;
 let evalPriorTemperatureDirty = false;
 let evalSearchModeDirty = false;
 let evalGumbelParamsDirty = false;
@@ -120,6 +122,7 @@ function treeEdgeHtml(edge, path) {
   const cached = searchTreeCache.get(key);
   const childStates = Number(edge.child_states || 0);
   const childVisits = Number(edge.child_visits || 0);
+  const randomSplit = Boolean(edge.random_split) || childStates > 1;
   const childSummary = childStates > 1
     ? ` · ${childStates} public states · child N ${childVisits}`
     : "";
@@ -127,8 +130,9 @@ function treeEdgeHtml(edge, path) {
     ? ""
     : ` · CQ ${Number(edge.completed_q || 0).toFixed(3)} · score ${Number(edge.completed_score || 0).toFixed(3)}`;
   const visits = Number(edge.visits || 0);
-  const valueLabel = visits > 0 ? "Q" : "FPU";
-  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}`;
+  const valueLabel = visits > 0 ? "Q(up)" : "FPU";
+  const transitionLabel = randomSplit ? " · random-world average" : "";
+  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}${transitionLabel}`;
   const branch = open
     ? `<div class="search-tree-branch${searchTreeLoading.has(key) ? " loading" : ""}">${cached ? treeNodeHtml(cached, childPath) : "loading..."}</div>`
     : "";
@@ -145,7 +149,7 @@ function treeNodeHtml(snapshot, path) {
   const label = path.length ? `node ${path.join("/")}` : "root";
   const children = snapshot?.children || [];
   return `<div class="search-tree-node">
-    <div class="search-tree-node-heading">${label} · visits ${Number(snapshot?.visits || 0)} · V ${Number(snapshot?.value || 0).toFixed(3)}</div>
+    <div class="search-tree-node-heading">${label} · visits ${Number(snapshot?.visits || 0)} · V(up) ${Number(snapshot?.value || 0).toFixed(3)} · V(sample) ${Number(snapshot?.sample_value ?? snapshot?.value ?? 0).toFixed(3)}</div>
     <div class="search-tree-children">${children.length ? children.map(edge => treeEdgeHtml(edge, path)).join("") : `<div class="search-tree-empty">no expanded children</div>`}</div>
   </div>`;
 }
@@ -212,6 +216,72 @@ document.querySelectorAll(".tab").forEach(button => button.addEventListener("cli
   if (button.dataset.tab === "tokens") drawTokens();
   if (button.dataset.tab === "evaluation") drawDistribution();
 }));
+
+const customDefaultState = {
+  encounter: "Cultist",
+  player: {
+    hp: 80, max_hp: 80, energy: 3, block: 0,
+    powers: [], counters: {}
+  },
+  monsters: [
+    {hp: 48, max_hp: 48, block: 0, move: "INCANTATION", powers: []}
+  ],
+  hand: [["STRIKE_RED", 0], ["DEFEND_RED", 0], ["BASH", 0]],
+  draw_pile: [["STRIKE_RED", 0], ["DEFEND_RED", 0], ["STRIKE_RED", 0]],
+  discard_pile: [],
+  exhaust_pile: [],
+  relics: []
+};
+const zhEncounterNames = {
+  "Cultist": "邪教徒", "Jaw Worm": "颚虫", "Two Louse": "双虱虫",
+  "Three Louse": "三虱虫", "Gremlin Nob": "地精首领", "Lagavulin": "拉格沃林",
+  "The Guardian": "守护者", "Hexaghost": "六火亡魂", "Slime Boss": "史莱姆首领",
+  "Champ": "冠军", "The Heart": "心脏", "Time Eater": "时间吞噬者",
+  "Awakened One": "觉醒者", "Donu and Deca": "多纳与迪卡"
+};
+function setCustomStateText(value) {
+  $("customStateJson").value = JSON.stringify(value, null, 2);
+}
+async function loadCustomEncounters() {
+  try {
+    const data = await api("/api/custom-combat/encounters");
+    const select = $("customEncounter");
+    select.innerHTML = (data.encounters || []).map(name =>
+      `<option value="${escapeHtml(name)}">${escapeHtml(zhEncounterNames[name] || name)}</option>`).join("");
+    if ([...select.options].some(x => x.value === customDefaultState.encounter)) {
+      select.value = customDefaultState.encounter;
+    }
+  } catch (error) {
+    $("customStateError").textContent = `无法读取敌人列表：${error.message}`;
+  }
+}
+if ($("customStateJson")) {
+  setCustomStateText(customDefaultState);
+  loadCustomEncounters();
+  $("customTemplateButton").addEventListener("click", () => {
+    setCustomStateText({...customDefaultState, encounter: $("customEncounter").value || "Cultist"});
+    $("customStateError").textContent = "";
+  });
+  $("customApplyButton").addEventListener("click", async () => {
+    const button = $("customApplyButton");
+    try {
+      const spec = JSON.parse($("customStateJson").value);
+      spec.encounter = $("customEncounter").value || spec.encounter || "Cultist";
+      button.disabled = true;
+      $("customStateError").textContent = "正在构造战斗状态…";
+      appState.watch = await api("/api/custom-combat/apply", {
+        method: "POST", body: JSON.stringify(spec)
+      });
+      renderWatch();
+      document.querySelector('[data-tab="watch"]').click();
+      $("customStateError").textContent = "已应用。当前状态已进入 Watch，可直接使用 MCTS 搜索。";
+    } catch (error) {
+      $("customStateError").textContent = `应用失败：${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 
 const dropzone = $("dropzone");
 ["dragenter", "dragover"].forEach(name => dropzone.addEventListener(name, event => { event.preventDefault(); dropzone.classList.add("drag"); }));
@@ -290,6 +360,10 @@ function gumbelSearchParams(prefix) {
     gumbel_max_visit_init: Number($(`${prefix}GumbelMaxVisitInit`).value),
     gumbel_rescale_q: $(`${prefix}GumbelRescaleQ`).checked,
     gumbel_use_mixed_value: $(`${prefix}GumbelMixedValue`).checked,
+    gumbel_interior_uniformity: Number($(`${prefix}GumbelInteriorUniformity`).value),
+    gumbel_interior_coverage_fraction: Number($(`${prefix}GumbelInteriorCoverageFraction`).value),
+    gumbel_interior_value_mode: Number($(`${prefix}GumbelInteriorValueMode`)?.value ?? 2),
+    end_turn_as_leaf: $(`${prefix}EndTurnAsLeaf`).checked,
   };
 }
 
@@ -314,6 +388,9 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty) {
       GumbelScale: source?.[`${fieldPrefix}gumbel_scale`],
       GumbelValueScale: source?.[`${fieldPrefix}gumbel_value_scale`],
       GumbelMaxVisitInit: source?.[`${fieldPrefix}gumbel_max_visit_init`],
+      GumbelInteriorUniformity: source?.[`${fieldPrefix}gumbel_interior_uniformity`],
+      GumbelInteriorCoverageFraction: source?.[`${fieldPrefix}gumbel_interior_coverage_fraction`],
+      GumbelInteriorValueMode: source?.[`${fieldPrefix}gumbel_interior_value_mode`],
     };
     Object.entries(values).forEach(([suffix, value]) => {
       const node = $(`${prefix}${suffix}`);
@@ -323,6 +400,8 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty) {
     const mixed = source?.[`${fieldPrefix}gumbel_use_mixed_value`];
     if (rescale != null) $(`${prefix}GumbelRescaleQ`).checked = Boolean(rescale);
     if (mixed != null) $(`${prefix}GumbelMixedValue`).checked = Boolean(mixed);
+    const endTurnLeaf = source?.[`${fieldPrefix}end_turn_as_leaf`];
+    if (endTurnLeaf != null) $(`${prefix}EndTurnAsLeaf`).checked = Boolean(endTurnLeaf);
   }
   setGumbelControlsVisible(prefix);
 }
@@ -339,6 +418,7 @@ $("resetButton").addEventListener("click", async () => {
       seed: Number($("watchSeed").value),
       simulations: Number($("watchSimulations").value),
       depth: Number($("watchDepth").value),
+      leaf_batch_size: Number($("watchLeafBatchSize").value),
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
@@ -347,6 +427,7 @@ $("resetButton").addEventListener("click", async () => {
     watchSeedDirty = false;
     watchSimulationsDirty = false;
     watchDepthDirty = false;
+    watchLeafBatchSizeDirty = false;
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
@@ -362,17 +443,23 @@ $("resetButton").addEventListener("click", async () => {
 $("watchSeed").addEventListener("input", () => { watchSeedDirty = true; });
 $("watchSimulations").addEventListener("input", () => { watchSimulationsDirty = true; });
 $("watchDepth").addEventListener("input", () => { watchDepthDirty = true; });
+$("watchLeafBatchSize").addEventListener("input", () => { watchLeafBatchSizeDirty = true; });
 $("watchPriorTemperature").addEventListener("input", () => { watchPriorTemperatureDirty = true; });
 $("watchSearchMode").addEventListener("change", () => {
   watchSearchModeDirty = true;
   setGumbelControlsVisible("watch");
 });
-for (const id of ["watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit"]) {
+for (const id of ["watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit", "watchGumbelInteriorUniformity"]) {
   $(id).addEventListener("input", () => { watchGumbelParamsDirty = true; });
 }
+document.querySelectorAll("#watchGumbelInteriorCoverageFraction,#watchGumbelInteriorValueMode").forEach(node => node.addEventListener("input", () => { watchGumbelParamsDirty = true; }));
+document.querySelectorAll("#watchGumbelInteriorValueMode").forEach(node => node.addEventListener("change", () => { watchGumbelParamsDirty = true; }));
 for (const id of ["watchGumbelRescaleQ", "watchGumbelMixedValue"]) {
   $(id).addEventListener("change", () => { watchGumbelParamsDirty = true; });
 }
+$("watchEndTurnAsLeaf").addEventListener("change", () => {
+  watchGumbelParamsDirty = true;
+});
 $("watchPrecompute").addEventListener("change", () => { watchPrecomputeDirty = true; });
 function watchStochasticValue() {
   return $("watchPolicyMode").querySelector("button.active")?.dataset.stochastic !== "false";
@@ -390,7 +477,7 @@ $("watchPolicyMode").querySelectorAll("button").forEach(button => {
 $("watchSeed").addEventListener("keydown", event => {
   if (event.key === "Enter") $("resetButton").click();
 });
-for (const id of ["watchSimulations", "watchDepth", "watchPriorTemperature", "watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit"]) {
+for (const id of ["watchSimulations", "watchDepth", "watchLeafBatchSize", "watchPriorTemperature", "watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit"]) {
   $(id).addEventListener("keydown", event => {
     if (event.key === "Enter") $("watchSearchApply").click();
   });
@@ -406,6 +493,7 @@ $("watchSearchApply").addEventListener("click", async () => {
       body: JSON.stringify({
         simulations: Number($("watchSimulations").value),
         depth: Number($("watchDepth").value),
+        leaf_batch_size: Number($("watchLeafBatchSize").value),
         prior_temperature: Number($("watchPriorTemperature").value),
         ...gumbelSearchParams("watch"),
         stochastic: watchStochasticValue(),
@@ -414,6 +502,7 @@ $("watchSearchApply").addEventListener("click", async () => {
     });
     watchSimulationsDirty = false;
     watchDepthDirty = false;
+    watchLeafBatchSizeDirty = false;
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
@@ -524,13 +613,16 @@ $("evalButton").addEventListener("click", async () => {
     appState.evaluation = await api("/api/eval/start", {method:"POST", body:JSON.stringify({
       episodes: Number($("evalEpisodes").value),
       seed: Number($("evalSeed").value),
+      workers: Number($("evalWorkers").value),
       simulations: Number($("evalSimulations").value),
       depth: Number($("evalDepth").value),
+      leaf_batch_size: Number($("evalLeafBatchSize").value),
       prior_temperature: Number($("evalPriorTemperature").value),
       ...gumbelSearchParams("eval"),
     }), headers:{"Content-Type":"application/json"}});
     evalSimulationsDirty = false;
     evalDepthDirty = false;
+    evalLeafBatchSizeDirty = false;
     evalPriorTemperatureDirty = false;
     evalSearchModeDirty = false;
     evalGumbelParamsDirty = false;
@@ -539,18 +631,23 @@ $("evalButton").addEventListener("click", async () => {
 });
 $("evalSimulations").addEventListener("input", () => { evalSimulationsDirty = true; });
 $("evalDepth").addEventListener("input", () => { evalDepthDirty = true; });
+$("evalLeafBatchSize").addEventListener("input", () => { evalLeafBatchSizeDirty = true; });
 $("evalPriorTemperature").addEventListener("input", () => { evalPriorTemperatureDirty = true; });
 $("evalSearchMode").addEventListener("change", () => {
   evalSearchModeDirty = true;
   setGumbelControlsVisible("eval");
 });
-for (const id of ["evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
+for (const id of ["evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit", "evalGumbelInteriorUniformity"]) {
   $(id).addEventListener("input", () => { evalGumbelParamsDirty = true; });
 }
+document.querySelectorAll("#evalGumbelInteriorCoverageFraction").forEach(node => node.addEventListener("input", () => { evalGumbelParamsDirty = true; }));
 for (const id of ["evalGumbelRescaleQ", "evalGumbelMixedValue"]) {
   $(id).addEventListener("change", () => { evalGumbelParamsDirty = true; });
 }
-for (const id of ["evalSimulations", "evalDepth", "evalPriorTemperature", "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
+$("evalEndTurnAsLeaf").addEventListener("change", () => {
+  evalGumbelParamsDirty = true;
+});
+for (const id of ["evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature", "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
   $(id).addEventListener("keydown", event => {
     if (event.key === "Enter") $("evalButton").click();
   });
@@ -566,6 +663,7 @@ $("winSeedList").addEventListener("click", async event => {
       seed: Number(button.dataset.seed),
       simulations: Number($("watchSimulations").value),
       depth: Number($("watchDepth").value),
+      leaf_batch_size: Number($("watchLeafBatchSize").value),
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
@@ -573,6 +671,7 @@ $("winSeedList").addEventListener("click", async event => {
     }), headers:{"Content-Type":"application/json"}});
     watchSimulationsDirty = false;
     watchDepthDirty = false;
+    watchLeafBatchSizeDirty = false;
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
@@ -970,6 +1069,9 @@ function renderWatch() {
   if (!watchDepthDirty && document.activeElement !== $("watchDepth")) {
     $("watchDepth").value = w.mcts_depth ?? 0;
   }
+  if (!watchLeafBatchSizeDirty && document.activeElement !== $("watchLeafBatchSize")) {
+    $("watchLeafBatchSize").value = w.mcts_leaf_batch_size ?? 16;
+  }
   if (!watchPriorTemperatureDirty && document.activeElement !== $("watchPriorTemperature")) {
     $("watchPriorTemperature").value = w.mcts_prior_temperature ?? 1;
   }
@@ -1136,8 +1238,10 @@ $("tokenCanvas").addEventListener("mouseleave",()=>$("tokenTooltip").style.displ
 
 function renderEvaluation() {
   const e=appState?.evaluation || {}, done=e.completed||0, total=e.episodes||0, results=e.results||{};
+  if ($("evalWorkers") && e.workers != null && document.activeElement !== $("evalWorkers")) $("evalWorkers").value = e.workers;
   if (!evalSimulationsDirty && e.simulations != null) $("evalSimulations").value = e.simulations;
   if (!evalDepthDirty && e.depth != null) $("evalDepth").value = e.depth;
+  if (!evalLeafBatchSizeDirty && e.leaf_batch_size != null) $("evalLeafBatchSize").value = e.leaf_batch_size;
   if (!evalPriorTemperatureDirty && e.prior_temperature != null) $("evalPriorTemperature").value = e.prior_temperature;
   restoreGumbelControls("eval", e, evalSearchModeDirty, evalGumbelParamsDirty);
   $("evalProgress").textContent=`${done} / ${total}`; $("meanFloor").textContent=e.floor_mean==null?"—":Number(e.floor_mean).toFixed(2);
@@ -1145,7 +1249,7 @@ function renderEvaluation() {
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
   const searchLabel=e.search_method==="nosl_is_az_cpp"
-    ? `${e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
+    ? `${e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
   $("evalStatus").textContent=searchLabel?`${stateLabel} · ${searchLabel}`:stateLabel;
   const winSeeds = evaluationWinSeeds(e);

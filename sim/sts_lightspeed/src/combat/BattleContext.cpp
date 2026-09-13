@@ -43,6 +43,8 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
     skipMonsterTurn = false;
     turnHasEnded = false;
     isBattleOver = false;
+    stopAfterEnemyTurn = false;
+    postEnemyTurnBoundary = false;
 
     actionQueue.clear();
     cardQueue.clear();
@@ -846,6 +848,13 @@ void BattleContext::executeActions() {
 
         if (turnHasEnded) {
             // after all monster turns
+            if (stopAfterEnemyTurn) {
+                // All queued effects from every enemy have completed.  Settle
+                // the deterministic end-of-round state, but do not run the
+                // next player turn's start effects, draw, or energy recharge.
+                enterPostEnemyTurnBoundary();
+                break;
+            }
             afterMonsterTurns();
 #ifdef STS_ENABLE_RULE_TRACE
             if (atomicStepObserver) {
@@ -2221,7 +2230,62 @@ void BattleContext::applyEndOfRoundPowers() {
     }
 }
 
+void BattleContext::enterPostEnemyTurnBoundary() {
+    // This state is used only as a value leaf.  It represents the completed
+    // enemy phase, not an in-flight action queue and not a partially initialized
+    // player turn.
+    if (!skipMonsterTurn) {
+        applyEndOfRoundPowers();
+    }
+
+    ++turn;
+    skipMonsterTurn = false;
+    turnHasEnded = false;
+    endTurnQueued = false;
+
+    // Project deterministic start-of-turn cleanup so expired block and
+    // per-turn counters cannot make two otherwise equivalent value leaves look
+    // different.  Start-of-turn relic/power effects are deliberately excluded:
+    // they belong to the random continuation beyond this boundary.
+    if (player.hasStatus<PS::BARRICADE>()) {
+        // Barricade intentionally carries block across turns.
+    } else if (player.hasStatus<PS::BLUR>()) {
+        player.decrementStatus<PS::BLUR>();
+    } else if (player.hasRelic<R::CALIPERS>()) {
+        player.block = std::max(0, player.block - 15);
+    } else {
+        player.block = 0;
+    }
+    if (player.stance == Stance::DIVINITY) {
+        player.stance = Stance::NEUTRAL;
+    }
+    if (player.hasStatus<PS::FLAME_BARRIER>()) {
+        player.removeStatus<PS::FLAME_BARRIER>();
+    }
+    player.energy = 0;
+    player.cardsPlayedThisTurn = 0;
+    player.attacksPlayedThisTurn = 0;
+    player.skillsPlayedThisTurn = 0;
+    player.cardsDiscardedThisTurn = 0;
+    player.echoFormCardsDoubled = 0;
+    player.haveUsedNecronomiconThisTurn = false;
+    player.orangePelletsCardTypesPlayed.reset();
+
+    // Enemy moves rolled while finishing the enemy action queue describe the
+    // next player turn.  They are beyond this pre-draw boundary and, under
+    // NOSL, depend on the sampled future world line.  Do not expose them to the
+    // boundary value estimate.
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        if (!monsters.arr[i].isDeadOrEscaped()) {
+            monsters.arr[i].moveHistory[0] = MonsterMoveId::INVALID;
+        }
+    }
+
+    postEnemyTurnBoundary = true;
+}
+
 void BattleContext::afterMonsterTurns() {
+    postEnemyTurnBoundary = false;
     // ********* Enemy powers atEndOfRound *********
     if (!skipMonsterTurn) {
         applyEndOfRoundPowers();

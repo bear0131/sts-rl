@@ -79,6 +79,13 @@ namespace sts {
         bool endTurnQueued = false;
         bool turnHasEnded = false;
         bool skipMonsterTurn = false;
+        // Search control: stop after the complete enemy phase, before
+        // next-turn start effects/draw/energy recharge.
+        bool stopAfterEnemyTurn = false;
+        // Observation marker set only after the stable boundary has actually
+        // been reached.  Keep it separate from the control flag so in-flight
+        // enemy actions are never mislabeled as value boundaries.
+        bool postEnemyTurnBoundary = false;
 
         ActionQueue<50> actionQueue;
         CardQueue cardQueue;
@@ -162,6 +169,7 @@ namespace sts {
         void callEndTurnEarlySequence(); // time eater
 
         void applyEndOfRoundPowers(); // game : MonsterGroup applyEndOfTurnPowers
+        void enterPostEnemyTurnBoundary();
         void afterMonsterTurns();
 
         void obtainPotion(Potion p);

@@ -17,6 +17,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_suppo
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
+from env.core.run_env import unpack_nosl_observation_buffer
 from rl.hierarchical_returns import compute_hierarchical_returns
 from rl.nosl_replay import NOSLISAZReplayBuffer
 
@@ -26,6 +27,44 @@ NOSL_IS_AZ_SEARCH_MODES = {
     "gumbel": 1,
     "full_gumbel": 2,
 }
+
+
+def _leaf_observation_as_tensor(observation, device):
+    """Move a compact leaf batch to the device with one copy per dtype.
+
+    The split combat encoder exposes many small fields.  Calling
+    ``obs_as_tensor`` on the dict moves each field independently, which turns
+    a small leaf batch into dozens of CUDA launch/copy operations.  All combat
+    fields are either int64 categorical arrays or float32 scalar arrays, so we
+    concatenate fields of the same dtype on the host, transfer two contiguous
+    buffers, and reconstruct field views on the device.  The tensor values and
+    shapes are unchanged; this is purely a transport optimization.
+    """
+    groups: dict[np.dtype, list[tuple[str, np.ndarray]]] = {}
+    for key, value in observation.items():
+        array = np.ascontiguousarray(value)
+        groups.setdefault(array.dtype, []).append((str(key), array))
+    if not groups:
+        return {}
+    result = {}
+    for dtype, fields in groups.items():
+        if dtype not in (np.dtype(np.int64), np.dtype(np.float32)):
+            # Keep compatibility with optional extensions that may add a new
+            # scalar dtype before the encoder contract is updated.
+            return obs_as_tensor(observation, device)
+        offsets = []
+        total = 0
+        flat_fields = []
+        for key, array in fields:
+            flat = array.reshape(-1)
+            offsets.append((key, array.shape, total, flat.size))
+            flat_fields.append(flat)
+            total += flat.size
+        packed = np.concatenate(flat_fields) if len(flat_fields) > 1 else flat_fields[0]
+        packed_tensor = th.as_tensor(packed, device=device)
+        for key, shape, offset, size in offsets:
+            result[key] = packed_tensor[offset:offset + size].reshape(shape)
+    return result
 
 
 def _fill_nosl_combat_value_targets(
@@ -227,17 +266,23 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_cpp: bool = False,
         nosl_is_az_simulations: int = 8,
         nosl_is_az_depth: int = 3,
+        nosl_is_az_end_turn_as_leaf: bool = False,
         nosl_is_az_rollout_steps: int = 0,
         nosl_is_az_c_puct: float = 1.5,
         nosl_is_az_temperature: float = 1.0,
         nosl_is_az_prior_temperature: float = 1.0,
         nosl_is_az_search_mode: str = "puct",
+        nosl_is_az_paper_full_gumbel: bool = False,
         nosl_is_az_gumbel_candidates: int = 0,
         nosl_is_az_gumbel_scale: float = 1.0,
         nosl_is_az_gumbel_value_scale: float = 0.1,
         nosl_is_az_gumbel_max_visit_init: float = 50.0,
         nosl_is_az_gumbel_rescale_q: bool = True,
         nosl_is_az_gumbel_use_mixed_value: bool = True,
+        nosl_is_az_gumbel_interior_uniformity: float = 0.0,
+        nosl_is_az_gumbel_interior_coverage_fraction: float = 0.0,
+        nosl_is_az_gumbel_interior_value_mode: int = 2,
+        nosl_is_az_gumbel_interior_max_mix_visits: float = 64.0,
         nosl_is_az_dirichlet_alpha: float = 0.0,
         nosl_is_az_dirichlet_epsilon: float = 0.0,
         nosl_is_az_master_nonce: int = 0x4E4F534C4953415A,
@@ -246,6 +291,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_replay_enabled: bool = True,
         nosl_is_az_replay_capacity: int = 131072,
         nosl_is_az_replay_min_size: int = 1,
+        nosl_is_az_replay_max_old_fraction: float = 1.0,
         nosl_is_az_leaf_batch_size: int = 64,
         nosl_is_az_updates: int = 1,
         nosl_is_az_policy_coef: float = 1.0,
@@ -314,6 +360,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError(
                 "NOSL-IS-AZ replay min size must be in [1, replay capacity]"
             )
+        if (
+            not np.isfinite(nosl_is_az_replay_max_old_fraction)
+            or not 0.0 <= nosl_is_az_replay_max_old_fraction <= 1.0
+        ):
+            raise ValueError(
+                "NOSL-IS-AZ replay max old fraction must be finite and in [0, 1]"
+            )
         if nosl_is_az_leaf_batch_size < 1:
             raise ValueError("NOSL-IS-AZ leaf batch size must be positive")
         if nosl_is_az_policy_coef < 0.0 or nosl_is_az_value_coef < 0.0:
@@ -342,11 +395,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
         )
         self.nosl_is_az_simulations = int(nosl_is_az_simulations)
         self.nosl_is_az_depth = int(nosl_is_az_depth)
+        self.nosl_is_az_end_turn_as_leaf = bool(nosl_is_az_end_turn_as_leaf)
         self.nosl_is_az_rollout_steps = int(nosl_is_az_rollout_steps)
         self.nosl_is_az_c_puct = float(nosl_is_az_c_puct)
         self.nosl_is_az_temperature = float(nosl_is_az_temperature)
         self.nosl_is_az_prior_temperature = float(nosl_is_az_prior_temperature)
         self.nosl_is_az_search_mode = str(nosl_is_az_search_mode)
+        self.nosl_is_az_paper_full_gumbel = bool(
+            nosl_is_az_paper_full_gumbel
+        )
         self.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[
             self.nosl_is_az_search_mode
         ]
@@ -360,14 +417,70 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_gumbel_use_mixed_value = bool(
             nosl_is_az_gumbel_use_mixed_value
         )
+        self.nosl_is_az_gumbel_interior_uniformity = float(
+            nosl_is_az_gumbel_interior_uniformity
+        )
+        self.nosl_is_az_gumbel_interior_coverage_fraction = float(
+            nosl_is_az_gumbel_interior_coverage_fraction
+        )
+        self.nosl_is_az_gumbel_interior_value_mode = int(
+            nosl_is_az_gumbel_interior_value_mode
+        )
+        self.nosl_is_az_gumbel_interior_max_mix_visits = float(
+            nosl_is_az_gumbel_interior_max_mix_visits
+        )
+        if not 0.0 <= self.nosl_is_az_gumbel_interior_coverage_fraction <= 1.0:
+            raise ValueError(
+                "NOSL Full-Gumbel interior coverage fraction must be in [0, 1]"
+            )
+        if self.nosl_is_az_gumbel_interior_value_mode not in (0, 1, 2):
+            raise ValueError(
+                "NOSL Full-Gumbel interior value mode must be 0, 1, or 2"
+            )
+        if (
+            not np.isfinite(self.nosl_is_az_gumbel_interior_max_mix_visits)
+            or self.nosl_is_az_gumbel_interior_max_mix_visits <= 0.0
+        ):
+            raise ValueError(
+                "NOSL Full-Gumbel interior max-mix visits must be positive and finite"
+            )
         self.nosl_is_az_dirichlet_alpha = float(nosl_is_az_dirichlet_alpha)
         self.nosl_is_az_dirichlet_epsilon = float(nosl_is_az_dirichlet_epsilon)
+        if self.nosl_is_az_paper_full_gumbel:
+            # Keep the serialized model metadata aligned with the native
+            # strict-paper path.  The native constructor repeats this
+            # canonicalization so direct environment callers get the same
+            # semantics.
+            if self.nosl_is_az_search_mode != "full_gumbel":
+                raise ValueError(
+                    "paper Full-Gumbel mode requires search_mode='full_gumbel'"
+                )
+            self.nosl_is_az_prior_temperature = 1.0
+            # DeepMind mctx's paper policy uses max_num_considered_actions=16.
+            # The legacy mode keeps 0 as the project-specific "all legal"
+            # convention; strict paper mode must use the paper default.
+            self.nosl_is_az_gumbel_candidates = 16
+            self.nosl_is_az_gumbel_scale = 1.0
+            # Match mctx.qtransform_completed_by_mix_value's value_scale=0.1.
+            self.nosl_is_az_gumbel_value_scale = 0.1
+            self.nosl_is_az_gumbel_max_visit_init = 50.0
+            self.nosl_is_az_gumbel_rescale_q = True
+            self.nosl_is_az_gumbel_use_mixed_value = True
+            self.nosl_is_az_gumbel_interior_uniformity = 0.0
+            self.nosl_is_az_gumbel_interior_coverage_fraction = 0.0
+            self.nosl_is_az_gumbel_interior_value_mode = 0
+            self.nosl_is_az_gumbel_interior_max_mix_visits = 64.0
+            self.nosl_is_az_dirichlet_alpha = 0.0
+            self.nosl_is_az_dirichlet_epsilon = 0.0
         self.nosl_is_az_master_nonce = int(nosl_is_az_master_nonce)
         self.nosl_is_az_batch_size = int(nosl_is_az_batch_size)
         self.nosl_is_az_micro_batch_size = int(nosl_is_az_micro_batch_size)
         self.nosl_is_az_replay_enabled = bool(nosl_is_az_replay_enabled)
         self.nosl_is_az_replay_capacity = int(nosl_is_az_replay_capacity)
         self.nosl_is_az_replay_min_size = int(nosl_is_az_replay_min_size)
+        self.nosl_is_az_replay_max_old_fraction = float(
+            nosl_is_az_replay_max_old_fraction
+        )
         self.nosl_is_az_leaf_batch_size = int(nosl_is_az_leaf_batch_size)
         self.nosl_is_az_updates = int(nosl_is_az_updates)
         self.nosl_is_az_policy_coef = float(nosl_is_az_policy_coef)
@@ -407,8 +520,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_replay_prepare_stats",
             "_nosl_is_az_metric_sums",
             "_nosl_is_az_metric_sumsq",
+            "_nosl_is_az_metric_counts",
             "_nosl_is_az_metric_count",
             "_nosl_is_az_policy_loss_sum",
+            "_nosl_is_az_policy_weight_sum",
             "_nosl_is_az_value_loss_sum",
         ]
 
@@ -423,6 +538,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_replay_capacity = capacity
         self.nosl_is_az_replay_min_size = int(
             getattr(self, "nosl_is_az_replay_min_size", 1)
+        )
+        self.nosl_is_az_replay_max_old_fraction = float(
+            getattr(self, "nosl_is_az_replay_max_old_fraction", 1.0)
         )
         self.nosl_is_az_micro_batch_size = int(
             getattr(self, "nosl_is_az_micro_batch_size", 2048)
@@ -475,6 +593,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         policy_targets = np.stack(
             [np.asarray(sample["policy_target"], dtype=np.float32) for sample in samples]
         )
+        policy_weights = np.asarray(
+            [sample.get("policy_weight", 1.0) for sample in samples],
+            dtype=np.float32,
+        )
         value_targets = np.asarray(
             [sample["value_target"] for sample in samples], dtype=np.float32
         )
@@ -484,10 +606,17 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "invalid fresh NOSL action/policy shape: "
                 f"{action_masks.shape}/{policy_targets.shape}; expected {expected}"
             )
+        if policy_weights.shape != (len(samples),) or not np.all(
+            np.isfinite(policy_weights) & (policy_weights >= 0.0)
+        ):
+            raise ValueError(
+                "fresh NOSL policy weights must be finite and non-negative"
+            )
         return {
             "observations": observations,
             "action_masks": action_masks,
             "policy_targets": policy_targets,
+            "policy_weights": policy_weights,
             "value_targets": value_targets,
             # The no-replay path has no persistent sample ids.  Keeping a
             # local ordinal makes diagnostics and compatibility callers easy.
@@ -813,16 +942,35 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._nosl_is_az_pending_fights = active_combat_samples
         incomplete_combat_roots = 0
         completed_combat_roots = 0
+        completed_combat_boundaries = 0
         completed_combats = 0
         cpp_leaf_batches = 0
         cpp_leaf_evaluations = 0
+        # Keep the staged NOSL pipeline measurable.  These counters include
+        # worker IPC where named, so the next run can distinguish simulator
+        # work from Python packing and learner inference without sampling every
+        # individual leaf.
+        nosl_timings = {
+            "root_policy_seconds": 0.0,
+            "cpp_begin_rpc_seconds": 0.0,
+            "cpp_leaf_decode_seconds": 0.0,
+            "cpp_leaf_model_seconds": 0.0,
+            "cpp_backprop_rpc_seconds": 0.0,
+            "env_step_seconds": 0.0,
+        }
         n_steps = 0
         action_masks = None
         started = time.perf_counter()
 
         while n_steps < n_rollout_steps:
-            with th.no_grad():
-                obs_tensor = obs_as_tensor(self._last_obs, self.device)
+            policy_started = time.perf_counter()
+            with th.inference_mode():
+                # Root, leaf, and learner batches use the same compact
+                # dtype-packed transport.  The router still selects only the
+                # fields needed by each phase after this value-preserving move.
+                obs_tensor = _leaf_observation_as_tensor(
+                    self._last_obs, self.device
+                )
                 if use_masking:
                     action_masks = get_action_masks(env)
                 # Whole-run policies expose this core API.  Keeping a strict
@@ -845,6 +993,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     distribution.apply_masking(action_masks)
                 actions = distribution.get_actions(deterministic=False)
                 values = values.float()
+            nosl_timings["root_policy_seconds"] += (
+                time.perf_counter() - policy_started
+            )
 
             actions_np = actions.cpu().numpy().reshape(-1)
             # BF16 autocast tensors do not have a numpy representation on
@@ -905,6 +1056,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "state_nonce": state_nonce,
                                 "simulations": self.nosl_is_az_simulations,
                                 "depth": self.nosl_is_az_depth,
+                                "end_turn_as_leaf": self.nosl_is_az_end_turn_as_leaf,
                                 "c_puct": self.nosl_is_az_c_puct,
                                 "leaf_batch_size": self.nosl_is_az_leaf_batch_size,
                                 "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,
@@ -912,12 +1064,18 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "root_value": float(values_np[env_index]),
                                 "prior_temperature": self.nosl_is_az_prior_temperature,
                                 "root_search_mode": self.nosl_is_az_root_search_mode,
+                                "paper_full_gumbel": self.nosl_is_az_paper_full_gumbel,
                                 "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
                                 "gumbel_scale": self.nosl_is_az_gumbel_scale,
                                 "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
                                 "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
                                 "gumbel_use_mixed_value": self.nosl_is_az_gumbel_use_mixed_value,
+                                "gumbel_interior_uniformity": self.nosl_is_az_gumbel_interior_uniformity,
+                                "gumbel_interior_min_visits": 1,
+                                "gumbel_interior_coverage_fraction": self.nosl_is_az_gumbel_interior_coverage_fraction,
+                                "gumbel_interior_value_mode": self.nosl_is_az_gumbel_interior_value_mode,
+                                "gumbel_interior_max_mix_visits": self.nosl_is_az_gumbel_interior_max_mix_visits,
                                 "compact_observation": compact_cpp_observations,
                             },
                         )
@@ -942,8 +1100,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     # batch of public leaves; all leaves from all workers are
                     # evaluated in one learner/GPU forward, then each worker
                     # receives its updates in one grouped IPC call.
+                    rpc_started = time.perf_counter()
                     responses = call_workers(
                         "nosl_is_az_cpp_begin", begin_calls
+                    )
+                    nosl_timings["cpp_begin_rpc_seconds"] += (
+                        time.perf_counter() - rpc_started
                     )
                     active = {
                         index: response
@@ -955,23 +1117,57 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             result_by_index[index] = response["result"]
 
                     while active:
+                        decode_started = time.perf_counter()
                         leaf_records = []
+                        packed_batches = []
                         for index in sorted(active):
-                            for leaf in active[index].get("leaves", ()):
-                                leaf_records.append((index, leaf))
+                            response = active[index]
+                            # New transport path: the environment has already
+                            # stacked each observation field into a contiguous
+                            # batch.  Retain only tiny per-leaf metadata here;
+                            # this removes a Python dict/np.stack pass from the
+                            # hot loop.
+                            batch = unpack_nosl_observation_buffer(response)
+                            meta = response.get("leaf_meta")
+                            if batch is not None and meta is not None:
+                                batch_position = len(packed_batches)
+                                packed_batches.append((index, batch))
+                                for position, item in enumerate(meta):
+                                    leaf_records.append(
+                                        (index, item, batch_position, position)
+                                    )
+                            else:
+                                for leaf in response.get("leaves", ()):
+                                    leaf_records.append((index, leaf))
                         if not leaf_records:
                             raise RuntimeError(
                                 "native NOSL AlphaZero returned no leaves before completion"
                             )
                         cpp_leaf_batches += 1
                         cpp_leaf_evaluations += len(leaf_records)
-                        leaf_observations = {
-                            key: np.stack([
-                                np.asarray(leaf["observation"][key])
-                                for _index, leaf in leaf_records
-                            ])
-                            for key in leaf_records[0][1]["observation"]
-                        }
+                        if packed_batches:
+                            # Batches from different worker processes are
+                            # concatenated once per field.  This is still
+                            # contiguous and avoids per-leaf Python packing.
+                            keys = tuple(packed_batches[0][1])
+                            leaf_observations = {
+                                key: np.ascontiguousarray(np.concatenate(
+                                    [batch[key] for _index, batch in packed_batches],
+                                    axis=0,
+                                ))
+                                for key in keys
+                            }
+                        else:
+                            leaf_observations = {
+                                key: np.stack([
+                                    np.asarray(leaf["observation"][key])
+                                    for _index, leaf in leaf_records
+                                ])
+                                for key in leaf_records[0][1]["observation"]
+                            }
+                        nosl_timings["cpp_leaf_decode_seconds"] += (
+                            time.perf_counter() - decode_started
+                        )
                         relic_width = None
                         if compact_cpp_observations:
                             relic_ids = leaf_observations["relics"]
@@ -982,8 +1178,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 int(active_columns[-1]) + 1
                                 if active_columns.size else 1
                             )
-                        leaf_tensor = obs_as_tensor(leaf_observations, self.device)
-                        with th.no_grad():
+                        leaf_tensor = _leaf_observation_as_tensor(
+                            leaf_observations, self.device
+                        )
+                        model_started = time.perf_counter()
+                        with th.inference_mode():
                             with self.autocast_context():
                                 if compact_cpp_observations:
                                     leaf_logits, leaf_values = (
@@ -1000,16 +1199,28 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         leaf_values_np = (
                             leaf_values.detach().float().cpu().numpy().reshape(-1)
                         )
+                        nosl_timings["cpp_leaf_model_seconds"] += (
+                            time.perf_counter() - model_started
+                        )
                         update_payloads = {}
-                        for position, (index, leaf) in enumerate(leaf_records):
+                        for position, record in enumerate(leaf_records):
+                            index = record[0]
+                            if len(record) == 4 and packed_batches:
+                                meta = record[1]
+                                needs_policy = bool(meta.get("needs_policy", True))
+                                request_id = int(meta["request_id"])
+                            else:
+                                leaf = record[1]
+                                needs_policy = bool(leaf.get("needs_policy", True))
+                                request_id = int(leaf["request_id"])
                             policy = (
                                 leaf_logits_np[position]
-                                if leaf.get("needs_policy", True)
+                                if needs_policy
                                 else np.zeros(0, dtype=np.float64)
                             )
                             update_payloads.setdefault(index, []).append(
                                 (
-                                    int(leaf["request_id"]),
+                                    request_id,
                                     float(leaf_values_np[position]),
                                     policy,
                                 )
@@ -1023,9 +1234,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             )
                             for index, updates in update_payloads.items()
                         }
+                        rpc_started = time.perf_counter()
                         next_responses = call_workers(
                             "nosl_is_az_cpp_backprop_and_leaf_batch",
                             next_calls,
+                        )
+                        nosl_timings["cpp_backprop_rpc_seconds"] += (
+                            time.perf_counter() - rpc_started
                         )
                         active = {
                             index: response
@@ -1055,8 +1270,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             ])
                             for key in active[active_indices[0]]["observation"]
                         }
-                        leaf_tensor = obs_as_tensor(leaf_observations, self.device)
-                        with th.no_grad():
+                        leaf_tensor = _leaf_observation_as_tensor(
+                            leaf_observations, self.device
+                        )
+                        with th.inference_mode():
                             with self.autocast_context():
                                 leaf_logits, leaf_values = core.actor_critic(
                                     leaf_tensor
@@ -1111,6 +1328,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         "policy_target": np.asarray(
                             result["visit_policy"], dtype=np.float32
                         ).copy(),
+                        "policy_weight": 1.0,
                         # Filled with objective final combat HP below.  The
                         # search root value remains diagnostic only.
                         "value_target": np.nan,
@@ -1122,7 +1340,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # log-probability so the rollout remains internally consistent even
             # though combat samples are excluded from the PPO objective below.
             log_probs = distribution.log_prob(actions).float()
+            env_started = time.perf_counter()
             new_obs, rewards, dones, infos = env.step(actions_np)
+            nosl_timings["env_step_seconds"] += (
+                time.perf_counter() - env_started
+            )
             self.num_timesteps += env.num_envs
 
             next_phases, next_hp, interrupted = self._next_phase_hp(
@@ -1131,6 +1353,30 @@ class AccumulatingMaskablePPO(MaskablePPO):
             for env_index in range(env.num_envs):
                 if int(phase[env_index]) != combat_phase:
                     continue
+                # Only the boundary on the action actually taken belongs to
+                # this trajectory.  It receives the fight's eventual HP label
+                # but no policy target; hypothetical search leaves must never
+                # be assigned the selected line's return.
+                boundary_observation = infos[env_index].pop(
+                    "nosl_value_boundary_observation", None
+                )
+                if (
+                    self.nosl_is_az_end_turn_as_leaf
+                    and boundary_observation is not None
+                ):
+                    action_dim = int(self.action_space.n)
+                    active_combat_samples[env_index].append({
+                        "observation": {
+                            key: np.asarray(value).copy()
+                            for key, value in boundary_observation.items()
+                        },
+                        "action_mask": np.zeros(action_dim, dtype=bool),
+                        "policy_target": np.zeros(action_dim, dtype=np.float32),
+                        "policy_weight": 0.0,
+                        "value_target": np.nan,
+                        "search_value": np.nan,
+                    })
+                    completed_combat_boundaries += 1
                 local_terminal = bool(
                     dones[env_index]
                     or next_phases[env_index] != combat_phase
@@ -1209,11 +1455,22 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.logger.record(
             "nosl_is_az/completed_combat_roots", completed_combat_roots
         )
+        self.logger.record(
+            "nosl_is_az/collected_value_boundaries",
+            completed_combat_boundaries,
+        )
+        # Keep a direct copy for the distributed learner.  The SB3 logger can
+        # be dumped/reset between collection and the inner update, so relying
+        # only on ``name_to_value`` makes these diagnostics disappear from
+        # distributed/W&B records.
+        self._nosl_is_az_rollout_timings = dict(nosl_timings)
         if self.nosl_is_az_cpp:
             self.logger.record("nosl_is_az/cpp_leaf_batches", cpp_leaf_batches)
             self.logger.record(
                 "nosl_is_az/cpp_leaf_evaluations", cpp_leaf_evaluations
             )
+            for name, seconds in nosl_timings.items():
+                self.logger.record(f"nosl_is_az/{name}", seconds)
         self.logger.record(
             "nosl_is_az/completed_combats", completed_combats
         )
@@ -1462,6 +1719,17 @@ class AccumulatingMaskablePPO(MaskablePPO):
         replay = self._ensure_nosl_is_az_replay()
         if replay.size < int(self.nosl_is_az_replay_min_size):
             return 0
+        max_old_fraction = float(getattr(
+            self, "nosl_is_az_replay_max_old_fraction", 1.0
+        ))
+        if max_old_fraction < 1.0:
+            fresh_roots = float(getattr(
+                self, "_nosl_is_az_replay_prepare_stats", {}
+            ).get("fresh_roots", 0.0))
+            # A protected update must never silently fall back to an all-old
+            # batch.  Wait for the next completed fight collection instead.
+            if fresh_roots < 1.0:
+                return 0
         return min(int(self.nosl_is_az_batch_size), replay.size)
 
     def _train_nosl_is_az(
@@ -1470,14 +1738,27 @@ class AccumulatingMaskablePPO(MaskablePPO):
         step_optimizer: bool = True,
         gradient_scale: float = 1.0,
         prepare_replay: bool = True,
+        update_count: int | None = None,
+        consume_fresh_samples: bool = True,
     ) -> dict[str, object]:
         """Train the combat specialist from a recent self-play replay window.
 
         One effective batch is sampled without replacement per requested AZ
         update. It is split into bounded microbatches for memory, accumulated as
         an exact sample-weighted mean, and stepped once. Distributed training
-        leaves that mean gradient installed for the ring all-reduce.
+        leaves that mean gradient installed for the ring all-reduce. ``update_count``
+        is an internal override used by distributed training to run one replay
+        update per synchronized optimizer step while retaining the configured
+        total number of inner updates.  Such callers set
+        ``consume_fresh_samples=False`` until their final synchronized update;
+        otherwise a no-replay batch would disappear after the first step.
         """
+        if update_count is None:
+            update_count = int(self.nosl_is_az_updates)
+        else:
+            update_count = int(update_count)
+        if update_count < 1:
+            raise ValueError("NOSL-IS-AZ update_count must be positive")
         if prepare_replay:
             prepare_stats = self._prepare_nosl_is_az_replay()
         else:
@@ -1489,13 +1770,20 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self._ensure_nosl_is_az_replay() if replay_enabled else None
         )
         train_count = self._nosl_is_az_replay_train_count()
+        requested_batch_size = int(self.nosl_is_az_batch_size)
+        batch_fill_ratio = (
+            float(train_count / requested_batch_size)
+            if requested_batch_size > 0 else 0.0
+        )
         if train_count < 1:
             if not step_optimizer:
                 self.policy.optimizer.zero_grad()
             self._nosl_is_az_metric_sums = {}
             self._nosl_is_az_metric_sumsq = {}
+            self._nosl_is_az_metric_counts = {}
             self._nosl_is_az_metric_count = 0.0
             self._nosl_is_az_policy_loss_sum = 0.0
+            self._nosl_is_az_policy_weight_sum = 0.0
             self._nosl_is_az_value_loss_sum = 0.0
             return {
                 "roots": 0.0,
@@ -1505,7 +1793,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "gradient_batches": 0.0,
                 "replay_sampled_roots": 0.0,
                 "replay_old_fraction": 0.0,
+                "replay_current_fraction": 0.0,
+                "replay_max_old_fraction": float(getattr(
+                    self, "nosl_is_az_replay_max_old_fraction", 1.0
+                )),
                 "replay_enabled": float(replay_enabled),
+                "batch_size_requested": float(requested_batch_size),
+                "batch_size_used": 0.0,
+                "batch_fill_ratio": 0.0,
                 "metric_count": 0.0,
                 "gradient_norm_preclip": 0.0,
                 **{
@@ -1531,6 +1826,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             getattr(self, "_nosl_is_az_fresh_samples", ())
         ) if not replay_enabled else None
         policy_loss_sum = 0.0
+        sampled_policy_weight = 0.0
         value_loss_sum = 0.0
         sampled_roots = 0
         sampled_old = 0
@@ -1558,10 +1854,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         monitor_sumsq = {name: 0.0 for name in monitor_names}
         monitor_min = {name: float("inf") for name in monitor_names}
         monitor_max = {name: float("-inf") for name in monitor_names}
-        monitor_count = 0
+        monitor_count = {name: 0 for name in monitor_names}
 
         def accumulate_monitor(name: str, values: th.Tensor) -> None:
-            nonlocal monitor_count
             array = values.detach().float().reshape(-1).cpu().numpy()
             finite = np.isfinite(array)
             if not np.any(finite):
@@ -1571,30 +1866,51 @@ class AccumulatingMaskablePPO(MaskablePPO):
             monitor_sumsq[name] += float(np.square(array).sum(dtype=np.float64))
             monitor_min[name] = min(monitor_min[name], float(array.min()))
             monitor_max[name] = max(monitor_max[name], float(array.max()))
+            monitor_count[name] += int(array.size)
 
-        for _update in range(int(self.nosl_is_az_updates)):
-            indices = replay.sample_indices(train_count) if replay_enabled else None
+        for _update in range(update_count):
+            indices = replay.sample_indices(
+                train_count,
+                fresh_start_id=fresh_start_id,
+                max_old_fraction=float(getattr(
+                    self, "nosl_is_az_replay_max_old_fraction", 1.0
+                )),
+            ) if replay_enabled else None
+            if replay_enabled:
+                assert indices is not None and replay is not None
+                # Materialize the sampled effective batch once.  Slicing this
+                # batch below keeps each micro-batch as a view and avoids a
+                # replay-buffer advanced-index copy for every forward pass.
+                sampled_batch = replay.get_batch(indices)
+            else:
+                assert fresh_samples is not None
+                sampled_batch = self._nosl_samples_to_batch(
+                    fresh_samples[:train_count]
+                )
             self.policy.optimizer.zero_grad()
             for start in range(0, train_count, micro_batch_size):
-                if replay_enabled:
-                    assert indices is not None and replay is not None
-                    micro_indices = indices[start : start + micro_batch_size]
-                    batch = replay.get_batch(micro_indices)
-                    micro_count = len(micro_indices)
-                else:
-                    assert fresh_samples is not None
-                    micro_samples = fresh_samples[start : start + micro_batch_size]
-                    batch = self._nosl_samples_to_batch(micro_samples)
-                    micro_count = len(micro_samples)
-                observations = {
-                    key: th.as_tensor(
-                        np.asarray(
-                            value, dtype=self.observation_space[key].dtype
-                        ),
-                        device=self.device,
-                    )
-                    for key, value in batch["observations"].items()
+                end = min(start + micro_batch_size, train_count)
+                micro_count = end - start
+                batch = {
+                    "observations": {
+                        key: value[start:end]
+                        for key, value in sampled_batch["observations"].items()
+                    },
+                    "action_masks": sampled_batch["action_masks"][start:end],
+                    "policy_targets": sampled_batch["policy_targets"][start:end],
+                    "policy_weights": sampled_batch["policy_weights"][start:end],
+                    "value_targets": sampled_batch["value_targets"][start:end],
+                    "sample_ids": sampled_batch["sample_ids"][start:end],
                 }
+                observations = _leaf_observation_as_tensor(
+                    {
+                        key: np.asarray(
+                            value, dtype=self.observation_space[key].dtype
+                        )
+                        for key, value in batch["observations"].items()
+                    },
+                    self.device,
+                )
                 masks = th.as_tensor(
                     batch["action_masks"], dtype=th.bool, device=self.device
                 )
@@ -1608,6 +1924,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     dtype=th.float32,
                     device=self.device,
                 )
+                policy_weights = th.as_tensor(
+                    batch["policy_weights"],
+                    dtype=th.float32,
+                    device=self.device,
+                ).clamp_min(0.0)
                 with self.autocast_context():
                     logits, values = actor_critic(observations)
                     masked_logits = th.where(
@@ -1653,23 +1974,32 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     target_top1_agreement = (
                         target_top1 == policy_top1
                     ).float()
-                    policy_loss = policy_cross_entropy_per_sample.mean()
-                    value_loss = F.mse_loss(
-                        values.float().flatten(), value_targets
+                    value_loss_per_sample = F.mse_loss(
+                        values.float().flatten(), value_targets,
+                        reduction="none",
                     )
-                    loss = (
-                        self.nosl_is_az_policy_coef * policy_loss
-                        + self.nosl_is_az_value_coef * value_loss
+                    loss_per_sample = (
+                        self.nosl_is_az_policy_coef
+                        * policy_cross_entropy_per_sample * policy_weights
+                        + self.nosl_is_az_value_coef
+                        * value_loss_per_sample
                     )
 
-                # Every microbatch contributes its exact fraction of the
-                # effective replay batch, including the shorter final chunk.
-                backward_loss = loss * (float(micro_count) / float(train_count))
+                # Every sample contributes its exact fraction of the effective
+                # batch.  A boundary's zero policy weight removes only its
+                # policy gradient while retaining its value supervision.
+                backward_loss = (
+                    loss_per_sample.sum() / float(train_count)
+                )
                 if not step_optimizer:
                     backward_loss = backward_loss * float(gradient_scale)
                 backward_loss.backward()
-                policy_loss_sum += float(policy_loss.detach().cpu()) * micro_count
-                value_loss_sum += float(value_loss.detach().cpu()) * micro_count
+                policy_loss_sum += float(
+                    (policy_cross_entropy_per_sample * policy_weights)
+                    .sum().detach().cpu()
+                )
+                sampled_policy_weight += float(policy_weights.sum().detach().cpu())
+                value_loss_sum += float(value_loss_per_sample.sum().detach().cpu())
                 sampled_roots += micro_count
                 if replay_enabled:
                     sampled_old += int(
@@ -1680,17 +2010,17 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 pred_values = values.float().flatten()
                 target_values = value_targets.float().flatten()
                 monitor_values = {
-                    "target_entropy": target_entropy_per_sample,
-                    "policy_entropy": policy_entropy_per_sample,
-                    "target_policy_kl": policy_kl_per_sample,
-                    "policy_cross_entropy": policy_cross_entropy_per_sample,
+                    "target_entropy": target_entropy_per_sample[policy_weights > 0],
+                    "policy_entropy": policy_entropy_per_sample[policy_weights > 0],
+                    "target_policy_kl": policy_kl_per_sample[policy_weights > 0],
+                    "policy_cross_entropy": policy_cross_entropy_per_sample[policy_weights > 0],
                     "target_effective_actions": th.exp(
                         target_entropy_per_sample
-                    ),
-                    "target_top1_agreement": target_top1_agreement,
-                    "legal_actions": legal_actions,
-                    "illegal_target_mass": illegal_target_mass,
-                    "target_sum_error": target_sum_error,
+                    )[policy_weights > 0],
+                    "target_top1_agreement": target_top1_agreement[policy_weights > 0],
+                    "legal_actions": legal_actions[policy_weights > 0],
+                    "illegal_target_mass": illegal_target_mass[policy_weights > 0],
+                    "target_sum_error": target_sum_error[policy_weights > 0],
                     "value_target": target_values,
                     "pred_value": pred_values,
                     "value_mae": (pred_values - target_values).abs(),
@@ -1702,28 +2032,32 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 }
                 for name, values_for_metric in monitor_values.items():
                     accumulate_monitor(name, values_for_metric)
-                monitor_count += micro_count
             if step_optimizer:
                 gradient_norms.append(self._optimizer_step(1))
                 optimizer_steps += 1
 
-        if not replay_enabled:
+        if not replay_enabled and consume_fresh_samples:
             # Fresh roots are deliberately one-shot.  This also bounds memory
-            # when a fight spans many collection updates.
+            # when a fight spans many collection updates.  Distributed
+            # multi-update training delays this until all synchronized steps
+            # have consumed the same collection batch.
             self._nosl_is_az_fresh_samples = []
 
         def metric_mean(name: str) -> float:
             return (
-                float(monitor_sum[name] / monitor_count)
-                if monitor_count else 0.0
+                float(monitor_sum[name] / monitor_count[name])
+                if monitor_count[name] else 0.0
             )
 
         def metric_std(name: str) -> float:
-            if not monitor_count:
+            if not monitor_count[name]:
                 return 0.0
-            mean = monitor_sum[name] / monitor_count
+            mean = monitor_sum[name] / monitor_count[name]
             return float(
-                np.sqrt(max(0.0, monitor_sumsq[name] / monitor_count - mean * mean))
+                np.sqrt(max(
+                    0.0,
+                    monitor_sumsq[name] / monitor_count[name] - mean * mean,
+                ))
             )
 
         def metric_minimum(name: str) -> float:
@@ -1734,14 +2068,25 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
         result = {
             "roots": float(sampled_roots),
-            "policy_loss": float(policy_loss_sum / sampled_roots),
+            "policy_loss": float(
+                policy_loss_sum / max(1.0, sampled_policy_weight)
+            ),
             "value_loss": float(value_loss_sum / sampled_roots),
             "updates": float(optimizer_steps),
             "gradient_batches": float(gradient_batches),
             "replay_sampled_roots": float(sampled_roots if replay_enabled else 0.0),
             "replay_old_fraction": float(sampled_old / sampled_roots),
+            "replay_current_fraction": float(
+                (sampled_roots - sampled_old) / sampled_roots
+            ),
+            "replay_max_old_fraction": float(getattr(
+                self, "nosl_is_az_replay_max_old_fraction", 1.0
+            )),
             "replay_enabled": float(replay_enabled),
-            "metric_count": float(monitor_count),
+            "batch_size_requested": float(requested_batch_size),
+            "batch_size_used": float(train_count),
+            "batch_fill_ratio": float(batch_fill_ratio),
+            "metric_count": float(monitor_count["value_target"]),
             "target_entropy": metric_mean("target_entropy"),
             "policy_entropy": metric_mean("policy_entropy"),
             "target_policy_kl": metric_mean("target_policy_kl"),
@@ -1776,8 +2121,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # W&B expect scalar values and reject nested dictionaries.
         self._nosl_is_az_metric_sums = monitor_sum
         self._nosl_is_az_metric_sumsq = monitor_sumsq
-        self._nosl_is_az_metric_count = float(monitor_count)
+        self._nosl_is_az_metric_counts = monitor_count
+        self._nosl_is_az_metric_count = float(monitor_count["value_target"])
         self._nosl_is_az_policy_loss_sum = float(policy_loss_sum)
+        self._nosl_is_az_policy_weight_sum = float(sampled_policy_weight)
         self._nosl_is_az_value_loss_sum = float(value_loss_sum)
         return result
 

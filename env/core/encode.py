@@ -61,11 +61,14 @@ from . import combat_language as CL
 # It adds a lossless per-card master-deck sequence (including upgrade count),
 # action-aligned upgrade fields for every overworld card choice, and persistent
 # run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
-OBS_VERSION = 11
+OBS_VERSION = 16
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14
 INTERACTIVE_REASONING_OBS_VERSION = 15
+# Search-only value leaves immediately after the enemy turn are represented by
+# a dedicated scalar boundary bit.  This is a model-input contract change.
+POST_ENEMY_TURN_BOUNDARY_OBS_VERSION = 16
 
 # ---- capacities (fixed slot counts; reserved, PAD-filled) ----
 MAX_MONSTERS = 5          # must equal actions.MAX_MONSTERS (slot i == target i)
@@ -177,6 +180,7 @@ def obs_space(*, global_map_view=False, card_language=False,
         "player_scalars": scal((PLAYER_SCALARS,)),
         "player_buffs": scal((V.PLAYER_BUFF_VEC,)),
         "combat_counters": scal((COMBAT_COUNTERS,)),
+        "post_enemy_turn_boundary": scal((1,)),
         # ---- monsters (fixed slots; slot i == action target i) ----
         "monster_id": cat((MAX_MONSTERS,), V.MONSTER_VOCAB_CAPACITY),
         "monster_move": cat((MAX_MONSTERS,), V.MOVE_VOCAB_CAPACITY),
@@ -376,6 +380,7 @@ def _empty(*, global_map_view=False, card_language=False,
         "player_scalars": np.zeros(PLAYER_SCALARS, _SCALAR),
         "player_buffs": np.zeros(V.PLAYER_BUFF_VEC, _SCALAR),
         "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
+        "post_enemy_turn_boundary": np.zeros(1, _SCALAR),
         "monster_id": np.zeros(MAX_MONSTERS, _CAT),
         "monster_move": np.zeros(MAX_MONSTERS, _CAT),
         "monster_intent_cat": np.zeros(MAX_MONSTERS, _CAT),
@@ -478,8 +483,8 @@ def _empty_combat(*, card_language=False, combat_language=False):
     """Allocate only the fields consumed by the split combat specialist.
 
     This is an internal transport representation for neural search leaves.  It
-    deliberately does not change ``obs_space()`` or the public environment
-    observation contract, so existing checkpoints remain compatible.
+    It mirrors the public combat fields, including the explicit
+    post-enemy-turn boundary bit.
     """
     o = {
         "arg_step": np.zeros(1, _CAT),
@@ -488,6 +493,7 @@ def _empty_combat(*, card_language=False, combat_language=False):
         "can_pick_zero": np.zeros(1, _SCALAR),
         "character": np.zeros(1, _CAT),
         "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
+        "post_enemy_turn_boundary": np.zeros(1, _SCALAR),
         "discard_counts": np.zeros(N_CARDS, _SCALAR),
         "draw_counts": np.zeros(N_CARDS, _SCALAR),
         "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
@@ -642,6 +648,9 @@ def _encode_combat(o, canon):
 
 def _encode_combat_global(o, canon):
     """Fill the run fields that the combat specialist actually consumes."""
+    o["post_enemy_turn_boundary"][0] = float(
+        bool(canon.get("post_enemy_turn_boundary", False))
+    )
     o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(
         canon.get("arg_step", "root"), 0
     )
@@ -685,6 +694,10 @@ def _encode_combat_global(o, canon):
 def _encode_global(o, canon):
     """Fill the run-global groups from canon['global'] (present every phase)."""
     o["phase"][0] = V.PHASE_VOCAB_INDEX.get(canon.get("phase", "none"), 0)
+    if "post_enemy_turn_boundary" in o:
+        o["post_enemy_turn_boundary"][0] = float(
+            bool(canon.get("post_enemy_turn_boundary", False))
+        )
     # arg_step rides at top level (the thin env sets it; combat-only canonicals
     # omit it -> root, index 0). Kept here so it is filled every phase.
     o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(canon.get("arg_step", "root"), 0)

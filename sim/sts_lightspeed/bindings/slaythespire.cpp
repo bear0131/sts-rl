@@ -10,6 +10,10 @@
 
 #include <sstream>
 #include <algorithm>
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <vector>
 
 #include "sim/ConsoleSimulator.h"
 #include "sim/search/ScumSearchAgent2.h"
@@ -42,6 +46,11 @@ using namespace sts;
 // symmetric with the real-game normalizer. Keeps the binding minimal.
 namespace {
 namespace py = pybind11;
+
+#ifdef STS_ENABLE_RULE_TRACE
+void setRulePlayerStatusByName(BattleContext &bc, const std::string &name, int amount);
+void setRuleMonsterStatusByName(BattleContext &bc, int target, const std::string &name, int amount);
+#endif
 
 template <typename Pile>
 py::list cardPileToList(const Pile &pile) {
@@ -84,6 +93,9 @@ py::list monsterPowersToList(const sts::Monster &m) {
 py::dict rawCombatState(const sts::BattleContext &bc) {
     py::dict d;
     d["turn"] = bc.turn;
+    // Search-only marker: true only after the complete enemy phase and its
+    // deterministic end-of-round cleanup have finished.
+    d["post_enemy_turn_boundary"] = bc.postEnemyTurnBoundary;
     d["outcome"] = static_cast<int>(bc.outcome);
     d["input_state"] = static_cast<int>(bc.inputState);
 
@@ -195,6 +207,421 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     select["pick_max"] = pickMax;
     d["select"] = select;
     return d;
+}
+
+// Native compact leaf transport.  The old binding converted every hypothetical
+// BattleContext into a deeply nested Python dict.  Neural search only needs the
+// numeric combat tensors, so keep the hot path as two flat POD buffers and let
+// Python perform one vectorized vocab remap per batch.  The layout is versioned
+// in env/core/run_env.py and intentionally contains native enum ids, not model
+// vocab ids; this keeps the C++ simulator independent of Python's canonical
+// naming aliases.
+namespace compact_leaf {
+constexpr int kMaxMonsters = 5;
+constexpr int kHandSlots = 10;
+// Keep this in lockstep with encode.COMBAT_COUNTER_KEYS.  The first version
+// of the compact transport only carried the original 19 simulator counters;
+// the observation contract now has 24 entries (including Panache, discard /
+// damage counters, Bomb timers, and last unblocked damage).
+constexpr int kCombatCounters = 24;
+constexpr int kPotionSlots = 5;
+constexpr int kPlayerStatus =
+    static_cast<int>(sizeof(playerStatusStrings) /
+                     sizeof(playerStatusStrings[0])) - 1;
+constexpr int kMonsterStatus =
+    static_cast<int>(sizeof(sts::enemyStatusStrings) /
+                     sizeof(sts::enemyStatusStrings[0]));
+constexpr int kCardIds =
+    static_cast<int>(sizeof(sts::cardEnumStrings) /
+                     sizeof(sts::cardEnumStrings[0]));
+constexpr int kNativeMonsters =
+    static_cast<int>(sizeof(sts::monsterIdStrings) /
+                     sizeof(sts::monsterIdStrings[0]));
+constexpr int kNativeMoves =
+    static_cast<int>(sizeof(sts::monsterMoveStrings) /
+                     sizeof(sts::monsterMoveStrings[0]));
+constexpr int kNativePotions =
+    static_cast<int>(sizeof(sts::potionNames) /
+                     sizeof(sts::potionNames[0]));
+// The largest legal action list is bounded by the simulator's hand/pile and
+// target capacities (combat is much smaller).  A fixed width keeps the
+// leaf transport contiguous; ``legal_action_counts`` identifies the valid
+// prefix in each row and zero padding is never interpreted as an action.
+constexpr int kLegalActionWidth = 128;
+
+// Categorical layout: hand cards, compacted monster ids/moves/intent classes,
+// potion slots, and the card-select task.
+constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
+                         kMaxMonsters + kPotionSlots + 1;
+
+// Float layout: player scalars, player statuses, counters, boundary bit,
+// monster scalars/statuses, hand upgrade/cost, three native pile histograms,
+// and card-select metadata.
+constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
+                           kMaxMonsters * 6 + kMaxMonsters * kMonsterStatus +
+                           kHandSlots * 2 + kCardIds * 3 + 4;
+
+struct Row {
+    std::array<std::int32_t, kCatSize> categorical{};
+    std::array<float, kFloatSize> scalars{};
+};
+
+inline int intentCategory(const sts::Monster &monster, int baseDamage) {
+    if (baseDamage > 0) return 1; // attack
+    const auto move = monster.moveHistory[0];
+    const int moveId = static_cast<int>(move);
+    if (moveId <= 0 || moveId >= kNativeMoves) return 0;
+    const std::string name(sts::monsterMoveStrings[moveId]);
+    auto has = [&name](const char *token) {
+        return name.find(token) != std::string::npos;
+    };
+    if (has("STUNNED")) return 7;
+    if (has("SLEEP") || has("ASLEEP") || has("DORMANT")) return 6;
+    if (has("ESCAPE") || has("SMOKE_BOMB")) return 8;
+    if (has("MEGA_DEBUFF") || has("HEX") || has("DEBILITATE")) return 5;
+    if (has("DEBUFF") || has("ENTANGLE") || has("SPORES") ||
+        has("ENFEEBL") || has("CONSTRICT") || has("SPIT_WEB") ||
+        has("GLARE") || has("MOCK") || has("TAUNT") || has("SCREAM") ||
+        has("WITHER") || has("PERPLEXING")) return 4;
+    if (has("DEFEND") || has("HARDEN") || has("PROTECT") ||
+        has("FORTIFY") || has("DEFENSIVE") || has("STANCE")) return 2;
+    if (has("BUFF") || has("BELLOW") || has("INCANTATION") ||
+        has("RITUAL") || has("GROW") || has("BOOST") || has("CHARG") ||
+        has("RALLY") || has("ENCOURAGE") || has("PREPARING") ||
+        has("ACTIVATE") || has("REGROW") || has("REINCARNATE") ||
+        has("REBIRTH") || has("SPLIT") || has("SPAWN") || has("SUMMON") ||
+        has("HEAL") || has("HASTE") || has("ANGER") || has("GLOAT") ||
+        has("FURY") || has("CIRCLE_OF_POWER") ||
+        has("SQUARE_OF_PROTECTION") || has("VENT_STEAM") ||
+        has("COUNT") || has("IT_IS_TIME") || has("ROAR") ||
+        has("DROOL") || has("FLY") || has("CAW") || has("IMPLANT") ||
+        has("ECHO")) return 3;
+    return 0;
+}
+
+inline int monsterStatusValue(const sts::Monster &monster, int status) {
+    // Avoid the simulator's print-only getStatusInternal() helper in this hot
+    // transport.  Its generic status lookup intentionally has no canonical
+    // vocabulary contract; the explicit fields below mirror the same storage
+    // used by the combat rules and preserve the status bit index.
+    const auto value = static_cast<sts::MonsterStatus>(status);
+    if (value == sts::MonsterStatus::STRENGTH) {
+        return monster.strength;
+    }
+    if (status < 0 || status >= 64 ||
+        !(monster.statusBits & (1ULL << status))) {
+        return 0;
+    }
+    switch (value) {
+        case sts::MonsterStatus::ARTIFACT: return monster.artifact;
+        case sts::MonsterStatus::BLOCK_RETURN: return monster.blockReturn;
+        case sts::MonsterStatus::CHOKED: return monster.choked;
+        case sts::MonsterStatus::CORPSE_EXPLOSION: return monster.corpseExplosion;
+        case sts::MonsterStatus::LOCK_ON: return monster.lockOn;
+        case sts::MonsterStatus::MARK: return monster.mark;
+        case sts::MonsterStatus::METALLICIZE: return monster.metallicize;
+        case sts::MonsterStatus::PLATED_ARMOR: return monster.platedArmor;
+        case sts::MonsterStatus::POISON: return monster.poison;
+        case sts::MonsterStatus::REGEN: return monster.regen;
+        case sts::MonsterStatus::SHACKLED: return monster.shackled;
+        case sts::MonsterStatus::VULNERABLE: return monster.vulnerable;
+        case sts::MonsterStatus::WEAK: return monster.weak;
+        case sts::MonsterStatus::ANGRY:
+        case sts::MonsterStatus::BEAT_OF_DEATH:
+        case sts::MonsterStatus::CURIOSITY:
+        case sts::MonsterStatus::CURL_UP:
+        case sts::MonsterStatus::ENRAGE:
+        case sts::MonsterStatus::FADING:
+        case sts::MonsterStatus::FLIGHT:
+        case sts::MonsterStatus::GENERIC_STRENGTH_UP:
+        case sts::MonsterStatus::INTANGIBLE:
+        case sts::MonsterStatus::MALLEABLE:
+        case sts::MonsterStatus::MODE_SHIFT:
+        case sts::MonsterStatus::RITUAL:
+        case sts::MonsterStatus::SLOW:
+        case sts::MonsterStatus::SPORE_CLOUD:
+        case sts::MonsterStatus::THIEVERY:
+        case sts::MonsterStatus::THORNS:
+        case sts::MonsterStatus::TIME_WARP:
+            return monster.uniquePower0;
+        case sts::MonsterStatus::INVINCIBLE:
+        case sts::MonsterStatus::REACTIVE:
+        case sts::MonsterStatus::SHARP_HIDE:
+            return monster.uniquePower1;
+        default:
+            return 1;
+    }
+}
+
+inline Row pack(const sts::BattleContext &bc) {
+    Row row;
+    int c = 0;
+    for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
+        row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
+    }
+    c += kHandSlots;
+    int monsterCount = 0;
+    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+         ++i) {
+        const auto &monster = bc.monsters.arr[i];
+        if (monster.id == sts::MonsterId::INVALID) continue;
+        row.categorical[c + monsterCount] = static_cast<int>(monster.id);
+        row.categorical[c + kMaxMonsters + monsterCount] =
+            static_cast<int>(monster.moveHistory[0]);
+        ++monsterCount;
+    }
+    c += 2 * kMaxMonsters;
+    monsterCount = 0;
+    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+         ++i) {
+        const auto &monster = bc.monsters.arr[i];
+        if (monster.id == sts::MonsterId::INVALID) continue;
+        const auto damage = monster.getMoveBaseDamage(bc);
+        row.categorical[c + monsterCount] = intentCategory(
+            monster, std::max(0, damage.damage));
+        ++monsterCount;
+    }
+    c += kMaxMonsters;
+    for (int i = 0; i < bc.potionCapacity && i < kPotionSlots; ++i) {
+        row.categorical[c + i] = static_cast<int>(bc.potions[i]);
+    }
+    c += kPotionSlots;
+    row.categorical[c] = static_cast<int>(bc.cardSelectInfo.cardSelectTask);
+
+    int f = 0;
+    row.scalars[f++] = static_cast<float>(bc.player.curHp);
+    row.scalars[f++] = static_cast<float>(bc.player.maxHp);
+    row.scalars[f++] = static_cast<float>(bc.player.block);
+    row.scalars[f++] = static_cast<float>(bc.player.energy);
+    row.scalars[f++] = static_cast<float>(bc.turn);
+    row.scalars[f++] = static_cast<float>(bc.player.gold);
+    for (int status = 1; status <= kPlayerStatus; ++status) {
+        row.scalars[f++] = static_cast<float>(bc.player.getStatusRuntime(
+            static_cast<PlayerStatus>(status)));
+    }
+    // Keep this order synchronized with encode.COMBAT_COUNTER_KEYS.
+    const float counters[kCombatCounters] = {
+        static_cast<float>(bc.player.happyFlowerCounter),
+        static_cast<float>(bc.player.incenseBurnerCounter),
+        static_cast<float>(bc.player.inkBottleCounter),
+        static_cast<float>(bc.player.inserterCounter),
+        static_cast<float>(bc.player.nunchakuCounter),
+        static_cast<float>(bc.player.penNibCounter),
+        static_cast<float>(bc.player.sundialCounter),
+        static_cast<float>(bc.player.haveUsedNecronomiconThisTurn),
+        static_cast<float>(bc.player.cardsPlayedThisTurn),
+        static_cast<float>(bc.player.attacksPlayedThisTurn),
+        static_cast<float>(bc.player.skillsPlayedThisTurn),
+        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(0)),
+        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(1)),
+        static_cast<float>(bc.player.orangePelletsCardTypesPlayed.test(2)),
+        static_cast<float>(bc.player.combustHpLoss),
+        static_cast<float>(bc.player.devaFormEnergyPerTurn),
+        static_cast<float>(bc.player.echoFormCardsDoubled),
+        static_cast<float>(bc.player.panacheCounter),
+        static_cast<float>(bc.player.cardsDiscardedThisTurn),
+        static_cast<float>(bc.player.timesDamagedThisCombat),
+        static_cast<float>(bc.player.bomb1),
+        static_cast<float>(bc.player.bomb2),
+        static_cast<float>(bc.player.bomb3),
+        static_cast<float>(bc.player.lastAttackUnblockedDamage),
+    };
+    for (int i = 0; i < kCombatCounters; ++i) row.scalars[f++] = counters[i];
+    row.scalars[f++] = bc.postEnemyTurnBoundary ? 1.0f : 0.0f;
+
+    // Keep the packed layout identical to encode._empty_combat(): all
+    // monsters' six scalar fields are contiguous, followed by all monster
+    // status vectors.  The Python decoder relies on these two rectangular
+    // blocks when reshaping a batch; interleaving status fields per monster
+    // silently corrupts multi-monster leaves.
+    monsterCount = 0;
+    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+         ++i) {
+        const auto &monster = bc.monsters.arr[i];
+        if (monster.id == sts::MonsterId::INVALID) continue;
+        const auto damage = monster.getMoveBaseDamage(bc);
+        const int baseDamage = std::max(0, damage.damage);
+        const int adjusted = baseDamage > 0
+            ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
+        row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
+        row.scalars[f++] = static_cast<float>(monster.curHp);
+        row.scalars[f++] = static_cast<float>(monster.maxHp);
+        row.scalars[f++] = static_cast<float>(monster.block);
+        row.scalars[f++] = static_cast<float>(adjusted);
+        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? damage.attackCount : 0);
+        ++monsterCount;
+    }
+    f += 6 * (kMaxMonsters - monsterCount);
+    monsterCount = 0;
+    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+         ++i) {
+        const auto &monster = bc.monsters.arr[i];
+        if (monster.id == sts::MonsterId::INVALID) continue;
+        for (int status = 0; status < kMonsterStatus; ++status) {
+            row.scalars[f++] = static_cast<float>(monsterStatusValue(monster, status));
+        }
+        ++monsterCount;
+    }
+    f += kMonsterStatus * (kMaxMonsters - monsterCount);
+    for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
+        const auto &card = bc.cards.hand[i];
+        row.scalars[f++] = static_cast<float>(card.getUpgradeCount());
+        row.scalars[f++] = static_cast<float>(card.freeToPlayOnce ? 0 : card.costForTurn);
+    }
+    f += 2 * (kHandSlots - std::min(kHandSlots, bc.cards.cardsInHand));
+    auto countPile = [&](const auto &pile) {
+        const int base = f;
+        for (const auto &card : pile) {
+            const int id = static_cast<int>(card.getId());
+            if (id >= 0 && id < kCardIds) row.scalars[base + id] += 1.0f;
+        }
+        f += kCardIds;
+    };
+    countPile(bc.cards.drawPile);
+    countPile(bc.cards.discardPile);
+    countPile(bc.cards.exhaustPile);
+    row.scalars[f++] = static_cast<float>(bc.cardSelectInfo.pickCount);
+    row.scalars[f++] = bc.cardSelectInfo.canPickZero ? 1.0f : 0.0f;
+    row.scalars[f++] = bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
+    const auto task = bc.cardSelectInfo.cardSelectTask;
+    row.scalars[f++] = (task == CardSelectTask::EXHAUST_MANY ||
+                        task == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
+    return row;
+}
+} // namespace compact_leaf
+
+// Apply a deliberately small, data-only combat override.  This is used by the
+// dashboard's custom-state editor; it never advances the simulator or touches
+// RNG streams.  Card piles are rebuilt with normal CardInstance bookkeeping so
+// subsequent draws/discards remain authoritative.
+void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+    auto getInt = [](const py::dict &d, const char *key, int current) {
+        return d.contains(key) ? d[key].cast<int>() : current;
+    };
+    if (spec.contains("player")) {
+        auto p = spec["player"].cast<py::dict>();
+        bc.player.curHp = std::max(0, getInt(p, "hp", bc.player.curHp));
+        bc.player.maxHp = std::max(1, getInt(p, "max_hp", bc.player.maxHp));
+        bc.player.block = std::max(0, getInt(p, "block", bc.player.block));
+        bc.player.energy = std::max(0, getInt(p, "energy", bc.player.energy));
+        bc.player.gold = std::max(0, getInt(p, "gold", bc.player.gold));
+        if (p.contains("counters")) {
+            auto c = p["counters"].cast<py::dict>();
+            bc.player.happyFlowerCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "happy_flower", bc.player.happyFlowerCounter), 0, 255));
+            bc.player.incenseBurnerCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "incense_burner", bc.player.incenseBurnerCounter), 0, 255));
+            bc.player.inkBottleCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "ink_bottle", bc.player.inkBottleCounter), 0, 255));
+            bc.player.inserterCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "inserter", bc.player.inserterCounter), 0, 255));
+            bc.player.nunchakuCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "nunchaku", bc.player.nunchakuCounter), 0, 255));
+            bc.player.penNibCounter = static_cast<std::int8_t>(
+                std::clamp(getInt(c, "pen_nib", bc.player.penNibCounter), 0, 255));
+        }
+        if (p.contains("powers")) {
+            for (auto item : p["powers"].cast<py::list>()) {
+                auto pair = item.cast<py::tuple>();
+                const auto name = pair[0].cast<std::string>();
+                const int amount = std::max(0, pair[1].cast<int>());
+#ifdef STS_ENABLE_RULE_TRACE
+                setRulePlayerStatusByName(bc, name, amount);
+#else
+                if (name == "STRENGTH") bc.player.strength = amount;
+                else if (name == "DEXTERITY") bc.player.dexterity = amount;
+                else if (name == "ARTIFACT") bc.player.artifact = amount;
+#endif
+            }
+        }
+    }
+    if (spec.contains("monsters")) {
+        auto mons = spec["monsters"].cast<py::list>();
+        const int n = std::min<int>(static_cast<int>(mons.size()), bc.monsters.monsterCount);
+        for (int i = 0; i < n; ++i) {
+            auto m = mons[i].cast<py::dict>();
+            auto &monster = bc.monsters.arr[i];
+            monster.curHp = std::clamp(getInt(m, "hp", monster.curHp), 0, monster.maxHp);
+            monster.maxHp = std::max(1, getInt(m, "max_hp", monster.maxHp));
+            monster.curHp = std::clamp(monster.curHp, 0, monster.maxHp);
+            monster.block = std::max(0, getInt(m, "block", monster.block));
+            if (m.contains("move")) {
+                const auto move = sts::SimHelpers::getMonsterMoveForString(
+                    m["move"].cast<std::string>());
+                if (move != sts::MonsterMoveId::INVALID) monster.moveHistory[0] = move;
+            }
+            if (m.contains("powers")) {
+                for (auto item : m["powers"].cast<py::list>()) {
+                    auto pair = item.cast<py::tuple>();
+                    const auto name = pair[0].cast<std::string>();
+                    const int amount = std::max(0, pair[1].cast<int>());
+#ifdef STS_ENABLE_RULE_TRACE
+                    setRuleMonsterStatusByName(bc, i, name, amount);
+#else
+                    if (name == "STRENGTH") monster.strength = amount;
+                    else if (name == "VULNERABLE") monster.vulnerable = amount;
+                    else if (name == "WEAK") monster.weak = amount;
+#endif
+                }
+            }
+        }
+        bc.monsters.monstersAlive = 0;
+        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+            if (!bc.monsters.arr[i].isDeadOrEscaped()) ++bc.monsters.monstersAlive;
+        }
+    }
+    int nextUid = 0;
+    auto applyVectorPile = [&](const char *key, auto &pile) {
+        if (!spec.contains(key)) return;
+        pile.clear();
+        for (auto item : spec[key].cast<py::list>()) {
+            std::string name;
+            int up = 0;
+            if (py::isinstance<py::str>(item)) name = item.cast<std::string>();
+            else {
+                auto pair = item.cast<py::tuple>();
+                name = pair[0].cast<std::string>();
+                up = pair.size() > 1 ? pair[1].cast<int>() : 0;
+            }
+            const auto id = sts::SimHelpers::getCardIdForString(name);
+            if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
+            sts::CardInstance card(id, up > 0);
+            for (int k = 1; k < up; ++k) card.upgrade();
+            card.uniqueId = static_cast<std::int16_t>(nextUid++);
+            pile.push_back(card);
+        }
+    };
+    if (spec.contains("hand")) {
+        bc.cards.cardsInHand = 0;
+        for (auto item : spec["hand"].cast<py::list>()) {
+            std::string name;
+            int up = 0;
+            if (py::isinstance<py::str>(item)) name = item.cast<std::string>();
+            else { auto pair = item.cast<py::tuple>(); name = pair[0].cast<std::string>(); up = pair.size() > 1 ? pair[1].cast<int>() : 0; }
+            auto id = sts::SimHelpers::getCardIdForString(name);
+            if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
+            sts::CardInstance card(id, up > 0);
+            for (int k = 1; k < up; ++k) card.upgrade();
+            card.uniqueId = static_cast<std::int16_t>(nextUid++);
+            if (bc.cards.cardsInHand >= sts::CardManager::MAX_HAND_SIZE) break;
+            bc.cards.hand[bc.cards.cardsInHand++] = card;
+        }
+    }
+    if (spec.contains("draw")) applyVectorPile("draw", bc.cards.drawPile);
+    else applyVectorPile("draw_pile", bc.cards.drawPile);
+    if (spec.contains("discard")) applyVectorPile("discard", bc.cards.discardPile);
+    else applyVectorPile("discard_pile", bc.cards.discardPile);
+    if (spec.contains("exhaust")) applyVectorPile("exhaust", bc.cards.exhaustPile);
+    else applyVectorPile("exhaust_pile", bc.cards.exhaustPile);
+    if (spec.contains("turn")) bc.turn = std::max(0, spec["turn"].cast<int>());
+    bc.inputState = sts::InputState::PLAYER_NORMAL;
+    bc.outcome = sts::Outcome::UNDECIDED;
+    bc.isBattleOver = false;
+    bc.endTurnQueued = false;
+    bc.turnHasEnded = false;
+    bc.stopAfterEnemyTurn = false;
+    bc.postEnemyTurnBoundary = false;
+    bc.monsterTurnIdx = bc.monsters.monsterCount;
 }
 
 std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc) {
@@ -614,6 +1041,22 @@ void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
     }
 }
 
+void setRelicState(sts::GameContext &gc, const py::list &items) {
+    gc.relics.relics.clear();
+    gc.relics.relicBits0 = gc.relics.relicBits1 = gc.relics.relicBits2 = 0;
+    for (auto item : items) {
+        std::string id;
+        int data = 0;
+        if (py::isinstance<py::str>(item)) id = item.cast<std::string>();
+        else {
+            auto d = item.cast<py::dict>();
+            id = d["id"].cast<std::string>();
+            if (d.contains("counter")) data = d["counter"].cast<int>();
+        }
+        gc.relics.add(sts::RelicInstance{relicIdFromString(id), data});
+    }
+}
+
 // The sim's OWN out-of-combat action enumerator (search::GameAction) already
 // solves legality for every overworld screen -- events (incl. phase-dependent
 // ones like Golden Idol / Cursed Tome), campfires (relic/key-gated), shop,
@@ -802,6 +1245,42 @@ PYBIND11_MODULE(slaythespire, m) {
     m.def("get_seed_str", &SeedHelper::getString, "gets the integral representation of seed string used in the game ui");
     m.def("get_seed_long", &SeedHelper::getLong, "gets the seed string representation of an integral seed");
     m.def("getNNInterface", &sts::NNInterface::getInstance, "gets the NNInterface object");
+    m.def("nosl_compact_layout", []() {
+        // Names are exported once so the Python adapter can build native-id
+        // -> canonical-vocab LUTs without asking C++ to serialize each leaf.
+        pybind11::dict out;
+        pybind11::list player_status;
+        for (int i = 1; i <= compact_leaf::kPlayerStatus; ++i) {
+            player_status.append(playerStatusStrings[i]);
+        }
+        pybind11::list monster_status;
+        for (int i = 0; i < compact_leaf::kMonsterStatus; ++i) {
+            monster_status.append(sts::enemyStatusStrings[i]);
+        }
+        pybind11::list monsters;
+        for (int i = 0; i < compact_leaf::kNativeMonsters; ++i) {
+            monsters.append(sts::monsterIdStrings[i]);
+        }
+        pybind11::list potions;
+        for (int i = 0; i < compact_leaf::kNativePotions; ++i) {
+            potions.append(sts::potionNames[i]);
+        }
+        pybind11::list cards;
+        for (int i = 0; i < compact_leaf::kCardIds; ++i) {
+            cards.append(sts::cardEnumStrings[i]);
+        }
+        out["player_status_names"] = player_status;
+        out["monster_status_names"] = monster_status;
+        out["monster_names"] = monsters;
+        out["potion_names"] = potions;
+        out["card_names"] = cards;
+        out["player_status_count"] = compact_leaf::kPlayerStatus;
+        out["monster_status_count"] = compact_leaf::kMonsterStatus;
+        out["card_count"] = compact_leaf::kCardIds;
+        out["categorical_width"] = compact_leaf::kCatSize;
+        out["scalar_width"] = compact_leaf::kFloatSize;
+        return out;
+    }, "return the versioned native NOSL compact-observation layout");
 
     pybind11::class_<NNInterface> nnInterface(m, "NNInterface");
     nnInterface.def("getObservation", &NNInterface::getObservation, "get observation array given a GameContext")
@@ -877,6 +1356,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("relic_state", &gcRelics, "relics as [{id, counter}, ...]")
         .def("set_deck", &setDeck, "replace the deck with [(sim_card_enum, upgrade_count), ...]")
         .def("set_relics", &setRelics, "replace the relics with [stable_id_string, ...]")
+        .def("set_relic_state", &setRelicState, "replace relics with [{id, counter}, ...]")
         .def_property_readonly("screen_state_name",
                [](const GameContext &gc) { return std::string(pybind11::str(pybind11::cast(gc.screenState))); })
         .def_property_readonly("cur_event_name",
@@ -1779,8 +2259,64 @@ PYBIND11_MODULE(slaythespire, m) {
                 out.append(item);
             }
             return out;
+         }, pybind11::arg("max_leaves") = 16,
+            "select a batch of NOSL leaf states using virtual visits")
+        .def("next_batch_packed", [](search::NoslNeuralSearchSession &session,
+                                      int max_leaves) {
+            // Keep the simulator-to-Python boundary to two fixed-width
+            // numeric arrays. Do not call rawCombatState() here: that
+            // recursively allocates Python dicts/lists for every leaf.
+            const auto requests = session.nextBatch(max_leaves);
+            const auto count = static_cast<pybind11::ssize_t>(requests.size());
+            pybind11::array_t<std::int32_t> categorical(
+                std::vector<pybind11::ssize_t>{count, compact_leaf::kCatSize});
+            pybind11::array_t<float> scalars(
+                std::vector<pybind11::ssize_t>{count, compact_leaf::kFloatSize});
+            auto cat = categorical.mutable_unchecked<2>();
+            auto scalar = scalars.mutable_unchecked<2>();
+            pybind11::list request_ids;
+            pybind11::array_t<std::uint32_t> legal_actions(
+                std::vector<pybind11::ssize_t>{count,
+                                               compact_leaf::kLegalActionWidth});
+            pybind11::array_t<std::uint16_t> legal_action_counts(
+                std::vector<pybind11::ssize_t>{count});
+            auto legal = legal_actions.mutable_unchecked<2>();
+            auto legal_count = legal_action_counts.mutable_unchecked<1>();
+            pybind11::list needs_policy;
+            for (pybind11::ssize_t row = 0; row < count; ++row) {
+                const auto &request = requests[static_cast<std::size_t>(row)];
+                const auto packed = compact_leaf::pack(request.state);
+                for (int col = 0; col < compact_leaf::kCatSize; ++col) {
+                    cat(row, col) = packed.categorical[static_cast<std::size_t>(col)];
+                }
+                for (int col = 0; col < compact_leaf::kFloatSize; ++col) {
+                    scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
+                }
+                request_ids.append(request.requestId);
+                if (request.legalActions.size() >
+                    compact_leaf::kLegalActionWidth) {
+                    throw std::runtime_error(
+                        "NOSL compact legal-action row exceeds fixed width");
+                }
+                const auto nLegal = request.legalActions.size();
+                legal_count(row) = static_cast<std::uint16_t>(nLegal);
+                for (std::size_t col = 0; col < nLegal; ++col) {
+                    legal(row, static_cast<pybind11::ssize_t>(col)) =
+                        request.legalActions[col].bits;
+                }
+                needs_policy.append(request.needsPolicy);
+            }
+            pybind11::dict out;
+            out["request_ids"] = request_ids;
+            out["categorical"] = categorical;
+            out["scalars"] = scalars;
+            out["legal_action_bits"] = legal_actions;
+            out["legal_action_counts"] = legal_action_counts;
+            out["needs_policy"] = needs_policy;
+            out["done"] = requests.empty() && session.done();
+            return out;
         }, pybind11::arg("max_leaves") = 16,
-           "select a batch of NOSL leaf states using virtual visits")
+           "select leaves into fixed-width native categorical/scalar arrays")
         .def("backprop", [](search::NoslNeuralSearchSession &session,
                             std::uint64_t request_id,
                             double value,
@@ -1797,6 +2333,60 @@ PYBIND11_MODULE(slaythespire, m) {
         }, pybind11::arg("request_id"), pybind11::arg("value"),
            pybind11::arg("policy_logits"),
            "install leaf policy/value and backpropagate one simulation")
+        .def("backprop_batch",
+             [](search::NoslNeuralSearchSession &session,
+                const std::vector<std::uint64_t> &request_ids,
+                const std::vector<double> &values,
+                const std::vector<std::vector<double>> &policy_logits) {
+                 session.backpropBatch(request_ids, values, policy_logits);
+             },
+             pybind11::arg("request_ids"),
+             pybind11::arg("values"),
+             pybind11::arg("policy_logits"),
+             "install and backpropagate a complete leaf batch")
+        .def("backprop_batch_array",
+             [](search::NoslNeuralSearchSession &session,
+                pybind11::array_t<std::uint64_t,
+                    pybind11::array::c_style | pybind11::array::forcecast>
+                    request_ids,
+                pybind11::array_t<double,
+                    pybind11::array::c_style | pybind11::array::forcecast>
+                    values,
+                pybind11::array_t<double,
+                    pybind11::array::c_style | pybind11::array::forcecast>
+                    policy_logits) {
+                 const auto ids = request_ids.unchecked<1>();
+                 const auto vals = values.unchecked<1>();
+                 const auto logits = policy_logits.unchecked<2>();
+                 const auto count = ids.shape(0);
+                 if (vals.shape(0) != count || logits.shape(0) != count) {
+                     throw std::invalid_argument(
+                         "NOSL backprop array batch lengths differ");
+                 }
+                 std::vector<std::uint64_t> request_ids_vec;
+                 std::vector<double> values_vec;
+                 std::vector<std::vector<double>> logits_vec;
+                 request_ids_vec.reserve(static_cast<std::size_t>(count));
+                 values_vec.reserve(static_cast<std::size_t>(count));
+                 logits_vec.reserve(static_cast<std::size_t>(count));
+                 const auto width = logits.shape(1);
+                 for (pybind11::ssize_t row = 0; row < count; ++row) {
+                     request_ids_vec.push_back(ids(row));
+                     values_vec.push_back(vals(row));
+                     std::vector<double> row_logits;
+                     row_logits.reserve(static_cast<std::size_t>(width));
+                     for (pybind11::ssize_t col = 0; col < width; ++col) {
+                         row_logits.push_back(logits(row, col));
+                     }
+                     logits_vec.push_back(std::move(row_logits));
+                 }
+                 session.backpropBatch(
+                     request_ids_vec, values_vec, logits_vec);
+             },
+             pybind11::arg("request_ids"),
+             pybind11::arg("values"),
+             pybind11::arg("policy_logits"),
+             "install a contiguous 2-D policy/value leaf batch")
         .def("done", &search::NoslNeuralSearchSession::done)
         .def("simulations_completed",
              &search::NoslNeuralSearchSession::simulationsCompleted)
@@ -1825,7 +2415,9 @@ PYBIND11_MODULE(slaythespire, m) {
             pybind11::dict result;
             result["valid"] = snapshot.valid;
             result["visits"] = snapshot.visits;
+            result["value_visits"] = snapshot.valueVisits;
             result["value"] = snapshot.value;
+            result["sample_value"] = snapshot.sampleValue;
             pybind11::list children;
             for (const auto &edge : snapshot.children) {
                 pybind11::dict item;
@@ -1834,8 +2426,10 @@ PYBIND11_MODULE(slaythespire, m) {
                 item["visits"] = edge.visits;
                 item["child_visits"] = edge.childVisits;
                 item["child_states"] = edge.childStates;
+                item["value_visits"] = edge.valueVisits;
                 item["prior"] = edge.prior;
                 item["value"] = edge.value;
+                item["sample_q"] = edge.sampleQ;
                 item["raw_q"] = edge.rawQ;
                 item["normalized_q"] = edge.normalizedQ;
                 item["completed_q"] = edge.completedQ;
@@ -1844,6 +2438,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 item["completed_score"] = edge.completedScore;
                 item["candidate"] = edge.candidate;
                 item["active_candidate"] = edge.activeCandidate;
+                item["random_split"] = edge.randomSplit;
                 item["expandable"] = edge.expandable;
                 item["targeted"] = edge.targeted;
                 item["label"] = edge.label;
@@ -1863,6 +2458,27 @@ PYBIND11_MODULE(slaythespire, m) {
 #endif
             return copy;
         }, "return an independent deep copy of the complete combat state")
+        .def("preview_end_turn_boundary", [](const BattleContext &bc,
+                                               std::uint32_t actionBits) {
+            const search::Action action(actionBits);
+            if (action.getActionType() != search::ActionType::END_TURN ||
+                !action.isValidAction(bc)) {
+                return pybind11::object(pybind11::none());
+            }
+            BattleContext boundary(bc);
+#ifdef STS_ENABLE_RULE_TRACE
+            boundary.atomicStepObserver = {};
+#endif
+            boundary.stopAfterEnemyTurn = true;
+            action.execute(boundary);
+            if (!boundary.postEnemyTurnBoundary) {
+                // A terminal outcome (normally player death) is valued by its
+                // objective HP directly and has no non-terminal boundary leaf.
+                return pybind11::object(pybind11::none());
+            }
+            return pybind11::object(rawCombatState(boundary));
+        }, pybind11::arg("action_bits"),
+           "preview the stable post-enemy-turn value boundary for End Turn")
         .def("is_targeted_action", [](const BattleContext &bc,
                                        std::uint32_t action_bits) {
             const search::Action action(action_bits);
@@ -1928,13 +2544,20 @@ PYBIND11_MODULE(slaythespire, m) {
                 double dirichlet_epsilon,
                 double root_value,
                 double prior_temperature,
+                bool end_turn_as_leaf,
                 int root_search_mode,
                 int gumbel_candidates,
                 double gumbel_scale,
                 double gumbel_value_scale,
                 double gumbel_max_visit_init,
                 bool gumbel_rescale_q,
-                bool gumbel_use_mixed_value) {
+                bool gumbel_use_mixed_value,
+                double gumbel_interior_uniformity,
+                int gumbel_interior_min_visits,
+                double gumbel_interior_coverage_fraction,
+                int gumbel_interior_value_mode,
+                double gumbel_interior_max_mix_visits,
+                bool paper_full_gumbel) {
                  std::vector<double> logits;
                  auto view = root_policy_logits.unchecked<1>();
                  logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -1946,6 +2569,7 @@ PYBIND11_MODULE(slaythespire, m) {
                  config.maxDepth = depth;
                  config.cPuct = c_puct;
                  config.priorTemperature = prior_temperature;
+                 config.endTurnAsLeaf = end_turn_as_leaf;
                  config.dirichletAlpha = dirichlet_alpha;
                  config.dirichletEpsilon = dirichlet_epsilon;
                  config.rootSearchMode = root_search_mode;
@@ -1955,6 +2579,13 @@ PYBIND11_MODULE(slaythespire, m) {
                  config.gumbelMaxVisitInit = gumbel_max_visit_init;
                  config.gumbelRescaleQ = gumbel_rescale_q;
                  config.gumbelUseMixedValue = gumbel_use_mixed_value;
+                 config.gumbelInteriorUniformity = gumbel_interior_uniformity;
+                 config.gumbelInteriorMinVisits = gumbel_interior_min_visits;
+                 config.gumbelInteriorCoverageFraction =
+                     gumbel_interior_coverage_fraction;
+                 config.gumbelInteriorValueMode = gumbel_interior_value_mode;
+                 config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
+                 config.paperFullGumbel = paper_full_gumbel;
                  config.seed = nonce;
                  return std::make_shared<sts::search::NoslNeuralSearchSession>(
                      bc, logits, config, nonce, root_value);
@@ -1968,6 +2599,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("dirichlet_epsilon") = 0.0,
              pybind11::arg("root_value") = 0.0,
              pybind11::arg("prior_temperature") = 1.0,
+             pybind11::arg("end_turn_as_leaf") = false,
              pybind11::arg("root_search_mode") = 0,
              pybind11::arg("gumbel_candidates") = 0,
              pybind11::arg("gumbel_scale") = 1.0,
@@ -1975,6 +2607,12 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("gumbel_max_visit_init") = 50.0,
              pybind11::arg("gumbel_rescale_q") = true,
              pybind11::arg("gumbel_use_mixed_value") = true,
+             pybind11::arg("gumbel_interior_uniformity") = 0.0,
+             pybind11::arg("gumbel_interior_min_visits") = 1,
+             pybind11::arg("gumbel_interior_coverage_fraction") = 0.0,
+             pybind11::arg("gumbel_interior_value_mode") = 2,
+             pybind11::arg("gumbel_interior_max_mix_visits") = 64.0,
+             pybind11::arg("paper_full_gumbel") = false,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;
@@ -1984,6 +2622,31 @@ PYBIND11_MODULE(slaythespire, m) {
             return projected.curHp;
         }, "HP after applying combat-exit relic healing to a temporary GameContext")
         .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
+        .def("compact_leaf_arrays", [](const BattleContext &bc) {
+            // Diagnostic endpoint for packed-vs-legacy contract tests. The
+            // search hot path uses next_batch_packed(), which does not expose
+            // this per-state call.
+            const auto packed = compact_leaf::pack(bc);
+            pybind11::array_t<std::int32_t> categorical(
+                std::vector<pybind11::ssize_t>{compact_leaf::kCatSize});
+            pybind11::array_t<float> scalars(
+                std::vector<pybind11::ssize_t>{compact_leaf::kFloatSize});
+            auto cat = categorical.mutable_unchecked<1>();
+            auto scalar = scalars.mutable_unchecked<1>();
+            for (int i = 0; i < compact_leaf::kCatSize; ++i) {
+                cat(i) = packed.categorical[static_cast<std::size_t>(i)];
+            }
+            for (int i = 0; i < compact_leaf::kFloatSize; ++i) {
+                scalar(i) = packed.scalars[static_cast<std::size_t>(i)];
+            }
+            pybind11::dict out;
+            out["categorical"] = categorical;
+            out["scalars"] = scalars;
+            return out;
+        }, "export the current state in the native compact leaf layout")
+        .def("apply_custom_state", &applyCustomCombatState,
+             pybind11::arg("state"),
+             "apply a data-only custom combat state without advancing RNG or simulation")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
         .def("legal_combat_mask", &legalCombatMask,
              "return the fixed 71-id combat mask, constructed in C++")

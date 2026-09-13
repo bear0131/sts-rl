@@ -6,9 +6,11 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
+from bridge.schemas.combat_state import normalize_sim
 from env.core import vocab as V
 from rl.accumulating_ppo import (
     AccumulatingMaskablePPO,
+    _leaf_observation_as_tensor,
     _fill_nosl_combat_value_targets,
     ppo_loss_components,
 )
@@ -105,6 +107,41 @@ class _ReplayPolicy(torch.nn.Module):
 
 
 class NOSLISAZTest(unittest.TestCase):
+    def test_native_boundary_marker_survives_canonical_normalization(self):
+        raw = {
+            "turn": 0,
+            "post_enemy_turn_boundary": True,
+            "player": {
+                "hp": 10,
+                "max_hp": 20,
+                "block": 0,
+                "energy": 3,
+                "powers": [],
+                "combat_counters": {},
+            },
+            "monsters": [],
+            "hand": [],
+            "draw": [],
+            "discard": [],
+            "exhaust": [],
+        }
+        self.assertTrue(normalize_sim(raw)["post_enemy_turn_boundary"])
+        raw.pop("post_enemy_turn_boundary")
+        self.assertFalse(normalize_sim(raw)["post_enemy_turn_boundary"])
+
+    def test_leaf_dtype_packing_preserves_fields(self):
+        observation = {
+            "category": np.arange(6, dtype=np.int64).reshape(2, 3),
+            "scalar": np.arange(8, dtype=np.float32).reshape(2, 4),
+        }
+        packed = _leaf_observation_as_tensor(observation, "cpu")
+        self.assertTrue(torch.equal(
+            packed["category"], torch.as_tensor(observation["category"])
+        ))
+        self.assertTrue(torch.equal(
+            packed["scalar"], torch.as_tensor(observation["scalar"])
+        ))
+
     @staticmethod
     def _replay_sample(value: int) -> dict:
         return {
@@ -134,8 +171,58 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertEqual(replay.total_added, 5)
         all_samples = replay.get_batch(np.arange(replay.size))
         self.assertEqual(set(all_samples["sample_ids"].tolist()), {2, 3, 4})
+        self.assertTrue(np.all(all_samples["policy_weights"] == 1.0))
         indices = replay.sample_indices(3, np.random.default_rng(7))
         self.assertEqual(len(set(indices.tolist())), 3)
+
+    def test_replay_sampling_caps_old_fraction_and_covers_small_fresh_set(self):
+        observation_space = spaces.Dict({
+            "category": spaces.Box(0, 1000, shape=(2,), dtype=np.int64),
+            "scalar": spaces.Box(-1, 1, shape=(1,), dtype=np.float32),
+        })
+        replay = NOSLISAZReplayBuffer(
+            capacity=10,
+            observation_space=observation_space,
+            observation_keys=observation_space.spaces,
+            action_dim=3,
+        )
+        replay.add_samples([self._replay_sample(i) for i in range(8)])
+        fresh_start_id = replay.total_added
+        replay.add_samples([self._replay_sample(i) for i in range(8, 10)])
+
+        indices = replay.sample_indices(
+            10,
+            np.random.default_rng(7),
+            fresh_start_id=fresh_start_id,
+            max_old_fraction=0.5,
+        )
+        batch = replay.get_batch(indices)
+        old = batch["sample_ids"] < fresh_start_id
+
+        self.assertEqual(indices.shape, (10,))
+        self.assertEqual(int(old.sum()), 5)
+        self.assertEqual(set(batch["sample_ids"][~old].tolist()), {8, 9})
+
+    def test_replay_freshness_protection_rejects_an_all_old_batch(self):
+        observation_space = spaces.Dict({
+            "category": spaces.Box(0, 1000, shape=(2,), dtype=np.int64),
+            "scalar": spaces.Box(-1, 1, shape=(1,), dtype=np.float32),
+        })
+        replay = NOSLISAZReplayBuffer(
+            capacity=4,
+            observation_space=observation_space,
+            observation_keys=observation_space.spaces,
+            action_dim=3,
+        )
+        replay.add_samples([self._replay_sample(i) for i in range(4)])
+
+        with self.assertRaisesRegex(ValueError, "without fresh roots"):
+            replay.sample_indices(
+                4,
+                np.random.default_rng(7),
+                fresh_start_id=replay.total_added,
+                max_old_fraction=0.9,
+            )
 
     def test_replay_uses_compact_lazy_storage(self):
         observation_space = spaces.Dict({
@@ -156,6 +243,25 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertEqual(
             replay.allocated_bytes, replay.estimated_capacity_bytes()
         )
+
+    def test_replay_preserves_value_only_boundary_weight(self):
+        observation_space = spaces.Dict({
+            "category": spaces.Box(0, 1000, shape=(2,), dtype=np.int64),
+            "scalar": spaces.Box(-1, 1, shape=(1,), dtype=np.float32),
+        })
+        replay = NOSLISAZReplayBuffer(
+            capacity=2,
+            observation_space=observation_space,
+            observation_keys=observation_space.spaces,
+            action_dim=3,
+        )
+        root = self._replay_sample(1)
+        boundary = self._replay_sample(2)
+        boundary["policy_weight"] = 0.0
+        replay.add_samples([root, boundary])
+
+        batch = replay.get_batch(np.arange(2))
+        self.assertEqual(batch["policy_weights"].tolist(), [1.0, 0.0])
 
     def test_training_samples_old_and_new_roots_from_replay(self):
         model = object.__new__(AccumulatingMaskablePPO)
@@ -261,6 +367,51 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertEqual(model._nosl_is_az_samples, [])
         self.assertIsNone(model._nosl_is_az_replay)
 
+    def test_replay_disabled_can_defer_consuming_fresh_samples(self):
+        model = object.__new__(AccumulatingMaskablePPO)
+        model.observation_space = spaces.Dict({
+            "state": spaces.Box(-10, 10, shape=(1,), dtype=np.float32),
+        })
+        model.action_space = spaces.Discrete(2)
+        model.policy = _ReplayPolicy()
+        model.device = torch.device("cpu")
+        model.amp_mode = "off"
+        model.max_grad_norm = 1.0
+        model.nosl_is_az_batch_size = 4
+        model.nosl_is_az_micro_batch_size = 2
+        model.nosl_is_az_replay_capacity = 8
+        model.nosl_is_az_replay_min_size = 1
+        model.nosl_is_az_updates = 1
+        model.nosl_is_az_policy_coef = 1.0
+        model.nosl_is_az_value_coef = 0.5
+        model.nosl_is_az_replay_enabled = False
+        model._nosl_is_az_replay = None
+        model._nosl_is_az_replay_prepare_stats = {}
+        model._logger = SimpleNamespace(record=lambda *_args, **_kwargs: None)
+
+        def sample(value):
+            return {
+                "observation": {
+                    "state": np.asarray([value], dtype=np.float32),
+                },
+                "action_mask": np.asarray([True, True]),
+                "policy_target": np.asarray([0.75, 0.25], dtype=np.float32),
+                "value_target": value / 10.0,
+            }
+
+        model._nosl_is_az_samples = [sample(value) for value in range(4)]
+        first = model._train_nosl_is_az(consume_fresh_samples=False)
+        second = model._train_nosl_is_az(
+            prepare_replay=False,
+            consume_fresh_samples=True,
+        )
+
+        self.assertEqual(first["roots"], 4.0)
+        self.assertEqual(second["roots"], 4.0)
+        self.assertEqual(first["value_target_mean"], second["value_target_mean"])
+        self.assertEqual(first["value_target_std"], second["value_target_std"])
+        self.assertEqual(model._nosl_is_az_fresh_samples, [])
+
     def test_replay_disabled_with_no_fresh_samples_keeps_buffer_unallocated(self):
         model = object.__new__(AccumulatingMaskablePPO)
         model.observation_space = spaces.Dict({
@@ -295,6 +446,57 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertEqual(result["replay_enabled"], 0.0)
         self.assertIsNone(model._nosl_is_az_replay)
         self.assertEqual(model._nosl_is_az_samples, [])
+
+    def test_value_only_boundary_trains_with_an_empty_action_mask(self):
+        model = object.__new__(AccumulatingMaskablePPO)
+        model.observation_space = spaces.Dict({
+            "state": spaces.Box(-10, 10, shape=(1,), dtype=np.float32),
+        })
+        model.action_space = spaces.Discrete(2)
+        model.policy = _ReplayPolicy()
+        model.device = torch.device("cpu")
+        model.amp_mode = "off"
+        model.max_grad_norm = 1.0
+        model.nosl_is_az_batch_size = 2
+        model.nosl_is_az_micro_batch_size = 2
+        model.nosl_is_az_replay_capacity = 8
+        model.nosl_is_az_replay_min_size = 1
+        model.nosl_is_az_updates = 1
+        model.nosl_is_az_policy_coef = 1.0
+        model.nosl_is_az_value_coef = 1.0
+        model.nosl_is_az_replay_enabled = False
+        model._nosl_is_az_replay = None
+        model._nosl_is_az_replay_prepare_stats = {}
+        model._logger = SimpleNamespace(record=lambda *_args, **_kwargs: None)
+        model._nosl_is_az_samples = [
+            {
+                "observation": {"state": np.asarray([1], dtype=np.float32)},
+                "action_mask": np.asarray([True, True]),
+                "policy_target": np.asarray([0.75, 0.25], dtype=np.float32),
+                "policy_weight": 1.0,
+                "value_target": 0.2,
+            },
+            {
+                "observation": {"state": np.asarray([2], dtype=np.float32)},
+                "action_mask": np.asarray([False, False]),
+                "policy_target": np.asarray([0.0, 0.0], dtype=np.float32),
+                "policy_weight": 0.0,
+                "value_target": 0.7,
+            },
+        ]
+        value_before = model.policy.core.value_head.weight.detach().clone()
+
+        result = model._train_nosl_is_az()
+
+        self.assertEqual(result["roots"], 2.0)
+        self.assertEqual(result["metric_count"], 2.0)
+        self.assertEqual(model._nosl_is_az_policy_weight_sum, 1.0)
+        self.assertTrue(np.isfinite(result["policy_loss"]))
+        self.assertTrue(np.isfinite(result["value_loss"]))
+        self.assertTrue(np.isfinite(result["finite_fraction"]))
+        self.assertFalse(torch.equal(
+            value_before, model.policy.core.value_head.weight.detach()
+        ))
 
     def test_root_redeterminizes_once_per_simulation_and_returns_legal_target(self):
         _Battle.redeterminizations = 0

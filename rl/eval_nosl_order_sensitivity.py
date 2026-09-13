@@ -29,7 +29,7 @@ from sb3_contrib import MaskablePPO
 from env.core import _BUILD  # noqa: F401
 from env.core import action_space as A
 from env.core.game_env import SimGameEnv
-from env.core.run_env import SlayTheSpireEnv
+from env.core.run_env import SlayTheSpireEnv, unpack_nosl_observation_buffer
 from rl import model as model_helpers
 from rl.collect_nosl_corpus import _load_custom_objects
 from rl.nosl_sampler import NOSLSampler
@@ -120,6 +120,11 @@ def _make_env(
 
 def _forward(model, observations):
     policy = model.policy
+    expected = getattr(getattr(model, "observation_space", None), "spaces", None)
+    if expected:
+        observations = {
+            key: value for key, value in observations.items() if key in expected
+        }
     tensor, _ = policy.obs_to_tensor(observations)
     core = getattr(policy, "core", None)
     if core is None or not hasattr(core, "actor_critic"):
@@ -190,6 +195,10 @@ def _run_search(
     gumbel_max_visit_init: float = 50.0,
     gumbel_rescale_q: bool = True,
     gumbel_use_mixed_value: bool = True,
+    gumbel_interior_uniformity: float = 0.0,
+    gumbel_interior_min_visits: int = 1,
+    gumbel_interior_coverage_fraction: float = 0.0,
+    paper_full_gumbel: bool = False,
 ):
     root_logits, direct_probs, direct_value, obs = _root_policy(model, env)
     if prior_mode not in {"model", "uniform", "none"}:
@@ -221,21 +230,33 @@ def _run_search(
         gumbel_max_visit_init=float(gumbel_max_visit_init),
         gumbel_rescale_q=bool(gumbel_rescale_q),
         gumbel_use_mixed_value=bool(gumbel_use_mixed_value),
+        gumbel_interior_uniformity=float(gumbel_interior_uniformity),
+        gumbel_interior_min_visits=int(gumbel_interior_min_visits),
+        gumbel_interior_coverage_fraction=float(
+            gumbel_interior_coverage_fraction
+        ),
+        paper_full_gumbel=bool(paper_full_gumbel),
         stochastic=False,
         decision_index=0,
     )
     leaf_count = 0
     batches = 0
     while not response.get("done", False):
-        leaves = response.get("leaves", ())
+        leaves = response.get("leaf_meta", response.get("leaves", ()))
         if not leaves:
             raise RuntimeError("native search returned no leaves before completion")
         batches += 1
         leaf_count += len(leaves)
-        observations = {
-            key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-            for key in leaves[0]["observation"]
-        }
+        packed = unpack_nosl_observation_buffer(response)
+        if packed is not None:
+            observations = {
+                key: np.ascontiguousarray(value) for key, value in packed.items()
+            }
+        else:
+            observations = {
+                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
+                for key in leaves[0]["observation"]
+            }
         leaf_logits, leaf_values = _forward(model, observations)
         updates = []
         for index, leaf in enumerate(leaves):

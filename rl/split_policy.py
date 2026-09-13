@@ -51,6 +51,7 @@ COMBAT_OBSERVATION_KEYS = frozenset({
     "can_pick_zero",
     "character",
     "combat_counters",
+    "post_enemy_turn_boundary",
     "discard_card_counts",
     "discard_card_ids",
     "discard_card_upgraded_counts",
@@ -380,13 +381,21 @@ class CombatEncoder(_SpecialistEncoder):
             )
             category_width += width
         self.global_category_keys = global_category_keys
+        # ``post_enemy_turn_boundary`` was added after the first generation of
+        # whole-run checkpoints.  Build this list from the actual observation
+        # space so those checkpoints remain loadable with the new encoder.  A
+        # legacy combat observation simply omits the feature and therefore
+        # retains its original input geometry.
         scalar_keys = (
             "player_scalars", "player_buffs", "combat_counters", "ascension",
-            "gold", "pick_remaining", "can_pick_zero", "can_pick_any",
+            "post_enemy_turn_boundary", "gold", "pick_remaining",
+            "can_pick_zero", "can_pick_any",
         )
-        self.global_scalar_keys = scalar_keys
+        self.global_scalar_keys = tuple(
+            key for key in scalar_keys if key in observation_space.spaces
+        )
         self.global_projection = nn.Linear(
-            sum(_space_width(observation_space, key) for key in scalar_keys)
+            sum(_space_width(observation_space, key) for key in self.global_scalar_keys)
             + category_width,
             d_model,
         )

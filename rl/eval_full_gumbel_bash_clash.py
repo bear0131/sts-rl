@@ -169,6 +169,7 @@ def _run_one(
     gumbel_max_visit_init: float,
     gumbel_rescale_q: bool,
     gumbel_use_mixed_value: bool,
+    paper_full_gumbel: bool,
 ) -> dict[str, Any]:
     env = _make_trial_env(model, seed=seed, swapped=swapped, fillers=fillers)
     hand, legal = _strict_root(env)
@@ -189,6 +190,7 @@ def _run_one(
         gumbel_max_visit_init=gumbel_max_visit_init,
         gumbel_rescale_q=gumbel_rescale_q,
         gumbel_use_mixed_value=gumbel_use_mixed_value,
+        paper_full_gumbel=paper_full_gumbel,
     )
     first_search = first_result["search"]
     first = _classify(first_search["action"])
@@ -204,6 +206,7 @@ def _run_one(
         "leaf_batch": int(leaf_batch),
         "requested_mode": requested_mode,
         "requested_root_search_mode": int(mode_id),
+        "paper_full_gumbel": bool(paper_full_gumbel),
         "gumbel_candidates": int(candidates),
         # Keep the native mode label alongside the requested mode.  This is
         # useful when comparing an older simulator build that only supports
@@ -254,6 +257,7 @@ def _run_one(
                 gumbel_max_visit_init=gumbel_max_visit_init,
                 gumbel_rescale_q=gumbel_rescale_q,
                 gumbel_use_mixed_value=gumbel_use_mixed_value,
+                paper_full_gumbel=paper_full_gumbel,
             )
             second = _classify(second_result["search"]["action"])
             row["second"] = second
@@ -293,6 +297,11 @@ def main() -> None:
     parser.add_argument("--no-gumbel-mixed-value",
                         dest="gumbel_use_mixed_value", action="store_false",
                         default=True)
+    parser.add_argument(
+        "--paper-full-gumbel",
+        action="store_true",
+        help="Use the canonical paper settings and explicit sequential halving.",
+    )
     parser.add_argument("--sequence", action="store_true",
                         help="also execute the selected first card and search the second card")
     parser.add_argument("--output", type=Path, required=True)
@@ -333,7 +342,12 @@ def main() -> None:
                         mode_id, mode_label = _requested_mode(mode_name)
                         # candidates is ignored by PUCT, but retaining the
                         # column makes paired matrices rectangular.
-                        candidate_values = args.gumbel_candidates if mode_id else [0]
+                        candidate_values = (
+                            [0]
+                            if not mode_id
+                            else ([16] if args.paper_full_gumbel and mode_id == 2
+                                  else args.gumbel_candidates)
+                        )
                         for candidates in candidate_values:
                             print(
                                 f"[full-gumbel] seed={seed} swapped={swapped} "
@@ -361,6 +375,9 @@ def main() -> None:
                                 gumbel_max_visit_init=float(args.gumbel_max_visit_init),
                                 gumbel_rescale_q=bool(args.gumbel_rescale_q),
                                 gumbel_use_mixed_value=bool(args.gumbel_use_mixed_value),
+                                paper_full_gumbel=(
+                                    bool(args.paper_full_gumbel) and mode_id == 2
+                                ),
                             ))
 
     if not rows:
@@ -383,6 +400,7 @@ def main() -> None:
         "gumbel_max_visit_init": float(args.gumbel_max_visit_init),
         "gumbel_rescale_q": bool(args.gumbel_rescale_q),
         "gumbel_use_mixed_value": bool(args.gumbel_use_mixed_value),
+        "paper_full_gumbel": bool(args.paper_full_gumbel),
         "sequence": bool(args.sequence),
         "rows": rows,
         "summary": _summary(rows),

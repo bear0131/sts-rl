@@ -1,0 +1,1288 @@
+{
+  "schema_version": 1,
+  "checkpoint": "D:\\sts-rl\\artifacts\\nosl-az-random-start-boundary-20260912\\nosl_az_random_start_s512_boundary_step0.zip",
+  "profile": "strict_root_normal_draw",
+  "seeds": [
+    219,
+    357,
+    454,
+    575,
+    605
+  ],
+  "repeats": 1,
+  "simulations": [
+    128
+  ],
+  "depth": 0,
+  "leaf_batch": 1,
+  "modes": [
+    "full"
+  ],
+  "gumbel_candidates": [
+    0
+  ],
+  "prior_temperature": 1.0,
+  "c_puct": 1.5,
+  "gumbel_scale": 1.0,
+  "gumbel_value_scale": 0.1,
+  "gumbel_max_visit_init": 50.0,
+  "gumbel_rescale_q": true,
+  "gumbel_use_mixed_value": true,
+  "sequence": false,
+  "rows": [
+    {
+      "seed": 219,
+      "swapped": false,
+      "nonce": 8379818252543931047,
+      "second_nonce": 8174683596421240004,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "end_turn",
+      "first_action": "END_TURN",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.421875,
+        "PLAY:BASH@1": 0.1640625,
+        "PLAY:CLASH@2": 0.4140625
+      },
+      "improved_policy": {
+        "END_TURN": 0.3322135806083679,
+        "PLAY:BASH@1": 0.3342320919036865,
+        "PLAY:CLASH@2": 0.33355432748794556
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3322135796346033,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 51,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.5921447313333044,
+          "gumbel_score": -1.694121936083094,
+          "completed_q": 0.0,
+          "completed_score": -1.694121936083094,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.333554324767901,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -1.3692696223635126,
+          "gumbel_score": -2.467219156398298,
+          "completed_q": 0.0,
+          "completed_score": -2.467219156398298,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.3342320955974958,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -1.4772215022975603,
+          "gumbel_score": -2.573141132633633,
+          "completed_q": 0.0,
+          "completed_score": -2.573141132633633,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 21,
+      "clash_visits": 53,
+      "end_turn_visits": 54,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 219,
+      "swapped": true,
+      "nonce": 5648526053511295025,
+      "second_nonce": 14069067280999863928,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "bash",
+      "first_action": "PLAY:BASH@2",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:CLASH@1": 0.1640625,
+        "PLAY:BASH@2": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.3322135806083679,
+        "PLAY:CLASH@1": 0.33355432748794556,
+        "PLAY:BASH@2": 0.3342320919036865
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.33423209523409747,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 1.2115050050058662,
+          "gumbel_score": 0.11558537358253007,
+          "completed_q": 0.0,
+          "completed_score": 0.11558537358253007,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3322135792733996,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 50,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.3766133837155813,
+          "gumbel_score": -0.7253638221214717,
+          "completed_q": 0.0,
+          "completed_score": -0.7253638221214717,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.3335543254925029,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.12196426127881879,
+          "gumbel_score": -1.2199137931412385,
+          "completed_q": 0.0,
+          "completed_score": -1.2199137931412385,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 54,
+      "clash_visits": 21,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 357,
+      "swapped": false,
+      "nonce": 6337486220961953206,
+      "second_nonce": 15502245435817151929,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@4",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.1640625,
+        "PLAY:BASH@1": 0.4140625,
+        "PLAY:CLASH@4": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.3327599763870239,
+        "PLAY:BASH@1": 0.33394989371299744,
+        "PLAY:CLASH@4": 0.33329012989997864
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (4) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.333290123575309,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 2.2771604550497946,
+          "gumbel_score": 1.1784185287050115,
+          "completed_q": 0.0,
+          "completed_score": 1.1784185287050115,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.3339498867618355,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.1988832342071119,
+          "gumbel_score": -1.2956475711048436,
+          "completed_q": 0.0,
+          "completed_score": -1.2956475711048436,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3327599896628555,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 21,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.7787780024592714,
+          "gumbel_score": -1.879111803090587,
+          "completed_q": 0.0,
+          "completed_score": -1.879111803090587,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 53,
+      "clash_visits": 54,
+      "end_turn_visits": 21,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 357,
+      "swapped": true,
+      "nonce": 14887140738538688973,
+      "second_nonce": 2607473494435734196,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@1",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:CLASH@1": 0.421875,
+        "PLAY:BASH@4": 0.1640625
+      },
+      "improved_policy": {
+        "END_TURN": 0.3327599763870239,
+        "PLAY:CLASH@1": 0.33329012989997864,
+        "PLAY:BASH@4": 0.33394989371299744
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.3332901240928616,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.7861984389040717,
+          "gumbel_score": -0.3125434858878524,
+          "completed_q": 0.0,
+          "completed_score": -0.3125434858878524,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.33275998955977104,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 49,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.3643834157671376,
+          "gumbel_score": -1.4647172167082396,
+          "completed_q": 0.0,
+          "completed_score": -1.4647172167082396,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 1,
+          "label": "{ use card (4) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.33394988634736733,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.8411418025775459,
+          "gumbel_score": -1.9379061407163864,
+          "completed_q": 0.0,
+          "completed_score": -1.9379061407163864,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 21,
+      "clash_visits": 54,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 454,
+      "swapped": false,
+      "nonce": 12244797526992394101,
+      "second_nonce": 8628355343203429026,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "bash",
+      "first_action": "PLAY:BASH@4",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:CLASH@3": 0.1640625,
+        "PLAY:BASH@4": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.33248385787010193,
+        "PLAY:CLASH@3": 0.3334236741065979,
+        "PLAY:BASH@4": 0.33409246802330017
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (4) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.33409247792469454,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 2.1728448633285655,
+          "gumbel_score": 1.0765074190129873,
+          "completed_q": 0.0,
+          "completed_score": 1.0765074190129873,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3324838571440655,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 52,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 1.2735034085535692,
+          "gumbel_score": 0.17233943854609413,
+          "completed_q": 0.0,
+          "completed_score": 0.17233943854609413,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (3) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.33342366493124,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 1.022586350199818,
+          "gumbel_score": -0.07575498038702833,
+          "completed_q": 0.0,
+          "completed_score": -0.07575498038702833,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 54,
+      "clash_visits": 21,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 454,
+      "swapped": true,
+      "nonce": 3647826885333661486,
+      "second_nonce": 11437357351484975041,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@4",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.1640625,
+        "PLAY:BASH@3": 0.4140625,
+        "PLAY:CLASH@4": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.33248385787010193,
+        "PLAY:BASH@3": 0.33409246802330017,
+        "PLAY:CLASH@4": 0.3334236741065979
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (4) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.33342366456938455,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.8832561496753942,
+          "gumbel_score": -0.21508518199672444,
+          "completed_q": 0.0,
+          "completed_score": -0.21508518199672444,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (3) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.33409247787326113,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.44827466382010406,
+          "gumbel_score": -0.6480627806494239,
+          "completed_q": 0.0,
+          "completed_score": -0.6480627806494239,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3324838575573543,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 21,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -1.0900814346178562,
+          "gumbel_score": -2.191245403382297,
+          "completed_q": 0.0,
+          "completed_score": -2.191245403382297,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 53,
+      "clash_visits": 54,
+      "end_turn_visits": 21,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 575,
+      "swapped": false,
+      "nonce": 14562536772965501841,
+      "second_nonce": 14640689950997664221,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "bash",
+      "first_action": "PLAY:BASH@2",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:CLASH@0": 0.1640625,
+        "PLAY:BASH@2": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.3327602446079254,
+        "PLAY:CLASH@0": 0.3332899808883667,
+        "PLAY:BASH@2": 0.3339497745037079
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.33394976345868765,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.17110738248262616,
+          "gumbel_score": -1.2678720886069261,
+          "completed_q": 0.0,
+          "completed_score": -1.2678720886069261,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.33276025340797677,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 52,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.7426272186633008,
+          "gumbel_score": -1.8429602266962726,
+          "completed_q": 0.0,
+          "completed_score": -1.8429602266962726,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (0) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.33328998313333563,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.8214839255239389,
+          "gumbel_score": -1.9202262732493542,
+          "completed_q": 0.0,
+          "completed_score": -1.9202262732493542,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 54,
+      "clash_visits": 21,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 575,
+      "swapped": true,
+      "nonce": 1552205684779527647,
+      "second_nonce": 7705609452190102882,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@2",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.1640625,
+        "PLAY:BASH@0": 0.4140625,
+        "PLAY:CLASH@2": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.3327602446079254,
+        "PLAY:BASH@0": 0.3339497745037079,
+        "PLAY:CLASH@2": 0.3332899808883667
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.3332899834435717,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 2.457435908485736,
+          "gumbel_score": 1.3586935616911497,
+          "completed_q": 0.0,
+          "completed_score": 1.3586935616911497,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (0) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.3339497634585229,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.6746046846293947,
+          "gumbel_score": -0.42216002149539844,
+          "completed_q": 0.0,
+          "completed_score": -0.42216002149539844,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3327602530979054,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 21,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.45062957216332683,
+          "gumbel_score": -0.6497034368014609,
+          "completed_q": 0.0,
+          "completed_score": -0.6497034368014609,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 53,
+      "clash_visits": 54,
+      "end_turn_visits": 21,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 605,
+      "swapped": false,
+      "nonce": 4023586238009364139,
+      "second_nonce": 2734871932932777339,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@3",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:BASH@2": 0.1640625,
+        "PLAY:CLASH@3": 0.421875
+      },
+      "improved_policy": {
+        "END_TURN": 0.3324835002422333,
+        "PLAY:BASH@2": 0.3340926468372345,
+        "PLAY:CLASH@3": 0.3334238529205322
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (3) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.33342383983794643,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.04928134002594157,
+          "gumbel_score": -1.049059465983081,
+          "completed_q": 0.0,
+          "completed_score": -1.049059465983081,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.3324835135139167,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 49,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.09752992455160395,
+          "gumbel_score": -1.1986949280839223,
+          "completed_q": 0.0,
+          "completed_score": -1.1986949280839223,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (2) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.334092646648137,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": -0.9385774345689951,
+          "gumbel_score": -2.0349143738645235,
+          "completed_q": 0.0,
+          "completed_score": -2.0349143738645235,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 21,
+      "clash_visits": 54,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 605,
+      "swapped": true,
+      "nonce": 15918716154482021434,
+      "second_nonce": 6264890475740609365,
+      "simulations": 128,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "gumbel_candidates": 0,
+      "effective_mode": "full_gumbel",
+      "selected": "clash",
+      "first_action": "PLAY:CLASH@2",
+      "root_value": 0.0,
+      "root_visit_policy": {
+        "END_TURN": 0.4140625,
+        "PLAY:CLASH@2": 0.421875,
+        "PLAY:BASH@3": 0.1640625
+      },
+      "improved_policy": {
+        "END_TURN": 0.3324835002422333,
+        "PLAY:CLASH@2": 0.3334238529205322,
+        "PLAY:BASH@3": 0.3340926468372345
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 0,
+          "label": "{ use card (2) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.3334238401481796,
+          "visits": 54,
+          "child_visits": 54,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.8998369812345811,
+          "gumbel_score": -0.19850382384399456,
+          "completed_q": 0.0,
+          "completed_score": -0.19850382384399456,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.33248351320397607,
+          "visits": 53,
+          "child_visits": 53,
+          "child_states": 51,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.5374430509454318,
+          "gumbel_score": -0.5637219535190852,
+          "completed_q": 0.0,
+          "completed_score": -0.5637219535190852,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        },
+        {
+          "edge_index": 1,
+          "label": "{ use card (3) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.3340926466478444,
+          "visits": 21,
+          "child_visits": 21,
+          "child_states": 1,
+          "q": 0.0,
+          "expandable": true,
+          "raw_q": 0.0,
+          "gumbel": 0.25490604001204364,
+          "gumbel_score": -0.8414308992843605,
+          "completed_q": 0.0,
+          "completed_score": -0.8414308992843605,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLOOD_FOR_BLOOD",
+          "up": 0,
+          "cost": 4
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 21,
+      "clash_visits": 54,
+      "end_turn_visits": 53,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    }
+  ],
+  "summary": [
+    {
+      "requested_mode": "full_gumbel",
+      "gumbel_candidates": 0,
+      "simulations": 128,
+      "trials": 10,
+      "bash_selected": 3,
+      "clash_selected": 6,
+      "end_turn_selected": 1,
+      "other_selected": 0,
+      "bash_selection_rate": 0.3,
+      "clash_selection_rate": 0.6,
+      "mean_bash_visits": 40.5,
+      "mean_clash_visits": 44.0,
+      "mean_end_turn_visits": 43.5,
+      "mean_observed_active_edges": 3.0,
+      "effective_modes": [
+        "full_gumbel"
+      ],
+      "sequence_bash_clash": 0,
+      "sequence_clash_bash": 0,
+      "sequence_censored": 10
+    }
+  ]
+}

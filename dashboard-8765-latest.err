@@ -1,0 +1,60 @@
+----------------------------------------
+----------------------------------------
+Exception occurred during processing of request from ('127.0.0.1', 49152)
+Exception occurred during processing of request from ('127.0.0.1', 58474)
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+  File "D:\sts-rl\rl\dashboard.py", line 2688, in do_POST
+    self._send_json(result)
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "D:\sts-rl\rl\dashboard.py", line 2608, in _send_json
+    self.hybrid_eval_status.update({
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+
+During handling of the above exception, another exception occurred:
+
+  File "D:\sts-rl\rl\dashboard.py", line 2617, in do_GET
+    server_version = "StSRLWorkbench/1.0"
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Traceback (most recent call last):
+  File "D:\sts-rl\rl\dashboard.py", line 2608, in _send_json
+    self.hybrid_eval_status.update({
+    ^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 691, in process_request_thread
+    self.finish_request(request, client_address)
+----------------------------------------
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 361, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 755, in __init__
+    self.handle()
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 440, in handle
+    self.handle_one_request()
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 428, in handle_one_request
+    method()
+  File "D:\sts-rl\rl\dashboard.py", line 2767, in do_POST
+    leaf_batch_size=body.get("leaf_batch_size"),
+  File "D:\sts-rl\rl\dashboard.py", line 2607, in _send_json
+    )
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 542, in end_headers
+    self.flush_headers()
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\http\server.py", line 546, in flush_headers
+    self.wfile.write(b"".join(self._headers_buffer))
+  File "C:\Users\Tony2\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socketserver.py", line 834, in write
+    self._sock.sendall(b)
+ConnectionAbortedError: [WinError 10053] 你的主机中的软件中止了一个已建立的连接。
+----------------------------------------

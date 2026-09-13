@@ -1,0 +1,304 @@
+{
+  "schema_version": 1,
+  "checkpoint": "D:\\sts-rl\\artifacts\\nosl-paper-full-gumbel-u40-20260912\\nosl_az_614400_steps.zip",
+  "profile": "strict_root_normal_draw",
+  "seeds": [
+    219
+  ],
+  "repeats": 1,
+  "simulations": [
+    16
+  ],
+  "depth": 0,
+  "leaf_batch": 1,
+  "modes": [
+    "full"
+  ],
+  "gumbel_candidates": [
+    2,
+    3
+  ],
+  "prior_temperature": 1.0,
+  "c_puct": 1.5,
+  "gumbel_scale": 1.0,
+  "gumbel_value_scale": 0.1,
+  "gumbel_max_visit_init": 50.0,
+  "gumbel_rescale_q": true,
+  "gumbel_use_mixed_value": true,
+  "paper_full_gumbel": true,
+  "sequence": false,
+  "rows": [
+    {
+      "seed": 219,
+      "swapped": false,
+      "nonce": 8379818252543931047,
+      "second_nonce": 8174683596421240004,
+      "simulations": 16,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "paper_full_gumbel": true,
+      "gumbel_candidates": 16,
+      "effective_mode": "full_gumbel",
+      "selected": "bash",
+      "first_action": "PLAY:BASH@1",
+      "root_value": 0.3532430752956619,
+      "root_visit_policy": {
+        "END_TURN": 0.125,
+        "PLAY:BASH@1": 0.4375,
+        "PLAY:CLASH@2": 0.4375
+      },
+      "improved_policy": {
+        "END_TURN": 5.853640686837025e-05,
+        "PLAY:BASH@1": 0.676708996295929,
+        "PLAY:CLASH@2": 0.3232324719429016
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Bash,0,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.4711072468846766,
+          "visits": 7,
+          "child_visits": 7,
+          "child_states": 1,
+          "q": 0.382055002450943,
+          "expandable": true,
+          "raw_q": 0.382055002450943,
+          "gumbel": -1.4772215022975603,
+          "gumbel_score": -2.2298910127909846,
+          "completed_q": 5.7,
+          "completed_score": 3.4701089872090156,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 1.0
+        },
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Clash,1,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.5167134497753268,
+          "visits": 7,
+          "child_visits": 7,
+          "child_states": 1,
+          "q": 0.3597998780508836,
+          "expandable": true,
+          "raw_q": 0.3597998780508836,
+          "gumbel": -1.3692696223635126,
+          "gumbel_score": -2.0295364362474397,
+          "completed_q": 4.8687277457804035,
+          "completed_score": 2.8391913095329637,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.8541627624176146
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.012179303339996589,
+          "visits": 2,
+          "child_visits": 2,
+          "child_states": 2,
+          "q": 0.22945252060890198,
+          "expandable": true,
+          "raw_q": 0.22945252060890198,
+          "gumbel": -0.5921447313333044,
+          "gumbel_score": -5.000161946714119,
+          "completed_q": 0.0,
+          "completed_score": -5.000161946714119,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "BASH",
+        "CLASH"
+      ],
+      "bash_visits": 7,
+      "clash_visits": 7,
+      "end_turn_visits": 2,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    },
+    {
+      "seed": 219,
+      "swapped": true,
+      "nonce": 5648526053511295025,
+      "second_nonce": 14069067280999863928,
+      "simulations": 16,
+      "depth": 0,
+      "leaf_batch": 1,
+      "requested_mode": "full_gumbel",
+      "requested_root_search_mode": 2,
+      "paper_full_gumbel": true,
+      "gumbel_candidates": 16,
+      "effective_mode": "full_gumbel",
+      "selected": "bash",
+      "first_action": "PLAY:BASH@2",
+      "root_value": 0.3336679538867126,
+      "root_visit_policy": {
+        "END_TURN": 0.125,
+        "PLAY:CLASH@1": 0.4375,
+        "PLAY:BASH@2": 0.4375
+      },
+      "improved_policy": {
+        "END_TURN": 7.574985647806898e-05,
+        "PLAY:CLASH@1": 0.1230815201997757,
+        "PLAY:BASH@2": 0.876842737197876
+      },
+      "used_completed_policy": true,
+      "edges": [
+        {
+          "edge_index": 1,
+          "label": "{ use card (2) (Bash,1,2,2) -> (0) CULTIST }",
+          "semantic": "bash",
+          "prior": 0.47542888735903427,
+          "visits": 7,
+          "child_visits": 7,
+          "child_states": 1,
+          "q": 0.3838191628456116,
+          "expandable": true,
+          "raw_q": 0.3838191628456116,
+          "gumbel": 1.2115050050058662,
+          "gumbel_score": 0.46796704342649376,
+          "completed_q": 5.7,
+          "completed_score": 6.1679670434264935,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 1.0
+        },
+        {
+          "edge_index": 0,
+          "label": "{ use card (1) (Clash,0,0,0) -> (0) CULTIST }",
+          "semantic": "clash",
+          "prior": 0.5122960356416818,
+          "visits": 7,
+          "child_visits": 7,
+          "child_states": 1,
+          "q": 0.3201010214785735,
+          "expandable": true,
+          "raw_q": 0.3201010214785735,
+          "gumbel": -0.12196426127881879,
+          "gumbel_score": -0.7908168876988894,
+          "completed_q": 3.6618339061037797,
+          "completed_score": 2.87101701840489,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.6424270010708385
+        },
+        {
+          "edge_index": 2,
+          "label": "{ end turn }",
+          "semantic": "end_turn",
+          "prior": 0.012275076999284056,
+          "visits": 2,
+          "child_visits": 2,
+          "child_states": 2,
+          "q": 0.20562298595905304,
+          "expandable": true,
+          "raw_q": 0.20562298595905304,
+          "gumbel": 0.3766133837155813,
+          "gumbel_score": -4.023570948751548,
+          "completed_q": 0.0,
+          "completed_score": -4.023570948751548,
+          "candidate": true,
+          "active_candidate": true,
+          "normalized_q": 0.0
+        }
+      ],
+      "hand": [
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "CLASH",
+          "up": 0,
+          "cost": 0
+        },
+        {
+          "id": "BASH",
+          "up": 0,
+          "cost": 2
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        },
+        {
+          "id": "BLUDGEON",
+          "up": 0,
+          "cost": 3
+        }
+      ],
+      "legal_cards": [
+        "CLASH",
+        "BASH"
+      ],
+      "bash_visits": 7,
+      "clash_visits": 7,
+      "end_turn_visits": 2,
+      "observed_active_edges": 3,
+      "sequence": "censored",
+      "second": null
+    }
+  ],
+  "summary": [
+    {
+      "requested_mode": "full_gumbel",
+      "gumbel_candidates": 16,
+      "simulations": 16,
+      "trials": 2,
+      "bash_selected": 2,
+      "clash_selected": 0,
+      "end_turn_selected": 0,
+      "other_selected": 0,
+      "bash_selection_rate": 1.0,
+      "clash_selection_rate": 0.0,
+      "mean_bash_visits": 7.0,
+      "mean_clash_visits": 7.0,
+      "mean_end_turn_visits": 2.0,
+      "mean_observed_active_edges": 3.0,
+      "effective_modes": [
+        "full_gumbel"
+      ],
+      "sequence_bash_clash": 0,
+      "sequence_clash_bash": 0,
+      "sequence_censored": 2
+    }
+  ]
+}

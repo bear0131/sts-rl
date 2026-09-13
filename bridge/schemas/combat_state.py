@@ -262,6 +262,12 @@ def normalize_sim(raw):
     return {
         # sim turn is 0-based at combat start; real game is 1-based.
         "turn": raw["turn"] + 1,
+        # Native NOSL leaves may stop exactly after the enemy turn, before the
+        # next-turn draw/energy setup. Preserve this search-only boundary bit
+        # through the canonical layer so the combat encoder can expose it.
+        "post_enemy_turn_boundary": bool(
+            raw.get("post_enemy_turn_boundary", False)
+        ),
         "player": {
             "hp": p["hp"],
             "max_hp": p["max_hp"],
@@ -501,6 +507,12 @@ def normalize_sim_global(gc):
             boss_relics = []
     relic_state = list(gc.relic_state())
     return {
+        # True only for the search-only state immediately after the final
+        # enemy action of End Turn, before next-turn setup/draw.
+        # The boundary marker is a combat-search-only feature.  The run-global
+        # block has no raw observation mapping, so ordinary environment states
+        # are always outside that boundary.
+        "post_enemy_turn_boundary": False,
         "character": _enum_tail(gc.character) if hasattr(gc, "character")
                      else _enum_tail(gc.cc) if hasattr(gc, "cc") else "INVALID",
         "ascension": getattr(gc, "ascension", 0),

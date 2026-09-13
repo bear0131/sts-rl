@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import gymnasium as gym
 import torch as th
 from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
@@ -35,7 +36,10 @@ from rl.accumulating_ppo import (
     NOSL_IS_AZ_SEARCH_MODES,
     ppo_loss_components,
 )
-from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv
+from rl.cached_mask_vec_env import (
+    CachedMaskSubprocVecEnv,
+    GroupedCachedMaskSubprocVecEnv,
+)
 from rl.ring_allreduce import SshRingAllReduce
 from rl.tasks.wholerun import WholeRunTask
 
@@ -57,6 +61,34 @@ class Peer:
     host: str
     port: int
     user: str = "root"
+
+
+class _CheckpointObservationCompat(gym.ObservationWrapper):
+    """Expose exactly the observation schema stored in a legacy checkpoint.
+
+    Observation fields are append-only.  Newer environments can therefore
+    emit fields that an older SB3 policy does not know about (currently the
+    post-enemy-turn boundary marker).  SB3 checks spaces before loading, so
+    filter the wrapper at the environment boundary instead of weakening that
+    safety check globally.
+    """
+
+    def __init__(self, env, expected_space):
+        super().__init__(env)
+        expected = getattr(expected_space, "spaces", {})
+        self._keys = frozenset(expected)
+        self.observation_space = spaces.Dict({
+            key: env.observation_space[key]
+            for key in self._keys
+            if key in env.observation_space.spaces
+        })
+
+    def observation(self, observation):
+        return {
+            key: value
+            for key, value in observation.items()
+            if key in self._keys
+        }
 
 
 def parse_peer(text: str) -> Peer:
@@ -153,6 +185,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--vec", choices=("subproc", "dummy"), default="subproc")
     parser.add_argument("--start-method", default="fork")
+    parser.add_argument(
+        "--envs-per-worker",
+        type=int,
+        default=1,
+        help="Independent environments/search trees hosted by one subprocess. "
+             "Values above 1 batch worker IPC while preserving independent "
+             "simulator state and NOSL trees.",
+    )
     parser.add_argument("--save-every-updates", type=int, default=0)
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
@@ -189,6 +229,13 @@ def build_parser() -> argparse.ArgumentParser:
         "AlphaZero-style node expansion.",
     )
     parser.add_argument(
+        "--nosl-is-az-end-turn-as-leaf",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Override whether End Turn stops search at the post-enemy-turn "
+             "value boundary.",
+    )
+    parser.add_argument(
         "--nosl-is-az-prior-temperature",
         type=float,
         default=None,
@@ -199,6 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(NOSL_IS_AZ_SEARCH_MODES),
         default=None,
         help="Override native search with puct, gumbel, or full_gumbel.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-paper-full-gumbel",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use the canonical strict-paper Full Gumbel/MuZero settings.",
     )
     parser.add_argument(
         "--nosl-is-az-gumbel-candidates",
@@ -224,10 +277,41 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument(
+        "--nosl-is-az-gumbel-interior-uniformity",
+        type=float,
+        default=None,
+        help="Full-Gumbel non-root smoothing strength in [0,1].",
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-interior-coverage-fraction",
+        type=float,
+        default=None,
+        help="Prior-independent Full-Gumbel interior coverage fraction in [0,1].",
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-interior-value-mode",
+        type=int,
+        choices=(0, 1, 2),
+        default=None,
+        help="Interior V aggregation: 0=mean, 1=max, 2=progressive mean-to-max.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-gumbel-interior-max-mix-visits",
+        type=float,
+        default=None,
+        help="Visit scale at which progressive interior V reaches max.",
+    )
+    parser.add_argument(
         "--nosl-is-az-batch-size",
         type=int,
         default=None,
         help="Override the number of replay roots sampled per AlphaZero update.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-updates",
+        type=int,
+        default=None,
+        help="Number of independent replay/optimizer updates per collection.",
     )
     parser.add_argument(
         "--nosl-is-az-replay",
@@ -255,6 +339,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Minimum local replay roots required before AZ updates begin.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-replay-max-old-fraction",
+        type=float,
+        default=None,
+        help="Maximum fraction of each replay batch drawn from before the "
+             "current collection; lower values reserve more batch entries "
+             "for the newest roots.",
     )
     parser.add_argument(
         "--nosl-is-az-leaf-batch-size",
@@ -468,10 +560,31 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.interactive_reasoning = interactive_reasoning
     env_args.map_dag = True
 
-    env_fns = [WholeRunTask().make_env_fn(env_args) for _ in range(args.n_envs)]
+    base_env_fn = WholeRunTask().make_env_fn(env_args)
+    expected_space = getattr(model, "observation_space", None)
+
+    def compat_env_fn():
+        env = base_env_fn()
+        if expected_space is not None:
+            env = _CheckpointObservationCompat(env, expected_space)
+        return env
+
+    env_fns = [compat_env_fn for _ in range(args.n_envs)]
     if args.vec == "subproc":
-        venv = CachedMaskSubprocVecEnv(
-            env_fns, start_method=args.start_method
+        if args.envs_per_worker == 1:
+            venv = CachedMaskSubprocVecEnv(
+                env_fns, start_method=args.start_method
+            )
+        else:
+            venv = GroupedCachedMaskSubprocVecEnv(
+                env_fns,
+                envs_per_worker=args.envs_per_worker,
+                start_method=args.start_method,
+            )
+        print(
+            f"[rank {args.rank}] subprocess workers={len(venv.remotes)} "
+            f"logical_envs={args.n_envs} "
+            f"envs_per_worker={args.envs_per_worker}"
         )
     else:
         venv = DummyVecEnv(env_fns)
@@ -1032,23 +1145,148 @@ def distributed_nosl_is_az_update(
     update: int,
     ring_transport,
     barrier_timeout: float,
+    prepare_replay: bool = True,
+    consume_fresh_samples: bool = True,
 ) -> dict[str, object]:
-    """Run one synchronized inner-only NOSL update.
+    """Run synchronized inner-only NOSL updates.
 
     Each rank first accumulates its local AZ loss gradient without stepping
     Adam.  The flat gradient is then averaged through the same ring used by
     ordinary PPO before every rank takes one identical optimizer step.  The
     sample-count weighting keeps ranks with fewer completed combats from
-    contributing an oversized mean gradient.
+    contributing an oversized mean gradient.  When ``model.nosl_is_az_updates``
+    is greater than one, each configured update is a separate replay sample,
+    all-reduce, and Adam step; this preserves the semantics of multiple local
+    optimizer steps in the distributed path.
     """
     if not model.nosl_is_az or not model.nosl_is_az_inner_only:
         raise ValueError("distributed NOSL update requires inner-only mode")
-    if int(model.nosl_is_az_updates) != 1:
-        raise ValueError(
-            "distributed NOSL currently requires --nosl-is-az-updates=1"
-        )
+    configured_updates = int(model.nosl_is_az_updates)
+    if configured_updates < 1:
+        raise ValueError("distributed NOSL updates must be positive")
 
-    model._prepare_nosl_is_az_replay()
+    # The one-step implementation below deliberately keeps its collective
+    # ordering small and explicit.  Re-enter it once per requested inner
+    # update, so every Adam step is synchronized across all ranks.  Replay is
+    # prepared only on the first pass; this is important for the legacy
+    # non-replay mode where fresh roots are one-shot samples.
+    if configured_updates > 1:
+        original_updates = model.nosl_is_az_updates
+        model.nosl_is_az_updates = 1
+        try:
+            results = [
+                distributed_nosl_is_az_update(
+                    model,
+                    rank=rank,
+                    world_size=world_size,
+                    peers=peers,
+                    key=key,
+                    control_dir=control_dir,
+                    local_root=local_root,
+                    remote_root=remote_root,
+                    run_id=run_id,
+                    update=update * configured_updates + inner_update,
+                    ring_transport=ring_transport,
+                    barrier_timeout=barrier_timeout,
+                    prepare_replay=prepare_replay if inner_update == 0 else False,
+                    consume_fresh_samples=False,
+                )
+                for inner_update in range(configured_updates)
+            ]
+        finally:
+            model.nosl_is_az_updates = original_updates
+
+        if (
+            consume_fresh_samples
+            and not bool(getattr(model, "nosl_is_az_replay_enabled", True))
+        ):
+            # Every synchronized optimizer step above must see the same fresh
+            # collection.  Consume it only after the complete update group.
+            model._nosl_is_az_fresh_samples = []
+
+        # Preserve the logger-facing shape while combining repeated updates.
+        # Losses and model diagnostics are root-weighted; timings and counts
+        # are additive; replay/configuration fields describe the final pass.
+        if not results:
+            return {}
+        aggregated = dict(results[-1])
+        metric_keys = {
+            "policy_loss", "value_loss", "target_entropy",
+            "policy_entropy", "target_policy_kl", "policy_cross_entropy",
+            "target_effective_actions", "target_top1_agreement",
+            "legal_actions_mean", "illegal_target_mass", "target_sum_error",
+            "value_mae", "value_bias", "finite_fraction",
+            "replay_old_fraction", "replay_current_fraction",
+        }
+        additive_keys = {
+            "roots", "global_roots", "gradient_batches", "updates", "metric_count",
+            "replay_sampled_roots", "backward_sec", "sync_sec",
+            "optimizer_step_sec",
+        }
+        weights = [max(0.0, float(row.get("metric_count", 0.0))) for row in results]
+        weight_total = sum(weights)
+        for key in aggregated:
+            values = [row.get(key) for row in results]
+            if not all(isinstance(value, (int, float, np.number)) for value in values):
+                continue
+            numeric = [float(value) for value in values]
+            if key in additive_keys:
+                aggregated[key] = float(sum(numeric))
+            elif key in metric_keys and weight_total > 0.0:
+                aggregated[key] = float(
+                    sum(value * weight for value, weight in zip(numeric, weights))
+                    / weight_total
+                )
+        # Combine means and standard deviations through their second moments.
+        # Averaging standard deviations is incorrect when update batches have
+        # different means (as replay batches generally do).
+        for mean_key, std_key in (
+            ("value_target_mean", "value_target_std"),
+            ("pred_value_mean", "pred_value_std"),
+        ):
+            if weight_total <= 0.0:
+                aggregated[mean_key] = 0.0
+                aggregated[std_key] = 0.0
+                continue
+            mean = sum(
+                float(row.get(mean_key, 0.0)) * weight
+                for row, weight in zip(results, weights)
+            ) / weight_total
+            second_moment = sum(
+                (
+                    float(row.get(std_key, 0.0)) ** 2
+                    + float(row.get(mean_key, 0.0)) ** 2
+                ) * weight
+                for row, weight in zip(results, weights)
+            ) / weight_total
+            aggregated[mean_key] = float(mean)
+            aggregated[std_key] = float(np.sqrt(max(
+                0.0, second_moment - mean * mean
+            )))
+        populated = [
+            row for row, weight in zip(results, weights) if weight > 0.0
+        ]
+        if populated:
+            aggregated["value_target_min"] = float(min(
+                float(row["value_target_min"]) for row in populated
+            ))
+            aggregated["value_target_max"] = float(max(
+                float(row["value_target_max"]) for row in populated
+            ))
+        else:
+            aggregated["value_target_min"] = 0.0
+            aggregated["value_target_max"] = 0.0
+        # These values are repeated configuration or final replay state.  Keep
+        # them from the final inner update, while averaging per-step scalars
+        # whose value is meaningful over the whole collection update.
+        for key in ("sync_mbps", "gradient_norm_preclip"):
+            values = [float(row.get(key, 0.0)) for row in results]
+            aggregated[key] = float(np.mean(values)) if values else 0.0
+        aggregated["grad_bytes"] = int(max(int(row.get("grad_bytes", 0)) for row in results))
+        return aggregated
+
+    if prepare_replay:
+        model._prepare_nosl_is_az_replay()
     local_count = model._nosl_is_az_replay_train_count()
     count_average = average_scalar_dict(
         {"nosl_is_az_valid_roots": float(local_count)}, ring_transport
@@ -1074,6 +1312,7 @@ def distributed_nosl_is_az_update(
         step_optimizer=False,
         gradient_scale=gradient_scale,
         prepare_replay=False,
+        consume_fresh_samples=consume_fresh_samples,
     )
     if model.device.type == "cuda":
         th.cuda.synchronize(model.device)
@@ -1101,37 +1340,44 @@ def distributed_nosl_is_az_update(
     )
     local_metric_sums = getattr(model, "_nosl_is_az_metric_sums", {})
     local_metric_sumsq = getattr(model, "_nosl_is_az_metric_sumsq", {})
-    local_metric_count = float(
-        getattr(model, "_nosl_is_az_metric_count", 0.0)
-    )
+    legacy_metric_count = float(getattr(
+        model, "_nosl_is_az_metric_count", 0.0
+    ))
+    local_metric_counts = getattr(model, "_nosl_is_az_metric_counts", {})
     diagnostic_payload = {}
     for name in diagnostic_names:
         diagnostic_payload[f"sum:{name}"] = float(local_metric_sums.get(name, 0.0))
         diagnostic_payload[f"sumsq:{name}"] = float(
             local_metric_sumsq.get(name, 0.0)
         )
-    diagnostic_payload["count"] = local_metric_count
+        diagnostic_payload[f"count:{name}"] = float(
+            local_metric_counts.get(name, legacy_metric_count)
+        )
     diagnostic_global = average_scalar_dict(diagnostic_payload, ring_transport)
-    diagnostic_count = float(diagnostic_global["count"] * scalar_world)
+
+    def diagnostic_count(name: str) -> float:
+        return float(diagnostic_global[f"count:{name}"] * scalar_world)
 
     def diagnostic_mean(name: str) -> float:
-        if diagnostic_count <= 0.0:
+        count = diagnostic_count(name)
+        if count <= 0.0:
             return 0.0
         return float(
-            diagnostic_global[f"sum:{name}"] * scalar_world / diagnostic_count
+            diagnostic_global[f"sum:{name}"] * scalar_world / count
         )
 
     def diagnostic_std(name: str) -> float:
-        if diagnostic_count <= 0.0:
+        count = diagnostic_count(name)
+        if count <= 0.0:
             return 0.0
         mean = diagnostic_mean(name)
         second = float(
-            diagnostic_global[f"sumsq:{name}"] * scalar_world / diagnostic_count
+            diagnostic_global[f"sumsq:{name}"] * scalar_world / count
         )
         return float(np.sqrt(max(0.0, second - mean * mean)))
 
     diagnostic_values = {
-        "metric_count": diagnostic_count,
+        "metric_count": diagnostic_count("value_target"),
         "target_entropy": diagnostic_mean("target_entropy"),
         "policy_entropy": diagnostic_mean("policy_entropy"),
         "target_policy_kl": diagnostic_mean("target_policy_kl"),
@@ -1194,6 +1440,7 @@ def distributed_nosl_is_az_update(
     effective_learning_rate = float(
         model.policy.optimizer.param_groups[0].get("lr", 0.0)
     )
+    rollout_timings = getattr(model, "_nosl_is_az_rollout_timings", {})
 
     result = {
         "roots": float(az_stats["roots"]),
@@ -1210,6 +1457,18 @@ def distributed_nosl_is_az_update(
         "gradient_norm_preclip": gradient_norm_preclip,
         "learning_rate": effective_learning_rate,
     }
+    # Collection timing is produced before this synchronized learner update.
+    # Carry it explicitly so a logger dump/reset cannot hide the breakdown
+    # from the distributed record or W&B.
+    for name in (
+        "root_policy_seconds",
+        "cpp_begin_rpc_seconds",
+        "cpp_leaf_decode_seconds",
+        "cpp_leaf_model_seconds",
+        "cpp_backprop_rpc_seconds",
+        "env_step_seconds",
+    ):
+        result[name] = float(rollout_timings.get(name, 0.0))
     result.update(diagnostic_values)
     # Aggregate the objective scalars with the same root weighting used by the
     # diagnostic values.  The gradient itself is already weighted before the
@@ -1220,21 +1479,33 @@ def distributed_nosl_is_az_update(
     local_value_loss_sum = float(
         getattr(model, "_nosl_is_az_value_loss_sum", 0.0)
     )
+    local_policy_weight_sum = float(
+        getattr(
+            model,
+            "_nosl_is_az_policy_weight_sum",
+            az_stats.get("metric_count", diagnostic_count("value_target")),
+        )
+    )
     loss_payload = average_scalar_dict(
         {
             "policy_sum": local_policy_loss_sum,
             "value_sum": local_value_loss_sum,
-            "count": float(az_stats.get("metric_count", diagnostic_count)),
+            "policy_count": local_policy_weight_sum,
+            "value_count": float(az_stats.get(
+                "metric_count", diagnostic_count("value_target")
+            )),
         },
         ring_transport,
     )
-    loss_count = float(loss_payload["count"] * scalar_world)
-    if loss_count > 0.0:
+    policy_loss_count = float(loss_payload["policy_count"] * scalar_world)
+    value_loss_count = float(loss_payload["value_count"] * scalar_world)
+    if policy_loss_count > 0.0:
         result["policy_loss"] = float(
-            loss_payload["policy_sum"] * scalar_world / loss_count
+            loss_payload["policy_sum"] * scalar_world / policy_loss_count
         )
+    if value_loss_count > 0.0:
         result["value_loss"] = float(
-            loss_payload["value_sum"] * scalar_world / loss_count
+            loss_payload["value_sum"] * scalar_world / value_loss_count
         )
     result.update({
         key: float(az_stats[key])
@@ -1242,10 +1513,15 @@ def distributed_nosl_is_az_update(
             "fresh_roots",
             "dropped_unlabeled_roots",
             "gradient_batches",
+            "batch_size_requested",
+            "batch_size_used",
+            "batch_fill_ratio",
             "replay_allocated_mb",
             "replay_capacity",
             "replay_fill_ratio",
             "replay_old_fraction",
+            "replay_current_fraction",
+            "replay_max_old_fraction",
             "replay_ready",
             "replay_sampled_roots",
             "replay_size",
@@ -1279,6 +1555,12 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/pending_combat_roots",
     "nosl_is_az/cpp_leaf_batches",
     "nosl_is_az/cpp_leaf_evaluations",
+    "nosl_is_az/root_policy_seconds",
+    "nosl_is_az/cpp_begin_rpc_seconds",
+    "nosl_is_az/cpp_leaf_decode_seconds",
+    "nosl_is_az/cpp_leaf_model_seconds",
+    "nosl_is_az/cpp_backprop_rpc_seconds",
+    "nosl_is_az/env_step_seconds",
     "nosl_is_az/collection_seconds",
     "nosl_is_az/dropped_unlabeled_roots",
     "nosl_is_az/roots",
@@ -1286,11 +1568,16 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/value_loss",
     "nosl_is_az/updates",
     "nosl_is_az/fresh_roots",
+    "nosl_is_az/batch_size_requested",
+    "nosl_is_az/batch_size_used",
+    "nosl_is_az/batch_fill_ratio",
     "nosl_is_az/gradient_batches",
     "nosl_is_az/replay_allocated_mb",
     "nosl_is_az/replay_capacity",
     "nosl_is_az/replay_fill_ratio",
     "nosl_is_az/replay_old_fraction",
+    "nosl_is_az/replay_current_fraction",
+    "nosl_is_az/replay_max_old_fraction",
     "nosl_is_az/replay_ready",
     "nosl_is_az/replay_sampled_roots",
     "nosl_is_az/replay_size",
@@ -1337,6 +1624,8 @@ def main() -> None:
         raise ValueError(
             "--reasoning-gradient-accumulation-steps must be at least 1"
         )
+    if args.envs_per_worker < 1:
+        raise ValueError("--envs-per-worker must be at least 1")
     if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:
         raise ValueError("--nosl-is-az-simulations must be positive")
     if args.nosl_is_az_depth is not None and args.nosl_is_az_depth < 0:
@@ -1366,8 +1655,34 @@ def main() -> None:
             raise ValueError(
                 f"--{name.replace('_', '-')} must be non-negative and finite"
             )
+    if (
+        args.nosl_is_az_gumbel_interior_uniformity is not None
+        and not 0.0 <= args.nosl_is_az_gumbel_interior_uniformity <= 1.0
+    ):
+        raise ValueError(
+            "--nosl-is-az-gumbel-interior-uniformity must be in [0, 1]"
+        )
+    if (
+        args.nosl_is_az_gumbel_interior_coverage_fraction is not None
+        and not 0.0 <= args.nosl_is_az_gumbel_interior_coverage_fraction <= 1.0
+    ):
+        raise ValueError(
+            "--nosl-is-az-gumbel-interior-coverage-fraction must be in [0, 1]"
+        )
+    if (
+        args.nosl_is_az_gumbel_interior_max_mix_visits is not None
+        and (
+            not np.isfinite(args.nosl_is_az_gumbel_interior_max_mix_visits)
+            or args.nosl_is_az_gumbel_interior_max_mix_visits <= 0.0
+        )
+    ):
+        raise ValueError(
+            "--nosl-is-az-gumbel-interior-max-mix-visits must be positive and finite"
+        )
     if args.nosl_is_az_batch_size is not None and args.nosl_is_az_batch_size < 1:
         raise ValueError("--nosl-is-az-batch-size must be positive")
+    if args.nosl_is_az_updates is not None and args.nosl_is_az_updates < 1:
+        raise ValueError("--nosl-is-az-updates must be positive")
     if (
         args.nosl_is_az_micro_batch_size is not None
         and args.nosl_is_az_micro_batch_size < 1
@@ -1383,6 +1698,16 @@ def main() -> None:
         and args.nosl_is_az_replay_min_size < 1
     ):
         raise ValueError("--nosl-is-az-replay-min-size must be positive")
+    if (
+        args.nosl_is_az_replay_max_old_fraction is not None
+        and (
+            not np.isfinite(args.nosl_is_az_replay_max_old_fraction)
+            or not 0.0 <= args.nosl_is_az_replay_max_old_fraction <= 1.0
+        )
+    ):
+        raise ValueError(
+            "--nosl-is-az-replay-max-old-fraction must be in [0, 1]"
+        )
     if (
         args.nosl_is_az_leaf_batch_size is not None
         and args.nosl_is_az_leaf_batch_size < 1
@@ -1529,6 +1854,20 @@ def main() -> None:
             f"{frozen:,} parameters; {trainable:,} combat parameters trainable",
             flush=True,
         )
+    if args.nosl_is_az_updates is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError(
+                "--nosl-is-az-updates requires a NOSL-IS-AZ checkpoint"
+            )
+        model.nosl_is_az_updates = int(args.nosl_is_az_updates)
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ optimizer updates per collection: "
+            f"{model.nosl_is_az_updates}",
+            flush=True,
+        )
+    elif bool(getattr(model, "nosl_is_az", False)):
+        # Make the effective checkpoint value visible in W&B and diagnostics.
+        args.nosl_is_az_updates = int(getattr(model, "nosl_is_az_updates", 1))
     model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
     print(
         f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "
@@ -1564,15 +1903,33 @@ def main() -> None:
             "(0=unlimited node expansion)",
             flush=True,
         )
+    if args.nosl_is_az_end_turn_as_leaf is not None:
+        if not bool(getattr(model, "nosl_is_az", False)):
+            raise ValueError(
+                "--nosl-is-az-end-turn-as-leaf requires a NOSL-IS-AZ checkpoint"
+            )
+        model.nosl_is_az_end_turn_as_leaf = bool(
+            args.nosl_is_az_end_turn_as_leaf
+        )
+        print(
+            f"[rank {args.rank}] NOSL End Turn leaf override: "
+            f"{model.nosl_is_az_end_turn_as_leaf}",
+            flush=True,
+        )
     gumbel_overrides = (
         args.nosl_is_az_prior_temperature,
         args.nosl_is_az_search_mode,
+        args.nosl_is_az_paper_full_gumbel,
         args.nosl_is_az_gumbel_candidates,
         args.nosl_is_az_gumbel_scale,
         args.nosl_is_az_gumbel_value_scale,
         args.nosl_is_az_gumbel_max_visit_init,
         args.nosl_is_az_gumbel_rescale_q,
         args.nosl_is_az_gumbel_use_mixed_value,
+        args.nosl_is_az_gumbel_interior_uniformity,
+        args.nosl_is_az_gumbel_interior_coverage_fraction,
+        args.nosl_is_az_gumbel_interior_value_mode,
+        args.nosl_is_az_gumbel_interior_max_mix_visits,
     )
     if any(value is not None for value in gumbel_overrides) and not bool(
         getattr(model, "nosl_is_az", False)
@@ -1591,12 +1948,17 @@ def main() -> None:
     model.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[mode]
     gumbel_fields = (
         ("nosl_is_az_prior_temperature", 1.0, float),
+        ("nosl_is_az_paper_full_gumbel", False, bool),
         ("nosl_is_az_gumbel_candidates", 0, int),
         ("nosl_is_az_gumbel_scale", 1.0, float),
         ("nosl_is_az_gumbel_value_scale", 0.1, float),
         ("nosl_is_az_gumbel_max_visit_init", 50.0, float),
         ("nosl_is_az_gumbel_rescale_q", True, bool),
         ("nosl_is_az_gumbel_use_mixed_value", True, bool),
+        ("nosl_is_az_gumbel_interior_uniformity", 0.0, float),
+        ("nosl_is_az_gumbel_interior_coverage_fraction", 0.0, float),
+        ("nosl_is_az_gumbel_interior_value_mode", 2, int),
+        ("nosl_is_az_gumbel_interior_max_mix_visits", 64.0, float),
     )
     for name, default, convert in gumbel_fields:
         requested = getattr(args, name)
@@ -1604,18 +1966,44 @@ def main() -> None:
         value = convert(value)
         setattr(model, name, value)
         setattr(args, name, value)
+    if bool(getattr(model, "nosl_is_az_paper_full_gumbel", False)):
+        # Match AccumulatingMaskablePPO and the native constructor when a
+        # checkpoint is loaded and its attributes are overridden in-place.
+        canonical = {
+            "nosl_is_az_prior_temperature": 1.0,
+            "nosl_is_az_gumbel_candidates": 16,
+            "nosl_is_az_gumbel_scale": 1.0,
+            "nosl_is_az_gumbel_value_scale": 0.1,
+            "nosl_is_az_gumbel_max_visit_init": 50.0,
+            "nosl_is_az_gumbel_rescale_q": True,
+            "nosl_is_az_gumbel_use_mixed_value": True,
+            "nosl_is_az_gumbel_interior_uniformity": 0.0,
+            "nosl_is_az_gumbel_interior_coverage_fraction": 0.0,
+            "nosl_is_az_gumbel_interior_value_mode": 0,
+            "nosl_is_az_gumbel_interior_max_mix_visits": 64.0,
+            "nosl_is_az_dirichlet_alpha": 0.0,
+            "nosl_is_az_dirichlet_epsilon": 0.0,
+        }
+        for name, value in canonical.items():
+            setattr(model, name, value)
+            if hasattr(args, name):
+                setattr(args, name, value)
     args.nosl_is_az_search_mode = mode
     if bool(getattr(model, "nosl_is_az", False)):
         print(
             f"[rank {args.rank}] NOSL search: mode={mode} "
             f"root_mode={model.nosl_is_az_root_search_mode} "
+            f"paper_full_gumbel={model.nosl_is_az_paper_full_gumbel} "
             f"prior_temperature={model.nosl_is_az_prior_temperature} "
             f"candidates={model.nosl_is_az_gumbel_candidates} "
             f"gumbel_scale={model.nosl_is_az_gumbel_scale} "
             f"value_scale={model.nosl_is_az_gumbel_value_scale} "
             f"max_visit_init={model.nosl_is_az_gumbel_max_visit_init} "
             f"rescale_q={model.nosl_is_az_gumbel_rescale_q} "
-            f"mixed_value={model.nosl_is_az_gumbel_use_mixed_value}",
+            f"mixed_value={model.nosl_is_az_gumbel_use_mixed_value} "
+            f"coverage={model.nosl_is_az_gumbel_interior_coverage_fraction} "
+            f"value_mode={model.nosl_is_az_gumbel_interior_value_mode} "
+            f"max_mix_visits={model.nosl_is_az_gumbel_interior_max_mix_visits}",
             flush=True,
         )
     if args.nosl_is_az_batch_size is not None:
@@ -1638,12 +2026,19 @@ def main() -> None:
     model.nosl_is_az_replay_min_size = int(
         getattr(model, "nosl_is_az_replay_min_size", 1)
     )
+    model.nosl_is_az_replay_max_old_fraction = float(
+        getattr(model, "nosl_is_az_replay_max_old_fraction", 1.0)
+    )
     if args.nosl_is_az_micro_batch_size is not None:
         model.nosl_is_az_micro_batch_size = int(args.nosl_is_az_micro_batch_size)
     if args.nosl_is_az_replay_capacity is not None:
         model.nosl_is_az_replay_capacity = int(args.nosl_is_az_replay_capacity)
     if args.nosl_is_az_replay_min_size is not None:
         model.nosl_is_az_replay_min_size = int(args.nosl_is_az_replay_min_size)
+    if args.nosl_is_az_replay_max_old_fraction is not None:
+        model.nosl_is_az_replay_max_old_fraction = float(
+            args.nosl_is_az_replay_max_old_fraction
+        )
     if model.nosl_is_az_replay_min_size > model.nosl_is_az_replay_capacity:
         raise ValueError(
             "NOSL replay min size cannot exceed replay capacity"
@@ -1655,10 +2050,14 @@ def main() -> None:
         args.nosl_is_az_micro_batch_size = model.nosl_is_az_micro_batch_size
         args.nosl_is_az_replay_capacity = model.nosl_is_az_replay_capacity
         args.nosl_is_az_replay_min_size = model.nosl_is_az_replay_min_size
+        args.nosl_is_az_replay_max_old_fraction = (
+            model.nosl_is_az_replay_max_old_fraction
+        )
         print(
             f"[rank {args.rank}] NOSL-IS-AZ replay: "
             f"capacity={model.nosl_is_az_replay_capacity} "
             f"min_size={model.nosl_is_az_replay_min_size} "
+            f"max_old_fraction={model.nosl_is_az_replay_max_old_fraction} "
             f"effective_batch={model.nosl_is_az_batch_size} "
             f"micro_batch={model.nosl_is_az_micro_batch_size}",
             flush=True,

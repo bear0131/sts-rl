@@ -157,6 +157,7 @@ def _warm_start_policy(
     allow_deck_size_extension=False,
     allow_neow_extension=True,
     allow_event_option_extension=True,
+    skip_combat_mismatch=False,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -168,13 +169,75 @@ def _warm_start_policy(
     if not any((allow_global_map_extension, allow_card_language_extension,
                 allow_combat_language_extension, allow_map_dag_extension,
                 allow_deck_size_extension, allow_neow_extension,
-                allow_event_option_extension)):
+                allow_event_option_extension, skip_combat_mismatch)):
         model.policy.load_state_dict(source)
         return 0
 
     target = model.policy.state_dict()
     incompatible = []
     initialized = []
+    source_core = getattr(getattr(pretrained, "policy", None), "core", None)
+    target_core = getattr(getattr(model, "policy", None), "core", None)
+
+    def _copy_inserted_combat_boundary(key, value):
+        """Transfer an old combat global projection with no boundary column.
+
+        The boundary feature is inserted between ``ascension`` and ``gold``.
+        Copying by raw prefix would shift every subsequent scalar weight, so
+        map segments by their named scalar keys and leave the new column at
+        zero (the neutral value for legacy states).
+        """
+        if key != "core.combat.encoder.global_projection.weight":
+            return False
+        source_encoder = getattr(source_core, "combat", None)
+        source_encoder = getattr(source_encoder, "encoder", None)
+        target_encoder = getattr(target_core, "combat", None)
+        target_encoder = getattr(target_encoder, "encoder", None)
+        if source_encoder is None or target_encoder is None:
+            return False
+        old_keys = tuple(getattr(source_encoder, "global_scalar_keys", ()))
+        new_keys = tuple(getattr(target_encoder, "global_scalar_keys", ()))
+        if "post_enemy_turn_boundary" not in new_keys or (
+            "post_enemy_turn_boundary" in old_keys
+        ):
+            return False
+        old_space = getattr(source_encoder, "observation_space", None)
+        new_space = getattr(target_encoder, "observation_space", None)
+        if old_space is None or new_space is None:
+            return False
+
+        def width(space, name):
+            return int(np.prod(space[name].shape))
+
+        old_offsets = {}
+        offset = 0
+        for name in old_keys:
+            old_offsets[name] = (offset, offset + width(old_space, name))
+            offset += width(old_space, name)
+        new_offsets = {}
+        offset = 0
+        for name in new_keys:
+            new_offsets[name] = (offset, offset + width(new_space, name))
+            offset += width(new_space, name)
+        # Category embeddings follow scalar features and have not changed.
+        if value.shape[1] > target[key].shape[1]:
+            return False
+        mapped = target[key].detach().clone()
+        for name, (lo, hi) in old_offsets.items():
+            nlo, nhi = new_offsets.get(name, (None, None))
+            if nlo is None or (hi - lo) != (nhi - nlo):
+                return False
+            mapped[:, nlo:nhi] = value[:, lo:hi]
+        old_category_start = max((hi for _lo, hi in old_offsets.values()), default=0)
+        new_category_start = max((hi for _lo, hi in new_offsets.values()), default=0)
+        category_width = value.shape[1] - old_category_start
+        if category_width != target[key].shape[1] - new_category_start:
+            return False
+        mapped[:, new_category_start:] = value[:, old_category_start:]
+        target[key] = mapped
+        initialized.append(f"{key} (inserted post_enemy_turn_boundary column)")
+        return True
+
     for key, value in source.items():
         if key not in target:
             is_old_map = any(marker in key for marker in (
@@ -187,6 +250,8 @@ def _warm_start_policy(
             continue
         if value.shape == target[key].shape:
             target[key] = value
+            continue
+        if _copy_inserted_combat_boundary(key, value):
             continue
         is_appended_role = (
             key.endswith("role_emb.weight")
@@ -221,6 +286,11 @@ def _warm_start_policy(
             target[key][:, :value.shape[1]] = value
             initialized.append(f"{key}[:, -1]")
         else:
+            if skip_combat_mismatch and (
+                key.startswith("core.combat.") or ".core.combat." in key
+            ):
+                initialized.append(f"skipped incompatible combat parameter {key}")
+                continue
             incompatible.append(
                 f"shape mismatch for {key}: checkpoint {tuple(value.shape)}, "
                 f"target {tuple(target[key].shape)}"
@@ -522,6 +592,13 @@ def main() -> None:
             raise ValueError(
                 "--nosl-is-az-replay-min-size cannot exceed replay capacity"
             )
+        if (
+            not np.isfinite(args.nosl_is_az_replay_max_old_fraction)
+            or not 0.0 <= args.nosl_is_az_replay_max_old_fraction <= 1.0
+        ):
+            raise ValueError(
+                "--nosl-is-az-replay-max-old-fraction must be in [0, 1]"
+            )
         if args.nosl_is_az_depth < 0:
             raise ValueError("--nosl-is-az-depth must be non-negative")
         if args.nosl_is_az_temperature < 0.0 or args.nosl_is_az_c_puct < 0.0:
@@ -540,8 +617,37 @@ def main() -> None:
                 raise ValueError(
                     f"--{name.replace('_', '-')} must be non-negative and finite"
                 )
+        if not 0.0 <= args.nosl_is_az_gumbel_interior_uniformity <= 1.0:
+            raise ValueError(
+                "--nosl-is-az-gumbel-interior-uniformity must be in [0, 1]"
+            )
+        if not 0.0 <= args.nosl_is_az_gumbel_interior_coverage_fraction <= 1.0:
+            raise ValueError(
+                "--nosl-is-az-gumbel-interior-coverage-fraction must be in [0, 1]"
+            )
+        if args.nosl_is_az_gumbel_interior_value_mode not in (0, 1, 2):
+            raise ValueError(
+                "--nosl-is-az-gumbel-interior-value-mode must be 0, 1, or 2"
+            )
+        if (
+            not np.isfinite(args.nosl_is_az_gumbel_interior_max_mix_visits)
+            or args.nosl_is_az_gumbel_interior_max_mix_visits <= 0.0
+        ):
+            raise ValueError(
+                "--nosl-is-az-gumbel-interior-max-mix-visits must be positive and finite"
+            )
         if args.nosl_is_az_search_mode != "puct" and not args.nosl_is_az_cpp:
             raise ValueError("Gumbel NOSL-IS-AZ modes require --nosl-is-az-cpp")
+        if getattr(args, "nosl_is_az_paper_full_gumbel", False):
+            if args.nosl_is_az_search_mode != "full_gumbel":
+                raise ValueError(
+                    "--nosl-is-az-paper-full-gumbel requires "
+                    "--nosl-is-az-search-mode full_gumbel"
+                )
+            if not args.nosl_is_az_cpp:
+                raise ValueError(
+                    "--nosl-is-az-paper-full-gumbel requires --nosl-is-az-cpp"
+                )
         if args.nosl_is_az_dirichlet_alpha < 0.0:
             raise ValueError("--nosl-is-az-dirichlet-alpha must be non-negative")
         if not 0.0 <= args.nosl_is_az_dirichlet_epsilon <= 1.0:
@@ -864,6 +970,9 @@ def main() -> None:
             nosl_is_az_cpp=getattr(args, "nosl_is_az_cpp", False),
             nosl_is_az_simulations=getattr(args, "nosl_is_az_simulations", 8),
             nosl_is_az_depth=getattr(args, "nosl_is_az_depth", 3),
+            nosl_is_az_end_turn_as_leaf=getattr(
+                args, "nosl_is_az_end_turn_as_leaf", False
+            ),
             nosl_is_az_rollout_steps=getattr(
                 args, "nosl_is_az_rollout_steps", 0
             ),
@@ -876,6 +985,9 @@ def main() -> None:
             ),
             nosl_is_az_search_mode=getattr(
                 args, "nosl_is_az_search_mode", "puct"
+            ),
+            nosl_is_az_paper_full_gumbel=getattr(
+                args, "nosl_is_az_paper_full_gumbel", False
             ),
             nosl_is_az_gumbel_candidates=getattr(
                 args, "nosl_is_az_gumbel_candidates", 0
@@ -895,6 +1007,18 @@ def main() -> None:
             nosl_is_az_gumbel_use_mixed_value=getattr(
                 args, "nosl_is_az_gumbel_use_mixed_value", True
             ),
+            nosl_is_az_gumbel_interior_uniformity=getattr(
+                args, "nosl_is_az_gumbel_interior_uniformity", 0.0
+            ),
+            nosl_is_az_gumbel_interior_coverage_fraction=getattr(
+                args, "nosl_is_az_gumbel_interior_coverage_fraction", 0.0
+            ),
+            nosl_is_az_gumbel_interior_value_mode=getattr(
+                args, "nosl_is_az_gumbel_interior_value_mode", 2
+            ),
+            nosl_is_az_gumbel_interior_max_mix_visits=getattr(
+                args, "nosl_is_az_gumbel_interior_max_mix_visits", 64.0
+            ),
             nosl_is_az_dirichlet_alpha=getattr(
                 args, "nosl_is_az_dirichlet_alpha", 0.0
             ),
@@ -913,6 +1037,9 @@ def main() -> None:
             ),
             nosl_is_az_replay_min_size=getattr(
                 args, "nosl_is_az_replay_min_size", 1
+            ),
+            nosl_is_az_replay_max_old_fraction=getattr(
+                args, "nosl_is_az_replay_max_old_fraction", 1.0
             ),
             nosl_is_az_leaf_batch_size=getattr(
                 args, "nosl_is_az_leaf_batch_size", 64
@@ -998,6 +1125,9 @@ def main() -> None:
                     args, "nosl_is_az_simulations", 8
                 ),
                 "nosl_is_az_depth": getattr(args, "nosl_is_az_depth", 3),
+                "nosl_is_az_end_turn_as_leaf": getattr(
+                    args, "nosl_is_az_end_turn_as_leaf", False
+                ),
                 "nosl_is_az_rollout_steps": getattr(
                     args, "nosl_is_az_rollout_steps", 0
                 ),
@@ -1011,13 +1141,16 @@ def main() -> None:
                 "nosl_is_az_search_mode": getattr(
                     args, "nosl_is_az_search_mode", "puct"
                 ),
+                "nosl_is_az_paper_full_gumbel": getattr(
+                    args, "nosl_is_az_paper_full_gumbel", False
+                ),
                 "nosl_is_az_gumbel_candidates": getattr(
                     args, "nosl_is_az_gumbel_candidates", 0
                 ),
                 "nosl_is_az_gumbel_scale": getattr(
                     args, "nosl_is_az_gumbel_scale", 1.0
                 ),
-                "nosl_is_az_gumbel_value_scale": getattr(
+                    "nosl_is_az_gumbel_value_scale": getattr(
                     args, "nosl_is_az_gumbel_value_scale", 0.1
                 ),
                 "nosl_is_az_gumbel_max_visit_init": getattr(
@@ -1028,6 +1161,18 @@ def main() -> None:
                 ),
                 "nosl_is_az_gumbel_use_mixed_value": getattr(
                     args, "nosl_is_az_gumbel_use_mixed_value", True
+                ),
+                "nosl_is_az_gumbel_interior_uniformity": getattr(
+                    args, "nosl_is_az_gumbel_interior_uniformity", 0.0
+                ),
+                "nosl_is_az_gumbel_interior_coverage_fraction": getattr(
+                    args, "nosl_is_az_gumbel_interior_coverage_fraction", 0.0
+                ),
+                "nosl_is_az_gumbel_interior_value_mode": getattr(
+                    args, "nosl_is_az_gumbel_interior_value_mode", 2
+                ),
+                "nosl_is_az_gumbel_interior_max_mix_visits": getattr(
+                    args, "nosl_is_az_gumbel_interior_max_mix_visits", 64.0
                 ),
                 "nosl_is_az_dirichlet_alpha": getattr(
                     args, "nosl_is_az_dirichlet_alpha", 0.0
@@ -1049,6 +1194,9 @@ def main() -> None:
                 ),
                 "nosl_is_az_replay_min_size": getattr(
                     args, "nosl_is_az_replay_min_size", 1
+                ),
+                "nosl_is_az_replay_max_old_fraction": getattr(
+                    args, "nosl_is_az_replay_max_old_fraction", 1.0
                 ),
                 "nosl_is_az_leaf_batch_size": getattr(
                     args, "nosl_is_az_leaf_batch_size", 64
@@ -1114,6 +1262,9 @@ def main() -> None:
                 allow_combat_language_extension=args.combat_language,
                 allow_event_option_extension=getattr(
                     args, "event_option_observation", False
+                ),
+                skip_combat_mismatch=bool(
+                    getattr(args, "nosl_is_az_inner_only", False)
                 ),
             )
         del pretrained

@@ -10,6 +10,7 @@ from rl.cached_mask_vec_env import (
     CachedMaskSubprocVecEnv,
     GroupedCachedMaskSubprocVecEnv,
 )
+from rl.distributed_sb3 import build_parser as build_distributed_parser
 
 
 class _MaskInfoEnv(gym.Env):
@@ -91,3 +92,17 @@ def test_grouped_cached_masks_preserve_logical_order():
         assert values == {0: 1, 1: 1, 2: 1}
     finally:
         env.close()
+
+
+def test_distributed_parser_accepts_grouped_worker_geometry():
+    args = build_distributed_parser().parse_args([
+        "--rank", "0",
+        "--world-size", "1",
+        "--checkpoint", "model.zip",
+        "--n-envs", "288",
+        "--envs-per-worker", "12",
+        "--nosl-is-az-replay-max-old-fraction", "0.9",
+    ])
+    assert args.n_envs == 288
+    assert args.envs_per_worker == 12
+    assert args.nosl_is_az_replay_max_old_fraction == 0.9

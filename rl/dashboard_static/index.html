@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>STS-RL 参数检验台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260910-full-gumbel">
+  <link rel="stylesheet" href="/styles.css?v=20260911-endturn-leaf">
 </head>
 <body>
   <header class="topbar">
@@ -15,6 +15,7 @@
       <button class="tab" data-tab="embedding">战士全卡向量</button>
       <button class="tab" data-tab="tokens">Token 向量</button>
       <button class="tab" data-tab="evaluation">爬塔评测</button>
+      <button class="tab" data-tab="customCombat">自定义战斗</button>
     </nav>
     <div id="checkpointPill" class="checkpoint-pill">未载入参数</div>
     <button id="replaceButton" class="icon-button" title="载入其他 checkpoint">＋</button>
@@ -25,7 +26,9 @@
       <div class="watch-toolbar">
         <label>Seed <input id="watchSeed" type="number" value="0"></label>
         <label title="Neural NOSL simulations per combat decision">Simulations <input id="watchSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
+        <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="watchLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
         <label title="Node expansion depth; 0 means expand until terminal or a new leaf">Depth <input id="watchDepth" type="number" min="0" max="256" step="1" value="0"></label>
+        <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="watchEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
         <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="watchPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
         <label title="Combat search algorithm">Search
           <select id="watchSearchMode">
@@ -37,10 +40,13 @@
         </label>
         <label class="gumbel-control" title="Maximum root actions retained by Gumbel top-k; 0 means all">Candidates <input id="watchGumbelCandidates" type="number" min="0" max="4096" step="1" value="0"></label>
         <label class="gumbel-control" title="Gumbel noise scale">Gumbel <input id="watchGumbelScale" type="number" min="0" max="100" step="0.05" value="1"></label>
-        <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="watchGumbelValueScale" type="number" min="0" max="100" step="0.01" value="0.1"></label>
+        <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="watchGumbelValueScale" type="number" min="0" max="100" step="0.01" value="3"></label>
         <label class="gumbel-control" title="Initial visit offset in the completed-Q transform">Visit init <input id="watchGumbelMaxVisitInit" type="number" min="0" max="1000000" step="1" value="50"></label>
         <label class="gumbel-check gumbel-control" title="Rescale completed Q values to [0,1]"><input id="watchGumbelRescaleQ" type="checkbox" checked> Q norm</label>
         <label class="gumbel-check gumbel-control" title="Use the prior-weighted mixed value for unvisited actions"><input id="watchGumbelMixedValue" type="checkbox" checked> Mixed Q</label>
+        <label class="gumbel-control" title="Non-root Full-Gumbel smoothing toward uniform as visits grow (0 disables)">Interior U <input id="watchGumbelInteriorUniformity" type="number" min="0" max="1" step="0.05" value="0"></label>
+        <label class="gumbel-control" title="Prior-independent non-root coverage fraction">Interior C <input id="watchGumbelInteriorCoverageFraction" type="number" min="0" max="1" step="0.05" value="0.4"></label>
+        <label class="gumbel-control">Interior V <select id="watchGumbelInteriorValueMode"><option value="2" selected>渐进均值→最大</option><option value="0">均值</option><option value="1">最大</option></select></label>
         <button id="watchSearchApply" type="button" title="Apply neural NOSL search settings">Apply</button>
         <div id="watchPolicyMode" class="segmented watch-policy-mode" role="group" aria-label="动作选择模式">
           <button type="button" data-stochastic="false" class="active">确定性</button>
@@ -130,6 +136,29 @@
       </div>
     </section>
 
+    <section id="customCombatView" class="view">
+      <div class="section-heading">
+        <div><h1>自定义当前状态</h1><p>直接构造模拟器战斗状态，然后使用当前搜索配置进行单步、撤回和搜索树查看。</p></div>
+      </div>
+      <div class="custom-combat-editor">
+        <div class="custom-combat-toolbar">
+          <label>敌人战斗
+            <select id="customEncounter"></select>
+          </label>
+          <button id="customTemplateButton" type="button">载入模板</button>
+          <button id="customApplyButton" class="primary" type="button">应用并进入战斗</button>
+        </div>
+        <label class="custom-json-label">状态配置（JSON）
+          <textarea id="customStateJson" spellcheck="false"></textarea>
+        </label>
+        <div id="customStateHelp" class="custom-state-help">
+          支持玩家 HP/能量/格挡/状态/计数器、敌人 HP/格挡/本回合意图/状态、手牌/抽牌堆/弃牌堆/消耗堆、遗物及计数器。
+          敌人意图只覆盖当前回合；结束回合后由模拟器重新决定下一回合意图。
+        </div>
+        <pre id="customStateError" class="custom-state-error"></pre>
+      </div>
+    </section>
+
     <section id="embeddingView" class="view">
       <div class="section-heading">
         <div><h1>战士全卡向量</h1><p>全部 75 张战士卡牌，基础版与升级版共同进行 PCA</p></div>
@@ -173,9 +202,12 @@
         <div class="eval-controls">
           <label>局数 <input id="evalEpisodes" type="number" min="1" max="10000" value="50"></label>
           <label>Seed <input id="evalSeed" type="number" value="0"></label>
+          <label title="Parallel evaluation episodes">Workers <input id="evalWorkers" type="number" min="1" max="64" step="1" value="4"></label>
           <label title="每个战斗决策的 neural NOSL 模拟次数；0 为 direct policy">Simulations <input id="evalSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
           <label title="搜索深度；0 为 AlphaZero 式自动展开">Depth <input id="evalDepth" type="number" min="0" max="256" step="1" value="0"></label>
+          <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="evalLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
           <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="evalPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
+          <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="evalEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
           <label title="Combat search algorithm">Search
             <select id="evalSearchMode">
               <option value="direct">Direct policy</option>
@@ -190,6 +222,8 @@
           <label class="gumbel-control" title="Initial visit offset in the completed-Q transform">Visit init <input id="evalGumbelMaxVisitInit" type="number" min="0" max="1000000" step="1" value="50"></label>
           <label class="gumbel-check gumbel-control" title="Rescale completed Q values to [0,1]"><input id="evalGumbelRescaleQ" type="checkbox" checked> Q norm</label>
           <label class="gumbel-check gumbel-control" title="Use the prior-weighted mixed value for unvisited actions"><input id="evalGumbelMixedValue" type="checkbox" checked> Mixed Q</label>
+          <label class="gumbel-control" title="Non-root Full-Gumbel smoothing toward uniform as visits grow (0 disables)">Interior U <input id="evalGumbelInteriorUniformity" type="number" min="0" max="1" step="0.05" value="0"></label>
+          <label class="gumbel-control" title="Prior-independent non-root coverage fraction">Interior C <input id="evalGumbelInteriorCoverageFraction" type="number" min="0" max="1" step="0.05" value="0"></label>
           <button id="evalButton">重新评测</button>
         </div>
       </div>
@@ -265,6 +299,6 @@
     </div>
   </div>
   <div id="toast" class="toast"></div>
-  <script src="/app.js?v=20260910-full-gumbel"></script>
+  <script src="/app.js?v=20260911-leaf-batch"></script>
 </body>
 </html>

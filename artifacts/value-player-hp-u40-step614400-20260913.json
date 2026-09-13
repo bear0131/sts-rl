@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "checkpoint": "/root/autodl-tmp/sts-rl/checkpoints/nosl-paper-full-gumbel-4way-s128-randomstart-boundary-lr1e4-replay-u40-20260912/nosl_az_614400_steps.zip",
+  "seed": 36,
+  "scenario": "Cultist / Bash+ + Strike",
+  "original_player_hp": 80,
+  "player_max_hp": 80,
+  "intervention": "player_scalars[0,5] and run_hp[0,2] only",
+  "all_other_observation_fields_identical": true,
+  "rows": [
+    {
+      "player_hp": 1,
+      "player_max_hp": 80,
+      "value": 0.0035526342689990997,
+      "changed_fields": [
+        "player_scalars",
+        "run_hp"
+      ],
+      "player_scalars": [
+        0.004999999888241291,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        0.012500000186264515
+      ],
+      "run_hp": [
+        0.004999999888241291,
+        0.4000000059604645,
+        0.012500000186264515
+      ]
+    },
+    {
+      "player_hp": 10,
+      "player_max_hp": 80,
+      "value": 0.01581737771630287,
+      "changed_fields": [
+        "player_scalars",
+        "run_hp"
+      ],
+      "player_scalars": [
+        0.05000000074505806,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        0.125
+      ],
+      "run_hp": [
+        0.05000000074505806,
+        0.4000000059604645,
+        0.125
+      ]
+    },
+    {
+      "player_hp": 20,
+      "player_max_hp": 80,
+      "value": 0.0346670038998127,
+      "changed_fields": [
+        "player_scalars",
+        "run_hp"
+      ],
+      "player_scalars": [
+        0.10000000149011612,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        0.25
+      ],
+      "run_hp": [
+        0.10000000149011612,
+        0.4000000059604645,
+        0.25
+      ]
+    },
+    {
+      "player_hp": 40,
+      "player_max_hp": 80,
+      "value": 0.09815360605716705,
+      "changed_fields": [
+        "player_scalars",
+        "run_hp"
+      ],
+      "player_scalars": [
+        0.20000000298023224,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        0.5
+      ],
+      "run_hp": [
+        0.20000000298023224,
+        0.4000000059604645,
+        0.5
+      ]
+    },
+    {
+      "player_hp": 60,
+      "player_max_hp": 80,
+      "value": 0.19979533553123474,
+      "changed_fields": [
+        "player_scalars",
+        "run_hp"
+      ],
+      "player_scalars": [
+        0.30000001192092896,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        0.75
+      ],
+      "run_hp": [
+        0.30000001192092896,
+        0.4000000059604645,
+        0.75
+      ]
+    },
+    {
+      "player_hp": 80,
+      "player_max_hp": 80,
+      "value": 0.298317551612854,
+      "changed_fields": [],
+      "player_scalars": [
+        0.4000000059604645,
+        0.4000000059604645,
+        0.0,
+        0.30000001192092896,
+        0.03333333507180214,
+        1.0
+      ],
+      "run_hp": [
+        0.4000000059604645,
+        0.4000000059604645,
+        1.0
+      ]
+    }
+  ],
+  "summary": {
+    "value_at_min_hp": 0.0035526342689990997,
+    "value_at_max_hp": 0.298317551612854,
+    "delta_min_minus_max": -0.2947649173438549,
+    "slope_per_hp": 0.003795334503773546,
+    "monotonic_increasing_with_player_hp": true,
+    "monotonic_decreasing_with_player_hp": false
+  }
+}

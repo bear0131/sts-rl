@@ -20,6 +20,9 @@ struct NoslCombatSearchConfig {
     double cPuct = 1.5;
     double fpuReduction = 0.01;
     double priorTemperature = 1.0;
+    // Treat the state immediately after executing End Turn as a value-only
+    // leaf.  This avoids searching through hidden enemy/random transitions.
+    bool endTurnAsLeaf = false;
     std::uint64_t seed = 1;
     double dirichletAlpha = 0.0;
     double dirichletEpsilon = 0.0;
@@ -28,6 +31,11 @@ struct NoslCombatSearchConfig {
     // transform from DeepMind's mctx implementation and deterministic
     // probability-minus-visit selection at interior nodes.
     int rootSearchMode = 0;
+    // Select the canonical paper Gumbel AlphaZero path while retaining the
+    // existing Full-Gumbel implementation as the default for old runs.  The
+    // strict path disables project-specific coverage/value heuristics and
+    // uses explicit completed-score sequential halving.
+    bool paperFullGumbel = false;
     int gumbelCandidates = 0; // 0 means all legal root actions
     // Full-Gumbel q-transform parameters.  They are ignored by modes 0/1.
     double gumbelScale = 1.0;
@@ -35,6 +43,24 @@ struct NoslCombatSearchConfig {
     double gumbelMaxVisitInit = 50.0;
     bool gumbelRescaleQ = true;
     bool gumbelUseMixedValue = true;
+    // Interior Full-Gumbel exploration smoothing.  Zero preserves the
+    // paper-style probability-minus-visit rule; positive values gradually
+    // mix the target distribution toward uniform as node visits accumulate.
+    double gumbelInteriorUniformity = 0.0;
+    // Prior-independent protection: every interior edge is evaluated at least
+    // this many times before the completed-policy selector is allowed to
+    // concentrate visits.  One visit is enough to prevent a zero-prior edge
+    // from remaining permanently unexpanded.
+    int gumbelInteriorMinVisits = 1;
+    // Prior-independent dynamic coverage.  A value of 0 disables it; 1.0
+    // forces uniform coverage, while 0.5 guarantees half of the uniform
+    // allocation at the current node visit count.
+    double gumbelInteriorCoverageFraction = 0.0;
+    // Decision-node value aggregation: 0=mean, 1=max, 2=progressive
+    // mean->max.  Random/world-line children are always chance-averaged
+    // before this setting is applied.
+    int gumbelInteriorValueMode = 2;
+    double gumbelInteriorMaxMixVisits = 64.0;
 };
 
 struct NoslCombatSearchStats {
@@ -84,11 +110,13 @@ public:
         int visits = 0;
         int childVisits = 0;
         int childStates = 0;
+        int valueVisits = 0;
         double prior = 0.0;
         double value = 0.0;
-        // Raw/completed values are kept separately so the tree inspector can
-        // explain why a sparse edge was (or was not) selected.  `value` is
-        // retained as the historical raw empirical Q field.
+        // `value` is the structurally propagated Q.  The sample mean is kept
+        // separately so the inspector can distinguish a decision backup from
+        // the underlying leaf samples.
+        double sampleQ = 0.0;
         double rawQ = 0.0;
         double normalizedQ = 0.0;
         double completedQ = 0.0;
@@ -97,6 +125,11 @@ public:
         double completedScore = 0.0;
         bool candidate = false;
         bool activeCandidate = false;
+        // True when this action has split into multiple NOSL public states.
+        // Such children are a chance/world-line node and are averaged;
+        // action alternatives at the parent are aggregated by the configured
+        // Interior V mode.
+        bool randomSplit = false;
         bool expandable = false;
         bool targeted = false;
         std::string label;
@@ -105,7 +138,9 @@ public:
     struct TreeSnapshot {
         bool valid = false;
         int visits = 0;
+        int valueVisits = 0;
         double value = 0.0;
+        double sampleValue = 0.0;
         std::vector<TreeEdgeInfo> children;
     };
 
@@ -125,6 +160,10 @@ public:
     std::vector<LeafRequest> nextBatch(int maxLeaves);
     void backprop(std::uint64_t requestId, double value,
                   const std::vector<double> &policyLogits);
+    void backpropBatch(
+        const std::vector<std::uint64_t> &requestIds,
+        const std::vector<double> &values,
+        const std::vector<std::vector<double>> &policyLogits);
     bool done() const { return simulationsCompleted_ >= config_.simulations; }
     int simulationsCompleted() const { return simulationsCompleted_; }
     NoslCombatDecision result() const;
@@ -143,9 +182,12 @@ private:
         // merging all hidden-world outcomes into a single node.
         std::unordered_map<std::uint64_t, std::unique_ptr<Node>> children;
         int visits = 0;
+        int valueVisits = 0;
         int virtualVisits = 0;
         double valueSum = 0.0;
         double prior = 0.0;
+        double propagatedValue = 0.0;
+        bool propagatedValid = false;
         std::uint64_t semanticKey = 0;
         bool targeted = false;
         std::string label;
@@ -159,9 +201,13 @@ private:
 
     struct Node {
         int visits = 0;
+        int valueVisits = 0;
         int virtualVisits = 0;
         double valueSum = 0.0;
         double networkValue = 0.0;
+        double propagatedValue = 0.0;
+        bool propagatedValid = false;
+        bool networkValueValid = false;
         bool expansionPending = false;
         std::vector<Edge> edges;
     };
@@ -174,6 +220,10 @@ private:
         std::vector<Action> legalActions;
         Node *leaf = nullptr;
         bool needsPolicy = true;
+        // Coverage-protection simulations are retained in N for scheduling,
+        // but excluded from value statistics so forced exploratory probes do
+        // not bias Q/V downward.
+        bool excludeValue = false;
     };
 
     NoslCombatSearchConfig config_;
@@ -216,7 +266,8 @@ private:
     static std::string actionLabel(const BattleContext &state,
                                    const Action &action);
     int selectPuct(const Node &node) const;
-    int selectFullGumbelInterior(const Node &node) const;
+    int selectFullGumbelInterior(const Node &node,
+                                 bool *usedCoverage = nullptr) const;
     void initializeGumbelRoot();
     void initializeFullGumbelSchedule();
     struct QTransformDetails {
@@ -228,6 +279,14 @@ private:
     std::vector<double> completedQTransform(const Node &node) const;
     std::vector<double> rootCompletedScores(bool includeNoise) const;
     std::vector<double> rootPolicyTarget() const;
+    // Recompute the structural value after a leaf backup.  An Edge is a
+    // chance/world-line aggregation over its public-state children; a Node
+    // is a decision aggregation over its outgoing action edges.
+    void recomputeEdgeValue(Edge &edge) const;
+    void recomputeNodeValue(Node &node) const;
+    double edgeValueForSelection(const Edge &edge,
+                                 const Node &parent) const;
+    double nodeValueForSelection(const Node &node) const;
     void advanceGumbelRound();
     int selectRootEdge();
     void backup(Pending &pending, double value);
