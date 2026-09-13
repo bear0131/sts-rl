@@ -1309,7 +1309,7 @@ def distributed_nosl_is_az_update(
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         step_started = time.perf_counter()
-        gradient_norm_preclip = optimizer_step(model)
+        gradient_norm_preclip = float(optimizer_step(model))
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         optimizer_step_seconds = time.perf_counter() - step_started

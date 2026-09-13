@@ -43,7 +43,8 @@ def optimizer_step(model, micro_batches=1):
     norm = th.nn.utils.clip_grad_norm_(model.policy.parameters(), model.max_grad_norm)
     model.policy.optimizer.step()
     model.policy.optimizer.zero_grad()
-    return float(norm.detach().float().cpu())
+    # Leave logging's device synchronization to callers that consume the norm.
+    return norm.detach()
 
 
 def reasoning_tensors(model, samples):

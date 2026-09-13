@@ -1784,7 +1784,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         return result
 
     def _optimizer_step(self, micro_batches: int) -> float:
-        return optimizer_step(self, micro_batches)
+        return float(optimizer_step(self, micro_batches))
 
     def _train_reasoning(self) -> dict[str, float]:
         self._wait_for_reasoning_samples()
