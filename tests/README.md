@@ -34,6 +34,8 @@ new build directory instead of trusting its cached configuration. On Windows use
 runtime DLLs (beside the extension, or via STS_LIGHTSPEED_DLL_DIRS). The original
 CMake setup targets GCC/Clang flags; this is not an MSVC build recipe.
 
+Windows 若加载 `.pyd` 报找不到依赖 DLL，将 `STS_LIGHTSPEED_DLL_DIRS` 设为 CMake 输出中所选 `g++.exe` 的目录，例如 Git Bash 中 `export STS_LIGHTSPEED_DLL_DIRS='C:/Strawberry/c/bin'`（替换为实际编译器目录）。Python 需要在 import 前读到此变量；不要混用另一套 MinGW 的 DLL。
+
 ## Correctness layers
 
     python -m pytest -q

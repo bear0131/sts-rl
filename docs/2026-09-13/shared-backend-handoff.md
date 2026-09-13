@@ -1,6 +1,6 @@
 # 共享评估、搜索与训练后端交接
 
-工作仓库：`D:/zxb/my/sts-rl-workbench/sts-rl`，分支 `chore/refactor-foundation`。本轮起点 `bc8cccc`，运行时代码验收 commit `1bef7b4`。日期是记录时间；持久使用说明在各模块 README，任务状态以根 `TODO.md` 为准。
+工作仓库：`D:/zxb/my/sts-rl-workbench/sts-rl`，工作分支 `chore/refactor-foundation`，交付目标 `origin/main`。本轮起点 `bc8cccc`，首次运行时验收 commit `1bef7b4`；推送前修正与干净环境验收为 `7ab49c9`，见文末复审。日期是记录时间；持久使用说明在各模块 README，任务状态以根 `TODO.md` 为准。
 
 用户原意：删除已确认不用的 RLlib、overfit 和有继任者的旧版本；允许改变语义，合并 eval/train 重复逻辑，能共享的 eval/rollout 后端一起共享；特别要求面向未来不同策略，而非只为当前实验做窄接口。此次只执行本地工作和 commit。
 
@@ -119,6 +119,21 @@ python -m rl.rules.training.train_rule_vectors_v7 --help
 
 后续任务只维护根 TODO：R02 处理大 collector/main 生命周期；R03/F16 处理剩余 corpus 协议、固定评测集、有效 solver manifest、硬超时。当前 deadline/cancel 是 step/leaf batch 边界检查，不能中断卡死的 native 调用。推送前复审已补上 CLI 异常/超时的部分结果保存及失败标记，但硬杀进程仍无法保证落盘。F13 的完整依赖 manifest、F14 的原生能力版本化，以及游戏状态/动作/HP 等 F 项仍需独立设计。
 
-没有执行 remote launcher、同步远端、fresh install、hosted CI、GPU bitwise、多机 ring 或长程胜率实验。单 rank loopback 测试只验证更新与传输适配边界，不代表真实网络容错已经验收。
+没有执行 remote launcher、远端训练同步、GPU bitwise、多机 ring 或长程胜率实验。单 rank loopback 测试只验证更新与传输适配边界，不代表真实网络容错已经验收。首次交接尚未做 fresh install；推送前独立安装/重建已补验，见下节。托管 CI 未通过当前访问路径确认状态。
 
-提交顺序：`0bff237` 退役旧链路 → `98a9aa0` 共享搜索/评估 → `0210e98` 共享训练更新 → `42b1dfe` 收拢场景与 CLI → `1bef7b4` 梯度 norm 同步收尾；交接/验收记录另作最后文档提交。未 push。
+提交顺序：`0bff237` 退役旧链路 → `98a9aa0` 共享搜索/评估 → `0210e98` 共享训练更新 → `42b1dfe` 收拢场景与 CLI → `1bef7b4` 梯度 norm 同步收尾 → `1c3c301` 首次交接 → `1bde5eb` 异常边界/新人说明 → `7ab49c9` 构建依赖修正。推送前验收记录另作文档提交。
+
+## 推送前复审与新维护者入口
+
+用户进一步授权检查后推送 `origin/main`。fetch 后远端 main 为 `1325041`，是全部本地改动的祖先；使用正常 fast-forward，不强推。新读者从根 README 的“第一次接手”开始，按 tests/README 完成环境激活/原生编译与无 checkpoint 冒烟，再根据 policies/README 配齐模型依赖；无需先阅读以前的重构过程。
+
+复审补修四项：dashboard 策略初始化失败进入 error 状态；CLI 超时/异常/Ctrl-C 保留完成的评测行且仍以失败退出；metadata 预检支持 SB3 省略 `.zip` 的写法；CMake 4.4.3 与内置 json 3.1 policy 不兼容，依赖约束到已实测的 3.31.10。专属回归保留在 tests/unit。
+
+以 `7ab49c9` 建独立干净工作树，`.venv` 禁用 system-site-packages，执行文档中的 `uv sync --locked --extra cpu --group test --no-dev --python 3.11`；Python 3.11.15、Torch 2.12.0+cpu、CMake 3.31.10、GCC 13.2，原生库从源码重建。新库 SHA256 为 `1b1e377f421d810409b4b6f7bc06b6fe425502a2c87a92d490e0dfd13809a2de`。
+
+- 全量 **228 passed / 8 strict xfailed**，94.12 秒；缺少原生库、额外本地文件或用户全局 Python 包均未被用来跳过测试。
+- README 的首次训练冒烟成功：128 个测量 transitions、真实优化更新，端到端约 17.3 秒；仅验证可运行，不当作稳定性能排名。
+- 六个主要 CLI 的 `--help`、32 份维护文档的 56 个本地链接、7 个 Bash 脚本、JS/模块语法及完整待推送 diff 空白检查通过。
+- 在原固定解释器/原生库上重跑旧 checkpoint 恢复，**7208-field bitwise 通过**；真实 checkpoint 固定评测仍为 **8403 字节一致**。独立安装的 CPU wheel 与新构建用于运行验证，不与原二进制混称跨环境 bitwise。
+
+验证文件统一归 `runs/local/prepush-*`；工作日志记录具体路径。GitHub Actions API 对当前未认证读取返回 404，未因此声称 hosted CI 已通过；仓库工作流会按其 push 触发配置运行。
