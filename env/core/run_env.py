@@ -1512,6 +1512,14 @@ class SlayTheSpireEnv(gym.Env):
             )
         return {"done": bool(session.done())}
 
+    def nosl_is_az_cpp_abort(self):
+        """Discard an interrupted search without changing the live game state."""
+        self._nosl_cpp_az_session = None
+        self._nosl_cpp_global_template = None
+        self._nosl_cpp_pending = None
+        self._nosl_cpp_compact_observation = False
+        self._nosl_cpp_stochastic = False
+
     def nosl_is_az_cpp_backprop_and_leaf_batch(
         self, updates, max_leaves: int = 64
     ):

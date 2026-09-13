@@ -17,7 +17,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_suppo
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
-from env.core.run_env import unpack_nosl_observation_buffer
+from rl.search.native import complete_searches, observation_as_tensor as _leaf_observation_as_tensor
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 
@@ -29,42 +29,6 @@ NOSL_IS_AZ_SEARCH_MODES = {
 }
 
 
-def _leaf_observation_as_tensor(observation, device):
-    """Move a compact leaf batch to the device with one copy per dtype.
-
-    The split combat encoder exposes many small fields.  Calling
-    ``obs_as_tensor`` on the dict moves each field independently, which turns
-    a small leaf batch into dozens of CUDA launch/copy operations.  All combat
-    fields are either int64 categorical arrays or float32 scalar arrays, so we
-    concatenate fields of the same dtype on the host, transfer two contiguous
-    buffers, and reconstruct field views on the device.  The tensor values and
-    shapes are unchanged; this is purely a transport optimization.
-    """
-    groups: dict[np.dtype, list[tuple[str, np.ndarray]]] = {}
-    for key, value in observation.items():
-        array = np.ascontiguousarray(value)
-        groups.setdefault(array.dtype, []).append((str(key), array))
-    if not groups:
-        return {}
-    result = {}
-    for dtype, fields in groups.items():
-        if dtype not in (np.dtype(np.int64), np.dtype(np.float32)):
-            # Keep compatibility with optional extensions that may add a new
-            # scalar dtype before the encoder contract is updated.
-            return obs_as_tensor(observation, device)
-        offsets = []
-        total = 0
-        flat_fields = []
-        for key, array in fields:
-            flat = array.reshape(-1)
-            offsets.append((key, array.shape, total, flat.size))
-            flat_fields.append(flat)
-            total += flat.size
-        packed = np.concatenate(flat_fields) if len(flat_fields) > 1 else flat_fields[0]
-        packed_tensor = th.as_tensor(packed, device=device)
-        for key, shape, offset, size in offsets:
-            result[key] = packed_tensor[offset:offset + size].reshape(shape)
-    return result
 
 
 def _fill_nosl_combat_value_targets(
@@ -1107,149 +1071,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     nosl_timings["cpp_begin_rpc_seconds"] += (
                         time.perf_counter() - rpc_started
                     )
-                    active = {
-                        index: response
-                        for index, response in responses.items()
-                        if not response.get("done", False)
-                    }
-                    for index, response in responses.items():
-                        if response.get("done", False):
-                            result_by_index[index] = response["result"]
-
-                    while active:
-                        decode_started = time.perf_counter()
-                        leaf_records = []
-                        packed_batches = []
-                        for index in sorted(active):
-                            response = active[index]
-                            # New transport path: the environment has already
-                            # stacked each observation field into a contiguous
-                            # batch.  Retain only tiny per-leaf metadata here;
-                            # this removes a Python dict/np.stack pass from the
-                            # hot loop.
-                            batch = unpack_nosl_observation_buffer(response)
-                            meta = response.get("leaf_meta")
-                            if batch is not None and meta is not None:
-                                batch_position = len(packed_batches)
-                                packed_batches.append((index, batch))
-                                for position, item in enumerate(meta):
-                                    leaf_records.append(
-                                        (index, item, batch_position, position)
-                                    )
-                            else:
-                                for leaf in response.get("leaves", ()):
-                                    leaf_records.append((index, leaf))
-                        if not leaf_records:
-                            raise RuntimeError(
-                                "native NOSL AlphaZero returned no leaves before completion"
-                            )
-                        cpp_leaf_batches += 1
-                        cpp_leaf_evaluations += len(leaf_records)
-                        if packed_batches:
-                            # Batches from different worker processes are
-                            # concatenated once per field.  This is still
-                            # contiguous and avoids per-leaf Python packing.
-                            keys = tuple(packed_batches[0][1])
-                            leaf_observations = {
-                                key: np.ascontiguousarray(np.concatenate(
-                                    [batch[key] for _index, batch in packed_batches],
-                                    axis=0,
-                                ))
-                                for key in keys
-                            }
-                        else:
-                            leaf_observations = {
-                                key: np.stack([
-                                    np.asarray(leaf["observation"][key])
-                                    for _index, leaf in leaf_records
-                                ])
-                                for key in leaf_records[0][1]["observation"]
-                            }
-                        nosl_timings["cpp_leaf_decode_seconds"] += (
-                            time.perf_counter() - decode_started
-                        )
-                        relic_width = None
-                        if compact_cpp_observations:
-                            relic_ids = leaf_observations["relics"]
-                            active_columns = np.flatnonzero(
-                                np.any(relic_ids != 0, axis=0)
-                            )
-                            relic_width = (
-                                int(active_columns[-1]) + 1
-                                if active_columns.size else 1
-                            )
-                        leaf_tensor = _leaf_observation_as_tensor(
-                            leaf_observations, self.device
-                        )
-                        model_started = time.perf_counter()
-                        with th.inference_mode():
-                            with self.autocast_context():
-                                if compact_cpp_observations:
-                                    leaf_logits, leaf_values = (
-                                        core.combat_actor_critic(
-                                            leaf_tensor,
-                                            active_relic_width=relic_width,
-                                        )
-                                    )
-                                else:
-                                    leaf_logits, leaf_values = core.actor_critic(
-                                        leaf_tensor
-                                    )
-                        leaf_logits_np = leaf_logits.detach().float().cpu().numpy()
-                        leaf_values_np = (
-                            leaf_values.detach().float().cpu().numpy().reshape(-1)
-                        )
-                        nosl_timings["cpp_leaf_model_seconds"] += (
-                            time.perf_counter() - model_started
-                        )
-                        update_payloads = {}
-                        for position, record in enumerate(leaf_records):
-                            index = record[0]
-                            if len(record) == 4 and packed_batches:
-                                meta = record[1]
-                                needs_policy = bool(meta.get("needs_policy", True))
-                                request_id = int(meta["request_id"])
-                            else:
-                                leaf = record[1]
-                                needs_policy = bool(leaf.get("needs_policy", True))
-                                request_id = int(leaf["request_id"])
-                            policy = (
-                                leaf_logits_np[position]
-                                if needs_policy
-                                else np.zeros(0, dtype=np.float64)
-                            )
-                            update_payloads.setdefault(index, []).append(
-                                (
-                                    request_id,
-                                    float(leaf_values_np[position]),
-                                    policy,
-                                )
-                            )
-                        next_calls = {
-                            index: (
-                                (updates,),
-                                {
-                                    "max_leaves": self.nosl_is_az_leaf_batch_size
-                                },
-                            )
-                            for index, updates in update_payloads.items()
-                        }
-                        rpc_started = time.perf_counter()
-                        next_responses = call_workers(
-                            "nosl_is_az_cpp_backprop_and_leaf_batch",
-                            next_calls,
-                        )
-                        nosl_timings["cpp_backprop_rpc_seconds"] += (
-                            time.perf_counter() - rpc_started
-                        )
-                        active = {
-                            index: response
-                            for index, response in next_responses.items()
-                            if not response.get("done", False)
-                        }
-                        for index, response in next_responses.items():
-                            if response.get("done", False):
-                                result_by_index[index] = response["result"]
+                    result_by_index, shared_stats = complete_searches(
+                        self, call_workers, responses,
+                        leaf_batch_size=self.nosl_is_az_leaf_batch_size,
+                        compact=compact_cpp_observations,
+                        autocast=self.autocast_context,
+                    )
+                    cpp_leaf_batches += shared_stats["leaf_batches"]
+                    cpp_leaf_evaluations += shared_stats["leaf_evaluations"]
+                    for key in ("cpp_leaf_decode_seconds", "cpp_leaf_model_seconds", "cpp_backprop_rpc_seconds"):
+                        nosl_timings[key] += shared_stats[key]
                 else:
                     requests = call_workers("nosl_is_az_begin", begin_calls)
                     active = {

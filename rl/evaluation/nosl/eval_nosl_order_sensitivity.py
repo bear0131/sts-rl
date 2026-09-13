@@ -29,6 +29,7 @@ from sb3_contrib import MaskablePPO
 from env.core import _BUILD  # noqa: F401
 from env.core import action_space as A
 from env.core.game_env import SimGameEnv
+from rl.search.native import NativeSearchConfig, search as native_search, forward_root
 from env.core.run_env import SlayTheSpireEnv, unpack_nosl_observation_buffer
 from rl.policies import model as model_helpers
 from rl.evaluation.nosl.collect_nosl_corpus import _load_custom_objects
@@ -102,22 +103,7 @@ def _make_env(
 
 
 def _forward(model, observations):
-    policy = model.policy
-    expected = getattr(getattr(model, "observation_space", None), "spaces", None)
-    if expected:
-        observations = {
-            key: value for key, value in observations.items() if key in expected
-        }
-    tensor, _ = policy.obs_to_tensor(observations)
-    core = getattr(policy, "core", None)
-    if core is None or not hasattr(core, "actor_critic"):
-        raise RuntimeError("checkpoint does not expose the AlphaZero actor_critic API")
-    with torch.inference_mode():
-        logits, values = core.actor_critic(tensor)
-    return (
-        logits.detach().float().cpu().numpy(),
-        values.detach().float().reshape(-1).cpu().numpy(),
-    )
+    return forward_root(model, observations)
 
 
 def _root_policy(model, env):
@@ -186,76 +172,27 @@ def _run_search(
     root_logits, direct_probs, direct_value, obs = _root_policy(model, env)
     if prior_mode not in {"model", "uniform", "none"}:
         raise ValueError(f"unknown prior mode: {prior_mode}")
-    search_logits = root_logits
-    c_puct = float(c_puct)
-    if prior_mode in {"uniform", "none"}:
-        # Equal logits produce a uniform legal-action prior in the native
-        # masked softmax.  ``none`` additionally removes the PUCT prior term,
-        # which is a useful strict ablation but is not the usual AZ setup.
-        search_logits = np.zeros_like(root_logits)
-    if prior_mode == "none":
-        c_puct = 0.0
-    response = env.nosl_is_az_cpp_begin(
-        search_logits,
-        state_nonce=int(nonce),
-        simulations=int(simulations),
-        depth=int(depth),
+    config = NativeSearchConfig(
+        simulations=simulations,
+        depth=depth,
         c_puct=c_puct,
-        leaf_batch_size=int(leaf_batch),
-        dirichlet_alpha=0.0,
-        dirichlet_epsilon=0.0,
-        root_value=float(direct_value),
-        prior_temperature=float(prior_temperature),
-        root_search_mode=int(root_search_mode),
-        gumbel_candidates=int(gumbel_candidates),
-        gumbel_scale=float(gumbel_scale),
-        gumbel_value_scale=float(gumbel_value_scale),
-        gumbel_max_visit_init=float(gumbel_max_visit_init),
-        gumbel_rescale_q=bool(gumbel_rescale_q),
-        gumbel_use_mixed_value=bool(gumbel_use_mixed_value),
-        gumbel_interior_uniformity=float(gumbel_interior_uniformity),
-        gumbel_interior_min_visits=int(gumbel_interior_min_visits),
-        gumbel_interior_coverage_fraction=float(
-            gumbel_interior_coverage_fraction
-        ),
-        paper_full_gumbel=bool(paper_full_gumbel),
-        stochastic=False,
-        decision_index=0,
+        prior_temperature=prior_temperature,
+        root_search_mode=root_search_mode,
+        gumbel_candidates=gumbel_candidates,
+        gumbel_scale=gumbel_scale,
+        gumbel_value_scale=gumbel_value_scale,
+        gumbel_max_visit_init=gumbel_max_visit_init,
+        gumbel_rescale_q=gumbel_rescale_q,
+        gumbel_use_mixed_value=gumbel_use_mixed_value,
+        gumbel_interior_uniformity=gumbel_interior_uniformity,
+        gumbel_interior_min_visits=gumbel_interior_min_visits,
+        gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
+        paper_full_gumbel=paper_full_gumbel,
+        leaf_batch_size=leaf_batch,
     )
-    leaf_count = 0
-    batches = 0
-    while not response.get("done", False):
-        leaves = response.get("leaf_meta", response.get("leaves", ()))
-        if not leaves:
-            raise RuntimeError("native search returned no leaves before completion")
-        batches += 1
-        leaf_count += len(leaves)
-        packed = unpack_nosl_observation_buffer(response)
-        if packed is not None:
-            observations = {
-                key: np.ascontiguousarray(value) for key, value in packed.items()
-            }
-        else:
-            observations = {
-                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-                for key in leaves[0]["observation"]
-            }
-        leaf_logits, leaf_values = _forward(model, observations)
-        updates = []
-        for index, leaf in enumerate(leaves):
-            if not leaf.get("needs_policy", True):
-                policy = np.zeros(0)
-            elif prior_mode == "model":
-                policy = leaf_logits[index]
-            else:
-                # The ablation applies to every newly expanded node, not just
-                # the root.  Values still come from the trained value head.
-                policy = np.zeros_like(leaf_logits[index])
-            updates.append((int(leaf["request_id"]), float(leaf_values[index]), policy))
-        env.nosl_is_az_cpp_backprop_batch(updates)
-        response = env.nosl_is_az_cpp_leaf_batch(int(leaf_batch))
-
-    result = response["result"]
+    result = native_search(model, env, obs, config, nonce=nonce,
+                           root_outputs=(root_logits, direct_value), prior_mode=prior_mode)
+    leaf_count, batches = result["leaf_evaluations"], result["leaf_batches"]
     adapted = result
     hand = [_card_dict(card) for card in env.thick.bc.to_dict()["hand"]]
     visits = np.asarray(result["root_visits"], dtype=np.int64)

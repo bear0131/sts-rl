@@ -1959,13 +1959,11 @@
     "rl.dashboard": "apps.dashboard",
     "rl.distributed_sb3": "rl.training.distributed_sb3",
     "rl.eval": "rl.evaluation.eval",
-    "rl.eval_combat": "rl.evaluation.eval_combat",
     "rl.eval_full_gumbel_bash_clash": "rl.evaluation.nosl.eval_full_gumbel_bash_clash",
     "rl.eval_gumbel_bash_clash_matrix": "rl.evaluation.nosl.eval_gumbel_bash_clash_matrix",
     "rl.eval_gumbel_bash_clash_repeated": "rl.evaluation.nosl.eval_gumbel_bash_clash_repeated",
     "rl.eval_gumbel_bash_clash_trials": "rl.evaluation.nosl.eval_gumbel_bash_clash_trials",
     "rl.eval_leftmost": "rl.evaluation.baselines.eval_leftmost",
-    "rl.eval_nosl_fullrun": "rl.evaluation.nosl.eval_nosl_fullrun",
     "rl.eval_nosl_methods": "rl.evaluation.nosl.eval_nosl_methods",
     "rl.eval_nosl_order_sensitivity": "rl.evaluation.nosl.eval_nosl_order_sensitivity",
     "rl.eval_nosl_single_combat": "rl.evaluation.nosl.eval_nosl_single_combat",
@@ -2008,7 +2006,6 @@
     "rl.route_dag_probe": "tools.analysis.route_dag_probe",
     "rl.route_model_probe": "tools.analysis.route_model_probe",
     "rl.rule_vector_model": "rl.rules.rule_vector_model",
-    "rl.run_parallel_nosl_eval": "rl.evaluation.nosl.run_parallel_nosl_eval",
     "rl.semantic_reasoning_policy": "rl.policies.semantic_reasoning_policy",
     "rl.split_policy": "rl.policies.split_policy",
     "rl.ssh_transport": "rl.training.ssh_transport",
@@ -2045,6 +2042,9 @@
     "rl.rule_data": "Removed with its unused implementation; current rule training is rl.rules.training.train_rule_vectors_v7, RL training is rl.training.trainer/distributed_sb3.",
     "rl.rule_model": "Removed with its unused implementation; current rule training is rl.rules.training.train_rule_vectors_v7, RL training is rl.training.trainer/distributed_sb3.",
     "rl.train_rule_vectors": "Removed with its unused implementation; current rule training is rl.rules.training.train_rule_vectors_v7, RL training is rl.training.trainer/distributed_sb3.",
-    "rl.train_rules": "Removed with its unused implementation; current rule training is rl.rules.training.train_rule_vectors_v7, RL training is rl.training.trainer/distributed_sb3."
+    "rl.train_rules": "Removed with its unused implementation; current rule training is rl.rules.training.train_rule_vectors_v7, RL training is rl.training.trainer/distributed_sb3.",
+    "rl.eval_combat": "Use rl.evaluation.eval --task combat or --solver native --num-envs N; legacy Python NOSL fullrun is removed.",
+    "rl.eval_nosl_fullrun": "Use rl.evaluation.eval --task combat or --solver native --num-envs N; legacy Python NOSL fullrun is removed.",
+    "rl.run_parallel_nosl_eval": "Use rl.evaluation.eval --task combat or --solver native --num-envs N; legacy Python NOSL fullrun is removed."
   }
 }

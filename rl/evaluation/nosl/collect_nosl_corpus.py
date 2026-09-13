@@ -18,6 +18,8 @@ the prefix is the replay contract for a later independent replayer.
 
 from __future__ import annotations
 
+from rl.policies.checkpoint import custom_objects as _load_custom_objects
+
 import argparse
 import copy
 import hashlib
@@ -83,25 +85,6 @@ def _checkpoint_meta(path: Path) -> dict[str, Any]:
     }
 
 
-def _load_custom_objects(checkpoint: Path, card_vector: Path | None) -> dict[str, Any]:
-    """Rewrite the remote absolute card-vector dependency in an SB3 zip."""
-    from stable_baselines3.common.save_util import load_from_zip_file
-
-    data, _params, _variables = load_from_zip_file(
-        checkpoint, device="cpu", load_data=True
-    )
-    kwargs = dict((data or {}).get("policy_kwargs") or {})
-    saved = kwargs.get("card_vector_checkpoint")
-    if not saved:
-        return {}
-    resolved = card_vector or Path(saved)
-    if not resolved.is_file():
-        raise FileNotFoundError(
-            "card-vector checkpoint is unavailable locally; pass "
-            f"--card-vector-checkpoint (requested {saved!s})"
-        )
-    kwargs["card_vector_checkpoint"] = str(resolved.resolve())
-    return {"policy_kwargs": kwargs}
 
 
 def _public_canonical(env: SlayTheSpireEnv) -> dict[str, Any]:

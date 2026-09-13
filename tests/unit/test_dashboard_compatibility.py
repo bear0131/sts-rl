@@ -10,6 +10,10 @@ import torch
 from env.core.cards_vocab import CARD_VOCAB
 from apps import dashboard
 from rl.rules.visualize_card_vectors import _semantic_card_vectors
+from rl.policies.checkpoint import custom_objects
+from rl.search.native import NativeSearchConfig, search, decode_leaves, forward_leaves
+from stable_baselines3.common.save_util import data_to_json
+from zipfile import ZipFile
 
 
 def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):
@@ -17,10 +21,11 @@ def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):
     local.parent.mkdir()
     local.touch()
 
-    resolved = dashboard._resolve_card_vector_checkpoint(
-        "/root/autodl-tmp/sts-rl/card-vector-run/last.pt",
-        project_root=tmp_path,
-    )
+    checkpoint = tmp_path / 'model.zip'
+    with ZipFile(checkpoint, 'w') as archive:
+        archive.writestr('data', data_to_json({'policy_kwargs': {
+            'card_vector_checkpoint': '/root/autodl-tmp/sts-rl/card-vector-run/last.pt'}}))
+    resolved = Path(custom_objects(checkpoint)['policy_kwargs']['card_vector_checkpoint'])
 
     assert resolved == local
 
@@ -32,10 +37,11 @@ def test_card_vector_path_can_be_overridden_by_environment(
     local.touch()
     monkeypatch.setenv("STS_CARD_VECTOR_CHECKPOINT", str(local))
 
-    resolved = dashboard._resolve_card_vector_checkpoint(
-        "/remote/missing/card-vector-run/last.pt",
-        project_root=tmp_path / "project",
-    )
+    checkpoint = tmp_path / 'model.zip'
+    with ZipFile(checkpoint, 'w') as archive:
+        archive.writestr('data', data_to_json({'policy_kwargs': {
+            'card_vector_checkpoint': '/remote/missing/card-vector-run/last.pt'}}))
+    resolved = Path(custom_objects(checkpoint)['policy_kwargs']['card_vector_checkpoint'])
 
     assert resolved == local
 
@@ -171,23 +177,11 @@ def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
     config = dashboard._evaluation_search_config(
         Model(), simulations=32, depth=0
     )
-    runner = dashboard.EvaluationNOSLSearch(Model(), threading.Lock(), config)
-    monkeypatch.setattr(
-        runner,
-        "_root_outputs",
-        lambda _observation: (
-            np.asarray([1.0, 2.0], dtype=np.float32),
-            0.37,
-        ),
-    )
     env = Env()
 
-    result = runner.choose_action(
-        env,
-        {"unused": np.asarray([0.0])},
-        episode_seed=7,
-        decision_index=11,
-    )
+    result = search(Model(), env, {}, NativeSearchConfig.from_mapping(config),
+                    nonce=7, decision_index=11,
+                    root_outputs=(np.asarray([1.0, 2.0], dtype=np.float32), 0.37))
 
     logits, call = env.unwrapped.call
     assert logits.tolist() == [1.0, 2.0]
@@ -236,7 +230,9 @@ def test_watch_leaf_inference_uses_explicit_combat_head():
         "needs_policy": True,
     }]
 
-    logits, values = runner._evaluate_native_leaves(leaves)
+    _, observations = decode_leaves({0: leaves})
+    logits, values = forward_leaves(runner.model, observations, compact=True,
+                                   lock=runner.model_lock)
 
     assert logits.shape == (1, 200)
     assert values.tolist() == pytest.approx([0.42])

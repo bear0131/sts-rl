@@ -27,9 +27,14 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.save_util import load_from_zip_file
 
 from env.core import action_space as A
-from env.core.run_env import SlayTheSpireEnv, unpack_nosl_observation_buffer
+from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
+from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
 from rl.evaluation.eval import is_win
+from rl.evaluation.strategies import PolicyStrategy, NativeStrategy, PhaseStrategy
+from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
+from dataclasses import fields
+from rl.search.native import NativeSearchConfig, search as native_search
 from rl.rules.visualize_card_vectors import (
     extract_state_dict_vectors,
     extract_vectors,
@@ -187,61 +192,8 @@ def _clamp_float(value, default: float, minimum: float, maximum: float) -> float
     return max(float(minimum), min(parsed, float(maximum)))
 
 
-def _resolve_card_vector_checkpoint(
-    saved_path: str | os.PathLike[str],
-    *,
-    project_root: Path = PROJECT_ROOT,
-) -> Path:
-    """Resolve a frozen card encoder after moving an SB3 checkpoint."""
-
-    original = Path(saved_path)
-    if original.is_file():
-        return original
-
-    normalized = str(saved_path).replace("\\", "/")
-    parts = [part for part in normalized.split("/") if part]
-    filename = parts[-1] if parts else "last.pt"
-    parent_name = parts[-2] if len(parts) >= 2 else ""
-
-    candidates: list[Path] = []
-    configured = os.environ.get("STS_CARD_VECTOR_CHECKPOINT")
-    if configured:
-        candidates.append(Path(configured).expanduser())
-    if parent_name:
-        candidates.append(project_root / parent_name / filename)
-    candidates.append(project_root / DEFAULT_CARD_VECTOR_RELATIVE_PATH)
-
-    checked: list[Path] = []
-    for candidate in candidates:
-        if candidate in checked:
-            continue
-        checked.append(candidate)
-        if candidate.is_file():
-            return candidate
-
-    locations = ", ".join(str(candidate) for candidate in checked)
-    raise FileNotFoundError(
-        "checkpoint depends on a frozen card-vector encoder that is not "
-        f"available locally: {saved_path!s}. Checked: {locations}. Set "
-        "STS_CARD_VECTOR_CHECKPOINT to its local path."
-    )
 
 
-def _sb3_load_custom_objects(path: Path) -> dict[str, Any]:
-    """Rewrite external checkpoint dependencies without changing the ZIP."""
-
-    data, _params, _variables = load_from_zip_file(
-        path, device="cpu", load_data=True
-    )
-    policy_kwargs = dict((data or {}).get("policy_kwargs") or {})
-    saved_card_vectors = policy_kwargs.get("card_vector_checkpoint")
-    if not saved_card_vectors:
-        return {}
-    resolved = _resolve_card_vector_checkpoint(saved_card_vectors)
-    if os.path.abspath(str(resolved)) == os.path.abspath(str(saved_card_vectors)):
-        return {}
-    policy_kwargs["card_vector_checkpoint"] = str(resolved)
-    return {"policy_kwargs": policy_kwargs}
 
 
 
@@ -472,169 +424,6 @@ def _evaluation_search_config(
     }
 
 
-class EvaluationNOSLSearch:
-    """Training-aligned C++ neural NOSL search for full-run evaluation."""
-
-    def __init__(self, model: Any, model_lock: threading.Lock, config: dict[str, Any]):
-        self.model = model
-        self.model_lock = model_lock
-        self.config = dict(config)
-        self.mcts_paper_full_gumbel = bool(
-            self.config.get("paper_full_gumbel", False)
-        )
-        self.policy = getattr(model, "policy", None)
-        self.core = getattr(self.policy, "core", None)
-        if self.policy is None or self.core is None or not hasattr(
-            self.core, "actor_critic"
-        ):
-            raise ValueError("neural NOSL MCTS requires core.actor_critic")
-        self.compact_observations = bool(
-            hasattr(self.core, "combat_actor_critic")
-            and hasattr(self.core, "combat_observation_keys")
-        )
-
-    def _root_outputs(self, observation) -> tuple[np.ndarray, float]:
-        import torch
-
-        obs_tensor, _ = self.policy.obs_to_tensor(
-            _observation_for_policy(self.model, observation)
-        )
-        with self.model_lock, torch.inference_mode():
-            logits, values = self.core.actor_critic(obs_tensor)
-        return (
-            logits.detach().float().reshape(-1).cpu().numpy(),
-            float(values.detach().float().reshape(-1)[0].cpu().item()),
-        )
-
-    def _leaf_updates(self, response) -> list[tuple[int, float, np.ndarray]]:
-        import torch
-        from stable_baselines3.common.utils import obs_as_tensor
-
-        if isinstance(response, list):
-            response = {"leaves": response}
-        leaves = response.get("leaf_meta", ())
-        packed = unpack_nosl_observation_buffer(response)
-        if packed is not None and leaves:
-            observations = {
-                key: np.ascontiguousarray(value) for key, value in packed.items()
-            }
-        else:
-            leaves = response.get("leaves", ())
-            observations = {
-                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-                for key in leaves[0]["observation"]
-            }
-        obs_tensor = obs_as_tensor(observations, self.model.device)
-        with self.model_lock, torch.inference_mode():
-            if self.compact_observations:
-                relic_ids = observations["relics"]
-                active_columns = np.flatnonzero(np.any(relic_ids != 0, axis=0))
-                relic_width = int(active_columns[-1]) + 1 if active_columns.size else 1
-                logits, values = self.core.combat_actor_critic(
-                    obs_tensor,
-                    active_relic_width=relic_width,
-                )
-            else:
-                logits, values = self.core.actor_critic(obs_tensor)
-        logits_np = logits.detach().float().cpu().numpy()
-        values_np = values.detach().float().reshape(-1).cpu().numpy()
-        return [
-            (
-                int(leaf["request_id"]),
-                float(values_np[index]),
-                (
-                    np.asarray(logits_np[index], dtype=np.float64)
-                    if leaf.get("needs_policy", True)
-                    else np.zeros(0, dtype=np.float64)
-                ),
-            )
-            for index, leaf in enumerate(leaves)
-        ]
-
-    @staticmethod
-    def _abort(env: SlayTheSpireEnv) -> None:
-        base = env.unwrapped
-        base._nosl_cpp_az_session = None
-        base._nosl_cpp_global_template = None
-        base._nosl_cpp_pending = None
-        base._nosl_cpp_compact_observation = False
-
-    def choose_action(
-        self,
-        env: SlayTheSpireEnv,
-        observation,
-        *,
-        episode_seed: int,
-        decision_index: int,
-    ) -> dict[str, Any]:
-        base = env.unwrapped
-        state_nonce = (
-            int(self.config["master_nonce"])
-            ^ (int(episode_seed) & ((1 << 64) - 1))
-            ^ (int(decision_index) * 0x9E3779B97F4A7C15)
-        ) & ((1 << 64) - 1)
-        started = time.monotonic()
-        leaf_evaluations = 0
-        try:
-            root_logits, root_value = self._root_outputs(observation)
-            response = base.nosl_is_az_cpp_begin(
-                root_logits,
-                state_nonce=state_nonce,
-                simulations=int(self.config["simulations"]),
-                depth=int(self.config["depth"]),
-                c_puct=float(self.config["c_puct"]),
-                leaf_batch_size=int(self.config["leaf_batch_size"]),
-                prior_temperature=float(self.config["prior_temperature"]),
-                end_turn_as_leaf=bool(self.config.get("end_turn_as_leaf", False)),
-                dirichlet_alpha=0.0,
-                dirichlet_epsilon=0.0,
-                root_value=root_value,
-                root_search_mode=int(self.config.get("root_search_mode", 0)),
-                gumbel_candidates=int(self.config.get("gumbel_candidates", 0)),
-                gumbel_scale=float(self.config.get("gumbel_scale", 1.0)),
-                gumbel_value_scale=float(
-                    self.config.get("gumbel_value_scale", 0.1)
-                ),
-                gumbel_max_visit_init=float(
-                    self.config.get("gumbel_max_visit_init", 50.0)
-                ),
-                gumbel_rescale_q=bool(
-                    self.config.get("gumbel_rescale_q", True)
-                ),
-                gumbel_use_mixed_value=bool(
-                    self.config.get("gumbel_use_mixed_value", True)
-                ),
-                gumbel_interior_uniformity=float(
-                    self.config.get("gumbel_interior_uniformity", 0.0)
-                ),
-                gumbel_interior_coverage_fraction=float(
-                    self.config.get("gumbel_interior_coverage_fraction", 0.0)
-                ),
-                paper_full_gumbel=bool(
-                    self.config.get("paper_full_gumbel", False)
-                ),
-                stochastic=False,
-                decision_index=int(decision_index),
-                compact_observation=self.compact_observations,
-            )
-            while not response.get("done", False):
-                leaves = response.get("leaf_meta", ())
-                if not leaves:
-                    raise RuntimeError(
-                        "neural NOSL returned no leaves before search completion"
-                    )
-                leaf_evaluations += len(leaves)
-                response = base.nosl_is_az_cpp_backprop_and_leaf_batch(
-                    self._leaf_updates(response),
-                    max_leaves=int(self.config["leaf_batch_size"]),
-                )
-        except Exception:
-            self._abort(env)
-            raise
-        result = dict(response["result"])
-        result["elapsed_seconds"] = time.monotonic() - started
-        result["leaf_evaluations"] = leaf_evaluations
-        return result
 
 
 class WatchSession:
@@ -1169,120 +958,19 @@ class WatchSession:
         value = float(values.detach().float().reshape(-1)[0].cpu().item())
         return probs, value, raw_logits
 
-    def _evaluate_native_leaves(self, response):
-        """Batch current-model policy/value inference for C++ leaf requests."""
-        import torch
-        from stable_baselines3.common.utils import obs_as_tensor
-
-        if isinstance(response, list):
-            response = {"leaves": response}
-        leaves = response.get("leaf_meta", ())
-        packed = unpack_nosl_observation_buffer(response)
-        if not leaves:
-            leaves = response.get("leaves", ())
-        if not leaves:
-            return np.empty((0, 0), dtype=np.float64), np.empty(0, dtype=np.float32)
-        if packed is not None:
-            observations = {
-                key: np.ascontiguousarray(value) for key, value in packed.items()
-            }
-        else:
-            observations = {
-                key: np.stack([np.asarray(leaf["observation"][key]) for leaf in leaves])
-                for key in leaves[0]["observation"]
-            }
-        policy = getattr(self.model, "policy", None)
-        core = getattr(policy, "core", None)
-        if policy is None or core is None or not hasattr(core, "actor_critic"):
-            raise RuntimeError(
-                "C++ neural NOSL requires a policy exposing core.actor_critic"
-            )
-        obs_tensor = obs_as_tensor(observations, self.model.device)
-        with self.model_lock, torch.inference_mode():
-            if self.compact_observations:
-                relic_ids = observations["relics"]
-                active_columns = np.flatnonzero(np.any(relic_ids != 0, axis=0))
-                relic_width = int(active_columns[-1]) + 1 if active_columns.size else 1
-                logits, values = core.combat_actor_critic(
-                    obs_tensor,
-                    active_relic_width=relic_width,
-                )
-            else:
-                # Older checkpoints may expose only the routed whole-run
-                # actor_critic. Keep those usable while preferring the
-                # explicit combat head whenever it exists.
-                logits, values = core.actor_critic(obs_tensor)
-        return (
-            logits.detach().float().cpu().numpy(),
-            values.detach().float().reshape(-1).cpu().numpy(),
-        )
 
     def _run_native_search(self, root_logits, root_value):
-        """Run one C++ neural NOSL-IS-AZ session for the live combat root."""
-        base = self.env.unwrapped
-        begin = getattr(base, "nosl_is_az_cpp_begin", None)
-        if begin is None:
-            raise RuntimeError("simulator build lacks neural NOSL search")
-        state_nonce = (
-            int(self.mcts_master_nonce)
-            ^ (int(self.seed) & ((1 << 64) - 1))
-            ^ (int(self.position) * 0x9E3779B97F4A7C15)
-        ) & ((1 << 64) - 1)
-        response = begin(
-            root_logits,
-            state_nonce=state_nonce,
-            simulations=self.mcts_simulations,
-            depth=self.mcts_depth,
-            c_puct=self.mcts_c_puct,
-            leaf_batch_size=self.mcts_leaf_batch_size,
-            root_value=float(root_value),
-            prior_temperature=self.mcts_prior_temperature,
-            end_turn_as_leaf=bool(
-                getattr(self, "mcts_end_turn_as_leaf", False)
-            ),
-            root_search_mode=self.mcts_root_search_mode,
-            gumbel_candidates=self.mcts_gumbel_candidates,
-            gumbel_scale=self.mcts_gumbel_scale,
-            gumbel_value_scale=self.mcts_gumbel_value_scale,
-            gumbel_max_visit_init=self.mcts_gumbel_max_visit_init,
-            gumbel_rescale_q=self.mcts_gumbel_rescale_q,
-            gumbel_use_mixed_value=self.mcts_gumbel_use_mixed_value,
-            gumbel_interior_uniformity=self.mcts_gumbel_interior_uniformity,
-            gumbel_interior_coverage_fraction=self.mcts_gumbel_interior_coverage_fraction,
-            gumbel_interior_value_mode=self.mcts_gumbel_interior_value_mode,
-            paper_full_gumbel=self.mcts_paper_full_gumbel,
-            stochastic=self.stochastic,
-            decision_index=self.position,
-            compact_observation=self.compact_observations,
-        )
-        while not response.get("done", False):
-            leaves = response.get("leaf_meta", ())
-            if not leaves:
-                raise RuntimeError("neural NOSL returned no leaves before completion")
-            logits, values = self._evaluate_native_leaves(response)
-            updates = [
-                (
-                    int(leaf["request_id"]),
-                    float(values[index]),
-                    np.asarray(logits[index], dtype=np.float64),
-                )
-                for index, leaf in enumerate(leaves)
-            ]
-            base.nosl_is_az_cpp_backprop_batch(updates)
-            response = base.nosl_is_az_cpp_leaf_batch(
-                self.mcts_leaf_batch_size,
-                stochastic=self.stochastic,
-                state_nonce=state_nonce,
-                decision_index=self.position,
-            )
-        return response["result"]
+        config = NativeSearchConfig(**{
+            field.name: getattr(self, "mcts_" + field.name, field.default)
+            for field in fields(NativeSearchConfig)
+        })
+        nonce = int(self.mcts_master_nonce) ^ int(self.seed) ^ (int(self.position) * 0x9E3779B97F4A7C15)
+        return native_search(self.model, self.env, None, config, nonce=nonce,
+                             decision_index=self.position, stochastic=self.stochastic,
+                             lock=self.model_lock, root_outputs=(root_logits, root_value))
 
     def _abort_native_search(self):
-        """Release a partially evaluated worker session after a search error."""
-        base = self.env.unwrapped
-        base._nosl_cpp_az_session = None
-        base._nosl_cpp_global_template = None
-        base._nosl_cpp_pending = None
+        self.env.unwrapped.nosl_is_az_cpp_abort()
 
     def _prepare_decision(self):
         if self.terminated or self.truncated:
@@ -2175,249 +1863,45 @@ class DashboardState:
             name="dashboard-eval",
         ).start()
 
-    def _evaluate(
-        self,
-        token: str,
-        model: Any,
-        episodes: int,
-        seed: int,
-        search_config: dict[str, Any],
-        worker_count: int,
-    ):
-        progress_lock = threading.Lock()
-        progress = {
-            "active_workers": 0,
-            "search_decisions": 0,
-            "search_simulations": 0,
-            "search_leaf_evaluations": 0,
-            "search_seconds": 0.0,
-        }
+    def _evaluate(self, token, model, episodes, seed, search_config, worker_count):
+        strategy = PolicyStrategy(model, lock=self.model_lock)
+        if search_config.get("method") == "nosl_is_az_cpp":
+            strategy = PhaseStrategy(strategy, {"combat": NativeStrategy(
+                model, NativeSearchConfig.from_mapping(search_config),
+                master_nonce=search_config.get("master_nonce", 0), lock=self.model_lock)},
+                predicates={"combat": lambda request: getattr(request.env.unwrapped, "_pending", None) is None})
+        scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
+            global_map_view=_model.uses_global_map_observation(model),
+            card_language=_model.uses_card_language(model),
+            combat_language=_model.uses_combat_language(model),
+            deck_size_observation=_model.uses_deck_size_observation(model),
+            neow_observation=_model.uses_neow_observation(model),
+            event_option_observation=_model.uses_event_option_observation(model)))
+        rows = []
 
-        def run_episode(episode: int) -> dict[str, Any] | None:
-            episode_seed = seed + episode
-            env = SlayTheSpireEnv(
-                global_map_view=_model.uses_global_map_observation(model),
-                card_language=_model.uses_card_language(model),
-                combat_language=_model.uses_combat_language(model),
-                deck_size_observation=_model.uses_deck_size_observation(model),
-                neow_observation=_model.uses_neow_observation(model),
-                event_option_observation=_model.uses_event_option_observation(model),
-            )
-            search = (
-                EvaluationNOSLSearch(model, self.model_lock, search_config)
-                if search_config.get("method") == "nosl_is_az_cpp"
-                else None
-            )
-            search_decisions = 0
-            search_simulations = 0
-            search_leaf_evaluations = 0
-            search_seconds = 0.0
-            try:
-                with progress_lock:
-                    progress["active_workers"] += 1
-                    active_workers = progress["active_workers"]
-                with self.lock:
-                    if token == self.eval_token:
-                        self.eval_status.update({
-                            "active_workers": active_workers,
-                            "last_progress_at": time.time(),
-                        })
-                obs, info = env.reset(seed=episode_seed)
-                terminated = truncated = False
-                steps = 0
-                while not (terminated or truncated):
-                    with self.lock:
-                        if token != self.eval_token:
-                            return None
-                    mask = env.action_masks()
-                    phase_before = info.get("phase")
-                    native_root = getattr(env.unwrapped, "_pending", None) is None
-                    if search is not None and phase_before == "combat" and native_root:
-                        search_result = search.choose_action(
-                            env, obs, episode_seed=episode_seed,
-                            decision_index=steps,
-                        )
-                        action_id = int(search_result["action"])
-                        action_source = "nosl_is_az_cpp"
-                        search_decisions += 1
-                        search_simulations += int(
-                            search_result.get("simulations", search_config["simulations"])
-                        )
-                        search_leaf_evaluations += int(
-                            search_result.get("leaf_evaluations", 0)
-                        )
-                        search_seconds += float(
-                            search_result.get("elapsed_seconds", 0.0)
-                        )
-                        with progress_lock:
-                            progress["search_decisions"] += 1
-                            progress["search_simulations"] += int(
-                                search_result.get(
-                                    "simulations", search_config["simulations"]
-                                )
-                            )
-                            progress["search_leaf_evaluations"] += int(
-                                search_result.get("leaf_evaluations", 0)
-                            )
-                            progress["search_seconds"] += float(
-                                search_result.get("elapsed_seconds", 0.0)
-                            )
-                            current_progress = dict(progress)
-                        with self.lock:
-                            if token != self.eval_token:
-                                return None
-                            self.eval_status.update({
-                                "search_decisions": current_progress[
-                                    "search_decisions"
-                                ],
-                                "search_simulations": current_progress[
-                                    "search_simulations"
-                                ],
-                                "search_leaf_evaluations": current_progress[
-                                    "search_leaf_evaluations"
-                                ],
-                                "search_seconds": current_progress[
-                                    "search_seconds"
-                                ],
-                                "active_workers": current_progress[
-                                    "active_workers"
-                                ],
-                                "last_progress_at": time.time(),
-                            })
-                    else:
-                        with self.model_lock:
-                            action, _ = model.predict(
-                                obs, action_masks=mask, deterministic=True
-                            )
-                        action_id = int(np.asarray(action).item())
-                        action_source = "direct_policy"
-                    action_label = env.describe_action(action_id)
-                    obs, _reward, terminated, truncated, info = env.step(action_id)
-                    steps += 1
-                    if steps == 1 or steps % 25 == 0:
-                        live_stats = info.get("run_stats", {})
-                        with self.lock:
-                            if token != self.eval_token:
-                                return None
-                            self.eval_status.update({
-                                "current_episode": episode + 1,
-                                "current_steps": steps,
-                                "current_floor": int(live_stats.get("floor", 0)),
-                                "current_phase": info.get("phase"),
-                                "current_phase_before": phase_before,
-                                "current_action": action_id,
-                                "current_action_label": action_label,
-                                "current_action_legal": bool(mask[action_id]),
-                                "current_legal_actions": np.flatnonzero(mask).tolist(),
-                                "current_action_source": action_source,
-                                "last_progress_at": time.time(),
-                            })
-                stats = env.unwrapped.thick.run_stats()
-                floor = int(stats["floor"])
-                if is_win(env):
-                    result_name = "win"
-                elif truncated and info.get("dead_screen"):
-                    result_name = "dead_screen"
-                elif truncated:
-                    result_name = "other_truncation"
-                else:
-                    result_name = "death"
-                return {
-                    "episode": episode,
-                    "seed": episode_seed,
-                    "floor": floor,
-                    "steps": steps,
-                    "result": result_name,
-                    "search_decisions": search_decisions,
-                    "search_simulations": search_simulations,
-                    "search_leaf_evaluations": search_leaf_evaluations,
-                    "search_seconds": search_seconds,
-                }
-            finally:
-                with progress_lock:
-                    progress["active_workers"] = max(
-                        0, progress["active_workers"] - 1
-                    )
-                    active_workers = progress["active_workers"]
-                with self.lock:
-                    if token == self.eval_token:
-                        self.eval_status.update({
-                            "active_workers": active_workers,
-                            "last_progress_at": time.time(),
-                        })
-                env.close()
+        def cancelled():
+            return token != self.eval_token
 
-        death_floors: Counter[int] = Counter()
-        death_seeds: dict[int, list[int]] = {}
-        win_seeds: list[int] = []
-        result_counts: Counter[str] = Counter()
-        floors: list[int] = []
-        lengths: list[int] = []
+        def progress(event):
+            with self.lock:
+                if not cancelled():
+                    self.eval_status.update(event, last_progress_at=time.time())
+
         try:
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=worker_count,
-                thread_name_prefix="dashboard-eval-worker",
-            ) as executor:
-                futures = [
-                    executor.submit(run_episode, episode)
-                    for episode in range(episodes)
-                ]
-                for future in concurrent.futures.as_completed(futures):
-                    item = future.result()
-                    if item is None:
-                        continue
-                    result_name = item["result"]
-                    floor = int(item["floor"])
-                    episode_seed = int(item["seed"])
-                    result_counts[result_name] += 1
-                    floors.append(floor)
-                    lengths.append(int(item["steps"]))
-                    if result_name == "win":
-                        win_seeds.append(episode_seed)
-                    elif result_name == "death":
-                        death_floors[floor] += 1
-                        death_seeds.setdefault(floor, []).append(episode_seed)
-                    done = len(floors)
-                    with progress_lock:
-                        current_progress = dict(progress)
-                    with self.lock:
-                        if token != self.eval_token:
-                            return
+            for row in evaluate(strategy, scenario, EvaluationConfig(
+                    episodes=episodes, seed=seed, num_envs=worker_count),
+                    cancelled=cancelled, progress=progress):
+                rows.append(row)
+                with self.lock:
+                    if not cancelled():
                         elapsed = time.time() - self.eval_status["started_at"]
-                        self.eval_status.update({
-                            "completed": done,
-                            "death_floors": dict(sorted(death_floors.items())),
-                            "death_seeds": {
-                                key: sorted(values)
-                                for key, values in sorted(death_seeds.items())
-                            },
-                            "win_seeds": sorted(win_seeds),
-                            "results": dict(result_counts),
-                            "floor_mean": float(np.mean(floors)),
-                            "floor_median": float(np.median(floors)),
-                            "steps_mean": float(np.mean(lengths)),
-                            "elapsed_seconds": elapsed,
-                            "eta_seconds": elapsed / done * (episodes - done),
-                            "search_decisions": current_progress[
-                                "search_decisions"
-                            ],
-                            "search_simulations": current_progress[
-                                "search_simulations"
-                            ],
-                            "search_leaf_evaluations": current_progress[
-                                "search_leaf_evaluations"
-                            ],
-                            "search_seconds": current_progress["search_seconds"],
-                            "active_workers": current_progress["active_workers"],
-                            "workers": worker_count,
-                        })
-            with self.lock:
-                if token == self.eval_token:
-                    self.eval_status["state"] = "complete"
+                        self.eval_status.update(summarize(rows), elapsed_seconds=elapsed,
+                            eta_seconds=elapsed / len(rows) * (episodes - len(rows)))
+            progress({"state": "complete", "active_workers": 0})
+        except EvaluationCancelled:
+            return
         except Exception as exc:
-            with self.lock:
-                if token == self.eval_token:
-                    self.eval_status.update({"state": "error", "error": str(exc)})
+            progress({"state": "error", "error": str(exc), "active_workers": 0})
 
 
 
