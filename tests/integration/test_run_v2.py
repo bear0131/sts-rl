@@ -13,7 +13,7 @@ contract holds end to end across every phase:
     overworld screens (map / reward / card_select / rest / event / boss_relic).
 
 Run from repo root (needs the sim built):
-    python -m env.scripts.test_run_v2 --episodes 20 --seed 0
+    python -m tests.integration.test_run_v2 --episodes 20 --seed 0
 """
 
 import argparse
@@ -21,7 +21,6 @@ import os
 import sys
 from collections import Counter
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import numpy as np
 

@@ -1,7 +1,7 @@
 """End-to-end regression test for SimCombatEnv. Requires the sim to be built
 (sim/sts_lightspeed/build). Run from the repo root on the training machine:
 
-    python -m env.scripts.test_combat
+    python -m tests.integration.test_combat
 
 Plays N random-but-legal episodes across the act-1 pools and asserts the env
 contract holds: obs shape/dtype/finiteness, the action mask agrees with what
@@ -13,7 +13,6 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from env.core.combat_env import SimCombatEnv
 from env.core import actions

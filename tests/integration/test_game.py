@@ -1,6 +1,6 @@
 """Whole-run (SimGameEnv) regression tests — run on the box with the built sim:
 
-    python -m env.scripts.test_game
+    python -m tests.integration.test_game
 
 Starts with the map-spine check (RunMap reachability must agree with where the
 gc actually lands) because that reconstruction is what the whole-run state

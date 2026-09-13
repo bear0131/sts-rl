@@ -2,7 +2,7 @@
 
 Run from the repository root:
 
-    python -m rl.test_rllib_split_policy
+    python -m tests.unit.test_rllib_split_policy
 """
 
 from __future__ import annotations

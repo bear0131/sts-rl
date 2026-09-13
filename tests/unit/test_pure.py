@@ -2,13 +2,12 @@
 actions + render). Runs WITHOUT the sim built: it feeds hand-made canonical dicts
 (the shape bridge.schemas produces) through the pure functions.
 
-Run from the repo root:  python -m env.scripts.test_pure
+Run from the repo root:  python -m tests.unit.test_pure
 """
 
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import numpy as np
 from env.core import encode

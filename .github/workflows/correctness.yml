@@ -36,7 +36,7 @@ jobs:
       - name: Existing and new correctness contracts
         run: python -m pytest -q -m "not training" --junitxml=artifacts/local/contracts.xml
       - name: Real training, optimizer persistence and CPU bitwise checks
-        run: python -m pytest tests/test_training_smoke.py -q --junitxml=artifacts/local/training.xml
+        run: python -m pytest tests/integration/test_training_smoke.py -q --junitxml=artifacts/local/training.xml
       - name: Bounded performance smoke (no hardware-specific speed gate)
         run: python -m rl.benchmarks.train --device cpu --output artifacts/local/ci-benchmark.json --timeout 180
       - name: Whitespace checks

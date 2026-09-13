@@ -26,10 +26,10 @@ CMake setup targets GCC/Clang flags; this is not an MSVC build recipe.
 
     python -m pytest -q
     python -m pytest tests -q
-    python -m pytest tests/test_training_smoke.py -q
-    python -m env.scripts.test_combat
-    python -m env.scripts.test_game
-    python -m env.scripts.test_run_v2 --episodes 20 --seed 0
+    python -m pytest tests/integration/test_training_smoke.py -q
+    python -m tests.integration.test_combat
+    python -m tests.integration.test_game
+    python -m tests.integration.test_run_v2 --episodes 20 --seed 0
 
 The main suite includes existing rl/ and env/scripts/ tests. New tests/ fixtures
 require the native extension: a missing native build is an error, not a skipped
