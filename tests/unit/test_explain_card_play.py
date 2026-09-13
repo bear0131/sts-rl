@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rl.explain_card_play import (
+from rl.evaluation.rules.explain_card_play import (
     SandboxConfig,
     build_report,
     explain_effect,

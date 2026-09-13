@@ -27,9 +27,9 @@ from env.core import action_space as A
 from env.core import game_actions as ga
 
 # Register custom policy/extractor classes before SB3 unpickles the checkpoint.
-from rl import model as _model  # noqa: F401
-from rl import pointer_policy as _pointer_policy  # noqa: F401
-from rl import split_policy as _split_policy  # noqa: F401
+from rl.policies import model as _model  # noqa: F401
+from rl.policies import pointer_policy as _pointer_policy  # noqa: F401
+from rl.policies import split_policy as _split_policy  # noqa: F401
 from sb3_contrib import MaskablePPO
 
 

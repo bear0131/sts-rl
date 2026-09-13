@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from env.core.ironclad_cards import ATTACK, IRONCLAD_CARDS
-from rl.probe_cultist_bash_order import (
+from tools.analysis.probe_cultist_bash_order import (
     ATTACK_CARD_IDS,
     BASH_ID,
     make_observation,

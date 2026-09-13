@@ -49,7 +49,7 @@ def parser():
 def make_environment():
     from gymnasium.wrappers import TimeLimit
     from env.core.run_env import SlayTheSpireEnv
-    from rl.reward import ShapedRewardWrapper
+    from rl.training.reward import ShapedRewardWrapper
     return TimeLimit(ShapedRewardWrapper(SlayTheSpireEnv(global_map_view=True)),
                      max_episode_steps=5000)
 
@@ -59,9 +59,9 @@ def run_worker(args):
     import psutil
     import torch
     from stable_baselines3.common.vec_env import DummyVecEnv
-    from rl.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
-    from rl.accumulating_ppo import AccumulatingMaskablePPO
-    from rl.split_policy import SplitStSPointerPolicy
+    from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.policies.split_policy import SplitStSPointerPolicy
     from rl.benchmarks.resources import ResourceMonitor
     import slaythespire as sts
 

@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from env.core.cards_vocab import CARD_INDEX
-from rl.rule_vector_model import (
+from rl.rules.rule_vector_model import (
     CARD_RULE_VOCAB,
     RELIC_RULE_VOCAB,
     StateVectorConfig,
@@ -40,7 +40,7 @@ from rl.rule_vector_model import (
     EventDecoderOutput,
     _calculation_number,
 )
-from rl.render_rule_vector_examples import render_examples
+from rl.evaluation.rules.render_rule_vector_examples import render_examples
 
 
 def _state():

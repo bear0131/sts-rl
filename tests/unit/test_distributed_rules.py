@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import Counter
 
-from rl.distributed_train_rules import _historical_wandb_rows
-from rl.rule_data import CardBalancedBatchSampler, action_card_group
+from rl.rules.training.distributed_train_rules import _historical_wandb_rows
+from rl.rules.rule_data import CardBalancedBatchSampler, action_card_group
 
 
 def _card_sample(card_id):

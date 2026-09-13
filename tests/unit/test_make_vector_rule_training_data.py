@@ -5,21 +5,21 @@ import random
 
 import pytest
 
-from rl.make_vector_rule_training_data import (
+from rl.rules.data.make_vector_rule_training_data import (
     BOSS_RELIC_POOL,
     _initial_relics,
     _effect_record,
     build_record,
     build_record_with_canonical,
 )
-from rl.rule_vector_model import (
+from rl.rules.rule_vector_model import (
     CARD_RULE_VOCAB,
     RELIC_RULE_VOCAB,
     StateVectorConfig,
     VectorEvent,
     serialize_vector_events,
 )
-from rl.vector_rule_data import example_from_v6_record
+from rl.rules.vector_rule_data import example_from_v6_record
 
 
 def test_random_records_are_valid_v6_and_within_requested_ranges():

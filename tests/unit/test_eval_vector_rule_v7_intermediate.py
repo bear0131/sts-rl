@@ -1,4 +1,4 @@
-from rl.eval_vector_rule_v7_intermediate import (
+from rl.evaluation.rules.eval_vector_rule_v7_intermediate import (
     _calculation_blocks,
     _parse_number,
 )

@@ -1,8 +1,8 @@
 import random
 import pytest
 
-from rl import make_vector_rule_training_data as teacher
-from rl.rule_vector_model import StateVectorConfig
+from rl.rules.data import make_vector_rule_training_data as teacher
+from rl.rules.rule_vector_model import StateVectorConfig
 
 
 @pytest.mark.parametrize("card,destination", [

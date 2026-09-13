@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from rl.eval_vector_rule_v7_cases import (
+from rl.evaluation.rules.eval_vector_rule_v7_cases import (
     BEGIN_TOKENS,
     END_TOKENS,
     _expected_value_bindings,
@@ -8,7 +8,7 @@ from rl.eval_vector_rule_v7_cases import (
     _token_metrics,
     build_cases,
 )
-from rl.rule_vector_model import StateVectorConfig
+from rl.rules.rule_vector_model import StateVectorConfig
 
 
 def test_free_outer_metrics_penalize_missing_and_extra_tokens():

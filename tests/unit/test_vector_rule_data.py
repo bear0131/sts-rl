@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from rl.rule_vector_model import StateVectorConfig, VECTOR_TOKEN_INDEX
-from rl.vector_rule_data import (
+from rl.rules.rule_vector_model import StateVectorConfig, VECTOR_TOKEN_INDEX
+from rl.rules.vector_rule_data import (
     VECTOR_DATA_SCHEMA_VERSION,
     VectorRuleV6Dataset,
     collate_vector_rule_v6_batch,

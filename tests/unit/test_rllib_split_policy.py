@@ -16,12 +16,12 @@ from gymnasium import spaces
 from env.core import action_space as A
 from env.core import encode
 from env.core import vocab as V
-from rl.rllib_trainer import (
+from rl.training.rllib_trainer import (
     MASK_LOG_FLOOR,
     StSRLLibTorchModel,
     _apply_sb3_weights,
 )
-from rl.split_policy import CombatStSPolicyCore, SplitStSPolicyCore
+from rl.policies.split_policy import CombatStSPolicyCore, SplitStSPolicyCore
 
 
 torch.set_num_threads(1)

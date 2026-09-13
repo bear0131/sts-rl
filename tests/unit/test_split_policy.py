@@ -17,8 +17,8 @@ from env.core import action_space as A
 from env.core import encode
 from env.core import vocab as V
 from env.core.cards_vocab import CARD_INDEX
-from rl.model import uses_card_language
-from rl.split_policy import (
+from rl.policies.model import uses_card_language
+from rl.policies.split_policy import (
     COMBAT_OBSERVATION_KEYS,
     OVERWORLD_OBSERVATION_KEYS,
     OVERWORLD_PHASE_OBSERVATION_KEYS,
@@ -26,7 +26,7 @@ from rl.split_policy import (
     SplitStSPointerPolicy,
     SplitStSPolicyCore,
 )
-from rl.trainer import _checkpoint_policy_arch
+from rl.training.trainer import _checkpoint_policy_arch
 
 
 torch.set_num_threads(1)

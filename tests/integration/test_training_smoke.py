@@ -6,9 +6,9 @@ from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.reward import ShapedRewardWrapper
-from rl.accumulating_ppo import AccumulatingMaskablePPO
-from rl.split_policy import SplitStSPointerPolicy
+from rl.training.reward import ShapedRewardWrapper
+from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+from rl.policies.split_policy import SplitStSPointerPolicy
 
 pytestmark = [pytest.mark.native, pytest.mark.training]
 

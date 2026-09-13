@@ -8,7 +8,7 @@ so the episode ends on death. Reward is +1 per fight cleared by default;
 fight ends. The network is the combat specialist used inside the whole-run
 split policy, on the same obs/action space, so its shared tokenizer, combat
 encoder, policy head, and value head can warm-start global training via
-``python -m rl.trainer --task wholerun --init-from <combat>.zip --freeze-encoder``.
+``python -m rl.training.trainer --task wholerun --init-from <combat>.zip --freeze-encoder``.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from stable_baselines3.common.callbacks import BaseCallback
 from env.core import factories
 from env.core.run_env import SlayTheSpireEnv
 from env.core.combat_backend import SimCombatBackend
-from rl.reward import CombatGauntletRewardWrapper
-from rl.split_policy import CombatStSPointerPolicy
+from rl.training.reward import CombatGauntletRewardWrapper
+from rl.policies.split_policy import CombatStSPointerPolicy
 from rl.tasks.base import Task
 
 

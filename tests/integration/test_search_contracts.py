@@ -3,8 +3,8 @@ import pytest
 
 from env.core.run_env import unpack_nosl_observation_buffer
 from schemas.combat_state import normalize_sim_global
-from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSession, NOSLISAZSearch
-from rl.nosl_sampler import NOSLSampler
+from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSession, NOSLISAZSearch
+from env.search.nosl_sampler import NOSLSampler
 from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 

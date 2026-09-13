@@ -8,8 +8,8 @@ import json
 from pathlib import Path
 import re
 
-from rl.explain_card_play import compare_model_outputs
-import rl.rule_data as rule_data
+from rl.evaluation.rules.explain_card_play import compare_model_outputs
+import rl.rules.rule_data as rule_data
 
 
 def surface(base_surface: str, base_damage: int, hits: int) -> str:

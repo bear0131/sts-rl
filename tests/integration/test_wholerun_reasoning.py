@@ -7,20 +7,20 @@ import torch
 from env.core import action_space as A
 from env.core.cards_vocab import CARD_VOCAB
 from env.core import encode
-from rl.semantic_reasoning_policy import (
+from rl.policies.semantic_reasoning_policy import (
     AnonymousCardProgramEmbedding,
     CachedReasoningDecoder,
     ReasoningKVCache,
     SemanticReasoningPolicyCore,
 )
-from rl.rule_vector_model import (
+from rl.rules.rule_vector_model import (
     CARD_RULE_VOCAB,
     CardRuleEncoder,
     ProgramEncoderConfig,
     RuleProgramTransformer,
 )
-from rl.split_policy import SplitStSPolicyCore
-from rl.wholerun_reasoning import (
+from rl.policies.split_policy import SplitStSPolicyCore
+from rl.policies.wholerun_reasoning import (
     IGNORE_INDEX,
     TokenOwner,
     VOCAB,

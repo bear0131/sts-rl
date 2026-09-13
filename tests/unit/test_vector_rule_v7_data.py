@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import random
 
-from rl.make_vector_rule_v7_data import (
+from rl.rules.data.make_vector_rule_v7_data import (
     V7_EXECUTOR_CONTRACT_VERSION,
     _action_name,
     build_v7_record,
     compile_v7_record,
 )
-from rl.make_vector_rule_training_data import build_record
-from rl.rule_vector_model import (
+from rl.rules.data.make_vector_rule_training_data import build_record
+from rl.rules.rule_vector_model import (
     CARD_RULE_VOCAB,
     RELIC_RULE_VOCAB,
     StateVectorConfig,
     vectorize_state,
     vector_delta,
 )
-from rl.vector_rule_v7_data import (
+from rl.rules.vector_rule_v7_data import (
     V7TokenCodec,
     collate_vector_rule_v7_batch,
     examples_from_v7_record,

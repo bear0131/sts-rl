@@ -8,15 +8,15 @@ from gymnasium import spaces
 
 from bridge.schemas.combat_state import normalize_sim
 from env.core import vocab as V
-from rl.accumulating_ppo import (
+from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
     _leaf_observation_as_tensor,
     _fill_nosl_combat_value_targets,
     ppo_loss_components,
 )
-from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSearch, NOSLISAZSession
-from rl.nosl_replay import NOSLISAZReplayBuffer
-from rl.nosl_sampler import NOSLSampler
+from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSearch, NOSLISAZSession
+from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
+from env.search.nosl_sampler import NOSLSampler
 
 
 class _Battle:

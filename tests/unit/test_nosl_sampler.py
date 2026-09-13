@@ -2,7 +2,7 @@ import copy
 import unittest
 
 from env.core.combat_env import SimCombatEnv
-from rl.nosl_sampler import NOSLSampler
+from env.search.nosl_sampler import NOSLSampler
 
 
 class NOSLSamplerTest(unittest.TestCase):

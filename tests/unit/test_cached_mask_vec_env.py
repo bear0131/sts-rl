@@ -6,11 +6,11 @@ from gymnasium import spaces
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import VecMonitor
 
-from rl.cached_mask_vec_env import (
+from rl.training.cached_mask_vec_env import (
     CachedMaskSubprocVecEnv,
     GroupedCachedMaskSubprocVecEnv,
 )
-from rl.distributed_sb3 import build_parser as build_distributed_parser
+from rl.training.distributed_sb3 import build_parser as build_distributed_parser
 
 
 class _MaskInfoEnv(gym.Env):

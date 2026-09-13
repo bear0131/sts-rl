@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-import rl.distributed_sb3 as distributed
+import rl.training.distributed_sb3 as distributed
 
 
 class _NoReplayDistributedModel:

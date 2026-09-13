@@ -5,7 +5,7 @@ from __future__ import annotations
 from env.core import game_actions as ga
 from env.core.game_env import SimGameEnv
 from env.core.run_env import SlayTheSpireEnv
-from rl.reward import ShapedRewardWrapper
+from rl.training.reward import ShapedRewardWrapper
 from rl.tasks.wholerun import WholeRunTask, _MAX_EPISODE_STEPS
 
 from gymnasium.wrappers import TimeLimit

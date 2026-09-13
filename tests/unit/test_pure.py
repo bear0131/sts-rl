@@ -178,7 +178,7 @@ def test_status_card_language_model_paths():
     import torch
 
     from env.core.cards_vocab import CARD_INDEX, CARD_VOCAB
-    from rl.model import CardLanguageEmbedding, StSTransformerExtractor
+    from rl.policies.model import CardLanguageEmbedding, StSTransformerExtractor
 
     status_ids = torch.tensor([CARD_INDEX[c] for c in STATUS_CARDS])
     card_embedding = CardLanguageEmbedding(len(CARD_VOCAB), 64)
@@ -287,7 +287,7 @@ def test_obs_matches_space():
 
 
 def test_compact_combat_matches_full_encoding():
-    from rl.split_policy import COMBAT_OBSERVATION_KEYS
+    from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 
     canon = _fake_combat()
     canon["options"] = {

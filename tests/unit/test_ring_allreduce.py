@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import torch
 
-from rl.ring_allreduce import RingAllReduce
+from rl.training.ring_allreduce import RingAllReduce
 
 
 def test_ring_allreduce_averages_uneven_flat_tensors():

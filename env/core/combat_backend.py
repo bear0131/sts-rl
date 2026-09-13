@@ -11,7 +11,7 @@ implicitly from the structure — no explicit HP-delta or death-penalty reward t
 It REUSES the whole-run thick backend's combat handling verbatim — same
 legal_semantic_actions / step / obs as SimGameEnv — so the thin SlayTheSpireEnv
 on top exposes the SAME 181-action space + masks the whole-run policy trains on,
-and combat-pretrained weights transfer to `rl.trainer --task wholerun
+and combat-pretrained weights transfer to `rl.training.trainer --task wholerun
 --init-from` with no
 remapping. (The standalone SimCombatEnv speaks the narrower 71-id combat space and
 does NOT line up with the policy head; that is why pretraining goes through here.)

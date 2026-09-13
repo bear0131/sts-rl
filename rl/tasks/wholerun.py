@@ -10,7 +10,7 @@ from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.callbacks import BaseCallback
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.split_policy import SplitStSPointerPolicy
+from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.tasks.base import Task
 
 
@@ -421,7 +421,7 @@ class WholeRunTask(Task):
         parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
     def make_env_fn(self, args):
-        from rl.reward import ShapedRewardWrapper
+        from rl.training.reward import ShapedRewardWrapper
 
         ascension = args.ascension
         interactive_reasoning = (
@@ -479,7 +479,7 @@ class WholeRunTask(Task):
                 raise ValueError(
                     "semantic-reasoning requires interactive trace capture"
                 )
-            from rl.semantic_reasoning_policy import SemanticReasoningPolicy
+            from rl.policies.semantic_reasoning_policy import SemanticReasoningPolicy
 
             return SemanticReasoningPolicy, dict(
                 d_model=args.d_model,

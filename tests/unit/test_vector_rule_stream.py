@@ -4,7 +4,7 @@ from io import StringIO
 
 import pytest
 
-from rl.vector_rule_stream import iter_jsonl_records, take_batch
+from rl.rules.vector_rule_stream import iter_jsonl_records, take_batch
 
 
 def test_jsonl_stream_is_incremental_and_preserves_record_order():
@@ -30,7 +30,7 @@ def test_take_batch_consumes_once_without_padding_or_replay():
 
 
 def test_fixed_file_reuse_requires_explicit_flag():
-    from rl.train_rule_vectors import build_parser, train
+    from rl.rules.training.train_rule_vectors import build_parser, train
 
     args = build_parser().parse_args(["missing-v6.jsonl", "--epochs", "2"])
     with pytest.raises(ValueError, match="allow-data-reuse"):
@@ -38,7 +38,7 @@ def test_fixed_file_reuse_requires_explicit_flag():
 
 
 def test_stream_mode_requires_a_step_budget():
-    from rl.train_rule_vectors import build_parser, train
+    from rl.rules.training.train_rule_vectors import build_parser, train
 
     args = build_parser().parse_args(["--stream-command", "producer"])
     with pytest.raises(ValueError, match="stream-steps"):

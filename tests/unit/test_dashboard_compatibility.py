@@ -8,8 +8,8 @@ import pytest
 import torch
 
 from env.core.cards_vocab import CARD_VOCAB
-from rl import dashboard
-from rl.visualize_card_vectors import _semantic_card_vectors
+from apps import dashboard
+from rl.rules.visualize_card_vectors import _semantic_card_vectors
 
 
 def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):

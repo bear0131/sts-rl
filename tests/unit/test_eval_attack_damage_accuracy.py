@@ -1,6 +1,6 @@
 import numpy as np
 
-from rl.eval_attack_damage_accuracy import (
+from rl.evaluation.rules.eval_attack_damage_accuracy import (
     _base_damage_checks,
     _decode_number,
     _hp_damage_checks,

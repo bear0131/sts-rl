@@ -23,9 +23,9 @@ def capture(output: Path, restore: Path | None) -> None:
     from stable_baselines3.common.vec_env import DummyVecEnv
     from env.core.run_env import SlayTheSpireEnv, unpack_nosl_observation_buffer
     import slaythespire as sts
-    from rl.accumulating_ppo import AccumulatingMaskablePPO
-    from rl.split_policy import SplitStSPointerPolicy
-    from rl.reward import ShapedRewardWrapper
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.policies.split_policy import SplitStSPointerPolicy
+    from rl.training.reward import ShapedRewardWrapper
 
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)

@@ -9,7 +9,7 @@ from env.core.rule_language import (
     relic_loadout_sentence,
     validate_first_version_language,
 )
-from rl.rule_data import (
+from rl.rules.rule_data import (
     CALCULATIONS_BEGIN,
     CRITICAL_CALCULATION,
     CRITICAL_COUNTER,
@@ -25,8 +25,8 @@ from rl.rule_data import (
     target_supervision_regions,
     transition_consistency_specs,
 )
-from rl.rule_model import RuleModelConfig, RuleWorldModel
-from rl.train_rules import (
+from rl.rules.rule_model import RuleModelConfig, RuleWorldModel
+from rl.rules.training.train_rules import (
     _loss_and_counts,
     _split_samples,
     _transition_consistency_loss,

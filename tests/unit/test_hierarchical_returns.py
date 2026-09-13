@@ -8,9 +8,9 @@ import torch
 from gymnasium import spaces
 
 from env.core import vocab as V
-from rl.accumulating_ppo import ppo_loss_components
-from rl.distributed_sb3 import ppo_microbatch_backward
-from rl.hierarchical_returns import compute_hierarchical_returns
+from rl.algorithms.accumulating_ppo import ppo_loss_components
+from rl.training.distributed_sb3 import ppo_microbatch_backward
+from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
 
 
 COMBAT = 1

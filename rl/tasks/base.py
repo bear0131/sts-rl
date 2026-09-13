@@ -1,9 +1,9 @@
-"""Task interface for the unified trainer (rl.trainer).
+"""Task interface for the unified trainer (rl.training.trainer).
 
 A *training* (the PPO algorithm + all its infrastructure: VecEnv, checkpoints,
 wandb, resume/init-from, the learn() loop) is one axis; a *task* (which env to
 build, which reward, which metrics to watch, which policy geometry) is the
-orthogonal axis. rl.trainer owns the first; a Task owns the second.
+orthogonal axis. rl.training.trainer owns the first; a Task owns the second.
 
 To add a new task: subclass Task, implement the five hooks, and register it in
 rl/tasks/__init__.py. The trainer gains `--task <name>` automatically; every
@@ -22,7 +22,7 @@ class Task(ABC):
 
     Subclasses set the three class attributes and implement the five hooks.
     Everything else (PPO build, VecEnv, callbacks, wandb, resume/init-from,
-    the absolute-``--steps`` learn loop) is shared and lives in rl.trainer.
+    the absolute-``--steps`` learn loop) is shared and lives in rl.training.trainer.
     """
 
     #: CLI selector (``--task <name>``) and identity used in logs.

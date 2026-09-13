@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from rl.eval_vector_rule_v7_simple_cards import build_cases, build_specs
-from rl.rule_vector_model import StateVectorConfig
+from rl.evaluation.rules.eval_vector_rule_v7_simple_cards import build_cases, build_specs
+from rl.rules.rule_vector_model import StateVectorConfig
 
 
 def test_simple_card_suite_contains_the_previous_probes():

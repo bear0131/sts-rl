@@ -707,8 +707,8 @@ class SlayTheSpireEnv(gym.Env):
         """
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("NOSL-IS-AZ requires a live combat state")
-        from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSearch
-        from rl.nosl_sampler import NOSLSampler
+        from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSearch
+        from env.search.nosl_sampler import NOSLSampler
 
         config = NOSLISAZConfig(
             simulations=int(simulations),
@@ -1084,7 +1084,7 @@ class SlayTheSpireEnv(gym.Env):
             weights = np.asarray([item[1] for item in raw_visits], dtype=np.float64)
             total = float(weights.sum())
             if total > 0.0 and np.isfinite(total):
-                from rl.nosl_sampler import NOSLSampler
+                from env.search.nosl_sampler import NOSLSampler
 
                 nonce = NOSLSampler(0x4E4F534C_64617368).nonce(
                     state_nonce=int(state_nonce),
@@ -1586,8 +1586,8 @@ class SlayTheSpireEnv(gym.Env):
         """Start a staged NOSL-IS-AZ search and return its first leaf request."""
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("NOSL-IS-AZ requires a live combat state")
-        from rl.nosl_is_az import NOSLISAZConfig, NOSLISAZSession
-        from rl.nosl_sampler import NOSLSampler
+        from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSession
+        from env.search.nosl_sampler import NOSLSampler
 
         config = NOSLISAZConfig(
             simulations=int(simulations),

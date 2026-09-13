@@ -7,11 +7,11 @@ import pytest
 from sb3_contrib import MaskablePPO
 
 from env.core.run_env import SlayTheSpireEnv
-from rl.model import observation_for_policy
-from rl.split_policy import SplitStSPointerPolicy
-from rl.combat_value_search import CombatValueSearch, CombatValueSearchConfig
-from rl.watch import _action_dist
-from rl import eval as evaluate
+from rl.policies.model import observation_for_policy
+from rl.policies.split_policy import SplitStSPointerPolicy
+from rl.search.combat_value_search import CombatValueSearch, CombatValueSearchConfig
+from apps.watch import _action_dist
+from rl.evaluation import eval as evaluate
 
 pytestmark = pytest.mark.native
 
@@ -72,7 +72,7 @@ def test_formal_eval_loads_legacy_checkpoint(legacy_checkpoint, monkeypatch):
             return obs, reward, terminated, truncated or self.test_steps == 2, info
 
     monkeypatch.setattr(evaluate, "SlayTheSpireEnv", TwoStepEnv)
-    monkeypatch.setattr(sys, "argv", ["rl.eval", str(legacy_checkpoint),
+    monkeypatch.setattr(sys, "argv", ["rl.evaluation.eval", str(legacy_checkpoint),
                                     "--episodes", "1", "--device", "cpu"])
     evaluate.main()
 

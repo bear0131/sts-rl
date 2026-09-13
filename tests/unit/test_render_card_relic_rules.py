@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from env.core.card_language import LANGUAGE_CARDS
 from env.core.rule_language import COMBAT_RELIC_RULES
-from rl.render_card_relic_rules import render_rules
+from tools.analysis.render_card_relic_rules import render_rules
 
 
 def test_catalog_has_one_line_per_ironclad_status_version_and_relic():

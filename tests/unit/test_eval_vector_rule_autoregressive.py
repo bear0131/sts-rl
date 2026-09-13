@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 import torch
 
-from rl.eval_vector_rule_autoregressive import (
+from rl.evaluation.rules.eval_vector_rule_autoregressive import (
     _delta_metrics,
     _predicted_serialized,
     build_evaluation_cases,
 )
-from rl.rule_vector_model import StateVectorConfig, SerializedVectorEvents
+from rl.rules.rule_vector_model import StateVectorConfig, SerializedVectorEvents
 
 
 def test_fly_kick_case_uses_vulnerable_without_block():
@@ -42,7 +42,7 @@ def test_predicted_delta_rows_align_to_delta_tokens():
 
 
 def test_pommel_case_matches_renderer_state_and_expected_stream():
-    from rl.render_rule_vector_examples import _pommel_with_sundial
+    from rl.evaluation.rules.render_rule_vector_examples import _pommel_with_sundial
 
     case = build_evaluation_cases()[1]
     assert len(case.state["combat"]["draw"]) == 0

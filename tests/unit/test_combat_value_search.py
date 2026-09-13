@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from env.core.combat_env import SimCombatEnv
-from rl.combat_value_search import CombatValueSearch, CombatValueSearchConfig
+from rl.search.combat_value_search import CombatValueSearch, CombatValueSearchConfig
 
 
 class _ToyPolicy:
