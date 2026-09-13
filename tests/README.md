@@ -5,10 +5,14 @@
 
 ## Runtime and native build
 
+先安装 Git、uv 和支持 C++17 的 GCC/Clang 编译器。Windows 使用 Git Bash 和兼容 MinGW；下面的 Bash 命令适用于 Linux 与 Git Bash。json/pybind11 源码已随仓库提供，无需从工作目录外复制模拟器源码。CMake/Ninja 由 test 依赖组安装。
+
 依赖只由根 pyproject.toml 声明，uv.lock 记录解析结果。不再分别维护 CI/远端 requirements。
 CI 原生回归用 Python 3.11；元数据允许 3.12，切换解释器时必须重建并验证原生扩展。
 
     uv sync --locked --extra cpu --group test --no-dev --python 3.11
+
+激活刚创建的环境，使 `python`、`cmake`、`ninja` 来自同一个安装：Linux/macOS 用 `source .venv/bin/activate`，Windows Git Bash 用 `source .venv/Scripts/activate`。所有后续命令从仓库根目录执行；不要误用系统 Python。
 
 GPU 开发用 `--extra cuda --group test --python 3.11`，保留默认 dev 组中的 W&B/TensorBoard/Plotly。
 cpu/cuda 互斥，只选择 wheel 来源；训练/评估仍使用同一套运行时版本。macOS 继续使用 PyPI Torch。
@@ -18,12 +22,15 @@ cpu/cuda 互斥，只选择 wheel 来源；训练/评估仍使用同一套运行
 
 From the repository root:
 
-    cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-ci -G Ninja -DPYBIND11_FINDPYTHON=ON -DSTS_ENABLE_RULE_TRACE=ON
+    cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-ci -G Ninja -DPYBIND11_FINDPYTHON=ON -DSTS_ENABLE_RULE_TRACE=ON -DPython_EXECUTABLE="$(python -c 'import sys; print(sys.executable)')"
     cmake --build sim/sts_lightspeed/build-ci --target slaythespire --parallel 2
+    export STS_LIGHTSPEED_BUILD_DIR="$(pwd)/sim/sts_lightspeed/build-ci"
+    python -c "from env.core import _BUILD; import slaythespire; print(_BUILD, slaythespire.__file__)"
+    python -m pytest -q
 
 Set STS_LIGHTSPEED_BUILD_DIR to that absolute build directory before running
-Python. Pass -DPython_EXECUTABLE=<your-interpreter> if CMake finds the wrong
-Python. On Windows use Git Bash via gbash, a compatible MinGW compiler and its
+Python. If reusing a build directory from another interpreter/compiler, use a
+new build directory instead of trusting its cached configuration. On Windows use Git Bash via gbash, a compatible MinGW compiler and its
 runtime DLLs (beside the extension, or via STS_LIGHTSPEED_DLL_DIRS). The original
 CMake setup targets GCC/Clang flags; this is not an MSVC build recipe.
 

@@ -117,7 +117,7 @@ python -m rl.rules.training.train_rule_vectors_v7 --help
 
 ## 交接边界
 
-后续任务只维护根 TODO：R02 处理大 collector/main 生命周期；R03/F16 处理剩余 corpus 协议、固定评测集、有效 solver manifest、硬超时。当前 deadline/cancel 是 step/leaf batch 边界检查，不能中断卡死的 native 调用；CLI 异常退出目前也不保存部分 episode 结果。F13 的完整依赖 manifest、F14 的原生能力版本化，以及游戏状态/动作/HP 等 F 项仍需独立设计。
+后续任务只维护根 TODO：R02 处理大 collector/main 生命周期；R03/F16 处理剩余 corpus 协议、固定评测集、有效 solver manifest、硬超时。当前 deadline/cancel 是 step/leaf batch 边界检查，不能中断卡死的 native 调用。推送前复审已补上 CLI 异常/超时的部分结果保存及失败标记，但硬杀进程仍无法保证落盘。F13 的完整依赖 manifest、F14 的原生能力版本化，以及游戏状态/动作/HP 等 F 项仍需独立设计。
 
 没有执行 remote launcher、同步远端、fresh install、hosted CI、GPU bitwise、多机 ring 或长程胜率实验。单 rank loopback 测试只验证更新与传输适配边界，不代表真实网络容错已经验收。
 

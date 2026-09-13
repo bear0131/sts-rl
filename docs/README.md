@@ -4,5 +4,6 @@
 当前完整审计：[codebase-audit.md](2026-09-13/codebase-audit.md)，原始证据：[codebase-audit-evidence.zip](2026-09-13/codebase-audit-evidence.zip)。问题状态以根 TODO.md 为准。
 历史包整理交接：[package-reorganization-handoff.md](2026-09-13/package-reorganization-handoff.md)。
 入口收敛讨论：[entrypoint-review.md](2026-09-13/entrypoint-review.md)，逐模块原始盘点：[entrypoint-inventory.json](2026-09-13/entrypoint-inventory.json)。
+共享搜索/评估/训练后端及策略扩展交接：[shared-backend-handoff.md](2026-09-13/shared-backend-handoff.md)。此前的包搬迁和入口讨论是历史快照，不能据此恢复已经退役的 CLI；正在使用的命令以根目录和模块 README 为准。
 
 长期用法/接口只维护所属模块 README；进度只写 worklog；旧路径由 tools/validation/migrations.json 查询。这里不维护另一份“当前架构入口”或 TODO。

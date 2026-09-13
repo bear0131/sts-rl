@@ -1855,19 +1855,6 @@ class DashboardState:
         ).start()
 
     def _evaluate(self, token, model, episodes, seed, search_config, worker_count):
-        strategy = PolicyStrategy(model, lock=self.model_lock)
-        if search_config.get("method") == "nosl_is_az_cpp":
-            strategy = PhaseStrategy(strategy, {"combat": NativeStrategy(
-                model, NativeSearchConfig.from_mapping(search_config),
-                master_nonce=search_config.get("master_nonce", 0), lock=self.model_lock)},
-                predicates={"combat": lambda request: getattr(request.env.unwrapped, "_pending", None) is None})
-        scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
-            global_map_view=_model.uses_global_map_observation(model),
-            card_language=_model.uses_card_language(model),
-            combat_language=_model.uses_combat_language(model),
-            deck_size_observation=_model.uses_deck_size_observation(model),
-            neow_observation=_model.uses_neow_observation(model),
-            event_option_observation=_model.uses_event_option_observation(model)))
         rows = []
 
         def cancelled():
@@ -1879,6 +1866,19 @@ class DashboardState:
                     self.eval_status.update(event, last_progress_at=time.time())
 
         try:
+            strategy = PolicyStrategy(model, lock=self.model_lock)
+            if search_config.get("method") == "nosl_is_az_cpp":
+                strategy = PhaseStrategy(strategy, {"combat": NativeStrategy(
+                    model, NativeSearchConfig.from_mapping(search_config),
+                    master_nonce=search_config.get("master_nonce", 0), lock=self.model_lock)},
+                    predicates={"combat": lambda request: getattr(request.env.unwrapped, "_pending", None) is None})
+            scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
+                global_map_view=_model.uses_global_map_observation(model),
+                card_language=_model.uses_card_language(model),
+                combat_language=_model.uses_combat_language(model),
+                deck_size_observation=_model.uses_deck_size_observation(model),
+                neow_observation=_model.uses_neow_observation(model),
+                event_option_observation=_model.uses_event_option_observation(model)))
             for row in evaluate(strategy, scenario, EvaluationConfig(
                     episodes=episodes, seed=seed, num_envs=worker_count),
                     cancelled=cancelled, progress=progress):

@@ -95,26 +95,33 @@ def main():
             last_report = time.monotonic()
 
     rows = []
-    for row in evaluate(strategy, make_scenario(model, args), config, progress=progress):
-        rows.append(row)
-        if args.progress_every and len(rows) % args.progress_every == 0:
-            print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
-    rows.sort(key=lambda row: row['episode'])
-    summary = summarize(rows)
-    payload = dict(schema_version=1, task=args.task, strategy=strategy.name,
-                   checkpoint=str(args.checkpoint.resolve()), config=vars(args),
-                   elapsed_seconds=time.monotonic() - started, summary=summary, rows=rows)
-    print(json.dumps(summary, ensure_ascii=False), flush=True)
-    if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(payload, default=str, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
-    if args.output_csv:
-        args.output_csv.parent.mkdir(parents=True, exist_ok=True)
-        keys = sorted({key for row in rows for key in row})
-        with args.output_csv.open('w', encoding='utf-8-sig', newline='') as stream:
-            writer = csv.DictWriter(stream, fieldnames=keys)
-            writer.writeheader()
-            writer.writerows(rows)
+    failure = None
+    try:
+        for row in evaluate(strategy, make_scenario(model, args), config, progress=progress):
+            rows.append(row)
+            if args.progress_every and len(rows) % args.progress_every == 0:
+                print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
+    except (Exception, KeyboardInterrupt) as exc:
+        failure = {"type": type(exc).__name__, "message": str(exc)}
+        raise
+    finally:
+        rows.sort(key=lambda row: row['episode'])
+        summary = summarize(rows)
+        payload = dict(schema_version=1, task=args.task, strategy=strategy.name,
+                       state="error" if failure else "complete", error=failure,
+                       checkpoint=str(args.checkpoint.resolve()), config=vars(args),
+                       elapsed_seconds=time.monotonic() - started, summary=summary, rows=rows)
+        print(json.dumps(summary, ensure_ascii=False), flush=True)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, default=str, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+        if args.output_csv:
+            args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+            keys = sorted({key for row in rows for key in row})
+            with args.output_csv.open('w', encoding='utf-8-sig', newline='') as stream:
+                writer = csv.DictWriter(stream, fieldnames=keys)
+                writer.writeheader()
+                writer.writerows(rows)
 
 
 if __name__ == '__main__':

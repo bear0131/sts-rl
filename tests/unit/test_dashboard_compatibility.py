@@ -16,7 +16,8 @@ from stable_baselines3.common.save_util import data_to_json
 from zipfile import ZipFile
 
 
-def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):
+@pytest.mark.parametrize('extension', ['', '.zip'])
+def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path, extension):
     local = tmp_path / "card-vector-run" / "last.pt"
     local.parent.mkdir()
     local.touch()
@@ -25,7 +26,7 @@ def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path):
     with ZipFile(checkpoint, 'w') as archive:
         archive.writestr('data', data_to_json({'policy_kwargs': {
             'card_vector_checkpoint': '/root/autodl-tmp/sts-rl/card-vector-run/last.pt'}}))
-    resolved = Path(custom_objects(checkpoint)['policy_kwargs']['card_vector_checkpoint'])
+    resolved = Path(custom_objects(tmp_path / ('model' + extension))['policy_kwargs']['card_vector_checkpoint'])
 
     assert resolved == local
 

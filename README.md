@@ -2,6 +2,22 @@
 
 在 C++ Slay the Spire 模拟器上训练和评估策略，并通过 bridge 接入真实游戏。
 
+项目主要研究 Ironclad 的整局决策和战斗搜索。通常先在模拟器中做实验，不需要启动游戏客户端；真实游戏接入是独立的 bridge 路径。这里有两种任务：`wholerun` 从地图、事件、选牌到战斗推进一整局；`combat` 是随机装备/牌组的连续战斗训练，以能打过多少场衡量表现。
+
+一次训练的流程是：环境给出观测和合法动作 → 策略网络直接选动作，或搜索多个可能后续再选动作 → 环境执行 → 收集轨迹并更新网络。评估只做决策和计分，不更新权重。PPO 是直接从轨迹学习的算法；NOSL 搜索重新采样不可见的未来随机状态；AZ learner 使用搜索给出的动作分布和战斗结果监督网络。本文中的 strict Full Gumbel 是一种具体搜索配置，不是整个项目的唯一策略接口。
+
+## 第一次接手
+
+1. 克隆仓库并进入根目录。准备 Git、uv、支持 C++17 的 GCC/Clang（Windows 用兼容 MinGW）；Python/CMake/Ninja 等依赖按 [构建与测试说明](tests/README.md#runtime-and-native-build) 安装。首次验证选单线程 CPU，无需 GPU、W&B 账号或训练 checkpoint。
+2. 编译 Python 原生扩展并设置 `STS_LIGHTSPEED_BUILD_DIR`，运行 `python -m pytest -q`。8 个已知游戏契约缺陷有 strict xfail，解释在 [TODO](TODO.md)；缺少原生扩展是错误，不算测试通过。
+3. 跑一份有预算的小训练：`python -m rl.benchmarks.train --device cpu --output runs/local/first-smoke.json --timeout 180`。它从随机小模型开始，输出实际更新、运行时间和资源记录；结果文件不能覆盖已有证据。
+4. 评估已有策略时，将 `CHECKPOINT` 换成实际 SB3 `.zip` 路径。部分模型另需训练时配套的 card encoder `.pt`，通过 `--card-vector-checkpoint` 或 `STS_CARD_VECTOR_CHECKPOINT` 指定；不要拿任意同形状文件替代。模型与数据约定见 [policies](rl/policies/README.md)、[runs](runs/README.md)。
+5. 修改代码前看 [学习模块职责](rl/README.md) 和 [AGENTS](AGENTS.md)。新增策略先读 [评估接口](rl/evaluation/README.md)，修改规则先读 [环境契约](env/README.md)。部署脚本含既有机器/run 配置，不能直接作为首次启动示例运行。
+
+本仓库是研究代码；结构与回归门禁不代表所有卡牌语义或实验结论已经正确。[共享后端交接](docs/2026-09-13/shared-backend-handoff.md) 记录改动范围与验证证据；[TODO](TODO.md) 才是持续维护的问题状态。
+
+## 代码与文件归属
+
 | 目录 | 职责 |
 |---|---|
 | [sim](sim/README.md) | 原生游戏规则、搜索树、Python binding |

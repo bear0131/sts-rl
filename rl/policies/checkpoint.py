@@ -9,6 +9,10 @@ from stable_baselines3.common.save_util import json_to_data
 
 def custom_objects(checkpoint, card_vector_checkpoint=None):
     checkpoint = Path(checkpoint)
+    # SB3 accepts extensionless checkpoint paths and appends .zip on load.
+    # The metadata preflight must resolve the same file as the actual loader.
+    if not checkpoint.exists() and Path(str(checkpoint) + '.zip').is_file():
+        checkpoint = Path(str(checkpoint) + '.zip')
     # Inspect metadata only: do not deserialize all weight/optimizer tensors
     # once here and then a second time inside MaskablePPO.load.
     with ZipFile(checkpoint) as archive:
