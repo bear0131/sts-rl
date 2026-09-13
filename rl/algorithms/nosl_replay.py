@@ -94,6 +94,42 @@ class NOSLISAZReplayBuffer:
         )
         return sum(array.nbytes for array in arrays)
 
+    def state_dict(self):
+        """Persist occupied slots only; never serialize uninitialized capacity."""
+        names = ('action_masks', 'policy_targets', 'policy_weights', 'value_targets', 'sample_ids')
+        return dict(version=1, capacity=self.capacity, action_dim=self.action_dim,
+            observation_keys=self.observation_keys, position=self.position, size=self.size,
+            total_added=self.total_added,
+            observations=None if self.observations is None else
+                {k:v[:self.size].copy() for k,v in self.observations.items()},
+            arrays={k:None if getattr(self,k) is None else getattr(self,k)[:self.size].copy() for k in names})
+
+    def load_state_dict(self, state):
+        if (state['version'] != 1 or state['capacity'] != self.capacity
+                or state['action_dim'] != self.action_dim
+                or tuple(state['observation_keys']) != self.observation_keys):
+            raise ValueError('replay checkpoint geometry does not match runtime')
+        size, position = int(state['size']), int(state['position'])
+        if not 0 <= size <= self.capacity or not 0 <= position < self.capacity:
+            raise ValueError('invalid replay cursor')
+        if size < self.capacity and position != size:
+            raise ValueError('invalid partially filled replay cursor')
+        if state['observations'] is not None:
+            self._allocate()
+            for key, target in self.observations.items():
+                source = state['observations'][key]
+                if source.shape != target[:size].shape or source.dtype != target.dtype:
+                    raise ValueError('replay observation schema mismatch: ' + key)
+                target[:size] = source
+            for key, source in state['arrays'].items():
+                target = getattr(self, key)
+                if source.shape != target[:size].shape or source.dtype != target.dtype:
+                    raise ValueError('replay target schema mismatch: ' + key)
+                target[:size] = source
+        elif size:
+            raise ValueError('nonempty replay checkpoint has no observations')
+        self.size, self.position, self.total_added = size, position, int(state['total_added'])
+
     def _allocate(self) -> None:
         if self.observations is not None:
             return

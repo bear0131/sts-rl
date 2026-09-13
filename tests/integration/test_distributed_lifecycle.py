@@ -34,6 +34,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     model.save(checkpoint)
     env.close()
     payloads, finished, identities = [], [], []
+    stop_file = tmp_path / 'stop'
+    def publish(payload):
+        payloads.append(json.loads(json.dumps(payload, allow_nan=False)))
+        if len(payloads) == 3:
+            stop_file.touch()
     def init(**kwargs):
         identities.append(kwargs)
         return SimpleNamespace(finish=lambda: finished.append(True))
@@ -41,7 +46,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
         init=init, config=SimpleNamespace(update=lambda *a, **kw: None),
         define_metric=lambda *a, **kw: None,
-        log=lambda payload: payloads.append(json.loads(json.dumps(payload, allow_nan=False)))))
+        log=publish))
     monkeypatch.setattr(distributed_sb3, 'make_env', make_env)
     output = tmp_path / 'trained.zip'
     monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0', '--world-size', '1',
@@ -50,7 +55,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
         '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'dummy',
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
-        '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run'])
+        '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
+        '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
+        '--max-checkpoints', '3', '--stop-file', str(stop_file)])
     distributed_sb3.main()
     assert len(payloads) == 2
     assert [p['global_step'] for p in payloads] == [32, 64]
@@ -62,3 +69,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
+    bundle = tmp_path/'state'/'rank0'/'step-000000000064'
+    assert (bundle/'learner.pt').is_file()
+    monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
+    distributed_sb3.main()
+    assert [p['global_step'] for p in payloads] == [32, 64, 96]
+    assert payloads[-1]['legacy_step'] == 3
+    assert finished == [True, True]
+    assert (tmp_path/'state'/'rank0'/'step-000000000096'/'manifest.json').is_file()

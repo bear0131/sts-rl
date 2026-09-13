@@ -27,21 +27,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import gymnasium as gym
 import torch as th
-from gymnasium import spaces
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from env.core import vocab as V
 from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
     NOSL_IS_AZ_SEARCH_MODES,
 )
-from rl.training.cached_mask_vec_env import (
-    CachedMaskSubprocVecEnv,
-    GroupedCachedMaskSubprocVecEnv,
-)
+from rl.training.environments import make_env
+from rl.training.checkpoints import read_bundle, restore_learner, save_bundle, prune_bundles
 from rl.training.ring_allreduce import SshRingAllReduce
 from rl.tasks.wholerun import WholeRunTask
 
@@ -49,7 +44,6 @@ from rl.tasks.wholerun import WholeRunTask
 from rl.policies import pointer_policy as _pointer_policy  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
 from rl.policies import semantic_reasoning_policy as _semantic_reasoning_policy  # noqa: F401
-from rl.policies import model as model_utils
 
 
 class NoopCallback(BaseCallback):
@@ -64,33 +58,6 @@ class Peer:
     port: int
     user: str = "root"
 
-
-class _CheckpointObservationCompat(gym.ObservationWrapper):
-    """Expose exactly the observation schema stored in a legacy checkpoint.
-
-    Observation fields are append-only.  Newer environments can therefore
-    emit fields that an older SB3 policy does not know about (currently the
-    post-enemy-turn boundary marker).  SB3 checks spaces before loading, so
-    filter the wrapper at the environment boundary instead of weakening that
-    safety check globally.
-    """
-
-    def __init__(self, env, expected_space):
-        super().__init__(env)
-        expected = getattr(expected_space, "spaces", {})
-        self._keys = frozenset(expected)
-        self.observation_space = spaces.Dict({
-            key: env.observation_space[key]
-            for key in self._keys
-            if key in env.observation_space.spaces
-        })
-
-    def observation(self, observation):
-        return {
-            key: value
-            for key, value in observation.items()
-            if key in self._keys
-        }
 
 
 def parse_peer(text: str) -> Peer:
@@ -197,9 +164,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--save-every-updates", type=int, default=0)
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
+    parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
+    parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument("--stop-file", type=Path, help="Request a coordinated save and stop at the next update boundary")
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
     parser.add_argument("--max-checkpoints", type=int, default=20)
     parser.add_argument("--wandb", action="store_true")
+    parser.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager",
+                        help="Runtime combat leaf backend; search and update semantics are unchanged")
     parser.add_argument("--wandb-project", default="sts-rl")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
@@ -520,79 +492,6 @@ def wait_for_sized_file(path: Path, timeout: float, expected_size: int) -> None:
         time.sleep(0.05)
     raise TimeoutError(f"timed out waiting for peer file: {path}")
 
-
-def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
-    core = getattr(model.policy, "core", None)
-    interactive_reasoning = hasattr(core, "reasoning_loss")
-    return {
-        "global_map_view": model_utils.uses_global_map_observation(model),
-        "card_language": model_utils.uses_card_language(model),
-        "combat_language": model_utils.uses_combat_language(model),
-        "deck_size_observation": model_utils.uses_deck_size_observation(model),
-        "neow_observation": model_utils.uses_neow_observation(model),
-        "event_option_observation": (
-            model_utils.uses_event_option_observation(model)
-        ),
-        "interactive_reasoning": interactive_reasoning,
-    }
-
-
-def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
-    flags = observation_flags(model)
-
-    class EnvArgs:
-        pass
-
-    env_args = EnvArgs()
-    env_args.ascension = args.ascension
-    env_args.global_map_view = flags["global_map_view"]
-    env_args.card_language = flags["card_language"]
-    env_args.combat_language = flags["combat_language"]
-    env_args.deck_size_observation = flags["deck_size_observation"]
-    env_args.neow_observation = flags["neow_observation"]
-    env_args.event_option_observation = flags["event_option_observation"]
-    interactive_reasoning = (
-        flags["interactive_reasoning"]
-        if args.interactive_reasoning is None
-        else bool(args.interactive_reasoning)
-    )
-    env_args.arch = (
-        "semantic-reasoning" if interactive_reasoning else "split-pointer"
-    )
-    env_args.interactive_reasoning = interactive_reasoning
-    env_args.map_dag = True
-
-    base_env_fn = WholeRunTask().make_env_fn(env_args)
-    expected_space = getattr(model, "observation_space", None)
-
-    def compat_env_fn():
-        env = base_env_fn()
-        if expected_space is not None:
-            env = _CheckpointObservationCompat(env, expected_space)
-        return env
-
-    env_fns = [compat_env_fn for _ in range(args.n_envs)]
-    if args.vec == "subproc":
-        if args.envs_per_worker == 1:
-            venv = CachedMaskSubprocVecEnv(
-                env_fns, start_method=args.start_method
-            )
-        else:
-            venv = GroupedCachedMaskSubprocVecEnv(
-                env_fns,
-                envs_per_worker=args.envs_per_worker,
-                start_method=args.start_method,
-            )
-        print(
-            f"[rank {args.rank}] subprocess workers={len(venv.remotes)} "
-            f"logical_envs={args.n_envs} "
-            f"envs_per_worker={args.envs_per_worker}"
-        )
-    else:
-        venv = DummyVecEnv(env_fns)
-    venv = VecMonitor(venv)
-    venv.seed(args.seed + args.rank * 1_000_003)
-    return venv
 
 
 def sync_file_to_peers(
@@ -1488,6 +1387,22 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.resume_state is not None:
+        manifest = read_bundle(args.resume_state, rank=args.rank, world_size=args.world_size)
+        if args.run_id is not None and args.run_id != manifest['run_id']:
+            raise ValueError('resume run ID differs from recovery manifest')
+        if args.wandb_id is not None and args.wandb_id != manifest['wandb_id']:
+            raise ValueError('resume W&B ID differs from recovery manifest')
+        args.run_id, args.wandb_id = manifest['run_id'], manifest['wandb_id']
+        args.checkpoint = args.resume_state / 'model.zip'
+    if args.stop_file is not None and args.stop_file.exists():
+        raise ValueError('remove the previous stop request before resuming')
+    if args.training_state_dir is not None and (args.save_every_updates < 1 or args.max_checkpoints < 2):
+        raise ValueError('learner recovery requires save-every-updates >= 1 and max-checkpoints >= 2')
+    if args.training_state_dir is not None and args.wandb and not args.wandb_id:
+        raise ValueError('learner recovery with W&B requires an explicit --wandb-id')
+    if args.stop_file is not None and args.world_size > 1 and args.gradient_transport != 'ssh-ring':
+        raise ValueError('coordinated stop requires ssh-ring for multiple ranks')
     args.checkpoint = normalize_checkpoint_path(args.checkpoint)
     th.set_float32_matmul_precision(args.float32_matmul_precision)
     if args.world_size < 1:
@@ -1935,7 +1850,13 @@ def main() -> None:
             f"{model.nosl_is_az_leaf_batch_size}",
             flush=True,
         )
-    model.set_random_seed(args.seed + args.rank * 1_000_003)
+    # Restarted environments cannot restore native in-flight games. Choose a
+    # new deterministic seed block rather than replaying the run's first games.
+    model.set_random_seed(args.seed + args.rank * 1_000_003 +
+                          (int(model.num_timesteps) if args.resume_state is not None else 0))
+    if args.leaf_inference == 'cuda-graph':
+        from rl.search.inference import CombatLeafGraphs
+        model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode)
 
     ring_transport = None
     if args.gradient_transport == "ssh-ring":
@@ -2033,6 +1954,8 @@ def main() -> None:
         progress_bar=False,
     )
     callback.on_training_start(locals(), globals())
+    if args.resume_state is not None:
+        restore_learner(model, args.resume_state, rank=args.rank, world_size=args.world_size)
 
     records = []
     try:
@@ -2614,6 +2537,14 @@ def main() -> None:
                 wandb_payload["legacy_step"] = int(legacy_step)
                 wandb.log(wandb_payload)
 
+            stop_requested = bool(average_scalar_dict(
+                {'stop_requested': float(args.stop_file is not None and args.stop_file.exists())},
+                ring_transport)['stop_requested'])
+            save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
+            if args.training_state_dir is not None and (save_due or stop_requested):
+                save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
+                    run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
+                prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
             if args.output is not None and (
                 args.save_every_updates
                 and (update + 1) % args.save_every_updates == 0
@@ -2622,6 +2553,7 @@ def main() -> None:
             if (
                 args.rank == 0
                 and args.checkpoint_dir is not None
+                and args.training_state_dir is None
                 and args.save_every_updates
                 and (update + 1) % args.save_every_updates == 0
             ):
@@ -2642,9 +2574,17 @@ def main() -> None:
                     args.max_checkpoints,
                 )
 
+            if stop_requested:
+                print(f'[rank {args.rank}] coordinated stop after {global_timesteps} global steps', flush=True)
+                break
+
         if args.output is not None:
             model.save(str(args.output.with_suffix("")))
-        if args.rank == 0 and args.checkpoint_dir is not None:
+        if args.training_state_dir is not None:
+            save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
+                run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
+            prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
+        if args.rank == 0 and args.checkpoint_dir is not None and args.training_state_dir is None:
             args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
             final_step = start_timesteps + len(records) * global_rollout_size
             model.num_timesteps = final_step
