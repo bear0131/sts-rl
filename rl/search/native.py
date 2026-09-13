@@ -115,6 +115,12 @@ def forward_root(model, observations, *, lock=None):
 
 
 def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nullcontext):
+    backend = getattr(model, '_native_leaf_inference', None)
+    if backend is not None and compact:
+        active = np.flatnonzero(np.any(observations['relics'] != 0, axis=0))
+        width = int(active[-1]) + 1 if active.size else 1
+        with lock or nullcontext():
+            return backend(observations, width)
     tensor = observation_as_tensor(observations, model.device)
     core = model.policy.core
     with lock or nullcontext(), th.inference_mode(), autocast():

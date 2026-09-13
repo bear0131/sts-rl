@@ -20,6 +20,12 @@ import time
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--workload", choices=("train", "leaves", "rollout"), default="train")
+    p.add_argument("--search-config", type=Path, help="NativeSearchConfig JSON for fixed rollout comparisons")
+    p.add_argument("--checkpoint", type=Path, help="Existing model for the leaf inference workload")
+    p.add_argument("--leaf-repeats", type=int, default=200)
+    p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
+    p.add_argument("--profile", action="store_true", help="Export a bounded CPU/CUDA operator trace for leaves")
     p.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     p.add_argument("--threads", type=int, default=1)
     p.add_argument("--n-envs", type=int, default=2)
@@ -55,6 +61,12 @@ def make_environment():
 
 
 def run_worker(args):
+    if args.workload == 'leaves':
+        from rl.benchmarks.leaves import run
+        return run(args)
+    if args.workload == 'rollout':
+        from rl.benchmarks.rollout import run
+        return run(args)
     import numpy as np
     import psutil
     import torch

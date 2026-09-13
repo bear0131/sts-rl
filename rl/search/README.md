@@ -6,3 +6,16 @@
 
 当前大实验用的严格 Full Gumbel 树在 C++ `sim/sts_lightspeed/src/sim/search/Nosl.cpp`，经 env/core/run_env.py 的 begin/backprop/packed leaf 接口调用。不要把这里的 Python 对照实现当作当前 native 算法的唯一真相。
 输入合法动作、先验、nonce 和预算；输出完整动作/访问分布/value。搜索不得修改 live env。depth=0 是按新节点展开而非零次搜索。
+# Leaf inference acceleration
+
+`inference.CombatLeafGraphs` is an opt-in CUDA backend for compact combat leaves.
+It uses an LRU cache of at most 32 exact observation shapes/relic widths; it does
+not pad batches or change search ordering. Model parameters retain their storage
+and AMP casts run inside the graph, so in-place optimizer updates are visible.
+Replace the backend after replacing parameters, model structure, device or AMP
+mode. It requires eval mode and is never serialized in policy checkpoints.
+
+Distributed training selects it with `--leaf-inference cuda-graph`; eager remains
+the default for other models/devices. GPU tests in
+`tests/integration/test_leaf_graphs.py` cover input/weight changes, LRU eviction,
+FP32/BF16 bitwise equality and checkpoint exclusion. CPU CI cannot validate CUDA.

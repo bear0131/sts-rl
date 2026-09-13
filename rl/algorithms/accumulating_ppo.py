@@ -300,6 +300,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         """
         return [
             *super()._excluded_save_params(),
+            "_native_leaf_inference",
             "_reasoning_rollout_samples",
             "_nosl_is_az_samples",
             "_nosl_is_az_fresh_samples",

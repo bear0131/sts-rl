@@ -317,10 +317,8 @@ class _SpecialistEncoder(nn.Module):
         )
 
     def _role(self, token: torch.Tensor, role: str) -> torch.Tensor:
-        role_id = torch.as_tensor(
-            self.role_index[role], dtype=torch.long, device=token.device
-        )
-        return token + self.role_embedding(role_id).view(1, 1, -1)
+        # A role is a model constant: avoid a CPU→CUDA scalar copy per block.
+        return token + self.role_embedding.weight[self.role_index[role]].view(1, 1, -1)
 
     def _run(
         self,
