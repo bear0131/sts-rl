@@ -115,10 +115,9 @@ def test_exhaust_uses_card_identity_when_index_hint_is_stale(combat_factory, hin
     assert after["exhaust"] == before["exhaust"] + [expected[:2]]
 
 
-@pytest.mark.xfail(reason="F19: value boundary erases Ice Cream carryover",
-                   strict=True, raises=AssertionError)
-def test_end_turn_boundary_keeps_icecream_future_resource(combat_factory):
-    env = combat_factory(["STRIKE_RED"] * 5, relics=("Ice Cream",))
+@pytest.mark.parametrize("icecream", [False, True])
+def test_end_turn_boundary_keeps_only_persistent_energy(combat_factory, icecream):
+    env = combat_factory(["STRIKE_RED"] * 5, relics=("Ice Cream",) if icecream else ())
     observations, energy = [], []
     for available in (1, 3):
         battle = env.thick.bc.clone()
@@ -127,9 +126,10 @@ def test_end_turn_boundary_keeps_icecream_future_resource(combat_factory):
         observations.append(encode.encode_combat(normalize_sim(boundary)))
         battle.execute(sts.Action(sts.ActionType.END_TURN))
         energy.append(battle.to_dict()["player"]["energy"])
-    assert energy == [4, 6]
-    assert any(not np.array_equal(observations[0][key], observations[1][key])
-               for key in observations[0])
+    assert energy == ([4, 6] if icecream else [3, 3])
+    different = any(not np.array_equal(observations[0][key], observations[1][key])
+                    for key in observations[0])
+    assert different == icecream
 
 
 def test_native_fork_is_read_only_until_committed(combat_factory):

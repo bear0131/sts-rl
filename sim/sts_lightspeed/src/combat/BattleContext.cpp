@@ -2262,7 +2262,10 @@ void BattleContext::enterPostEnemyTurnBoundary() {
     if (player.hasStatus<PS::FLAME_BARRIER>()) {
         player.removeStatus<PS::FLAME_BARRIER>();
     }
-    player.energy = 0;
+    // Carryover is a future resource, not a turn-local counter.
+    if (!player.hasRelic<R::ICE_CREAM>()) {
+        player.energy = 0;
+    }
     player.cardsPlayedThisTurn = 0;
     player.attacksPlayedThisTurn = 0;
     player.skillsPlayedThisTurn = 0;
