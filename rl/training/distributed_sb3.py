@@ -15,6 +15,9 @@ experiment targets.
 
 from __future__ import annotations
 
+from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.search.native import apply_strict_training_settings
+
 import argparse
 import json
 import shlex
@@ -34,7 +37,6 @@ from env.core import vocab as V
 from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
     NOSL_IS_AZ_SEARCH_MODES,
-    ppo_loss_components,
 )
 from rl.training.cached_mask_vec_env import (
     CachedMaskSubprocVecEnv,
@@ -825,6 +827,8 @@ def ppo_microbatch_backward(
         rollout_data.returns
     )
     combat = phase == V.PHASE_VOCAB_INDEX["combat"]
+    if bool(getattr(model, "nosl_is_az", False)):
+        valid = valid & ~combat
     if phasewise_backward and model.hierarchical_combat_hp:
         index_groups = [
             th.nonzero(valid & group, as_tuple=False).flatten()
@@ -835,7 +839,9 @@ def ppo_microbatch_backward(
         index_groups = [None]
 
     if not index_groups:
-        raise RuntimeError("PPO minibatch has no valid hierarchical samples")
+        # Match the combined objective's differentiable zero when every row
+        # is unresolved or supervised by the combat learner instead of PPO.
+        index_groups = [None]
 
     group_scale = 1.0 / len(index_groups)
     loss_value = 0.0
@@ -844,52 +850,17 @@ def ppo_microbatch_backward(
     peak_forward_allocated = 0
     peak_observation_mix = None
     for indices in index_groups:
-        observations = (
-            rollout_data.observations
-            if indices is None
-            else {
-                key: value.index_select(0, indices)
-                for key, value in rollout_data.observations.items()
-            }
-        )
+        def after_forward(observations):
+            nonlocal peak_forward_allocated, peak_observation_mix
+            if cuda_profile is not None:
+                allocated = th.cuda.memory_allocated(model.device)
+                if allocated > peak_forward_allocated:
+                    peak_forward_allocated = allocated
+                    peak_observation_mix = cuda_observation_mix(observations)
 
-        def select(value):
-            return value if indices is None else value.index_select(0, indices)
-
-        actions = select(rollout_data.actions)
-        if isinstance(model.action_space, spaces.Discrete):
-            actions = actions.long().flatten()
-
-        with model.autocast_context():
-            values, log_prob, entropy = model.policy.evaluate_actions(
-                observations,
-                actions,
-                action_masks=select(rollout_data.action_masks),
-            )
-        if cuda_profile is not None:
-            allocated = th.cuda.memory_allocated(model.device)
-            if allocated > peak_forward_allocated:
-                peak_forward_allocated = allocated
-                peak_observation_mix = cuda_observation_mix(observations)
-        components = ppo_loss_components(
-            hierarchical=model.hierarchical_combat_hp,
-            normalize_advantage=model.normalize_advantage,
-            observations=observations,
-            advantages=select(rollout_data.advantages),
-            returns=select(rollout_data.returns),
-            old_values=select(rollout_data.old_values),
-            old_log_prob=select(rollout_data.old_log_prob),
-            values=values.flatten(),
-            log_prob=log_prob,
-            entropy=entropy,
-            clip_range=clip_range,
-            clip_range_vf=clip_range_vf,
-        )
-        loss = group_scale * (
-            components.policy_loss
-            + model.ent_coef * components.entropy_loss
-            + model.vf_coef * components.value_loss
-        )
+        components, loss = ppo_forward(model, rollout_data, clip_range, clip_range_vf,
+                                       indices=indices, after_forward=after_forward)
+        loss = group_scale * loss
         loss_value += float(loss.detach().cpu())
         if components.combat_value_loss is not None:
             combat_value_loss = float(
@@ -961,95 +932,6 @@ def cuda_observation_mix(
     return {"phase_counts": phase_counts, "active_widths": widths}
 
 
-def reasoning_microbatch_backward(
-    model: AccumulatingMaskablePPO, batch_size: int, loss_scale: float = 1.0,
-) -> dict[str, float] | None:
-    """Backpropagate one local reasoning batch without stepping the optimizer."""
-    # Trace transcripts are compiled on a CPU helper thread during PPO
-    # backward.  Join here at the last consumer so that compilation overlaps
-    # the GPU-heavy phase without changing the sampled examples.
-    compile_wait_started = time.perf_counter()
-    model._wait_for_reasoning_samples()
-    compile_wait_seconds = time.perf_counter() - compile_wait_started
-    samples = model._reasoning_rollout_samples
-    core = getattr(model.policy, "core", None)
-    if (
-        not samples
-        or model.reasoning_coef <= 0.0
-        or not hasattr(core, "reasoning_loss")
-    ):
-        return None
-    # Long transcripts are valid supervision.  The decoder extends positions
-    # beyond its initial learned table instead of dropping these samples.
-    eligible = list(samples)
-    if not eligible:
-        return None
-    count = min(int(batch_size), len(eligible))
-    indices = np.random.choice(len(eligible), size=count, replace=False)
-    batch = [eligible[int(index)] for index in indices]
-    observations = {
-        key: th.as_tensor(
-            np.stack([sample["observation"][key] for sample in batch]),
-            device=model.device,
-        )
-        for key in batch[0]["observation"]
-    }
-    actions = th.as_tensor(
-        [sample["action"] for sample in batch],
-        dtype=th.long,
-        device=model.device,
-    )
-    length = max(len(sample["inputs"]) for sample in batch)
-    from rl.policies.wholerun_reasoning import IGNORE_INDEX, VOCAB
-
-    input_ids = th.full(
-        (count, length), VOCAB.pad_id, dtype=th.long, device=model.device
-    )
-    labels = th.full(
-        (count, length), IGNORE_INDEX, dtype=th.long, device=model.device
-    )
-    for row, sample in enumerate(batch):
-        width = len(sample["inputs"])
-        input_ids[row, :width] = th.as_tensor(
-            sample["inputs"], dtype=th.long, device=model.device
-        )
-        labels[row, :width] = th.as_tensor(
-            sample["labels"], dtype=th.long, device=model.device
-        )
-    if model.device.type == "cuda":
-        th.cuda.synchronize(model.device)
-    compute_started = time.perf_counter()
-    with model.autocast_context():
-        loss, stats = core.reasoning_loss(
-            observations, actions, input_ids, labels
-        )
-        (model.reasoning_coef * loss * loss_scale).backward()
-    if model.device.type == "cuda":
-        th.cuda.synchronize(model.device)
-    compute_seconds = time.perf_counter() - compute_started
-    return {
-        "loss": float(loss.detach().cpu()),
-        "token_accuracy": float(stats["token_accuracy"]),
-        "supervised_tokens": float(stats["supervised_tokens"]),
-        "sampled_samples": float(count),
-        "samples": float(len(samples)),
-        "eligible_samples": float(len(eligible)),
-        "dropped_too_long": float(len(samples) - len(eligible)),
-        "environment_tokens": float(sum(
-            sample["environment_tokens"] for sample in batch
-        )),
-        "atomic_trace_rate": float(sum(
-            sample["precision"] == "atomic" for sample in batch
-        ) / len(batch)),
-        "sequence_length_mean": float(np.mean(
-            [len(sample["inputs"]) for sample in eligible]
-        )),
-        "sequence_length_max": float(max(
-            len(sample["inputs"]) for sample in eligible
-        )),
-        "compile_wait_sec": float(compile_wait_seconds),
-        "compute_sec": float(compute_seconds),
-    }
 
 
 def synchronize_gradient_step(
@@ -1068,7 +950,9 @@ def synchronize_gradient_step(
     barrier_timeout: float,
 ) -> dict[str, float]:
     """Average current gradients over all ranks using the selected transport."""
+    pack_started = time.perf_counter()
     local_flat = pack_gradients(model)
+    pack_seconds = time.perf_counter() - pack_started
     grad_bytes = local_flat.numel() * local_flat.element_size()
     sync_started = time.perf_counter()
     sync_mbps = 0.0
@@ -1113,6 +997,7 @@ def synchronize_gradient_step(
         except FileNotFoundError:
             pass
     return {
+        "gradient_pack_sec": pack_seconds,
         "sync_sec": time.perf_counter() - sync_started,
         "sync_mbps": sync_mbps,
         "grad_bytes": float(grad_bytes),
@@ -1424,12 +1309,7 @@ def distributed_nosl_is_az_update(
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         step_started = time.perf_counter()
-        gradient_norm = th.nn.utils.clip_grad_norm_(
-            model.policy.parameters(), model.max_grad_norm
-        )
-        gradient_norm_preclip = float(gradient_norm.detach().float().cpu())
-        model.policy.optimizer.step()
-        model.policy.optimizer.zero_grad()
+        gradient_norm_preclip = optimizer_step(model)
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         optimizer_step_seconds = time.perf_counter() - step_started
@@ -1967,27 +1847,7 @@ def main() -> None:
         setattr(model, name, value)
         setattr(args, name, value)
     if bool(getattr(model, "nosl_is_az_paper_full_gumbel", False)):
-        # Match AccumulatingMaskablePPO and the native constructor when a
-        # checkpoint is loaded and its attributes are overridden in-place.
-        canonical = {
-            "nosl_is_az_prior_temperature": 1.0,
-            "nosl_is_az_gumbel_candidates": 16,
-            "nosl_is_az_gumbel_scale": 1.0,
-            "nosl_is_az_gumbel_value_scale": 0.1,
-            "nosl_is_az_gumbel_max_visit_init": 50.0,
-            "nosl_is_az_gumbel_rescale_q": True,
-            "nosl_is_az_gumbel_use_mixed_value": True,
-            "nosl_is_az_gumbel_interior_uniformity": 0.0,
-            "nosl_is_az_gumbel_interior_coverage_fraction": 0.0,
-            "nosl_is_az_gumbel_interior_value_mode": 0,
-            "nosl_is_az_gumbel_interior_max_mix_visits": 64.0,
-            "nosl_is_az_dirichlet_alpha": 0.0,
-            "nosl_is_az_dirichlet_epsilon": 0.0,
-        }
-        for name, value in canonical.items():
-            setattr(model, name, value)
-            if hasattr(args, name):
-                setattr(args, name, value)
+        apply_strict_training_settings(model, args)
     args.nosl_is_az_search_mode = mode
     if bool(getattr(model, "nosl_is_az", False)):
         print(
@@ -2206,7 +2066,6 @@ def main() -> None:
             overworld_value_losses = []
             sync_seconds = 0.0
             sync_mbps = []
-            avg_seconds = 0.0
             gradient_pack_seconds = 0.0
             step_seconds = 0.0
             backward_seconds = 0.0
@@ -2280,93 +2139,24 @@ def main() -> None:
                     ]
                     th._foreach_mul_(gradients, 1.0 / accumulated)
 
-                    pack_started = time.perf_counter()
-                    local_flat = pack_gradients(model)
-                    grad_bytes = local_flat.numel() * local_flat.element_size()
-                    gradient_pack_seconds += time.perf_counter() - pack_started
-                    paths_to_remove = []
-
-                    if ring_transport is not None:
-                        ring_started = time.perf_counter()
-                        local_flat, bytes_sent = ring_transport.average(local_flat)
-                        elapsed = time.perf_counter() - ring_started
-                        sync_seconds += elapsed
-                        sync_mbps.append(
-                            bytes_sent / 1024 / 1024 / max(elapsed, 1e-9)
-                        )
-                        avg_started = time.perf_counter()
-                        install_flat_gradients(model, local_flat)
-                        avg_seconds += time.perf_counter() - avg_started
-                    else:
-                        sync_tag = (
-                            f"u{update:06d}_e{epoch:03d}_s{optimizer_steps:06d}"
-                        )
-                        grad_path = local_root / (
-                            f"grad_rank{args.rank}_{sync_tag}.pt"
-                        )
-                        save_gradients(local_flat, grad_path)
-                        remote_name = (
-                            f"rank{args.rank}/grad_rank{args.rank}_{sync_tag}.pt"
-                        )
-                        elapsed, mbps = sync_file_to_peers(
-                            local_file=grad_path,
-                            remote_name=remote_name,
-                            peers=peers,
-                            key=key,
-                            control_dir=control_dir,
-                            remote_root=f"{args.remote_root}/{run_id}",
-                            timeout=args.barrier_timeout,
-                        )
-                        sync_seconds += elapsed
-                        sync_mbps.append(mbps)
-
-                        peer_paths = [
-                            Path(args.remote_root)
-                            / run_id
-                            / f"rank{peer.rank}"
-                            / f"grad_rank{peer.rank}_{sync_tag}.pt"
-                            for peer in peers
-                        ]
-                        wait_started = time.perf_counter()
-                        for path in peer_paths:
-                            wait_for_sized_file(
-                                path,
-                                timeout=args.barrier_timeout,
-                                expected_size=grad_bytes,
-                            )
-                        sync_seconds += time.perf_counter() - wait_started
-
-                        avg_seconds += average_peer_gradients(
-                            model,
-                            local_flat,
-                            list(zip(
-                                (peer.rank for peer in peers),
-                                peer_paths,
-                                strict=True,
-                            )),
-                            rank=args.rank,
-                            world_size=args.world_size,
-                        )
-                        paths_to_remove = [grad_path, *peer_paths]
-
+                    sync = synchronize_gradient_step(
+                        model, rank=args.rank, world_size=args.world_size, peers=peers,
+                        key=key, control_dir=control_dir, local_root=local_root,
+                        remote_root=args.remote_root, run_id=run_id,
+                        tag=f"u{update:06d}_e{epoch:03d}_s{optimizer_steps:06d}",
+                        ring_transport=ring_transport, barrier_timeout=args.barrier_timeout,
+                    )
+                    gradient_pack_seconds += sync["gradient_pack_sec"]
+                    sync_seconds += sync["sync_sec"]
+                    sync_mbps.append(sync["sync_mbps"])
+                    grad_bytes = int(sync["grad_bytes"])
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     step_started = time.perf_counter()
-                    th.nn.utils.clip_grad_norm_(
-                        model.policy.parameters(),
-                        model.max_grad_norm,
-                    )
-                    model.policy.optimizer.step()
-                    model.policy.optimizer.zero_grad()
+                    optimizer_step(model)
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     step_seconds += time.perf_counter() - step_started
-                    for path in paths_to_remove:
-                        try:
-                            path.unlink()
-                        except FileNotFoundError:
-                            pass
-
                     accumulated = 0
                     optimizer_steps += 1
 
@@ -2456,11 +2246,7 @@ def main() -> None:
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     reasoning_step_started = time.perf_counter()
-                    th.nn.utils.clip_grad_norm_(
-                        model.policy.parameters(), model.max_grad_norm
-                    )
-                    model.policy.optimizer.step()
-                    model.policy.optimizer.zero_grad()
+                    optimizer_step(model)
                     if model.device.type == "cuda":
                         th.cuda.synchronize(model.device)
                     reasoning_step_seconds += (
@@ -2520,7 +2306,6 @@ def main() -> None:
                 "sync_mbps_mean": float(np.mean(sync_mbps)) if sync_mbps else 0.0,
                 "backward_sec": backward_seconds,
                 "gradient_pack_sec": gradient_pack_seconds,
-                "avg_grad_sec": avg_seconds,
                 "optimizer_step_sec": step_seconds,
                 "grad_bytes": grad_bytes,
                 "reasoning_loss": reasoning_mean["loss"],
@@ -2586,7 +2371,6 @@ def main() -> None:
                     + backward_seconds
                     + gradient_pack_seconds
                     + sync_seconds
-                    + avg_seconds
                     + step_seconds
                     + reasoning_sync_seconds
                     + reasoning_compile_wait_seconds

@@ -1,0 +1,165 @@
+"""PPO statistical objective, shared by local and synchronized updates."""
+from dataclasses import dataclass
+import torch as th
+import torch.nn.functional as F
+from env.core import vocab as V
+
+@dataclass(frozen=True)
+class PPOLossComponents:
+    policy_loss: th.Tensor
+    value_loss: th.Tensor
+    entropy_loss: th.Tensor
+    approx_kl: th.Tensor
+    clip_fraction: th.Tensor
+    valid_samples: int
+    combat_samples: int
+    overworld_samples: int
+    combat_value_loss: th.Tensor | None
+    overworld_value_loss: th.Tensor | None
+
+
+def _phase_balanced_mean(
+    values: th.Tensor,
+    *,
+    valid: th.Tensor,
+    combat: th.Tensor,
+) -> th.Tensor:
+    means = []
+    for group in (valid & combat, valid & ~combat):
+        if bool(group.any()):
+            means.append(values[group].mean())
+    if not means:
+        raise RuntimeError("PPO minibatch has no valid hierarchical samples")
+    return th.stack(means).mean()
+
+
+def ppo_loss_components(
+    *,
+    hierarchical: bool,
+    normalize_advantage: bool,
+    observations,
+    advantages: th.Tensor,
+    returns: th.Tensor,
+    old_values: th.Tensor,
+    old_log_prob: th.Tensor,
+    values: th.Tensor,
+    log_prob: th.Tensor,
+    entropy: th.Tensor | None,
+    clip_range: float,
+    clip_range_vf: float | None,
+    skip_combat: bool = False,
+) -> PPOLossComponents:
+    """Compute the shared native/distributed PPO objective.
+
+    Hierarchical rollouts use NaN to mark an overworld macro transition whose
+    combat option did not finish before the rollout boundary. Those samples are
+    excluded. Combat and overworld means are then weighted equally so the much
+    larger number of combat clicks cannot drown out strategic decisions.
+    """
+    if clip_range_vf is None:
+        values_pred = values
+    else:
+        values_pred = old_values + th.clamp(
+            values - old_values,
+            -clip_range_vf,
+            clip_range_vf,
+        )
+
+    ratio = th.exp(log_prob - old_log_prob)
+    clipped_ratio = th.clamp(ratio, 1 - clip_range, 1 + clip_range)
+    entropy_per_sample = log_prob if entropy is None else -entropy
+    kl_per_sample = (th.exp(log_prob - old_log_prob) - 1) - (
+        log_prob - old_log_prob
+    )
+    clipped_per_sample = (th.abs(ratio - 1) > clip_range).float()
+
+    if not hierarchical:
+        normalized_advantages = advantages
+        if normalize_advantage:
+            normalized_advantages = (
+                advantages - advantages.mean()
+            ) / (advantages.std() + 1e-8)
+        policy_loss = -th.min(
+            normalized_advantages * ratio,
+            normalized_advantages * clipped_ratio,
+        ).mean()
+        value_loss = F.mse_loss(returns, values_pred)
+        return PPOLossComponents(
+            policy_loss=policy_loss,
+            value_loss=value_loss,
+            entropy_loss=entropy_per_sample.mean(),
+            approx_kl=kl_per_sample.mean(),
+            clip_fraction=clipped_per_sample.mean(),
+            valid_samples=int(advantages.numel()),
+            combat_samples=0,
+            overworld_samples=0,
+            combat_value_loss=None,
+            overworld_value_loss=None,
+        )
+
+    phase = observations["phase"].long().reshape(-1)
+    combat = phase == V.PHASE_VOCAB_INDEX["combat"]
+    valid = th.isfinite(advantages) & th.isfinite(returns)
+    if skip_combat:
+        valid = valid & ~combat
+    if not bool(valid.any()):
+        zero = values.sum() * 0.0
+        return PPOLossComponents(
+            policy_loss=zero,
+            value_loss=zero,
+            entropy_loss=zero,
+            approx_kl=zero.detach(),
+            clip_fraction=zero.detach(),
+            valid_samples=0,
+            combat_samples=0,
+            overworld_samples=0,
+            combat_value_loss=None,
+            overworld_value_loss=None,
+        )
+    normalized_advantages = th.where(valid, advantages, th.zeros_like(advantages))
+    if normalize_advantage:
+        normalized_advantages = normalized_advantages.clone()
+        for group in (valid & combat, valid & ~combat):
+            count = int(group.sum().item())
+            if count > 1:
+                selected = normalized_advantages[group]
+                normalized_advantages[group] = (
+                    selected - selected.mean()
+                ) / (selected.std(unbiased=False) + 1e-8)
+
+    policy_per_sample = -th.min(
+        normalized_advantages * ratio,
+        normalized_advantages * clipped_ratio,
+    )
+    safe_returns = th.where(valid, returns, values_pred.detach())
+    value_per_sample = (safe_returns - values_pred).square()
+    policy_loss = _phase_balanced_mean(
+        policy_per_sample, valid=valid, combat=combat
+    )
+    value_loss = _phase_balanced_mean(
+        value_per_sample, valid=valid, combat=combat
+    )
+    entropy_loss = _phase_balanced_mean(
+        entropy_per_sample, valid=valid, combat=combat
+    )
+
+    combat_valid = valid & combat
+    overworld_valid = valid & ~combat
+    return PPOLossComponents(
+        policy_loss=policy_loss,
+        value_loss=value_loss,
+        entropy_loss=entropy_loss,
+        approx_kl=kl_per_sample[valid].mean(),
+        clip_fraction=clipped_per_sample[valid].mean(),
+        valid_samples=int(valid.sum().item()),
+        combat_samples=int(combat_valid.sum().item()),
+        overworld_samples=int(overworld_valid.sum().item()),
+        combat_value_loss=(
+            value_per_sample[combat_valid].mean()
+            if bool(combat_valid.any()) else None
+        ),
+        overworld_value_loss=(
+            value_per_sample[overworld_valid].mean()
+            if bool(overworld_valid.any()) else None
+        ),
+    )

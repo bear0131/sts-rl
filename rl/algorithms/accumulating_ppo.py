@@ -18,6 +18,9 @@ from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
 from rl.search.native import complete_searches, observation_as_tensor as _leaf_observation_as_tensor
+from rl.algorithms.ppo import PPOLossComponents, ppo_loss_components
+from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 
@@ -43,165 +46,10 @@ def _fill_nosl_combat_value_targets(
     return len(samples)
 
 
-@dataclass(frozen=True)
-class PPOLossComponents:
-    policy_loss: th.Tensor
-    value_loss: th.Tensor
-    entropy_loss: th.Tensor
-    approx_kl: th.Tensor
-    clip_fraction: th.Tensor
-    valid_samples: int
-    combat_samples: int
-    overworld_samples: int
-    combat_value_loss: th.Tensor | None
-    overworld_value_loss: th.Tensor | None
 
 
-def _phase_balanced_mean(
-    values: th.Tensor,
-    *,
-    valid: th.Tensor,
-    combat: th.Tensor,
-) -> th.Tensor:
-    means = []
-    for group in (valid & combat, valid & ~combat):
-        if bool(group.any()):
-            means.append(values[group].mean())
-    if not means:
-        raise RuntimeError("PPO minibatch has no valid hierarchical samples")
-    return th.stack(means).mean()
 
 
-def ppo_loss_components(
-    *,
-    hierarchical: bool,
-    normalize_advantage: bool,
-    observations,
-    advantages: th.Tensor,
-    returns: th.Tensor,
-    old_values: th.Tensor,
-    old_log_prob: th.Tensor,
-    values: th.Tensor,
-    log_prob: th.Tensor,
-    entropy: th.Tensor | None,
-    clip_range: float,
-    clip_range_vf: float | None,
-    skip_combat: bool = False,
-) -> PPOLossComponents:
-    """Compute the shared native/distributed PPO objective.
-
-    Hierarchical rollouts use NaN to mark an overworld macro transition whose
-    combat option did not finish before the rollout boundary. Those samples are
-    excluded. Combat and overworld means are then weighted equally so the much
-    larger number of combat clicks cannot drown out strategic decisions.
-    """
-    if clip_range_vf is None:
-        values_pred = values
-    else:
-        values_pred = old_values + th.clamp(
-            values - old_values,
-            -clip_range_vf,
-            clip_range_vf,
-        )
-
-    ratio = th.exp(log_prob - old_log_prob)
-    clipped_ratio = th.clamp(ratio, 1 - clip_range, 1 + clip_range)
-    entropy_per_sample = log_prob if entropy is None else -entropy
-    kl_per_sample = (th.exp(log_prob - old_log_prob) - 1) - (
-        log_prob - old_log_prob
-    )
-    clipped_per_sample = (th.abs(ratio - 1) > clip_range).float()
-
-    if not hierarchical:
-        normalized_advantages = advantages
-        if normalize_advantage:
-            normalized_advantages = (
-                advantages - advantages.mean()
-            ) / (advantages.std() + 1e-8)
-        policy_loss = -th.min(
-            normalized_advantages * ratio,
-            normalized_advantages * clipped_ratio,
-        ).mean()
-        value_loss = F.mse_loss(returns, values_pred)
-        return PPOLossComponents(
-            policy_loss=policy_loss,
-            value_loss=value_loss,
-            entropy_loss=entropy_per_sample.mean(),
-            approx_kl=kl_per_sample.mean(),
-            clip_fraction=clipped_per_sample.mean(),
-            valid_samples=int(advantages.numel()),
-            combat_samples=0,
-            overworld_samples=0,
-            combat_value_loss=None,
-            overworld_value_loss=None,
-        )
-
-    phase = observations["phase"].long().reshape(-1)
-    combat = phase == V.PHASE_VOCAB_INDEX["combat"]
-    valid = th.isfinite(advantages) & th.isfinite(returns)
-    if skip_combat:
-        valid = valid & ~combat
-    if not bool(valid.any()):
-        zero = values.sum() * 0.0
-        return PPOLossComponents(
-            policy_loss=zero,
-            value_loss=zero,
-            entropy_loss=zero,
-            approx_kl=zero.detach(),
-            clip_fraction=zero.detach(),
-            valid_samples=0,
-            combat_samples=0,
-            overworld_samples=0,
-            combat_value_loss=None,
-            overworld_value_loss=None,
-        )
-    normalized_advantages = th.where(valid, advantages, th.zeros_like(advantages))
-    if normalize_advantage:
-        normalized_advantages = normalized_advantages.clone()
-        for group in (valid & combat, valid & ~combat):
-            count = int(group.sum().item())
-            if count > 1:
-                selected = normalized_advantages[group]
-                normalized_advantages[group] = (
-                    selected - selected.mean()
-                ) / (selected.std(unbiased=False) + 1e-8)
-
-    policy_per_sample = -th.min(
-        normalized_advantages * ratio,
-        normalized_advantages * clipped_ratio,
-    )
-    safe_returns = th.where(valid, returns, values_pred.detach())
-    value_per_sample = (safe_returns - values_pred).square()
-    policy_loss = _phase_balanced_mean(
-        policy_per_sample, valid=valid, combat=combat
-    )
-    value_loss = _phase_balanced_mean(
-        value_per_sample, valid=valid, combat=combat
-    )
-    entropy_loss = _phase_balanced_mean(
-        entropy_per_sample, valid=valid, combat=combat
-    )
-
-    combat_valid = valid & combat
-    overworld_valid = valid & ~combat
-    return PPOLossComponents(
-        policy_loss=policy_loss,
-        value_loss=value_loss,
-        entropy_loss=entropy_loss,
-        approx_kl=kl_per_sample[valid].mean(),
-        clip_fraction=clipped_per_sample[valid].mean(),
-        valid_samples=int(valid.sum().item()),
-        combat_samples=int(combat_valid.sum().item()),
-        overworld_samples=int(overworld_valid.sum().item()),
-        combat_value_loss=(
-            value_per_sample[combat_valid].mean()
-            if bool(combat_valid.any()) else None
-        ),
-        overworld_value_loss=(
-            value_per_sample[overworld_valid].mean()
-            if bool(overworld_valid.any()) else None
-        ),
-    )
 
 
 class AccumulatingMaskablePPO(MaskablePPO):
@@ -411,31 +259,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_dirichlet_alpha = float(nosl_is_az_dirichlet_alpha)
         self.nosl_is_az_dirichlet_epsilon = float(nosl_is_az_dirichlet_epsilon)
         if self.nosl_is_az_paper_full_gumbel:
-            # Keep the serialized model metadata aligned with the native
-            # strict-paper path.  The native constructor repeats this
-            # canonicalization so direct environment callers get the same
-            # semantics.
-            if self.nosl_is_az_search_mode != "full_gumbel":
-                raise ValueError(
-                    "paper Full-Gumbel mode requires search_mode='full_gumbel'"
-                )
-            self.nosl_is_az_prior_temperature = 1.0
-            # DeepMind mctx's paper policy uses max_num_considered_actions=16.
-            # The legacy mode keeps 0 as the project-specific "all legal"
-            # convention; strict paper mode must use the paper default.
-            self.nosl_is_az_gumbel_candidates = 16
-            self.nosl_is_az_gumbel_scale = 1.0
-            # Match mctx.qtransform_completed_by_mix_value's value_scale=0.1.
-            self.nosl_is_az_gumbel_value_scale = 0.1
-            self.nosl_is_az_gumbel_max_visit_init = 50.0
-            self.nosl_is_az_gumbel_rescale_q = True
-            self.nosl_is_az_gumbel_use_mixed_value = True
-            self.nosl_is_az_gumbel_interior_uniformity = 0.0
-            self.nosl_is_az_gumbel_interior_coverage_fraction = 0.0
-            self.nosl_is_az_gumbel_interior_value_mode = 0
-            self.nosl_is_az_gumbel_interior_max_mix_visits = 64.0
-            self.nosl_is_az_dirichlet_alpha = 0.0
-            self.nosl_is_az_dirichlet_epsilon = 0.0
+            apply_strict_training_settings(self)
         self.nosl_is_az_master_nonce = int(nosl_is_az_master_nonce)
         self.nosl_is_az_batch_size = int(nosl_is_az_batch_size)
         self.nosl_is_az_micro_batch_size = int(nosl_is_az_micro_batch_size)
@@ -1960,19 +1784,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         return result
 
     def _optimizer_step(self, micro_batches: int) -> float:
-        """Average accumulated gradients, clip once, and update parameters."""
-        if micro_batches < 1:
-            return
-        scale = 1.0 / micro_batches
-        for parameter in self.policy.parameters():
-            if parameter.grad is not None:
-                parameter.grad.mul_(scale)
-        gradient_norm = th.nn.utils.clip_grad_norm_(
-            self.policy.parameters(), self.max_grad_norm
-        )
-        self.policy.optimizer.step()
-        self.policy.optimizer.zero_grad()
-        return float(gradient_norm.detach().float().cpu())
+        return optimizer_step(self, micro_batches)
 
     def _train_reasoning(self) -> dict[str, float]:
         self._wait_for_reasoning_samples()
@@ -2008,46 +1820,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         accumulation_steps = self.reasoning_gradient_accumulation_steps
         self.policy.optimizer.zero_grad()
         for reasoning_update in range(self.reasoning_updates):
-            count = min(self.reasoning_batch_size, len(eligible))
-            indices = np.random.choice(len(eligible), size=count, replace=False)
-            batch = [eligible[int(index)] for index in indices]
-            observations = {
-                key: th.as_tensor(
-                    np.stack([sample["observation"][key] for sample in batch]),
-                    device=self.device,
-                )
-                for key in batch[0]["observation"]
-            }
-            actions = th.as_tensor(
-                [sample["action"] for sample in batch],
-                dtype=th.long,
-                device=self.device,
-            )
-            length = max(len(sample["inputs"]) for sample in batch)
-            from rl.policies.wholerun_reasoning import IGNORE_INDEX, VOCAB
-
-            input_ids = th.full(
-                (count, length), VOCAB.pad_id, dtype=th.long, device=self.device
-            )
-            labels = th.full(
-                (count, length), IGNORE_INDEX, dtype=th.long, device=self.device
-            )
-            for row, sample in enumerate(batch):
-                width = len(sample["inputs"])
-                input_ids[row, :width] = th.as_tensor(
-                    sample["inputs"], dtype=th.long, device=self.device
-                )
-                labels[row, :width] = th.as_tensor(
-                    sample["labels"], dtype=th.long, device=self.device
-                )
-
-            with self.autocast_context():
-                reasoning_loss, stats = core.reasoning_loss(
-                    observations, actions, input_ids, labels
-                )
-                weighted_loss = self.reasoning_coef * reasoning_loss
-            weighted_loss.backward()
-            sampled_samples += count
+            stats = reasoning_microbatch_backward(
+                self, self.reasoning_batch_size, synchronize=False)
+            sampled_samples += int(stats["sampled_samples"])
             group_finished = (
                 (reasoning_update + 1) % accumulation_steps == 0
                 or reasoning_update + 1 >= self.reasoning_updates
@@ -2060,7 +1835,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 )
                 self._optimizer_step(group_size)
                 optimizer_steps += 1
-            losses.append(float(reasoning_loss.detach().cpu()))
+            losses.append(stats["loss"])
             accuracies.append(stats["token_accuracy"])
             supervised += stats["supervised_tokens"]
 
@@ -2114,35 +1889,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.policy.optimizer.zero_grad()
 
             for rollout_data in self.rollout_buffer.get(self.batch_size):
-                actions = rollout_data.actions
-                if isinstance(self.action_space, spaces.Discrete):
-                    actions = rollout_data.actions.long().flatten()
-
-                with self.autocast_context():
-                    values, log_prob, entropy = self.policy.evaluate_actions(
-                        rollout_data.observations,
-                        actions,
-                        action_masks=rollout_data.action_masks,
-                    )
-                values = values.flatten()
-
-                components = ppo_loss_components(
-                    hierarchical=self.hierarchical_combat_hp,
-                    normalize_advantage=self.normalize_advantage,
-                    observations=rollout_data.observations,
-                    advantages=rollout_data.advantages,
-                    returns=rollout_data.returns,
-                    old_values=rollout_data.old_values,
-                    old_log_prob=rollout_data.old_log_prob,
-                    values=values,
-                    log_prob=log_prob,
-                    entropy=entropy,
-                    clip_range=clip_range,
-                    clip_range_vf=(
-                        clip_range_vf
-                        if self.clip_range_vf is not None else None
-                    ),
-                    skip_combat=self.nosl_is_az,
+                components, loss = ppo_forward(
+                    self, rollout_data, clip_range,
+                    clip_range_vf if self.clip_range_vf is not None else None,
                 )
                 policy_loss = components.policy_loss
                 value_loss = components.value_loss
@@ -2162,12 +1911,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     overworld_value_losses.append(
                         components.overworld_value_loss.item()
                     )
-
-                loss = (
-                    policy_loss
-                    + self.ent_coef * entropy_loss
-                    + self.vf_coef * value_loss
-                )
 
                 approx_kl_div = float(components.approx_kl.detach().cpu())
                 approx_kl_divs.append(approx_kl_div)

@@ -16,6 +16,24 @@ from env.core.run_env import unpack_nosl_observation_buffer
 from rl.policies.model import observation_for_policy
 
 
+STRICT_SEARCH_DEFAULTS = {
+    'prior_temperature': 1.0, 'gumbel_candidates': 16, 'gumbel_scale': 1.0,
+    'gumbel_value_scale': 0.1, 'gumbel_max_visit_init': 50.0,
+    'gumbel_rescale_q': True, 'gumbel_use_mixed_value': True,
+    'gumbel_interior_uniformity': 0.0, 'gumbel_interior_coverage_fraction': 0.0,
+    'gumbel_interior_value_mode': 0, 'gumbel_interior_max_mix_visits': 64.0,
+}
+
+
+def apply_strict_training_settings(model, *mirrors):
+    """Keep new models, resumed models and their CLI metadata consistent."""
+    if model.nosl_is_az_search_mode != 'full_gumbel':
+        raise ValueError("paper Full-Gumbel mode requires search_mode='full_gumbel'")
+    for name, value in dict(STRICT_SEARCH_DEFAULTS, dirichlet_alpha=0.0, dirichlet_epsilon=0.0).items():
+        for target in (model, *mirrors):
+            setattr(target, 'nosl_is_az_' + name, value)
+
+
 @dataclass(frozen=True)
 class NativeSearchConfig:
     simulations: int = 128
@@ -45,6 +63,9 @@ class NativeSearchConfig:
             raise ValueError("root_search_mode must be 0 (PUCT), 1 (Gumbel) or 2 (Full Gumbel)")
         if self.paper_full_gumbel and self.root_search_mode != 2:
             raise ValueError("paper_full_gumbel requires root_search_mode=2")
+        if self.paper_full_gumbel:
+            for name, value in STRICT_SEARCH_DEFAULTS.items():
+                object.__setattr__(self, name, value)
         if self.prior_temperature <= 0 or self.c_puct < 0 or self.gumbel_candidates < 0:
             raise ValueError("invalid search temperature, PUCT coefficient or candidate count")
         if any(isinstance(value, float) and not np.isfinite(value) for value in asdict(self).values()):
