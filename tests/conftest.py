@@ -6,6 +6,7 @@ for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
 
 import pytest
 import torch
+import numpy as np
 
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
@@ -39,3 +40,20 @@ def combat_factory():
     yield make
     for env in created:
         env.close()
+
+
+@pytest.fixture
+def short_combat_env_type():
+    class ShortCombatEnv(SlayTheSpireEnv):
+        def reset(self, **kwargs):
+            super().reset(**kwargs)
+            # Enter through the real run state machine so exit callbacks exist.
+            for _ in range(64):
+                if self.thick.bc is not None:
+                    break
+                self.step(int(np.flatnonzero(self.action_masks())[0]))
+            assert self.thick.bc is not None, "fixture failed to reach combat"
+            self.thick.bc.set_player_strength(999)
+            self._invalidate_backend_cache()
+            return self._obs(), self._info()
+    return ShortCombatEnv

@@ -56,17 +56,23 @@ also retained.
     python -m rl.benchmarks.train --output artifacts/local/cpu-small.json --device cpu
     python -m rl.benchmarks.train --output artifacts/local/gpu-medium.json --device cuda --n-envs 8 --n-steps 64 --batch-size 128 --accumulation 2 --epochs 2 --updates 3 --d-model 128 --layers 4 --heads 8 --timeout 180
     python -m rl.benchmarks.train --output artifacts/local/gpu-subproc.json --device cuda --vec-env subproc --n-envs 8 --n-steps 64 --batch-size 128 --d-model 128 --layers 4 --heads 8
+    python -m rl.benchmarks.train --output artifacts/local/nosl-cpu.json --device cpu --search puct --n-steps 64 --updates 4 --timeout 180
 
 Each command supervises a separate worker with a wall-time budget; timeout exits
 124 and kills only that worker's process tree. Reusing an output filename fails
 instead of overwriting evidence. The runner uses WholeRun wrapper ordering,
 split-pointer policy, normal or hierarchical PPO, and supports existing cached
-subprocess/grouped vector environments. It does not benchmark NOSL self-play,
-Ray, remote ring synchronization or long-term convergence.
+subprocess/grouped vector environments. --search puct/full/strict enables native
+NOSL self-play and hierarchical combat HP, with depth=0 and an explicitly bounded
+replay (default 2,048 rows). Search runs fail if no completed-fight labels reach
+replay: merely running the overworld PPO must not masquerade as an AZ update.
+The training tests enter short fights through the real run state machine and
+verify native PUCT/strict Full Gumbel targets reach the learner. Neither these
+tests nor benchmarks cover Ray, remote synchronization or long-term convergence.
 
-JSON records configuration, commit/dirty state, actual native path, dependency
+JSON records configuration, commit/dirty state, actual native path/hash, dependency
 versions and hardware, setup/warmup/process/measurement time, rollout and
-optimization time, actual transitions/s, buffer/parameter storage, process-tree
+optimization time, actual transitions/s, buffer/replay/parameter storage, process-tree
 RSS and CPU, system available memory, and GPU device telemetry plus Torch
 allocated/reserved/peak bytes. NVIDIA device samples include other processes;
 100% process-tree CPU is one logical core and RSS can count shared pages twice.

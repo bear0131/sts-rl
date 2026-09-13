@@ -6,6 +6,7 @@ Output intentionally stays outside source control under artifacts/local/.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -36,6 +37,9 @@ def parser():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--hierarchical", action="store_true")
     p.add_argument("--amp", choices=("off", "bf16"), default="off")
+    p.add_argument("--search", choices=("none", "puct", "full", "strict"), default="none")
+    p.add_argument("--simulations", type=int, default=8)
+    p.add_argument("--replay-capacity", type=int, default=2048)
     p.add_argument("--timeout", type=float, default=180)
     p.add_argument("--sample-interval", type=float, default=0.5)
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -101,6 +105,13 @@ def run_worker(args):
             SplitStSPointerPolicy, env, n_steps=args.n_steps, batch_size=args.batch_size,
             n_epochs=args.epochs, gradient_accumulation_steps=args.accumulation,
             hierarchical_combat_hp=args.hierarchical, amp_mode=args.amp,
+            nosl_is_az=args.search != "none", nosl_is_az_cpp=args.search != "none",
+            nosl_is_az_depth=0, nosl_is_az_simulations=args.simulations,
+            nosl_is_az_search_mode="full_gumbel" if args.search in ("full", "strict") else "puct",
+            nosl_is_az_paper_full_gumbel=args.search == "strict",
+            nosl_is_az_replay_capacity=args.replay_capacity,
+            nosl_is_az_micro_batch_size=args.batch_size,
+            nosl_is_az_batch_size=args.batch_size,
             policy_kwargs=dict(d_model=args.d_model, n_layers=args.layers,
                                n_heads=args.heads, map_dag=True),
             seed=args.seed, device=args.device, learning_rate=3e-4,
@@ -139,6 +150,9 @@ def run_worker(args):
         observations = model.rollout_buffer.observations
         buffer_bytes = sum(x.nbytes for x in buffer_arrays.values())
         buffer_bytes += sum(x.nbytes for x in observations.values())
+        replay = getattr(model, "_nosl_is_az_replay", None)
+        if args.search != "none" and (replay is None or replay.total_added == 0):
+            raise RuntimeError("search budget produced no completed-fight labels; increase steps")
         def git(*a):
             return subprocess.check_output(["git", *a], text=True).strip()
         result = {
@@ -146,6 +160,7 @@ def run_worker(args):
             "identity": {"commit": git("rev-parse", "HEAD"),
                          "dirty": bool(git("status", "--porcelain")),
                          "native_module": str(Path(sts.__file__).resolve()),
+                         "native_sha256": hashlib.sha256(Path(sts.__file__).read_bytes()).hexdigest(),
                          "python": platform.python_version(), "platform": platform.platform(),
                          "cpu_logical": psutil.cpu_count(), "cpu_physical": psutil.cpu_count(logical=False),
                          "ram_total_bytes": psutil.virtual_memory().total,
@@ -158,9 +173,12 @@ def run_worker(args):
                        "collection_seconds": model.collection_seconds,
                        "optimization_seconds": model.optimization_seconds},
             "memory": {"rollout_buffer_bytes": buffer_bytes,
+                       "replay_bytes": 0 if replay is None else replay.allocated_bytes,
                        "parameter_bytes": sum(v.numel() * v.element_size() for v in model.policy.parameters()),
                        "cuda": cuda},
             "resources": monitor.summary, "samples": monitor.samples,
+            "learner": {"replay_samples": 0 if replay is None else replay.size,
+                        "replay_total_added": 0 if replay is None else replay.total_added},
         }
         result["config"]["output"] = str(args.output)
         return result
@@ -171,13 +189,16 @@ def run_worker(args):
 def main():
     args = parser().parse_args()
     for field in ("threads", "n_envs", "n_steps", "batch_size", "accumulation",
-                  "epochs", "updates", "d_model", "layers", "heads", "envs_per_worker"):
+                  "epochs", "updates", "d_model", "layers", "heads", "envs_per_worker",
+                  "simulations", "replay_capacity"):
         if getattr(args, field) < 1:
             raise ValueError(field + " must be positive")
     if args.warmup_updates < 0 or args.timeout <= 0 or args.sample_interval <= 0:
         raise ValueError("invalid warmup/time budget")
     if args.n_envs * args.n_steps % args.batch_size:
         raise ValueError("use complete microbatches for controlled benchmark comparisons")
+    if args.search != "none":
+        args.hierarchical = True
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.worker:
         try:
