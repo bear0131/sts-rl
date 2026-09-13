@@ -38,7 +38,8 @@ def run(args):
         model.set_random_seed(args.seed)
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
-            model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp)
+            model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
+                failure_path=args.output.with_suffix('.failed-leaves.npz'))
         _, callback = model._setup_learn(args.n_steps * args.n_envs * args.updates,
             callback=lambda *_: True, reset_num_timesteps=True)
         callback.on_training_start({}, {})

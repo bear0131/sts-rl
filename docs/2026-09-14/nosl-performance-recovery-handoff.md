@@ -60,7 +60,9 @@
 
 ## 验收记录
 
-本地完整 suite 244 passed、2 GPU-only skip、8 既有 strict xfail；新增 SSH 边界与真实生命周期 focused 4 passed。GPU 独立合同 3 passed，覆盖 FP32/BF16 graph 输入、权重变化及缓存。
+正式启动扩大验收曾在第 35 次 graph 捕获失败；三个独立完整采样复现，allocator 开/关无影响。根因为 graph 引用预热阶段的外部 cuBLAS workspace，在其他 graph 释放该 stream 的 workspace 后发生非法显存访问。已改为捕获前清预热 cache、在 graph private pool 内拥有 workspace、捕获后释放外部 cache 引用；新 GPU 合同对旧实现稳定失败、修复版通过。不能只凭此前短程性能对照认定长程稳定。CPU 叶输入快照可用基准的 `--leaf-input NPZ` 重放；相关规范见搜索 README。
+
+修复后本地完整 suite 246 passed、4 GPU-only skip、8 既有 strict xfail（37.64s）；GPU 独立合同 5 passed，覆盖 FP32/BF16 输入/权重变化、100 次捕获/淘汰与 workspace 生命周期。完整长度原失败 workload 和正式保存的最终结果追加工作日志。
 
 真实四机小预算 smoke 从 0→512→2816→3328：每 rank 自有 replay 保留，ring 真实平均梯度；仅 rank 0 发 STOP 后四 rank 同步保存退出。3328 时四机权重 SHA `ff8ba0e316294e93f5c6c5a30d0c5f444275b6feda2eeb150237c2a07ff355aa`，Adam SHA `53d6bf919ac8a25ab5422921d9166476ae30b8eefb1e39e1438b36d81e6b0f85` 完全相同。W&B smoke 为 offline，不把它声称为云端 resume 验收。
 

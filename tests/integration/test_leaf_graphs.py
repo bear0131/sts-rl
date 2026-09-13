@@ -64,3 +64,65 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
     model.policy.set_training_mode(True)
     with pytest.raises(RuntimeError, match='eval mode'):
         cache({}, 1)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
+def test_graph_cache_survives_many_capture_streams_and_evictions(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5)
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=9,
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=256, n_layers=8, n_heads=8))
+    model.amp_mode = 'bf16'
+    model.policy.set_training_mode(False)
+    cache = CombatLeafGraphs(model.policy.core, model.device, amp='bf16', capacity=32)
+    obs = env._obs()
+    for index in range(100):
+        count = 1 + index % 24
+        width = 1 + (index // 24) % min(4, obs['relics'].shape[0])
+        batch = {k: np.stack([v] * count) for k,v in obs.items()
+                 if k in model.policy.core.combat_observation_keys}
+        batch['relics'].fill(0)
+        batch['relics'][:, width-1] = 1
+        model._native_leaf_inference = None
+        expected = forward_leaves(model, batch, autocast=model.autocast_context)
+        model._native_leaf_inference = cache
+        actual = forward_leaves(model, batch, autocast=model.autocast_context)
+        for a,b in zip(actual,expected):
+            np.testing.assert_array_equal(a,b,err_msg=f'capture {index}, batch {count}, width {width}')
+        # Keep one old graph alive while other captures cycle through CUDA's
+        # stream pool; only replaying newly captured graphs misses this lifetime.
+        anchor = {k:v[:1].copy() for k,v in batch.items()}
+        anchor['relics'].fill(0)
+        model._native_leaf_inference = None
+        expected = forward_leaves(model, anchor, autocast=model.autocast_context)
+        model._native_leaf_inference = cache
+        actual = forward_leaves(model, anchor, autocast=model.autocast_context)
+        for a,b in zip(actual,expected):
+            np.testing.assert_array_equal(a,b,err_msg=f'old graph after capture {index}')
+    assert cache.captures >= 96
+    assert len(cache.entries) == 32
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
+def test_graph_owns_workspace_after_blas_cache_is_released(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5)
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=9,
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=256, n_layers=8, n_heads=8))
+    model.amp_mode = 'bf16'
+    model.policy.set_training_mode(False)
+    obs = env._obs()
+    batch = {k:np.stack([obs[k]] * 17) for k in sorted(obs)
+             if k in model.policy.core.combat_observation_keys}
+    for key in ('monster_move', 'monster_intent_cat'):
+        batch[key] = batch[key].astype(np.int32)
+    batch['relics'].fill(0)
+    batch['relics'][:, 4] = 1
+    expected = forward_leaves(model, batch, autocast=model.autocast_context)
+    model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp='bf16')
+    forward_leaves(model, batch, autocast=model.autocast_context)
+    # CUDA graph destruction clears stream-local cuBLAS workspaces. Releasing
+    # eager workspaces must not invalidate any other cached graph's pointers.
+    torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()
+    actual = forward_leaves(model, batch, autocast=model.autocast_context)
+    for a,b in zip(actual,expected):
+        np.testing.assert_array_equal(a,b)

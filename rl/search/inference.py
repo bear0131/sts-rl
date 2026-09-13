@@ -6,13 +6,15 @@ clear() after replacing parameters or changing model structure. This backend is
 owned by the runtime, excluded from checkpoints, and never used for backward.
 """
 from collections import OrderedDict
+import json
+from pathlib import Path
 
 import numpy as np
 import torch
 
 
 class CombatLeafGraphs:
-    def __init__(self, core, device, *, amp='off', capacity=32):
+    def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None):
         if torch.device(device).type != 'cuda':
             raise ValueError('combat CUDA graphs require a CUDA device')
         if capacity < 1 or amp not in ('off', 'bf16'):
@@ -20,11 +22,26 @@ class CombatLeafGraphs:
         self.core, self.device, self.amp, self.capacity = core, device, amp, capacity
         self.entries = OrderedDict()
         self.hits = self.captures = 0
+        self.failure_path = failure_path
 
     def clear(self):
         self.entries.clear()
 
     def __call__(self, observations, width):
+        try:
+            return self._forward(observations, width)
+        except RuntimeError:
+            # CUDA errors can poison the context: save only CPU inputs here.
+            if self.failure_path is not None:
+                target = Path(self.failure_path)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                np.savez(target, **observations)
+                target.with_suffix('.json').write_text(json.dumps(dict(
+                    width=width, amp=self.amp, captures=self.captures, hits=self.hits,
+                    signatures=[repr(s) for s in self.entries])), encoding='utf-8')
+            raise
+
+    def _forward(self, observations, width):
         if self.core.training:
             raise RuntimeError('leaf graphs require eval mode')
         signature = (width, tuple((k, v.shape, v.dtype.str) for k, v in observations.items()))
@@ -80,9 +97,15 @@ class CombatLeafGraphs:
             for _ in range(3):
                 forward()
         current.wait_stream(stream)
+        torch.cuda.synchronize(self.device)
+        # Capture each graph's cuBLAS workspace in its own private pool. CUDA
+        # streams come from a finite reusable pool; an evicted graph must not
+        # release workspace still referenced by another graph on that stream.
+        torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, stream=stream):
             logits, values = forward()
         current.wait_stream(stream)
+        torch._C._cuda_clearCublasWorkspaces()
         entry.update(graph=graph, logits=logits, values=values)
         return entry

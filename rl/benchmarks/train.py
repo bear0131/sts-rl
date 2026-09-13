@@ -24,6 +24,7 @@ def parser():
     p.add_argument("--search-config", type=Path, help="NativeSearchConfig JSON for fixed rollout comparisons")
     p.add_argument("--checkpoint", type=Path, help="Existing model for the leaf inference workload")
     p.add_argument("--leaf-repeats", type=int, default=200)
+    p.add_argument("--leaf-input", type=Path, help="Replay a saved CPU leaf observation NPZ")
     p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
     p.add_argument("--profile", action="store_true", help="Export a bounded CPU/CUDA operator trace for leaves")
     p.add_argument("--device", choices=("cpu", "cuda"), default="cpu")

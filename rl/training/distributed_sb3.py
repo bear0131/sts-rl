@@ -1866,7 +1866,9 @@ def main() -> None:
                           (int(model.num_timesteps) if args.resume_state is not None else 0))
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
-        model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode)
+        model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
+            failure_path=(args.training_state_dir / f'failed-leaves-rank{args.rank}.npz')
+            if args.training_state_dir else None)
 
     ring_transport = None
     if args.gradient_transport == "ssh-ring":

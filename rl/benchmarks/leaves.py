@@ -41,7 +41,7 @@ def run(args):
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp)
         observations = []
-        for index in range(args.n_envs):
+        for index in range(0 if args.leaf_input else args.n_envs):
             env.reset(seed=args.seed + index)
             for _ in range(100):
                 if env.thick.bc is not None:
@@ -50,9 +50,14 @@ def run(args):
             if env.thick.bc is None:
                 raise RuntimeError('failed to reach combat in bounded fixture')
             observations.append(env._obs())
-        batch = {key: np.stack([o[key] for o in observations])
-                 for key in model.policy.core.combat_observation_keys
-                 if key in observations[0] and key in model.observation_space.spaces}
+        if args.leaf_input:
+            with np.load(args.leaf_input, allow_pickle=False) as saved:
+                batch = {key:saved[key] for key in saved.files}
+        else:
+            batch = {key: np.stack([o[key] for o in observations])
+                     for key in model.policy.core.combat_observation_keys
+                     if key in observations[0] and key in model.observation_space.spaces}
+        batch_size = next(iter(batch.values())).shape[0]
         def forward():
             return forward_leaves(model, batch, autocast=model.autocast_context)
         setup = time.perf_counter() - started
@@ -97,7 +102,7 @@ def run(args):
                 native_sha256=hashlib.sha256(Path(slaythespire.__file__).read_bytes()).hexdigest(),
                 checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest() if args.checkpoint else None),
             timing=dict(setup_seconds=setup, warmup_seconds=warmup, measured_seconds=elapsed,
-                leaf_batches=args.leaf_repeats, leaves=args.leaf_repeats * args.n_envs,
+                leaf_batches=args.leaf_repeats, leaves=args.leaf_repeats * batch_size,
                 milliseconds_per_batch=elapsed * 1000 / args.leaf_repeats),
             output_sha256=hashlib.sha256(b''.join(x.tobytes() for x in result)).hexdigest(),
             memory=dict(cuda=cuda), resources=monitor.summary, samples=monitor.samples, profile=profile)

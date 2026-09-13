@@ -19,3 +19,12 @@ Distributed training selects it with `--leaf-inference cuda-graph`; eager remain
 the default for other models/devices. GPU tests in
 `tests/integration/test_leaf_graphs.py` cover input/weight changes, LRU eviction,
 FP32/BF16 bitwise equality and checkpoint exclusion. CPU CI cannot validate CUDA.
+
+Each graph captures its own cuBLAS workspace. Warmup workspaces must be cleared
+before capture and the external cache released afterward; otherwise graph
+eviction/stream reuse can free memory referenced by a different live graph.
+`test_graph_owns_workspace_after_blas_cache_is_released` reproduces that lifetime
+failure independently of a long game rollout. This uses the CUDA runtime's
+`torch._C._cuda_clearCublasWorkspaces` binding (validated on Torch 2.12.0+cu132).
+Production recovery directories receive CPU leaf NPZ/JSON evidence on a graph
+runtime error; a poisoned CUDA context is never silently reused.

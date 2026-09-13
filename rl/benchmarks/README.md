@@ -12,3 +12,8 @@ SEARCH.json 是 `NativeSearchConfig` 字段。可对比 `--leaf-inference eager/
 与 `--vec-env subproc/grouped --envs-per-worker N`。输出 hash 覆盖最后一个
 rollout 的观测、动作、奖励、value、log-prob 和完整战斗标签；计时不进入摘要。
 采样 workload 包含首次 CUDA graph capture，不应冒称全部是稳定热态。
+
+`--workload leaves --leaf-input FAILURE.npz --checkpoint MODEL` 可直接重放保存的
+叶输入；与自动进战斗 fixture 共用后续计时/后端，不需要另写临时推理程序。
+当单批可通过而长采样失败时，需继续检查 graph/allocator 生命周期，不能据此
+排除运行时错误。GPU 合同包含跨多次捕获/淘汰和释放外部 BLAS workspace 后重放。
