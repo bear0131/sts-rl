@@ -1423,7 +1423,7 @@ void BattleContext::useSkillCard() {
             bool hasAttack = false;
             for (int i = 0; i < cards.cardsInHand; ++i) {
                 if (cards.hand[i].getType() == CardType::ATTACK) {
-                    hasAttack = false;
+                    hasAttack = true;
                     break;
                 }
             }
@@ -2679,11 +2679,11 @@ void BattleContext::exhaustSpecificCardInHand(int idx, std::int16_t uniqueId) {
 
     int foundIdx = -1;
 
-    if (idx < cards.cardsInHand && cards.hand[idx].uniqueId == uniqueId) {
+    if (idx >= 0 && idx < cards.cardsInHand && cards.hand[idx].uniqueId == uniqueId) {
         foundIdx = idx;
     } else {
         for (int i = 0; i < cards.cardsInHand; ++i) {
-            if (cards.hand[idx].uniqueId == uniqueId) {
+            if (cards.hand[i].uniqueId == uniqueId) {
                foundIdx = i;
                break;
             }

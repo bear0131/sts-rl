@@ -2662,6 +2662,14 @@ PYBIND11_MODULE(slaythespire, m) {
              "pick_count, can_pick_zero, can_pick_any}")
         .def("execute", [](BattleContext &bc, const search::Action &a) { a.execute(bc); }, "apply an action and pump to the next input state")
 #ifdef STS_ENABLE_RULE_TRACE
+        .def("exhaust_hand_card_with_hint", [](BattleContext &bc, int cardIndex, int indexHint) {
+            if (cardIndex < 0 || cardIndex >= bc.cards.cardsInHand) {
+                throw std::out_of_range("card index is out of range");
+            }
+            const auto uniqueId = bc.cards.hand[cardIndex].uniqueId;
+            bc.exhaustSpecificCardInHand(indexHint, uniqueId);
+        }, pybind11::arg("card_index"), pybind11::arg("index_hint"),
+           "rule fixture: exhaust a card by identity with a possibly stale index hint")
         .def("set_player_strength", [](BattleContext &bc, int amount) {
             if (amount < 0) {
                 throw std::invalid_argument("strength must be non-negative");
@@ -2759,5 +2767,4 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-
 

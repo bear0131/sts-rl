@@ -90,17 +90,29 @@ def test_gauntlet_preserves_feed_max_hp():
     assert next_player["max_hp"] == won["player"]["max_hp"] == 83
 
 
-@pytest.mark.xfail(reason="F10: Impatience draws even when attacks remain",
-                   strict=True, raises=AssertionError)
-def test_impatience_does_not_draw_with_attack_in_hand(combat_factory):
-    env = combat_factory(["IMPATIENCE"] + ["STRIKE_RED"] * 9, seed=0)
+@pytest.mark.parametrize("has_attack", [False, True])
+def test_impatience_draws_only_without_attacks(combat_factory, has_attack):
+    env = combat_factory(["IMPATIENCE"] + ["STRIKE_RED" if has_attack else "DEFEND_RED"] * 9, seed=0)
     battle = env.thick.bc
     before = battle.to_dict()
     slot = next(i for i, c in enumerate(before["hand"]) if c[0] == "IMPATIENCE")
     battle.execute(sts.Action(sts.ActionType.CARD, slot, 0))
     after = battle.to_dict()
-    assert len(after["hand"]) == len(before["hand"]) - 1
-    assert after["draw"] == before["draw"]
+    drawn = 0 if has_attack else 2
+    assert len(after["hand"]) == len(before["hand"]) - 1 + drawn
+    assert len(after["draw"]) == len(before["draw"]) - drawn
+
+
+@pytest.mark.parametrize("hint", [-1, 0, 4, 100])
+def test_exhaust_uses_card_identity_when_index_hint_is_stale(combat_factory, hint):
+    env = combat_factory(["STRIKE_RED", "DEFEND_RED", "BASH", "ANGER", "FEED"])
+    battle = env.thick.bc
+    before = battle.to_dict()
+    expected = before["hand"][2]
+    battle.exhaust_hand_card_with_hint(2, hint)
+    after = battle.to_dict()
+    assert after["hand"] == before["hand"][:2] + before["hand"][3:]
+    assert after["exhaust"] == before["exhaust"] + [expected[:2]]
 
 
 @pytest.mark.xfail(reason="F19: value boundary erases Ice Cream carryover",
