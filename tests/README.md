@@ -5,7 +5,7 @@
 
 ## Runtime and native build
 
-先安装 Git、uv 和支持 C++17 的 GCC/Clang 编译器。Windows 使用 Git Bash 和兼容 MinGW；下面的 Bash 命令适用于 Linux 与 Git Bash。json/pybind11 源码已随仓库提供，无需从工作目录外复制模拟器源码。CMake/Ninja 由 test 依赖组安装。
+先安装 Git、uv 和支持 C++17 的 GCC/Clang 编译器。Windows 使用 Git Bash 和兼容 MinGW；下面的 Bash 命令适用于 Linux 与 Git Bash。json/pybind11 源码已随仓库提供，无需从工作目录外复制模拟器源码。CMake/Ninja 由 test 依赖组安装；必须使用锁定的 CMake 3.x，现有 json 子项目的旧 policy 声明不兼容 CMake 4。
 
 依赖只由根 pyproject.toml 声明，uv.lock 记录解析结果。不再分别维护 CI/远端 requirements。
 CI 原生回归用 Python 3.11；元数据允许 3.12，切换解释器时必须重建并验证原生扩展。
