@@ -38,6 +38,7 @@
             <option value="full_gumbel">Full Gumbel AZ</option>
           </select>
         </label>
+        <label class="gumbel-check paper-control unavailable" title="严格使用论文/mctx Full Gumbel 参数和顺序；取消后进入可调实验模式"><input id="watchPaperFullGumbel" type="checkbox"> Strict paper</label>
         <label class="gumbel-control" title="Maximum root actions retained by Gumbel top-k; 0 means all">Candidates <input id="watchGumbelCandidates" type="number" min="0" max="4096" step="1" value="0"></label>
         <label class="gumbel-control" title="Gumbel noise scale">Gumbel <input id="watchGumbelScale" type="number" min="0" max="100" step="0.05" value="1"></label>
         <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="watchGumbelValueScale" type="number" min="0" max="100" step="0.01" value="3"></label>
@@ -216,6 +217,7 @@
               <option value="full_gumbel">Full Gumbel AZ</option>
             </select>
           </label>
+          <label class="gumbel-check paper-control unavailable" title="严格使用论文/mctx Full Gumbel 参数和顺序；取消后进入可调实验模式"><input id="evalPaperFullGumbel" type="checkbox"> Strict paper</label>
           <label class="gumbel-control" title="Maximum root actions retained by Gumbel top-k; 0 means all">Candidates <input id="evalGumbelCandidates" type="number" min="0" max="4096" step="1" value="0"></label>
           <label class="gumbel-control" title="Gumbel noise scale">Gumbel <input id="evalGumbelScale" type="number" min="0" max="100" step="0.05" value="1"></label>
           <label class="gumbel-control" title="Completed-Q visit value scale">Q scale <input id="evalGumbelValueScale" type="number" min="0" max="100" step="0.01" value="0.1"></label>
@@ -224,6 +226,7 @@
           <label class="gumbel-check gumbel-control" title="Use the prior-weighted mixed value for unvisited actions"><input id="evalGumbelMixedValue" type="checkbox" checked> Mixed Q</label>
           <label class="gumbel-control" title="Non-root Full-Gumbel smoothing toward uniform as visits grow (0 disables)">Interior U <input id="evalGumbelInteriorUniformity" type="number" min="0" max="1" step="0.05" value="0"></label>
           <label class="gumbel-control" title="Prior-independent non-root coverage fraction">Interior C <input id="evalGumbelInteriorCoverageFraction" type="number" min="0" max="1" step="0.05" value="0"></label>
+          <label class="gumbel-control">Interior V <select id="evalGumbelInteriorValueMode"><option value="2" selected>渐进均值→最大</option><option value="0">均值</option><option value="1">最大</option></select></label>
           <button id="evalButton">重新评测</button>
         </div>
       </div>

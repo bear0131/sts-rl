@@ -17,10 +17,12 @@ from rl.policies.model import observation_for_policy
 
 
 STRICT_SEARCH_DEFAULTS = {
+    'leaf_batch_size': 1,
     'prior_temperature': 1.0, 'gumbel_candidates': 16, 'gumbel_scale': 1.0,
     'gumbel_value_scale': 0.1, 'gumbel_max_visit_init': 50.0,
     'gumbel_rescale_q': True, 'gumbel_use_mixed_value': True,
-    'gumbel_interior_uniformity': 0.0, 'gumbel_interior_coverage_fraction': 0.0,
+    'gumbel_interior_uniformity': 0.0, 'gumbel_interior_min_visits': 0,
+    'gumbel_interior_coverage_fraction': 0.0,
     'gumbel_interior_value_mode': 0, 'gumbel_interior_max_mix_visits': 64.0,
 }
 

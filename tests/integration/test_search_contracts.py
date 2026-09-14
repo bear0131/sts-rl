@@ -99,3 +99,77 @@ def test_native_search_budget_and_live_state_contract(combat_factory, mode, stri
     action = response["result"]["action"]
     assert env.action_masks()[action]
     assert not env.step(action)[4].get("illegal", False)
+
+
+@pytest.mark.native
+def test_strict_gumbel_matches_reference_schedule_transform_and_target(
+    combat_factory,
+):
+    env = combat_factory(["STRIKE_RED"] * 5, "Gremlin Leader")
+    response = env.nosl_is_az_cpp_begin(
+        np.zeros(181),
+        root_value=0.35,
+        state_nonce=123,
+        simulations=32,
+        depth=1,
+        root_search_mode=2,
+        paper_full_gumbel=True,
+        leaf_batch_size=1,
+        compact_observation=True,
+    )
+    leaf_index = 0
+    while not response["done"]:
+        updates = [
+            (leaf["request_id"], 0.2 + (leaf_index % 5) * 0.1, np.zeros(181))
+            for leaf in response["leaves"]
+        ]
+        leaf_index += len(updates)
+        response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
+            updates, max_leaves=1
+        )
+
+    children = env.nosl_is_az_cpp_tree_snapshot((), 64)["children"]
+    assert len(children) == 16
+    assert sum(child["candidate"] for child in children) == 16
+    assert sorted((child["visits"] for child in children), reverse=True) == (
+        [4] * 4 + [2] * 4 + [1] * 8
+    )
+
+    raw_q = np.asarray([child["raw_q"] for child in children])
+    expected_normalized = (raw_q - raw_q.min()) / max(
+        raw_q.max() - raw_q.min(), 1e-8
+    )
+    expected_completed = expected_normalized * (50 + 4) * 0.1
+    np.testing.assert_allclose(
+        [child["normalized_q"] for child in children],
+        expected_normalized,
+        rtol=0,
+        atol=1e-12,
+    )
+    np.testing.assert_allclose(
+        [child["completed_q"] for child in children],
+        expected_completed,
+        rtol=0,
+        atol=1e-12,
+    )
+
+    complete_weights = np.asarray([
+        child["prior"] * np.exp(child["completed_q"])
+        for child in children
+    ])
+    complete_weights /= complete_weights.sum()
+    expected_target = np.zeros(181)
+    for child, weight in zip(children, complete_weights):
+        action_type = (child["action_bits"] >> 29) & 0xF
+        thin_action = 0 if action_type == 4 else 1 + child["source_idx"]
+        expected_target[thin_action] += weight
+    np.testing.assert_allclose(
+        response["result"]["visit_policy"], expected_target, rtol=0, atol=1e-7
+    )
+
+    max_visits = max(child["visits"] for child in children)
+    expected_action = max(
+        (child for child in children if child["visits"] == max_visits),
+        key=lambda child: (child["completed_score"], -child["action_bits"]),
+    )
+    assert response["result"]["native_action_bits"] == expected_action["action_bits"]

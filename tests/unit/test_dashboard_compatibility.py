@@ -137,7 +137,9 @@ def test_paper_full_gumbel_config_uses_mctx_defaults():
     config = dashboard._evaluation_search_config(Model())
 
     assert config["search_mode"] == "full_gumbel"
+    assert config["search_mode_label"] == "Strict paper Full Gumbel"
     assert config["paper_full_gumbel"] is True
+    assert config["leaf_batch_size"] == 1
     assert config["gumbel_candidates"] == 16
     assert config["gumbel_scale"] == 1.0
     assert config["gumbel_value_scale"] == 0.1
@@ -167,6 +169,96 @@ def test_paper_full_gumbel_dashboard_override_uses_requested_value():
     assert config["paper_full_gumbel"] is False
     assert config["search_mode"] == "full_gumbel"
     assert config["gumbel_scale"] == pytest.approx(0.25)
+
+
+def test_explicit_paper_full_gumbel_ignores_noncanonical_dashboard_values():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        nosl_is_az_paper_full_gumbel = False
+
+    config = dashboard._evaluation_search_config(
+        Model(),
+        simulations=32,
+        leaf_batch_size=64,
+        search_mode="puct",
+        gumbel_scale=0.25,
+        paper_full_gumbel=True,
+    )
+
+    assert config["paper_full_gumbel"] is True
+    assert config["search_mode"] == "full_gumbel"
+    assert config["leaf_batch_size"] == 1
+    assert config["gumbel_scale"] == pytest.approx(1.0)
+
+
+def test_explicit_paper_full_gumbel_rejects_direct_policy():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+
+    with pytest.raises(ValueError, match="requires simulations >= 1"):
+        dashboard._evaluation_search_config(
+            Model(), simulations=0, paper_full_gumbel=True
+        )
+
+
+def test_native_strict_config_forces_sequential_leaf_evaluation():
+    strict = NativeSearchConfig(leaf_batch_size=64, paper_full_gumbel=True)
+    experimental = NativeSearchConfig(
+        leaf_batch_size=64, paper_full_gumbel=False
+    )
+
+    assert strict.leaf_batch_size == 1
+    assert strict.gumbel_interior_min_visits == 0
+    assert experimental.leaf_batch_size == 64
+
+
+def test_watch_strict_mode_disables_post_search_visit_sampling():
+    session = dashboard.WatchSession.__new__(dashboard.WatchSession)
+    session.mcts_paper_full_gumbel = True
+    session.mcts_simulations = 32
+    session.mcts_search_mode = "puct"
+    session.mcts_root_search_mode = 0
+    session.mcts_leaf_batch_size = 64
+    session.mcts_prior_temperature = 2.0
+    session.mcts_gumbel_candidates = 0
+    session.mcts_gumbel_scale = 0.25
+    session.mcts_gumbel_value_scale = 3.0
+    session.mcts_gumbel_max_visit_init = 5.0
+    session.mcts_gumbel_rescale_q = False
+    session.mcts_gumbel_use_mixed_value = False
+    session.mcts_gumbel_interior_uniformity = 0.5
+    session.mcts_gumbel_interior_coverage_fraction = 0.4
+    session.mcts_gumbel_interior_value_mode = 2
+    session.stochastic = True
+
+    session._apply_paper_full_gumbel_defaults()
+
+    assert session.mcts_search_mode == "full_gumbel"
+    assert session.mcts_leaf_batch_size == 1
+    assert session.stochastic is False
+
+
+def test_dashboard_assets_expose_and_send_strict_paper_mode():
+    static = Path(dashboard.__file__).with_name("dashboard_static")
+    html = (static / "index.html").read_text(encoding="utf-8")
+    javascript = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="watchPaperFullGumbel"' in html
+    assert 'id="evalPaperFullGumbel"' in html
+    assert "paper_full_gumbel: $(`${prefix}PaperFullGumbel`).checked" in javascript
+    assert '"Strict paper Full Gumbel"' in javascript
 
 
 def test_paper_full_gumbel_dashboard_can_select_direct_policy():

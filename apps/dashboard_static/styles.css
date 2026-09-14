@@ -82,13 +82,16 @@ main { min-height: calc(100vh - 58px); }
   white-space: pre-wrap;
 }
 .watch-toolbar { min-height: 50px; display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 8px 18px; border-bottom: 1px solid var(--line); background: #151b18; }
+.watch-toolbar > *, .eval-controls > * { flex-shrink: 0; }
 .watch-toolbar label, .eval-controls label { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 13px; }
 .watch-toggle { white-space: nowrap; }
 .watch-toggle input { width: 16px; height: 16px; margin: 0; accent-color: var(--red-bright); }
 .watch-policy-mode { display: inline-flex; align-items: center; }
 .watch-policy-mode button { min-width: 68px; min-height: 32px; padding: 0 9px; font-size: 12px; }
 .gumbel-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--red-bright); }
-.gumbel-control.unavailable { display: none; }
+.gumbel-control.unavailable, .paper-control.unavailable { display: none; }
+.paper-control:has(input:checked) { color: var(--gold); font-weight: 700; }
+.gumbel-control :disabled, .watch-toolbar :disabled, .eval-controls :disabled { opacity: .62; cursor: not-allowed; }
 .icon-command { display: inline-flex; align-items: center; gap: 7px; }
 .icon-command span:first-child { font-size: 17px; }
 .toolbar-meta { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }

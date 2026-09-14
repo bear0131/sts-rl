@@ -90,12 +90,16 @@ def test_native_nosl_search_targets_reach_learner(mode, strict, short_combat_env
         True, env_type=short_combat_env_type,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_depth=0,
         nosl_is_az_simulations=4, nosl_is_az_replay_capacity=128,
-        nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
+        nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=4,
         nosl_is_az_search_mode=mode, nosl_is_az_paper_full_gumbel=strict,
     )
     try:
         replay = model._nosl_is_az_replay
         assert replay is not None and replay.size > 0
+        assert model.nosl_is_az_leaf_batch_size == (1 if strict else 4)
+        assert getattr(model, "nosl_is_az_gumbel_interior_min_visits", 1) == (
+            0 if strict else 1
+        )
         assert replay.total_added >= replay.size
         assert np.isfinite(replay.value_targets[:replay.size]).all()
         assert model.policy.optimizer.state

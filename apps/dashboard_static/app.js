@@ -17,6 +17,7 @@ let watchLeafBatchSizeDirty = false;
 let watchPriorTemperatureDirty = false;
 let watchSearchModeDirty = false;
 let watchGumbelParamsDirty = false;
+let watchPaperModeDirty = false;
 let watchPolicyModeDirty = false;
 let watchPrecomputeDirty = false;
 let evalSimulationsDirty = false;
@@ -25,6 +26,7 @@ let evalLeafBatchSizeDirty = false;
 let evalPriorTemperatureDirty = false;
 let evalSearchModeDirty = false;
 let evalGumbelParamsDirty = false;
+let evalPaperModeDirty = false;
 let seeking = false;
 let selectedMapAct = null;
 let mapPreviewing = false;
@@ -347,6 +349,7 @@ async function uploadFile(file) {
 function gumbelSearchParams(prefix) {
   return {
     search_mode: $(`${prefix}SearchMode`).value,
+    paper_full_gumbel: $(`${prefix}PaperFullGumbel`).checked,
     gumbel_candidates: Number($(`${prefix}GumbelCandidates`).value),
     gumbel_scale: Number($(`${prefix}GumbelScale`).value),
     gumbel_value_scale: Number($(`${prefix}GumbelValueScale`).value),
@@ -360,16 +363,57 @@ function gumbelSearchParams(prefix) {
   };
 }
 
+const strictPaperControlValues = {
+  GumbelCandidates: 16,
+  GumbelScale: 1,
+  GumbelValueScale: 0.1,
+  GumbelMaxVisitInit: 50,
+  GumbelInteriorUniformity: 0,
+  GumbelInteriorCoverageFraction: 0,
+  GumbelInteriorValueMode: 0,
+};
+
+function applyStrictPaperControls(prefix) {
+  $(`${prefix}SearchMode`).value = "full_gumbel";
+  $(`${prefix}LeafBatchSize`).value = 1;
+  $(`${prefix}PriorTemperature`).value = 1;
+  Object.entries(strictPaperControlValues).forEach(([suffix, value]) => {
+    const node = $(`${prefix}${suffix}`);
+    if (node) node.value = value;
+  });
+  $(`${prefix}GumbelRescaleQ`).checked = true;
+  $(`${prefix}GumbelMixedValue`).checked = true;
+  if (prefix === "watch") setWatchPolicyMode(false, false);
+  const simulations = $(`${prefix}Simulations`);
+  simulations.min = "1";
+  if (Number(simulations.value) < 1) simulations.value = 512;
+}
+
 function setGumbelControlsVisible(prefix) {
   const mode = $(`${prefix}SearchMode`).value;
   const visible = mode === "gumbel" || mode === "full_gumbel";
+  const paperControl = $(`${prefix}PaperFullGumbel`);
+  const strict = mode === "full_gumbel" && paperControl.checked;
+  paperControl.closest(".paper-control").classList.toggle("unavailable", mode !== "full_gumbel");
   document.querySelectorAll(".gumbel-control").forEach(control => {
     const input = control.querySelector("[id]");
-    if (input?.id.startsWith(prefix)) control.classList.toggle("unavailable", !visible);
+    if (input?.id.startsWith(prefix)) {
+      control.classList.toggle("unavailable", !visible);
+      input.disabled = !visible || strict;
+    }
   });
+  $(`${prefix}SearchMode`).disabled = strict;
+  $(`${prefix}LeafBatchSize`).disabled = strict;
+  $(`${prefix}PriorTemperature`).disabled = strict;
+  if (prefix === "watch") {
+    $("watchPolicyMode").querySelectorAll("button").forEach(button => {
+      button.disabled = strict;
+    });
+  }
+  $(`${prefix}Simulations`).min = strict ? "1" : "0";
 }
 
-function restoreGumbelControls(prefix, source, modeDirty, paramsDirty) {
+function restoreGumbelControls(prefix, source, modeDirty, paramsDirty, paperModeDirty) {
   const fieldPrefix = prefix === "watch" ? "mcts_" : "";
   if (!modeDirty) {
     const mode = source?.[`${fieldPrefix}search_mode`];
@@ -396,6 +440,11 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty) {
     const endTurnLeaf = source?.[`${fieldPrefix}end_turn_as_leaf`];
     if (endTurnLeaf != null) $(`${prefix}EndTurnAsLeaf`).checked = Boolean(endTurnLeaf);
   }
+  if (!paperModeDirty) {
+    const paper = source?.[`${fieldPrefix}paper_full_gumbel`];
+    if (paper != null) $(`${prefix}PaperFullGumbel`).checked = Boolean(paper);
+  }
+  if ($(`${prefix}PaperFullGumbel`).checked) applyStrictPaperControls(prefix);
   setGumbelControlsVisible(prefix);
 }
 
@@ -424,6 +473,7 @@ $("resetButton").addEventListener("click", async () => {
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
+    watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = null;
@@ -440,6 +490,15 @@ $("watchLeafBatchSize").addEventListener("input", () => { watchLeafBatchSizeDirt
 $("watchPriorTemperature").addEventListener("input", () => { watchPriorTemperatureDirty = true; });
 $("watchSearchMode").addEventListener("change", () => {
   watchSearchModeDirty = true;
+  if ($("watchSearchMode").value !== "full_gumbel") {
+    $("watchPaperFullGumbel").checked = false;
+    watchPaperModeDirty = true;
+  }
+  setGumbelControlsVisible("watch");
+});
+$("watchPaperFullGumbel").addEventListener("change", () => {
+  watchPaperModeDirty = true;
+  if ($("watchPaperFullGumbel").checked) applyStrictPaperControls("watch");
   setGumbelControlsVisible("watch");
 });
 for (const id of ["watchGumbelCandidates", "watchGumbelScale", "watchGumbelValueScale", "watchGumbelMaxVisitInit", "watchGumbelInteriorUniformity"]) {
@@ -499,6 +558,7 @@ $("watchSearchApply").addEventListener("click", async () => {
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
+    watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     renderWatch();
     toast("Neural NOSL search settings applied");
@@ -619,6 +679,7 @@ $("evalButton").addEventListener("click", async () => {
     evalPriorTemperatureDirty = false;
     evalSearchModeDirty = false;
     evalGumbelParamsDirty = false;
+    evalPaperModeDirty = false;
     renderEvaluation();
   } catch (e) { toast(e.message); }
 });
@@ -628,12 +689,22 @@ $("evalLeafBatchSize").addEventListener("input", () => { evalLeafBatchSizeDirty 
 $("evalPriorTemperature").addEventListener("input", () => { evalPriorTemperatureDirty = true; });
 $("evalSearchMode").addEventListener("change", () => {
   evalSearchModeDirty = true;
+  if ($("evalSearchMode").value !== "full_gumbel") {
+    $("evalPaperFullGumbel").checked = false;
+    evalPaperModeDirty = true;
+  }
+  setGumbelControlsVisible("eval");
+});
+$("evalPaperFullGumbel").addEventListener("change", () => {
+  evalPaperModeDirty = true;
+  if ($("evalPaperFullGumbel").checked) applyStrictPaperControls("eval");
   setGumbelControlsVisible("eval");
 });
 for (const id of ["evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit", "evalGumbelInteriorUniformity"]) {
   $(id).addEventListener("input", () => { evalGumbelParamsDirty = true; });
 }
-document.querySelectorAll("#evalGumbelInteriorCoverageFraction").forEach(node => node.addEventListener("input", () => { evalGumbelParamsDirty = true; }));
+document.querySelectorAll("#evalGumbelInteriorCoverageFraction,#evalGumbelInteriorValueMode").forEach(node => node.addEventListener("input", () => { evalGumbelParamsDirty = true; }));
+$("evalGumbelInteriorValueMode").addEventListener("change", () => { evalGumbelParamsDirty = true; });
 for (const id of ["evalGumbelRescaleQ", "evalGumbelMixedValue"]) {
   $(id).addEventListener("change", () => { evalGumbelParamsDirty = true; });
 }
@@ -668,6 +739,7 @@ $("winSeedList").addEventListener("click", async event => {
     watchPriorTemperatureDirty = false;
     watchSearchModeDirty = false;
     watchGumbelParamsDirty = false;
+    watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     watchPrecomputeDirty = false;
     renderWatch();
@@ -676,7 +748,8 @@ $("winSeedList").addEventListener("click", async event => {
 
 function renderAll() {
   const format = appState?.checkpoint_format === "sb3" ? "SB3" : "";
-  $("checkpointPill").textContent = appState?.checkpoint ? `${format} · ${appState.checkpoint}` : "未载入参数";
+  const paperMode = appState?.watch?.mcts_paper_full_gumbel ? " · Strict paper Gumbel" : "";
+  $("checkpointPill").textContent = appState?.checkpoint ? `${format}${paperMode} · ${appState.checkpoint}` : "未载入参数";
   if (appState?.checkpoint && !uploadManuallyOpen) $("uploadOverlay").classList.add("hidden");
   renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation();
 }
@@ -1041,7 +1114,9 @@ function renderWatch() {
   if (!watchPriorTemperatureDirty && document.activeElement !== $("watchPriorTemperature")) {
     $("watchPriorTemperature").value = w.mcts_prior_temperature ?? 1;
   }
-  restoreGumbelControls("watch", w, watchSearchModeDirty, watchGumbelParamsDirty);
+  restoreGumbelControls(
+    "watch", w, watchSearchModeDirty, watchGumbelParamsDirty, watchPaperModeDirty
+  );
   if (!watchPolicyModeDirty) setWatchPolicyMode(w.stochastic !== false, false);
   if (!watchPrecomputeDirty && document.activeElement !== $("watchPrecompute")) {
     $("watchPrecompute").checked = Boolean(w.precompute_enabled);
@@ -1117,7 +1192,7 @@ function renderWatch() {
   }).join("");
   $("searchStatus").textContent = search
     ? (search.method === "nosl_is_az_cpp"
-      ? `${search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
+      ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
       : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
     : `${w.stochastic ? "stochastic" : "deterministic"} direct policy${w.mcts_simulations > 0 && w.phase !== "combat" ? " (search is combat-only)" : ""}`;
   renderSearchTree(search);
@@ -1209,13 +1284,15 @@ function renderEvaluation() {
   if (!evalDepthDirty && e.depth != null) $("evalDepth").value = e.depth;
   if (!evalLeafBatchSizeDirty && e.leaf_batch_size != null) $("evalLeafBatchSize").value = e.leaf_batch_size;
   if (!evalPriorTemperatureDirty && e.prior_temperature != null) $("evalPriorTemperature").value = e.prior_temperature;
-  restoreGumbelControls("eval", e, evalSearchModeDirty, evalGumbelParamsDirty);
+  restoreGumbelControls(
+    "eval", e, evalSearchModeDirty, evalGumbelParamsDirty, evalPaperModeDirty
+  );
   $("evalProgress").textContent=`${done} / ${total}`; $("meanFloor").textContent=e.floor_mean==null?"—":Number(e.floor_mean).toFixed(2);
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
   const searchLabel=e.search_method==="nosl_is_az_cpp"
-    ? `${e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
+    ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
   $("evalStatus").textContent=searchLabel?`${stateLabel} · ${searchLabel}`:stateLabel;
   const winSeeds = evaluationWinSeeds(e);

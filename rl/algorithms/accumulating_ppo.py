@@ -279,8 +279,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
             )
         self.nosl_is_az_dirichlet_alpha = float(nosl_is_az_dirichlet_alpha)
         self.nosl_is_az_dirichlet_epsilon = float(nosl_is_az_dirichlet_epsilon)
-        if self.nosl_is_az_paper_full_gumbel:
-            apply_strict_training_settings(self)
         self.nosl_is_az_master_nonce = int(nosl_is_az_master_nonce)
         self.nosl_is_az_batch_size = int(nosl_is_az_batch_size)
         self.nosl_is_az_micro_batch_size = int(nosl_is_az_micro_batch_size)
@@ -291,6 +289,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             nosl_is_az_replay_max_old_fraction
         )
         self.nosl_is_az_leaf_batch_size = int(nosl_is_az_leaf_batch_size)
+        if self.nosl_is_az_paper_full_gumbel:
+            apply_strict_training_settings(self)
         self.nosl_is_az_updates = int(nosl_is_az_updates)
         self.nosl_is_az_policy_coef = float(nosl_is_az_policy_coef)
         self.nosl_is_az_value_coef = float(nosl_is_az_value_coef)
@@ -883,7 +883,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
                                 "gumbel_use_mixed_value": self.nosl_is_az_gumbel_use_mixed_value,
                                 "gumbel_interior_uniformity": self.nosl_is_az_gumbel_interior_uniformity,
-                                "gumbel_interior_min_visits": 1,
+                                "gumbel_interior_min_visits": int(getattr(
+                                    self,
+                                    "nosl_is_az_gumbel_interior_min_visits",
+                                    1,
+                                )),
                                 "gumbel_interior_coverage_fraction": self.nosl_is_az_gumbel_interior_coverage_fraction,
                                 "gumbel_interior_value_mode": self.nosl_is_az_gumbel_interior_value_mode,
                                 "gumbel_interior_max_mix_visits": self.nosl_is_az_gumbel_interior_max_mix_visits,

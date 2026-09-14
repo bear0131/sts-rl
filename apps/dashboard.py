@@ -126,11 +126,13 @@ SEARCH_MODE_LABELS = {
     "gumbel": "Simplified Gumbel",
     "full_gumbel": "Full Gumbel AZ",
 }
+STRICT_PAPER_SEARCH_LABEL = "Strict paper Full Gumbel"
 
 
 def _strict_paper_search_settings_match(
     *,
     search_mode: str,
+    leaf_batch_size: int,
     prior_temperature: float,
     gumbel_candidates: int,
     gumbel_scale: float,
@@ -145,6 +147,7 @@ def _strict_paper_search_settings_match(
     """Return whether dashboard values still describe strict paper search."""
     return (
         search_mode == "full_gumbel"
+        and int(leaf_batch_size) == STRICT_SEARCH_DEFAULTS["leaf_batch_size"]
         and np.isclose(
             float(prior_temperature), STRICT_SEARCH_DEFAULTS["prior_temperature"]
         )
@@ -280,6 +283,7 @@ def _evaluation_search_config(
     gumbel_interior_uniformity: float | None = None,
     gumbel_interior_coverage_fraction: float | None = None,
     gumbel_interior_value_mode: int | None = None,
+    paper_full_gumbel: bool | None = None,
     end_turn_as_leaf: bool | None = None,
 ) -> dict[str, Any]:
     supported = _supports_neural_nosl(model)
@@ -344,8 +348,13 @@ def _evaluation_search_config(
         saved_mode if search_mode is None else search_mode,
         saved_mode,
     )
-    paper_full_gumbel = _model_search_bool(
+    saved_paper_full_gumbel = _model_search_bool(
         model, "nosl_is_az_paper_full_gumbel", False
+    )
+    selected_paper_full_gumbel = (
+        saved_paper_full_gumbel
+        if paper_full_gumbel is None
+        else bool(paper_full_gumbel)
     )
     if selected_simulations <= 0:
         selected_mode = "direct"
@@ -395,9 +404,10 @@ def _evaluation_search_config(
         else gumbel_interior_coverage_fraction,
         0.0, 0.0, 1.0,
     )
-    selected_value_mode = (
-        2 if gumbel_interior_value_mode is None
-        else int(gumbel_interior_value_mode)
+    selected_value_mode = int(
+        _model_search_param(model, "nosl_is_az_gumbel_interior_value_mode", 2)
+        if gumbel_interior_value_mode is None
+        else gumbel_interior_value_mode
     )
     selected_end_turn_as_leaf = _model_search_bool(
         model, "nosl_is_az_end_turn_as_leaf", False
@@ -406,6 +416,7 @@ def _evaluation_search_config(
         value is not None
         for value in (
             simulations,
+            leaf_batch_size,
             prior_temperature,
             search_mode,
             gumbel_candidates,
@@ -419,38 +430,57 @@ def _evaluation_search_config(
             gumbel_interior_value_mode,
         )
     )
-    # Strict checkpoints remain canonical by default. An explicit dashboard
-    # value requests the interactive, non-strict Full-Gumbel variant.
-    if paper_full_gumbel and explicit_search_override and not _strict_paper_search_settings_match(
-        search_mode=selected_mode,
-        prior_temperature=selected_prior_temperature,
-        gumbel_candidates=selected_candidates,
-        gumbel_scale=selected_gumbel_scale,
-        gumbel_value_scale=selected_gumbel_value_scale,
-        gumbel_max_visit_init=selected_gumbel_max_visit_init,
-        gumbel_rescale_q=selected_rescale_q,
-        gumbel_use_mixed_value=selected_mixed_value,
-        gumbel_interior_uniformity=selected_interior_uniformity,
-        gumbel_interior_coverage_fraction=selected_coverage_fraction,
-        gumbel_interior_value_mode=selected_value_mode,
+    # Old dashboard clients do not send paper_full_gumbel. Preserve strict
+    # checkpoint behavior only while their explicit values remain canonical.
+    if (
+        paper_full_gumbel is None
+        and selected_paper_full_gumbel
+        and explicit_search_override
+        and not _strict_paper_search_settings_match(
+            search_mode=selected_mode,
+            leaf_batch_size=selected_leaf_batch_size,
+            prior_temperature=selected_prior_temperature,
+            gumbel_candidates=selected_candidates,
+            gumbel_scale=selected_gumbel_scale,
+            gumbel_value_scale=selected_gumbel_value_scale,
+            gumbel_max_visit_init=selected_gumbel_max_visit_init,
+            gumbel_rescale_q=selected_rescale_q,
+            gumbel_use_mixed_value=selected_mixed_value,
+            gumbel_interior_uniformity=selected_interior_uniformity,
+            gumbel_interior_coverage_fraction=selected_coverage_fraction,
+            gumbel_interior_value_mode=selected_value_mode,
+        )
     ):
-        paper_full_gumbel = False
-    if paper_full_gumbel:
+        selected_paper_full_gumbel = False
+    if selected_paper_full_gumbel and selected_simulations <= 0:
+        if paper_full_gumbel is True:
+            raise ValueError("strict paper Full Gumbel requires simulations >= 1")
+        selected_paper_full_gumbel = False
+    if selected_paper_full_gumbel:
         # Keep the dashboard's reported/requested settings identical to the
         # native strict-paper canonicalization.  In particular, mctx's
         # default max_num_considered_actions is 16; zero means "all legal"
         # only in the legacy project mode.
         selected_mode = "full_gumbel"
-        selected_candidates = 16
-        selected_prior_temperature = 1.0
-        selected_gumbel_scale = 1.0
-        selected_gumbel_value_scale = 0.1
-        selected_gumbel_max_visit_init = 50.0
-        selected_rescale_q = True
-        selected_mixed_value = True
-        selected_interior_uniformity = 0.0
-        selected_coverage_fraction = 0.0
-        selected_value_mode = 0
+        selected_leaf_batch_size = STRICT_SEARCH_DEFAULTS["leaf_batch_size"]
+        selected_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
+        selected_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
+        selected_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
+        selected_gumbel_value_scale = STRICT_SEARCH_DEFAULTS[
+            "gumbel_value_scale"
+        ]
+        selected_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
+            "gumbel_max_visit_init"
+        ]
+        selected_rescale_q = STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
+        selected_mixed_value = STRICT_SEARCH_DEFAULTS["gumbel_use_mixed_value"]
+        selected_interior_uniformity = STRICT_SEARCH_DEFAULTS[
+            "gumbel_interior_uniformity"
+        ]
+        selected_coverage_fraction = STRICT_SEARCH_DEFAULTS[
+            "gumbel_interior_coverage_fraction"
+        ]
+        selected_value_mode = STRICT_SEARCH_DEFAULTS["gumbel_interior_value_mode"]
     if selected_simulations > 0 and not supported and selected_mode != "direct":
         raise ValueError(
             "this checkpoint does not expose the combat policy/value heads "
@@ -464,9 +494,13 @@ def _evaluation_search_config(
         ),
         "supported": supported,
         "search_mode": selected_mode,
-        "search_mode_label": SEARCH_MODE_LABELS[selected_mode],
+        "search_mode_label": (
+            STRICT_PAPER_SEARCH_LABEL
+            if selected_paper_full_gumbel
+            else SEARCH_MODE_LABELS[selected_mode]
+        ),
         "root_search_mode": SEARCH_MODE_IDS.get(selected_mode, 0),
-        "paper_full_gumbel": paper_full_gumbel,
+        "paper_full_gumbel": selected_paper_full_gumbel,
         "simulations": selected_simulations,
         "depth": selected_depth,
         "c_puct": _model_search_float(model, "nosl_is_az_c_puct", 1.5),
@@ -628,8 +662,12 @@ class WatchSession:
         """Keep Watch's displayed/native settings on the mctx paper path."""
         if not self.mcts_paper_full_gumbel:
             return
+        if self.mcts_simulations <= 0:
+            self.mcts_paper_full_gumbel = False
+            return
         if preserve_overrides and not _strict_paper_search_settings_match(
             search_mode=self.mcts_search_mode,
+            leaf_batch_size=self.mcts_leaf_batch_size,
             prior_temperature=self.mcts_prior_temperature,
             gumbel_candidates=self.mcts_gumbel_candidates,
             gumbel_scale=self.mcts_gumbel_scale,
@@ -645,16 +683,28 @@ class WatchSession:
             return
         self.mcts_search_mode = "full_gumbel"
         self.mcts_root_search_mode = SEARCH_MODE_IDS["full_gumbel"]
-        self.mcts_prior_temperature = 1.0
-        self.mcts_gumbel_candidates = 16
-        self.mcts_gumbel_scale = 1.0
-        self.mcts_gumbel_value_scale = 0.1
-        self.mcts_gumbel_max_visit_init = 50.0
-        self.mcts_gumbel_rescale_q = True
-        self.mcts_gumbel_use_mixed_value = True
-        self.mcts_gumbel_interior_uniformity = 0.0
-        self.mcts_gumbel_interior_coverage_fraction = 0.0
-        self.mcts_gumbel_interior_value_mode = 0
+        self.mcts_leaf_batch_size = STRICT_SEARCH_DEFAULTS["leaf_batch_size"]
+        self.mcts_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
+        self.mcts_gumbel_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
+        self.mcts_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
+        self.mcts_gumbel_value_scale = STRICT_SEARCH_DEFAULTS["gumbel_value_scale"]
+        self.mcts_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
+            "gumbel_max_visit_init"
+        ]
+        self.mcts_gumbel_rescale_q = STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
+        self.mcts_gumbel_use_mixed_value = STRICT_SEARCH_DEFAULTS[
+            "gumbel_use_mixed_value"
+        ]
+        self.mcts_gumbel_interior_uniformity = STRICT_SEARCH_DEFAULTS[
+            "gumbel_interior_uniformity"
+        ]
+        self.mcts_gumbel_interior_coverage_fraction = STRICT_SEARCH_DEFAULTS[
+            "gumbel_interior_coverage_fraction"
+        ]
+        self.mcts_gumbel_interior_value_mode = STRICT_SEARCH_DEFAULTS[
+            "gumbel_interior_value_mode"
+        ]
+        self.stochastic = False
 
     def close(self):
         self.env.close()
@@ -677,10 +727,18 @@ class WatchSession:
         gumbel_interior_uniformity: float | None = None,
         gumbel_interior_coverage_fraction: float | None = None,
         gumbel_interior_value_mode: int | None = None,
+        paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
     ):
+        requested_simulations = (
+            self.mcts_simulations if simulations is None else int(simulations)
+        )
+        if paper_full_gumbel is True and requested_simulations <= 0:
+            raise ValueError("strict paper Full Gumbel requires simulations >= 1")
         self.seed = int(seed)
+        if paper_full_gumbel is not None:
+            self.mcts_paper_full_gumbel = bool(paper_full_gumbel)
         if simulations is not None:
             self.mcts_simulations = _clamp_int(
                 simulations,
@@ -756,7 +814,9 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
-        self._apply_paper_full_gumbel_defaults(preserve_overrides=True)
+        self._apply_paper_full_gumbel_defaults(
+            preserve_overrides=paper_full_gumbel is not True
+        )
         self.precompute_enabled = bool(precompute)
         self.history = []
         self.native_history = []
@@ -861,10 +921,18 @@ class WatchSession:
         gumbel_interior_uniformity: float | None = None,
         gumbel_interior_coverage_fraction: float | None = None,
         gumbel_interior_value_mode: int | None = None,
+        paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
     ):
         """Apply search settings without resetting the current run."""
+        requested_simulations = (
+            self.mcts_simulations if simulations is None else int(simulations)
+        )
+        if paper_full_gumbel is True and requested_simulations <= 0:
+            raise ValueError("strict paper Full Gumbel requires simulations >= 1")
+        if paper_full_gumbel is not None:
+            self.mcts_paper_full_gumbel = bool(paper_full_gumbel)
         if simulations is not None:
             self.mcts_simulations = _clamp_int(
                 simulations,
@@ -946,7 +1014,9 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
-        self._apply_paper_full_gumbel_defaults(preserve_overrides=True)
+        self._apply_paper_full_gumbel_defaults(
+            preserve_overrides=paper_full_gumbel is not True
+        )
         # A previous neural decision may have retained a complete native
         # action until its thin root id is submitted.  Changing settings means
         # that pending action is no longer the displayed decision and must not
@@ -1181,9 +1251,14 @@ class WatchSession:
                         else "neural_puct"
                     ),
                     "search_mode": self.mcts_search_mode,
-                    "search_mode_label": SEARCH_MODE_LABELS.get(
-                        self.mcts_search_mode, self.mcts_search_mode
+                    "search_mode_label": (
+                        STRICT_PAPER_SEARCH_LABEL
+                        if self.mcts_paper_full_gumbel
+                        else SEARCH_MODE_LABELS.get(
+                            self.mcts_search_mode, self.mcts_search_mode
+                        )
                     ),
+                    "paper_full_gumbel": self.mcts_paper_full_gumbel,
                     "simulations": int(result.get("simulations", self.mcts_simulations)),
                     "depth": self.mcts_depth,
                     "prior_temperature": self.mcts_prior_temperature,
@@ -1612,8 +1687,12 @@ class WatchSession:
             "mcts_prior_temperature": self.mcts_prior_temperature,
             "mcts_leaf_batch_size": self.mcts_leaf_batch_size,
             "mcts_search_mode": self.mcts_search_mode,
-            "mcts_search_mode_label": SEARCH_MODE_LABELS.get(
-                self.mcts_search_mode, self.mcts_search_mode
+            "mcts_search_mode_label": (
+                STRICT_PAPER_SEARCH_LABEL
+                if self.mcts_paper_full_gumbel
+                else SEARCH_MODE_LABELS.get(
+                    self.mcts_search_mode, self.mcts_search_mode
+                )
             ),
             "mcts_paper_full_gumbel": self.mcts_paper_full_gumbel,
             "mcts_root_search_mode": self.mcts_root_search_mode,
@@ -1880,6 +1959,8 @@ class DashboardState:
         gumbel_use_mixed_value: bool | None = None,
         gumbel_interior_uniformity: float | None = None,
         gumbel_interior_coverage_fraction: float | None = None,
+        gumbel_interior_value_mode: int | None = None,
+        paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         workers: int | None = None,
     ):
@@ -1910,6 +1991,8 @@ class DashboardState:
                 gumbel_use_mixed_value=gumbel_use_mixed_value,
                 gumbel_interior_uniformity=gumbel_interior_uniformity,
                 gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
+                gumbel_interior_value_mode=gumbel_interior_value_mode,
+                paper_full_gumbel=paper_full_gumbel,
                 end_turn_as_leaf=end_turn_as_leaf,
             )
             self.eval_token = token
@@ -1923,6 +2006,7 @@ class DashboardState:
                 "search_supported": search_config["supported"],
                 "search_mode": search_config["search_mode"],
                 "search_mode_label": search_config["search_mode_label"],
+                "paper_full_gumbel": search_config["paper_full_gumbel"],
                 "root_search_mode": search_config["root_search_mode"],
                 "simulations": search_config["simulations"],
                 "depth": search_config["depth"],
@@ -1935,6 +2019,15 @@ class DashboardState:
                 "gumbel_max_visit_init": search_config["gumbel_max_visit_init"],
                 "gumbel_rescale_q": search_config["gumbel_rescale_q"],
                 "gumbel_use_mixed_value": search_config["gumbel_use_mixed_value"],
+                "gumbel_interior_uniformity": search_config[
+                    "gumbel_interior_uniformity"
+                ],
+                "gumbel_interior_coverage_fraction": search_config[
+                    "gumbel_interior_coverage_fraction"
+                ],
+                "gumbel_interior_value_mode": search_config[
+                    "gumbel_interior_value_mode"
+                ],
                 "end_turn_as_leaf": search_config["end_turn_as_leaf"],
                 "stochastic": False,
                 "root_noise": False,
@@ -2076,6 +2169,7 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
                         gumbel_interior_coverage_fraction=body.get("gumbel_interior_coverage_fraction"),
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
+                        paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
                     )
@@ -2100,6 +2194,7 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
                         gumbel_interior_coverage_fraction=body.get("gumbel_interior_coverage_fraction"),
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
+                        paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
                     )
@@ -2171,6 +2266,9 @@ class Handler(BaseHTTPRequestHandler):
                     gumbel_rescale_q=body.get("gumbel_rescale_q"),
                     gumbel_use_mixed_value=body.get("gumbel_use_mixed_value"),
                     gumbel_interior_uniformity=body.get("gumbel_interior_uniformity"),
+                    gumbel_interior_coverage_fraction=body.get("gumbel_interior_coverage_fraction"),
+                    gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
+                    paper_full_gumbel=body.get("paper_full_gumbel"),
                     end_turn_as_leaf=body.get("end_turn_as_leaf"),
                     workers=body.get("workers"),
                 )
