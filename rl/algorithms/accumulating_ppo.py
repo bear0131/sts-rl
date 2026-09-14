@@ -67,6 +67,22 @@ def _fill_nosl_combat_value_targets(
     return len(samples)
 
 
+def _normalized_player_hp(observation) -> float:
+    """Read the public current-player-HP feature used by combat roots."""
+    if not isinstance(observation, dict):
+        return float("nan")
+    # run_hp is present in all phases; player_scalars is the combat-specific
+    # fallback for older checkpoints/observation adapters.
+    for key in ("run_hp", "player_scalars"):
+        value = observation.get(key)
+        if value is None:
+            continue
+        array = np.asarray(value, dtype=np.float32).reshape(-1)
+        if array.size:
+            return float(array[0])
+    return float("nan")
+
+
 
 
 
@@ -328,6 +344,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_pending_fights",
             "_nosl_is_az_replay",
             "_nosl_is_az_replay_prepare_stats",
+            "_nosl_is_az_rollout_hp_order",
             "_nosl_is_az_metric_sums",
             "_nosl_is_az_metric_sumsq",
             "_nosl_is_az_metric_counts",
@@ -755,6 +772,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         collected_value_boundaries = 0
         collected_combat_terminals = 0
         completed_combats = 0
+        rollout_hp_order_count = 0
+        rollout_hp_order_matches = 0
         cpp_leaf_batches = 0
         cpp_leaf_evaluations = 0
         # Keep the staged NOSL pipeline measurable.  These counters include
@@ -1015,6 +1034,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         # search root value remains diagnostic only.
                         "value_target": np.nan,
                         "search_value": float(result["root_value"]),
+                        "estimated_value": float(values_np[env_index]),
+                        "current_hp": _normalized_player_hp(
+                            {
+                                key: self._last_obs[key][env_index]
+                                for key in ("run_hp", "player_scalars")
+                                if key in self._last_obs
+                            }
+                        ),
                         "sample_kind": "combat_root",
                     }
                 )
@@ -1072,6 +1099,18 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if interrupted[env_index]:
                     incomplete_combat_roots += len(pending)
                     continue
+                future_hp = float(next_hp[env_index])
+                if np.isfinite(future_hp):
+                    for sample in pending:
+                        if sample.get("sample_kind") != "combat_root":
+                            continue
+                        estimated_value = float(sample.get("estimated_value", np.nan))
+                        current_hp = float(sample.get("current_hp", np.nan))
+                        if not (np.isfinite(estimated_value) and np.isfinite(current_hp)):
+                            continue
+                        rollout_hp_order_count += 1
+                        if estimated_value > current_hp and current_hp >= future_hp:
+                            rollout_hp_order_matches += 1
                 completed = _fill_nosl_combat_value_targets(
                     pending, next_hp[env_index]
                 )
@@ -1152,6 +1191,24 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # only on ``name_to_value`` makes these diagnostics disappear from
         # distributed/W&B records.
         self._nosl_is_az_rollout_timings = dict(nosl_timings)
+        rollout_hp_order_fraction = (
+            float(rollout_hp_order_matches / rollout_hp_order_count)
+            if rollout_hp_order_count
+            else 0.0
+        )
+        self._nosl_is_az_rollout_hp_order = {
+            "count": float(rollout_hp_order_count),
+            "matches": float(rollout_hp_order_matches),
+            "fraction": rollout_hp_order_fraction,
+        }
+        self.logger.record(
+            "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_fraction",
+            rollout_hp_order_fraction,
+        )
+        self.logger.record(
+            "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_count",
+            rollout_hp_order_count,
+        )
         if self.nosl_is_az_cpp:
             self.logger.record("nosl_is_az/cpp_leaf_batches", cpp_leaf_batches)
             self.logger.record(
@@ -1768,6 +1825,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         def metric_maximum(name: str) -> float:
             return 0.0 if not np.isfinite(monitor_max[name]) else float(monitor_max[name])
 
+        rollout_hp_order = getattr(
+            self,
+            "_nosl_is_az_rollout_hp_order",
+            {"count": 0.0, "matches": 0.0, "fraction": 0.0},
+        )
         result = {
             "roots": float(sampled_roots),
             "policy_loss": float(
@@ -1807,6 +1869,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "value_mae": metric_mean("value_mae"),
             "value_bias": metric_mean("value_bias"),
             "finite_fraction": metric_mean("finite_fraction"),
+            "rollout_value_gt_current_hp_ge_future_hp_fraction": float(
+                rollout_hp_order.get("fraction", 0.0)
+            ),
+            "rollout_value_gt_current_hp_ge_future_hp_count": float(
+                rollout_hp_order.get("count", 0.0)
+            ),
+            "rollout_value_gt_current_hp_ge_future_hp_matches": float(
+                rollout_hp_order.get("matches", 0.0)
+            ),
             "gradient_norm_preclip": float(
                 np.mean(gradient_norms) if gradient_norms else 0.0
             ),

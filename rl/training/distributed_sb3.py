@@ -1394,6 +1394,9 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/value_mae",
     "nosl_is_az/value_bias",
     "nosl_is_az/finite_fraction",
+    "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_fraction",
+    "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_count",
+    "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_matches",
     "nosl_is_az/gradient_norm_preclip",
     "nosl_is_az/learning_rate",
 )

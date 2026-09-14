@@ -103,6 +103,12 @@ def test_native_nosl_search_targets_reach_learner(mode, strict, short_combat_env
         assert replay.total_added >= replay.size
         assert np.isfinite(replay.value_targets[:replay.size]).all()
         assert model.policy.optimizer.state
+        hp_order = model._nosl_is_az_rollout_hp_order
+        assert hp_order["count"] > 0
+        assert 0 <= hp_order["matches"] <= hp_order["count"]
+        assert hp_order["fraction"] == pytest.approx(
+            hp_order["matches"] / hp_order["count"]
+        )
     finally:
         env.close()
 

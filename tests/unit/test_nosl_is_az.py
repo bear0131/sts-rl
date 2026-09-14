@@ -13,6 +13,7 @@ from rl.algorithms.accumulating_ppo import (
     _append_nosl_value_only_sample,
     _leaf_observation_as_tensor,
     _fill_nosl_combat_value_targets,
+    _normalized_player_hp,
     ppo_loss_components,
 )
 from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSearch, NOSLISAZSession
@@ -108,6 +109,18 @@ class _ReplayPolicy(torch.nn.Module):
 
 
 class NOSLISAZTest(unittest.TestCase):
+    def test_normalized_player_hp_prefers_public_run_hp(self):
+        observation = {
+            "run_hp": np.asarray([0.32, 0.4, 0.8], dtype=np.float32),
+            "player_scalars": np.asarray([0.31, 0.4, 0, 0, 0, 0.8]),
+        }
+        self.assertAlmostEqual(_normalized_player_hp(observation), 0.32)
+        self.assertAlmostEqual(
+            _normalized_player_hp({"player_scalars": observation["player_scalars"]}),
+            0.31,
+        )
+        self.assertTrue(np.isnan(_normalized_player_hp({})))
+
     def test_native_boundary_marker_survives_canonical_normalization(self):
         raw = {
             "turn": 0,
