@@ -1209,6 +1209,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_count",
             rollout_hp_order_count,
         )
+        self.logger.record(
+            "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_matches",
+            rollout_hp_order_matches,
+        )
         if self.nosl_is_az_cpp:
             self.logger.record("nosl_is_az/cpp_leaf_batches", cpp_leaf_batches)
             self.logger.record(

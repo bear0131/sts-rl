@@ -1315,6 +1315,9 @@ def distributed_nosl_is_az_update(
             "replay_sampled_roots",
             "replay_size",
             "replay_enabled",
+            "rollout_value_gt_current_hp_ge_future_hp_fraction",
+            "rollout_value_gt_current_hp_ge_future_hp_count",
+            "rollout_value_gt_current_hp_ge_future_hp_matches",
         )
         if key in az_stats
     })
