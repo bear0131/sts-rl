@@ -149,6 +149,46 @@ def test_paper_full_gumbel_config_uses_mctx_defaults():
     assert config["gumbel_interior_value_mode"] == 0
 
 
+def test_paper_full_gumbel_dashboard_override_uses_requested_value():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        nosl_is_az_simulations = 512
+        nosl_is_az_search_mode = "full_gumbel"
+        nosl_is_az_paper_full_gumbel = True
+
+    config = dashboard._evaluation_search_config(Model(), gumbel_scale=0.25)
+
+    assert config["paper_full_gumbel"] is False
+    assert config["search_mode"] == "full_gumbel"
+    assert config["gumbel_scale"] == pytest.approx(0.25)
+
+
+def test_paper_full_gumbel_dashboard_can_select_direct_policy():
+    class Core:
+        actor_critic = object()
+
+    class Policy:
+        core = Core()
+
+    class Model:
+        policy = Policy()
+        nosl_is_az_simulations = 512
+        nosl_is_az_search_mode = "full_gumbel"
+        nosl_is_az_paper_full_gumbel = True
+
+    config = dashboard._evaluation_search_config(Model(), simulations=0)
+
+    assert config["paper_full_gumbel"] is False
+    assert config["search_mode"] == "direct"
+    assert config["simulations"] == 0
+
+
 def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
     class Core:
         def actor_critic(self, _observation):

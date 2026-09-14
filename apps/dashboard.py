@@ -28,7 +28,11 @@ from rl.evaluation.runner import is_win
 from rl.evaluation.strategies import PolicyStrategy, NativeStrategy, PhaseStrategy
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
 from dataclasses import fields
-from rl.search.native import NativeSearchConfig, search as native_search
+from rl.search.native import (
+    STRICT_SEARCH_DEFAULTS,
+    NativeSearchConfig,
+    search as native_search,
+)
 from rl.rules.visualize_card_vectors import (
     extract_state_dict_vectors,
     extract_vectors,
@@ -122,6 +126,51 @@ SEARCH_MODE_LABELS = {
     "gumbel": "Simplified Gumbel",
     "full_gumbel": "Full Gumbel AZ",
 }
+
+
+def _strict_paper_search_settings_match(
+    *,
+    search_mode: str,
+    prior_temperature: float,
+    gumbel_candidates: int,
+    gumbel_scale: float,
+    gumbel_value_scale: float,
+    gumbel_max_visit_init: float,
+    gumbel_rescale_q: bool,
+    gumbel_use_mixed_value: bool,
+    gumbel_interior_uniformity: float,
+    gumbel_interior_coverage_fraction: float,
+    gumbel_interior_value_mode: int,
+) -> bool:
+    """Return whether dashboard values still describe strict paper search."""
+    return (
+        search_mode == "full_gumbel"
+        and np.isclose(
+            float(prior_temperature), STRICT_SEARCH_DEFAULTS["prior_temperature"]
+        )
+        and int(gumbel_candidates) == STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
+        and np.isclose(float(gumbel_scale), STRICT_SEARCH_DEFAULTS["gumbel_scale"])
+        and np.isclose(
+            float(gumbel_value_scale), STRICT_SEARCH_DEFAULTS["gumbel_value_scale"]
+        )
+        and np.isclose(
+            float(gumbel_max_visit_init),
+            STRICT_SEARCH_DEFAULTS["gumbel_max_visit_init"],
+        )
+        and bool(gumbel_rescale_q) is STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
+        and bool(gumbel_use_mixed_value)
+        is STRICT_SEARCH_DEFAULTS["gumbel_use_mixed_value"]
+        and np.isclose(
+            float(gumbel_interior_uniformity),
+            STRICT_SEARCH_DEFAULTS["gumbel_interior_uniformity"],
+        )
+        and np.isclose(
+            float(gumbel_interior_coverage_fraction),
+            STRICT_SEARCH_DEFAULTS["gumbel_interior_coverage_fraction"],
+        )
+        and int(gumbel_interior_value_mode)
+        == STRICT_SEARCH_DEFAULTS["gumbel_interior_value_mode"]
+    )
 
 
 def _normalize_search_mode(value: Any, default: str = "puct") -> str:
@@ -353,6 +402,39 @@ def _evaluation_search_config(
     selected_end_turn_as_leaf = _model_search_bool(
         model, "nosl_is_az_end_turn_as_leaf", False
     ) if end_turn_as_leaf is None else bool(end_turn_as_leaf)
+    explicit_search_override = any(
+        value is not None
+        for value in (
+            simulations,
+            prior_temperature,
+            search_mode,
+            gumbel_candidates,
+            gumbel_scale,
+            gumbel_value_scale,
+            gumbel_max_visit_init,
+            gumbel_rescale_q,
+            gumbel_use_mixed_value,
+            gumbel_interior_uniformity,
+            gumbel_interior_coverage_fraction,
+            gumbel_interior_value_mode,
+        )
+    )
+    # Strict checkpoints remain canonical by default. An explicit dashboard
+    # value requests the interactive, non-strict Full-Gumbel variant.
+    if paper_full_gumbel and explicit_search_override and not _strict_paper_search_settings_match(
+        search_mode=selected_mode,
+        prior_temperature=selected_prior_temperature,
+        gumbel_candidates=selected_candidates,
+        gumbel_scale=selected_gumbel_scale,
+        gumbel_value_scale=selected_gumbel_value_scale,
+        gumbel_max_visit_init=selected_gumbel_max_visit_init,
+        gumbel_rescale_q=selected_rescale_q,
+        gumbel_use_mixed_value=selected_mixed_value,
+        gumbel_interior_uniformity=selected_interior_uniformity,
+        gumbel_interior_coverage_fraction=selected_coverage_fraction,
+        gumbel_interior_value_mode=selected_value_mode,
+    ):
+        paper_full_gumbel = False
     if paper_full_gumbel:
         # Keep the dashboard's reported/requested settings identical to the
         # native strict-paper canonicalization.  In particular, mctx's
@@ -542,9 +624,24 @@ class WatchSession:
     def _model_search_float(self, name: str, default: float) -> float:
         return _model_search_float(self.model, name, default)
 
-    def _apply_paper_full_gumbel_defaults(self):
+    def _apply_paper_full_gumbel_defaults(self, *, preserve_overrides: bool = False):
         """Keep Watch's displayed/native settings on the mctx paper path."""
         if not self.mcts_paper_full_gumbel:
+            return
+        if preserve_overrides and not _strict_paper_search_settings_match(
+            search_mode=self.mcts_search_mode,
+            prior_temperature=self.mcts_prior_temperature,
+            gumbel_candidates=self.mcts_gumbel_candidates,
+            gumbel_scale=self.mcts_gumbel_scale,
+            gumbel_value_scale=self.mcts_gumbel_value_scale,
+            gumbel_max_visit_init=self.mcts_gumbel_max_visit_init,
+            gumbel_rescale_q=self.mcts_gumbel_rescale_q,
+            gumbel_use_mixed_value=self.mcts_gumbel_use_mixed_value,
+            gumbel_interior_uniformity=self.mcts_gumbel_interior_uniformity,
+            gumbel_interior_coverage_fraction=self.mcts_gumbel_interior_coverage_fraction,
+            gumbel_interior_value_mode=self.mcts_gumbel_interior_value_mode,
+        ):
+            self.mcts_paper_full_gumbel = False
             return
         self.mcts_search_mode = "full_gumbel"
         self.mcts_root_search_mode = SEARCH_MODE_IDS["full_gumbel"]
@@ -659,6 +756,7 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        self._apply_paper_full_gumbel_defaults(preserve_overrides=True)
         self.precompute_enabled = bool(precompute)
         self.history = []
         self.native_history = []
@@ -848,7 +946,7 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
-        self._apply_paper_full_gumbel_defaults()
+        self._apply_paper_full_gumbel_defaults(preserve_overrides=True)
         # A previous neural decision may have retained a complete native
         # action until its thin root id is submitted.  Changing settings means
         # that pending action is no longer the displayed decision and must not
