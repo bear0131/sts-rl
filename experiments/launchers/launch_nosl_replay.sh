@@ -23,7 +23,11 @@ test -x "$python"
 test -f "$checkpoint"
 test -f "$args_file"
 mkdir -p "$run_dir" "$remote_root" /tmp/sts-launch
-ports=(12009 17944 13500 44892)
+read -r -a ports <<< "${NOSL_PEER_PORTS:-12009 17944 13500 44892}"
+[ "${#ports[@]}" -eq 4 ] || {
+  echo 'NOSL_PEER_PORTS must contain four space-separated ports' >&2
+  exit 2
+}
 peers=()
 for peer in 0 1 2 3; do
   [ "$peer" = "$rank" ] && continue

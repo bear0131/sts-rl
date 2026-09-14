@@ -40,6 +40,24 @@ def test_current_replay_experiment_identity_and_explicit_override():
     assert args.n_envs == 24
 
 
+def test_u5_replay_experiment_only_changes_optimizer_update_count():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip"]
+    u40 = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_20260913.args'}"]
+    ))
+    u5 = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u5_20260914.args'}"]
+    ))
+
+    differences = {
+        key: (u40[key], u5[key])
+        for key in u40
+        if u40[key] != u5[key]
+    }
+    assert differences == {"nosl_is_az_updates": (40, 5)}
+
+
 def test_public_scenario_presets_preserve_original_card_order():
     from configs.eval import nosl_scenarios
     expected = json.loads((ROOT / "tests/fixtures/configs/nosl_scenarios.json").read_text())
