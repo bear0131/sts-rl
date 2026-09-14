@@ -24,6 +24,7 @@
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | VAL01 | 待实验 | 区分并统计 combat root、实际 End-Turn boundary、terminal/near-terminal value 样本；固定边界语料按怪物身份及 HP/分裂阶段验证校准，搜索截断与采样开关分离，禁止用所选路线回报标注假想叶子 |
+| VAL02 | 待实验 | 在固定 combat corpus 上审计 policy prior → Full-Gumbel 搜索 → improved-policy target 的反馈：按合法完整动作数/候选裁剪分层，统计未访问动作、prior/Q 排名冲突、搜索前后 TV/KL、低 prior 高 Q 翻转率；以只改根 prior 且保留内部 policy 的 matched-nonce 消融判断根部影响，不能用全树 uniform 冒充根部消融 |
 | CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
 | PERF01 | GPU 采样实测已建立 | 固定 RTX 5090/512 simulations，最终 CUDA graph 采样提速 1.37×且摘要逐位相同；叶推理初测 6.51×；含 CPU/RSS/显存/设备采样及完整长度故障回归，见 docs/2026-09-14/nosl-performance-recovery-handoff.md。多 seed 长程吞吐/收敛和 IPC 优化仍待验证 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
