@@ -10,6 +10,7 @@ from bridge.schemas.combat_state import normalize_sim
 from env.core import vocab as V
 from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
+    _append_nosl_value_only_sample,
     _leaf_observation_as_tensor,
     _fill_nosl_combat_value_targets,
     ppo_loss_components,
@@ -497,6 +498,31 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertFalse(torch.equal(
             value_before, model.policy.core.value_head.weight.detach()
         ))
+
+    def test_observed_value_only_states_never_create_policy_targets(self):
+        samples = []
+        source = {"state": np.asarray([3.0], dtype=np.float32)}
+
+        for kind in ("end_turn_boundary", "combat_terminal"):
+            self.assertTrue(_append_nosl_value_only_sample(
+                samples, source, 3, sample_kind=kind
+            ))
+        self.assertFalse(_append_nosl_value_only_sample(
+            samples, None, 3, sample_kind="combat_terminal"
+        ))
+        source["state"][0] = 99.0
+
+        self.assertEqual(
+            [sample["sample_kind"] for sample in samples],
+            ["end_turn_boundary", "combat_terminal"],
+        )
+        for sample in samples:
+            np.testing.assert_array_equal(sample["observation"]["state"], [3.0])
+            self.assertFalse(sample["action_mask"].any())
+            self.assertFalse(sample["policy_target"].any())
+            self.assertEqual(sample["policy_weight"], 0.0)
+            self.assertTrue(np.isnan(sample["search_value"]))
+            self.assertTrue(np.isnan(sample["value_target"]))
 
     def test_root_redeterminizes_once_per_simulation_and_returns_legal_target(self):
         _Battle.redeterminizations = 0

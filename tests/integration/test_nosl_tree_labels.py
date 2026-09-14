@@ -227,7 +227,8 @@ def test_boundary_observation_changes_only_enemy_hp_for_hp_only_input_change():
     assert changed == [("monster_scalars", [[0, 1], [0, 2]])]
 
 
-def test_native_end_turn_step_returns_value_boundary_observation():
+@pytest.mark.parametrize("native", [False, True])
+def test_real_end_turn_step_returns_value_boundary_observation(native):
     env = SlayTheSpireEnv()
     env.reset(seed=7)
     env.thick.bc = sts.create_battle(env.thick.gc, "Jaw Worm")
@@ -236,9 +237,96 @@ def test_native_end_turn_step_returns_value_boundary_observation():
 
     before_hp = env.thick.bc.to_dict()["player"]["hp"]
     end_turn_bits = 4 << 29
-    env._nosl_cpp_pending = (A.END_TURN, end_turn_bits)
+    if native:
+        env._nosl_cpp_pending = (A.END_TURN, end_turn_bits)
+    else:
+        env._nosl_value_capture_pending = True
     _obs, _reward, _terminated, _truncated, info = env.step(A.END_TURN)
 
     boundary = info["nosl_value_boundary_observation"]
     assert boundary["post_enemy_turn_boundary"].tolist() == [1]
     assert boundary["player_scalars"][0] < min(before_hp, 200) / 200.0
+
+
+def test_non_nosl_end_turn_does_not_preview_value_boundary(monkeypatch):
+    env = SlayTheSpireEnv()
+    env.reset(seed=7)
+    env.thick.bc = sts.create_battle(env.thick.gc, "Jaw Worm")
+    env._invalidate_backend_cache()
+    calls = []
+    original = env.thick.preview_native_end_turn_boundary
+
+    def tracked_preview(action_bits):
+        calls.append(action_bits)
+        return original(action_bits)
+
+    monkeypatch.setattr(
+        env.thick, "preview_native_end_turn_boundary", tracked_preview
+    )
+    _obs, _reward, _terminated, _truncated, info = env.step(A.END_TURN)
+
+    assert calls == []
+    assert "nosl_value_boundary_observation" not in info
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_winning_combat_step_returns_pre_settlement_value_observation(
+    short_combat_env_type, native
+):
+    env = short_combat_env_type()
+    env.reset(seed=17)
+    try:
+        raw = env.thick.bc.to_dict()
+        attack_index = next(
+            index
+            for index, card in enumerate(raw["hand"])
+            if card[0] in {"STRIKE_RED", "BASH"}
+        )
+        env.thick.bc.apply_custom_state({"monsters": [{"hp": 1}]})
+        env._invalidate_backend_cache()
+        play_id = A._PLAY + attack_index
+
+        if native:
+            action_bits = attack_index  # CARD, hand index, monster slot 0
+            env._nosl_cpp_pending = (play_id, action_bits)
+            result = env.step(play_id)
+        else:
+            partial = env.step(play_id)
+            assert "nosl_value_terminal_observation" not in partial[4]
+            env._nosl_value_capture_pending = True
+            result = env.step(A._TARGET)
+
+        _obs, _reward, _terminated, _truncated, info = result
+        terminal = info["nosl_value_terminal_observation"]
+        assert "nosl_value_terminal_state" not in info
+        assert terminal["post_enemy_turn_boundary"].tolist() == [0]
+        assert terminal["player_scalars"][0] > 0
+        assert terminal["monster_id"][0] != 0
+        assert terminal["monster_scalars"][0, 0] == 0
+        assert terminal["monster_scalars"][0, 1] == 0
+    finally:
+        env.close()
+
+
+def test_nonlethal_combat_step_has_no_terminal_value_observation(
+    short_combat_env_type,
+):
+    env = short_combat_env_type()
+    env.reset(seed=17)
+    try:
+        env.thick.bc.set_player_strength(0)
+        raw = env.thick.bc.to_dict()
+        attack_index = next(
+            index
+            for index, card in enumerate(raw["hand"])
+            if card[0] in {"STRIKE_RED", "BASH"}
+        )
+        play_id = A._PLAY + attack_index
+        partial = env.step(play_id)
+        assert "nosl_value_terminal_observation" not in partial[4]
+        result = env.step(A._TARGET)
+        assert "nosl_value_terminal_observation" not in result[4]
+        assert env.thick.bc is not None
+        assert not env.thick.bc.is_battle_over
+    finally:
+        env.close()

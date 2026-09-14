@@ -1338,10 +1338,14 @@ _DISTRIBUTED_GAME_METRIC_KEYS = (
 # rank has no completed combat in a particular rollout.
 _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/combat_roots",
+    "nosl_is_az/combat_policy_roots",
+    "nosl_is_az/value_only_samples",
     "nosl_is_az/completed_combat_roots",
     "nosl_is_az/completed_combats",
     "nosl_is_az/incomplete_combat_roots",
     "nosl_is_az/pending_combat_roots",
+    "nosl_is_az/collected_value_boundaries",
+    "nosl_is_az/collected_combat_terminals",
     "nosl_is_az/cpp_leaf_batches",
     "nosl_is_az/cpp_leaf_evaluations",
     "nosl_is_az/root_policy_seconds",

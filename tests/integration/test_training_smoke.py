@@ -5,6 +5,7 @@ import torch
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.vec_env import DummyVecEnv
 
+from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.training.reward import ShapedRewardWrapper
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
@@ -98,5 +99,83 @@ def test_native_nosl_search_targets_reach_learner(mode, strict, short_combat_env
         assert replay.total_added >= replay.size
         assert np.isfinite(replay.value_targets[:replay.size]).all()
         assert model.policy.optimizer.state
+    finally:
+        env.close()
+
+
+@pytest.mark.parametrize("end_turn_as_leaf", [False, True])
+def test_real_value_boundaries_reach_replay_independent_of_search_leaf_mode(
+    short_combat_env_type, end_turn_as_leaf
+):
+    class BoundaryThenWinEnv(short_combat_env_type):
+        def __init__(self):
+            super().__init__()
+            self._force_end_turn = False
+
+        def reset(self, **kwargs):
+            obs, info = super().reset(**kwargs)
+            self.thick.bc.apply_custom_state({"monsters": [{"hp": 1}]})
+            self._force_end_turn = True
+            self._invalidate_backend_cache()
+            return self._obs(), self._info()
+
+        def action_masks(self):
+            mask = super().action_masks()
+            if self._phase() != "combat" or self._pending is not None:
+                return mask
+            restricted = np.zeros_like(mask)
+            if self._force_end_turn:
+                restricted[A.END_TURN] = True
+                return restricted
+            raw = self.thick.bc.to_dict()
+            attack_index = next(
+                index
+                for index, card in enumerate(raw["hand"])
+                if card[0] in {"STRIKE_RED", "BASH"}
+            )
+            restricted[A._PLAY + attack_index] = True
+            return restricted
+
+        def step(self, action):
+            result = super().step(action)
+            if "nosl_value_boundary_observation" in result[4]:
+                self._force_end_turn = False
+                self._invalidate_thin_cache()
+            return result
+
+    env = DummyVecEnv([BoundaryThenWinEnv])
+    model = AccumulatingMaskablePPO(
+        SplitStSPointerPolicy,
+        env,
+        n_steps=4,
+        batch_size=4,
+        n_epochs=1,
+        gradient_accumulation_steps=1,
+        hierarchical_combat_hp=True,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4),
+        seed=42,
+        device="cpu",
+        nosl_is_az=True,
+        nosl_is_az_cpp=True,
+        nosl_is_az_depth=0,
+        nosl_is_az_simulations=1,
+        nosl_is_az_replay_capacity=32,
+        nosl_is_az_micro_batch_size=4,
+        nosl_is_az_leaf_batch_size=1,
+        nosl_is_az_end_turn_as_leaf=end_turn_as_leaf,
+    )
+    try:
+        model.learn(4)
+        replay = model._nosl_is_az_replay
+        assert replay is not None and replay.size >= 5
+        weights = replay.policy_weights[:replay.size]
+        value_only = np.flatnonzero(weights == 0)
+        assert value_only.size == 2
+        boundaries = replay.observations["post_enemy_turn_boundary"][value_only, 0]
+        assert sorted(boundaries.tolist()) == [0.0, 1.0]
+        present = replay.observations["monster_scalars"][value_only, :, 0].sum(axis=1)
+        assert sorted(present.tolist()) == [0.0, 1.0]
+        assert not replay.action_masks[value_only].any()
+        assert not replay.policy_targets[value_only].any()
     finally:
         env.close()

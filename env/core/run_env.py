@@ -259,6 +259,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_stochastic = False
         self._nosl_cpp_state_nonce = 0
         self._nosl_cpp_decision_index = 0
+        self._nosl_value_capture_pending = False
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
@@ -289,6 +290,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_stochastic = False
         self._nosl_cpp_state_nonce = 0
         self._nosl_cpp_decision_index = 0
+        self._nosl_value_capture_pending = False
         self._invalidate_backend_cache()
         return self._obs(), self._info()
 
@@ -442,11 +444,29 @@ class SlayTheSpireEnv(gym.Env):
         raise ValueError(f"illegal combat search action: {aid}")
 
     def _backend_step(self, semantic):
+        capture_nosl_value = self._nosl_value_capture_pending
+        self._nosl_value_capture_pending = False
+        boundary_observation = None
+        if capture_nosl_value and semantic == ga.combat(actions.END_TURN):
+            preview_boundary = getattr(
+                self.thick, "preview_native_end_turn_boundary", None
+            )
+            if preview_boundary is not None:
+                raw_boundary = preview_boundary(4 << 29)
+                if raw_boundary is not None:
+                    boundary_observation = self._native_leaf_observation(
+                        raw_boundary, combat_only=True
+                    )
         result = self.thick.step(semantic)
         self._invalidate_backend_cache()
-        return result
+        return self._with_nosl_value_observations(
+            result,
+            boundary_observation=boundary_observation,
+            include_terminal=capture_nosl_value,
+        )
 
     def _backend_step_native_combat(self, action_bits):
+        self._nosl_value_capture_pending = False
         step_native = getattr(self.thick, "step_native_combat", None)
         if step_native is None:
             raise RuntimeError("native combat step requires the simulator backend")
@@ -462,12 +482,26 @@ class SlayTheSpireEnv(gym.Env):
                 )
         result = step_native(int(action_bits))
         self._invalidate_backend_cache()
+        return self._with_nosl_value_observations(
+            result, boundary_observation=boundary_observation, include_terminal=True
+        )
+
+    def _with_nosl_value_observations(
+        self, result, *, boundary_observation=None, include_terminal=False
+    ):
+        canon, reward, terminated, transition_info = result
+        has_terminal_state = "nosl_value_terminal_state" in transition_info
+        if boundary_observation is None and not has_terminal_state:
+            return result
+        transition_info = dict(transition_info)
+        terminal_state = transition_info.pop("nosl_value_terminal_state", None)
         if boundary_observation is not None:
-            canon, reward, terminated, info = result
-            info = dict(info)
-            info["nosl_value_boundary_observation"] = boundary_observation
-            result = canon, reward, terminated, info
-        return result
+            transition_info["nosl_value_boundary_observation"] = boundary_observation
+        if include_terminal and terminal_state is not None:
+            transition_info["nosl_value_terminal_observation"] = (
+                self._native_leaf_observation(terminal_state, combat_only=True)
+            )
+        return canon, reward, terminated, transition_info
 
     def _backend_step_fast(self, semantic):
         """Apply a combat branch action without constructing canonical state."""
@@ -552,6 +586,11 @@ class SlayTheSpireEnv(gym.Env):
         )
         if boundary_observation is not None:
             info["nosl_value_boundary_observation"] = boundary_observation
+        terminal_observation = (transition_info or {}).get(
+            "nosl_value_terminal_observation"
+        )
+        if terminal_observation is not None:
+            info["nosl_value_terminal_observation"] = terminal_observation
         return self._obs(), reward, terminated, False, info
 
     def step(self, action_id):
@@ -728,6 +767,7 @@ class SlayTheSpireEnv(gym.Env):
             decision_index=0,
             leaf_value=None if leaf_value is None else float(leaf_value),
         )
+        self._nosl_value_capture_pending = True
         return result.as_dict()
 
     def nosl_is_az_cpp_decide(
@@ -760,6 +800,7 @@ class SlayTheSpireEnv(gym.Env):
             if legal.size:
                 visit_policy[action] = 1.0
             self._nosl_cpp_pending = None
+            self._nosl_value_capture_pending = True
             return {
                 "action": action,
                 "visit_policy": visit_policy,
@@ -819,6 +860,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_pending = (
             (int(action), selected_native) if native_valid else None
         )
+        self._nosl_value_capture_pending = True
         return {
             "action": int(action),
             "visit_policy": visit_policy,
@@ -1106,6 +1148,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_pending = (
             (int(action), native_bits) if native_valid else None
         )
+        self._nosl_value_capture_pending = True
         return {
             "action": int(action),
             # Preserve the historical field name for the learner, but use the
@@ -1519,6 +1562,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_pending = None
         self._nosl_cpp_compact_observation = False
         self._nosl_cpp_stochastic = False
+        self._nosl_value_capture_pending = False
 
     def nosl_is_az_cpp_backprop_and_leaf_batch(
         self, updates, max_leaves: int = 64
@@ -1616,6 +1660,7 @@ class SlayTheSpireEnv(gym.Env):
         result = self._nosl_is_az_session.next_request()
         if result.get("done"):
             self._nosl_is_az_session = None
+            self._nosl_value_capture_pending = True
         return result
 
     def nosl_is_az_backprop(self, value: float, policy_logits=None):
@@ -1626,6 +1671,7 @@ class SlayTheSpireEnv(gym.Env):
         result = session.backprop(float(value), policy_logits=policy_logits)
         if result.get("done"):
             self._nosl_is_az_session = None
+            self._nosl_value_capture_pending = True
         return result
 
     # ---------------------------------------------------------------- obs/mask

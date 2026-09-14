@@ -32,6 +32,27 @@ NOSL_IS_AZ_SEARCH_MODES = {
 }
 
 
+def _append_nosl_value_only_sample(
+    samples: list[dict], observation, action_dim: int, *, sample_kind: str
+) -> bool:
+    """Append an observed trajectory state that has value but no action target."""
+    if observation is None:
+        return False
+    samples.append({
+        "observation": {
+            key: np.asarray(value).copy()
+            for key, value in observation.items()
+        },
+        "action_mask": np.zeros(action_dim, dtype=bool),
+        "policy_target": np.zeros(action_dim, dtype=np.float32),
+        "policy_weight": 0.0,
+        "value_target": np.nan,
+        "search_value": np.nan,
+        "sample_kind": sample_kind,
+    })
+    return True
+
+
 
 
 def _fill_nosl_combat_value_targets(
@@ -731,7 +752,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._nosl_is_az_pending_fights = active_combat_samples
         incomplete_combat_roots = 0
         completed_combat_roots = 0
-        completed_combat_boundaries = 0
+        collected_value_boundaries = 0
+        collected_combat_terminals = 0
         completed_combats = 0
         cpp_leaf_batches = 0
         cpp_leaf_evaluations = 0
@@ -989,6 +1011,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         # search root value remains diagnostic only.
                         "value_target": np.nan,
                         "search_value": float(result["root_value"]),
+                        "sample_kind": "combat_root",
                     }
                 )
             actions = th.as_tensor(actions_np, dtype=th.long, device=self.device)
@@ -1016,26 +1039,27 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 boundary_observation = infos[env_index].pop(
                     "nosl_value_boundary_observation", None
                 )
-                if (
-                    self.nosl_is_az_end_turn_as_leaf
-                    and boundary_observation is not None
+                if _append_nosl_value_only_sample(
+                    active_combat_samples[env_index],
+                    boundary_observation,
+                    int(self.action_space.n),
+                    sample_kind="end_turn_boundary",
                 ):
-                    action_dim = int(self.action_space.n)
-                    active_combat_samples[env_index].append({
-                        "observation": {
-                            key: np.asarray(value).copy()
-                            for key, value in boundary_observation.items()
-                        },
-                        "action_mask": np.zeros(action_dim, dtype=bool),
-                        "policy_target": np.zeros(action_dim, dtype=np.float32),
-                        "policy_weight": 0.0,
-                        "value_target": np.nan,
-                        "search_value": np.nan,
-                    })
-                    completed_combat_boundaries += 1
+                    collected_value_boundaries += 1
+                terminal_observation = infos[env_index].pop(
+                    "nosl_value_terminal_observation", None
+                )
+                if _append_nosl_value_only_sample(
+                    active_combat_samples[env_index],
+                    terminal_observation,
+                    int(self.action_space.n),
+                    sample_kind="combat_terminal",
+                ):
+                    collected_combat_terminals += 1
                 local_terminal = bool(
                     dones[env_index]
                     or next_phases[env_index] != combat_phase
+                    or terminal_observation is not None
                 )
                 if not local_terminal:
                     continue
@@ -1113,7 +1137,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         )
         self.logger.record(
             "nosl_is_az/collected_value_boundaries",
-            completed_combat_boundaries,
+            collected_value_boundaries,
+        )
+        self.logger.record(
+            "nosl_is_az/collected_combat_terminals",
+            collected_combat_terminals,
         )
         # Keep a direct copy for the distributed learner.  The SB3 logger can
         # be dumped/reset between collection and the inner update, so relying
@@ -1145,6 +1173,20 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "calls": {"policy": n_rollout_steps, "env": n_rollout_steps, "mask": 0},
             }
         self.logger.record("nosl_is_az/combat_roots", len(self._nosl_is_az_samples))
+        self.logger.record(
+            "nosl_is_az/combat_policy_roots",
+            sum(
+                float(sample.get("policy_weight", 1.0)) > 0.0
+                for sample in self._nosl_is_az_samples
+            ),
+        )
+        self.logger.record(
+            "nosl_is_az/value_only_samples",
+            sum(
+                float(sample.get("policy_weight", 1.0)) == 0.0
+                for sample in self._nosl_is_az_samples
+            ),
+        )
         return True
 
     def _compile_reasoning_samples(self, raw_reasoning_steps, buffer_observations):

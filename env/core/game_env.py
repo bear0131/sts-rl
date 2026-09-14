@@ -367,6 +367,7 @@ class SimGameEnv:
             )
         if not executed:
             self._apply(action)
+        terminal_combat_state = self._winning_combat_value_state()
         self._settle()  # pump through any auto-resolving screens to next decision
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
@@ -388,6 +389,8 @@ class SimGameEnv:
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
         info = self._info()
+        if terminal_combat_state is not None:
+            info["nosl_value_terminal_state"] = terminal_combat_state
         if self._last_reasoning_trace is not None:
             info["reasoning_trace"] = self._last_reasoning_trace
         return self._canonical(), reward, terminated, info
@@ -405,6 +408,7 @@ class SimGameEnv:
             raise RuntimeError("native combat action requires a live combat")
         self._last_reasoning_trace = None
         self.bc.execute(sts.Action(int(action_bits)))
+        terminal_combat_state = self._winning_combat_value_state()
         self._settle()
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp
@@ -413,7 +417,10 @@ class SimGameEnv:
             cleared_run = self.gc.outcome == _GC_UNDECIDED and self.gc.act > 3
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
-        return self._canonical(), reward, terminated, self._info()
+        info = self._info()
+        if terminal_combat_state is not None:
+            info["nosl_value_terminal_state"] = terminal_combat_state
+        return self._canonical(), reward, terminated, info
 
     def preview_native_end_turn_boundary(self, action_bits: int):
         """Return the stable value boundary for a native End Turn action.
@@ -428,6 +435,15 @@ class SimGameEnv:
         if preview is None:
             return None
         return preview(int(action_bits))
+
+    def _winning_combat_value_state(self):
+        """Snapshot a just-won combat before settlement removes the battle."""
+        if self.bc is None or not self.bc.is_battle_over:
+            return None
+        state = self.bc.to_dict()
+        if state.get("outcome") != combat_env._OUTCOME_VICTORY:
+            return None
+        return state
 
     @staticmethod
     def _semantic_action_card(action, before):
