@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import time
+from itertools import product
 from pathlib import Path
 
 import numpy as np
@@ -71,10 +72,45 @@ def summarize(replay, indices, logits, values, reference_logits):
                 policy_argmax_change_fraction=float(np.mean(old.argmax(1).numpy()!=new.argmax(1).numpy())))
 
 
+def configure_probe_sampling(replay, low_hp_fraction):
+    """Override only this private clone's sampler; never the runtime class.
+
+    Zero preserves the native uniform sampler exactly. Positive fractions reserve
+    round(count*fraction) rows for living HP1–5, with the remainder from all other
+    rows (including terminal/dead rows). This intentionally reweights both losses.
+    """
+    if not np.isfinite(low_hp_fraction) or not 0 <= low_hp_fraction < 1:
+        raise ValueError('low HP fraction must be finite and in [0, 1)')
+    hp = replay.observations['player_scalars'][:replay.size, 0].astype(np.float32)*200
+    low = np.flatnonzero((hp > 0) & (hp <= 5))
+    other = np.flatnonzero(~((hp > 0) & (hp <= 5)))
+    metadata = dict(low_hp_fraction=low_hp_fraction, available_low_hp=len(low),
+                    available_other=len(other), low_hp_interval=[0, 5])
+    if low_hp_fraction == 0:
+        return metadata
+    if not len(low) or not len(other):
+        raise ValueError('quota experiment requires both low HP and other replay rows')
+    def sample(count, rng=None, *, fresh_start_id=None, max_old_fraction=1.0):
+        if count < 1 or max_old_fraction != 1.0:
+            raise ValueError('quota probe requires positive count and frozen replay')
+        count = min(int(count), replay.size)
+        low_count = int(round(count*low_hp_fraction))
+        chooser = np.random if rng is None else rng
+        selected = np.concatenate([chooser.choice(pool, size=n, replace=n > len(pool))
+            for pool, n in [(low, low_count), (other, count-low_count)]])
+        chooser.shuffle(selected)
+        return selected
+    replay.sample_indices = sample
+    return metadata
+
+
 def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=120,
-              per_stratum=64, seed=5311, audit_seed=5311):
+              per_stratum=64, seed=5311, audit_seed=5311, low_hp_fractions=(0.,)):
     if updates < 1 or max_seconds <= 0 or per_stratum < 1 or any(b < 1 for b in batch_sizes):
         raise ValueError('all budgets must be positive')
+    if not batch_sizes or not low_hp_fractions or any(
+            not np.isfinite(f) or not 0 <= f < 1 for f in low_hp_fractions):
+        raise ValueError('provide batches and low HP fractions in [0, 1)')
     bundle, output = Path(bundle), Path(output)
     if output.exists() or output.resolve().is_relative_to(bundle.resolve()):
         raise ValueError('use a new output path outside the source bundle')
@@ -90,7 +126,7 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
         source_sha256=manifest['sha256'], seed=seed, audit_seed=audit_seed, audit_rows=len(indices),
         tool_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), torch_version=torch.__version__,
         units='fit_value_bias/fit_value_mae: normalized HP/200; strata errors and mode deltas: HP',
-        protocol='CPU FP32; single-rank cloned Adam/replay; uniform frozen replay, no new collection; in-sample audit',
+        protocol='CPU FP32; single-rank cloned Adam/replay; frozen replay, no new collection; in-sample audit; per-branch sampling quota',
         state='running', branches=[])
     output.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -100,7 +136,7 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
         temporary.write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
         temporary.replace(output)
     try:
-        for batch_size in batch_sizes:
+        for batch_size, low_hp_fraction in product(batch_sizes, low_hp_fractions):
             if time.monotonic()-started >= max_seconds:
                 result['state'] = 'budget_exhausted'
                 publish()
@@ -112,14 +148,16 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
             model.nosl_is_az_batch_size = batch_size
             model.nosl_is_az_micro_batch_size = min(256, batch_size)
             model.nosl_is_az_replay_max_old_fraction = 1.0
-            model._ensure_nosl_is_az_replay().load_state_dict(replay)
+            buffer = model._ensure_nosl_is_az_replay()
+            buffer.load_state_dict(replay)
+            sampling = configure_probe_sampling(buffer, low_hp_fraction)
             model._nosl_is_az_replay_prepare_stats = {'fresh_roots': 0, 'fresh_start_id': replay['total_added']}
             # Loading a model can reset RNG to its historical training seed.
             # Set the experiment seed after all checkpoint/setup work.
             np.random.seed(seed)
             torch.manual_seed(seed)
             reference_logits, reference_values = predictions(model, replay, indices)
-            branch = dict(batch_size=batch_size, rows=[dict(update=0,
+            branch = dict(batch_size=batch_size, sampling=sampling, rows=[dict(update=0,
                 **summarize(replay, indices, reference_logits, reference_values, reference_logits))])
             result['branches'].append(branch)
             # Compare modes on identical tensors before any optimizer change.
@@ -162,10 +200,13 @@ def main():
     parser.add_argument('--per-stratum', type=int, default=64)
     parser.add_argument('--seed', type=int, default=5311)
     parser.add_argument('--audit-seed', type=int, default=5311, help='hold audit rows fixed across learner seeds')
+    parser.add_argument('--low-hp-fractions', nargs='+', type=float, default=[0.],
+                        help='0 keeps uniform replay; positive values reserve that batch fraction for HP1–5')
     args = parser.parse_args()
     torch.set_num_threads(1)
     result = run_probe(args.bundle, args.output, batch_sizes=args.batch_sizes, updates=args.updates,
-                       max_seconds=args.max_seconds, per_stratum=args.per_stratum, seed=args.seed, audit_seed=args.audit_seed)
+                       max_seconds=args.max_seconds, per_stratum=args.per_stratum, seed=args.seed,
+                       audit_seed=args.audit_seed, low_hp_fractions=args.low_hp_fractions)
     print(json.dumps({k: result[k] for k in ['state', 'source_step', 'elapsed_seconds']}))
     if result['state'] != 'complete':
         raise SystemExit(2)

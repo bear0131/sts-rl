@@ -8,6 +8,9 @@
 这一入口独立于纯推理 HP CLI，因为它会在私有模型副本上执行 optimizer；不能把这种操作混进日常只读推理接口。
 各 batch 分支重新加载同一模型/Adam，固定 seed 和 HP 分层 audit rows，逐次记录额外 update 后的偏差及 policy KL。
 这里用均匀、冻结的单 rank replay，无新 collection，也无四机梯度平均；不是生产 batch/update 设置的等价重放。
+`--low-hp-fractions 0 .25` 可在每个 batch 设置下对比原生均匀抽样与25% HP1–5 配额；每个组合重新加载同一源包。
+配额影响 policy 和 value 两种监督，不做重要性校正；其余样本来自非 HP1–5 的全部 replay（包括终局），分区不足时允许重复抽样。
+输出记录各分区可用数量，缺少任一分区则报错；固定 audit 行仍来自原始 replay，不能把低 HP 改善当作整体改善。
 audit 行来自训练 replay，结果必须标为 in-sample，不能用它替代独立验证来决定上线。
 源 bundle 校验 SHA、输出拒绝覆盖源目录或已有文件；时间预算在 update 间检查，外层应再加进程超时。
 FP32/train-mode 与 CPU BF16 控制用于分辨实现差异；CPU BF16 不代表 CUDA BF16 的实测。
