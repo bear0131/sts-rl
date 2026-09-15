@@ -22,4 +22,5 @@ Update/batch 对照可用 `--device cuda --micro-batch-size 2048 --batch-sizes 6
 `--audit-bundle` 可指定同一 run/rank 的更晚完整包，审计只选 sample ID 不早于训练源 `total_added` 的 policy roots；后续 replay 只做审计，绝不进入 optimizer。
 这比 in-sample 更严格，但仍受时间和采样策略分布变化影响，不代表独立游戏 seed 的泛化测试。
 CUDA 记录同步后的 update 耗时和 Torch 峰值 allocated；并行实验的耗时含设备竞争，不能当独占吞吐。
-默认仍是 CPU；诊断关闭 AMP，CLI 关闭 TF32。CPU/GPU 间不承诺 bitwise，生产 BF16/四 rank/fresh replay 需另行验证。
+默认仍是 CPU 且关闭 AMP；CLI 关闭 TF32。CPU/GPU 间不承诺 bitwise，生产 BF16/四 rank/fresh replay 需另行验证。
+`--device cuda --amp bf16` 可单独对照训练精度；默认 `--amp off`。两者的 audit/HP 曲线仍使用 FP32 推理，避免混淆训练与评测精度影响。

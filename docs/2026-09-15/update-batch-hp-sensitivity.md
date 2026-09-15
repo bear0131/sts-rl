@@ -82,3 +82,28 @@ python -m tools.analysis.probe_nosl_updates SOURCE_BUNDLE \
 并继续用双方完整HP曲线、负值/超界、真实后续样本误差及policy漂移联合筛选。
 不得只因反向步数下降就替换线上配置。若这些仍不改善低HP范围，应单独审查
 value目标、低HP状态覆盖和输出参数化；与本次纯update/batch实验分开。
+
+## BF16 训练复核
+
+随后保持源包、audit、四个seeds、batch和microbatch不变，将训练前向改为CUDA
+BF16（`--amp bf16`）；所有评测仍是FP32。初始audit与两个corpus逐项完全相同，
+排除了评测精度切换。完整8条分支全部完成，每对并行任务约69–74秒。
+单个6144-update冒烟约0.61秒、Torch峰值allocated3.85GiB。
+
+| BF16 batch / updates | 敌方反向步数 | HP1–5 MAE | HP>40 MAE | Policy argmax变化 |
+| --- | --- | --- | --- | --- |
+| 24576 /5 | 183（140–210） | 6.16（6.05–6.36） | 9.69（9.46–10.02） | 6.2% |
+| 6144 /40 | 80（0–133） | 6.23（5.62–6.76） | 9.49（8.97–10.39） | 10.1% |
+| 24576 /40 | 75（20–154） | 6.21（5.12–7.53） | 10.08（8.93–11.82） | 8.3% |
+
+BF16保留了较多更新改善敌方局部单调性的趋势，但6144/40低HP误差均值并未改善，
+seed范围仍扩大。精确终局HP1平均预测18.21，负值问题也仍存在。
+24576/40的敌方指标在BF16下好于其FP32版本，但低/高HP误差波动仍大。
+因此不根据单调性一项上线，不声称6144/40在所有指标上优于24576/40。
+
+结果保存在 `runs/local/value-health/update-matrix-bf16-seed{0,5311,17,29}.json`，
+原始执行代码与输出另存远端 `diagnostics/update-batch-bf16-4018176/`。
+四rank验证尚未完成：已保留共同step4866048的四个完整模型/Adam/replay包，
+路径为各rank主机上的 `diagnostics/four-rank-step-000004866048/rankN/`。
+四份policy全部215个tensor逐字节哈希一致；这只证明该恢复点模型同步，
+不等于候选参数已通过四rank/fresh-replay试验。线上仍未改动。

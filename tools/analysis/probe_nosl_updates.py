@@ -110,7 +110,7 @@ def configure_probe_sampling(replay, low_hp_fraction):
 def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=120,
               per_stratum=64, seed=5311, audit_seed=5311, low_hp_fractions=(0.,),
               device='cpu', micro_batch_size=256, audit_bundle=None,
-              hp_corpus=None, terminal_corpus=None, eval_updates=(5, 10, 20, 40)):
+              hp_corpus=None, terminal_corpus=None, eval_updates=(5, 10, 20, 40), amp='off'):
     if updates < 1 or max_seconds <= 0 or per_stratum < 1 or any(b < 1 for b in batch_sizes):
         raise ValueError('all budgets must be positive')
     if not batch_sizes or not low_hp_fractions or any(
@@ -126,6 +126,8 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
         raise ValueError('bundle has no replay')
     if micro_batch_size < 1 or device not in ('cpu', 'cuda'):
         raise ValueError('positive micro batch and cpu/cuda device required')
+    if amp not in ('off', 'bf16') or (amp != 'off' and device != 'cuda'):
+        raise ValueError('training AMP must be off, or bf16 on CUDA')
     if device == 'cuda' and not torch.cuda.is_available():
         raise ValueError('CUDA explicitly requested but unavailable')
     audit_replay, audit_metadata, minimum_id = replay, {'kind': 'in-sample'}, None
@@ -147,8 +149,8 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
         source_sha256=manifest['sha256'], seed=seed, audit_seed=audit_seed, audit_rows=len(indices),
         tool_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), torch_version=torch.__version__,
         units='fit_value_bias/fit_value_mae: normalized HP/200; strata errors and mode deltas: HP',
-        protocol='FP32; single-rank cloned Adam/replay; frozen replay, no new collection; per-branch sampling quota',
-        device=device, micro_batch_size=micro_batch_size, audit=audit_metadata,
+        protocol='single-rank cloned Adam/replay; frozen replay, no new collection; FP32 audit; per-branch sampling quota',
+        device=device, training_amp=amp, micro_batch_size=micro_batch_size, audit=audit_metadata,
         state='running', branches=[])
     output.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
@@ -176,7 +178,7 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
             model = AccumulatingMaskablePPO.load(bundle/'model.zip', device=device,
                 custom_objects=custom_objects(bundle/'model.zip'))
             model.configure_nosl_is_az_inner_only()
-            model.amp_mode = 'off'
+            model.amp_mode = amp
             model.nosl_is_az_batch_size = batch_size
             model.nosl_is_az_micro_batch_size = min(micro_batch_size, batch_size)
             model.nosl_is_az_replay_max_old_fraction = 1.0
@@ -247,6 +249,7 @@ def main():
     parser.add_argument('--low-hp-fractions', nargs='+', type=float, default=[0.],
                         help='0 keeps uniform replay; positive values reserve that batch fraction for HP1–5')
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
+    parser.add_argument('--amp', choices=['off', 'bf16'], default='off', help='training precision; audit stays FP32')
     parser.add_argument('--micro-batch-size', type=int, default=256)
     parser.add_argument('--audit-bundle', type=Path)
     parser.add_argument('--hp-corpus', type=Path)
@@ -260,7 +263,8 @@ def main():
                        max_seconds=args.max_seconds, per_stratum=args.per_stratum, seed=args.seed,
                        audit_seed=args.audit_seed, low_hp_fractions=args.low_hp_fractions,
                        device=args.device, micro_batch_size=args.micro_batch_size, audit_bundle=args.audit_bundle,
-                       hp_corpus=args.hp_corpus, terminal_corpus=args.terminal_corpus, eval_updates=args.eval_updates)
+                       hp_corpus=args.hp_corpus, terminal_corpus=args.terminal_corpus,
+                       eval_updates=args.eval_updates, amp=args.amp)
     print(json.dumps({k: result[k] for k in ['state', 'source_step', 'elapsed_seconds']}))
     if result['state'] != 'complete':
         raise SystemExit(2)

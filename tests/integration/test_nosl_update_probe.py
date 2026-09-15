@@ -53,6 +53,8 @@ def test_update_probe_uses_real_learner_and_preserves_source(tmp_path, short_com
         assert read_bundle(source, rank=0, world_size=1) == original
         with pytest.raises(ValueError, match='later in the same run'):
             run_probe(source, tmp_path/'not-later.json', audit_bundle=source)
+        with pytest.raises(ValueError, match='bf16 on CUDA'):
+            run_probe(source, tmp_path/'cpu-bf16.json', amp='bf16')
         # The short native fixture need not visit low HP. Inject a synthetic
         # quota partition only in each private clone to exercise real updates.
         configure = probe_nosl_updates.configure_probe_sampling
