@@ -51,6 +51,19 @@ def test_update_probe_uses_real_learner_and_preserves_source(tmp_path, short_com
         assert [h['update'] for h in audited['branches'][0]['health']] == [0, 1]
         assert all(h['terminal']['summary']['states'] == 2 for h in audited['branches'][0]['health'])
         assert read_bundle(source, rank=0, world_size=1) == original
+        rates = run_probe(source, tmp_path/'rate-controls.json', batch_sizes=[8], updates=2,
+                          per_stratum=4, learning_rate_scales=[0., .5, 1.], terminal_corpus=terminal_path)
+        zero, half, full = rates['branches']
+        assert zero['initial_learning_rates'] == [0.]*len(full['initial_learning_rates'])
+        assert half['initial_learning_rates'] == [lr*.5 for lr in full['initial_learning_rates']]
+        for branch in rates['branches']:
+            assert all(r['learning_rates'] == branch['initial_learning_rates'] for r in branch['rows'][1:])
+            assert branch['rows'][0]['strata'] == full['rows'][0]['strata']
+        assert all(r['strata'] == zero['rows'][0]['strata'] and r['policy_kl_from_start'] == 0
+                   for r in zero['rows'])
+        assert zero['health'][0]['terminal'] == zero['health'][-1]['terminal']
+        assert full['rows'][-1]['policy_kl_from_start'] > 0
+        assert read_bundle(source, rank=0, world_size=1) == original
         with pytest.raises(ValueError, match='later in the same run'):
             run_probe(source, tmp_path/'not-later.json', audit_bundle=source)
         with pytest.raises(ValueError, match='bf16 on CUDA'):

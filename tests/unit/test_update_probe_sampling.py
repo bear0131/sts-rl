@@ -3,7 +3,13 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tools.analysis.probe_nosl_updates import configure_probe_sampling, audit_indices
+from tools.analysis.probe_nosl_updates import configure_probe_sampling, audit_indices, run_probe
+
+
+@pytest.mark.parametrize('scales', [[], [-1], [float('nan')], [float('inf')]])
+def test_invalid_rate_scale_rejected_before_reading_source(tmp_path, scales):
+    with pytest.raises(ValueError, match='learning rate scales'):
+        run_probe(tmp_path/'absent-source', tmp_path/'out.json', learning_rate_scales=scales)
 
 
 def buffer(hps):

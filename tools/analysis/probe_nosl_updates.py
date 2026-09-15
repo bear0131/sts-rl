@@ -110,12 +110,15 @@ def configure_probe_sampling(replay, low_hp_fraction):
 def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=120,
               per_stratum=64, seed=5311, audit_seed=5311, low_hp_fractions=(0.,),
               device='cpu', micro_batch_size=256, audit_bundle=None,
-              hp_corpus=None, terminal_corpus=None, eval_updates=(5, 10, 20, 40), amp='off'):
+              hp_corpus=None, terminal_corpus=None, eval_updates=(5, 10, 20, 40), amp='off',
+              learning_rate_scales=(1.,)):
     if updates < 1 or max_seconds <= 0 or per_stratum < 1 or any(b < 1 for b in batch_sizes):
         raise ValueError('all budgets must be positive')
     if not batch_sizes or not low_hp_fractions or any(
             not np.isfinite(f) or not 0 <= f < 1 for f in low_hp_fractions):
         raise ValueError('provide batches and low HP fractions in [0, 1)')
+    if not learning_rate_scales or any(not np.isfinite(s) or s < 0 for s in learning_rate_scales):
+        raise ValueError('provide finite nonnegative learning rate scales; zero is a no-weight-update control')
     bundle, output = Path(bundle), Path(output)
     if output.exists() or output.resolve().is_relative_to(bundle.resolve()):
         raise ValueError('use a new output path outside the source bundle')
@@ -170,7 +173,7 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
         temporary.write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
         temporary.replace(output)
     try:
-        for batch_size, low_hp_fraction in product(batch_sizes, low_hp_fractions):
+        for batch_size, low_hp_fraction, lr_scale in product(batch_sizes, low_hp_fractions, learning_rate_scales):
             if time.monotonic()-started >= max_seconds:
                 result['state'] = 'budget_exhausted'
                 publish()
@@ -178,6 +181,12 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
             model = AccumulatingMaskablePPO.load(bundle/'model.zip', device=device,
                 custom_objects=custom_objects(bundle/'model.zip'))
             model.configure_nosl_is_az_inner_only()
+            # Keep the checkpoint's Adam moments and schedule; scale every
+            # schedule evaluation so the learner cannot overwrite this control.
+            original_schedule = model.lr_schedule
+            model.lr_schedule = lambda progress, schedule=original_schedule, scale=lr_scale: schedule(progress)*scale
+            for group in model.policy.optimizer.param_groups:
+                group['lr'] *= lr_scale
             model.amp_mode = amp
             model.nosl_is_az_batch_size = batch_size
             model.nosl_is_az_micro_batch_size = min(micro_batch_size, batch_size)
@@ -191,7 +200,8 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
             np.random.seed(seed)
             torch.manual_seed(seed)
             reference_logits, reference_values = predictions(model, audit_replay, indices)
-            branch = dict(batch_size=batch_size, sampling=sampling, rows=[dict(update=0,
+            branch = dict(batch_size=batch_size, sampling=sampling, learning_rate_scale=lr_scale,
+                initial_learning_rates=[float(g['lr']) for g in model.policy.optimizer.param_groups], rows=[dict(update=0,
                 **summarize(audit_replay, indices, reference_logits, reference_values, reference_logits))],
                 health=[dict(update=0, **health(model))])
             result['branches'].append(branch)
@@ -221,6 +231,7 @@ def run_probe(bundle, output, *, batch_sizes=(1024,), updates=10, max_seconds=12
                 logits, values = predictions(model, audit_replay, indices)
                 branch['rows'].append(dict(update=update, fit_value_bias=fit.get('value_bias'),
                     fit_value_mae=fit.get('value_mae'), optimizer_steps=fit['updates'],
+                    learning_rates=[float(g['lr']) for g in model.policy.optimizer.param_groups],
                     fit_seconds=fit_seconds, sampled_rows=min(batch_size, replay['size']),
                     cuda_peak_allocated=torch.cuda.max_memory_allocated() if device == 'cuda' else None,
                     **summarize(audit_replay, indices, logits, values, reference_logits)))
@@ -246,6 +257,8 @@ def main():
     parser.add_argument('--per-stratum', type=int, default=64)
     parser.add_argument('--seed', type=int, default=5311)
     parser.add_argument('--audit-seed', type=int, default=5311, help='hold audit rows fixed across learner seeds')
+    parser.add_argument('--learning-rate-scales', nargs='+', type=float, default=[1.],
+                        help='multiply saved LR schedule; zero controls for drift without weight updates (Adam moments still advance)')
     parser.add_argument('--low-hp-fractions', nargs='+', type=float, default=[0.],
                         help='0 keeps uniform replay; positive values reserve that batch fraction for HP1–5')
     parser.add_argument('--device', choices=['cpu', 'cuda'], default='cpu')
@@ -264,7 +277,7 @@ def main():
                        audit_seed=args.audit_seed, low_hp_fractions=args.low_hp_fractions,
                        device=args.device, micro_batch_size=args.micro_batch_size, audit_bundle=args.audit_bundle,
                        hp_corpus=args.hp_corpus, terminal_corpus=args.terminal_corpus,
-                       eval_updates=args.eval_updates, amp=args.amp)
+                       eval_updates=args.eval_updates, amp=args.amp, learning_rate_scales=args.learning_rate_scales)
     print(json.dumps({k: result[k] for k in ['state', 'source_step', 'elapsed_seconds']}))
     if result['state'] != 'complete':
         raise SystemExit(2)

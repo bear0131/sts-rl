@@ -24,3 +24,6 @@ Update/batch 对照可用 `--device cuda --micro-batch-size 2048 --batch-sizes 6
 CUDA 记录同步后的 update 耗时和 Torch 峰值 allocated；并行实验的耗时含设备竞争，不能当独占吞吐。
 默认仍是 CPU 且关闭 AMP；CLI 关闭 TF32。CPU/GPU 间不承诺 bitwise，生产 BF16/四 rank/fresh replay 需另行验证。
 `--device cuda --amp bf16` 可单独对照训练精度；默认 `--amp off`。两者的 audit/HP 曲线仍使用 FP32 推理，避免混淆训练与评测精度影响。
+`--learning-rate-scales 0 .25 .5 1` 在每个 batch/配额组合内重新加载源状态，分别缩放保存的 optimizer 学习率及 schedule，保持 Adam moments。
+逐次输出实际各参数组学习率，不能仅按 CLI 值推断生效。默认1保留原步幅；0是无权重更新控制（Adam moments仍推进），用于检查固定语料评测漂移，不是候选训练设置。
+降低学习率若只是接近不更新的基线，不能据此宣称学得更好；需联合观察相对源模型的误差改善与跨seed波动。
