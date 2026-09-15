@@ -56,3 +56,28 @@ def test_hp_intervention_rejects_inconsistent_language_aliases(combat_factory):
     base['player_status_language'] = np.zeros(4, dtype=np.int64)
     with pytest.raises(ValueError, match='tokenized'):
         intervene(base, 'player', 20)
+
+
+def test_terminal_corpus_contains_native_wins_at_each_player_hp(combat_factory, tmp_path):
+    from types import SimpleNamespace
+    from rl.evaluation.nosl.hp_sensitivity import build_terminal_corpus, evaluate_corpus, evaluate_terminal_corpus
+    env = combat_factory(['STRIKE_RED']*5)
+    model = SimpleNamespace(observation_space=env.observation_space)
+    corpus = build_terminal_corpus(model, ['Cultist', 'Shell Parasite'], [8], hps=[1, 20, 80])
+    assert len(corpus) == 6
+    for (meta, obs), hp in zip(corpus, [1, 20, 80]*2):
+        assert meta['oracle_hp'] == hp
+        assert obs['player_scalars'][0] == pytest.approx(hp/200)
+        assert obs['run_hp'][0] == pytest.approx(hp/200)
+        assert obs['monster_id'][0] > 0
+        assert obs['monster_scalars'][0, 0] == 0
+        assert obs['monster_scalars'][0, 1] == 0
+    path = tmp_path/'terminals.npz'
+    save_corpus(corpus, path)
+    assert corpus_digest(corpus) == corpus_digest(load_corpus(path))
+    # Corpus protocol mistakes must fail before trying to run a network.
+    model.policy = SimpleNamespace(set_training_mode=lambda _: None)
+    with pytest.raises(ValueError, match='terminal protocol'):
+        evaluate_corpus(model, corpus)
+    with pytest.raises(ValueError, match='not a terminal'):
+        evaluate_terminal_corpus(model, [({'kind': 'root'}, env._obs())])

@@ -1,8 +1,9 @@
-"""Fixed public-observation HP probes; synthetic interventions, not game oracles.
+"""Fixed HP sensitivity sweeps and a separate native terminal oracle protocol.
 
 The corpus is independent of checkpoint weights and persisted without pickle.
 Native roots/boundaries supply contexts; HP sweeps deliberately do not execute
 mechanics. Inversions flag a review candidate, not necessarily a game-rule bug.
+The terminal protocol executes a lethal action with an exact no-healing label.
 """
 from __future__ import annotations
 
@@ -145,6 +146,8 @@ def evaluate_corpus(model, corpus, *, axes=('player', 'enemy'), batch_size=64, t
     model.policy.set_training_mode(False)
     curves = []
     for meta, base in corpus:
+        if meta.get('kind') == 'combat_terminal_oracle':
+            raise ValueError('terminal oracle corpus requires the terminal protocol')
         for axis in axes:
             slots = [0] if axis == 'player' else [i for i, x in enumerate(base['monster_id'])
                 if x and base['monster_scalars'][i, 0] > 0 and base['monster_scalars'][i, 1] > 0]
@@ -174,3 +177,69 @@ def evaluate_corpus(model, corpus, *, axes=('player', 'enemy'), batch_size=64, t
                 curves=curves, summary=dict(curves=len(curves),
                     curves_with_inversions=sum(c['summary']['adverse_steps'] > 0 for c in curves),
                     finite=True))
+
+
+def build_terminal_corpus(model, encounters, seeds, *, hps=(1, 5, 20, 80)):
+    """Execute native lethal attacks; oracle applies to these no-healing states."""
+    from rl.evaluation.nosl.scenarios import SCENARIOS, make_env, card_dict
+    import slaythespire as sts
+    result = []
+    for encounter in encounters:
+        if encounter not in sts.encounter_names():
+            raise ValueError(f'unknown encounter: {encounter}')
+        for seed in seeds:
+            env = make_env(model, SCENARIOS['bash_plus_strike'], False, seed)
+            try:
+                env.thick.gc.set_relics([])
+                env.thick.gc.set_deck([('STRIKE_RED', 0)] * 5)
+                env.thick.bc = sts.create_battle(env.thick.gc, encounter)
+                base = env.thick.bc.to_dict()
+                if len(base['monsters']) != 1:
+                    raise ValueError('terminal protocol currently requires single-enemy encounters')
+                slots = [i for i, card in enumerate(base['hand'])
+                         if card_dict(card)['id'] == 'STRIKE_RED']
+                if not slots:
+                    raise ValueError('terminal fixture did not draw its guaranteed Strike')
+                slot = slots[0]
+                for hp in hps:
+                    if not 1 <= hp <= base['player']['max_hp']:
+                        raise ValueError('terminal probe HP exceeds fixture bounds')
+                    battle = env.thick.bc.clone()
+                    battle.apply_custom_state({'player': {'hp': hp}, 'monsters': [{'hp': 1, 'block': 0}]})
+                    battle.execute(sts.Action(sts.ActionType.CARD, slot, 0))
+                    raw = battle.to_dict()
+                    if not battle.is_battle_over or raw['player']['hp'] != hp:
+                        raise ValueError(f'non-terminal/no-heal fixture violated: {encounter}, seed={seed}, '
+                            f'HP={hp}, final_player_HP={raw["player"]["hp"]}, '
+                            f'final_monster_HP={[m["hp"] for m in raw["monsters"]]}')
+                    observation = env._native_leaf_observation(raw)
+                    result.append((dict(kind='combat_terminal_oracle', encounter=encounter,
+                        seed=int(seed), oracle_hp=int(hp), relics=[], fixture='five_strikes_enemy_hp1_block0',
+                        monster=base['monsters'][0]['id'], attack=card_dict(base['hand'][slot])['id']), observation))
+            finally:
+                env.close()
+    return result
+
+
+def evaluate_terminal_corpus(model, corpus, *, batch_size=64):
+    from rl.search.native import forward_root
+    if batch_size < 1 or not corpus:
+        raise ValueError('terminal evaluation needs data and a positive batch size')
+    if any(meta.get('kind') != 'combat_terminal_oracle' for meta, _ in corpus):
+        raise ValueError('not a terminal oracle corpus')
+    model.policy.set_training_mode(False)
+    rows = []
+    for start in range(0, len(corpus), batch_size):
+        items = corpus[start:start+batch_size]
+        batch = {k: np.stack([obs[k] for _, obs in items]) for k in items[0][1]}
+        _, values = forward_root(model, batch)
+        for (meta, _), value in zip(items, values):
+            if not np.isfinite(value):
+                raise FloatingPointError('nonfinite terminal prediction')
+            rows.append(dict(**meta, predicted_hp=float(value)*200,
+                             error_hp=float(value)*200-meta['oracle_hp']))
+    errors = np.asarray([row['error_hp'] for row in rows])
+    return dict(schema_version=2, protocol='native no-healing lethal terminal oracle',
+        corpus_sha256=corpus_digest(corpus), rows=rows,
+        summary=dict(states=len(rows), mae_hp=float(np.abs(errors).mean()),
+                     max_abs_error_hp=float(np.abs(errors).max()), finite=True))

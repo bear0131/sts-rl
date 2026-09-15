@@ -56,7 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="enemy HP values to inject; default spans 1..max HP",
     )
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument('--suite', action='store_true', help='fixed multi-enemy, player/enemy HP corpus')
+    protocol = parser.add_mutually_exclusive_group()
+    protocol.add_argument('--suite', action='store_true', help='fixed multi-enemy, player/enemy HP corpus')
+    protocol.add_argument('--terminal', action='store_true', help='native no-healing lethal terminal oracle')
     parser.add_argument('--encounters', nargs='+', default=['Cultist', 'Jaw Worm', 'Large Slime', 'Gremlin Nob', 'Shell Parasite'])
     parser.add_argument('--seeds', nargs='+', type=int, default=[8, 36, 42])
     parser.add_argument('--axes', nargs='+', choices=['player', 'enemy'], default=['player', 'enemy'])
@@ -80,16 +82,21 @@ def main() -> None:
         custom_objects=_load_custom_objects(args.checkpoint, None),
     )
     model.policy.set_training_mode(False)
-    if args.suite:
+    if args.suite or args.terminal:
         import hashlib
         import time
         from rl.evaluation.nosl.hp_sensitivity import build_corpus, load_corpus, save_corpus, evaluate_corpus
+        from rl.evaluation.nosl.hp_sensitivity import build_terminal_corpus, evaluate_terminal_corpus
         started = time.perf_counter()
-        corpus = load_corpus(args.corpus) if args.corpus else build_corpus(model, args.encounters, args.seeds)
+        builder = build_terminal_corpus if args.terminal else build_corpus
+        corpus = load_corpus(args.corpus) if args.corpus else builder(model, args.encounters, args.seeds)
         if args.write_corpus:
             save_corpus(corpus, args.write_corpus)
-        result = evaluate_corpus(model, corpus, axes=args.axes,
-                                 batch_size=args.inference_batch_size, tolerance=args.tolerance)
+        if args.terminal:
+            result = evaluate_terminal_corpus(model, corpus, batch_size=args.inference_batch_size)
+        else:
+            result = evaluate_corpus(model, corpus, axes=args.axes,
+                                     batch_size=args.inference_batch_size, tolerance=args.tolerance)
         result.update(checkpoint=str(args.checkpoint.resolve()),
                       checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
                       elapsed_seconds=time.perf_counter()-started, device='cpu',

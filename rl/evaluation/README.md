@@ -29,3 +29,11 @@ JSON suite schema=2 包含 checkpoint/corpus SHA-256、每条完整曲线、局�
 当前支持 scalar HP 编码、我方 max HP < 200、敌方当前 HP < 200；遇到 tokenized combat-status HP 或被截断的 HP 编码明确报错，不能静默制造不一致 observation。
 语料基态无遗物、固定牌组，不是训练分布代表性样本。改 HP 可能让 intent/分裂阶段与可达状态不一致；统计是敏感性报警，**不等于真实 transition 的单调性定理，也不等于无回血条件下的总体违规率**。
 解读时报告幅度、样本位置和异常片段；要验证游戏行为，另用实际 native action 路径复测。
+
+同一入口的 `--terminal`（与 `--suite` 互斥）检查有精确答案的终局输入：
+无遗物、五张 Strike，将敌人设为HP1/block0，在每个单敌人场景以我方HP1/5/20/80执行真正致死攻击，
+比较模型输出与 C++ 终局 HP。用独立的 `--write-corpus runs/local/terminal-corpus.npz`
+保存此语料，之后 `--terminal --corpus ...` 复用。两类 corpus 不可混用。
+该协议没有结算回血，pre/post HP 相同；输出每状态预测/误差及 MAE（HP单位）。
+当前仅支持单敌人、能被该固定攻击直接击杀的场景；条件不成立时明确报错。
+native search 对终局本来就直接返回精确 HP，所以网络的 terminal 误差反映监督/校准情况，不能单独当作搜索返回值错误。
