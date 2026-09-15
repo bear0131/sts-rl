@@ -14,3 +14,18 @@
 一次评估只加载一份模型，多环境的直接策略和 native 叶子批量前推。num_envs 表示常驻环境数；改变 batch size 可能改变浮点舍入，随机策略的 RNG 消费顺序也可能变化。参数预设在 configs/eval，结果在 runs/local。生成器调用方提前停止消费时应显式 close，以释放环境。
 
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
+
+## 固定血量敏感性协议
+
+复用原有 CLI：`python -m rl.evaluation.nosl.eval_value_hp_sensitivity CHECKPOINT --suite --write-corpus runs/local/hp-corpus.npz --output runs/local/hp-first.json`。
+之后的 checkpoint 用 `--corpus runs/local/hp-corpus.npz` 替代 `--write-corpus`，确保输入逐字节相同。
+默认 CPU 单线程、batch 64；`--encounters`、`--seeds` 和 `--axes player enemy` 可缩小预算。
+默认五类 encounter × 三 seed，覆盖自然生成的 Acid/Spike 大史莱姆、Cultist、JawWorm、GremlinNob、Shelled Parasite，分别检查 root 和真实 End-Turn preview boundary。
+`hp_sensitivity.py` 是无 CLI 的共享库，corpus 使用不含 pickle 的 NPZ，保存命令拒绝覆盖。
+
+JSON suite schema=2 包含 checkpoint/corpus SHA-256、每条完整曲线、局部反向步数/幅度、低于零及超当前我方 HP 的偏差；异常非有限预测以失败退出。
+每条曲线逐点只改一个当前 HP 坐标及其所有 scalar 别名，不推进模拟器；enemy slot 保持不变。
+**monster_scalars[0] 是 presence，不能当 max HP**；未饱和的 current HP 和 HP ratio 才能还原 enemy max HP。
+当前支持 scalar HP 编码、我方 max HP < 200、敌方当前 HP < 200；遇到 tokenized combat-status HP 或被截断的 HP 编码明确报错，不能静默制造不一致 observation。
+语料基态无遗物、固定牌组，不是训练分布代表性样本。改 HP 可能让 intent/分裂阶段与可达状态不一致；统计是敏感性报警，**不等于真实 transition 的单调性定理，也不等于无回血条件下的总体违规率**。
+解读时报告幅度、样本位置和异常片段；要验证游戏行为，另用实际 native action 路径复测。

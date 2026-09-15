@@ -56,11 +56,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="enemy HP values to inject; default spans 1..max HP",
     )
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument('--suite', action='store_true', help='fixed multi-enemy, player/enemy HP corpus')
+    parser.add_argument('--encounters', nargs='+', default=['Cultist', 'Jaw Worm', 'Large Slime', 'Gremlin Nob', 'Shell Parasite'])
+    parser.add_argument('--seeds', nargs='+', type=int, default=[8, 36, 42])
+    parser.add_argument('--axes', nargs='+', choices=['player', 'enemy'], default=['player', 'enemy'])
+    corpus = parser.add_mutually_exclusive_group()
+    corpus.add_argument('--corpus', type=Path, help='reuse exact saved public observations')
+    corpus.add_argument('--write-corpus', type=Path, help='save new corpus; refuses overwrite')
+    parser.add_argument('--inference-batch-size', type=int, default=64)
+    parser.add_argument('--threads', type=int, default=1)
+    parser.add_argument('--tolerance', type=float, default=1e-5)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    torch.set_num_threads(args.threads)
     if not args.checkpoint.is_file():
         raise FileNotFoundError(args.checkpoint)
     model = MaskablePPO.load(
@@ -68,6 +79,25 @@ def main() -> None:
         device="cpu",
         custom_objects=_load_custom_objects(args.checkpoint, None),
     )
+    model.policy.set_training_mode(False)
+    if args.suite:
+        import hashlib
+        import time
+        from rl.evaluation.nosl.hp_sensitivity import build_corpus, load_corpus, save_corpus, evaluate_corpus
+        started = time.perf_counter()
+        corpus = load_corpus(args.corpus) if args.corpus else build_corpus(model, args.encounters, args.seeds)
+        if args.write_corpus:
+            save_corpus(corpus, args.write_corpus)
+        result = evaluate_corpus(model, corpus, axes=args.axes,
+                                 batch_size=args.inference_batch_size, tolerance=args.tolerance)
+        result.update(checkpoint=str(args.checkpoint.resolve()),
+                      checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
+                      elapsed_seconds=time.perf_counter()-started, device='cpu',
+                      torch_version=torch.__version__, inference_batch_size=args.inference_batch_size)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
+        print(json.dumps(result['summary']))
+        return
     env = make_env(
         model, SCENARIOS["bash_plus_strike"], False, int(args.seed)
     )
