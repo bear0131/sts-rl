@@ -1,6 +1,7 @@
 #ifndef STS_LIGHTSPEED_NOSL_COMBAT_TRAINER_H
 #define STS_LIGHTSPEED_NOSL_COMBAT_TRAINER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -146,7 +147,10 @@ public:
 
     struct LeafRequest {
         std::uint64_t requestId = 0;
-        BattleContext state;
+        // Non-owning view into the pending entry. The pointer is valid until
+        // the matching backprop/abort; Python bindings serialize it before
+        // returning from nextBatch().
+        const BattleContext *state = nullptr;
         std::vector<Action> legalActions;
         bool needsPolicy = true;
     };
@@ -164,6 +168,13 @@ public:
         const std::vector<std::uint64_t> &requestIds,
         const std::vector<double> &values,
         const std::vector<std::vector<double>> &policyLogits);
+    // Consume contiguous Python/NumPy storage without materializing one
+    // std::vector<double> per leaf. Rows are backed up in input order.
+    void backpropBatchArray(const std::uint64_t *requestIds,
+                            const double *values,
+                            const double *policyLogits,
+                            std::size_t count,
+                            std::size_t policyWidth);
     bool done() const { return simulationsCompleted_ >= config_.simulations; }
     int simulationsCompleted() const { return simulationsCompleted_; }
     NoslCombatDecision result() const;
@@ -258,6 +269,9 @@ private:
     void expandWithLogits(Node &node, const BattleContext &state,
                           const std::vector<Action> &actions,
                           const std::vector<double> &logits);
+    void expandWithLogits(Node &node, const BattleContext &state,
+                          const std::vector<Action> &actions,
+                          const double *logits, std::size_t logitsSize);
     void applyRootDirichletNoise();
     static void expandUniform(Node &node, const BattleContext &state,
                               const std::vector<Action> &actions);
@@ -289,6 +303,8 @@ private:
     double nodeValueForSelection(const Node &node) const;
     void advanceGumbelRound();
     int selectRootEdge();
+    void backupStats(Pending &pending, double value);
+    void recomputePathValues(const Pending &pending);
     void backup(Pending &pending, double value);
     void finishTerminal(Pending &pending, double value);
 };

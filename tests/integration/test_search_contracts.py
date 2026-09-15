@@ -102,6 +102,59 @@ def test_native_search_budget_and_live_state_contract(combat_factory, mode, stri
 
 
 @pytest.mark.native
+def test_native_batch_backprop_matches_scalar_order(combat_factory):
+    env_batch = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
+    env_scalar = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
+    root_logits = np.linspace(-1.0, 1.0, 181, dtype=np.float64)
+    kwargs = dict(
+        simulations=24,
+        depth=2,
+        nonce=173,
+        root_search_mode=2,
+        paper_full_gumbel=False,
+    )
+    batch_session = env_batch.thick.bc.nosl_neural_search_begin(
+        root_logits, **kwargs
+    )
+    scalar_session = env_scalar.thick.bc.nosl_neural_search_begin(
+        root_logits, **kwargs
+    )
+
+    while not batch_session.done():
+        batch = batch_session.next_batch(8)
+        scalar_batch = scalar_session.next_batch(8)
+        assert len(batch) == len(scalar_batch)
+        assert batch
+        ids = np.asarray([leaf["request_id"] for leaf in batch], dtype=np.uint64)
+        values = np.asarray(
+            [0.2 + 0.03 * (index % 5) for index in range(len(batch))],
+            dtype=np.float64,
+        )
+        logits = np.stack(
+            [root_logits + 0.01 * index for index in range(len(batch))], axis=0
+        )
+        batch_session.backprop_batch_array(ids, values, logits)
+        for leaf, value, policy in zip(scalar_batch, values, logits):
+            scalar_session.backprop(leaf["request_id"], float(value), policy)
+
+    assert scalar_session.done()
+    batch_result = batch_session.result()
+    scalar_result = scalar_session.result()
+    assert batch_result["action_bits"] == scalar_result["action_bits"]
+    assert batch_result["total_root_visits"] == scalar_result["total_root_visits"]
+    assert batch_result["root_visits"] == scalar_result["root_visits"]
+    assert batch_result["root_value"] == pytest.approx(
+        scalar_result["root_value"], rel=0, abs=1e-12
+    )
+
+    batch_tree = batch_session.tree_snapshot((), 64)
+    scalar_tree = scalar_session.tree_snapshot((), 64)
+    assert batch_tree["visits"] == scalar_tree["visits"]
+    assert batch_tree["value_visits"] == scalar_tree["value_visits"]
+    assert batch_tree["children"] == scalar_tree["children"]
+
+
+@pytest.mark.native
 def test_strict_gumbel_matches_reference_schedule_transform_and_target(
     combat_factory,
 ):

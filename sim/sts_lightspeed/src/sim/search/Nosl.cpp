@@ -19,7 +19,8 @@ std::uint64_t streamSeed(std::uint64_t nonce, std::uint64_t stream) {
 }
 }
 
-void noslRedeterminize(BattleContext &bc, std::uint64_t nonce) {
+void redeterminize(BattleContext &bc, std::uint64_t nonce,
+                   bool canonicalizeDrawPile) {
     bc.aiRng = sts::Random(streamSeed(nonce, 1));
     bc.cardRandomRng = sts::Random(streamSeed(nonce, 2));
     bc.miscRng = sts::Random(streamSeed(nonce, 3));
@@ -30,18 +31,28 @@ void noslRedeterminize(BattleContext &bc, std::uint64_t nonce) {
     // The remaining-card multiset is observable but its order is hidden.
     // Canonicalization prevents the result from depending on the source
     // world's hidden order before sampling an independent permutation.
-    std::sort(
-        bc.cards.drawPile.begin(),
-        bc.cards.drawPile.end(),
-        [](const CardInstance &lhs, const CardInstance &rhs) {
-            return lhs.getUniqueId() < rhs.getUniqueId();
-        }
-    );
+    if (canonicalizeDrawPile) {
+        std::sort(
+            bc.cards.drawPile.begin(),
+            bc.cards.drawPile.end(),
+            [](const CardInstance &lhs, const CardInstance &rhs) {
+                return lhs.getUniqueId() < rhs.getUniqueId();
+            }
+        );
+    }
     java::Collections::shuffle(
         bc.cards.drawPile.begin(),
         bc.cards.drawPile.end(),
         java::Random(streamSeed(nonce, 7))
     );
+}
+
+void noslRedeterminize(BattleContext &bc, std::uint64_t nonce) {
+    redeterminize(bc, nonce, true);
+}
+
+void noslRedeterminizeCanonical(BattleContext &bc, std::uint64_t nonce) {
+    redeterminize(bc, nonce, false);
 }
 
 }

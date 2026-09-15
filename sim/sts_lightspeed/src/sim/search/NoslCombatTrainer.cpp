@@ -1,6 +1,7 @@
 #include "sim/search/NoslCombatTrainer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <limits>
@@ -39,10 +40,10 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
     // transition.  uniqueId is deliberately excluded: it is an opaque card
     // identity and is not public information.
     using CardSignature = std::tuple<int, int, int, int, int, int, int>;
-    std::vector<CardSignature> cards;
-    cards.reserve(pile.size());
+    std::array<CardSignature, CardManager::MAX_GROUP_SIZE> cards{};
+    std::size_t count = 0;
     for (const auto &card : pile) {
-        cards.emplace_back(
+        cards[count++] = CardSignature(
             static_cast<int>(card.getId()),
             static_cast<int>(card.specialData),
             static_cast<int>(card.cost),
@@ -51,10 +52,11 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
             card.freeToPlayOnce ? 1 : 0,
             card.retain ? 1 : 0);
     }
-    std::sort(cards.begin(), cards.end());
-    hashValue(hash, cards.size());
-    for (const auto &[cardId, specialData, cost, costForTurn, upgraded,
-                       freeToPlayOnce, retain] : cards) {
+    std::sort(cards.begin(), cards.begin() + count);
+    hashValue(hash, count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto &[cardId, specialData, cost, costForTurn, upgraded,
+                     freeToPlayOnce, retain] = cards[i];
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -67,12 +69,12 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
 
 void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
     using CardSignature = std::tuple<int, int, int, int, int, int, int, int>;
-    std::vector<CardSignature> cards;
-    cards.reserve(static_cast<std::size_t>(bc.cards.cardsInHand));
+    std::array<CardSignature, CardManager::MAX_HAND_SIZE> cards{};
+    std::size_t count = 0;
     for (int i = 0; i < bc.cards.cardsInHand; ++i) {
         const auto &card = bc.cards.hand[i];
         const int currentCost = card.freeToPlayOnce ? 0 : card.costForTurn;
-        cards.emplace_back(
+        cards[count++] = CardSignature(
             static_cast<int>(card.getId()),
             static_cast<int>(card.specialData),
             static_cast<int>(card.cost),
@@ -82,10 +84,11 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
             card.freeToPlayOnce ? 1 : 0,
             card.retain ? 1 : 0);
     }
-    std::sort(cards.begin(), cards.end());
-    hashValue(hash, cards.size());
-    for (const auto &[cardId, specialData, cost, costForTurn, currentCost,
-                       upgraded, freeToPlayOnce, retain] : cards) {
+    std::sort(cards.begin(), cards.begin() + count);
+    hashValue(hash, count);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto &[cardId, specialData, cost, costForTurn, currentCost,
+                     upgraded, freeToPlayOnce, retain] = cards[i];
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -396,22 +399,25 @@ std::uint64_t publicActionKey(const BattleContext &bc, const Action &action) {
         case ActionType::MULTI_CARD_SELECT: {
             hashValue(hash, static_cast<int>(
                 bc.cardSelectInfo.cardSelectTask));
-            std::vector<std::tuple<int, int, int>> selected;
+            std::array<std::tuple<int, int, int>, CardManager::MAX_HAND_SIZE>
+                selected{};
+            std::size_t selectedCount = 0;
             for (const int index : action.getSelectedIdxs()) {
                 const auto *card = actionCardAt(
                     bc, static_cast<int>(ActionCardCollection::HAND), index);
                 if (card != nullptr) {
-                selected.emplace_back(
+                selected[selectedCount++] = std::make_tuple(
                         static_cast<int>(card->getId()),
                         card->specialData,
                         card->freeToPlayOnce ? 0 : card->costForTurn);
                 } else {
-                    selected.emplace_back(-1, index, 0);
+                    selected[selectedCount++] = std::make_tuple(-1, index, 0);
                 }
             }
-            std::sort(selected.begin(), selected.end());
-            hashValue(hash, selected.size());
-            for (const auto &[cardId, upgrades, cost] : selected) {
+            std::sort(selected.begin(), selected.begin() + selectedCount);
+            hashValue(hash, selectedCount);
+            for (std::size_t i = 0; i < selectedCount; ++i) {
+                const auto &[cardId, upgrades, cost] = selected[i];
                 hashValue(hash, cardId);
                 hashValue(hash, upgrades);
                 hashValue(hash, cost);
@@ -766,6 +772,14 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     std::uint64_t searchNonce,
     double rootValue)
     : config_(config), rootState_(rootState), searchNonce_(searchNonce) {
+    // NOSL treats draw-pile order as hidden. Canonicalize the copied root once
+    // so every simulation can shuffle the same representation without paying
+    // an O(n log n) sort before its independent permutation.
+    std::sort(
+        rootState_.cards.drawPile.begin(), rootState_.cards.drawPile.end(),
+        [](const CardInstance &lhs, const CardInstance &rhs) {
+            return lhs.getUniqueId() < rhs.getUniqueId();
+        });
     if (config_.simulations < 1) {
         config_.simulations = 1;
     }
@@ -1198,24 +1212,37 @@ void NoslNeuralSearchSession::expandWithLogits(
     Node &node, const BattleContext &state,
     const std::vector<Action> &actions,
     const std::vector<double> &logits) {
+    expandWithLogits(node, state, actions, logits.data(), logits.size());
+}
+
+void NoslNeuralSearchSession::expandWithLogits(
+    Node &node, const BattleContext &state,
+    const std::vector<Action> &actions,
+    const double *logits, std::size_t logitsSize) {
     if (actions.empty()) {
         node.edges.clear();
         return;
     }
-    if (logits.empty()) {
+    if (logits == nullptr || logitsSize == 0) {
         expandUniform(node, state, actions);
         return;
     }
 
-    std::unordered_map<int, int> groupCounts;
+    // The thin action codec currently has 181 ids. A fixed table avoids a
+    // hash allocation for every expanded leaf; invalid/unmapped actions keep
+    // the old count=1 behavior.
+    constexpr int kThinActionCount = 181;
+    std::array<int, kThinActionCount> groupCounts{};
     double maxLogit = -std::numeric_limits<double>::infinity();
     for (const auto &action : actions) {
         const int id = thinActionId(action);
         if (id < 0) {
             continue;
         }
-        ++groupCounts[id];
-        if (id < static_cast<int>(logits.size()) &&
+        if (id >= 0 && id < kThinActionCount) {
+            ++groupCounts[static_cast<std::size_t>(id)];
+        }
+        if (id < static_cast<int>(logitsSize) &&
             std::isfinite(logits[id])) {
             maxLogit = std::max(
                 maxLogit, logits[id] / config_.priorTemperature);
@@ -1233,9 +1260,10 @@ void NoslNeuralSearchSession::expandWithLogits(
     weights.reserve(actions.size());
     for (const auto &action : actions) {
         const int id = thinActionId(action);
-        const auto countIt = groupCounts.find(id);
-        const int count = countIt == groupCounts.end() ? 1 : countIt->second;
-        const double logit = id >= 0 && id < static_cast<int>(logits.size()) &&
+        const int count = id >= 0 && id < kThinActionCount &&
+                groupCounts[static_cast<std::size_t>(id)] > 0
+            ? groupCounts[static_cast<std::size_t>(id)] : 1;
+        const double logit = id >= 0 && id < static_cast<int>(logitsSize) &&
                 std::isfinite(logits[id])
             ? logits[id] / config_.priorTemperature
             : maxLogit;
@@ -1706,7 +1734,7 @@ int NoslNeuralSearchSession::selectFullGumbelInterior(
     return best;
 }
 
-void NoslNeuralSearchSession::backup(Pending &pending, double value) {
+void NoslNeuralSearchSession::backupStats(Pending &pending, double value) {
     if (!std::isfinite(value)) {
         value = 0.0;
     }
@@ -1734,7 +1762,14 @@ void NoslNeuralSearchSession::backup(Pending &pending, double value) {
             edge->valueSum += value;
         }
     }
+    if (config_.rootSearchMode == 1 && !gumbelActiveEdges_.empty()) {
+        ++gumbelRoundCompleted_;
+    }
+    ++simulationsCompleted_;
+}
 
+void NoslNeuralSearchSession::recomputePathValues(
+    const Pending &pending) {
     // Rebuild values from the bottom of this sampled path.  The raw sample
     // sums above remain available for diagnostics, while propagated values
     // now respect the two kinds of backward edge:
@@ -1756,10 +1791,11 @@ void NoslNeuralSearchSession::backup(Pending &pending, double value) {
             recomputeNodeValue(**itNode);
         }
     }
-    if (config_.rootSearchMode == 1 && !gumbelActiveEdges_.empty()) {
-        ++gumbelRoundCompleted_;
-    }
-    ++simulationsCompleted_;
+}
+
+void NoslNeuralSearchSession::backup(Pending &pending, double value) {
+    backupStats(pending, value);
+    recomputePathValues(pending);
 }
 
 void NoslNeuralSearchSession::finishTerminal(Pending &pending, double value) {
@@ -1776,16 +1812,26 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
     }
     std::vector<LeafRequest> requests;
     requests.reserve(maxLeaves);
+    // A batch owns at most maxLeaves pending paths. Keep the hash table at a
+    // stable size across the hot backprop/nextBatch cycle and avoid a rehash
+    // when larger evaluation batches are used.
+    if (pending_.bucket_count() < static_cast<std::size_t>(maxLeaves)) {
+        pending_.reserve(static_cast<std::size_t>(maxLeaves));
+    }
     while (simulationsStarted_ < config_.simulations &&
            static_cast<int>(requests.size()) < maxLeaves) {
         BattleContext state(rootState_);
-        noslRedeterminize(
+        noslRedeterminizeCanonical(
             state, noslMix(searchNonce_ + static_cast<std::uint64_t>(
                                    simulationsStarted_)));
         ++simulationsStarted_;
 
         Pending pending;
         pending.id = nextRequestId_++;
+        const std::size_t pathReserve = config_.maxDepth > 0
+            ? static_cast<std::size_t>(config_.maxDepth) + 1 : 16;
+        pending.nodes.reserve(pathReserve);
+        pending.edges.reserve(pathReserve);
         pending.nodes.push_back(&root_);
         root_.virtualVisits++;
         Node *node = &root_;
@@ -1930,7 +1976,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         const auto &stored = pending_.at(requestId);
         LeafRequest request;
         request.requestId = stored.id;
-        request.state = stored.state;
+        request.state = &stored.state;
         request.legalActions = stored.legalActions;
         request.needsPolicy = stored.needsPolicy;
         requests.push_back(std::move(request));
@@ -1967,8 +2013,69 @@ void NoslNeuralSearchSession::backpropBatch(
         requestIds.size() != policyLogits.size()) {
         throw std::invalid_argument("NOSL backprop batch lengths differ");
     }
+    std::vector<Pending> batch;
+    batch.reserve(requestIds.size());
     for (std::size_t i = 0; i < requestIds.size(); ++i) {
-        backprop(requestIds[i], values[i], policyLogits[i]);
+        auto it = pending_.find(requestIds[i]);
+        if (it == pending_.end()) {
+            throw std::invalid_argument("unknown NOSL neural leaf request id");
+        }
+        Pending pending = std::move(it->second);
+        pending_.erase(it);
+        if (pending.leaf != nullptr && pending.needsPolicy &&
+            pending.leaf->edges.empty()) {
+            pending.leaf->networkValue = std::isfinite(values[i])
+                ? std::clamp(values[i], 0.0, 1.0)
+                : 0.0;
+            pending.leaf->networkValueValid = true;
+            expandWithLogits(
+                *pending.leaf, pending.state, pending.legalActions,
+                policyLogits[i]);
+        }
+        backupStats(pending, values[i]);
+        batch.emplace_back(std::move(pending));
+    }
+    for (const auto &pending : batch) {
+        recomputePathValues(pending);
+    }
+}
+
+void NoslNeuralSearchSession::backpropBatchArray(
+    const std::uint64_t *requestIds,
+    const double *values,
+    const double *policyLogits,
+    std::size_t count,
+    std::size_t policyWidth) {
+    if (count > 0 && (requestIds == nullptr || values == nullptr ||
+                      (policyWidth > 0 && policyLogits == nullptr))) {
+        throw std::invalid_argument("null NOSL backprop array storage");
+    }
+    std::vector<Pending> batch;
+    batch.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        auto it = pending_.find(requestIds[i]);
+        if (it == pending_.end()) {
+            throw std::invalid_argument("unknown NOSL neural leaf request id");
+        }
+        Pending pending = std::move(it->second);
+        pending_.erase(it);
+        if (pending.leaf != nullptr && pending.needsPolicy &&
+            pending.leaf->edges.empty()) {
+            pending.leaf->networkValue = std::isfinite(values[i])
+                ? std::clamp(values[i], 0.0, 1.0)
+                : 0.0;
+            pending.leaf->networkValueValid = true;
+            const double *row = policyWidth > 0
+                ? policyLogits + i * policyWidth : nullptr;
+            expandWithLogits(
+                *pending.leaf, pending.state, pending.legalActions,
+                row, policyWidth);
+        }
+        backupStats(pending, values[i]);
+        batch.emplace_back(std::move(pending));
+    }
+    for (const auto &pending : batch) {
+        recomputePathValues(pending);
     }
 }
 

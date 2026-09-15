@@ -17,6 +17,11 @@ std::uint64_t noslMix(std::uint64_t value);
 // permutation. The caller must pass a copy of the live BattleContext.
 void noslRedeterminize(BattleContext &bc, std::uint64_t nonce);
 
+// Variant for search sessions whose root draw pile was canonicalized once at
+// construction. It preserves the same independent RNG streams and shuffle,
+// while avoiding a repeated sort on every simulation clone.
+void noslRedeterminizeCanonical(BattleContext &bc, std::uint64_t nonce);
+
 }
 
 #endif // STS_LIGHTSPEED_NOSL_H

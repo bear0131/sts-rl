@@ -2248,7 +2248,7 @@ PYBIND11_MODULE(slaythespire, m) {
             for (const auto &request : session.nextBatch(max_leaves)) {
                 pybind11::dict item;
                 item["request_id"] = request.requestId;
-                item["state"] = rawCombatState(request.state);
+                item["state"] = rawCombatState(*request.state);
                 std::vector<std::uint32_t> legal;
                 legal.reserve(request.legalActions.size());
                 for (const auto &action : request.legalActions) {
@@ -2285,7 +2285,7 @@ PYBIND11_MODULE(slaythespire, m) {
             pybind11::list needs_policy;
             for (pybind11::ssize_t row = 0; row < count; ++row) {
                 const auto &request = requests[static_cast<std::size_t>(row)];
-                const auto packed = compact_leaf::pack(request.state);
+                const auto packed = compact_leaf::pack(*request.state);
                 for (int col = 0; col < compact_leaf::kCatSize; ++col) {
                     cat(row, col) = packed.categorical[static_cast<std::size_t>(col)];
                 }
@@ -2363,25 +2363,11 @@ PYBIND11_MODULE(slaythespire, m) {
                      throw std::invalid_argument(
                          "NOSL backprop array batch lengths differ");
                  }
-                 std::vector<std::uint64_t> request_ids_vec;
-                 std::vector<double> values_vec;
-                 std::vector<std::vector<double>> logits_vec;
-                 request_ids_vec.reserve(static_cast<std::size_t>(count));
-                 values_vec.reserve(static_cast<std::size_t>(count));
-                 logits_vec.reserve(static_cast<std::size_t>(count));
                  const auto width = logits.shape(1);
-                 for (pybind11::ssize_t row = 0; row < count; ++row) {
-                     request_ids_vec.push_back(ids(row));
-                     values_vec.push_back(vals(row));
-                     std::vector<double> row_logits;
-                     row_logits.reserve(static_cast<std::size_t>(width));
-                     for (pybind11::ssize_t col = 0; col < width; ++col) {
-                         row_logits.push_back(logits(row, col));
-                     }
-                     logits_vec.push_back(std::move(row_logits));
-                 }
-                 session.backpropBatch(
-                     request_ids_vec, values_vec, logits_vec);
+                 session.backpropBatchArray(
+                     request_ids.data(0), vals.data(0), logits.data(0, 0),
+                     static_cast<std::size_t>(count),
+                     static_cast<std::size_t>(width));
              },
              pybind11::arg("request_ids"),
              pybind11::arg("values"),
