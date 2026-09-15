@@ -27,6 +27,52 @@ global step 保存退出，保留该干预前 generation 的副本，写覆盖�
 同 ID 恢复。确认继续上报后用 `--record-change PARAMETER --at-step STEP` 记录。
 不得仅记录建议就当作已改动；没有明显变化时保持安静，故障或完成才通知用户。
 
+## 四机 NOSL 本地启动入口
+
+Windows 本地统一使用
+`experiments/launchers/manage_nosl_replay_4way.ps1` 编排四个远端 rank；远端实际命令仍只有
+`launch_nosl_replay.sh` 一个入口。脚本只依赖 OpenSSH 和
+`%USERPROFILE%\.ssh\sts_dist_shared_ed25519`，不会保存密码。新机器首次启用时应先把该公钥加入
+远端授权；密码只用于这次引导，不写入命令、文档或 Git。
+
+先检查当前端口、构建目录和准备执行的身份：
+
+```powershell
+$ports = 22324,50418,25377,17011
+.\experiments\launchers\manage_nosl_replay_4way.ps1 -Action plan -Ports $ports
+.\experiments\launchers\manage_nosl_replay_4way.ps1 -Action status -Ports $ports
+```
+
+从保留 replay 的四 rank recovery 恢复时，必须使用相同的 run/W&B ID、相同 global step，且四份
+`manifest.json`、`model.zip`、`learner.pt` 都完整。`preflight` 会校验 checksum、rank/world、run、
+W&B 和 step，并拒绝已有训练进程或遗留 `STOP`：
+
+```powershell
+.\experiments\launchers\manage_nosl_replay_4way.ps1 `
+  -Action preflight -Ports $ports -ResumeStep 2113536
+```
+
+启动并守到下一轮完整 recovery 发布：
+
+```powershell
+.\experiments\launchers\manage_nosl_replay_4way.ps1 `
+  -Action start -Ports $ports -ResumeStep 2113536 `
+  -TargetStep 2162688 -WaitForTarget
+```
+
+脚本默认值对应 `u40x4-20260915`。新实验必须显式换 `RunId`、`WandbId`、`WandbName` 和需要的
+args/checkpoint；`ResumeStep=0` 表示从头启动，并会拒绝复用已有 recovery 的 run 目录。端口或某台
+机器的 native build 变化时分别传 `-Ports`、`-BuildDirs`。只等待已有训练可运行：
+
+```powershell
+.\experiments\launchers\manage_nosl_replay_4way.ps1 `
+  -Action wait-update -Ports $ports -TargetStep 2162688
+```
+
+启动器不自动同步源码或重编译 native 扩展。部署属于独立操作：同步后先在每台机器显式构建并
+运行原生回归，再执行 `preflight`。这样不会因为一次启动静默覆盖远端未提交文件，也不会把
+checkpoint 的恢复成功误当成 native 代码已经对齐。
+
 HP ordering 坏事件统计的权威全局比例为
 `rl.training.monitoring.hp_order_fraction(record)`，其输入是等权 all-reduce 后的
 `rollout_value_gt_current_hp_ge_future_hp_matches/count`（两者均为 rank mean，
