@@ -27,3 +27,10 @@ CUDA 记录同步后的 update 耗时和 Torch 峰值 allocated；并行实验�
 `--learning-rate-scales 0 .25 .5 1` 在每个 batch/配额组合内重新加载源状态，分别缩放保存的 optimizer 学习率及 schedule，保持 Adam moments。
 逐次输出实际各参数组学习率，不能仅按 CLI 值推断生效。默认1保留原步幅；0是无权重更新控制（Adam moments仍推进），用于检查固定语料评测漂移，不是候选训练设置。
 降低学习率若只是接近不更新的基线，不能据此宣称学得更好；需联合观察相对源模型的误差改善与跨seed波动。
+
+`python -m tools.analysis.probe_nosl_updates BUNDLE --audit-only --per-stratum 64 --max-seconds 180 --output runs/local/replay-supervision.json`
+只读检查保存的 replay：按 policy root/value-only、编码中有无存活敌人及 HP 区间统计覆盖，
+固定 seed 抽样报告预测误差、偏差和负值，并验证源包未被改写。没有 optimizer 或 rollout；
+这是训练 replay 上的校准，不是独立验证。历史 replay 没有保留 `sample_kind`，因此
+“无存活敌人的 value-only”只是编码分组，不能等同于精确 terminal 分类或推断回血是否合法。
+该模式不执行训练参数矩阵，推理始终 FP32；预算不足以 `budget_exhausted`/退出码2返回部分结果。

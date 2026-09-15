@@ -48,6 +48,96 @@ def predictions(model, replay, indices, *, training=False, bf16=False):
     return np.concatenate(logits), np.concatenate(values) * 200
 
 
+def supervision_strata(replay):
+    """Partition serialized rows without inventing discarded sample_kind metadata."""
+    size = int(replay['size'])
+    obs, arrays = replay['observations'], replay['arrays']
+    # Stored compact observations can be float16; game HP is integral.
+    hp = np.rint(obs['player_scalars'][:size, 0].astype(np.float32)*200)
+    roots = arrays['policy_weights'][:size].reshape(-1) > 0
+    monsters = obs['monster_scalars'][:size]
+    living = ((monsters[..., 0] > 0) & (monsters[..., 1] > 0)).any(axis=1)
+    kinds = [('policy_root', roots), ('value_only_living_enemy', ~roots & living),
+             ('value_only_no_living_enemy', ~roots & ~living)]
+    bins = [('dead', hp <= 0), ('1-5', (hp > 0) & (hp <= 5)),
+            ('6-20', (hp > 5) & (hp <= 20)), ('21-40', (hp > 20) & (hp <= 40)),
+            ('above40', hp > 40)]
+    return hp, [(kind, interval, np.flatnonzero(mask & take))
+                for kind, mask in kinds for interval, take in bins]
+
+
+def run_replay_audit(bundle, output, *, per_stratum=64, seed=5311,
+                     device='cpu', max_seconds=120):
+    """Read-only in-replay coverage/calibration; never calls an optimizer."""
+    if per_stratum < 1 or not np.isfinite(max_seconds) or max_seconds <= 0:
+        raise ValueError('positive finite audit budgets required')
+    if device not in ('cpu', 'cuda'):
+        raise ValueError('audit device must be cpu or cuda')
+    bundle, output = Path(bundle), Path(output)
+    if output.exists() or output.resolve().is_relative_to(bundle.resolve()):
+        raise ValueError('use a new output path outside the source bundle')
+    started = time.monotonic()
+    header = json.loads((bundle/'manifest.json').read_text())
+    manifest = read_bundle(bundle, rank=header['rank'], world_size=header['world_size'])
+    replay = torch.load(bundle/'learner.pt', map_location='cpu', weights_only=False)['replay']
+    if replay is None or replay['size'] < 1:
+        raise ValueError('audit requires nonempty replay')
+    model = AccumulatingMaskablePPO.load(bundle/'model.zip', device=device,
+        custom_objects=custom_objects(bundle/'model.zip'))
+    hp, strata = supervision_strata(replay)
+    targets = replay['arrays']['value_targets'][:replay['size']].reshape(-1)*200
+    if not np.isfinite(hp).all() or not np.isfinite(targets).all():
+        raise ValueError('nonfinite replay HP or labels')
+    rng = np.random.default_rng(seed)
+    result = dict(schema_version=1, state='running', source_step=manifest['global_step'],
+        source_rank=manifest['rank'], source_sha256=manifest['sha256'], seed=seed,
+        replay_size=int(replay['size']), device=device, torch_version=torch.__version__,
+        tool_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        protocol='in-replay calibration, not held-out; FP32 inference; no optimizer or rollout',
+        classification='policy_weight separates roots/value-only; living enemies use presence and HP; '
+                       'sample_kind was not retained, so value-only strata are not exact boundary/terminal labels',
+        rows=[])
+    for kind, interval, pool in strata:
+        if time.monotonic()-started >= max_seconds:
+            result['state'] = 'budget_exhausted'
+            break
+        ids = rng.choice(pool, size=min(per_stratum, len(pool)), replace=False)
+        row = dict(kind=kind, hp_interval=interval, available=len(pool), sampled=len(ids))
+        if len(pool):
+            delta = targets[pool]-hp[pool]
+            row.update(target_mean_hp=float(targets[pool].mean()),
+                target_minus_current_hp_mean=float(delta.mean()),
+                target_matches_current_count=int((np.abs(delta) <= .1).sum()),
+                target_above_current_count=int((delta > .1).sum()),
+                target_below_current_count=int((delta < -.1).sum()))
+        if len(ids):
+            _, values = predictions(model, replay, ids)
+            if not np.isfinite(values).all():
+                raise FloatingPointError('nonfinite audit predictions')
+            error = values-targets[ids]
+            equal = np.abs(targets[ids]-hp[ids]) <= .1
+            row.update(sample_ids_sha256=hashlib.sha256(
+                replay['arrays']['sample_ids'][ids].astype('<i8').tobytes()).hexdigest(),
+                sampled_target_mean_hp=float(targets[ids].mean()),
+                predicted_mean_hp=float(values.mean()), mae_hp=float(np.abs(error).mean()),
+                bias_hp=float(error.mean()), negative_predictions=int((values < 0).sum()),
+                above_current_predictions=int((values > hp[ids]+.1).sum()),
+                target_matches_current_sampled=int(equal.sum()),
+                target_matches_current_mae_hp=float(np.abs(error[equal]).mean()) if equal.any() else None,
+                target_matches_current_bias_hp=float(error[equal].mean()) if equal.any() else None)
+        result['rows'].append(row)
+    else:
+        result['state'] = 'complete'
+    # Rehash both source files after inference: audit must not rewrite recovery.
+    assert read_bundle(bundle, rank=header['rank'], world_size=header['world_size']) == manifest
+    result['elapsed_seconds'] = time.monotonic()-started
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix+'.partial')
+    temporary.write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
+    temporary.replace(output)
+    return result
+
+
 def summarize(replay, indices, logits, values, reference_logits):
     if not (np.isfinite(logits).all() and np.isfinite(values).all()):
         raise FloatingPointError('nonfinite diagnostic prediction')
@@ -251,6 +341,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('bundle', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--audit-only', action='store_true',
+                        help='read-only supervision/HP coverage and calibration; no learner updates')
     parser.add_argument('--batch-sizes', nargs='+', type=int, default=[1024])
     parser.add_argument('--updates', type=int, default=10)
     parser.add_argument('--max-seconds', type=float, default=120)
@@ -272,7 +364,11 @@ def main():
     torch.set_num_threads(1)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    result = run_probe(args.bundle, args.output, batch_sizes=args.batch_sizes, updates=args.updates,
+    if args.audit_only:
+        result = run_replay_audit(args.bundle, args.output, per_stratum=args.per_stratum,
+                                 seed=args.audit_seed, device=args.device, max_seconds=args.max_seconds)
+    else:
+        result = run_probe(args.bundle, args.output, batch_sizes=args.batch_sizes, updates=args.updates,
                        max_seconds=args.max_seconds, per_stratum=args.per_stratum, seed=args.seed,
                        audit_seed=args.audit_seed, low_hp_fractions=args.low_hp_fractions,
                        device=args.device, micro_batch_size=args.micro_batch_size, audit_bundle=args.audit_bundle,

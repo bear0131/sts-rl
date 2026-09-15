@@ -21,6 +21,26 @@ def test_update_probe_uses_real_learner_and_preserves_source(tmp_path, short_com
         source = save_bundle(model, tmp_path/'source', rank=0, world_size=1,
                              run_id='do-not-restart', wandb_id='same', config={})
         original = read_bundle(source, rank=0, world_size=1)
+        with monkeypatch.context() as audit_patch:
+            def forbidden_update(*args, **kwargs):
+                raise AssertionError('read-only audit called the learner')
+            audit_patch.setattr(probe_nosl_updates.AccumulatingMaskablePPO,
+                                '_train_nosl_is_az', forbidden_update)
+            audit = probe_nosl_updates.run_replay_audit(source, tmp_path/'coverage.json', per_stratum=4)
+            repeated = probe_nosl_updates.run_replay_audit(source, tmp_path/'coverage-repeat.json', per_stratum=4)
+        assert audit['state'] == 'complete'
+        assert audit['rows'] == repeated['rows']
+        assert sum(row['available'] for row in audit['rows']) == audit['replay_size']
+        assert any(row['sampled'] and row['kind'].startswith('value_only') for row in audit['rows'])
+        assert all(row['sampled'] <= 4 for row in audit['rows'])
+        assert all(row['target_matches_current_count'] + row['target_above_current_count'] +
+                   row['target_below_current_count'] == row['available']
+                   for row in audit['rows'] if row['available'])
+        assert all(row['target_matches_current_mae_hp'] is None
+                   if row['target_matches_current_sampled'] == 0 else
+                   row['target_matches_current_mae_hp'] >= 0
+                   for row in audit['rows'] if row['sampled'])
+        assert read_bundle(source, rank=0, world_size=1) == original
         output = tmp_path/'probe.json'
         result = run_probe(source, output, batch_sizes=[8, 16, 8], updates=2, per_stratum=4)
         assert result['state'] == 'complete'

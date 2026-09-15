@@ -306,3 +306,33 @@ HP异常比例在中段恶化后回落，未出现持续胜率崩溃。固定终
 终局oracle不能直接用来断言所有真实游戏状态应满足value≤当前HP。
 最终证据为`runs/local/value-health/validation-5431296-{hp,terminal,monitor}.json`；
 运行与恢复详情见[worklog](../../worklog/2026-09-15.md)。
+
+### 保存的真实 replay 监督检查
+
+新增既有诊断CLI的`--audit-only`模式，不运行optimizer/rollout，按监督类别和
+HP区间统计全量覆盖、每格固定抽64行推理，前后验证源恢复包hash。
+四rank最终replay共524288行，每host约4.5秒完成。以下是训练replay上的校准，
+每格四rank共抽256行；不是独立验证，也未按各格人口比例估计整体MAE。
+
+历史collector生成的`sample_kind`没有进入replay，所以只能精确区分policy root与
+value-only，再按编码中的敌人presence和HP分组。下面“无存活敌人”是编码代理，
+不能当作已经恢复了原始terminal标签，也不能据此验证具体回血规则。
+
+| HP1–5分组 | 全量行数 | 抽样MAE（HP） | 抽样平均偏差（HP） | 负值预测/256 |
+| --- | --- | --- | --- | --- |
+| policy root | 9718 | 4.05 | +2.34 | 47 |
+| value-only，有存活敌人 | 2537 | 4.14 | +1.65 | 63 |
+| value-only，无存活敌人 | 429 | 5.64 | +3.90 | 25 |
+
+所有HP1–5行只占replay的2.42%，其中无存活敌人的value-only低HP行占整个replay
+约0.082%。后者429行中402行标签等于当前HP、27行更高、没有更低；抽样中237行
+标签等于当前HP，这部分仍有MAE5.69、平均高估4.55HP。因此不合理预测也出现在
+真实训练数据上，不能全部归因于构造语料分布外，或仅以回血/已知F05解释。
+这并不证明其余27行标签错误：缺少原生轨迹和结算信息，暂不修改标签。
+
+下一项值得隔离的假设是稀有状态的value监督与policy共享更新之间的取舍：之前
+低HP配额同时改变两项loss，已出现敌方敏感性代价；后续应独立控制value监督，
+同时验证固定HP曲线、后续replay和policy漂移，不能直接把本诊断样本当新评测集。
+来源标记丢失也应补入后续replay版本及恢复兼容，历史数据保持unknown不猜造。
+原始结果位于`runs/local/value-health/supervision-audit-5431296-label-controls-rankN.json`，
+汇总`supervision-audit-5431296-summary.json`；使用说明见[tools/README.md](../../tools/README.md)。
