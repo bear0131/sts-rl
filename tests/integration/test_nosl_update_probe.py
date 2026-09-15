@@ -25,10 +25,34 @@ def test_update_probe_uses_real_learner_and_preserves_source(tmp_path, short_com
         result = run_probe(source, output, batch_sizes=[8, 16, 8], updates=2, per_stratum=4)
         assert result['state'] == 'complete'
         assert [len(b['rows']) for b in result['branches']] == [3, 3, 3]
-        assert result['branches'][0] == result['branches'][2]
+        def without_timing(branch):
+            return {**branch, 'rows': [{k: v for k, v in r.items() if k != 'fit_seconds'}
+                                      for r in branch['rows']]}
+        assert without_timing(result['branches'][0]) == without_timing(result['branches'][2])
         assert all(r['optimizer_steps'] == 1 for b in result['branches'] for r in b['rows'][1:])
         assert all(b['rows'][0]['policy_kl_from_start'] == 0 for b in result['branches'])
         assert read_bundle(source, rank=0, world_size=1) == original
+        # Later audit labels must not enter optimization of the original clone.
+        replay = model._ensure_nosl_is_az_replay()
+        replay.sample_ids[:replay.size] += replay.total_added
+        replay.total_added += replay.size
+        replay.value_targets[:replay.size] = 0
+        model.num_timesteps += 1
+        later = save_bundle(model, tmp_path/'later', rank=0, world_size=1,
+                            run_id='do-not-restart', wandb_id='same', config={})
+        from rl.evaluation.nosl.hp_sensitivity import build_terminal_corpus, save_corpus
+        terminal_path = tmp_path/'terminals.npz'
+        save_corpus(build_terminal_corpus(model, ['Cultist'], [8], hps=[1, 80]), terminal_path)
+        audited = run_probe(source, tmp_path/'later-audit.json', batch_sizes=[8], updates=1,
+                            per_stratum=4, audit_bundle=later, terminal_corpus=terminal_path)
+        assert audited['audit']['source_step'] == model.num_timesteps
+        assert audited['branches'][0]['rows'][1]['fit_value_mae'] == result['branches'][0]['rows'][1]['fit_value_mae']
+        assert audited['branches'][0]['rows'][0]['strata'] != result['branches'][0]['rows'][0]['strata']
+        assert [h['update'] for h in audited['branches'][0]['health']] == [0, 1]
+        assert all(h['terminal']['summary']['states'] == 2 for h in audited['branches'][0]['health'])
+        assert read_bundle(source, rank=0, world_size=1) == original
+        with pytest.raises(ValueError, match='later in the same run'):
+            run_probe(source, tmp_path/'not-later.json', audit_bundle=source)
         # The short native fixture need not visit low HP. Inject a synthetic
         # quota partition only in each private clone to exercise real updates.
         configure = probe_nosl_updates.configure_probe_sampling

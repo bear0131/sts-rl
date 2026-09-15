@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tools.analysis.probe_nosl_updates import configure_probe_sampling
+from tools.analysis.probe_nosl_updates import configure_probe_sampling, audit_indices
 
 
 def buffer(hps):
@@ -42,3 +42,11 @@ def test_invalid_quota_rejected(fraction):
 def test_missing_partition_is_not_silently_substituted(hps):
     with pytest.raises(ValueError, match='both low HP and other'):
         configure_probe_sampling(buffer(hps), .25)
+
+
+def test_later_audit_filters_source_ids_and_value_only_rows():
+    replay = {'observations': {'player_scalars': np.array([[.005], [.4], [.005], [.4]])},
+              'arrays': {'policy_weights': np.array([1, 1, 1, 0]),
+                         'sample_ids': np.array([10, 11, 12, 13], dtype=np.uint64)}}
+    assert audit_indices(replay, minimum_sample_id=12).tolist() == [2]
+    assert audit_indices(replay, minimum_sample_id=14).size == 0

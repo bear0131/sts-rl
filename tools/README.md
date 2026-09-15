@@ -4,7 +4,7 @@
 运行方式：仓库根目录 `python -m tools.<package>.<command> --help`。这些命令允许依赖运行时，rl/env 不反向导入 tools。诊断结果不是源代码，写入 runs/local；需要长期复用的实验参数放 configs。
 
 `python -m tools.analysis.probe_nosl_updates BUNDLE --batch-sizes 1024 --updates 10 --max-seconds 120 --output runs/local/update-probe.json`
-对不可变的完整恢复包做有预算的 **CPU 克隆 learner 拟合诊断**，复用真实 NOSL learner、保存的 Adam/replay；不启动环境、W&B、SSH 或保存训练 checkpoint。
+对不可变的完整恢复包做有预算的 **克隆 learner 拟合诊断**（默认 CPU，可选 CUDA），复用真实 NOSL learner、保存的 Adam/replay；不启动训练环境、W&B、SSH 或保存训练 checkpoint。
 这一入口独立于纯推理 HP CLI，因为它会在私有模型副本上执行 optimizer；不能把这种操作混进日常只读推理接口。
 各 batch 分支重新加载同一模型/Adam，固定 seed 和 HP 分层 audit rows，逐次记录额外 update 后的偏差及 policy KL。
 这里用均匀、冻结的单 rank replay，无新 collection，也无四机梯度平均；不是生产 batch/update 设置的等价重放。
@@ -13,6 +13,13 @@
 输出记录各分区可用数量，缺少任一分区则报错；固定 audit 行仍来自原始 replay，不能把低 HP 改善当作整体改善。
 audit 行来自训练 replay，结果必须标为 in-sample，不能用它替代独立验证来决定上线。
 源 bundle 校验 SHA、输出拒绝覆盖源目录或已有文件；时间预算在 update 间检查，外层应再加进程超时。
-FP32/train-mode 与 CPU BF16 控制用于分辨实现差异；CPU BF16 不代表 CUDA BF16 的实测。
+FP32/train-mode 与所选设备的 BF16 推理控制用于分辨实现差异；CPU BF16 不代表 CUDA BF16，BF16 推理也不代表 BF16 optimizer 对照。
 `--seed` 控制 learner 抽样并在模型加载后设置；`--audit-seed` 默认5311，跨 learner seeds 保持审计输入固定。
 输出带工具/源文件 SHA；`state=budget_exhausted` 保留部分曲线且 CLI 退出码2，不能称为完成的全部分支比较。
+
+Update/batch 对照可用 `--device cuda --micro-batch-size 2048 --batch-sizes 6144 24576 --updates 40`。
+`--hp-corpus` 和 `--terminal-corpus` 接收 HP 评测入口保存的不可变 NPZ，在初始及 `--eval-updates 5 10 20 40` 时评测；输出保留完整双方 HP 曲线。
+`--audit-bundle` 可指定同一 run/rank 的更晚完整包，审计只选 sample ID 不早于训练源 `total_added` 的 policy roots；后续 replay 只做审计，绝不进入 optimizer。
+这比 in-sample 更严格，但仍受时间和采样策略分布变化影响，不代表独立游戏 seed 的泛化测试。
+CUDA 记录同步后的 update 耗时和 Torch 峰值 allocated；并行实验的耗时含设备竞争，不能当独占吞吐。
+默认仍是 CPU；诊断关闭 AMP，CLI 关闭 TF32。CPU/GPU 间不承诺 bitwise，生产 BF16/四 rank/fresh replay 需另行验证。
