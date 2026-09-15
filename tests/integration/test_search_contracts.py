@@ -102,6 +102,31 @@ def test_native_search_budget_and_live_state_contract(combat_factory, mode, stri
 
 
 @pytest.mark.native
+def test_native_search_supports_piles_larger_than_fixed_list_capacity(combat_factory):
+    # Production builds use vector-backed piles. Long runs and generated cards
+    # can therefore exceed CardManager::MAX_GROUP_SIZE (64), and state-key
+    # canonicalization must use the actual pile size rather than that optional
+    # fixed-list build limit.
+    env = combat_factory(["STRIKE_RED"] * 70, "Jaw Worm", seed=7)
+    session = env.thick.bc.nosl_neural_search_begin(
+        np.zeros(181),
+        simulations=8,
+        depth=0,
+        nonce=7,
+        root_search_mode=2,
+        paper_full_gumbel=True,
+    )
+
+    while not session.done():
+        leaves = session.next_batch(1)
+        assert leaves
+        leaf = leaves[0]
+        session.backprop(leaf["request_id"], 0.4, np.zeros(181))
+
+    assert session.result()["simulations"] == 8
+
+
+@pytest.mark.native
 def test_native_batch_backprop_matches_scalar_order(combat_factory):
     env_batch = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
     env_scalar = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
