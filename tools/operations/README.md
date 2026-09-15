@@ -26,3 +26,14 @@ End-Turn leaf→false，simulations→128。每次只变一个参数；最终基
 global step 保存退出，保留该干预前 generation 的副本，写覆盖参数，清除 STOP，
 同 ID 恢复。确认继续上报后用 `--record-change PARAMETER --at-step STEP` 记录。
 不得仅记录建议就当作已改动；没有明显变化时保持安静，故障或完成才通知用户。
+
+HP ordering 坏事件统计的权威全局比例为
+`rl.training.monitoring.hp_order_fraction(record)`，其输入是等权 all-reduce 后的
+`rollout_value_gt_current_hp_ge_future_hp_matches/count`（两者均为 rank mean，
+相除等于全局 sum/sum）。历史版本直接平均 rank fraction，可从保留的两项 count
+修正；多 collection 合并也先分别加总分子/分母。count=0 表示无数据；运行日志为
+兼容保留 fraction=0，但分析函数返回 None，不能当作完全校准。
+该事件只看已完成战斗 root、update 前的预测，future HP 是结算后 HP；它不是
+无回血条件概率。与胜率和固定 HP corpus 共同观察，固定探针入口见
+`rl/evaluation/README.md`。旧搜索回退序列仅适用于原实验配置，换 run/基线必须
+重新定义干预协议，不能对已是 strict 的新 run 机械复用。

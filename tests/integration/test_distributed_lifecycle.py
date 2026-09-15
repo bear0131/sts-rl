@@ -48,6 +48,20 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
         define_metric=lambda *a, **kw: None,
         log=publish))
     monkeypatch.setattr(distributed_sb3, 'make_env', make_env)
+    if nosl:
+        # Exercise the real main/logging path with an unequal-rank reduction.
+        # Only the collective's metric result is injected; collection, learner,
+        # payload construction and checkpoint/resume still execute normally.
+        from rl.training.monitoring import HP_ORDER_PREFIX as hp_prefix
+        reduce_scalars = distributed_sb3.average_scalar_dict
+        def unequal_rank_counts(values, transport):
+            result = reduce_scalars(values, transport)
+            if hp_prefix + '_fraction' in result:
+                result.update({hp_prefix + '_count': 50.0,
+                               hp_prefix + '_matches': .5,
+                               hp_prefix + '_fraction': .5})
+            return result
+        monkeypatch.setattr(distributed_sb3, 'average_scalar_dict', unequal_rank_counts)
     output = tmp_path / 'trained.zip'
     monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
@@ -64,6 +78,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     assert [p['legacy_step'] for p in payloads] == [1, 2]
     assert all(p['dist/avg_grad_sec'] == 0 for p in payloads)
     assert all('game/layer_5_win_rate' in p for p in payloads)
+    from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
+    assert all(p[HP_ORDER_PREFIX + '_fraction'] == pytest.approx(
+        hp_order_fraction(p) or 0.0) for p in payloads)
+    if nosl:
+        assert all(p[HP_ORDER_PREFIX + '_fraction'] == .01 for p in payloads)
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [True]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')

@@ -2,6 +2,22 @@
 import math
 
 
+HP_ORDER_PREFIX = 'nosl_is_az/rollout_value_gt_current_hp_ge_future_hp'
+
+
+def hp_order_fraction(record):
+    """Global bad-event ratio from equally reduced numerator/denominator.
+
+    Works with rank sums or rank means; averaging local ratios does not.
+    No eligible observations means no estimate (None), not perfect calibration.
+    """
+    count = float(record[HP_ORDER_PREFIX + '_count'])
+    matches = float(record[HP_ORDER_PREFIX + '_matches'])
+    if not all(math.isfinite(x) for x in (count, matches)) or not 0 <= matches <= count:
+        raise ValueError('invalid HP-order counts')
+    return matches / count if count else None
+
+
 # Move one coordinate at a time toward configs/train/nosl_paper_replay_fresh10_20260913.args.
 RECOVERY_STEPS = (
     ('nosl_is_az_gumbel_scale', 1.0),

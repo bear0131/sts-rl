@@ -39,6 +39,7 @@ from rl.algorithms.accumulating_ppo import (
 from rl.training.environments import make_env
 from rl.training.checkpoints import read_bundle, restore_learner, save_bundle, prune_bundles
 from rl.training.ring_allreduce import SshRingAllReduce
+from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
 from rl.tasks.wholerun import WholeRunTask
 
 # Register custom policies before loading checkpoints.
@@ -2400,6 +2401,12 @@ def main() -> None:
                 })
             aggregate_scalars = average_scalar_dict(
                 aggregate_scalars, ring_transport
+            )
+            # Both counters underwent the same mean reduction, so their ratio
+            # is sum(matches)/sum(count), even with unequal rank populations.
+            # Keep the historical zero/count=0 logging convention for W&B.
+            aggregate_scalars[HP_ORDER_PREFIX + '_fraction'] = (
+                hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
 
