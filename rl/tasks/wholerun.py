@@ -414,7 +414,21 @@ class WholeRunTask(Task):
             type=int,
             default=64,
             help="Number of C++ AlphaZero leaf states returned per worker round; "
-                 "larger values reduce IPC synchronization and use larger GPU batches.",
+                  "larger values reduce IPC synchronization and use larger GPU batches.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-inference-batch-size",
+            type=int,
+            default=32,
+            help="Target GPU batch assembled from independent search trees. "
+                 "This does not increase per-tree leaf concurrency.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-inference-max-wait-ms",
+            type=float,
+            default=0.5,
+            help="Maximum queue delay before a partial cross-tree leaf batch "
+                 "is sent to the GPU.",
         )
         parser.add_argument("--nosl-is-az-updates", type=int, default=1)
         parser.add_argument("--nosl-is-az-policy-coef", type=float, default=1.0)

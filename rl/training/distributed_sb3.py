@@ -329,7 +329,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Override C++ leaves returned per worker round; larger values "
-             "reduce worker synchronization and increase GPU batch size.",
+              "reduce worker synchronization and increase GPU batch size.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-inference-batch-size",
+        type=int,
+        default=None,
+        help="Target GPU batch assembled from independent worker trees; this "
+             "does not change per-tree leaf concurrency.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-inference-max-wait-ms",
+        type=float,
+        default=None,
+        help="Maximum queue delay before forwarding a partial cross-tree leaf "
+             "batch. Omission uses the checkpoint value or 0.5 ms.",
     )
     parser.add_argument("--nosl-is-az-dirichlet-alpha", type=float, default=0.0)
     parser.add_argument("--nosl-is-az-dirichlet-epsilon", type=float, default=0.0)
@@ -1256,6 +1270,7 @@ def distributed_nosl_is_az_update(
         "cpp_leaf_decode_seconds",
         "cpp_leaf_model_seconds",
         "cpp_backprop_rpc_seconds",
+        "cpp_stream_wait_seconds",
         "env_step_seconds",
     ):
         result[name] = float(rollout_timings.get(name, 0.0))
@@ -1357,6 +1372,9 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/cpp_leaf_decode_seconds",
     "nosl_is_az/cpp_leaf_model_seconds",
     "nosl_is_az/cpp_backprop_rpc_seconds",
+    "nosl_is_az/cpp_stream_wait_seconds",
+    "nosl_is_az/inference_batch_size_mean",
+    "nosl_is_az/inference_batch_size_max",
     "nosl_is_az/env_step_seconds",
     "nosl_is_az/collection_seconds",
     "nosl_is_az/dropped_unlabeled_roots",
@@ -1529,6 +1547,21 @@ def main() -> None:
         and args.nosl_is_az_leaf_batch_size < 1
     ):
         raise ValueError("--nosl-is-az-leaf-batch-size must be positive")
+    if (
+        args.nosl_is_az_inference_batch_size is not None
+        and args.nosl_is_az_inference_batch_size < 1
+    ):
+        raise ValueError("--nosl-is-az-inference-batch-size must be positive")
+    if (
+        args.nosl_is_az_inference_max_wait_ms is not None
+        and (
+            not np.isfinite(args.nosl_is_az_inference_max_wait_ms)
+            or args.nosl_is_az_inference_max_wait_ms < 0.0
+        )
+    ):
+        raise ValueError(
+            "--nosl-is-az-inference-max-wait-ms must be finite and non-negative"
+        )
     if args.nosl_is_az_dirichlet_alpha < 0.0:
         raise ValueError("--nosl-is-az-dirichlet-alpha must be non-negative")
     if not 0.0 <= args.nosl_is_az_dirichlet_epsilon <= 1.0:
@@ -1869,6 +1902,41 @@ def main() -> None:
         print(
             f"[rank {args.rank}] NOSL-IS-AZ leaf batch size override: "
             f"{model.nosl_is_az_leaf_batch_size}",
+            flush=True,
+        )
+    inference_override = (
+        args.nosl_is_az_inference_batch_size is not None
+        or args.nosl_is_az_inference_max_wait_ms is not None
+    )
+    if inference_override and not bool(getattr(model, "nosl_is_az", False)):
+        raise ValueError(
+            "NOSL inference scheduling overrides require a NOSL-IS-AZ checkpoint"
+        )
+    if bool(getattr(model, "nosl_is_az", False)):
+        model.nosl_is_az_inference_batch_size = int(getattr(
+            model, "nosl_is_az_inference_batch_size", 32
+        ))
+        model.nosl_is_az_inference_max_wait_ms = float(getattr(
+            model, "nosl_is_az_inference_max_wait_ms", 0.5
+        ))
+        if args.nosl_is_az_inference_batch_size is not None:
+            model.nosl_is_az_inference_batch_size = int(
+                args.nosl_is_az_inference_batch_size
+            )
+        if args.nosl_is_az_inference_max_wait_ms is not None:
+            model.nosl_is_az_inference_max_wait_ms = float(
+                args.nosl_is_az_inference_max_wait_ms
+            )
+        args.nosl_is_az_inference_batch_size = (
+            model.nosl_is_az_inference_batch_size
+        )
+        args.nosl_is_az_inference_max_wait_ms = (
+            model.nosl_is_az_inference_max_wait_ms
+        )
+        print(
+            f"[rank {args.rank}] NOSL-IS-AZ cross-tree inference: "
+            f"target_batch={model.nosl_is_az_inference_batch_size} "
+            f"max_wait_ms={model.nosl_is_az_inference_max_wait_ms}",
             flush=True,
         )
     # Restarted environments cannot restore native in-flight games. Choose a

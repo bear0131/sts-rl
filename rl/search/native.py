@@ -4,6 +4,7 @@ The caller owns environments, root policy sampling and randomness. This module
 owns batched leaf decoding/inference/backprop; it never resets a game or updates
 model weights. Transport callbacks support local environments and VecEnv IPC.
 """
+from collections import deque
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, fields
 import time
@@ -82,6 +83,20 @@ class NativeSearchConfig:
     @classmethod
     def from_mapping(cls, values):
         return cls(**{f.name: values[f.name] for f in fields(cls) if f.name in values})
+
+
+@dataclass(frozen=True)
+class LeafInferenceSchedule:
+    """Cross-tree batching only; it never changes one tree's leaf concurrency."""
+
+    target_batch_size: int = 32
+    max_wait_seconds: float = 0.0005
+
+    def __post_init__(self):
+        if self.target_batch_size < 1:
+            raise ValueError("leaf inference target batch size must be positive")
+        if not np.isfinite(self.max_wait_seconds) or self.max_wait_seconds < 0.0:
+            raise ValueError("leaf inference maximum wait must be finite and non-negative")
 
 
 def observation_as_tensor(observation, device):
@@ -173,7 +188,8 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
         raise ValueError(f'unknown prior mode: {prior_mode}')
     results = {}
     stats = dict(leaf_batches=0, leaf_evaluations=0, cpp_leaf_decode_seconds=0.0,
-                 cpp_leaf_model_seconds=0.0, cpp_backprop_rpc_seconds=0.0)
+                 cpp_leaf_model_seconds=0.0, cpp_backprop_rpc_seconds=0.0,
+                 inference_batch_size_max=0)
     by_worker = {index: {'leaf_evaluations': 0, 'leaf_batches': 0} for index in responses}
     while responses:
         check()
@@ -190,6 +206,9 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
         stats['cpp_leaf_decode_seconds'] += time.perf_counter() - started
         stats['leaf_batches'] += 1
         stats['leaf_evaluations'] += len(records)
+        stats['inference_batch_size_max'] = max(
+            stats['inference_batch_size_max'], len(records)
+        )
         for index in active:
             by_worker[index]['leaf_batches'] += 1
         for index, _ in records:
@@ -210,6 +229,186 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
         if set(responses) != set(active):
             raise RuntimeError('native worker response IDs do not match requests')
         stats['cpp_backprop_rpc_seconds'] += time.perf_counter() - started
+    stats['inference_batch_size_mean'] = (
+        float(stats['leaf_evaluations'] / stats['leaf_batches'])
+        if stats['leaf_batches']
+        else 0.0
+    )
+    stats['by_worker'] = by_worker
+    return results, stats
+
+
+def _leaf_count(response):
+    if isinstance(response, list):
+        return len(response)
+    packed = unpack_nosl_observation_buffer(response)
+    meta = response.get('leaf_meta') if packed is not None else response.get('leaves')
+    if not meta:
+        raise RuntimeError('native search returned no leaves before completion')
+    return len(meta)
+
+
+def complete_searches_streaming(
+    model,
+    stream,
+    begin_calls,
+    *,
+    leaf_batch_size,
+    schedule=LeafInferenceSchedule(),
+    compact=True,
+    lock=None,
+    autocast=nullcontext,
+    prior_mode='model',
+    check=lambda: None,
+):
+    """Finish independent trees without a cross-worker simulation barrier.
+
+    Each tree still has exactly one outstanding leaf. Worker groups are the
+    scheduling unit because one subprocess owns and serializes several envs.
+    Dynamic GPU batches contain only leaves from distinct trees, so the C++
+    visit order, virtual-visit behavior and NOSL nonce sequence are unchanged.
+    """
+    if leaf_batch_size != 1:
+        raise ValueError(
+            'streaming search requires leaf_batch_size=1 to preserve '
+            'single-leaf tree semantics'
+        )
+    if prior_mode not in ('model', 'uniform', 'none'):
+        raise ValueError(f'unknown prior mode: {prior_mode}')
+    if not isinstance(schedule, LeafInferenceSchedule):
+        schedule = LeafInferenceSchedule(**dict(schedule))
+
+    expected = set(begin_calls)
+    results = {}
+    stats = dict(
+        leaf_batches=0,
+        leaf_evaluations=0,
+        cpp_leaf_decode_seconds=0.0,
+        cpp_leaf_model_seconds=0.0,
+        cpp_backprop_rpc_seconds=0.0,
+        cpp_stream_wait_seconds=0.0,
+        inference_batch_size_max=0,
+    )
+    by_worker = {
+        index: {'leaf_evaluations': 0, 'leaf_batches': 0}
+        for index in begin_calls
+    }
+    # Keep a whole worker group atomic. Sending only part of a returned group
+    # would leave that process idle until a later GPU batch supplies the rest.
+    ready = deque()
+    ready_leaf_count = 0
+
+    def receive(timeout):
+        started = time.perf_counter()
+        packets = stream.receive(timeout=timeout)
+        elapsed = time.perf_counter() - started
+        stats['cpp_stream_wait_seconds'] += elapsed
+        return packets
+
+    def ingest(packets):
+        nonlocal ready_leaf_count
+        received_at = time.perf_counter()
+        for packet in packets:
+            active = {}
+            for index, response in packet.responses.items():
+                if index not in expected:
+                    raise RuntimeError(f'unexpected native search response {index}')
+                if response.get('done', False):
+                    results[index] = response['result']
+                else:
+                    active[index] = response
+            if active:
+                count = sum(_leaf_count(response) for response in active.values())
+                ready.append((received_at, packet.group_index, active, count))
+                ready_leaf_count += count
+
+    started = time.perf_counter()
+    stream.submit('nosl_is_az_cpp_begin', begin_calls)
+    stats['cpp_begin_rpc_seconds'] = time.perf_counter() - started
+
+    while len(results) < len(expected):
+        check()
+        if ready:
+            oldest_at = ready[0][0]
+            wait_left = schedule.max_wait_seconds - (time.perf_counter() - oldest_at)
+            if ready_leaf_count < schedule.target_batch_size and stream.pending and wait_left > 0.0:
+                packets = receive(wait_left)
+                if packets:
+                    ingest(packets)
+                    continue
+            selected = {}
+            selected_count = 0
+            while ready and selected_count < schedule.target_batch_size:
+                _received_at, _group_index, responses, count = ready.popleft()
+                overlap = set(selected).intersection(responses)
+                if overlap:
+                    raise RuntimeError(f'duplicate queued native responses: {sorted(overlap)}')
+                selected.update(responses)
+                selected_count += count
+                ready_leaf_count -= count
+
+            decode_started = time.perf_counter()
+            records, observations = decode_leaves(selected)
+            stats['cpp_leaf_decode_seconds'] += time.perf_counter() - decode_started
+            stats['leaf_batches'] += 1
+            stats['leaf_evaluations'] += len(records)
+            stats['inference_batch_size_max'] = max(
+                stats['inference_batch_size_max'], len(records)
+            )
+            for index in selected:
+                by_worker[index]['leaf_batches'] += 1
+            for index, _leaf in records:
+                by_worker[index]['leaf_evaluations'] += 1
+
+            model_started = time.perf_counter()
+            logits, values = forward_leaves(
+                model,
+                observations,
+                compact=compact,
+                lock=lock,
+                autocast=autocast,
+            )
+            stats['cpp_leaf_model_seconds'] += time.perf_counter() - model_started
+            updates = {}
+            for position, (index, leaf) in enumerate(records):
+                policy = (
+                    logits[position]
+                    if prior_mode == 'model'
+                    else np.zeros_like(logits[position])
+                )
+                if not leaf.get('needs_policy', True):
+                    policy = np.zeros(0, dtype=np.float64)
+                updates.setdefault(index, []).append(
+                    (int(leaf['request_id']), float(values[position]), policy)
+                )
+            check()
+            dispatch_started = time.perf_counter()
+            stream.submit(
+                'nosl_is_az_cpp_backprop_and_leaf_batch',
+                {
+                    index: ((payload,), {'max_leaves': leaf_batch_size})
+                    for index, payload in updates.items()
+                },
+            )
+            stats['cpp_backprop_rpc_seconds'] += (
+                time.perf_counter() - dispatch_started
+            )
+            continue
+
+        if not stream.pending:
+            missing = sorted(expected.difference(results))
+            raise RuntimeError(
+                f'native search stream stopped before results for {missing}'
+            )
+        ingest(receive(None))
+
+    if stream.pending or ready:
+        raise RuntimeError('native search completed with outstanding streamed work')
+    stats['inference_batch_size_mean'] = (
+        float(stats['leaf_evaluations'] / stats['leaf_batches'])
+        if stats['leaf_batches']
+        else 0.0
+    )
     stats['by_worker'] = by_worker
     return results, stats
 

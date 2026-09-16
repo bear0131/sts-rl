@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 from collections import defaultdict
+from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_connections
 from typing import Any, Callable
 
@@ -259,6 +260,86 @@ def _group_worker(
                 pass
 
 
+@dataclass(frozen=True)
+class GroupedMethodResponse:
+    """One completed worker-group command, restored to logical env indices."""
+
+    group_index: int
+    method_name: str
+    responses: dict[int, Any]
+
+
+class GroupedMethodStream:
+    """Keep independent worker groups in flight without a global receive barrier.
+
+    A worker process still executes one command at a time and preserves the
+    order of every environment it owns.  The stream only allows the caller to
+    receive and resubmit groups independently, which is useful for batching
+    neural leaves from unrelated search trees.
+    """
+
+    def __init__(self, owner: "GroupedCachedMaskSubprocVecEnv") -> None:
+        self._owner = owner
+        self._pending: dict[Any, tuple[int, str]] = {}
+
+    @property
+    def pending(self) -> bool:
+        return bool(self._pending)
+
+    def submit(
+        self,
+        method_name: str,
+        calls: dict[int, tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> None:
+        """Submit distinct calls, requiring each affected group to be idle."""
+        if not calls:
+            return
+        grouped_calls: dict[
+            int, list[tuple[int, str, tuple[Any, ...], dict[str, Any]]]
+        ] = defaultdict(list)
+        for index, (args, kwargs) in calls.items():
+            group_index, local_index = self._owner._env_to_group[int(index)]
+            grouped_calls[group_index].append(
+                (local_index, method_name, args, kwargs)
+            )
+        for group_index in grouped_calls:
+            remote = self._owner.remotes[group_index]
+            if remote in self._pending:
+                raise RuntimeError(
+                    f"worker group {group_index} already has an in-flight command"
+                )
+        for group_index, group_calls in grouped_calls.items():
+            remote = self._owner.remotes[group_index]
+            remote.send(("env_method_batch", group_calls))
+            self._pending[remote] = (group_index, method_name)
+
+    def receive(
+        self,
+        timeout: float | None = None,
+    ) -> list[GroupedMethodResponse]:
+        """Return every group currently ready, or an empty list on timeout."""
+        if not self._pending:
+            return []
+        ready = wait_for_connections(tuple(self._pending), timeout=timeout)
+        packets = []
+        for remote in ready:
+            group_index, method_name = self._pending.pop(remote)
+            local_responses = remote.recv()
+            group = self._owner._groups[group_index]
+            responses = {
+                int(group[int(local_index)]): response
+                for local_index, response in local_responses.items()
+            }
+            packets.append(
+                GroupedMethodResponse(
+                    group_index=group_index,
+                    method_name=method_name,
+                    responses=responses,
+                )
+            )
+        return packets
+
+
 class GroupedCachedMaskSubprocVecEnv(VecEnv):
     """Vector env whose subprocesses each own multiple independent envs.
 
@@ -471,6 +552,17 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             ]
             for index in calls
         }
+
+    def env_method_stream(self) -> GroupedMethodStream:
+        """Open a search-scoped stream for independently scheduled groups.
+
+        No other VecEnv operation may use the worker pipes until the returned
+        stream has no pending commands.  NOSL collection satisfies that rule by
+        completing every combat search before the environment step.
+        """
+        if self.waiting:
+            raise RuntimeError("cannot open an env-method stream during step_wait")
+        return GroupedMethodStream(self)
 
     def get_attr(self, attr_name: str, indices=None):
         selected = list(self._get_indices(indices))
