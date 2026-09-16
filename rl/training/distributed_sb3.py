@@ -2488,6 +2488,13 @@ def main() -> None:
             save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
             checkpoint_started = time.perf_counter()
             if args.training_state_dir is not None and (save_due or stop_requested):
+                # Keep one known-good generation while bounding peak disk use
+                # to max_checkpoints during the next atomic bundle write.
+                prune_bundles(
+                    args.training_state_dir,
+                    rank=args.rank,
+                    keep=max(args.max_checkpoints - 1, 1),
+                )
                 save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
                     run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
                 prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
@@ -2685,6 +2692,11 @@ def main() -> None:
         if args.output is not None:
             model.save(str(args.output.with_suffix("")))
         if args.training_state_dir is not None:
+            prune_bundles(
+                args.training_state_dir,
+                rank=args.rank,
+                keep=max(args.max_checkpoints - 1, 1),
+            )
             save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
                 run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
             prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)

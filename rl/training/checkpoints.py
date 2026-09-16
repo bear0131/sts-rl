@@ -105,8 +105,8 @@ def restore_learner(model, path, *, rank, world_size):
 
 
 def prune_bundles(root, *, rank, keep):
-    if keep < 2:
-        raise ValueError('keep at least two recovery generations')
+    if keep < 1:
+        raise ValueError('keep at least one recovery generation')
     directory = Path(root) / f'rank{rank}'
     bundles = sorted(p for p in directory.glob('step-*') if (p/'manifest.json').is_file())
     for path in bundles[:-keep]:
