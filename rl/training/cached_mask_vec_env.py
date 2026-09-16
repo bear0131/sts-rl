@@ -20,6 +20,53 @@ from stable_baselines3.common.vec_env.subproc_vec_env import (
 )
 
 
+@dataclass
+class _PackedLeafResponses:
+    responses: dict
+    observations: dict[str, np.ndarray]
+    slices: dict[int, tuple[int, int]]
+
+
+def _pack_leaf_responses(responses):
+    """Serialize one array per field/group, rather than per field/tree.
+
+    Only numeric native leaf batches use this wire representation. Public RPC
+    results, terminal responses and canonical/language leaves keep their schema.
+    """
+    active = {index:response['observation_batch'] for index,response in responses.items()
+              if isinstance(response,dict) and response.get('observation_batch')}
+    if len(active) < 2:
+        return responses
+    first = next(iter(active.values()))
+    if any(value.dtype.hasobject for batch in active.values() for value in batch.values()):
+        return responses
+    schema = {key:(value.shape[1:],value.dtype) for key,value in first.items()}
+    if any({key:(value.shape[1:],value.dtype) for key,value in batch.items()} != schema
+           for batch in active.values()):
+        return responses
+    packed = {key:np.concatenate([batch[key] for batch in active.values()]) for key in first}
+    stripped = dict(responses)
+    offset, slices = 0, {}
+    for index,batch in active.items():
+        count = len(next(iter(batch.values())))
+        if any(len(value)!=count for value in batch.values()):
+            raise ValueError('native observation field batch lengths differ')
+        slices[index] = (offset,offset+count)
+        offset += count
+        stripped[index] = dict(responses[index],observation_batch=None)
+    return _PackedLeafResponses(stripped,packed,slices)
+
+
+def _unpack_leaf_responses(payload):
+    if not isinstance(payload,_PackedLeafResponses):
+        return payload
+    responses = dict(payload.responses)
+    for index,(start,end) in payload.slices.items():
+        responses[index] = dict(responses[index],observation_batch={
+            key:value[start:end] for key,value in payload.observations.items()})
+    return responses
+
+
 class CachedMaskSubprocVecEnv(SubprocVecEnv):
     """Avoid a second worker round trip for the next action mask.
 
@@ -216,12 +263,15 @@ def _group_worker(
                 })
             elif cmd == "env_method_batch":
                 calls = data
-                remote.send({
+                responses = {
                     int(index): envs[int(index)].get_wrapper_attr(method_name)(
                         *args, **kwargs
                     )
                     for index, method_name, args, kwargs in calls
-                })
+                }
+                remote.send(_pack_leaf_responses(responses) if all(
+                    method_name in ('nosl_is_az_cpp_begin','nosl_is_az_cpp_backprop_and_leaf_batch')
+                    for _index,method_name,_args,_kwargs in calls) else responses)
             elif cmd == "get_attr":
                 local_indices, attr_name = data
                 remote.send({
@@ -326,7 +376,7 @@ class GroupedMethodStream:
         packets = []
         for remote in ready:
             group_index, method_name, submitted_at = self._pending.pop(remote)
-            local_responses = remote.recv()
+            local_responses = _unpack_leaf_responses(remote.recv())
             group = self._owner._groups[group_index]
             responses = {
                 int(group[int(local_index)]): response
@@ -421,7 +471,7 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
         while pending:
             for remote in wait_for_connections(tuple(pending)):
                 group_index = pending.pop(remote)
-                results[group_index] = remote.recv()
+                results[group_index] = _unpack_leaf_responses(remote.recv())
         return results
 
     def step_async(self, actions: np.ndarray) -> None:

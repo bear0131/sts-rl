@@ -176,6 +176,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Runtime combat leaf backend; search and update semantics are unchanged")
     parser.add_argument("--leaf-graph-profile-interval", type=int, default=0,
                         help="Sample CUDA stream stage timings every N leaf calls; 0 disables")
+    parser.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
+                        help="Pad independent leaf rows to this multiple; 0 preserves exact batch shapes")
+    parser.add_argument("--rollout-resource-interval", type=float, default=0,
+                        help="Sample rollout process-tree CPU/RSS and device GPU every N seconds; 0 disables")
     parser.add_argument("--wandb-project", default="sts-rl")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
@@ -1996,6 +2000,7 @@ def main() -> None:
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
             profile_interval=args.leaf_graph_profile_interval,
+            batch_multiple=args.leaf_graph_batch_multiple,
             failure_path=(args.training_state_dir / f'failed-leaves-rank{args.rank}.npz')
             if args.training_state_dir else None)
 
@@ -2104,12 +2109,19 @@ def main() -> None:
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
-            ok = model.collect_rollouts(
-                model.env,
-                callback,
-                model.rollout_buffer,
-                n_rollout_steps=args.n_steps,
-            )
+            from contextlib import nullcontext
+            monitor = None
+            if args.rollout_resource_interval:
+                from rl.training.resource_monitor import ResourceMonitor
+                monitor = ResourceMonitor(interval=args.rollout_resource_interval,
+                                          gpu=model.device.type=='cuda')
+            with monitor if monitor is not None else nullcontext():
+                ok = model.collect_rollouts(
+                    model.env,
+                    callback,
+                    model.rollout_buffer,
+                    n_rollout_steps=args.n_steps,
+                )
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             rollout_sec = time.perf_counter() - started
@@ -2460,6 +2472,8 @@ def main() -> None:
                 )
             if cuda_memory_peak is not None:
                 record["cuda_memory_peak"] = cuda_memory_peak
+            if monitor is not None:
+                record['rollout_resources'] = monitor.summary
 
             # Episode metrics are maintained independently by each callback.
             # Average the fixed set across ranks before printing or sending it

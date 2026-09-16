@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
-from rl.benchmarks.resources import ResourceMonitor
+from rl.training.resource_monitor import ResourceMonitor
 from rl.search.native import NativeSearchConfig
 from rl.training.environments import make_env
 
@@ -42,7 +42,8 @@ def run(args):
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
-                failure_path=args.output.with_suffix('.failed-leaves.npz'), profile_interval=args.graph_profile_interval)
+                failure_path=args.output.with_suffix('.failed-leaves.npz'), profile_interval=args.graph_profile_interval,
+                batch_multiple=args.leaf_graph_batch_multiple)
         _, callback = model._setup_learn(args.n_steps * args.n_envs * args.updates,
             callback=lambda *_: True, reset_num_timesteps=True)
         callback.on_training_start({}, {})

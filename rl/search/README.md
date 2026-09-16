@@ -16,8 +16,11 @@ batch 或最老 leaf 超过固定等待时间即前向。`adaptive` 以配置的
 # Leaf inference acceleration
 
 `inference.CombatLeafGraphs` is an opt-in CUDA backend for compact combat leaves.
-It uses an LRU cache of at most 32 exact observation shapes/relic widths; it does
-not pad batches or change search ordering. Model parameters retain their storage
+It uses an LRU cache of at most 32 observation shapes/relic widths. Exact batch
+shapes are the default. `--leaf-graph-batch-multiple 32` optionally rounds the
+batch dimension up, duplicates valid independent rows and discards their outputs.
+Relic width, observations of real rows and the per-tree search budget are unchanged.
+Model parameters retain their storage
 and AMP casts run inside the graph, so in-place optimizer updates are visible.
 Replace the backend after replacing parameters, model structure, device or AMP
 mode. It requires eval mode and is never serialized in policy checkpoints.
@@ -25,7 +28,16 @@ mode. It requires eval mode and is never serialized in policy checkpoints.
 Distributed training selects it with `--leaf-inference cuda-graph`; eager remains
 the default for other models/devices. GPU tests in
 `tests/integration/test_leaf_graphs.py` cover input/weight changes, LRU eviction,
-FP32/BF16 bitwise equality and checkpoint exclusion. CPU CI cannot validate CUDA.
+FP32/BF16 same-shape bitwise equality and checkpoint exclusion. Changing batch
+shape may select different GEMM kernels: padded-vs-original floating-point outputs
+are not guaranteed bitwise, and search trajectories can consequently diverge.
+CPU CI cannot validate CUDA.
+
+`--leaf-graph-profile-interval N` samples CUDA stream H2D/replay/D2H intervals;
+zero disables event sampling. Capture/copy/output wall times and cache counts
+are recorded per collection under `nosl_is_az/leaf_graph_*`. Stream event times
+include host submission gaps; output wall time includes waiting for GPU work.
+These overlapping measurements must not be added as independent kernel costs.
 
 Each graph captures its own cuBLAS workspace. Warmup workspaces must be cleared
 before capture and the external cache released afterward; otherwise graph

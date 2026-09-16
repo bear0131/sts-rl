@@ -28,19 +28,33 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
-def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp):
+@pytest.mark.parametrize('batch_multiple', [0, 4])
+def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple):
     env = combat_factory(['STRIKE_RED'] * 5)
     model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=7,
         n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
     model.amp_mode = amp
     model.policy.set_training_mode(False)
-    cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2)
+    cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2,
+                             batch_multiple=batch_multiple)
     obs = env._obs()
     def compare(count):
         batch = {k: np.stack([v] * count) for k, v in obs.items()
                  if k in model.policy.core.combat_observation_keys}
         model._native_leaf_inference = None
         eager = forward_leaves(model, batch, autocast=model.autocast_context)
+        if batch_multiple:
+            padded_count = (count + batch_multiple - 1) // batch_multiple * batch_multiple
+            padded = {k:np.concatenate([v, np.repeat(v[:1], padded_count-count, axis=0)])
+                      for k,v in batch.items()}
+            reference = forward_leaves(model, padded, autocast=model.autocast_context)
+            # GEMM selection can change with batch shape, even for independent
+            # rows. Keep graph-vs-eager bitwise at the SAME shape; separately
+            # bound cross-shape floating-point drift for this small fixture.
+            for a,b in zip(eager, reference):
+                np.testing.assert_allclose(a, b[:count], rtol=0.02 if amp=='bf16' else 1e-5,
+                                           atol=2e-4 if amp=='bf16' else 1e-7)
+            eager = tuple(v[:count] for v in reference)
         model._native_leaf_inference = cache
         graphed = forward_leaves(model, batch, autocast=model.autocast_context)
         for a, b in zip(eager, graphed):
@@ -53,7 +67,7 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
         # Catch stale BF16 weight casts as well as stale inputs.
         model.policy.core.combat.encoder.global_projection.weight.mul_(1.1)
     compare(2)
-    for size in (3, 4, 2):
+    for size in (3, 4, 9, 5, 2):
         compare(size)
     assert len(cache.entries) == 2
     assert cache.hits >= 2

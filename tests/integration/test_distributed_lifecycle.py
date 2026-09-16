@@ -16,7 +16,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
 @pytest.mark.parametrize('nosl', [False, True])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_combat_env_type, nosl):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
     def make_env(*_):
         return DummyVecEnv([lambda: TimeLimit(
             ShapedRewardWrapper(short_combat_env_type()), max_episode_steps=12)] * 2)
@@ -71,7 +71,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
         '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
-        '--max-checkpoints', '3', '--stop-file', str(stop_file)])
+        '--max-checkpoints', '3', '--stop-file', str(stop_file),
+        '--rollout-resource-interval', '0.1'])
     distributed_sb3.main()
     assert len(payloads) == 2
     assert [p['global_step'] for p in payloads] == [32, 64]
@@ -97,3 +98,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, short_comb
     assert finished == [True, True]
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)
+    records=[json.loads(line) for line in capsys.readouterr().out.splitlines()
+             if line.startswith('{') and 'rollout_resources' in line]
+    assert len(records)==4
+    assert all(r['rollout_resources']['sample_count']>=2 for r in records)
+    assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
+    assert all(r['rollout_resources']['gpu_devices'] is None for r in records)

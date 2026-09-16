@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gymnasium as gym
 import numpy as np
+import pickle
 from gymnasium import spaces
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import VecMonitor
@@ -9,6 +10,8 @@ from stable_baselines3.common.vec_env import VecMonitor
 from rl.training.cached_mask_vec_env import (
     CachedMaskSubprocVecEnv,
     GroupedCachedMaskSubprocVecEnv,
+    _pack_leaf_responses,
+    _unpack_leaf_responses,
 )
 from rl.training.distributed_sb3 import build_parser as build_distributed_parser
 
@@ -36,9 +39,55 @@ class _MaskInfoEnv(gym.Env):
     def action_masks(self):
         raise AssertionError("cached info mask should avoid worker method calls")
 
+    def nosl_is_az_cpp_begin(self, value):
+        return {'done':False,'leaf_meta':[{'request_id':value}],
+                'observation_batch':{'x':np.array([[value]],dtype=np.int64)}}
+
 
 def _make_mask_info_env():
     return _MaskInfoEnv()
+
+
+def test_grouped_leaf_wire_roundtrip_preserves_rows_dtypes_and_terminals():
+    inputs = {
+        4:{'leaf_meta':[{'request_id':7}], 'observation_batch':{
+            'ids':np.array([[1,2]],dtype=np.int32),'hp':np.array([[.125]],dtype=np.float32)}},
+        1:{'done':True,'result':{'action':3}},
+        8:{'leaf_meta':[{'request_id':8},{'request_id':9}], 'observation_batch':{
+            'ids':np.arange(8,dtype=np.int32).reshape(2,4)[:,::2],
+            'hp':np.array([[.25],[.75]],dtype=np.float32)}},
+    }
+    restored = _unpack_leaf_responses(pickle.loads(pickle.dumps(_pack_leaf_responses(inputs))))
+    assert list(restored)==list(inputs)
+    assert restored[1]==inputs[1]
+    for index in (4,8):
+        assert restored[index]['leaf_meta']==inputs[index]['leaf_meta']
+        for key,value in inputs[index]['observation_batch'].items():
+            actual=restored[index]['observation_batch'][key]
+            assert actual.dtype==value.dtype
+            np.testing.assert_array_equal(actual,value)
+    # Unpacking a later message cannot overwrite results retained by search.
+    later=pickle.loads(pickle.dumps(_pack_leaf_responses(inputs)))
+    _unpack_leaf_responses(later)[4]['observation_batch']['hp'].fill(9)
+    assert restored[4]['observation_batch']['hp'][0,0]==.125
+
+
+def test_grouped_leaf_wire_works_for_synchronous_and_streamed_rpc():
+    env=GroupedCachedMaskSubprocVecEnv([_make_mask_info_env]*3,
+                                    envs_per_worker=2,start_method='spawn')
+    try:
+        calls={index:((index+10,),{}) for index in range(3)}
+        expected=env.env_method_batch('nosl_is_az_cpp_begin',calls)
+        stream=env.env_method_stream()
+        stream.submit('nosl_is_az_cpp_begin',calls)
+        actual={}
+        while stream.pending:
+            for packet in stream.receive():actual.update(packet.responses)
+        for index in range(3):
+            assert actual[index]['leaf_meta']==expected[index]['leaf_meta']
+            np.testing.assert_array_equal(actual[index]['observation_batch']['x'],[[index+10]])
+    finally:
+        env.close()
 
 
 def test_cached_masks_follow_step_and_autoreset_info():

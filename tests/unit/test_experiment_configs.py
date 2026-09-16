@@ -77,9 +77,9 @@ def test_u40_sixteenfold_width_preset_scales_coupled_geometry():
     assert args.nosl_is_az_micro_batch_size == 8192
     assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 48
     assert args.nosl_is_az_replay_capacity == 2097152
-    assert args.nosl_is_az_inference_batch_size == 256
-    assert args.nosl_is_az_inference_max_wait_ms == 0.5
-    assert args.nosl_is_az_inference_schedule == "adaptive"
+    assert args.nosl_is_az_inference_batch_size == 128
+    assert args.nosl_is_az_inference_max_wait_ms == 0
+    assert args.nosl_is_az_inference_schedule == "fixed_wait"
     assert args.nosl_is_az_updates == 40
     assert args.nosl_is_az_replay_max_old_fraction == 0.9
     differences = {
@@ -92,9 +92,12 @@ def test_u40_sixteenfold_width_preset_scales_coupled_geometry():
         "envs_per_worker": (4, 16),
         "n_envs": (96, 384),
         "nosl_is_az_batch_size": (98304, 393216),
-        "nosl_is_az_inference_batch_size": (None, 256),
-        "nosl_is_az_inference_max_wait_ms": (None, 0.5),
-        "nosl_is_az_inference_schedule": (None, "adaptive"),
+        "nosl_is_az_inference_batch_size": (None, 128),
+        "nosl_is_az_inference_max_wait_ms": (None, 0),
+        "nosl_is_az_inference_schedule": (None, "fixed_wait"),
+        "leaf_graph_batch_multiple": (0, 32),
+        "leaf_graph_profile_interval": (0, 512),
+        "rollout_resource_interval": (0, 2),
         "nosl_is_az_micro_batch_size": (2048, 8192),
         "nosl_is_az_replay_capacity": (524288, 2097152),
     }

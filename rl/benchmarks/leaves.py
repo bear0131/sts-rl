@@ -11,7 +11,7 @@ import torch
 
 from env.core.run_env import SlayTheSpireEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
-from rl.benchmarks.resources import ResourceMonitor
+from rl.training.resource_monitor import ResourceMonitor
 from rl.policies import model as model_utils
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.search.native import forward_leaves
@@ -40,7 +40,7 @@ def run(args):
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
-                profile_interval=args.graph_profile_interval)
+            profile_interval=args.graph_profile_interval, batch_multiple=args.leaf_graph_batch_multiple)
         observations = []
         for index in range(0 if args.leaf_input else args.n_envs):
             env.reset(seed=args.seed + index)
@@ -61,6 +61,28 @@ def run(args):
         batch_size = next(iter(batch.values())).shape[0]
         def forward():
             return forward_leaves(model, batch, autocast=model.autocast_context)
+        equivalence = None
+        if args.leaf_inference == 'cuda-graph':
+            backend = model._native_leaf_inference
+            actual = forward()
+            try:
+                model._native_leaf_inference = None
+                eager = forward()
+                multiple = args.leaf_graph_batch_multiple
+                padded_count = (batch_size+multiple-1)//multiple*multiple if multiple else batch_size
+                padded = {k:np.concatenate([v,np.repeat(v[:1],padded_count-batch_size,axis=0)])
+                          for k,v in batch.items()}
+                reference = forward_leaves(model,padded,autocast=model.autocast_context)
+                for a,b in zip(actual,reference):
+                    np.testing.assert_array_equal(a,b[:batch_size])
+                equivalence = {'same_shape_bitwise': True, 'unpadded_eager': {}}
+                for name,a,b in zip(('logits','values'),actual,eager):
+                    delta = np.abs(a.astype(np.float64)-b.astype(np.float64))
+                    equivalence['unpadded_eager'][name] = dict(
+                        bitwise=bool(np.array_equal(a,b)), max_abs=float(delta.max()),
+                        mean_abs=float(delta.mean()), p99_abs=float(np.quantile(delta,0.99)))
+            finally:
+                model._native_leaf_inference = backend
         setup = time.perf_counter() - started
         started = time.perf_counter()
         for _ in range(10):
@@ -106,6 +128,7 @@ def run(args):
                 leaf_batches=args.leaf_repeats, leaves=args.leaf_repeats * batch_size,
                 milliseconds_per_batch=elapsed * 1000 / args.leaf_repeats),
             output_sha256=hashlib.sha256(b''.join(x.tobytes() for x in result)).hexdigest(),
+            equivalence=equivalence,
             graphs=model._native_leaf_inference.statistics() if args.leaf_inference == 'cuda-graph' else None,
             memory=dict(cuda=cuda), resources=monitor.summary, samples=monitor.samples, profile=profile)
     finally:
