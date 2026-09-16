@@ -26,6 +26,7 @@ param(
     [string]$WandbName = "u40x4-20260915",
     [string]$RemoteRepo = "/root/autodl-tmp/sts-rl",
     [string]$ArgsFile = "configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args",
+    [string]$OverridesFile = "",
     [string]$Checkpoint = "migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip",
     [long]$ResumeStep = 0,
     [long]$TargetStep = 0,
@@ -33,6 +34,8 @@ param(
     [int]$TimeoutSeconds = 1200,
     [int]$PollSeconds = 15,
     [int]$RingPort = 29789,
+    [ValidateRange(2, 100)]
+    [int]$MaxCheckpoints = 3,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),
     [string[]]$BuildDirs = @(
         "build-gumbel-current",
@@ -121,6 +124,11 @@ function Invoke-Remote {
 function Get-PreflightCommand($Peer) {
     $repo = ConvertTo-BashQuote $RemoteRepo
     $args = ConvertTo-BashQuote (Resolve-RemotePath $ArgsFile)
+    $overridesCheck = ""
+    if ($OverridesFile) {
+        $overrides = ConvertTo-BashQuote (Resolve-RemotePath $OverridesFile)
+        $overridesCheck = "test -f $overrides"
+    }
     $checkpoint = ConvertTo-BashQuote (Resolve-RemotePath $Checkpoint)
     $build = ConvertTo-BashQuote "$RemoteRepo/sim/sts_lightspeed/$($Peer.BuildDir)"
     $runDir = ConvertTo-BashQuote "$RemoteRepo/runs/$RunId"
@@ -161,6 +169,7 @@ launcher="`$repo/experiments/launchers/launch_nosl_replay.sh"
 cd "`$repo"
 test -x "`$python"
 test -f "`$args_file"
+$overridesCheck
 test -f "`$checkpoint"
 test -f "`$launcher"
 compgen -G "`$build/slaythespire*.so" >/dev/null
@@ -186,6 +195,10 @@ function Get-LaunchCommand($Peer) {
     if ($ResumeStep -gt 0) {
         $resumeLine = "export NOSL_RESUME_STEP=$ResumeStep"
     }
+    $overridesLine = "unset NOSL_OVERRIDES_FILE"
+    if ($OverridesFile) {
+        $overridesLine = "export NOSL_OVERRIDES_FILE=$(ConvertTo-BashQuote (Resolve-RemotePath $OverridesFile))"
+    }
     return @"
 set -euo pipefail
 repo=$repo
@@ -199,8 +212,10 @@ export NOSL_ARGS_FILE=$args
 export NOSL_CHECKPOINT=$checkpoint
 export NOSL_PEER_PORTS=$ports
 export NOSL_RING_PORT=$RingPort
+export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
 export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
+$overridesLine
 bash experiments/launchers/launch_nosl_replay.sh $($Peer.Rank)
 "@
 }
@@ -283,7 +298,7 @@ echo "running=`$running latest=`${latest:-none}"
 }
 
 if ($Action -eq "plan") {
-    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep target=$TargetStep"
+    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints"
     foreach ($peer in $Peers) {
         Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
     }
