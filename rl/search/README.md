@@ -6,6 +6,13 @@
 
 当前大实验用的严格 Full Gumbel 树在 C++ `sim/sts_lightspeed/src/sim/search/Nosl.cpp`，经 env/core/run_env.py 的 begin/backprop/packed leaf 接口调用。不要把这里的 Python 对照实现当作当前 native 算法的唯一真相。
 输入合法动作、先验、nonce 和预算；输出完整动作/访问分布/value。搜索不得修改 live env。depth=0 是按新节点展开而非零次搜索。
+
+`complete_searches_streaming` 支持两种跨独立树的 GPU 合批策略。`fixed_wait` 是旧兼容模式：达到目标
+batch 或最老 leaf 超过固定等待时间即前向。`adaptive` 以配置的 batch size 为上限、从半上限开始，
+只在固定桶之间根据 fill、ready backlog、queue delay 和实际 leaves/s 带滞回调节；每批目标还受实际
+活跃树容量限制。所有 worker 都已返回时必须立即 flush，时间参数在该模式只作为按 worker round-trip
+延迟自适应的 straggler watchdog 下限。两种模式都保持每棵树只有一个 pending leaf；不要用增大
+`leaf_batch_size` 冒充跨树合批优化。
 # Leaf inference acceleration
 
 `inference.CombatLeafGraphs` is an opt-in CUDA backend for compact combat leaves.

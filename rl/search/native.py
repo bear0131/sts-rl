@@ -91,12 +91,187 @@ class LeafInferenceSchedule:
 
     target_batch_size: int = 32
     max_wait_seconds: float = 0.0005
+    mode: str = 'fixed_wait'
 
     def __post_init__(self):
         if self.target_batch_size < 1:
             raise ValueError("leaf inference target batch size must be positive")
         if not np.isfinite(self.max_wait_seconds) or self.max_wait_seconds < 0.0:
             raise ValueError("leaf inference maximum wait must be finite and non-negative")
+        if self.mode not in ('fixed_wait', 'adaptive'):
+            raise ValueError("leaf inference schedule mode must be fixed_wait or adaptive")
+
+
+class AdaptiveLeafBatchController:
+    """Low-frequency backpressure controller over fixed CUDA-friendly buckets."""
+
+    def __init__(self, max_batch_size, *, initial_batch_size=None,
+                 window_batches=256, evidence_windows=3):
+        if max_batch_size < 1 or window_batches < 1 or evidence_windows < 1:
+            raise ValueError("adaptive leaf batching limits must be positive")
+        self.max_batch_size = int(max_batch_size)
+        self.window_batches = int(window_batches)
+        self.evidence_windows = int(evidence_windows)
+        self.buckets = self._make_buckets(self.max_batch_size)
+        initial = (
+            max(1, self.max_batch_size // 2)
+            if initial_batch_size is None
+            else int(initial_batch_size)
+        )
+        self.bucket_index = min(
+            range(len(self.buckets)),
+            key=lambda index: abs(self.buckets[index] - initial),
+        )
+        self.changes = 0
+        self.increases = 0
+        self.decreases = 0
+        self.rollbacks = 0
+        self.last_decision = 'hold'
+        self._trial_origin_index = None
+        self._trial_baseline_rate = None
+        self._increase_evidence = 0
+        self._decrease_evidence = 0
+        self._worker_latency_ewma = None
+        self._worker_latency_deviation = 0.0
+        self._reset_window()
+
+    @staticmethod
+    def _make_buckets(maximum):
+        quantum = 16 if maximum >= 64 else 1
+        values = []
+        for fraction in (0.25, 0.375, 0.5, 0.75, 1.0):
+            value = int(round((maximum * fraction) / quantum)) * quantum
+            values.append(min(maximum, max(1, value)))
+        values.append(maximum)
+        return tuple(sorted(set(values)))
+
+    @property
+    def current_batch_size(self):
+        return self.buckets[self.bucket_index]
+
+    def compatible_with(self, schedule):
+        return self.max_batch_size == schedule.target_batch_size
+
+    def target(self, active_capacity):
+        return max(1, min(self.current_batch_size, int(active_capacity)))
+
+    def observe_worker_latency(self, seconds):
+        if seconds is None or not np.isfinite(seconds) or seconds < 0.0:
+            return
+        value = float(seconds)
+        if self._worker_latency_ewma is None:
+            self._worker_latency_ewma = value
+            return
+        alpha = 0.05
+        difference = abs(value - self._worker_latency_ewma)
+        self._worker_latency_ewma += alpha * (value - self._worker_latency_ewma)
+        self._worker_latency_deviation += alpha * (
+            difference - self._worker_latency_deviation
+        )
+
+    def watchdog_seconds(self, floor_seconds):
+        floor = max(float(floor_seconds), 0.001)
+        if self._worker_latency_ewma is None:
+            return max(floor, 0.005)
+        estimate = self._worker_latency_ewma + 4.0 * self._worker_latency_deviation
+        return min(0.1, max(floor, estimate))
+
+    def observe_batch(self, *, batch_size, target, active_capacity,
+                      ready_backlog, queue_delay_seconds, model_seconds,
+                      cycle_seconds):
+        # Tail batches are capacity-limited and must not train the outer
+        # controller to shrink an otherwise healthy steady-state batch.
+        if active_capacity < self.current_batch_size:
+            return
+        self._window_count += 1
+        self._window_fill += min(1.0, float(batch_size) / max(1, target))
+        self._window_backlog += float(ready_backlog)
+        self._window_queue_delay += float(queue_delay_seconds)
+        self._window_model += float(model_seconds)
+        self._window_leaves += int(batch_size)
+        self._window_seconds += float(cycle_seconds)
+        if self._window_count < self.window_batches:
+            return
+
+        count = self._window_count
+        fill = self._window_fill / count
+        backlog = self._window_backlog / count
+        queue_delay = self._window_queue_delay / count
+        model_seconds = self._window_model / count
+        queue_to_model = queue_delay / max(model_seconds, 1e-9)
+        low = fill < 0.80 and backlog < 0.10 * self.current_batch_size \
+            and queue_to_model > 0.25
+        high = fill > 0.95 and backlog > 0.50 * self.current_batch_size
+
+        leaves_per_second = self._window_leaves / max(
+            self._window_seconds, 1e-9
+        )
+        self.last_window = {
+            'fill': fill,
+            'backlog': backlog,
+            'queue_delay_seconds': queue_delay,
+            'model_seconds': model_seconds,
+            'leaves_per_second': leaves_per_second,
+        }
+        self._reset_window()
+        if self._trial_origin_index is not None:
+            if leaves_per_second < 0.95 * self._trial_baseline_rate:
+                self.bucket_index = self._trial_origin_index
+                self.rollbacks += 1
+                self.changes += 1
+                self.last_decision = 'rollback'
+            else:
+                self.last_decision = 'accept'
+            self._trial_origin_index = None
+            self._trial_baseline_rate = None
+            self._increase_evidence = 0
+            self._decrease_evidence = 0
+            return
+        if low:
+            self._decrease_evidence += 1
+            self._increase_evidence = 0
+        elif high:
+            self._increase_evidence += 1
+            self._decrease_evidence = 0
+        else:
+            self._increase_evidence = 0
+            self._decrease_evidence = 0
+            self.last_decision = 'hold'
+            return
+
+        if (
+            self._decrease_evidence >= self.evidence_windows
+            and self.bucket_index > 0
+        ):
+            origin = self.bucket_index
+            self.bucket_index -= 1
+            self.decreases += 1
+            self.changes += 1
+            self.last_decision = 'decrease'
+            self._trial_origin_index = origin
+            self._trial_baseline_rate = leaves_per_second
+            self._decrease_evidence = 0
+        elif (
+            self._increase_evidence >= self.evidence_windows
+            and self.bucket_index + 1 < len(self.buckets)
+        ):
+            origin = self.bucket_index
+            self.bucket_index += 1
+            self.increases += 1
+            self.changes += 1
+            self.last_decision = 'increase'
+            self._trial_origin_index = origin
+            self._trial_baseline_rate = leaves_per_second
+            self._increase_evidence = 0
+
+    def _reset_window(self):
+        self._window_count = 0
+        self._window_fill = 0.0
+        self._window_backlog = 0.0
+        self._window_queue_delay = 0.0
+        self._window_model = 0.0
+        self._window_leaves = 0
+        self._window_seconds = 0.0
 
 
 def observation_as_tensor(observation, device):
@@ -260,6 +435,7 @@ def complete_searches_streaming(
     autocast=nullcontext,
     prior_mode='model',
     check=lambda: None,
+    controller=None,
 ):
     """Finish independent trees without a cross-worker simulation barrier.
 
@@ -277,6 +453,22 @@ def complete_searches_streaming(
         raise ValueError(f'unknown prior mode: {prior_mode}')
     if not isinstance(schedule, LeafInferenceSchedule):
         schedule = LeafInferenceSchedule(**dict(schedule))
+    if schedule.mode == 'adaptive':
+        if controller is None:
+            controller = getattr(model, '_nosl_leaf_batch_controller', None)
+            if (
+                controller is None
+                or not controller.compatible_with(schedule)
+            ):
+                controller = AdaptiveLeafBatchController(
+                    schedule.target_batch_size
+                )
+                try:
+                    model._nosl_leaf_batch_controller = controller
+                except AttributeError:
+                    pass
+    else:
+        controller = None
 
     expected = set(begin_calls)
     results = {}
@@ -287,7 +479,23 @@ def complete_searches_streaming(
         cpp_leaf_model_seconds=0.0,
         cpp_backprop_rpc_seconds=0.0,
         cpp_stream_wait_seconds=0.0,
+        cpp_ready_empty_wait_seconds=0.0,
         inference_batch_size_max=0,
+        inference_target_batch_sum=0,
+        inference_target_batch_count=0,
+        inference_ready_backlog_sum=0,
+        inference_ready_backlog_count=0,
+        inference_ready_backlog_max=0,
+        inference_leaf_queue_wait_seconds=0.0,
+        inference_leaf_worker_wait_seconds=0.0,
+        inference_full_flushes=0,
+        inference_drained_flushes=0,
+        inference_watchdog_flushes=0,
+    )
+    initial_controller_counts = (
+        (controller.changes, controller.increases,
+         controller.decreases, controller.rollbacks)
+        if controller is not None else (0, 0, 0, 0)
     )
     by_worker = {
         index: {'leaf_evaluations': 0, 'leaf_batches': 0}
@@ -298,11 +506,18 @@ def complete_searches_streaming(
     ready = deque()
     ready_leaf_count = 0
 
-    def receive(timeout):
+    def receive(timeout, *, ready_empty=False):
         started = time.perf_counter()
         packets = stream.receive(timeout=timeout)
         elapsed = time.perf_counter() - started
         stats['cpp_stream_wait_seconds'] += elapsed
+        if ready_empty:
+            stats['cpp_ready_empty_wait_seconds'] += elapsed
+        if controller is not None:
+            for packet in packets:
+                controller.observe_worker_latency(
+                    getattr(packet, 'elapsed_seconds', None)
+                )
         return packets
 
     def ingest(packets):
@@ -329,27 +544,87 @@ def complete_searches_streaming(
     while len(results) < len(expected):
         check()
         if ready:
-            oldest_at = ready[0][0]
-            wait_left = schedule.max_wait_seconds - (time.perf_counter() - oldest_at)
-            if ready_leaf_count < schedule.target_batch_size and stream.pending and wait_left > 0.0:
+            batch_cycle_started = time.perf_counter()
+            active_capacity = len(expected) - len(results)
+            target = (
+                controller.target(active_capacity)
+                if controller is not None
+                else schedule.target_batch_size
+            )
+            flush_reason = None
+            while ready_leaf_count < target and stream.pending:
+                oldest_at = ready[0][0]
+                wait_budget = (
+                    controller.watchdog_seconds(schedule.max_wait_seconds)
+                    if controller is not None
+                    else schedule.max_wait_seconds
+                )
+                wait_left = wait_budget - (time.perf_counter() - oldest_at)
+                if wait_left <= 0.0:
+                    flush_reason = 'watchdog'
+                    break
                 packets = receive(wait_left)
-                if packets:
+                if not packets:
+                    flush_reason = 'watchdog'
+                    break
+                ingest(packets)
+                active_capacity = len(expected) - len(results)
+                target = (
+                    controller.target(active_capacity)
+                    if controller is not None
+                    else schedule.target_batch_size
+                )
+
+            # Drain packets already waiting in the OS pipe. This does not wait,
+            # but exposes producer backlog to the controller before selection.
+            if controller is not None and ready_leaf_count >= target:
+                while stream.pending:
+                    packets = receive(0.0)
+                    if not packets:
+                        break
                     ingest(packets)
-                    continue
+                    active_capacity = len(expected) - len(results)
+                    target = controller.target(active_capacity)
+
+            if ready_leaf_count >= target:
+                flush_reason = 'full'
+            elif not stream.pending:
+                flush_reason = 'drained'
+            else:
+                flush_reason = flush_reason or 'watchdog'
+
             selected = {}
             selected_count = 0
-            while ready and selected_count < schedule.target_batch_size:
-                _received_at, _group_index, responses, count = ready.popleft()
+            selected_packets = []
+            selection_started = time.perf_counter()
+            while ready and selected_count < target:
+                received_at, group_index, responses, count = ready.popleft()
                 overlap = set(selected).intersection(responses)
                 if overlap:
                     raise RuntimeError(f'duplicate queued native responses: {sorted(overlap)}')
                 selected.update(responses)
                 selected_count += count
                 ready_leaf_count -= count
+                selected_packets.append((received_at, group_index, count))
+
+            queue_wait_seconds = sum(
+                max(0.0, selection_started - received_at) * count
+                for received_at, _group_index, count in selected_packets
+            )
+            stats['inference_target_batch_sum'] += target
+            stats['inference_target_batch_count'] += 1
+            stats['inference_ready_backlog_sum'] += ready_leaf_count
+            stats['inference_ready_backlog_count'] += 1
+            stats['inference_ready_backlog_max'] = max(
+                stats['inference_ready_backlog_max'], ready_leaf_count
+            )
+            stats['inference_leaf_queue_wait_seconds'] += queue_wait_seconds
+            stats[f'inference_{flush_reason}_flushes'] += 1
 
             decode_started = time.perf_counter()
             records, observations = decode_leaves(selected)
-            stats['cpp_leaf_decode_seconds'] += time.perf_counter() - decode_started
+            decode_seconds = time.perf_counter() - decode_started
+            stats['cpp_leaf_decode_seconds'] += decode_seconds
             stats['leaf_batches'] += 1
             stats['leaf_evaluations'] += len(records)
             stats['inference_batch_size_max'] = max(
@@ -368,7 +643,8 @@ def complete_searches_streaming(
                 lock=lock,
                 autocast=autocast,
             )
-            stats['cpp_leaf_model_seconds'] += time.perf_counter() - model_started
+            model_seconds = time.perf_counter() - model_started
+            stats['cpp_leaf_model_seconds'] += model_seconds
             updates = {}
             for position, (index, leaf) in enumerate(records):
                 policy = (
@@ -390,9 +666,27 @@ def complete_searches_streaming(
                     for index, payload in updates.items()
                 },
             )
-            stats['cpp_backprop_rpc_seconds'] += (
-                time.perf_counter() - dispatch_started
+            dispatch_finished = time.perf_counter()
+            dispatch_seconds = dispatch_finished - dispatch_started
+            stats['cpp_backprop_rpc_seconds'] += dispatch_seconds
+            worker_wait_seconds = sum(
+                max(0.0, dispatch_finished - received_at) * count
+                for received_at, _group_index, count in selected_packets
             )
+            stats['inference_leaf_worker_wait_seconds'] += worker_wait_seconds
+            if controller is not None:
+                controller.observe_batch(
+                    batch_size=selected_count,
+                    target=target,
+                    active_capacity=active_capacity,
+                    ready_backlog=ready_leaf_count,
+                    queue_delay_seconds=(
+                        queue_wait_seconds / selected_count
+                        if selected_count else 0.0
+                    ),
+                    model_seconds=model_seconds,
+                    cycle_seconds=dispatch_finished - batch_cycle_started,
+                )
             continue
 
         if not stream.pending:
@@ -400,7 +694,7 @@ def complete_searches_streaming(
             raise RuntimeError(
                 f'native search stream stopped before results for {missing}'
             )
-        ingest(receive(None))
+        ingest(receive(None, ready_empty=True))
 
     if stream.pending or ready:
         raise RuntimeError('native search completed with outstanding streamed work')
@@ -408,6 +702,31 @@ def complete_searches_streaming(
         float(stats['leaf_evaluations'] / stats['leaf_batches'])
         if stats['leaf_batches']
         else 0.0
+    )
+    stats['inference_batch_target_current'] = (
+        controller.current_batch_size
+        if controller is not None
+        else schedule.target_batch_size
+    )
+    stats['inference_controller_changes'] = (
+        controller.changes - initial_controller_counts[0]
+        if controller is not None else 0
+    )
+    stats['inference_controller_increases'] = (
+        controller.increases - initial_controller_counts[1]
+        if controller is not None else 0
+    )
+    stats['inference_controller_decreases'] = (
+        controller.decreases - initial_controller_counts[2]
+        if controller is not None else 0
+    )
+    stats['inference_controller_rollbacks'] = (
+        controller.rollbacks - initial_controller_counts[3]
+        if controller is not None else 0
+    )
+    stats['inference_watchdog_seconds'] = (
+        controller.watchdog_seconds(schedule.max_wait_seconds)
+        if controller is not None else schedule.max_wait_seconds
     )
     stats['by_worker'] = by_worker
     return results, stats

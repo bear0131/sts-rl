@@ -73,6 +73,7 @@ class _FakeGroupedSearchStream:
             group_index=group,
             method_name=method_name,
             responses=responses,
+            elapsed_seconds=0.001,
         )]
 
 
@@ -143,3 +144,85 @@ def test_streamed_search_rejects_multiple_pending_leaves_per_tree():
         assert "leaf_batch_size=1" in str(error)
     else:
         raise AssertionError("streaming accepted multiple leaves per tree")
+
+
+def test_adaptive_controller_moves_between_fixed_buckets_with_hysteresis():
+    shrinking = native.AdaptiveLeafBatchController(
+        256, initial_batch_size=128, window_batches=2, evidence_windows=2
+    )
+    for _ in range(4):
+        shrinking.observe_batch(
+            batch_size=64,
+            target=128,
+            active_capacity=384,
+            ready_backlog=0,
+            queue_delay_seconds=0.01,
+            model_seconds=0.01,
+            cycle_seconds=0.02,
+        )
+    assert shrinking.buckets == (64, 96, 128, 192, 256)
+    assert shrinking.current_batch_size == 96
+    assert shrinking.decreases == 1
+
+    growing = native.AdaptiveLeafBatchController(
+        256, initial_batch_size=128, window_batches=2, evidence_windows=2
+    )
+    for _ in range(4):
+        growing.observe_batch(
+            batch_size=128,
+            target=128,
+            active_capacity=384,
+            ready_backlog=80,
+            queue_delay_seconds=0.0,
+            model_seconds=0.01,
+            cycle_seconds=0.01,
+        )
+    assert growing.current_batch_size == 192
+    assert growing.increases == 1
+    assert growing.target(70) == 70
+    for _ in range(2):
+        growing.observe_batch(
+            batch_size=192,
+            target=192,
+            active_capacity=384,
+            ready_backlog=100,
+            queue_delay_seconds=0.0,
+            model_seconds=0.05,
+            cycle_seconds=0.10,
+        )
+    assert growing.current_batch_size == 128
+    assert growing.rollbacks == 1
+
+
+def test_adaptive_streaming_uses_active_capacity_without_reordering_trees(
+    monkeypatch,
+):
+    def fake_forward(_model, observations, **_kwargs):
+        x = np.asarray(observations["x"])
+        return np.zeros((len(x), 3), dtype=np.float32), x[:, 0] * 0.1
+
+    monkeypatch.setattr(native, "forward_leaves", fake_forward)
+    stream = _FakeGroupedSearchStream()
+    controller = native.AdaptiveLeafBatchController(
+        4, initial_batch_size=4, window_batches=100
+    )
+    results, stats = native.complete_searches_streaming(
+        object(),
+        stream,
+        {index: ((np.zeros(3),), {}) for index in range(6)},
+        leaf_batch_size=1,
+        schedule=native.LeafInferenceSchedule(
+            target_batch_size=4,
+            max_wait_seconds=0.0,
+            mode="adaptive",
+        ),
+        controller=controller,
+    )
+
+    assert set(results) == set(range(6))
+    assert stats["leaf_evaluations"] == 12
+    assert stats["inference_batch_target_current"] == 4
+    assert stats["inference_full_flushes"] > 0
+    assert stats["inference_ready_backlog_max"] > 0
+    for index in range(6):
+        assert [item[0] for item in stream.updates[index]] == [0, 1]

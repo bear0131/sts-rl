@@ -596,6 +596,10 @@ def main() -> None:
             raise ValueError(
                 "--nosl-is-az-inference-max-wait-ms must be finite and non-negative"
             )
+        if args.nosl_is_az_inference_schedule not in ("fixed_wait", "adaptive"):
+            raise ValueError(
+                "--nosl-is-az-inference-schedule must be fixed_wait or adaptive"
+            )
         if args.nosl_is_az_replay_min_size > args.nosl_is_az_replay_capacity:
             raise ValueError(
                 "--nosl-is-az-replay-min-size cannot exceed replay capacity"
@@ -1058,6 +1062,9 @@ def main() -> None:
             nosl_is_az_inference_max_wait_ms=getattr(
                 args, "nosl_is_az_inference_max_wait_ms", 0.5
             ),
+            nosl_is_az_inference_schedule=getattr(
+                args, "nosl_is_az_inference_schedule", "fixed_wait"
+            ),
             nosl_is_az_updates=getattr(args, "nosl_is_az_updates", 1),
             nosl_is_az_policy_coef=getattr(
                 args, "nosl_is_az_policy_coef", 1.0
@@ -1220,6 +1227,9 @@ def main() -> None:
                 ),
                 "nosl_is_az_inference_max_wait_ms": getattr(
                     args, "nosl_is_az_inference_max_wait_ms", 0.5
+                ),
+                "nosl_is_az_inference_schedule": getattr(
+                    args, "nosl_is_az_inference_schedule", "fixed_wait"
                 ),
                 "nosl_is_az_updates": getattr(args, "nosl_is_az_updates", 1),
                 "nosl_is_az_policy_coef": getattr(

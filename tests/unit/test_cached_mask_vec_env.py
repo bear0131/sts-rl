@@ -141,9 +141,11 @@ def test_distributed_parser_accepts_grouped_worker_geometry():
         "--nosl-is-az-replay-max-old-fraction", "0.9",
         "--nosl-is-az-inference-batch-size", "48",
         "--nosl-is-az-inference-max-wait-ms", "0.25",
+        "--nosl-is-az-inference-schedule", "adaptive",
     ])
     assert args.n_envs == 288
     assert args.envs_per_worker == 12
     assert args.nosl_is_az_replay_max_old_fraction == 0.9
     assert args.nosl_is_az_inference_batch_size == 48
     assert args.nosl_is_az_inference_max_wait_ms == 0.25
+    assert args.nosl_is_az_inference_schedule == "adaptive"

@@ -149,6 +149,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_leaf_batch_size: int = 64,
         nosl_is_az_inference_batch_size: int = 32,
         nosl_is_az_inference_max_wait_ms: float = 0.5,
+        nosl_is_az_inference_schedule: str = "fixed_wait",
         nosl_is_az_updates: int = 1,
         nosl_is_az_policy_coef: float = 1.0,
         nosl_is_az_value_coef: float = 0.5,
@@ -233,6 +234,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         ):
             raise ValueError(
                 "NOSL-IS-AZ inference maximum wait must be finite and non-negative"
+            )
+        if nosl_is_az_inference_schedule not in ("fixed_wait", "adaptive"):
+            raise ValueError(
+                "NOSL-IS-AZ inference schedule must be fixed_wait or adaptive"
             )
         if nosl_is_az_policy_coef < 0.0 or nosl_is_az_value_coef < 0.0:
             raise ValueError("NOSL-IS-AZ loss coefficients must be non-negative")
@@ -327,6 +332,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_inference_max_wait_ms = float(
             nosl_is_az_inference_max_wait_ms
         )
+        self.nosl_is_az_inference_schedule = str(
+            nosl_is_az_inference_schedule
+        )
+        self._nosl_leaf_batch_controller = None
         if self.nosl_is_az_paper_full_gumbel:
             apply_strict_training_settings(self)
         self.nosl_is_az_updates = int(nosl_is_az_updates)
@@ -360,6 +369,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         return [
             *super()._excluded_save_params(),
             "_native_leaf_inference",
+            "_nosl_leaf_batch_controller",
             "_reasoning_rollout_samples",
             "_nosl_is_az_samples",
             "_nosl_is_az_fresh_samples",
@@ -809,11 +819,34 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "cpp_leaf_model_seconds": 0.0,
             "cpp_backprop_rpc_seconds": 0.0,
             "cpp_stream_wait_seconds": 0.0,
+            "cpp_ready_empty_wait_seconds": 0.0,
             "env_step_seconds": 0.0,
         }
         inference_batch_size_sum = 0.0
         inference_batch_count = 0
         inference_batch_size_max = 0
+        inference_schedule_stats = {
+            "target_sum": 0.0,
+            "target_count": 0,
+            "ready_backlog_sum": 0.0,
+            "ready_backlog_count": 0,
+            "ready_backlog_max": 0,
+            "leaf_queue_wait_seconds": 0.0,
+            "leaf_worker_wait_seconds": 0.0,
+            "full_flushes": 0,
+            "drained_flushes": 0,
+            "watchdog_flushes": 0,
+            "controller_changes": 0,
+            "controller_increases": 0,
+            "controller_decreases": 0,
+            "controller_rollbacks": 0,
+            "target_current": float(getattr(
+                self, "nosl_is_az_inference_batch_size", 32
+            )),
+            "watchdog_seconds": float(getattr(
+                self, "nosl_is_az_inference_max_wait_ms", 0.5
+            )) / 1000.0,
+        }
         n_steps = 0
         action_masks = None
         started = time.perf_counter()
@@ -982,6 +1015,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                         "nosl_is_az_inference_max_wait_ms",
                                         0.5,
                                     )) / 1000.0,
+                                    mode=str(getattr(
+                                        self,
+                                        "nosl_is_az_inference_schedule",
+                                        "fixed_wait",
+                                    )),
                                 ),
                                 compact=compact_cpp_observations,
                                 autocast=self.autocast_context,
@@ -993,6 +1031,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         nosl_timings["cpp_stream_wait_seconds"] += shared_stats[
                             "cpp_stream_wait_seconds"
                         ]
+                        nosl_timings["cpp_ready_empty_wait_seconds"] += (
+                            shared_stats["cpp_ready_empty_wait_seconds"]
+                        )
                     else:
                         rpc_started = time.perf_counter()
                         responses = call_workers(
@@ -1014,6 +1055,44 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     inference_batch_size_max = max(
                         inference_batch_size_max,
                         int(shared_stats.get("inference_batch_size_max", 0)),
+                    )
+                    inference_schedule_stats["target_sum"] += shared_stats.get(
+                        "inference_target_batch_sum", 0
+                    )
+                    inference_schedule_stats["target_count"] += shared_stats.get(
+                        "inference_target_batch_count", 0
+                    )
+                    inference_schedule_stats["ready_backlog_sum"] += shared_stats.get(
+                        "inference_ready_backlog_sum", 0
+                    )
+                    inference_schedule_stats["ready_backlog_count"] += shared_stats.get(
+                        "inference_ready_backlog_count", 0
+                    )
+                    inference_schedule_stats["ready_backlog_max"] = max(
+                        inference_schedule_stats["ready_backlog_max"],
+                        int(shared_stats.get("inference_ready_backlog_max", 0)),
+                    )
+                    for source, target_name in (
+                        ("inference_leaf_queue_wait_seconds", "leaf_queue_wait_seconds"),
+                        ("inference_leaf_worker_wait_seconds", "leaf_worker_wait_seconds"),
+                        ("inference_full_flushes", "full_flushes"),
+                        ("inference_drained_flushes", "drained_flushes"),
+                        ("inference_watchdog_flushes", "watchdog_flushes"),
+                        ("inference_controller_changes", "controller_changes"),
+                        ("inference_controller_increases", "controller_increases"),
+                        ("inference_controller_decreases", "controller_decreases"),
+                        ("inference_controller_rollbacks", "controller_rollbacks"),
+                    ):
+                        inference_schedule_stats[target_name] += shared_stats.get(
+                            source, 0
+                        )
+                    inference_schedule_stats["target_current"] = shared_stats.get(
+                        "inference_batch_target_current",
+                        inference_schedule_stats["target_current"],
+                    )
+                    inference_schedule_stats["watchdog_seconds"] = shared_stats.get(
+                        "inference_watchdog_seconds",
+                        inference_schedule_stats["watchdog_seconds"],
                     )
                     for key in ("cpp_leaf_decode_seconds", "cpp_leaf_model_seconds", "cpp_backprop_rpc_seconds"):
                         nosl_timings[key] += shared_stats[key]
@@ -1295,6 +1374,54 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.logger.record(
                 "nosl_is_az/inference_batch_size_max",
                 inference_batch_size_max,
+            )
+            target_count = inference_schedule_stats["target_count"]
+            backlog_count = inference_schedule_stats["ready_backlog_count"]
+            self.logger.record(
+                "nosl_is_az/inference_batch_target_mean",
+                (
+                    inference_schedule_stats["target_sum"] / target_count
+                    if target_count else 0.0
+                ),
+            )
+            self.logger.record(
+                "nosl_is_az/inference_batch_target_current",
+                inference_schedule_stats["target_current"],
+            )
+            self.logger.record(
+                "nosl_is_az/inference_ready_backlog_mean",
+                (
+                    inference_schedule_stats["ready_backlog_sum"] / backlog_count
+                    if backlog_count else 0.0
+                ),
+            )
+            self.logger.record(
+                "nosl_is_az/inference_ready_backlog_max",
+                inference_schedule_stats["ready_backlog_max"],
+            )
+            leaf_count = max(1, cpp_leaf_evaluations)
+            self.logger.record(
+                "nosl_is_az/inference_leaf_queue_wait_ms_mean",
+                1000.0 * inference_schedule_stats["leaf_queue_wait_seconds"]
+                / leaf_count,
+            )
+            self.logger.record(
+                "nosl_is_az/inference_leaf_worker_wait_ms_mean",
+                1000.0 * inference_schedule_stats["leaf_worker_wait_seconds"]
+                / leaf_count,
+            )
+            for name in (
+                "full_flushes", "drained_flushes", "watchdog_flushes",
+                "controller_changes", "controller_increases",
+                "controller_decreases", "controller_rollbacks",
+            ):
+                self.logger.record(
+                    f"nosl_is_az/inference_{name}",
+                    inference_schedule_stats[name],
+                )
+            self.logger.record(
+                "nosl_is_az/inference_watchdog_ms",
+                1000.0 * inference_schedule_stats["watchdog_seconds"],
             )
             for name, seconds in nosl_timings.items():
                 self.logger.record(f"nosl_is_az/{name}", seconds)

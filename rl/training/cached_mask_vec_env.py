@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_connections
@@ -267,6 +268,7 @@ class GroupedMethodResponse:
     group_index: int
     method_name: str
     responses: dict[int, Any]
+    elapsed_seconds: float = 0.0
 
 
 class GroupedMethodStream:
@@ -280,7 +282,7 @@ class GroupedMethodStream:
 
     def __init__(self, owner: "GroupedCachedMaskSubprocVecEnv") -> None:
         self._owner = owner
-        self._pending: dict[Any, tuple[int, str]] = {}
+        self._pending: dict[Any, tuple[int, str, float]] = {}
 
     @property
     def pending(self) -> bool:
@@ -311,7 +313,7 @@ class GroupedMethodStream:
         for group_index, group_calls in grouped_calls.items():
             remote = self._owner.remotes[group_index]
             remote.send(("env_method_batch", group_calls))
-            self._pending[remote] = (group_index, method_name)
+            self._pending[remote] = (group_index, method_name, time.perf_counter())
 
     def receive(
         self,
@@ -323,7 +325,7 @@ class GroupedMethodStream:
         ready = wait_for_connections(tuple(self._pending), timeout=timeout)
         packets = []
         for remote in ready:
-            group_index, method_name = self._pending.pop(remote)
+            group_index, method_name, submitted_at = self._pending.pop(remote)
             local_responses = remote.recv()
             group = self._owner._groups[group_index]
             responses = {
@@ -335,6 +337,7 @@ class GroupedMethodStream:
                     group_index=group_index,
                     method_name=method_name,
                     responses=responses,
+                    elapsed_seconds=time.perf_counter() - submitted_at,
                 )
             )
         return packets

@@ -427,8 +427,14 @@ class WholeRunTask(Task):
             "--nosl-is-az-inference-max-wait-ms",
             type=float,
             default=0.5,
-            help="Maximum queue delay before a partial cross-tree leaf batch "
-                 "is sent to the GPU.",
+            help="Fixed-mode queue delay or adaptive-mode watchdog floor.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-inference-schedule",
+            choices=("fixed_wait", "adaptive"),
+            default="fixed_wait",
+            help="Cross-tree GPU batching policy; adaptive mode uses active "
+                 "tree capacity and measured backpressure.",
         )
         parser.add_argument("--nosl-is-az-updates", type=int, default=1)
         parser.add_argument("--nosl-is-az-policy-coef", type=float, default=1.0)

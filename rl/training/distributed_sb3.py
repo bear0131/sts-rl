@@ -342,8 +342,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--nosl-is-az-inference-max-wait-ms",
         type=float,
         default=None,
-        help="Maximum queue delay before forwarding a partial cross-tree leaf "
-             "batch. Omission uses the checkpoint value or 0.5 ms.",
+        help="Fixed-mode partial-batch delay, or adaptive-mode straggler "
+             "watchdog floor. Omission uses the checkpoint value or 0.5 ms.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-inference-schedule",
+        choices=("fixed_wait", "adaptive"),
+        default=None,
+        help="Cross-tree GPU batching policy. Adaptive mode uses active-tree "
+             "capacity and backpressure while preserving one leaf per tree.",
     )
     parser.add_argument("--nosl-is-az-dirichlet-alpha", type=float, default=0.0)
     parser.add_argument("--nosl-is-az-dirichlet-epsilon", type=float, default=0.0)
@@ -1373,8 +1380,23 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/cpp_leaf_model_seconds",
     "nosl_is_az/cpp_backprop_rpc_seconds",
     "nosl_is_az/cpp_stream_wait_seconds",
+    "nosl_is_az/cpp_ready_empty_wait_seconds",
     "nosl_is_az/inference_batch_size_mean",
     "nosl_is_az/inference_batch_size_max",
+    "nosl_is_az/inference_batch_target_mean",
+    "nosl_is_az/inference_batch_target_current",
+    "nosl_is_az/inference_ready_backlog_mean",
+    "nosl_is_az/inference_ready_backlog_max",
+    "nosl_is_az/inference_leaf_queue_wait_ms_mean",
+    "nosl_is_az/inference_leaf_worker_wait_ms_mean",
+    "nosl_is_az/inference_full_flushes",
+    "nosl_is_az/inference_drained_flushes",
+    "nosl_is_az/inference_watchdog_flushes",
+    "nosl_is_az/inference_controller_changes",
+    "nosl_is_az/inference_controller_increases",
+    "nosl_is_az/inference_controller_decreases",
+    "nosl_is_az/inference_controller_rollbacks",
+    "nosl_is_az/inference_watchdog_ms",
     "nosl_is_az/env_step_seconds",
     "nosl_is_az/collection_seconds",
     "nosl_is_az/dropped_unlabeled_roots",
@@ -1907,6 +1929,7 @@ def main() -> None:
     inference_override = (
         args.nosl_is_az_inference_batch_size is not None
         or args.nosl_is_az_inference_max_wait_ms is not None
+        or args.nosl_is_az_inference_schedule is not None
     )
     if inference_override and not bool(getattr(model, "nosl_is_az", False)):
         raise ValueError(
@@ -1919,6 +1942,9 @@ def main() -> None:
         model.nosl_is_az_inference_max_wait_ms = float(getattr(
             model, "nosl_is_az_inference_max_wait_ms", 0.5
         ))
+        model.nosl_is_az_inference_schedule = str(getattr(
+            model, "nosl_is_az_inference_schedule", "fixed_wait"
+        ))
         if args.nosl_is_az_inference_batch_size is not None:
             model.nosl_is_az_inference_batch_size = int(
                 args.nosl_is_az_inference_batch_size
@@ -1927,16 +1953,26 @@ def main() -> None:
             model.nosl_is_az_inference_max_wait_ms = float(
                 args.nosl_is_az_inference_max_wait_ms
             )
+        if args.nosl_is_az_inference_schedule is not None:
+            model.nosl_is_az_inference_schedule = str(
+                args.nosl_is_az_inference_schedule
+            )
+        model._nosl_leaf_batch_controller = None
         args.nosl_is_az_inference_batch_size = (
             model.nosl_is_az_inference_batch_size
         )
         args.nosl_is_az_inference_max_wait_ms = (
             model.nosl_is_az_inference_max_wait_ms
         )
+        args.nosl_is_az_inference_schedule = (
+            model.nosl_is_az_inference_schedule
+        )
         print(
             f"[rank {args.rank}] NOSL-IS-AZ cross-tree inference: "
-            f"target_batch={model.nosl_is_az_inference_batch_size} "
-            f"max_wait_ms={model.nosl_is_az_inference_max_wait_ms}",
+            f"schedule={model.nosl_is_az_inference_schedule} "
+            f"max_batch={model.nosl_is_az_inference_batch_size} "
+            f"wait_or_watchdog_floor_ms="
+            f"{model.nosl_is_az_inference_max_wait_ms}",
             flush=True,
         )
     # Restarted environments cannot restore native in-flight games. Choose a

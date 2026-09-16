@@ -28,9 +28,11 @@ full_gumbel
 --nosl-is-az-leaf-batch-size
 1
 --nosl-is-az-inference-batch-size
-128
+256
 --nosl-is-az-inference-max-wait-ms
 0.5
+--nosl-is-az-inference-schedule
+adaptive
 --total-steps
 10000000
 --n-envs
