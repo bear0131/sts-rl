@@ -127,6 +127,34 @@ def test_native_search_supports_piles_larger_than_fixed_list_capacity(combat_fac
 
 
 @pytest.mark.native
+def test_packed_leaf_preserves_more_than_128_legal_actions(combat_factory):
+    env = combat_factory(["EXHUME"] * 5, "Jaw Worm", seed=19)
+    env.thick.bc.apply_custom_state({
+        "player": {"energy": 3},
+        "hand": ["EXHUME"],
+        "draw": [],
+        "discard": [],
+        "exhaust": ["STRIKE_RED"] * 129,
+    })
+    root_logits = np.full(181, -100.0)
+    root_logits[1] = 100.0
+    kwargs = dict(simulations=1, depth=2, nonce=19)
+    raw_session = env.thick.bc.nosl_neural_search_begin(root_logits, **kwargs)
+    packed_session = env.thick.bc.nosl_neural_search_begin(root_logits, **kwargs)
+
+    raw = raw_session.next_batch(1)[0]
+    packed = packed_session.next_batch_packed(1)
+    expected = np.asarray(raw["legal_action_bits"], dtype=np.uint32)
+    counts = np.asarray(packed["legal_action_counts"], dtype=np.uint32)
+    matrix = np.asarray(packed["legal_action_bits"], dtype=np.uint32)
+
+    assert expected.size == 129
+    assert counts.tolist() == [expected.size]
+    assert matrix.shape == (1, expected.size)
+    np.testing.assert_array_equal(matrix[0], expected)
+
+
+@pytest.mark.native
 def test_native_batch_backprop_matches_scalar_order(combat_factory):
     env_batch = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
     env_scalar = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
