@@ -174,6 +174,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager",
                         help="Runtime combat leaf backend; search and update semantics are unchanged")
+    parser.add_argument("--leaf-graph-profile-interval", type=int, default=0,
+                        help="Sample CUDA stream stage timings every N leaf calls; 0 disables")
     parser.add_argument("--wandb-project", default="sts-rl")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
@@ -1399,6 +1401,17 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/inference_watchdog_ms",
     "nosl_is_az/env_step_seconds",
     "nosl_is_az/collection_seconds",
+    "nosl_is_az/leaf_graph_captures",
+    "nosl_is_az/leaf_graph_hits",
+    "nosl_is_az/leaf_graph_evictions",
+    "nosl_is_az/leaf_graph_cached_graphs",
+    "nosl_is_az/leaf_graph_capture_seconds",
+    "nosl_is_az/leaf_graph_copy_seconds",
+    "nosl_is_az/leaf_graph_output_seconds",
+    "nosl_is_az/leaf_graph_profile_samples",
+    "nosl_is_az/leaf_graph_h2d_ms",
+    "nosl_is_az/leaf_graph_replay_ms",
+    "nosl_is_az/leaf_graph_d2h_ms",
     "nosl_is_az/dropped_unlabeled_roots",
     "nosl_is_az/roots",
     "nosl_is_az/policy_loss",
@@ -1982,6 +1995,7 @@ def main() -> None:
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
+            profile_interval=args.leaf_graph_profile_interval,
             failure_path=(args.training_state_dir / f'failed-leaves-rank{args.rank}.npz')
             if args.training_state_dir else None)
 

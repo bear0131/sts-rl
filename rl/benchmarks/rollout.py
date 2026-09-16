@@ -35,11 +35,14 @@ def run(args):
         model.nosl_is_az_search_mode = {0:'puct', 1:'gumbel', 2:'full_gumbel'}[config.root_search_mode]
         model.nosl_is_az = model.nosl_is_az_cpp = True
         model.amp_mode = args.amp
+        model.nosl_is_az_inference_schedule = args.inference_schedule
+        model.nosl_is_az_inference_batch_size = args.inference_batch_size
+        model.nosl_is_az_inference_max_wait_ms = args.inference_wait_ms
         model.set_random_seed(args.seed)
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
-                failure_path=args.output.with_suffix('.failed-leaves.npz'))
+                failure_path=args.output.with_suffix('.failed-leaves.npz'), profile_interval=args.graph_profile_interval)
         _, callback = model._setup_learn(args.n_steps * args.n_envs * args.updates,
             callback=lambda *_: True, reset_num_timesteps=True)
         callback.on_training_start({}, {})
@@ -81,7 +84,7 @@ def run(args):
                 checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()),
             timing=dict(setup_seconds=setup, measured_seconds=elapsed, transitions=model.num_timesteps,
                 transitions_per_second=model.num_timesteps/elapsed),
-            search_metrics=metrics, graphs=None if cache is None else dict(captures=cache.captures,hits=cache.hits),
+            search_metrics=metrics, graphs=None if cache is None else cache.statistics(),
             memory=dict(cuda=None if args.device!='cuda' else dict(
                 allocated_bytes=torch.cuda.memory_allocated(),reserved_bytes=torch.cuda.memory_reserved(),
                 peak_allocated_bytes=torch.cuda.max_memory_allocated(),peak_reserved_bytes=torch.cuda.max_memory_reserved())),

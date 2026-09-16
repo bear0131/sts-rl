@@ -808,6 +808,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         rollout_hp_order_matches = 0
         cpp_leaf_batches = 0
         cpp_leaf_evaluations = 0
+        leaf_graph = getattr(self, '_native_leaf_inference', None)
+        graph_before = leaf_graph.statistics() if hasattr(leaf_graph, 'statistics') else {}
         # Keep the staged NOSL pipeline measurable.  These counters include
         # worker IPC where named, so the next run can distinguish simulator
         # work from Python packing and learner inference without sampling every
@@ -1431,6 +1433,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.logger.record(
             "nosl_is_az/collection_seconds", time.perf_counter() - started
         )
+        if graph_before:
+            graph_after = leaf_graph.statistics()
+            for name, value in graph_after.items():
+                if isinstance(value, (int, float)):
+                    self.logger.record('nosl_is_az/leaf_graph_' + name,
+                        value if name == 'cached_graphs' else value-graph_before[name])
         if self.performance_profile:
             total = time.perf_counter() - started
             self._performance_rollout = {

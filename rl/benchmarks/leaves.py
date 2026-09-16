@@ -39,7 +39,8 @@ def run(args):
         model.policy.set_training_mode(False)
         if args.leaf_inference == 'cuda-graph':
             from rl.search.inference import CombatLeafGraphs
-            model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp)
+            model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
+                profile_interval=args.graph_profile_interval)
         observations = []
         for index in range(0 if args.leaf_input else args.n_envs):
             env.reset(seed=args.seed + index)
@@ -105,6 +106,7 @@ def run(args):
                 leaf_batches=args.leaf_repeats, leaves=args.leaf_repeats * batch_size,
                 milliseconds_per_batch=elapsed * 1000 / args.leaf_repeats),
             output_sha256=hashlib.sha256(b''.join(x.tobytes() for x in result)).hexdigest(),
+            graphs=model._native_leaf_inference.statistics() if args.leaf_inference == 'cuda-graph' else None,
             memory=dict(cuda=cuda), resources=monitor.summary, samples=monitor.samples, profile=profile)
     finally:
         env.close()
