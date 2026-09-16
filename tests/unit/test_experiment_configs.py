@@ -173,6 +173,31 @@ def test_u40x4_uniform_replay_only_removes_freshness_ratio():
     }
 
 
+def test_u80x4_uniform_replay_only_quarters_capacity_and_doubles_updates():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip"]
+    u40x4 = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_u40x4_uniform_20260916.args'}"]
+    ))
+    args = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_u80x4_uniform_20260916.args'}"]
+    ))
+
+    assert args["nosl_is_az_replay_enabled"] is True
+    assert args["nosl_is_az_replay_capacity"] == 131072
+    assert args["nosl_is_az_updates"] == 80
+    assert args["nosl_is_az_replay_max_old_fraction"] == 1.0
+    differences = {
+        key: (u40x4[key], value)
+        for key, value in args.items()
+        if u40x4[key] != value
+    }
+    assert differences == {
+        "nosl_is_az_updates": (40, 80),
+        "nosl_is_az_replay_capacity": (524288, 131072),
+    }
+
+
 def test_public_scenario_presets_preserve_original_card_order():
     from configs.eval import nosl_scenarios
     expected = json.loads((ROOT / "tests/fixtures/configs/nosl_scenarios.json").read_text())
