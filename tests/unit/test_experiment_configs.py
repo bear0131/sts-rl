@@ -148,6 +148,31 @@ def test_u10x4_preset_carries_rollout_tuning():
     }
 
 
+def test_u40x4_uniform_replay_only_removes_freshness_ratio():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip"]
+    u10x4 = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u10x4_20260916.args'}"]
+    ))
+    args = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_paper_replay_u40x4_uniform_20260916.args'}"]
+    ))
+
+    assert args["nosl_is_az_replay_enabled"] is True
+    assert args["nosl_is_az_replay_capacity"] == 524288
+    assert args["nosl_is_az_updates"] == 40
+    assert args["nosl_is_az_replay_max_old_fraction"] == 1.0
+    differences = {
+        key: (u10x4[key], value)
+        for key, value in args.items()
+        if u10x4[key] != value
+    }
+    assert differences == {
+        "nosl_is_az_updates": (10, 40),
+        "nosl_is_az_replay_max_old_fraction": (0.9, 1.0),
+    }
+
+
 def test_public_scenario_presets_preserve_original_card_order():
     from configs.eval import nosl_scenarios
     expected = json.loads((ROOT / "tests/fixtures/configs/nosl_scenarios.json").read_text())
