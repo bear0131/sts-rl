@@ -28,7 +28,7 @@
 | SEARCH01 | 已修 | `paper_full_gumbel` 在训练、Watch、Eval 与前端显式一致；strict 模式强制 mctx canonical 参数、单叶顺序评估及无额外 visit 采样，原生回归覆盖 considered-visits、completed-Q、improved-policy target 与最终动作；NOSL chance/redeterminization 和卡→目标接口仍明确属于项目适配 |
 | SEARCH02 | 已修 | NOSL packed leaf 的合法动作矩阵按当前 batch 最大动作数动态定宽；Exhume 等大牌堆选择状态不再受错误的 128 动作上限约束，普通与 packed 路径逐 action bits 对齐 |
 | CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
-| PERF01 | rollout 优化通过完整单机验证；多机验收中 | 共享 CUDA graph 分桶、grouped IPC 和零主动等待；384env/strict128 固定 checkpoint 的完整 collection 已通过，CPU/GPU/内存与数值边界记录在 [rollout 实测](worklog/2026-09-16.md#rollout-optimization-bounded-graphs-ipc-and-measured-scheduling)。原方案约804s，候选约244s（跨机，另做同机复核）；不减少 simulation，不宣称改变 batch 形状后 bitwise。仍需多机恢复后的完整更新、多 seed 长程吞吐与收敛验证 |
+| PERF01 | rollout 单机对照与四机恢复验收完成 | 共享 CUDA graph 分桶、grouped IPC 和零主动等待；384env/strict128 固定 checkpoint 的同机完整 collection 从803.56s降至241.75s，四机恢复后的首轮rollout239–251s、整轮808–813s，step2162688模型/Adam跨rank一致。CPU/GPU/内存与数值边界见 [rollout 实测](worklog/2026-09-16.md#rollout-optimization-bounded-graphs-ipc-and-measured-scheduling)。不减少simulation，不宣称改变batch形状后bitwise；多seed长程吞吐与收敛仍需后续验证 |
 | OPS01 | 已完成 | 四机 NOSL replay 由本地 `manage_nosl_replay_4way.ps1` 统一预检、启动、状态和指定 recovery step 验收；密码不入库，恢复前校验四 rank bundle 身份与 checksum |
 | OPS02 | 待修 | 分布式训练单轮约 20 分钟且只在轮末调用 `wandb.log` 时，W&B `heartbeatAt` 停在上一轮指标、run 会在活进程仍正常运行时被误标为 `crashed`；需用受测的独立低频 heartbeat 或显式 lifecycle 更新保持 Running 状态，且不得改变训练 step/图表语义 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
