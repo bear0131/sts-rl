@@ -584,10 +584,22 @@ def main() -> None:
             "nosl_is_az_replay_capacity",
             "nosl_is_az_replay_min_size",
             "nosl_is_az_leaf_batch_size",
+            "nosl_is_az_inference_batch_size",
             "nosl_is_az_updates",
         ):
             if getattr(args, name) < 1:
                 raise ValueError(f"--{name.replace('_', '-')} must be positive")
+        if (
+            not np.isfinite(args.nosl_is_az_inference_max_wait_ms)
+            or args.nosl_is_az_inference_max_wait_ms < 0.0
+        ):
+            raise ValueError(
+                "--nosl-is-az-inference-max-wait-ms must be finite and non-negative"
+            )
+        if args.nosl_is_az_inference_schedule not in ("fixed_wait", "adaptive"):
+            raise ValueError(
+                "--nosl-is-az-inference-schedule must be fixed_wait or adaptive"
+            )
         if args.nosl_is_az_replay_min_size > args.nosl_is_az_replay_capacity:
             raise ValueError(
                 "--nosl-is-az-replay-min-size cannot exceed replay capacity"
@@ -1044,6 +1056,15 @@ def main() -> None:
             nosl_is_az_leaf_batch_size=getattr(
                 args, "nosl_is_az_leaf_batch_size", 64
             ),
+            nosl_is_az_inference_batch_size=getattr(
+                args, "nosl_is_az_inference_batch_size", 32
+            ),
+            nosl_is_az_inference_max_wait_ms=getattr(
+                args, "nosl_is_az_inference_max_wait_ms", 0.5
+            ),
+            nosl_is_az_inference_schedule=getattr(
+                args, "nosl_is_az_inference_schedule", "fixed_wait"
+            ),
             nosl_is_az_updates=getattr(args, "nosl_is_az_updates", 1),
             nosl_is_az_policy_coef=getattr(
                 args, "nosl_is_az_policy_coef", 1.0
@@ -1200,6 +1221,15 @@ def main() -> None:
                 ),
                 "nosl_is_az_leaf_batch_size": getattr(
                     args, "nosl_is_az_leaf_batch_size", 64
+                ),
+                "nosl_is_az_inference_batch_size": getattr(
+                    args, "nosl_is_az_inference_batch_size", 32
+                ),
+                "nosl_is_az_inference_max_wait_ms": getattr(
+                    args, "nosl_is_az_inference_max_wait_ms", 0.5
+                ),
+                "nosl_is_az_inference_schedule": getattr(
+                    args, "nosl_is_az_inference_schedule", "fixed_wait"
                 ),
                 "nosl_is_az_updates": getattr(args, "nosl_is_az_updates", 1),
                 "nosl_is_az_policy_coef": getattr(

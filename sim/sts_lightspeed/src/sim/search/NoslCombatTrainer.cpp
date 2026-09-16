@@ -40,10 +40,15 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
     // transition.  uniqueId is deliberately excluded: it is an opaque card
     // identity and is not public information.
     using CardSignature = std::tuple<int, int, int, int, int, int, int>;
-    std::array<CardSignature, CardManager::MAX_GROUP_SIZE> cards{};
-    std::size_t count = 0;
+    // CardManager uses std::vector unless the optional fixed-list build flag
+    // is enabled, so a legal pile is not necessarily bounded by
+    // MAX_GROUP_SIZE.  In particular, long runs and generated cards can make
+    // a pile exceed 64 entries.  Size this scratch space from the actual pile
+    // to avoid writing past a fixed stack array while canonicalizing the key.
+    std::vector<CardSignature> cards;
+    cards.reserve(pile.size());
     for (const auto &card : pile) {
-        cards[count++] = CardSignature(
+        cards.emplace_back(
             static_cast<int>(card.getId()),
             static_cast<int>(card.specialData),
             static_cast<int>(card.cost),
@@ -52,11 +57,10 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
             card.freeToPlayOnce ? 1 : 0,
             card.retain ? 1 : 0);
     }
-    std::sort(cards.begin(), cards.begin() + count);
-    hashValue(hash, count);
-    for (std::size_t i = 0; i < count; ++i) {
-        const auto &[cardId, specialData, cost, costForTurn, upgraded,
-                     freeToPlayOnce, retain] = cards[i];
+    std::sort(cards.begin(), cards.end());
+    hashValue(hash, cards.size());
+    for (const auto &[cardId, specialData, cost, costForTurn, upgraded,
+                       freeToPlayOnce, retain] : cards) {
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);

@@ -1316,7 +1316,7 @@ class SlayTheSpireEnv(gym.Env):
         # Language-enabled checkpoints need the legacy canonical path because
         # the packed numeric layout intentionally omits token programs.  For
         # the ordinary language-free combat specialist, keep serialization on
-        # the C++ side and return one fixed-width batch directly.
+        # the C++ side and return one contiguous batch directly.
         packed_fn = getattr(session, "next_batch_packed", None)
         if (self._nosl_cpp_compact_observation and
                 not self._card_language and not self._combat_language and
@@ -1348,8 +1348,9 @@ class SlayTheSpireEnv(gym.Env):
             if observation_batch is not None:
                 leaf_meta = []
                 request_ids = packed_response.get("request_ids", ())
-                # New native builds return a fixed-width uint32 matrix plus a
-                # per-row count, avoiding one Python list allocation per leaf.
+                # New native builds return a rectangular uint32 matrix sized
+                # to this batch's largest row plus a per-row count, avoiding
+                # one Python list allocation per leaf.
                 # Older extensions still return nested lists and are handled
                 # by the fallback branch below.
                 legal_bits = packed_response.get("legal_action_bits", ())

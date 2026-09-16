@@ -69,6 +69,7 @@ def test_grouped_cached_masks_preserve_logical_order():
     env = VecMonitor(base)
     try:
         assert len(base.processes) == 2
+        assert callable(getattr(env, "env_method_stream"))
         env.reset()
         np.testing.assert_array_equal(
             get_action_masks(env),
@@ -94,6 +95,42 @@ def test_grouped_cached_masks_preserve_logical_order():
         env.close()
 
 
+def test_grouped_method_stream_reuses_groups_without_changing_env_order():
+    base = GroupedCachedMaskSubprocVecEnv(
+        [_make_mask_info_env, _make_mask_info_env, _make_mask_info_env],
+        envs_per_worker=2,
+        start_method="spawn",
+    )
+    try:
+        base.reset()
+        base.step(np.array([0, 0, 0]))
+        stream = base.env_method_stream()
+        calls = {
+            index: (("position",), {})
+            for index in range(3)
+        }
+        stream.submit("get_wrapper_attr", calls)
+        packets = []
+        while stream.pending:
+            packets.extend(stream.receive())
+
+        assert {packet.group_index for packet in packets} == {0, 1}
+        assert {
+            index: value
+            for packet in packets
+            for index, value in packet.responses.items()
+        } == {0: 1, 1: 1, 2: 1}
+
+        stream.submit("get_wrapper_attr", calls)
+        repeated = {}
+        while stream.pending:
+            for packet in stream.receive():
+                repeated.update(packet.responses)
+        assert repeated == {0: 1, 1: 1, 2: 1}
+    finally:
+        base.close()
+
+
 def test_distributed_parser_accepts_grouped_worker_geometry():
     args = build_distributed_parser().parse_args([
         "--rank", "0",
@@ -102,7 +139,13 @@ def test_distributed_parser_accepts_grouped_worker_geometry():
         "--n-envs", "288",
         "--envs-per-worker", "12",
         "--nosl-is-az-replay-max-old-fraction", "0.9",
+        "--nosl-is-az-inference-batch-size", "48",
+        "--nosl-is-az-inference-max-wait-ms", "0.25",
+        "--nosl-is-az-inference-schedule", "adaptive",
     ])
     assert args.n_envs == 288
     assert args.envs_per_worker == 12
     assert args.nosl_is_az_replay_max_old_fraction == 0.9
+    assert args.nosl_is_az_inference_batch_size == 48
+    assert args.nosl_is_az_inference_max_wait_ms == 0.25
+    assert args.nosl_is_az_inference_schedule == "adaptive"
