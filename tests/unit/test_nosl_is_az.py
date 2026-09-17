@@ -1,6 +1,8 @@
 import copy
 import unittest
+import weakref
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -106,6 +108,338 @@ class _ReplayPolicy(torch.nn.Module):
         super().__init__()
         self.core = _ReplayCore()
         self.optimizer = torch.optim.SGD(self.parameters(), lr=0.05)
+
+
+class NOSLLearnerDiagnosticsTest(unittest.TestCase):
+    """Diagnostics must not change the bounded, sample-weighted objective."""
+
+    def setUp(self):
+        self.model = object.__new__(AccumulatingMaskablePPO)
+        model = self.model
+        model.observation_space = spaces.Dict({
+            "state": spaces.Box(-10, 10, shape=(1,), dtype=np.float32),
+        })
+        model.action_space = spaces.Discrete(2)
+        with torch.random.fork_rng():
+            torch.manual_seed(5311)
+            model.policy = _ReplayPolicy()
+        model.policy.optimizer = torch.optim.Adam(model.policy.parameters(), lr=0.01)
+        model.device = torch.device("cpu")
+        model.amp_mode = "off"
+        model.max_grad_norm = 0.5
+        model.nosl_is_az_batch_size = 5
+        model.nosl_is_az_micro_batch_size = 2
+        model.nosl_is_az_replay_enabled = False
+        model.nosl_is_az_updates = 1
+        model.nosl_is_az_policy_coef = 0.7
+        model.nosl_is_az_value_coef = 1.3
+        model._logger = SimpleNamespace(record=lambda *_args, **_kwargs: None)
+        # A complete value-only microbatch and a short, fractionally weighted
+        # final microbatch distinguish policy population from policy weights.
+        weights = [1.0, 2.0, 0.0, 0.0, 0.25]
+        self.samples = [{
+            "observation": {"state": np.asarray([index - 1], dtype=np.float32)},
+            "action_mask": np.asarray([weight > 0, weight > 0]),
+            "policy_target": np.asarray(
+                [0.75, 0.25] if weight else [0.0, 0.0], dtype=np.float32),
+            "policy_weight": weight,
+            "value_target": (index + 1) / 8.0,
+        } for index, weight in enumerate(weights)]
+        model._nosl_is_az_samples = self.samples
+
+    def _reference_gradients(self, reference, samples, *, gradient_scale=1.0, totals=None):
+        if totals is None:
+            totals = ({}, {}, {}, np.zeros(3, dtype=np.float64))
+        expected_sum, expected_sumsq, expected_count, expected_losses = totals
+        reference.optimizer.zero_grad()
+        for start in range(0, len(samples), 2):
+            rows = samples[start:start + 2]
+            obs = {"state": torch.from_numpy(np.stack([
+                row["observation"]["state"] for row in rows]))}
+            logits, values = reference.core.actor_critic(obs)
+            masks = torch.from_numpy(np.stack([row["action_mask"] for row in rows]))
+            targets = torch.from_numpy(np.stack([row["policy_target"] for row in rows]))
+            weights = torch.tensor([row["policy_weight"] for row in rows])
+            value_targets = torch.tensor([row["value_target"] for row in rows])
+            log_probs = torch.log_softmax(torch.where(
+                masks, logits, torch.full_like(logits, -1e8)), dim=-1)
+            total = targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+            targets = targets / total
+            cross_entropy = -(targets * log_probs).sum(dim=-1)
+            squared_error = torch.nn.functional.mse_loss(
+                values.float().flatten(), value_targets, reduction="none")
+            # The reference objective specifies the same microbatch and
+            # distributed scale; no diagnostics participate in backward.
+            objective = 0.7 * cross_entropy * weights + 1.3 * squared_error
+            (objective.sum() / len(samples) * gradient_scale).backward()
+            expected_losses += [
+                float((cross_entropy * weights).sum().detach()),
+                float(weights.sum()), float(squared_error.sum().detach()),
+            ]
+            target_log = torch.where(targets > 0, targets.clamp_min(1e-8).log(),
+                                     torch.zeros_like(targets))
+            target_entropy = -(targets * target_log).sum(dim=-1)
+            probabilities = torch.where(masks, log_probs.exp(), torch.zeros_like(log_probs))
+            probabilities = probabilities / probabilities.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+            policy_log = torch.where(probabilities > 0, probabilities.clamp_min(1e-8).log(),
+                                     torch.zeros_like(probabilities))
+            predicted = values.float().flatten()
+            policy_metrics = {
+                "target_entropy": target_entropy,
+                "policy_entropy": -(probabilities * policy_log).sum(dim=-1),
+                "target_policy_kl": cross_entropy - target_entropy,
+                "policy_cross_entropy": cross_entropy,
+                "target_effective_actions": target_entropy.exp(),
+                "target_top1_agreement": (targets.argmax(-1) == probabilities.argmax(-1)).float(),
+                "legal_actions": masks.sum(dim=-1).float(),
+                "illegal_target_mass": (targets * (~masks).to(targets.dtype)).sum(dim=-1),
+                "target_sum_error": (total.squeeze(-1) - 1.0).abs(),
+            }
+            metrics = {name: value[weights > 0] for name, value in policy_metrics.items()}
+            metrics.update({
+                "value_target": value_targets,
+                "pred_value": predicted,
+                "value_mae": (predicted - value_targets).abs(),
+                "value_bias": predicted - value_targets,
+                "finite_fraction": (torch.isfinite(logits).all(-1) & torch.isfinite(predicted)).float(),
+            })
+            for name, tensor in metrics.items():
+                array = tensor.detach().float().numpy()
+                array = array[np.isfinite(array)].astype(np.float64)
+                expected_sum[name] = expected_sum.get(name, 0.0) + float(array.sum())
+                expected_sumsq[name] = expected_sumsq.get(name, 0.0) + float(np.square(array).sum())
+                expected_count[name] = expected_count.get(name, 0) + array.size
+        return totals
+
+    def test_diagnostics_gradients_and_adam_match_fixed_microbatch_objective(self):
+        model = self.model
+        reference = copy.deepcopy(model.policy)
+        expected_sum, expected_sumsq, expected_count, expected_losses = self._reference_gradients(
+            reference, self.samples, gradient_scale=1.5)
+        result = model._train_nosl_is_az(step_optimizer=False, gradient_scale=1.5)
+        self.assertEqual(result["gradient_batches"], 3)
+        self.assertEqual(model._nosl_is_az_metric_sums, expected_sum)
+        self.assertEqual(model._nosl_is_az_metric_sumsq, expected_sumsq)
+        self.assertEqual(model._nosl_is_az_metric_counts, expected_count)
+        self.assertEqual(model._nosl_is_az_policy_loss_sum, expected_losses[0])
+        self.assertEqual(model._nosl_is_az_policy_weight_sum, expected_losses[1])
+        self.assertEqual(model._nosl_is_az_value_loss_sum, expected_losses[2])
+        for actual, expected in zip(model.policy.parameters(), reference.parameters(), strict=True):
+            self.assertTrue(torch.equal(actual.grad, expected.grad))
+        for policy in (model.policy, reference):
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), model.max_grad_norm)
+            policy.optimizer.step()
+        for actual, expected in zip(model.policy.parameters(), reference.parameters(), strict=True):
+            self.assertTrue(torch.equal(actual, expected))
+            for key in ("step", "exp_avg", "exp_avg_sq"):
+                self.assertTrue(torch.equal(model.policy.optimizer.state[actual][key],
+                                            reference.optimizer.state[expected][key]))
+
+    def _assert_nested_equal(self, actual, expected):
+        if isinstance(actual, torch.Tensor):
+            self.assertEqual(actual.dtype, expected.dtype)
+            self.assertTrue(torch.equal(actual, expected))
+        elif isinstance(actual, np.ndarray):
+            np.testing.assert_array_equal(actual, expected)
+        elif isinstance(actual, dict):
+            self.assertEqual(actual.keys(), expected.keys())
+            for key in actual:
+                self._assert_nested_equal(actual[key], expected[key])
+        elif isinstance(actual, (list, tuple)):
+            self.assertEqual(len(actual), len(expected))
+            for left, right in zip(actual, expected, strict=True):
+                self._assert_nested_equal(left, right)
+        else:
+            self.assertEqual(actual, expected)
+
+    @staticmethod
+    def _policy_snapshot(policy):
+        return {
+            "weights": copy.deepcopy(policy.state_dict()),
+            "adam": copy.deepcopy(policy.optimizer.state_dict()),
+            "gradients": [None if p.grad is None else p.grad.detach().clone()
+                          for p in policy.parameters()],
+        }
+
+    def test_two_update_diagnostics_reuse_matches_sequential_objective_and_rng(self):
+        saved_rng = np.random.get_state()
+        try:
+            for replay_enabled in (False, True):
+                with self.subTest(replay=replay_enabled):
+                    self.setUp()
+                    model = self.model
+                    model.nosl_is_az_replay_enabled = replay_enabled
+                    model.nosl_is_az_replay_capacity = 16
+                    model.nosl_is_az_updates = 2
+                    reference = copy.deepcopy(model.policy)
+                    np.random.seed(5311)
+                    for _round in range(2):
+                        model._nosl_is_az_samples = copy.deepcopy(self.samples)
+                        prepare = model._prepare_nosl_is_az_replay()
+                        replay = copy.deepcopy(model._nosl_is_az_replay) if replay_enabled else None
+                        initial_rng = np.random.get_state()
+                        initial_torch_rng = torch.get_rng_state()
+                        totals = None
+                        expected_states, expected_norms = [], []
+                        for _ in range(2):
+                            rows = self.samples
+                            if replay is not None:
+                                indices = replay.sample_indices(
+                                    5, fresh_start_id=int(prepare["fresh_start_id"]),
+                                    max_old_fraction=1.0)
+                                batch = replay.get_batch(indices)
+                                rows = [{
+                                    "observation": {"state": np.asarray(
+                                        batch["observations"]["state"][i], dtype=np.float32)},
+                                    "action_mask": batch["action_masks"][i],
+                                    "policy_target": np.asarray(batch["policy_targets"][i], dtype=np.float32),
+                                    "policy_weight": float(batch["policy_weights"][i]),
+                                    "value_target": float(batch["value_targets"][i]),
+                                } for i in range(5)]
+                            totals = self._reference_gradients(reference, rows, totals=totals)
+                            norm = torch.nn.utils.clip_grad_norm_(
+                                reference.parameters(), model.max_grad_norm)
+                            expected_norms.append(float(norm))
+                            reference.optimizer.step()
+                            expected_states.append(self._policy_snapshot(reference))
+                            reference.optimizer.zero_grad()
+                        expected_rng = np.random.get_state()
+                        np.random.set_state(initial_rng)
+                        actual_states = []
+                        original_step = model.policy.optimizer.step
+
+                        def record_step(*args, **kwargs):
+                            result = original_step(*args, **kwargs)
+                            actual_states.append(self._policy_snapshot(model.policy))
+                            return result
+
+                        with patch.object(model.policy.optimizer, "step", record_step):
+                            result = model._train_nosl_is_az(prepare_replay=False)
+                        expected_sum, expected_sumsq, expected_count, expected_losses = totals
+                        self._assert_nested_equal(actual_states, expected_states)
+                        self._assert_nested_equal(np.random.get_state(), expected_rng)
+                        self._assert_nested_equal(torch.get_rng_state(), initial_torch_rng)
+                        self.assertEqual(model._nosl_is_az_metric_sums, expected_sum)
+                        self.assertEqual(model._nosl_is_az_metric_sumsq, expected_sumsq)
+                        self.assertEqual(model._nosl_is_az_metric_counts, expected_count)
+                        self.assertEqual(model._nosl_is_az_policy_loss_sum, expected_losses[0])
+                        self.assertEqual(model._nosl_is_az_policy_weight_sum, expected_losses[1])
+                        self.assertEqual(model._nosl_is_az_value_loss_sum, expected_losses[2])
+                        self.assertEqual(result["policy_loss"], expected_losses[0] / max(1.0, expected_losses[1]))
+                        self.assertEqual(result["value_loss"], expected_losses[2] / 10)
+                        self.assertEqual(result["gradient_norm_preclip"], np.mean(expected_norms))
+                        self.assertEqual(result["gradient_batches"], 6)
+                        self.assertEqual(result["metric_count"], 10)
+                        self.assertEqual(result["updates"], 2)
+                        self.assertTrue(all(p.grad is None for p in model.policy.parameters()))
+                        if not replay_enabled:
+                            self.assertEqual(model._nosl_is_az_fresh_samples, [])
+        finally:
+            np.random.set_state(saved_rng)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "requires a CUDA device; CPU objective test always runs")
+    def test_cuda_temporary_host_sources_match_blocking_transfers_and_are_released(self):
+        # Two fields per dtype exercise temporary packed host allocations.
+        self.model.observation_space = spaces.Dict({
+            **self.model.observation_space.spaces,
+            "extra": spaces.Box(-10, 10, shape=(1,), dtype=np.float32),
+            "category": spaces.Box(0, 10, shape=(1,), dtype=np.int64),
+            "category_extra": spaces.Box(0, 10, shape=(1,), dtype=np.int64),
+        })
+        self.model.policy.core.combat_observation_keys = frozenset(self.model.observation_space.spaces)
+        for index, sample in enumerate(self.samples):
+            sample["observation"].update({
+                "extra": np.asarray([index / 4], dtype=np.float32),
+                "category": np.asarray([index], dtype=np.int64),
+                "category_extra": np.asarray([5 - index], dtype=np.int64),
+            })
+        original_to, original_from_numpy = torch.Tensor.to, torch.from_numpy
+
+        def run(blocking):
+            model = copy.deepcopy(self.model)
+            model.device = torch.device("cuda")
+            model.policy.to(model.device)
+            core = model.policy.core
+
+            def combat(obs):
+                # Consume every field; allocation churn occurs while preceding
+                # nonblocking copies may still be queued on this stream.
+                scratch = [np.full((2, 2), -100, dtype=dtype)
+                           for dtype in (np.float32, np.int64) for _ in range(8)]
+                state = obs["state"] + obs["extra"] + (
+                    obs["category"] + obs["category_extra"]).float() / 8
+                del scratch
+                return core.policy_head(state), core.value_head(state)
+
+            core.combat_actor_critic = combat
+            sources = []
+
+            def track_source(array):
+                source = original_from_numpy(array)
+                sources.append(weakref.ref(source))
+                return source
+
+            def transfer(source, *args, **kwargs):
+                if blocking and source.device.type == "cpu":
+                    kwargs["non_blocking"] = False
+                return original_to(source, *args, **kwargs)
+
+            stream = torch.cuda.Stream()
+            stream.wait_stream(torch.cuda.current_stream())
+            results = []
+            with torch.cuda.stream(stream), patch.object(torch, "from_numpy", track_source), \
+                    patch.object(torch.Tensor, "to", transfer):
+                for count in (5, 3):
+                    model._nosl_is_az_samples = copy.deepcopy(self.samples[:count])
+                    result = model._train_nosl_is_az(update_count=2)
+                    self.assertTrue(sources)
+                    self.assertTrue(all(source() is None for source in sources))
+                    results.append((result, copy.deepcopy(model._nosl_is_az_metric_sums),
+                                    copy.deepcopy(model._nosl_is_az_metric_sumsq),
+                                    copy.deepcopy(model._nosl_is_az_metric_counts),
+                                    self._policy_snapshot(model.policy)))
+            stream.synchronize()
+            return results
+
+        self._assert_nested_equal(run(blocking=False), run(blocking=True))
+
+    def test_relic_width_preserves_sparse_slots_and_microbatch_boundaries(self):
+        model = self.model
+        model.observation_space = spaces.Dict({
+            **model.observation_space.spaces,
+            "relics": spaces.Box(0, 10, shape=(4,), dtype=np.int64),
+        })
+        model.policy.core.combat_observation_keys = frozenset({"state", "relics"})
+        relics = [[1, 0, 2, 0], [0, 0, 0, 0], [0, 0, 0, 0],
+                  [0, 0, 0, 0], [0, 0, 0, 3]]
+        for sample, ids in zip(self.samples, relics, strict=True):
+            sample["observation"]["relics"] = np.asarray(ids, dtype=np.int64)
+        widths = []
+        def combat(obs, *, active_relic_width):
+            widths.append(active_relic_width)
+            return model.policy.core.actor_critic(obs)
+        model.policy.core.combat_actor_critic = combat
+        model._train_nosl_is_az(step_optimizer=False)
+        self.assertEqual(widths, [3, 1, 4])
+
+    def test_nonfinite_predictions_are_excluded_per_metric(self):
+        model = self.model
+        def combat(obs):
+            logits, values = model.policy.core.actor_critic(obs)
+            state = obs["state"].flatten()
+            offsets = torch.where(state == 0, float("nan"),
+                                  torch.where(state == 1, float("inf"), 0.0))
+            return logits, values + offsets[:, None]
+        model.policy.core.combat_actor_critic = combat
+        result = model._train_nosl_is_az(step_optimizer=False)
+        self.assertEqual(result["finite_fraction"], 3 / 5)
+        counts = model._nosl_is_az_metric_counts
+        self.assertEqual(counts["value_target"], 5)
+        self.assertEqual(counts["pred_value"], 3)
+        self.assertEqual(counts["value_mae"], 3)
+        self.assertEqual(counts["value_bias"], 3)
+        self.assertEqual(counts["policy_entropy"], 3)
+        self.assertTrue(all(np.isfinite(value) for value in model._nosl_is_az_metric_sums.values()))
 
 
 class NOSLISAZTest(unittest.TestCase):

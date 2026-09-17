@@ -1832,8 +1832,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         monitor_max = {name: float("-inf") for name in monitor_names}
         monitor_count = {name: 0 for name in monitor_names}
 
-        def accumulate_monitor(name: str, values: th.Tensor) -> None:
-            array = values.detach().float().reshape(-1).cpu().numpy()
+        def accumulate_monitor(name: str, array: np.ndarray) -> None:
             finite = np.isfinite(array)
             if not np.any(finite):
                 return
@@ -1843,6 +1842,43 @@ class AccumulatingMaskablePPO(MaskablePPO):
             monitor_min[name] = min(monitor_min[name], float(array.min()))
             monitor_max[name] = max(monitor_max[name], float(array.max()))
             monitor_count[name] += int(array.size)
+
+        host_transfer_sources = []
+        is_cuda = th.device(self.device).type == "cuda"
+
+        def transfer_array(array: np.ndarray, dtype=None) -> th.Tensor:
+            source = th.from_numpy(array)
+            if is_cuda:
+                # Keep pageable source storage alive until the update's D2H
+                # barrier, including packed observations and dtype casts.
+                host_transfer_sources.append(source)
+            return source.to(device=self.device, dtype=dtype, non_blocking=True)
+
+        def transfer_observations(observation: dict) -> dict:
+            if not is_cuda:
+                return _leaf_observation_as_tensor(observation, self.device)
+            groups = {}
+            for key, value in observation.items():
+                array = np.ascontiguousarray(value)
+                groups.setdefault(array.dtype, []).append((key, array))
+            if any(dtype not in (np.dtype(np.int64), np.dtype(np.float32))
+                   for dtype in groups):
+                return {key: transfer_array(value)
+                        for key, value in observation.items()}
+            result = {}
+            for fields in groups.values():
+                flats = [array.reshape(-1) for _, array in fields]
+                packed = np.concatenate(flats) if len(flats) > 1 else flats[0]
+                tensor = transfer_array(packed)
+                offset = 0
+                for key, array in fields:
+                    result[key] = tensor[offset:offset + array.size].reshape(array.shape)
+                    offset += array.size
+            return result
+
+        micro_batches_per_update = (train_count + micro_batch_size - 1) // micro_batch_size
+        diagnostics_size = len(monitor_names) * train_count + 3 * micro_batches_per_update
+        diagnostics_device = None
 
         for _update in range(update_count):
             indices = replay.sample_indices(
@@ -1864,6 +1900,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     fresh_samples[:train_count]
                 )
             self.policy.optimizer.zero_grad()
+            diagnostics_offset = 0
             for start in range(0, train_count, micro_batch_size):
                 end = min(start + micro_batch_size, train_count)
                 micro_count = end - start
@@ -1878,35 +1915,39 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     "value_targets": sampled_batch["value_targets"][start:end],
                     "sample_ids": sampled_batch["sample_ids"][start:end],
                 }
-                observations = _leaf_observation_as_tensor(
-                    {
-                        key: np.asarray(
-                            value, dtype=self.observation_space[key].dtype
-                        )
-                        for key, value in batch["observations"].items()
-                    },
-                    self.device,
+                host_observations = {
+                    key: np.asarray(
+                        value, dtype=self.observation_space[key].dtype
+                    )
+                    for key, value in batch["observations"].items()
+                }
+                observations = transfer_observations(host_observations)
+                actor_kwargs = {}
+                if "relics" in host_observations and hasattr(core, "combat_actor_critic"):
+                    # Match the encoder's ids.long().ne(0) prefix for this
+                    # exact microbatch, without CUDA nonzero/item syncs.
+                    relics = host_observations["relics"].astype(np.int64, copy=False)
+                    active = np.flatnonzero(np.any(relics != 0, axis=0))
+                    actor_kwargs["active_relic_width"] = (
+                        int(active[-1]) + 1 if active.size else 1
+                    )
+                masks = transfer_array(
+                    batch["action_masks"], dtype=th.bool
                 )
-                masks = th.as_tensor(
-                    batch["action_masks"], dtype=th.bool, device=self.device
-                )
-                targets = th.as_tensor(
+                targets = transfer_array(
                     batch["policy_targets"],
                     dtype=th.float32,
-                    device=self.device,
                 )
-                value_targets = th.as_tensor(
+                value_targets = transfer_array(
                     batch["value_targets"],
                     dtype=th.float32,
-                    device=self.device,
                 )
-                policy_weights = th.as_tensor(
+                policy_weights = transfer_array(
                     batch["policy_weights"],
                     dtype=th.float32,
-                    device=self.device,
                 ).clamp_min(0.0)
                 with self.autocast_context():
-                    logits, values = actor_critic(observations)
+                    logits, values = actor_critic(observations, **actor_kwargs)
                     masked_logits = th.where(
                         masks, logits, th.full_like(logits, -1.0e8)
                     )
@@ -1970,12 +2011,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if not step_optimizer:
                     backward_loss = backward_loss * float(gradient_scale)
                 backward_loss.backward()
-                policy_loss_sum += float(
-                    (policy_cross_entropy_per_sample * policy_weights)
-                    .sum().detach().cpu()
+                loss_sums = (
+                    (policy_cross_entropy_per_sample * policy_weights).sum(),
+                    policy_weights.sum(),
+                    value_loss_per_sample.sum(),
                 )
-                sampled_policy_weight += float(policy_weights.sum().detach().cpu())
-                value_loss_sum += float(value_loss_per_sample.sum().detach().cpu())
                 sampled_roots += micro_count
                 if replay_enabled:
                     sampled_old += int(
@@ -1986,17 +2026,17 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 pred_values = values.float().flatten()
                 target_values = value_targets.float().flatten()
                 monitor_values = {
-                    "target_entropy": target_entropy_per_sample[policy_weights > 0],
-                    "policy_entropy": policy_entropy_per_sample[policy_weights > 0],
-                    "target_policy_kl": policy_kl_per_sample[policy_weights > 0],
-                    "policy_cross_entropy": policy_cross_entropy_per_sample[policy_weights > 0],
+                    "target_entropy": target_entropy_per_sample,
+                    "policy_entropy": policy_entropy_per_sample,
+                    "target_policy_kl": policy_kl_per_sample,
+                    "policy_cross_entropy": policy_cross_entropy_per_sample,
                     "target_effective_actions": th.exp(
                         target_entropy_per_sample
-                    )[policy_weights > 0],
-                    "target_top1_agreement": target_top1_agreement[policy_weights > 0],
-                    "legal_actions": legal_actions[policy_weights > 0],
-                    "illegal_target_mass": illegal_target_mass[policy_weights > 0],
-                    "target_sum_error": target_sum_error[policy_weights > 0],
+                    ),
+                    "target_top1_agreement": target_top1_agreement,
+                    "legal_actions": legal_actions,
+                    "illegal_target_mass": illegal_target_mass,
+                    "target_sum_error": target_sum_error,
                     "value_target": target_values,
                     "pred_value": pred_values,
                     "value_mae": (pred_values - target_values).abs(),
@@ -2006,8 +2046,46 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         & th.isfinite(pred_values)
                     ).float(),
                 }
-                for name, values_for_metric in monitor_values.items():
-                    accumulate_monitor(name, values_for_metric)
+                # Preserve the original reductions and detached metric values,
+                # but avoid a host synchronization after each microbatch.
+                if diagnostics_device is None:
+                    diagnostics_dtype = th.float32
+                    for value in loss_sums:
+                        diagnostics_dtype = th.promote_types(diagnostics_dtype, value.dtype)
+                    diagnostics_device = th.empty(
+                        diagnostics_size, dtype=diagnostics_dtype, device=self.device
+                    )
+                diagnostics_end = diagnostics_offset + 3 + len(monitor_names) * micro_count
+                th.cat([
+                    *(value.detach().reshape(-1) for value in loss_sums),
+                    *(value.detach().float().reshape(-1)
+                      for value in monitor_values.values()),
+                ], out=diagnostics_device[diagnostics_offset:diagnostics_end])
+                diagnostics_offset = diagnostics_end
+
+            # This blocking D2H completes all preceding H2D/compute work. Host
+            # transfer storage can now be released, while CPU aggregation keeps
+            # the original microbatch order and float64 reduction boundaries.
+            diagnostics_host = diagnostics_device.cpu().numpy()
+            host_transfer_sources.clear()
+            diagnostics_offset = 0
+            for start in range(0, train_count, micro_batch_size):
+                end = min(start + micro_batch_size, train_count)
+                micro_count = end - start
+                diagnostics_end = diagnostics_offset + 3 + len(monitor_names) * micro_count
+                diagnostics = diagnostics_host[diagnostics_offset:diagnostics_end]
+                policy_loss_sum += float(diagnostics[0])
+                sampled_policy_weight += float(diagnostics[1])
+                value_loss_sum += float(diagnostics[2])
+                metric_rows = diagnostics[3:].reshape(len(monitor_names), micro_count)
+                policy_rows = np.asarray(
+                    sampled_batch["policy_weights"][start:end], dtype=np.float32
+                ) > 0
+                for name, array in zip(monitor_names, metric_rows, strict=True):
+                    if name in monitor_names[:9]:
+                        array = array[policy_rows]
+                    accumulate_monitor(name, array)
+                diagnostics_offset = diagnostics_end
             if step_optimizer:
                 gradient_norms.append(self._optimizer_step(1))
                 optimizer_steps += 1
