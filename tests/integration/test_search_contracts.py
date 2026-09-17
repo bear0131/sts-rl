@@ -8,6 +8,25 @@ from env.search.nosl_sampler import NOSLSampler
 from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 
+def test_native_combat_fork_victory_does_not_settle_parent(combat_factory):
+    import json
+    env = combat_factory(['STRIKE_RED']*5, encounter='Cultist', relics=('Burning Blood',))
+    env.thick.gc.cur_hp = 30
+    env.thick.bc.apply_custom_state({'player': {'hp': 30}})
+    env.thick.bc.set_player_strength(999)
+    env._invalidate_backend_cache()
+    before = json.dumps(env.thick.bc.to_dict(), sort_keys=True)
+    stats = dict(env.thick.run_stats())
+    branch = env.fork_combat()
+    # Native CARD source0 target0 is bit pattern 0, not the thin End Turn id.
+    _, _, terminated, info = branch._backend_step_native_combat(0)
+    assert terminated and branch.thick.bc is not None
+    assert branch.thick.bc.to_dict()['player']['hp'] == 30
+    assert info['nosl_value_terminal_observation']['player_scalars'][0] == pytest.approx(30/200)
+    assert env.thick.run_stats() == stats
+    assert json.dumps(env.thick.bc.to_dict(), sort_keys=True) == before
+
+
 @pytest.mark.parametrize("branch_type", [_Branch, _DeepBranch])
 def test_python_unbounded_depth_advances_beyond_root(branch_type):
     env = branch_type()

@@ -692,6 +692,22 @@ class _CombatBranchGameEnv(SimGameEnv):
         terminated = self.bc.is_battle_over
         return self._canonical(), 0.0, terminated, self._info()
 
+    def step_native_combat(self, action_bits: int):
+        """Finish native actions inside this branch without settling the run.
+
+        The branch shares read-only run metadata with its parent. Calling the
+        whole-run implementation would exit_battle into that parent's gc and
+        clear bc, violating both isolation and pre-settlement HP semantics.
+        """
+        if self.is_over:
+            raise RuntimeError("combat branch is terminal")
+        self.bc.execute(sts.Action(int(action_bits)))
+        info = self._info()
+        terminal = self._winning_combat_value_state()
+        if terminal is not None:
+            info['nosl_value_terminal_state'] = terminal
+        return self._canonical(), 0.0, self.bc.is_battle_over, info
+
     def step_fast(self, action):
         """Apply a combat semantic action without rebuilding observations.
 
