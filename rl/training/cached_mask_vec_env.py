@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_connections
 from typing import Any, Callable
 
@@ -16,6 +18,53 @@ from stable_baselines3.common.vec_env.subproc_vec_env import (
     _patch_env,
     _stack_obs,
 )
+
+
+@dataclass
+class _PackedLeafResponses:
+    responses: dict
+    observations: dict[str, np.ndarray]
+    slices: dict[int, tuple[int, int]]
+
+
+def _pack_leaf_responses(responses):
+    """Serialize one array per field/group, rather than per field/tree.
+
+    Only numeric native leaf batches use this wire representation. Public RPC
+    results, terminal responses and canonical/language leaves keep their schema.
+    """
+    active = {index:response['observation_batch'] for index,response in responses.items()
+              if isinstance(response,dict) and response.get('observation_batch')}
+    if len(active) < 2:
+        return responses
+    first = next(iter(active.values()))
+    if any(value.dtype.hasobject for batch in active.values() for value in batch.values()):
+        return responses
+    schema = {key:(value.shape[1:],value.dtype) for key,value in first.items()}
+    if any({key:(value.shape[1:],value.dtype) for key,value in batch.items()} != schema
+           for batch in active.values()):
+        return responses
+    packed = {key:np.concatenate([batch[key] for batch in active.values()]) for key in first}
+    stripped = dict(responses)
+    offset, slices = 0, {}
+    for index,batch in active.items():
+        count = len(next(iter(batch.values())))
+        if any(len(value)!=count for value in batch.values()):
+            raise ValueError('native observation field batch lengths differ')
+        slices[index] = (offset,offset+count)
+        offset += count
+        stripped[index] = dict(responses[index],observation_batch=None)
+    return _PackedLeafResponses(stripped,packed,slices)
+
+
+def _unpack_leaf_responses(payload):
+    if not isinstance(payload,_PackedLeafResponses):
+        return payload
+    responses = dict(payload.responses)
+    for index,(start,end) in payload.slices.items():
+        responses[index] = dict(responses[index],observation_batch={
+            key:value[start:end] for key,value in payload.observations.items()})
+    return responses
 
 
 class CachedMaskSubprocVecEnv(SubprocVecEnv):
@@ -214,12 +263,15 @@ def _group_worker(
                 })
             elif cmd == "env_method_batch":
                 calls = data
-                remote.send({
+                responses = {
                     int(index): envs[int(index)].get_wrapper_attr(method_name)(
                         *args, **kwargs
                     )
                     for index, method_name, args, kwargs in calls
-                })
+                }
+                remote.send(_pack_leaf_responses(responses) if all(
+                    method_name in ('nosl_is_az_cpp_begin','nosl_is_az_cpp_backprop_and_leaf_batch')
+                    for _index,method_name,_args,_kwargs in calls) else responses)
             elif cmd == "get_attr":
                 local_indices, attr_name = data
                 remote.send({
@@ -257,6 +309,88 @@ def _group_worker(
                 env.close()
             except Exception:
                 pass
+
+
+@dataclass(frozen=True)
+class GroupedMethodResponse:
+    """One completed worker-group command, restored to logical env indices."""
+
+    group_index: int
+    method_name: str
+    responses: dict[int, Any]
+    elapsed_seconds: float = 0.0
+
+
+class GroupedMethodStream:
+    """Keep independent worker groups in flight without a global receive barrier.
+
+    A worker process still executes one command at a time and preserves the
+    order of every environment it owns.  The stream only allows the caller to
+    receive and resubmit groups independently, which is useful for batching
+    neural leaves from unrelated search trees.
+    """
+
+    def __init__(self, owner: "GroupedCachedMaskSubprocVecEnv") -> None:
+        self._owner = owner
+        self._pending: dict[Any, tuple[int, str, float]] = {}
+
+    @property
+    def pending(self) -> bool:
+        return bool(self._pending)
+
+    def submit(
+        self,
+        method_name: str,
+        calls: dict[int, tuple[tuple[Any, ...], dict[str, Any]]],
+    ) -> None:
+        """Submit distinct calls, requiring each affected group to be idle."""
+        if not calls:
+            return
+        grouped_calls: dict[
+            int, list[tuple[int, str, tuple[Any, ...], dict[str, Any]]]
+        ] = defaultdict(list)
+        for index, (args, kwargs) in calls.items():
+            group_index, local_index = self._owner._env_to_group[int(index)]
+            grouped_calls[group_index].append(
+                (local_index, method_name, args, kwargs)
+            )
+        for group_index in grouped_calls:
+            remote = self._owner.remotes[group_index]
+            if remote in self._pending:
+                raise RuntimeError(
+                    f"worker group {group_index} already has an in-flight command"
+                )
+        for group_index, group_calls in grouped_calls.items():
+            remote = self._owner.remotes[group_index]
+            remote.send(("env_method_batch", group_calls))
+            self._pending[remote] = (group_index, method_name, time.perf_counter())
+
+    def receive(
+        self,
+        timeout: float | None = None,
+    ) -> list[GroupedMethodResponse]:
+        """Return every group currently ready, or an empty list on timeout."""
+        if not self._pending:
+            return []
+        ready = wait_for_connections(tuple(self._pending), timeout=timeout)
+        packets = []
+        for remote in ready:
+            group_index, method_name, submitted_at = self._pending.pop(remote)
+            local_responses = _unpack_leaf_responses(remote.recv())
+            group = self._owner._groups[group_index]
+            responses = {
+                int(group[int(local_index)]): response
+                for local_index, response in local_responses.items()
+            }
+            packets.append(
+                GroupedMethodResponse(
+                    group_index=group_index,
+                    method_name=method_name,
+                    responses=responses,
+                    elapsed_seconds=time.perf_counter() - submitted_at,
+                )
+            )
+        return packets
 
 
 class GroupedCachedMaskSubprocVecEnv(VecEnv):
@@ -337,7 +471,7 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
         while pending:
             for remote in wait_for_connections(tuple(pending)):
                 group_index = pending.pop(remote)
-                results[group_index] = remote.recv()
+                results[group_index] = _unpack_leaf_responses(remote.recv())
         return results
 
     def step_async(self, actions: np.ndarray) -> None:
@@ -471,6 +605,17 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             ]
             for index in calls
         }
+
+    def env_method_stream(self) -> GroupedMethodStream:
+        """Open a search-scoped stream for independently scheduled groups.
+
+        No other VecEnv operation may use the worker pipes until the returned
+        stream has no pending commands.  NOSL collection satisfies that rule by
+        completing every combat search before the environment step.
+        """
+        if self.waiting:
+            raise RuntimeError("cannot open an env-method stream during step_wait")
+        return GroupedMethodStream(self)
 
     def get_attr(self, attr_name: str, indices=None):
         selected = list(self._get_indices(indices))

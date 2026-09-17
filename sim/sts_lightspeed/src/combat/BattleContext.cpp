@@ -227,7 +227,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::ANCHOR:
-                p.block += 10;
+                p.block = std::min(Player::MAX_BLOCK, std::max(0, p.block) + 10);
                 break;
 
             case R::ANCIENT_TEA_SET:

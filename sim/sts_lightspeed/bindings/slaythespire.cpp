@@ -243,12 +243,6 @@ constexpr int kNativeMoves =
 constexpr int kNativePotions =
     static_cast<int>(sizeof(sts::potionNames) /
                      sizeof(sts::potionNames[0]));
-// The largest legal action list is bounded by the simulator's hand/pile and
-// target capacities (combat is much smaller).  A fixed width keeps the
-// leaf transport contiguous; ``legal_action_counts`` identifies the valid
-// prefix in each row and zero padding is never interpreted as an action.
-constexpr int kLegalActionWidth = 128;
-
 // Categorical layout: hand cards, compacted monster ids/moves/intent classes,
 // potion slots, and the card-select task.
 constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
@@ -2263,11 +2257,18 @@ PYBIND11_MODULE(slaythespire, m) {
             "select a batch of NOSL leaf states using virtual visits")
         .def("next_batch_packed", [](search::NoslNeuralSearchSession &session,
                                       int max_leaves) {
-            // Keep the simulator-to-Python boundary to two fixed-width
-            // numeric arrays. Do not call rawCombatState() here: that
+            // Keep the simulator-to-Python boundary to contiguous numeric
+            // arrays. Do not call rawCombatState() here: that
             // recursively allocates Python dicts/lists for every leaf.
             const auto requests = session.nextBatch(max_leaves);
             const auto count = static_cast<pybind11::ssize_t>(requests.size());
+            std::size_t maxLegalActions = 0;
+            for (const auto &request : requests) {
+                maxLegalActions = std::max(
+                    maxLegalActions, request.legalActions.size());
+            }
+            const auto legalWidth =
+                static_cast<pybind11::ssize_t>(maxLegalActions);
             pybind11::array_t<std::int32_t> categorical(
                 std::vector<pybind11::ssize_t>{count, compact_leaf::kCatSize});
             pybind11::array_t<float> scalars(
@@ -2276,10 +2277,15 @@ PYBIND11_MODULE(slaythespire, m) {
             auto scalar = scalars.mutable_unchecked<2>();
             pybind11::list request_ids;
             pybind11::array_t<std::uint32_t> legal_actions(
-                std::vector<pybind11::ssize_t>{count,
-                                               compact_leaf::kLegalActionWidth});
-            pybind11::array_t<std::uint16_t> legal_action_counts(
+                std::vector<pybind11::ssize_t>{count, legalWidth});
+            pybind11::array_t<std::uint32_t> legal_action_counts(
                 std::vector<pybind11::ssize_t>{count});
+            if (legal_actions.size() > 0) {
+                std::fill(
+                    legal_actions.mutable_data(),
+                    legal_actions.mutable_data() + legal_actions.size(),
+                    std::uint32_t{0});
+            }
             auto legal = legal_actions.mutable_unchecked<2>();
             auto legal_count = legal_action_counts.mutable_unchecked<1>();
             pybind11::list needs_policy;
@@ -2293,13 +2299,8 @@ PYBIND11_MODULE(slaythespire, m) {
                     scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
                 }
                 request_ids.append(request.requestId);
-                if (request.legalActions.size() >
-                    compact_leaf::kLegalActionWidth) {
-                    throw std::runtime_error(
-                        "NOSL compact legal-action row exceeds fixed width");
-                }
                 const auto nLegal = request.legalActions.size();
-                legal_count(row) = static_cast<std::uint16_t>(nLegal);
+                legal_count(row) = static_cast<std::uint32_t>(nLegal);
                 for (std::size_t col = 0; col < nLegal; ++col) {
                     legal(row, static_cast<pybind11::ssize_t>(col)) =
                         request.legalActions[col].bits;
@@ -2316,7 +2317,7 @@ PYBIND11_MODULE(slaythespire, m) {
             out["done"] = requests.empty() && session.done();
             return out;
         }, pybind11::arg("max_leaves") = 16,
-           "select leaves into fixed-width native categorical/scalar arrays")
+           "select leaves into contiguous native categorical/scalar arrays")
         .def("backprop", [](search::NoslNeuralSearchSession &session,
                             std::uint64_t request_id,
                             double value,

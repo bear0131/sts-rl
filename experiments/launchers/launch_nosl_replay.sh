@@ -49,14 +49,23 @@ cmd=("$python" -u -m rl.training.distributed_sb3
   --reasoning-gradient-accumulation-steps 1 --no-interactive-reasoning
   --leaf-inference "${NOSL_LEAF_INFERENCE:-cuda-graph}"
   --wandb --wandb-project sts-rl --wandb-id "$wandb_id" --wandb-name "$run_name"
-  --save-every-updates 1 --max-checkpoints 3 --training-state-dir "$run_dir/recovery"
+  --save-every-updates 1 --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-3}" --training-state-dir "$run_dir/recovery"
   --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision high
   "${peers[@]}")
 cd "$repo"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 export STS_LIGHTSPEED_BUILD_DIR="$build" PYTHONPATH="$build:$repo"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+printf '\n=== NOSL launch utc=%s rank=%s resume_step=%s ===\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rank" "${NOSL_RESUME_STEP:-fresh}" \
+  >> "$run_dir/rank$rank.log"
 nohup "${cmd[@]}" >> "$run_dir/rank$rank.log" 2>&1 < /dev/null &
 pid=$!
 printf '%s\n' "$pid" > "$run_dir/rank$rank.pid"
+sleep 1
+if ! kill -0 "$pid" 2>/dev/null; then
+  echo "rank=$rank exited during startup; inspect $run_dir/rank$rank.log" >&2
+  tail -n 20 "$run_dir/rank$rank.log" >&2
+  exit 4
+fi
 echo "started rank=$rank pid=$pid run=$run_id wandb=$wandb_id log=$run_dir/rank$rank.log"

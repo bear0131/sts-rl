@@ -11,6 +11,7 @@ dependencies = [
     "numpy==2.4.6",
     "stable-baselines3==2.9.0",
     "sb3-contrib==2.9.0",
+    "psutil==7.2.2",
 ]
 
 # One dependency declaration and lock, with explicit wheel selection.
@@ -27,7 +28,6 @@ dev = [
 test = [
     "pytest==9.1.1",
     "pytest-timeout==2.4.0",
-    "psutil==7.2.2",
     # Bundled nlohmann/json declares CMake 3.1 policies, removed by CMake 4.
     "cmake>=3.19,<4",
     "ninja",

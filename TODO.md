@@ -26,8 +26,12 @@
 | VAL01 | 部分完成 | 真实执行路径的 End-Turn boundary 与战斗胜利 terminal 已无条件采为 value-only 样本，policy mask/target/weight 均不参与 policy 监督；搜索截断与采样已分离并覆盖开关两态，新增 policy root/boundary/terminal 计数。仍需固定边界语料按怪物身份及 HP/分裂阶段验证校准及 near-terminal 覆盖，禁止用所选路线回报标注假想叶子 |
 | VAL02 | 待实验 | 在固定 combat corpus 上审计 policy prior → Full-Gumbel 搜索 → improved-policy target 的反馈：按合法完整动作数/候选裁剪分层，统计未访问动作、prior/Q 排名冲突、搜索前后 TV/KL、低 prior 高 Q 翻转率；以只改根 prior 且保留内部 policy 的 matched-nonce 消融判断根部影响，不能用全树 uniform 冒充根部消融 |
 | SEARCH01 | 已修 | `paper_full_gumbel` 在训练、Watch、Eval 与前端显式一致；strict 模式强制 mctx canonical 参数、单叶顺序评估及无额外 visit 采样，原生回归覆盖 considered-visits、completed-Q、improved-policy target 与最终动作；NOSL chance/redeterminization 和卡→目标接口仍明确属于项目适配 |
+| SEARCH02 | 已修 | NOSL packed leaf 的合法动作矩阵按当前 batch 最大动作数动态定宽；Exhume 等大牌堆选择状态不再受错误的 128 动作上限约束，普通与 packed 路径逐 action bits 对齐 |
 | CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
-| PERF01 | GPU 采样实测已建立 | 固定 RTX 5090/512 simulations，最终 CUDA graph 采样提速 1.37×且摘要逐位相同；叶推理初测 6.51×；含 CPU/RSS/显存/设备采样及完整长度故障回归，见 docs/2026-09-14/nosl-performance-recovery-handoff.md。多 seed 长程吞吐/收敛和 IPC 优化仍待验证 |
+| PERF01 | rollout 单机对照与四机恢复验收完成 | 共享 CUDA graph 分桶、grouped IPC 和零主动等待；384env/strict128 固定 checkpoint 的同机完整 collection 从803.56s降至241.75s，四机恢复后的首轮rollout239–251s、整轮808–813s，step2162688模型/Adam跨rank一致。CPU/GPU/内存与数值边界见 [rollout 实测](worklog/2026-09-16.md#rollout-optimization-bounded-graphs-ipc-and-measured-scheduling)。不减少simulation，不宣称改变batch形状后bitwise；多seed长程吞吐与收敛仍需后续验证 |
+| PERF02 | 已修并完成四机首轮验收 | 旧 `u40x4-u10` 派生 preset 遗漏 CUDA graph 分桶及调度参数，96env 生产轮发生约 1.7–1.94 万次 capture/eviction、rollout 425–499s。`u10x4` 修正版对齐优化后的 `u40x16` 调度；相近 0.89M leaves 的四机首轮 rollout 为 139–148s，capture 约 13 次/0.25s、零 eviction，四 rank step49152 bundle 校验通过。batch 形状变化不宣称 bitwise 等价。 |
+| OPS01 | 已完成 | 四机 NOSL replay 由本地 `manage_nosl_replay_4way.ps1` 统一预检、启动、状态和指定 recovery step 验收；密码不入库，恢复前校验四 rank bundle 身份与 checksum |
+| OPS02 | 待修 | 分布式训练单轮约 20 分钟且只在轮末调用 `wandb.log` 时，W&B `heartbeatAt` 停在上一轮指标、run 会在活进程仍正常运行时被误标为 `crashed`；需用受测的独立低频 heartbeat 或显式 lifecycle 更新保持 Running 状态，且不得改变训练 step/图表语义 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
 | R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见 [恢复交接](docs/2026-09-14/nosl-performance-recovery-handoff.md)。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
 | R03 | 共享后端已落实 | episode runner/策略组合、native eval/rollout/watch、固定场景库已共享并合批；仍需 corpus/历史基准协议迁接、完整评测集与统计定义，关联 F05/F16/PERF01 |

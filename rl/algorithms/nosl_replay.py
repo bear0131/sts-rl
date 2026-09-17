@@ -29,13 +29,16 @@ def _compact_integer_dtype(space: spaces.Box) -> np.dtype:
     return np.dtype(np.int64)
 
 
-def _storage_dtype(space: spaces.Box) -> np.dtype:
+def _storage_dtype(space: spaces.Box, *, key: str | None = None) -> np.dtype:
     if np.issubdtype(space.dtype, np.integer):
         return _compact_integer_dtype(space)
     if np.issubdtype(space.dtype, np.bool_):
         return np.dtype(bool)
-    # Combat observations are normalized features. Float16 cuts the replay
-    # footprint roughly in half and is expanded by the policy before use.
+    # Most features are normalized, but player_scalars also carries unbounded
+    # block/counter-derived values. Keeping this group in float32 prevents
+    # overflow to inf from poisoning the learner.
+    if key == "player_scalars":
+        return np.dtype(np.float32)
     return np.dtype(np.float16)
 
 
@@ -118,7 +121,9 @@ class NOSLISAZReplayBuffer:
             self._allocate()
             for key, target in self.observations.items():
                 source = state['observations'][key]
-                if source.shape != target[:size].shape or source.dtype != target.dtype:
+                if source.shape != target[:size].shape:
+                    raise ValueError('replay observation schema mismatch: ' + key)
+                if not np.can_cast(source.dtype, target.dtype, casting='safe'):
                     raise ValueError('replay observation schema mismatch: ' + key)
                 target[:size] = source
             for key, source in state['arrays'].items():
@@ -135,7 +140,7 @@ class NOSLISAZReplayBuffer:
             return
         self.observations = {
             key: np.empty(
-                (self.capacity, *space.shape), dtype=_storage_dtype(space)
+                (self.capacity, *space.shape), dtype=_storage_dtype(space, key=key)
             )
             for key, space in self._observation_spaces.items()
         }
@@ -343,8 +348,8 @@ class NOSLISAZReplayBuffer:
 
     def estimated_capacity_bytes(self) -> int:
         obs_bytes = sum(
-            np.dtype(_storage_dtype(space)).itemsize * prod(space.shape)
-            for space in self._observation_spaces.values()
+            np.dtype(_storage_dtype(space, key=key)).itemsize * prod(space.shape)
+            for key, space in self._observation_spaces.items()
         )
         per_sample = (
             obs_bytes

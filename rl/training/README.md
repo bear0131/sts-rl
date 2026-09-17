@@ -10,6 +10,11 @@ PPO、NOSL 与 reasoning 使用同一个梯度同步边界（ring 或 file trans
 
 环境构造与 checkpoint schema 适配在 `environments.py`，采样基准复用同一工厂。
 `--leaf-inference cuda-graph` 仅加速 CUDA compact combat 叶节点；其它路径默认 eager。
+`--leaf-graph-batch-multiple`、缓存生命周期和数值边界见 [搜索说明](../search/README.md)。
+Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方仍收到原来的
+逐环境 RPC 结果；混合终局、不同 batch 长度与请求顺序有真实子进程回归。
+`--rollout-resource-interval 2` 在每个 rank 的 JSON 记录中加入 collection 的
+CPU/RSS/cgroup/GPU 采样，0 关闭；定义与复现实验入口见 [资源基准](../benchmarks/README.md)。
 
 生产恢复使用 `--training-state-dir DIR --save-every-updates 1 --max-checkpoints 3`。
 每个 rank 各存 `DIR/rankN/step-XXXXXXXXXXXX/{model.zip,learner.pt,manifest.json}`，

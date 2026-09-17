@@ -3,6 +3,7 @@
 //
 
 #include <cassert>
+#include <algorithm>
 
 #include <constants/PlayerStatusEffects.h>
 #include <combat/BattleContext.h>
@@ -76,7 +77,10 @@ void Player::gainBlock(BattleContext &bc, int amount) {
         return;
     }
 
-    block += amount;
+    // Slay the Spire caps combat block at 999. Clamp imported/search states
+    // first so legacy oversized values cannot overflow during Entrench.
+    block = std::clamp(block, 0, MAX_BLOCK);
+    block += std::min(amount, MAX_BLOCK - block);
 
     if (hasStatus<PS::JUGGERNAUT>()) {
         bc.addToBot(Actions::DamageRandomEnemy(getStatus<PS::JUGGERNAUT>()));

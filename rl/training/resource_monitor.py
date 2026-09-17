@@ -5,12 +5,16 @@ import shutil
 import subprocess
 import threading
 import time
+import math
+from pathlib import Path
 
 import psutil
 
 
 class ResourceMonitor:
     def __init__(self, *, interval: float = 0.5, gpu: bool = False):
+        if not math.isfinite(interval) or interval <= 0:
+            raise ValueError('resource sample interval must be positive')
         self.interval = interval
         self.gpu = gpu
         self.samples = []
@@ -38,6 +42,7 @@ class ResourceMonitor:
         row = {"elapsed_seconds": time.perf_counter() - self.started,
                "cpu_seconds_delta": cpu_delta, "tree_rss_bytes": rss,
                "system_available_bytes": psutil.virtual_memory().available,
+               "cgroup_memory_bytes": self._cgroup_number('memory.current'),
                "gpu_devices": None}
         if self._smi:
             try:
@@ -64,6 +69,13 @@ class ResourceMonitor:
                 self.errors.add(type(exc).__name__ + ": device telemetry unavailable")
         self.samples.append(row)
 
+    @staticmethod
+    def _cgroup_number(name):
+        try:
+            return int((Path('/sys/fs/cgroup') / name).read_text().strip())
+        except (OSError,ValueError):
+            return None
+
     def _loop(self):
         while not self._stop.wait(self.interval):
             self._sample()
@@ -80,12 +92,33 @@ class ResourceMonitor:
         self._thread.join()
         self._sample()
         elapsed = self.samples[-1]["elapsed_seconds"]
+        devices = {}
+        for sample in self.samples:
+            for device in sample['gpu_devices'] or []:
+                devices.setdefault(device['index'],[]).append(device)
+        gpu_summary = []
+        for index,rows in devices.items():
+            utilization = [row['gpu_util_percent'] for row in rows if row['gpu_util_percent'] is not None]
+            memory = [row['vram_used_mib'] for row in rows if row['vram_used_mib'] is not None]
+            gpu_summary.append(dict(index=index,
+                gpu_util_percent_mean=sum(utilization)/len(utilization) if utilization else None,
+                vram_peak_sampled_mib=max(memory) if memory else None))
+        cgroup_memory = [s['cgroup_memory_bytes'] for s in self.samples if s['cgroup_memory_bytes'] is not None]
+        try:
+            quota,period=(Path('/sys/fs/cgroup')/'cpu.max').read_text().split()
+            cpu_quota=float(quota)/float(period)
+        except (OSError,ValueError,ZeroDivisionError):
+            cpu_quota=None
         self.summary = {
             "sample_count": len(self.samples),
             "interval_seconds": self.interval,
             "tree_cpu_percent_mean": 100 * sum(s["cpu_seconds_delta"] for s in self.samples) / max(elapsed, 1e-9),
             "tree_rss_peak_sampled_bytes": max(s["tree_rss_bytes"] for s in self.samples),
             "system_available_min_bytes": min(s["system_available_bytes"] for s in self.samples),
+            "cgroup_memory_peak_sampled_bytes": max(cgroup_memory) if cgroup_memory else None,
+            "cgroup_memory_limit_bytes": self._cgroup_number('memory.max'),
+            "cgroup_cpu_quota_cores": cpu_quota,
+            "gpu_devices": gpu_summary or None,
             "errors": sorted(self.errors),
             "notes": [
                 "100% CPU means one logical core; short-lived children can be undersampled.",

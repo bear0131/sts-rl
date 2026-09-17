@@ -27,6 +27,12 @@ def parser():
     p.add_argument("--leaf-input", type=Path, help="Replay a saved CPU leaf observation NPZ")
     p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
     p.add_argument("--profile", action="store_true", help="Export a bounded CPU/CUDA operator trace for leaves")
+    p.add_argument("--graph-profile-interval", type=int, default=0, help="sample CUDA stage timings every N leaf calls; 0 disables")
+    p.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
+                   help="pad independent leaf rows to this batch multiple; 0 keeps exact shapes")
+    p.add_argument("--inference-schedule", choices=("fixed_wait", "adaptive"), default="fixed_wait")
+    p.add_argument("--inference-batch-size", type=int, default=32)
+    p.add_argument("--inference-wait-ms", type=float, default=0.5)
     p.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     p.add_argument("--threads", type=int, default=1)
     p.add_argument("--n-envs", type=int, default=2)
@@ -75,7 +81,7 @@ def run_worker(args):
     from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
     from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
     from rl.policies.split_policy import SplitStSPointerPolicy
-    from rl.benchmarks.resources import ResourceMonitor
+    from rl.training.resource_monitor import ResourceMonitor
     import slaythespire as sts
 
     torch.set_num_threads(args.threads)

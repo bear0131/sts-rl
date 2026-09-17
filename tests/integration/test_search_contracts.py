@@ -102,6 +102,59 @@ def test_native_search_budget_and_live_state_contract(combat_factory, mode, stri
 
 
 @pytest.mark.native
+def test_native_search_supports_piles_larger_than_fixed_list_capacity(combat_factory):
+    # Production builds use vector-backed piles. Long runs and generated cards
+    # can therefore exceed CardManager::MAX_GROUP_SIZE (64), and state-key
+    # canonicalization must use the actual pile size rather than that optional
+    # fixed-list build limit.
+    env = combat_factory(["STRIKE_RED"] * 70, "Jaw Worm", seed=7)
+    session = env.thick.bc.nosl_neural_search_begin(
+        np.zeros(181),
+        simulations=8,
+        depth=0,
+        nonce=7,
+        root_search_mode=2,
+        paper_full_gumbel=True,
+    )
+
+    while not session.done():
+        leaves = session.next_batch(1)
+        assert leaves
+        leaf = leaves[0]
+        session.backprop(leaf["request_id"], 0.4, np.zeros(181))
+
+    assert session.result()["simulations"] == 8
+
+
+@pytest.mark.native
+def test_packed_leaf_preserves_more_than_128_legal_actions(combat_factory):
+    env = combat_factory(["EXHUME"] * 5, "Jaw Worm", seed=19)
+    env.thick.bc.apply_custom_state({
+        "player": {"energy": 3},
+        "hand": ["EXHUME"],
+        "draw": [],
+        "discard": [],
+        "exhaust": ["STRIKE_RED"] * 129,
+    })
+    root_logits = np.full(181, -100.0)
+    root_logits[1] = 100.0
+    kwargs = dict(simulations=1, depth=2, nonce=19)
+    raw_session = env.thick.bc.nosl_neural_search_begin(root_logits, **kwargs)
+    packed_session = env.thick.bc.nosl_neural_search_begin(root_logits, **kwargs)
+
+    raw = raw_session.next_batch(1)[0]
+    packed = packed_session.next_batch_packed(1)
+    expected = np.asarray(raw["legal_action_bits"], dtype=np.uint32)
+    counts = np.asarray(packed["legal_action_counts"], dtype=np.uint32)
+    matrix = np.asarray(packed["legal_action_bits"], dtype=np.uint32)
+
+    assert expected.size == 129
+    assert counts.tolist() == [expected.size]
+    assert matrix.shape == (1, expected.size)
+    np.testing.assert_array_equal(matrix[0], expected)
+
+
+@pytest.mark.native
 def test_native_batch_backprop_matches_scalar_order(combat_factory):
     env_batch = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)
     env_scalar = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=91)

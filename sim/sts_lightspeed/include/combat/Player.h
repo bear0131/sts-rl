@@ -30,7 +30,8 @@ namespace sts {
 
     class BattleContext;
 
-    struct Player {
+struct Player {
+    static constexpr int MAX_BLOCK = 999;
         CharacterClass cc;
 
         int16_t gold = 0;
