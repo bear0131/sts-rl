@@ -327,7 +327,9 @@ def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nul
 
 def decode_leaves(responses):
     """Decode each response in stable worker/request order, including mixed transports."""
-    records, batches = [], []
+    records, spans = [], []
+    validated_sources = set()
+    keys = None
     for index in sorted(responses):
         response = responses[index]
         if isinstance(response, list):
@@ -339,14 +341,38 @@ def decode_leaves(responses):
         if packed is None:
             packed = {key: np.stack([leaf['observation'][key] for leaf in meta])
                       for key in meta[0]['observation']}
-        if any(len(value) != len(meta) for value in packed.values()):
+        span = getattr(packed, '_nosl_observation_span', None)
+        if span is None:
+            source, start, end = packed, 0, len(meta)
+            if any(len(value) != end for value in source.values()):
+                raise ValueError('native leaf metadata/observation batch size mismatch')
+        else:
+            source, start, end = span
+            if end - start != len(meta) or start < 0:
+                raise ValueError('native leaf metadata/observation batch size mismatch')
+        source_id = id(source)
+        if source_id not in validated_sources:
+            if span is not None:
+                row_count = len(next(iter(source.values())))
+                if any(len(value) != row_count for value in source.values()):
+                    raise ValueError('native leaf metadata/observation batch size mismatch')
+            if keys is None:
+                keys = tuple(source)
+            elif set(source) != set(keys):
+                raise ValueError('native workers returned incompatible observation schemas')
+            validated_sources.add(source_id)
+        if span is not None and end > len(next(iter(source.values()))):
             raise ValueError('native leaf metadata/observation batch size mismatch')
         records.extend((index, leaf) for leaf in meta)
-        batches.append(packed)
-    keys = tuple(batches[0])
-    if any(set(batch) != set(keys) for batch in batches):
-        raise ValueError('native workers returned incompatible observation schemas')
-    observations = {key: np.ascontiguousarray(np.concatenate([b[key] for b in batches], axis=0))
+        if spans and spans[-1][0] is source and spans[-1][2] == start:
+            spans[-1] = (source, spans[-1][1], end)
+        else:
+            spans.append((source, start, end))
+    # Keep concatenate even for one span: callers retain their independent,
+    # contiguous result rather than a mutable alias into a received packet.
+    observations = {key: np.ascontiguousarray(np.concatenate([
+                        source[key][start:end] for source, start, end in spans
+                    ], axis=0))
                     for key in keys}
     return records, observations
 
@@ -416,8 +442,10 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
 def _leaf_count(response):
     if isinstance(response, list):
         return len(response)
-    packed = unpack_nosl_observation_buffer(response)
-    meta = response.get('leaf_meta') if packed is not None else response.get('leaves')
+    packed = (response.get('observation_batch') is not None or
+              (response.get('observation_buffer') is not None and
+               response.get('observation_spec') is not None))
+    meta = response.get('leaf_meta') if packed else response.get('leaves')
     if not meta:
         raise RuntimeError('native search returned no leaves before completion')
     return len(meta)

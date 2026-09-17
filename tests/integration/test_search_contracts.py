@@ -59,20 +59,102 @@ def test_native_terminal_matches_post_exit_training_value(combat_factory):
 
 @pytest.mark.native
 @pytest.mark.parametrize("encounter", ["Jaw Worm", "Two Louse", "Gremlin Leader"])
-def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter):
+@pytest.mark.parametrize("batch_size", [1, 4])
+def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_size):
     env = combat_factory(["STRIKE_RED"] * 5, encounter, relics=("Akabeko",))
+    env.thick.bc.apply_custom_state({
+        "player": {"powers": [("STRENGTH", 3), ("ARTIFACT", 2)],
+                   "counters": {"happy_flower": 2, "pen_nib": 3}},
+        "monsters": [{"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}],
+    })
     env._nosl_cpp_global_template = normalize_sim_global(env.thick.gc)
     logits = np.zeros(181)
     logits[1] = 50
     config = dict(simulations=1, depth=1, nonce=123)
-    raw_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
-    packed_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
-    raw = raw_session.next_batch(1)[0]
-    packed = env._native_packed_observation_batch(packed_session.next_batch_packed(1))
-    expected = env._native_leaf_observation(raw["state"], combat_only=True)
-    assert expected.keys() == packed.keys()
-    for key in expected:
-        np.testing.assert_array_equal(expected[key], packed[key][0], err_msg=key)
+    raw, payloads = [], []
+    for row in range(batch_size):
+        env.thick.bc.apply_custom_state({"player": {"hp": 70 - 3 * row,
+                                                    "block": 2 * row}})
+        raw_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
+        packed_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
+        raw.append(raw_session.next_batch(1)[0])
+        payloads.append(packed_session.next_batch_packed(1))
+    packed = env._native_packed_observation_batch({
+        key: np.concatenate([payload[key] for payload in payloads])
+        for key in ("categorical", "scalars")
+    })
+    for row, leaf in enumerate(raw):
+        expected = env._native_leaf_observation(leaf["state"], combat_only=True)
+        assert expected.keys() == packed.keys()
+        for key in expected:
+            np.testing.assert_array_equal(expected[key], packed[key][row], err_msg=key)
+
+
+@pytest.mark.native
+def test_packed_leaf_global_cache_is_root_scoped(combat_factory, monkeypatch):
+    from env.core import encode
+
+    env = combat_factory(["STRIKE_RED"] * 5)
+    original_encode = encode._encode_combat_global
+    encoded_roots = []
+
+    def record_encode(observation, canonical):
+        encoded_roots.append(canonical["global"]["gold"])
+        return original_encode(observation, canonical)
+
+    monkeypatch.setattr(encode, "_encode_combat_global", record_encode)
+
+    def begin(gold):
+        env.thick.gc.gold = gold
+        response = env.nosl_is_az_cpp_begin(
+            np.zeros(181), state_nonce=123, simulations=3, depth=1,
+            leaf_batch_size=1, compact_observation=True)
+        assert not response["done"]
+        np.testing.assert_array_equal(
+            response["observation_batch"]["gold"],
+            np.asarray([[gold / encode.GOLD_SCALE]], dtype=np.float32))
+        return response
+
+    def advance(response):
+        return env.nosl_is_az_cpp_backprop_and_leaf_batch([
+            (leaf["request_id"], 0.4, np.zeros(181))
+            for leaf in response["leaf_meta"]
+        ], max_leaves=1)
+
+    response = begin(123)
+    # Returned observations belong to the caller; their mutation must not
+    # corrupt the persistent root snapshot used by later leaves.
+    response["observation_batch"]["gold"].fill(-1)
+    response = advance(response)
+    assert not response["done"]
+    np.testing.assert_array_equal(
+        response["observation_batch"]["gold"],
+        np.asarray([[123 / encode.GOLD_SCALE]], dtype=np.float32))
+    assert encoded_roots == [123]
+
+    branch = env.fork_combat()
+    try:
+        assert branch._nosl_cpp_encoded_global_template is None
+        assert env._nosl_cpp_encoded_global_template is not None
+    finally:
+        branch.close()
+
+    # Replacing an unfinished session and explicitly aborting a later one must
+    # both make the next root read the changed live metadata.
+    response = begin(731)
+    assert encoded_roots == [123, 731]
+    env.nosl_is_az_cpp_abort()
+    assert env._nosl_cpp_encoded_global_template is None
+    response = begin(415)
+    for _ in range(3):
+        response = advance(response)
+        if response["done"]:
+            break
+    assert response["done"]
+    assert env._nosl_cpp_encoded_global_template is None
+    begin(617)
+    env.reset(seed=7)
+    assert env._nosl_cpp_encoded_global_template is None
 
 
 @pytest.mark.native

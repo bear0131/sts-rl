@@ -154,6 +154,15 @@ def _nosl_compact_lut():
         monster_status_lut[native] = encode.V.MONSTER_BUFF_VOCAB_INDEX.get(
             _power_name(str(name)), -1
         )
+
+    def status_columns(mapping, width):
+        # Preserve the scalar decoder's last-write-wins rule if native aliases
+        # ever map to one model status, without repeated advanced-index writes.
+        sources = {int(target): native for native, target in enumerate(mapping)
+                   if 0 <= target < width}
+        return (np.asarray(list(sources.values()), dtype=np.intp),
+                np.asarray(list(sources), dtype=np.intp))
+
     _NOSL_COMPACT_LUT = {
         "layout": layout,
         "monster": monster_lut,
@@ -161,6 +170,14 @@ def _nosl_compact_lut():
         "card": card_lut,
         "player_status": player_status_lut,
         "monster_status": monster_status_lut,
+        "player_status_columns": status_columns(
+            player_status_lut, encode.V.PLAYER_BUFF_VEC),
+        "monster_status_columns": status_columns(
+            monster_status_lut, encode.V.MONSTER_BUFF_VEC),
+        "binary_counters": np.asarray([
+            index for index, name in enumerate(encode.COMBAT_COUNTER_KEYS)
+            if name in encode._BINARY_COMBAT_COUNTERS
+        ], dtype=np.intp),
     }
     return _NOSL_COMPACT_LUT
 
@@ -255,6 +272,7 @@ class SlayTheSpireEnv(gym.Env):
         # inspection. It is replaced on the next combat decision/reset.
         self._nosl_cpp_last_session = None
         self._nosl_cpp_global_template = None
+        self._nosl_cpp_encoded_global_template = None
         self._nosl_cpp_compact_observation = False
         self._nosl_cpp_stochastic = False
         self._nosl_cpp_state_nonce = 0
@@ -286,6 +304,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_az_session = None
         self._nosl_cpp_last_session = None
         self._nosl_cpp_global_template = None
+        self._nosl_cpp_encoded_global_template = None
         self._nosl_cpp_compact_observation = False
         self._nosl_cpp_stochastic = False
         self._nosl_cpp_state_nonce = 0
@@ -307,6 +326,7 @@ class SlayTheSpireEnv(gym.Env):
         branch._nosl_cpp_az_session = None
         branch._nosl_cpp_last_session = None
         branch._nosl_cpp_global_template = None
+        branch._nosl_cpp_encoded_global_template = None
         branch._nosl_cpp_compact_observation = False
         branch._nosl_cpp_stochastic = False
         branch._nosl_cpp_state_nonce = 0
@@ -961,18 +981,27 @@ class SlayTheSpireEnv(gym.Env):
 
         # A single root's persistent metadata can be copied once for the
         # complete batch; branch-local HP, potions, and combat fields follow.
-        out = {key: zeros(key) for key in encode._empty_combat()}
-        global_state = dict(self._nosl_cpp_global_template or
-                            normalize_sim_global(self.thick.gc))
-        template = {key: value.copy() for key, value in empty.items()}
-        encode._encode_combat_global(template, {
-            "phase": "combat",
-            "arg_step": "root",
-            "global": global_state,
-        })
-        for key in ("arg_step", "ascension", "character", "gold",
-                    "relics", "relic_counters"):
-            out[key][:] = template[key]
+        out = {key: zeros(key) for key in empty}
+        global_state = self._nosl_cpp_global_template
+        cached = self._nosl_cpp_encoded_global_template
+        if global_state is None or cached is None or cached[0] is not global_state:
+            template = {key: value.copy() for key, value in empty.items()}
+            encode._encode_combat_global(template, {
+                "phase": "combat",
+                "arg_step": "root",
+                "global": global_state or normalize_sim_global(self.thick.gc),
+            })
+            cached = (global_state, {
+                key: template[key] for key in (
+                    "arg_step", "ascension", "character", "gold",
+                    "relics", "relic_counters")
+            })
+            # Begin owns this immutable root snapshot. Direct diagnostic calls
+            # without an active root always read the current live metadata.
+            if global_state is not None:
+                self._nosl_cpp_encoded_global_template = cached
+        for key, value in cached[1].items():
+            out[key][:] = value
 
         c = categorical
         card_lut = lut["card"]
@@ -997,16 +1026,13 @@ class SlayTheSpireEnv(gym.Env):
             np.divide(hp, max_hp, out=np.zeros_like(hp), where=max_hp != 0),
         ), axis=1)
         player_status = f[:, 6:6 + ps]
-        for native, target in enumerate(lut["player_status"]):
-            if target >= 0 and target < out["player_buffs"].shape[1]:
-                out["player_buffs"][:, target] = player_status[:, native] / encode.BUFF_SCALE
+        native, target = lut["player_status_columns"]
+        out["player_buffs"][:, target] = player_status[:, native] / encode.BUFF_SCALE
         counter_start = 6 + ps
         counters = f[:, counter_start:counter_start + encode.COMBAT_COUNTERS]
-        for i, name in enumerate(encode.COMBAT_COUNTER_KEYS):
-            if name in encode._BINARY_COMBAT_COUNTERS:
-                out["combat_counters"][:, i] = (counters[:, i] != 0).astype(np.float32)
-            else:
-                out["combat_counters"][:, i] = counters[:, i] / encode.COUNTER_SCALE
+        out["combat_counters"][:] = counters / encode.COUNTER_SCALE
+        binary = lut["binary_counters"]
+        out["combat_counters"][:, binary] = counters[:, binary] != 0
         boundary = counter_start + encode.COMBAT_COUNTERS
         out["post_enemy_turn_boundary"][:, 0] = f[:, boundary]
 
@@ -1022,9 +1048,8 @@ class SlayTheSpireEnv(gym.Env):
         out["monster_scalars"][:, :, 5] = monster_raw[:, :, 5] / encode.HITS_SCALE
         status_start = monster_start + 5 * 6
         monster_status = f[:, status_start:status_start + 5 * ms].reshape(n, 5, ms)
-        for native, target in enumerate(lut["monster_status"]):
-            if target >= 0 and target < out["monster_buffs"].shape[2]:
-                out["monster_buffs"][:, :, target] = monster_status[:, :, native] / encode.BUFF_SCALE
+        native, target = lut["monster_status_columns"]
+        out["monster_buffs"][:, :, target] = monster_status[:, :, native] / encode.BUFF_SCALE
         out["monster_buffs"] *= (monster_raw[:, :, 0] > 0.0)[:, :, None]
 
         hand_start = status_start + 5 * ms
@@ -1300,6 +1325,7 @@ class SlayTheSpireEnv(gym.Env):
         # branches.  Compute it once per root; only branch HP/potions are
         # overlaid in _native_leaf_observation().
         self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
+        self._nosl_cpp_encoded_global_template = None
         return self.nosl_is_az_cpp_leaf_batch(leaf_batch_size)
 
     def nosl_is_az_cpp_leaf_batch(
@@ -1335,6 +1361,7 @@ class SlayTheSpireEnv(gym.Env):
                 self._nosl_cpp_last_session = session
                 self._nosl_cpp_az_session = None
                 self._nosl_cpp_global_template = None
+                self._nosl_cpp_encoded_global_template = None
                 self._nosl_cpp_compact_observation = False
                 self._nosl_cpp_stochastic = False
                 return {
@@ -1479,6 +1506,7 @@ class SlayTheSpireEnv(gym.Env):
             self._nosl_cpp_last_session = session
             self._nosl_cpp_az_session = None
             self._nosl_cpp_global_template = None
+            self._nosl_cpp_encoded_global_template = None
             self._nosl_cpp_compact_observation = False
             self._nosl_cpp_stochastic = False
             return {
@@ -1560,6 +1588,7 @@ class SlayTheSpireEnv(gym.Env):
         """Discard an interrupted search without changing the live game state."""
         self._nosl_cpp_az_session = None
         self._nosl_cpp_global_template = None
+        self._nosl_cpp_encoded_global_template = None
         self._nosl_cpp_pending = None
         self._nosl_cpp_compact_observation = False
         self._nosl_cpp_stochastic = False

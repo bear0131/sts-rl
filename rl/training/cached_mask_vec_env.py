@@ -5,6 +5,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_for_connections
 from typing import Any, Callable
@@ -25,6 +26,30 @@ class _PackedLeafResponses:
     responses: dict
     observations: dict[str, np.ndarray]
     slices: dict[int, tuple[int, int]]
+
+
+class _ObservationBatchSlice(Mapping):
+    """Expose one tree's rows without allocating a view for every field.
+
+    The private span protocol lets the native decoder combine adjacent trees
+    from the same received group before slicing its fields. Ordinary mapping
+    consumers still see the original arrays, shapes and dtypes on demand.
+    """
+
+    __slots__ = ('_nosl_observation_span',)
+
+    def __init__(self, observations, start, end):
+        self._nosl_observation_span = (observations, start, end)
+
+    def __getitem__(self, key):
+        observations, start, end = self._nosl_observation_span
+        return observations[key][start:end]
+
+    def __iter__(self):
+        return iter(self._nosl_observation_span[0])
+
+    def __len__(self):
+        return len(self._nosl_observation_span[0])
 
 
 def _pack_leaf_responses(responses):
@@ -62,8 +87,8 @@ def _unpack_leaf_responses(payload):
         return payload
     responses = dict(payload.responses)
     for index,(start,end) in payload.slices.items():
-        responses[index] = dict(responses[index],observation_batch={
-            key:value[start:end] for key,value in payload.observations.items()})
+        responses[index] = dict(responses[index],observation_batch=
+            _ObservationBatchSlice(payload.observations, start, end))
     return responses
 
 
