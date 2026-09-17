@@ -16,6 +16,10 @@
 候选索引以正确提交选择。`Havoc` 按一般收益估计，不查看牌堆顶。原生怪物槽位保留空槽，
 避免 canonical 旧路径的槽压缩问题 F01；这不表示全项目 F01 已修复。
 
+规则读的是玩家可见语义，而神经策略仍受现有编码表示限制（含 F01/F02/F03 已知缺陷）。
+因此这个实验隔离“整个战斗决策组件”，不能把所有差异都归因于搜索算法或策略直觉；
+需要进一步归因时，应另做观测表示与搜索预算的控制实验。
+
 `HEADBUTT`/Liquid Memories 用弃牌堆，`EXHUME` 用消耗堆，Secret Weapon/Technique
 用公开检索候选，Discovery/Codex 用屏幕生成的选项；不统一当作手牌。新 native build 的
 `select_info.generated_cards` 是只读附加字段，仅在生成选牌屏幕读取，不改变神经观测或
@@ -62,6 +66,9 @@ python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver r
 报告，它会影响样本分布。每场各策略拿到同一隐藏随机状态，但行动不同可消耗不同随机数，
 因此不是相同未来抽牌序列保证。当前复现方式是固定 checkpoint/native hash、seed、参考策略、
 配置和版本重新运行；JSONL 保存可见状态和动作，不是可恢复完整 RNG 的跨版本快照语料。
+分支 runner 从 step0 开始，因此 native 的决策 nonce 使用分支的局部步号；它不承诺与
+参考整局同一位置的 nonce 相同。native 可以一次提交完整带目标动作，普通策略可能需要
+两个 thin step，不能把两者的 steps 或 steps/s 当作等量原子动作的效率比较。
 
 JSON 记录上下层/native 文件哈希、逐局结果和 `combat_rows`，包括初始/结束 HP、药水、
 搜索量和用时；`combat_comparison` 在双方都赢的配对战斗上统计规则减对手的损血差，同时单列
