@@ -20,7 +20,7 @@ full_gumbel
 --nosl-is-az-replay-min-size
 1
 --nosl-is-az-replay-max-old-fraction
-0.90
+1.0
 --nosl-is-az-dirichlet-alpha
 0
 --nosl-is-az-dirichlet-epsilon

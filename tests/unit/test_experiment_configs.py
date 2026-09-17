@@ -81,7 +81,7 @@ def test_u40_sixteenfold_width_preset_scales_coupled_geometry():
     assert args.nosl_is_az_inference_max_wait_ms == 0
     assert args.nosl_is_az_inference_schedule == "fixed_wait"
     assert args.nosl_is_az_updates == 40
-    assert args.nosl_is_az_replay_max_old_fraction == 0.9
+    assert args.nosl_is_az_replay_max_old_fraction == 1.0
     differences = {
         key: (previous[key], value)
         for key, value in vars(args).items()
@@ -100,6 +100,7 @@ def test_u40_sixteenfold_width_preset_scales_coupled_geometry():
         "rollout_resource_interval": (0, 2),
         "nosl_is_az_micro_batch_size": (2048, 8192),
         "nosl_is_az_replay_capacity": (524288, 2097152),
+        "nosl_is_az_replay_max_old_fraction": (0.9, 1.0),
     }
 
 
