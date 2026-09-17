@@ -100,3 +100,18 @@ def test_paired_fights_share_start_and_leave_reference_unchanged(combat_factory)
     assert rows[0]['final_hp'] == rows[1]['final_hp']
     assert summarize_pairs(rows)['same']['rules_minus_opponent_hp_loss_mean'] == 0
     assert any(x.get('candidate') == 'same' for x in trace)
+
+
+def test_trace_retains_native_complete_target_not_just_root_id(combat_factory):
+    import slaythespire as sts
+    env = combat_factory(['STRIKE_RED']*5)
+    trace = []
+    class CompleteAction:
+        name = 'native-fixture'
+        def decide(self, requests, *, check):
+            # Same binding contract used by NativeStrategy after search.
+            requests[0].env._nosl_cpp_pending = (A._PLAY, 0)
+            return [Decision(A._PLAY, self.name)]
+    CombatAuditStrategy(CompleteAction(), trace=trace.append).decide([request(env)], check=lambda: None)
+    assert trace[0]['action'] == A._PLAY
+    assert trace[0]['native_action'] == dict(bits=0, kind='CARD', source=0, target=0)

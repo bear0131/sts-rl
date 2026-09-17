@@ -60,9 +60,16 @@ class CombatAuditStrategy:
             for index, view in views.items():
                 request, decision = requests[index], decisions[index]
                 ranking = rank_actions(view, np.flatnonzero(request.env.action_masks()))
+                native = getattr(request.env.unwrapped, '_nosl_cpp_pending', None)
+                native_action = None
+                if native is not None:
+                    import slaythespire as sts
+                    complete = sts.Action(int(native[1]))
+                    native_action = dict(bits=int(native[1]), kind=complete.action_type.name,
+                                         source=complete.source_idx, target=complete.target_idx)
                 self.trace(dict(kind='reference_decision', seed=request.seed, step=request.step,
                     floor=request.info.get('run_stats', {}).get('floor'), source=decision.source,
-                    action=decision.action, rule_action=ranking[0]['action'],
+                    action=decision.action, native_action=native_action, rule_action=ranking[0]['action'],
                     state=public_state(view), ranked=ranking))
         return decisions
 
