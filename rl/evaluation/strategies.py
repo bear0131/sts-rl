@@ -37,6 +37,20 @@ class DecisionStrategy(Protocol):
     def decide(self, requests: list[DecisionRequest], *, check: Callable[[], None]) -> list[Decision]: ...
 
 
+def strategy_manifest(strategy):
+    """Record effective composition and search settings, including inherited values."""
+    result = {'name': strategy.name}
+    if isinstance(strategy, PhaseStrategy):
+        result['default'] = strategy_manifest(strategy.default)
+        result['phases'] = {phase: strategy_manifest(solver) for phase, solver in strategy.routes.items()}
+        result['predicate_phases'] = sorted(strategy.predicates)
+    if isinstance(strategy, NativeStrategy):
+        result.update(config=asdict(strategy.config), master_nonce=strategy.master_nonce)
+    if isinstance(strategy, PolicyStrategy):
+        result['deterministic'] = strategy.deterministic
+    return result
+
+
 class PolicyStrategy:
     name = 'policy'
 
@@ -192,7 +206,12 @@ def value_strategy(model, args, lock=None):
                          {'combat': ValueStrategy(model, config_from_args(args), lock)})
 
 
+def rule_strategy(model, args, lock=None):
+    from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
+    return PhaseStrategy(policy_strategy(model, args, lock), {'combat': CombatRuleStrategy()})
+
+
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
-              'leftmost': lambda model, args, lock=None: LeftmostStrategy()}
+              'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy}

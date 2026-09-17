@@ -4,6 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BASE01 | 进行中 | 固定同一个 hierarchical 上层 checkpoint，仅替换 combat 为可解释、无模型/无模拟器前瞻的规则策略；复用 DecisionStrategy/PhaseStrategy/runner，覆盖目标槽位、pending 来源和不同选牌区域；固定种子整局与相同战斗初态配对评测，保存规则理由与 bad case，区分开发集/留出集，比较 policy/规则/native 搜索；上层规则为独立后续实验 |
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
 | [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
 | [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确 |

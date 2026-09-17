@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 from pathlib import Path
 import time
@@ -11,13 +12,18 @@ from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
-from rl.evaluation.strategies import STRATEGIES, MapRouteStrategy, PhaseStrategy
+from rl.evaluation.strategies import STRATEGIES, MapRouteStrategy, PhaseStrategy, strategy_manifest
 from rl.search.combat_value_search import add_combat_search_args
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__, fromfile_prefix_chars='@')
     parser.add_argument('checkpoint', type=Path)
+    parser.add_argument('--combat-checkpoint', type=Path,
+                        help='Separate combat model; positional checkpoint remains the upper policy')
+    parser.add_argument('--compare-combats', type=int, default=0,
+                        help='Audit first N combat starts against rules, policy and native on identical forks')
+    parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
@@ -44,11 +50,11 @@ def build_parser():
     return parser
 
 
-def make_scenario(model, args):
+def make_scenario(model, args, combat_model=None):
     if args.task == 'combat':
         from rl.tasks.combat import CombatTask
-        if args.solver == 'native':
-            raise ValueError('native search currently requires the wholerun thin environment')
+        if args.solver in ('native', 'rules'):
+            raise ValueError('native/rules currently require the wholerun thin environment')
         if not 1 <= args.floor_lo <= args.floor_hi <= 50:
             raise ValueError('expected 1 <= floor-lo <= floor-hi <= 50')
         options = argparse.Namespace(floor_lo=args.floor_lo, floor_hi=args.floor_hi,
@@ -62,14 +68,26 @@ def make_scenario(model, args):
                         floor=int(base.gc.floor_num), act=int(base.gc.act),
                         combats_cleared=int(base.combats_won))
         return Scenario('combat', CombatTask().make_env_fn(options), outcome)
+    models = [model] + ([combat_model] if combat_model is not None else [])
+    def uses(feature):
+        return any(feature(m) for m in models)
     return Scenario('wholerun', lambda: SlayTheSpireEnv(
         ascension=args.ascension,
-        global_map_view=policy_model.uses_global_map_observation(model),
-        card_language=policy_model.uses_card_language(model),
-        combat_language=policy_model.uses_combat_language(model),
-        deck_size_observation=policy_model.uses_deck_size_observation(model),
-        neow_observation=policy_model.uses_neow_observation(model),
-        event_option_observation=policy_model.uses_event_option_observation(model)))
+        global_map_view=uses(policy_model.uses_global_map_observation),
+        card_language=uses(policy_model.uses_card_language),
+        combat_language=uses(policy_model.uses_combat_language),
+        deck_size_observation=uses(policy_model.uses_deck_size_observation),
+        neow_observation=uses(policy_model.uses_neow_observation),
+        event_option_observation=uses(policy_model.uses_event_option_observation)))
+
+
+def file_identity(path):
+    if path is None:
+        return None
+    path = Path(path).resolve()
+    if not path.exists() and path.with_suffix('.zip').exists():
+        path = path.with_suffix('.zip')
+    return dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None)
 
 
 def main():
@@ -77,15 +95,32 @@ def main():
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
+    if args.compare_combats < 0 or ((args.compare_combats or args.trace) and args.task != 'wholerun'):
+        raise ValueError('combat auditing requires wholerun and a non-negative combat count')
+    if args.compare_combats and args.stochastic:
+        raise ValueError('paired combat auditing requires deterministic policy decisions')
     if args.combat_search_depth > 0:
         if args.solver not in ('policy', 'value'):
             raise ValueError('--combat-search cannot be combined with a different solver')
         args.solver = 'value'
     model = load_checkpoint(args.checkpoint, device=args.device, card_vector_checkpoint=args.card_vector_checkpoint)
     model.set_random_seed(args.seed)
+    combat_model = model
     strategy = STRATEGIES[args.solver](model, args)
+    if args.combat_checkpoint:
+        if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules'):
+            raise ValueError('--combat-checkpoint requires wholerun policy/native/value/rules')
+        combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
+                                       card_vector_checkpoint=args.card_vector_checkpoint)
+        combat_model.set_random_seed(args.seed)
+        from rl.evaluation.strategies import policy_strategy
+        if args.solver != 'rules':
+            strategy = PhaseStrategy(policy_strategy(model, args),
+                                     {'combat': STRATEGIES[args.solver](combat_model, args)})
     if args.route != 'model':
         strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
+    effective_strategy = strategy_manifest(strategy)
+    candidate_manifests = {}
     started = last_report = time.monotonic()
 
     def progress(event):
@@ -95,9 +130,24 @@ def main():
             last_report = time.monotonic()
 
     rows = []
+    combat_rows = []
+    trace_stream = None
     failure = None
     try:
-        for row in evaluate(strategy, make_scenario(model, args), config, progress=progress):
+        if args.compare_combats or args.trace:
+            from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
+            from rl.evaluation.baselines.combat_audit import CombatAuditStrategy
+            if args.trace:
+                args.trace.parent.mkdir(parents=True, exist_ok=True)
+                trace_stream = args.trace.open('x', encoding='utf-8')
+            strategy = CombatAuditStrategy(strategy, rows=combat_rows, limit=args.compare_combats,
+                candidates={'rules': CombatRuleStrategy(),
+                            'policy': STRATEGIES['policy'](combat_model, args),
+                            'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
+                max_steps=args.max_steps, timeout=args.timeout,
+                trace=(lambda event: trace_stream.write(json.dumps(event)+'\n')) if trace_stream else None)
+            candidate_manifests = {name: strategy_manifest(solver) for name, solver in strategy.candidates.items()}
+        for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
                 print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
@@ -105,12 +155,22 @@ def main():
         failure = {"type": type(exc).__name__, "message": str(exc)}
         raise
     finally:
+        if trace_stream:
+            trace_stream.close()
         rows.sort(key=lambda row: row['episode'])
         summary = summarize(rows)
         payload = dict(schema_version=1, task=args.task, strategy=strategy.name,
                        state="error" if failure else "complete", error=failure,
                        checkpoint=str(args.checkpoint.resolve()), config=vars(args),
                        elapsed_seconds=time.monotonic() - started, summary=summary, rows=rows)
+        import slaythespire
+        from rl.evaluation.baselines.combat_audit import summarize_pairs
+        from rl.evaluation.baselines.combat_rules import RULE_VERSION
+        payload.update(identities=dict(upper=file_identity(args.checkpoint),
+            combat=file_identity(args.combat_checkpoint or args.checkpoint),
+            native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
+            effective_strategy=effective_strategy, combat_candidates=candidate_manifests,
+            combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
         print(json.dumps(summary, ensure_ascii=False), flush=True)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

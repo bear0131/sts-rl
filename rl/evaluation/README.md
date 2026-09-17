@@ -3,6 +3,12 @@
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
 `--solver policy` 为直接策略；`value` 为原有 value-guided lookahead；`leftmost` 为最小合法动作。`--task combat` 保留 gauntlet 的 combats_cleared 指标。native 当前只接 whole-run 场景；旧 Python NOSL fullrun/parallel、独立 eval_combat 入口已删除。
 
+`--solver rules` 只替换 combat 为规则策略，其余阶段使用位置参数的上层 checkpoint。
+`--combat-checkpoint LOWER.zip` 可为 policy/native/value 单独指定下层；`--compare-combats N`
+沿参考轨迹取前 N 场开局，在相同完整初态上配对规则/policy/native；`--trace FILE.jsonl`
+保存可见状态、选择与规则分项。信息边界、支持范围与开发/留出协议见
+[战斗规则基线](baselines/README.md)。
+
 - `runner.py`：环境常驻/重置、预算、取消、合法性、结果与统计，CLI/dashboard 共用。max_steps 截断记为 step_limit，不能当死亡。timeout 在 step/leaf batch 之间检查；native 卡死须由外层进程硬超时处理。
 - `strategies.py`：DecisionRequest → 批量 Decision。新增策略实现 DecisionStrategy，传给 runner 即可；只在需要 CLI 时注册到 STRATEGIES。PhaseStrategy 按阶段及显式谓词组合策略，runner 不识别具体模型或搜索算法。
 - `Scenario`：工厂、seeded reset、结果解释。固定初态/新任务实现自己的 Scenario，无需复制 episode loop。

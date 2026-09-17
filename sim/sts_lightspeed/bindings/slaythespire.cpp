@@ -1228,6 +1228,16 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
         pickMax = bc.cards.cardsInHand;
     }
     d["pick_max"] = pickMax;
+    // Public choices on generated-card screens, in the action's source order.
+    // Never read this array off-screen: it can contain uninitialized ids.
+    py::list generated;
+    if (bc.inputState == sts::InputState::CARD_SELECT &&
+        (task == sts::CardSelectTask::CODEX || task == sts::CardSelectTask::DISCOVERY)) {
+        for (auto id : csi.cards) {
+            generated.append(py::make_tuple(sts::cardEnumStrings[static_cast<int>(id)], 0));
+        }
+    }
+    d["generated_cards"] = generated;
     return d;
 }
 
