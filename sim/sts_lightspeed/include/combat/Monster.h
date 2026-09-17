@@ -26,7 +26,8 @@ namespace sts {
         int attackCount = 1;
     };
 
-    struct Monster {
+struct Monster {
+    static constexpr int MAX_BLOCK = 999;
 
         /*
          * Things to possibly cache about a monster

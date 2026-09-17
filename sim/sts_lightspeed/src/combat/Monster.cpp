@@ -2,6 +2,8 @@
 // Created by gamerpuppy on 7/5/2021.
 //
 
+#include <algorithm>
+
 #include "combat/Monster.h"
 
 #include "game/Random.h"
@@ -277,7 +279,10 @@ void Monster::heal(int amount) {
 }
 
 void Monster::addBlock(int amount) {
-    block += amount;
+    block = std::clamp(block, 0, MAX_BLOCK);
+    if (amount > 0) {
+        block += std::min(amount, MAX_BLOCK - block);
+    }
 }
 
 void Monster::die(BattleContext &bc) {
