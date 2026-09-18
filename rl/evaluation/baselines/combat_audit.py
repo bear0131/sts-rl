@@ -79,7 +79,8 @@ class CombatAuditStrategy:
         digest = hashlib.sha256(json.dumps(initial, sort_keys=True).encode()).hexdigest()
         context = dict(combat=self._starts, seed=request.seed, reference_step=request.step,
                        floor=request.info.get('run_stats', {}).get('floor', 0),
-                       initial_hp=view.player['hp'], visible_state_sha256=digest,
+                       initial_hp=view.player['hp'], initial_potions=list(view.potions),
+                       visible_state_sha256=digest,
                        encounter=[m['id'] for m in view.alive])
         if self.trace:
             self.trace(dict(kind='combat_start', **context, state=initial))

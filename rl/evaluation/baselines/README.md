@@ -15,6 +15,9 @@
 普通抽牌堆进入策略前按牌名/升级排序，不能利用未来抽牌顺序；检索牌堆的选牌屏幕才保留
 候选索引以正确提交选择。`Havoc` 按一般收益估计，不查看牌堆顶。原生怪物槽位保留空槽，
 避免 canonical 旧路径的槽压缩问题 F01；这不表示全项目 F01 已修复。
+从 v2 开始，Runic Dome 会隐藏真实敌人 move/damage/hits，改用明确标注的公开属性威胁估计。
+历史 v1 没有这个遮罩；比较版本时应注明信息契约也发生修正，神经路径是否隐藏圆顶意图
+仍需另行审计。
 
 规则读的是玩家可见语义，而神经策略仍受现有编码表示限制（含 F01/F02/F03 已知缺陷）。
 因此这个实验隔离“整个战斗决策组件”，不能把所有差异都归因于搜索算法或策略直觉；
@@ -37,6 +40,9 @@
   Flex 等免费铺垫尽量先于受益攻击，花费 HP 的效果计入代价。
 - 药水有保留成本，紧急情况降低成本。选牌按所属区域和任务区分保留、消耗、升级、回收；
   End Turn/Confirm 为显式候选。
+- Clash 会考虑先清除非攻击牌；力量铺垫考虑当前手牌的支付能力。死亡目标不再得到 debuff
+  奖励。长战斗成长、睡眠期准备、Spore Cloud、Plated Armor、Apparition 与主要药水均有
+  单独规则。Mercury Hourglass 在敌人行动之后才触发，不能算作当前回合免伤。
 
 这些是近似值，不是第二套完整 simulator：例如动态 Rampage 数值、随机连击分配、飞行中途
 解除、完整遗物/药水相互作用、无限循环和多回合资源规划尚未精确建模。评测中的差异应从
@@ -71,7 +77,9 @@ python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver r
 两个 thin step，不能把两者的 steps 或 steps/s 当作等量原子动作的效率比较。
 
 JSON 记录上下层/native 文件哈希、逐局结果和 `combat_rows`，包括初始/结束 HP、药水、
-搜索量和用时；`combat_comparison` 在双方都赢的配对战斗上统计规则减对手的损血差，同时单列
+搜索量和用时；`hp_loss` 是初始减最终的净 HP 变化，包含战斗内治疗，可能为负，不能解释为
+累计受击伤害。逐场同时保存 `initial_potions` / `final_potions`，便于检查消耗差异。
+`combat_comparison` 在双方都赢的配对战斗上统计规则减对手的损血差，同时单列
 双方胜场。最终 HP 是**胜利结算回血前**的战斗 HP，不与整局回血后的 HP 混用。
 `step_limit`/超时必须单列，未完成组不能伪装成完整样本。CLI 超时是合作式；正式批次还需
 外部进程监督硬超时。trace 拒绝覆盖现有文件。
@@ -79,3 +87,26 @@ JSON 记录上下层/native 文件哈希、逐局结果和 `combat_rows`，包�
 开发种子固定为 10000–10003；留出从 20000 开始。只针对开发 bad case 调整规则，冻结版本后
 跑留出；若查看留出并修改，就把它标为新的开发集并另选留出。报告样本数和不确定性，不能从
 几局/单个怪物声称总体胜率优越，也不能拿 W&B 滚动训练指标代替固定 checkpoint 评测。
+
+## 可选择的上层规则
+
+```bash
+python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --solver rules --episodes 32 --seed 30000 --device cpu --max-steps 6000 --timeout 300 --output runs/local/joint-rules.json
+python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoint COMBAT.zip --solver native --search-mode strict --simulations 128 --depth 0 --episodes 8 --seed 30000 --device cpu --max-steps 6000 --timeout 1200 --output runs/local/rule-upper-search.json
+```
+
+`OverworldRuleStrategy` 依据公开牌组缺口、重复牌和力量/消耗/格挡配合评估奖励及跳过，按价格
+评估购买/移除，结合 HP、升级空间与公开地图选择路线，营火比较治疗和升级，评估 boss
+遗物副作用，并处理源码已核对按钮含义的事件。永久诅咒、圆顶、咖啡滤杯、融合之锤等有
+显式约束；没有访问未来事件、未展示奖励或 RNG。
+
+未知事件/选择屏幕仍由指定上层模型处理，计入 `overworld_fallback_decisions`；已知规则决策
+计入 `overworld_rule_decisions`。因此该组合是“上层规则加显式模型回退”，不能称为完全无模型。
+无需 CLI 的使用方可传任意 `fallback` 策略；不传回退而遇到未知屏幕会明确报错。
+`--trace` 同时记录 `overworld_decision` 的公开状态、排序、实际动作和来源；
+`effective_strategy` 记录上下层组合、规则版本和回退策略。
+
+跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表
+上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
+下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision
+重跑。全局胜率、不同参考轨迹的配对战斗、人工牌组压力测试分别报告，不混合样本数。

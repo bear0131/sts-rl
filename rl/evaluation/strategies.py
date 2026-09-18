@@ -40,6 +40,10 @@ class DecisionStrategy(Protocol):
 def strategy_manifest(strategy):
     """Record effective composition and search settings, including inherited values."""
     result = {'name': strategy.name}
+    if getattr(strategy, 'version', None):
+        result['version'] = strategy.version
+    if getattr(strategy, 'fallback', None) is not None:
+        result['fallback'] = strategy_manifest(strategy.fallback)
     if isinstance(strategy, PhaseStrategy):
         result['default'] = strategy_manifest(strategy.default)
         result['phases'] = {phase: strategy_manifest(solver) for phase, solver in strategy.routes.items()}
@@ -215,3 +219,17 @@ def rule_strategy(model, args, lock=None):
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
               'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy}
+
+
+def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
+    """Compose independently chosen upper/combat components outside the runner."""
+    strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
+    if combat_model is not None:
+        strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
+    if getattr(args, 'upper_strategy', 'model') == 'rules':
+        from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
+        upper = OverworldRuleStrategy(fallback=policy_strategy(upper_model, args), trace=trace)
+        strategy = PhaseStrategy(upper, {'combat': strategy})
+    if getattr(args, 'route', 'model') != 'model':
+        strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
+    return strategy

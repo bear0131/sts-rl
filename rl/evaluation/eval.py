@@ -12,7 +12,7 @@ from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
-from rl.evaluation.strategies import STRATEGIES, MapRouteStrategy, PhaseStrategy, strategy_manifest
+from rl.evaluation.strategies import STRATEGIES, compose_strategy, strategy_manifest
 from rl.search.combat_value_search import add_combat_search_args
 
 
@@ -27,6 +27,8 @@ def build_parser():
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
+    parser.add_argument('--upper-strategy', choices=['model', 'rules'], default='model',
+                        help='Keep the upper checkpoint, or use overworld rules with explicit model fallback')
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--seed', type=int, default=10000)
     parser.add_argument('--ascension', type=int, default=0)
@@ -99,6 +101,8 @@ def main():
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:
         raise ValueError('paired combat auditing requires deterministic policy decisions')
+    if args.upper_strategy != 'model' and args.task != 'wholerun':
+        raise ValueError('--upper-strategy requires wholerun')
     if args.combat_search_depth > 0:
         if args.solver not in ('policy', 'value'):
             raise ValueError('--combat-search cannot be combined with a different solver')
@@ -106,19 +110,17 @@ def main():
     model = load_checkpoint(args.checkpoint, device=args.device, card_vector_checkpoint=args.card_vector_checkpoint)
     model.set_random_seed(args.seed)
     combat_model = model
-    strategy = STRATEGIES[args.solver](model, args)
     if args.combat_checkpoint:
         if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules'):
             raise ValueError('--combat-checkpoint requires wholerun policy/native/value/rules')
         combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
                                        card_vector_checkpoint=args.card_vector_checkpoint)
         combat_model.set_random_seed(args.seed)
-        from rl.evaluation.strategies import policy_strategy
-        if args.solver != 'rules':
-            strategy = PhaseStrategy(policy_strategy(model, args),
-                                     {'combat': STRATEGIES[args.solver](combat_model, args)})
-    if args.route != 'model':
-        strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
+    trace_stream = None
+    def trace(event):
+        if trace_stream:
+            trace_stream.write(json.dumps(event)+'\n')
+    strategy = compose_strategy(model, args, combat_model if args.combat_checkpoint else None, trace=trace)
     effective_strategy = strategy_manifest(strategy)
     candidate_manifests = {}
     started = last_report = time.monotonic()
@@ -131,7 +133,6 @@ def main():
 
     rows = []
     combat_rows = []
-    trace_stream = None
     failure = None
     try:
         if args.compare_combats or args.trace:
@@ -145,7 +146,7 @@ def main():
                             'policy': STRATEGIES['policy'](combat_model, args),
                             'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
                 max_steps=args.max_steps, timeout=args.timeout,
-                trace=(lambda event: trace_stream.write(json.dumps(event)+'\n')) if trace_stream else None)
+                trace=trace if trace_stream else None)
             candidate_manifests = {name: strategy_manifest(solver) for name, solver in strategy.candidates.items()}
         for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
             rows.append(row)
@@ -168,6 +169,7 @@ def main():
         from rl.evaluation.baselines.combat_rules import RULE_VERSION
         payload.update(identities=dict(upper=file_identity(args.checkpoint),
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
+            card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
             effective_strategy=effective_strategy, combat_candidates=candidate_manifests,
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
