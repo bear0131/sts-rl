@@ -30,6 +30,80 @@ def test_early_deck_values_damage_but_skips_unenabled_limit_break():
     assert choose(s, A._RCARD, A._RCARD + 1, A._RSKIP) == A._RSKIP
 
 
+def damage_covered_state(cards=()):
+    deck = [('Strike_R', 0)] * 5 + [('Defend_R', 0)] * 4 + [('Bash', 0)]
+    deck += [('Anger', 0), ('Pommel Strike', 1), ('Headbutt', 0),
+             ('Cleave', 0), ('Immolate', 0)]
+    s = state(cards=cards, deck=deck)
+    s['global'].update(act=2, floor=20)
+    return s
+
+
+def test_skip_redundant_damage_once_attack_package_is_established():
+    s = damage_covered_state([('Carnage', 0)])
+    # Existing Immolate already does at least this damage for the same energy;
+    # ten of fifteen cards attack. Another ordinary attack delays defense/setup.
+    assert choose(s, A._RCARD, A._RSKIP) == A._RSKIP
+    # The same offer remains useful when damage coverage is not established.
+    s['global']['deck'] = [('Strike_R', 0)] * 5 + [('Defend_R', 0)] * 4 + [('Bash', 0)]
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_damage_upgrade_can_improve_an_established_attack_package():
+    s = damage_covered_state([('Carnage', 1)])
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_existing_single_target_burst_does_not_replace_a_stronger_aoe():
+    s = damage_covered_state([('Immolate', 0), ('Flame Barrier', 0)])
+    s['global']['deck'] = [('Carnage', 1) if c == 'Immolate' else (c, u)
+                           for c, u in s['global']['deck']]
+    # Carnage+ outdamages Immolate on one target, while existing Cleave does not
+    # cover Immolate's AoE improvement. Keep that role upgrade above more block.
+    assert choose(s, A._RCARD, A._RCARD + 1, A._RSKIP) == A._RCARD
+
+
+def test_first_aoe_and_zero_cost_attack_still_fill_distinct_needs():
+    s = damage_covered_state([('Cleave', 0)])
+    s['global']['deck'] = [(('Carnage' if c == 'Cleave' else 'Hemokinesis' if c == 'Immolate' else c), u)
+                           for c, u in s['global']['deck']]
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+    s = damage_covered_state([('Anger', 0)])
+    s['global']['deck'] = [('Carnage' if c == 'Anger' else c, u) for c, u in s['global']['deck']]
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_coverage_does_not_reject_defense_or_draw_tools():
+    for cid in ('Flame Barrier', 'Battle Trance'):
+        s = damage_covered_state([(cid, 0)])
+        assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_early_and_confused_decks_keep_the_existing_damage_preference():
+    s = damage_covered_state([('Carnage', 0)])
+    s['global']['act'] = 1
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+    s['global']['act'] = 2
+    s['global']['relics'] = ['Snecko Eye']
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_conditional_attacks_do_not_prove_damage_coverage():
+    s = damage_covered_state([('Carnage', 0)])
+    s['global']['deck'] = [('Body Slam' if c in ('Anger', 'Headbutt', 'Cleave') else c, u)
+                           for c, u in s['global']['deck']]
+    assert choose(s, A._RCARD, A._RSKIP) == A._RCARD
+
+
+def test_acquisition_penalty_does_not_change_removal_or_route_card_values():
+    s = damage_covered_state([('Carnage', 0)])
+    assert card_value(('Carnage', 0), s, adding=False) == pytest.approx(6.2)
+    # Value is independent of which other reward candidates happen to be shown.
+    value = card_value(('Carnage', 0), s)
+    s['options']['cards'] = [('Immolate', 1), ('Carnage', 0), ('Offering', 1)]
+    assert card_value(('Carnage', 0), s) == value
+
+
 def test_strength_enables_scaling_and_duplicate_powers_diminish():
     s = state(deck=[('Strike_R', 0), ('Inflame', 0), ('Spot Weakness', 0)])
     empty = state(deck=[('Strike_R', 0)])

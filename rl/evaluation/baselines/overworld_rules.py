@@ -12,10 +12,10 @@ from functools import lru_cache
 import numpy as np
 
 from env.core import action_space as A
-from env.core.ironclad_cards import IRONCLAD_CARDS
+from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v1'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-damage-coverage-v1'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -70,6 +70,59 @@ def _item_key(name):
 def has_relic(state, *names):
     held = {_item_key(name) for name in state['global'].get('relics', ())}
     return bool(held & {_item_key(name) for name in names})
+
+
+def damage_coverage_penalty(card, state):
+    """Discount redundant front-loaded damage after the deck covers that role.
+
+    This changes acquisition only. Draw, block, debuffs, exhaust tools, healing,
+    and dedicated Strength payoffs keep their existing fit scores. It compares
+    the displayed card with owned cards, never other reward offers or draws.
+    """
+    cid, upgraded = card[:2]
+    plain_damage = {'Anger', 'Carnage', 'Bludgeon', 'Twin Strike', 'Cleave',
+                    'Immolate', 'Hemokinesis'}
+    g = state['global']
+    if cid not in plain_damage or int(g.get('act', 1)) < 2:
+        return 0.0
+    if has_relic(state, 'SNECKO_EYE'):
+        return 0.0  # Printed energy costs do not order confused-card costs.
+    deck = g.get('deck', ())
+    attacks = [(c, u) for c, u in deck if c in IRONCLAD_CARDS
+               and IRONCLAD_CARDS[c].kind == 'attack']
+    conditional = {'Body Slam', 'Clash', 'Fiend Fire', 'Perfected Strike'}
+    reliable = [(c, u) for c, u in attacks if c not in conditional
+                and card_numbers(c, u)[0] >= 0 and card_numbers(c, u)[1] > 0]
+    # At least five nonstarter attacks and half the draw slots already attacking:
+    # another ordinary damage card competes with the deck's defense and setup.
+    if sum(c not in ('Strike_R', 'Bash') for c, _ in reliable) < 5 or 2 * len(attacks) < len(deck):
+        return 0.0
+    if cid in AOE and not any(c in AOE for c, _ in deck):
+        return 0.0
+    girya_strength = any(_item_key(relic) == 'GIRYA' and counter > 0
+                         for relic, counter in zip(g.get('relics', ()), g.get('relic_counters', ())))
+    if cid == 'Twin Strike' and (any(c in STRENGTH for c, _ in deck)
+                                 or has_relic(state, 'VAJRA') or girya_strength):
+        return 0.0  # Two hits gain twice from an already-enabled Strength plan.
+    cost, damage, _ = card_numbers(cid, upgraded)
+    if cost == 0 and not any(card_numbers(c, u)[0] == 0 for c, u in attacks):
+        return 0.0
+
+    def owned_damage(c, u):
+        energy, hit, _ = card_numbers(c, u)
+        hits = {'Twin Strike': 2, 'Sword Boomerang': 4 if u else 3,
+                'Pummel': 5 if u else 4}.get(c, 1)
+        # Conditional/X-cost damage is not proof that a new attack is redundant.
+        if energy < 0 or c in conditional:
+            return None
+        return energy, hit * hits
+
+    damage *= 2 if cid == 'Twin Strike' else 1
+    # Single-target burst cannot establish that the deck's AoE is sufficient.
+    comparable = [owned_damage(c, u) for c, u in attacks if cid not in AOE or c in AOE]
+    if not any(entry and entry[0] <= cost and entry[1] >= damage for entry in comparable):
+        return 0.0  # The new card improves damage at its energy budget.
+    return 2.5  # Functional redundancy, like an already-owned setup power.
 
 
 def card_value(card, state, *, adding=True):
@@ -127,6 +180,8 @@ def card_value(card, state, *, adding=True):
         value -= max(0, int(g.get('floor', 1)) - 15) * .12
     if adding and len(g.get('deck', ())) > 23 and cid not in DRAW:
         value -= min(3, (len(g['deck']) - 23) * .2)
+    if adding:
+        value -= damage_coverage_penalty(card, state)
     return value
 
 
