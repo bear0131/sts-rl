@@ -5,7 +5,7 @@ import pytest
 
 from env.core import action_space as A
 from rl.evaluation.baselines.combat_rules import (
-    CombatView, card_score, damage, rank_actions, selection_score,
+    CombatView, card_score, damage, hide_intent, potion_score, rank_actions, selection_score,
 )
 
 
@@ -124,3 +124,128 @@ def test_chip_persistent_enemy_block_instead_of_ending_forever(view):
     view.monsters[0].update(block=40, powers={'Barricade':1})
     view.player['block'] = 20
     assert pick(view, A.END_TURN, A._PLAY) == A._PLAY
+
+
+def test_play_affordable_nonattacks_to_unlock_clash(view):
+    view.player['energy'] = 4
+    view.monsters[0].update(hp=109, block=8, adjusted_damage=0)
+    view.hand = [card('Strike_R'), card('Strike_R'), card('Defend_R'),
+                 card('Defend_R'), card('Clash', 0)]
+    view.targets = {('play', i): [0] for i in range(4)}
+    assert pick(view, *(A._PLAY+i for i in range(4)), A.END_TURN) == A._PLAY+2
+    # An unplayable Wound prevents promising a Clash that cannot be unlocked.
+    view.hand.append(card('Wound', -2))
+    assert 'unlock_clash' not in card_score(view.hand[2], 0, view)[1]
+
+
+def test_debuffs_do_not_reward_expensive_overkill(view):
+    view.monsters = [monster(hp=2, attack=0), monster(hp=40)]
+    view.hand = [card('Anger', 0), card('Bash', 2)]
+    view.targets = {('play', 0): [0], ('play', 1): [0]}
+    assert card_score(view.hand[1], 0, view)[1]['vulnerable'] == 0
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+
+
+def test_inflame_precedes_attacks_when_both_fit(view):
+    view.monsters[0].update(hp=420, max_hp=420)
+    view.hand = [card('Strike_R', up=1), card('Inflame')]
+    view.targets = {('play', 0): [0], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_long_fight_scaling_is_worth_setting_up(view):
+    view.monsters[0].update(hp=420, max_hp=420)
+    view.hand = [card('Demon Form', 3), card('Defend_R')]
+    view.targets = {('play', 0): [None], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+
+
+def test_plated_armor_covers_current_threat(view):
+    view.player['powers'] = {'Plated Armor': 10}
+    assert view.deficit == 0
+    assert pick(view, A._PLAY+1, A.END_TURN) == A.END_TURN
+
+
+def test_spore_cloud_penalty_requires_a_survivor_and_no_artifact(view):
+    # Equal dictionaries still represent separate monster slots.
+    view.monsters = [monster(hp=6, **{'Spore Cloud': 2}), monster(hp=6, **{'Spore Cloud': 2})]
+    parts = card_score(view.hand[0], 0, view)[1]
+    assert parts['spore_cloud'] < 0
+    view.player['powers'] = {'Artifact': 1}
+    assert 'spore_cloud' not in card_score(view.hand[0], 0, view)[1]
+    view.player['powers'] = {}
+    view.monsters.pop()
+    assert 'spore_cloud' not in card_score(view.hand[0], 0, view)[1]
+
+
+def test_mercury_does_not_cancel_current_enemy_attack(view):
+    view.relics = {'Mercury Hourglass': 0}
+    view.monsters[0]['hp'] = 3
+    assert view.incoming == 10
+    assert view.deficit == 10
+    # A current combat lethal is still preferable to waiting for next turn.
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A._PLAY
+
+
+def test_sleep_allows_setup_but_does_not_stall_forever(view):
+    view.monsters[0].update(id='Lagavulin', move='LAGAVULIN_SLEEP',
+        hp=109, block=8, powers={'Metallicize': 8}, adjusted_damage=0)
+    view.hand = [card('Carnage', 2)]
+    view.targets = {('play', 0): [0]}
+    view.piles['draw'] = [card('Inflame')]
+    assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+    view.turn = 3
+    assert pick(view, A._PLAY, A.END_TURN) == A._PLAY
+
+
+@pytest.mark.parametrize('potion', ['Regen Potion', 'Essence Of Steel', 'Heart Of Iron', 'Cultist Potion'])
+def test_use_long_fight_potions_before_damage_accumulates(view, potion):
+    view.monsters[0].update(hp=420, max_hp=420)
+    view.potions = [potion]
+    assert potion_score(0, None, view)[0] > 0
+
+
+def test_flex_potion_requires_attacks_to_use_its_temporary_strength(view):
+    view.potions = ['Flex Potion']
+    view.hand = [card('Strike_R')]*3
+    assert potion_score(0, None, view)[0] > 0
+    view.hand = [card('Defend_R')]*3
+    assert potion_score(0, None, view)[0] < 0
+
+
+def test_upgraded_neutral_damage_and_block_are_not_base_values(view):
+    assert damage(card('Flash Of Steel', 0, up=1), view.monsters[0], view) == 6
+    assert card_score(card('Good Instincts', 0, up=1), None, view)[0] > card_score(card('Good Instincts', 0), None, view)[0]
+
+
+def test_generated_skill_with_clash_hand_is_a_valid_selection(view):
+    view.hand = [card('Clash', 0)]
+    view.select = {'context': 'DISCOVERY'}
+    view.piles['generated'] = [card('Defend_R'), card('Impervious', 2)]
+    assert pick(view, A._PICK, A._PICK+1) in (A._PICK, A._PICK+1)
+
+
+def test_apparition_covers_multihit_threat_and_avoids_excess_block(view):
+    view.monsters[0].update(adjusted_damage=20, hits=3)
+    view.hand = [card('Apparition'), card('Defend_R')]
+    view.targets = {('play', 0): [None], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+    view.player['powers'] = {'Intangible': 1}
+    view.player['block'] = 3
+    assert view.incoming == 3
+    assert pick(view, A._PLAY+1, A.END_TURN) == A.END_TURN
+
+
+def test_dome_hides_actual_intent_before_scoring(view):
+    first = monster(attack=999)
+    first.update(move='LAGAVULIN_ATTACK', move_id=87, base_damage=333, hits=3)
+    second = monster(attack=0)
+    second.update(move='LAGAVULIN_SLEEP', move_id=92, base_damage=0, hits=0)
+    for m in (first, second):
+        hide_intent(m, view.player, {'Runic Dome': 0})
+    assert first == second
+    assert first['intent_hidden'] and first['hits'] == first['adjusted_damage'] == 0
+    view.monsters = [first]
+    ranked = rank_actions(view, [A._PLAY, A._PLAY+1, A.END_TURN])
+    view.monsters = [second]
+    assert rank_actions(view, [A._PLAY, A._PLAY+1, A.END_TURN]) == ranked

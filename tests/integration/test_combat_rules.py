@@ -115,3 +115,19 @@ def test_trace_retains_native_complete_target_not_just_root_id(combat_factory):
     CombatAuditStrategy(CompleteAction(), trace=trace.append).decide([request(env)], check=lambda: None)
     assert trace[0]['action'] == A._PLAY
     assert trace[0]['native_action'] == dict(bits=0, kind='CARD', source=0, target=0)
+
+
+def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
+    from dataclasses import asdict
+    env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH', 'STRIKE_RED', 'DEFEND_RED'],
+                         relics=['Runic Dome'])
+    views, decisions, raw_moves = [], [], []
+    for move in ('JAW_WORM_BELLOW', 'JAW_WORM_CHOMP'):
+        env.thick.bc.apply_custom_state({'monsters': [{'move': move}]})
+        env._invalidate_backend_cache()
+        raw_moves.append(env.thick.bc.to_dict()['monsters'][0]['move'])
+        views.append(asdict(visible_combat(request(env))))
+        decisions.append(CombatRuleStrategy().decide([request(env)])[0])
+    assert raw_moves[0] != raw_moves[1]
+    assert views[0] == views[1]
+    assert decisions[0] == decisions[1]
