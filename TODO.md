@@ -5,7 +5,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BASE01 | 初版已验收 | 固定上层，仅替换 combat 的可解释规则策略；DecisionStrategy/PhaseStrategy/runner、独立下层 checkpoint、目标/选牌区域与 trace 已接入；留出8整局规则/policy/native分别0/0/1胜，24同初态战斗分别23/19/24胜。方法与局限见 [基线协议](rl/evaluation/baselines/README.md)，结果见 [实验记录](worklog/2026-09-18.md#base01-held-out-evaluation) |
-| BASE02 | v3保留，128局新种子验证完成 | `rl/evaluation/baselines/combat_rules.py`：固定上层 v3 8/128胜、均楼层38.8828；终局修正版8/128、38.8125，未显示整体提升，候选留在独立分支。四上层32局规则/搜索/直接策略对照完成；F01/F02/F03、搜索预算与药水差异继续分开解释。结果与下一轮 bad case 范围见 [128局记录](worklog/2026-09-18.md#rule-128-results-and-candidate-decision) |
+| BASE02 | v3保留，第二轮128局开发中 | `rl/evaluation/baselines/combat_rules.py`：固定上层 v3 8/128胜、均楼层38.8828；终局修正版未晋级。按高频开发坏例子迭代，冻结后至少128新种子验证；70000系列补128局 native32/128配对对照。F01/F02/F03、搜索预算与药水差异分开解释；见 [128局记录](worklog/2026-09-18.md#rule-128-results-and-candidate-decision) 与 [继续开发协议](worklog/2026-09-18.md#resumed-rule-development-and-128-game-search-controls) |
 | BASE03 | 上层v1保留，v2新种子退步未晋级 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；公开牌组/地图/商店/选项做可解释决策，未知事件显式回退并计数；与固定上层分开评估，冻结后新种子对照及 bad case 迭代 |
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
 | [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
