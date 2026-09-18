@@ -31,11 +31,13 @@ def _chosen_loop(combat_factory, *, combust=True):
     return battle
 
 
-def _planner():
-    return NativeTurnPlanner(TurnPlannerConfig(worlds=2, node_budget=2048))
+def _planner(lookahead_turns):
+    return NativeTurnPlanner(TurnPlannerConfig(worlds=2, node_budget=2048,
+                                             lookahead_turns=lookahead_turns))
 
 
-def test_medical_kit_hex_loop_ends_an_equivalent_proved_win(combat_factory):
+@pytest.mark.parametrize('lookahead_turns', [1, 2])
+def test_medical_kit_hex_loop_ends_an_equivalent_proved_win(combat_factory, lookahead_turns):
     battle = _chosen_loop(combat_factory)
     before = battle.to_dict()
     loop = battle.clone()
@@ -50,7 +52,7 @@ def test_medical_kit_hex_loop_ends_an_equivalent_proved_win(combat_factory):
     assert direct.to_dict()['outcome'] == 1
     assert direct.to_dict()['player']['hp'] == 69
 
-    result = _planner().choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
+    result = _planner(lookahead_turns).choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
     values = result.diagnostics['root_values']
     assert len(values) == 9 and len(set(values.values())) == 1
     outcomes = result.diagnostics['root_outcomes']
@@ -69,14 +71,15 @@ def test_medical_kit_hex_loop_ends_an_equivalent_proved_win(combat_factory):
     json.dumps(result.diagnostics, allow_nan=False)
 
 
-def test_slower_higher_hp_victory_still_beats_immediate_kill(combat_factory):
+@pytest.mark.parametrize('lookahead_turns', [1, 2])
+def test_slower_higher_hp_victory_still_beats_immediate_kill(combat_factory, lookahead_turns):
     battle = combat_factory(['STRIKE_RED'] * 5, encounter='Spheric Guardian').thick.bc
     battle.apply_custom_state({
         'player': {'hp': 71, 'max_hp': 85, 'energy': 4, 'powers': [('STRENGTH', 4)]},
         'hand': [('STRIKE_RED', 1), ('REAPER', 0)],
         'monsters': [{'hp': 13, 'block': 0}],
     })
-    result = _planner().choose(battle, state_nonce=10025, public_relics=())
+    result = _planner(lookahead_turns).choose(battle, state_nonce=10025, public_relics=())
     outcomes = result.diagnostics['root_outcomes']
     assert outcomes['0']['winning_steps_mean'] == 1
     assert outcomes['1']['winning_steps_mean'] == 2
@@ -87,9 +90,10 @@ def test_slower_higher_hp_victory_still_beats_immediate_kill(combat_factory):
     assert battle.to_dict()['outcome'] == 1 and battle.to_dict()['player']['hp'] == 79
 
 
-def test_equal_live_roots_keep_previous_bits_tie_break(combat_factory):
+@pytest.mark.parametrize('lookahead_turns', [1, 2])
+def test_nonwinning_roots_keep_previous_tie_break(combat_factory, lookahead_turns):
     battle = _chosen_loop(combat_factory, combust=False)
-    result = _planner().choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
+    result = _planner(lookahead_turns).choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
     outcomes = result.diagnostics['root_outcomes']
     assert all(o['wins'] == 0 for o in outcomes.values())
     assert all(o['winning_steps_total'] == o['winning_steps_mean'] == 0 for o in outcomes.values())
@@ -97,8 +101,9 @@ def test_equal_live_roots_keep_previous_bits_tie_break(combat_factory):
         -outcomes[str(bits)]['deaths'], outcomes[str(bits)]['wins'],
         outcomes[str(bits)]['heuristic_mean'], -bits))
     assert result.action_bits == previous
-    assert len({o['heuristic_mean'] for o in outcomes.values()}) == 1
-    assert result.action_bits == 0
+    if lookahead_turns == 1:
+        assert len({o['heuristic_mean'] for o in outcomes.values()}) == 1
+        assert result.action_bits == 0
 
 
 def test_manifest_declares_secondary_winning_length_preference():
