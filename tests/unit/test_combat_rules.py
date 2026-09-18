@@ -249,3 +249,52 @@ def test_dome_hides_actual_intent_before_scoring(view):
     ranked = rank_actions(view, [A._PLAY, A._PLAY+1, A.END_TURN])
     view.monsters = [second]
     assert rank_actions(view, [A._PLAY, A._PLAY+1, A.END_TURN]) == ranked
+
+
+def test_race_permanent_lagavulin_debuffs_without_ignoring_lethal(view):
+    view.monsters[0].update(id='Lagavulin', hp=101, adjusted_damage=18,
+                           powers={'Vulnerable': 1})
+    view.player['hp'] = 80
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+    view.player['hp'] = 3
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_do_not_exhaust_impervious_for_unused_block(view):
+    view.monsters[0]['adjusted_damage'] = 0
+    view.hand = [card('Impervious', 2)]
+    view.targets = {('play', 0): [None]}
+    assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+
+
+def test_block_setup_requires_affordable_body_slam(view):
+    view.monsters[0]['adjusted_damage'] = 0
+    view.hand = [card('Impervious', 2), card('Body Slam')]
+    view.targets = {('play', 0): [None], ('play', 1): [0]}
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A._PLAY
+    view.player['energy'] = 2
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A.END_TURN
+
+
+def test_reserve_sleeping_turn_energy_for_barricade(view):
+    view.monsters[0].update(id='Lagavulin', move='LAGAVULIN_SLEEP', hp=109,
+                           adjusted_damage=0, block=8, powers={'Metallicize': 8})
+    view.hand = [card('Barricade', 3), card('Power Through'), card('Body Slam')]
+    view.targets = {('play', 0): [None], ('play', 1): [None], ('play', 2): [0]}
+    assert pick(view, A._PLAY, A._PLAY+1, A._PLAY+2, A.END_TURN) == A._PLAY
+
+
+def test_exhaust_selection_keeps_last_damage_source(view):
+    view.monsters[0].update(hp=14, adjusted_damage=18)
+    view.player['powers'] = {'Strength': -2}
+    view.hand = [card('Strike_R'), card('Defend_R')]
+    view.piles['draw'] = [card('Burning Pact')]
+    view.select = {'context': 'EXHAUST_ONE'}
+    assert pick(view, A._PICK, A._PICK+1) == A._PICK+1
+
+
+def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
+    view.hand = [card('True Grit'), card('Strike_R')]
+    view.piles['draw'] = [card('Defend_R')]
+    view.targets = {('play', 0): [None], ('play', 1): [0]}
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1

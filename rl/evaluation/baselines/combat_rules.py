@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v2'
+RULE_VERSION = 'ironclad-v3'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -211,8 +211,13 @@ def damage(card, monster, view):
 
 def block_value(amount, view):
     useful = min(amount, view.deficit)
-    carry = max(0, amount-useful) * (.6 if view.player['powers'].get('Barricade', 0) else .02)
-    danger = 2.5 if view.deficit >= view.player['hp'] else 1.7
+    carry = max(0, amount-useful) * (.6 if view.player['powers'].get('Barricade', 0) else 0)
+    # Permanent Siphon debuffs and visible growth powers punish indefinite
+    # partial blocking. Race them while HP permits; lethal prevention remains
+    # urgent. This depends on public monster identity/powers, never next moves.
+    race = any(m['id'] in ('Lagavulin', 'BookOfStabbing') or m['powers'].get('Ritual', 0)
+               for m in view.alive)
+    danger = 2.5 if view.deficit >= view.player['hp'] else 1.35 if race else 1.7
     return useful * danger + carry
 
 
@@ -247,6 +252,13 @@ def passive_damage(monster, view, *, before_enemy=False):
     if monster['powers'].get('Intangible', 0):
         value = min(1, value)
     return max(0, value - monster['block'])
+
+
+def damage_source_count(view):
+    """Keep a way to finish: exhaust can otherwise leave a defense-only deck."""
+    if view.player['powers'].get('Combust', 0):
+        return 3
+    return sum(kind(c) == 'attack' for c in view.hand + view.piles['draw'] + view.piles['discard'])
 
 
 def card_score(card, target, view):
@@ -298,7 +310,8 @@ def card_score(card, target, view):
                 # attack that only removes block does not wake Lagavulin.
                 setup = any(kind(c) == 'power' or c['id'] in ('Disarm', 'Apotheosis')
                     for c in view.hand + view.piles['draw'])
-                if setup and damage(card, m, view) > m['block']:
+                ready_setup = any(kind(c) == 'power' and cost(c, view) <= p['energy'] for c in view.hand)
+                if setup and (damage(card, m, view) > m['block'] or ready_setup and cost(card, view)):
                     parts['sleep_setup'] = -40
         if cid in ('Reaper', 'Bite'):
             heal = damage_total if cid == 'Reaper' else 3 if up else 2
@@ -320,6 +333,8 @@ def card_score(card, target, view):
     if pp.get('NoBlock', 0):
         block = 0
     parts['block'] = block_value(block, view)
+    if block and any(c['id'] == 'Body Slam' and cost(c, view) <= remaining for c in view.hand if c is not card):
+        parts['body_slam_setup'] = .85 * block
     if cid == 'Flame Barrier':
         parts['counterattack'] = (6 if up else 4) * sum(intent_hits(m) for m in alive if intent(m)) * .7
     attacks = [c for c in view.hand if c is not card and kind(c) == 'attack']
@@ -363,7 +378,9 @@ def card_score(card, target, view):
         'Dark Embrace': 3 * min(4, exhaust_count),
         'Evolve': 3 * sum(c['id'] in BAD_CARDS for c in all_cards),
         'Fire Breathing': (10 if up else 6) * sum(c['id'] in BAD_CARDS for c in all_cards),
-        'Barricade': 7 if any(c['id'] in ('Entrench', 'Impervious', 'Body Slam') for c in all_cards) else 1,
+        'Barricade': (12 + 6*min(3, sum(c['id'] == 'Body Slam' for c in all_cards))
+            + 5*min(2, sum(c['id'] == 'Entrench' for c in all_cards))) * min(1, turns_left/3)
+            if any(c['id'] in ('Entrench', 'Impervious', 'Body Slam') for c in all_cards) else 1,
         'Corruption': 4 * sum(kind(c) == 'skill' and cost(c, view) > 0 for c in view.hand if c is not card),
         'Berserk': 4 * turns_left - view.deficit * .6,
         'Brutality': 2 * turns_left, 'Rupture': 4 * sum(c['id'] in ('Offering', 'Bloodletting', 'Hemokinesis', 'Combust') for c in all_cards),
@@ -410,6 +427,15 @@ def card_score(card, target, view):
             parts['unlock_clash'] = .9 * sum(numbers(c)[1] for c in attacks if c['id'] == 'Clash') / len(blockers)
     if cid == 'Fiend Fire' and not parts.get('combat_lethal'):
         parts['exhaust_hand'] = -2 * sum(c['id'] not in BAD_CARDS and c is not card for c in view.hand)
+        parts['exhaust_setup'] = -6 * sum(kind(c) == 'power' for c in view.hand if c is not card) * min(3, turns_left)
+    if cid in ('True Grit', 'Burning Pact') and (cid != 'True Grit' or not up):
+        remaining_hand = [c for c in view.hand if c is not card]
+        attacks_at_risk = sum(kind(c) == 'attack' for c in remaining_hand)
+        if remaining_hand and attacks_at_risk and damage_source_count(view) <= 2:
+            # True Grit's unupgraded exhaust is random. Burning Pact chooses,
+            # so only penalize it when every choice would remove an attack.
+            risk = attacks_at_risk / len(remaining_hand) if cid == 'True Grit' else float(attacks_at_risk == len(remaining_hand))
+            parts['preserve_damage_source'] = -30 * risk * (.2 if view.deficit >= p['hp'] else 1)
     if cid in ('Wild Strike', 'Reckless Charge', 'Power Through', 'Immolate'):
         parts['add_junk'] = -1.5
     if not attack:
@@ -417,6 +443,10 @@ def card_score(card, target, view):
     parts['beat_of_death'] = -sum(m['powers'].get('BeatOfDeath', m['powers'].get('Beat of Death', 0)) for m in alive)
     if cid not in IRONCLAD_CARDS and cid not in EXTRA:
         parts['unknown_card'] = -1 if cid not in BAD_CARDS else -5
+    if view.turn < 3 and alive and all(m.get('move') == 'LAGAVULIN_SLEEP' and m['powers'].get('Metallicize', 0) >= 8 for m in alive):
+        ready_powers = [c for c in view.hand if kind(c) == 'power' and cost(c, view) <= p['energy']]
+        if kind(card) != 'power' and ready_powers and remaining < max(cost(c, view) for c in ready_powers):
+            parts['reserve_sleep_setup'] = -40
     # Prefer efficient cards, but a guaranteed kill takes precedence over cost.
     total = sum(parts.values())
     if not parts.get('kill') and not parts.get('combat_lethal'):
@@ -519,6 +549,8 @@ def selection_score(index, view):
         score = -12
     if context in ('EXHAUST_ONE', 'EXHAUST_MANY', 'RECYCLE'):
         score = -score + (6 if card['id'] == 'Sentinel' else 0)
+        if kind(card) == 'attack' and damage_source_count(view) <= 2:
+            score -= 30
     elif context in ('WARCRY', 'FORETHOUGHT', 'SETUP', 'GAMBLE'):
         score = -score + (6 if cost(card, view) > view.player['energy'] else 0)
     elif context == 'ARMAMENTS':
