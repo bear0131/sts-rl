@@ -37,8 +37,9 @@ def test_guaranteed_combat_kill_beats_defending(view):
 
 
 def test_block_is_valued_only_against_visible_threat(view):
+    view.monsters[0]['adjusted_damage'] = 14
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
-    view.player['block'] = 10
+    view.player['block'] = 14
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
     assert pick(view, A._PLAY+1, A.END_TURN) == A.END_TURN
 
@@ -298,3 +299,19 @@ def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
     view.piles['draw'] = [card('Defend_R')]
     view.targets = {('play', 0): [None], ('play', 1): [0]}
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_hp_budget_prefers_damage_only_for_affordable_chip_loss(view):
+    from rl.evaluation.baselines.combat_rules import block_value
+    view.player['hp'] = 80
+    view.monsters[0]['adjusted_damage'] = 20
+    assert block_value(5, view) == 5
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+    view.monsters[0]['adjusted_damage'] = 21
+    assert block_value(5, view) == 8.5
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+    view.player['hp'] = 21
+    assert block_value(5, view) == 12.5
+    view.player['powers'] = {'Barricade': 1}
+    view.monsters[0]['adjusted_damage'] = 0
+    assert block_value(5, view) == 3

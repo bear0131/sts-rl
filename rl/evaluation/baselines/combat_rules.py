@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v3'
+RULE_VERSION = 'ironclad-hp-budget-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -218,6 +218,10 @@ def block_value(amount, view):
     race = any(m['id'] in ('Lagavulin', 'BookOfStabbing') or m['powers'].get('Ritual', 0)
                for m in view.alive)
     danger = 2.5 if view.deficit >= view.player['hp'] else 1.35 if race else 1.7
+    # Experimental HP budget: affordable chip damage can justify faster kills.
+    # This is a preference hypothesis, not a game-mechanics equivalence claim.
+    if view.deficit < view.player['hp'] and view.deficit <= view.player['hp']/4:
+        danger = min(danger, 1.0)
     return useful * danger + carry
 
 

@@ -131,3 +131,26 @@ def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     assert raw_moves[0] != raw_moves[1]
     assert views[0] == views[1]
     assert decisions[0] == decisions[1]
+
+
+@pytest.mark.parametrize('hp,first,damage', [(80, A._PLAY, 18), (8, A._PLAY+3, 12)])
+def test_native_hp_budget_trades_chip_damage_but_preserves_lethal_defense(combat_factory, hp, first, damage):
+    env = combat_factory(['STRIKE_RED']*5).fork_combat()
+    env.thick.bc.apply_custom_state({'player': {'hp': hp},
+        'hand': [('STRIKE_RED',0)]*3+[('DEFEND_RED',0)],
+        'monsters': [{'move': 'JAW_WORM_CHOMP'}]})
+    env._invalidate_backend_cache()
+    before = visible_combat(request(env))
+    strategy = CombatRuleStrategy()
+    assert strategy.decide([request(env)])[0].action == first
+    for _ in range(10):
+        action = strategy.decide([request(env)])[0].action
+        env.step(action)
+        if visible_combat(request(env)).turn > before.turn:
+            break
+    after = visible_combat(request(env))
+    assert after.turn == before.turn+1
+    assert before.monsters[0]['hp']-after.monsters[0]['hp'] == damage
+    saved = 0 if hp == 80 else 5
+    assert after.player['hp'] == hp-before.incoming+saved
+    assert after.player['hp'] > 0
