@@ -1241,6 +1241,49 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     return d;
 }
 
+std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
+                                const sts::BattleContext &source,
+                                std::uint32_t actionBits) {
+    using namespace sts;
+    using namespace sts::search;
+    const search::Action original(actionBits);
+    const auto task = source.cardSelectInfo.cardSelectTask;
+    if (source.outcome != Outcome::UNDECIDED || sampled.outcome != Outcome::UNDECIDED ||
+        source.inputState != InputState::CARD_SELECT ||
+        sampled.inputState != InputState::CARD_SELECT ||
+        sampled.cardSelectInfo.cardSelectTask != task ||
+        (task != CardSelectTask::SECRET_TECHNIQUE &&
+         task != CardSelectTask::SECRET_WEAPON && task != CardSelectTask::SEEK) ||
+        original.getActionType() != ActionType::SINGLE_CARD_SELECT ||
+        !original.isValidAction(source)) {
+        throw std::invalid_argument("draw-selection remap requires matching live draw-select screens and a legal source action");
+    }
+    const auto &card = source.cards.drawPile[original.getSelectIdx()];
+    const auto uid = card.getUniqueId();
+    const auto sameIdentity = [uid](const CardInstance &other) {
+        return other.getUniqueId() == uid;
+    };
+    if (uid < 0 || std::count_if(source.cards.drawPile.begin(), source.cards.drawPile.end(), sameIdentity) != 1 ||
+        std::count_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity) != 1) {
+        throw std::invalid_argument("draw-selection remap requires one matching card entity in each pile");
+    }
+    const auto found = std::find_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity);
+    // Re-determinization may reorder this entity, never substitute an equal-name
+    // card or change persistent state such as Ritual Dagger's specialData.
+    if (card.id != found->id || card.specialData != found->specialData ||
+        card.upgraded != found->upgraded || card.cost != found->cost ||
+        card.costForTurn != found->costForTurn || card.freeToPlayOnce != found->freeToPlayOnce ||
+        card.retain != found->retain) {
+        throw std::invalid_argument("draw-selection entity changed after sampling");
+    }
+    const search::Action mapped(ActionType::SINGLE_CARD_SELECT,
+                        static_cast<int>(found - sampled.cards.drawPile.begin()));
+    if (!mapped.isValidAction(sampled)) {
+        throw std::invalid_argument("remapped draw selection is not legal in sampled state");
+    }
+    return mapped.bits;
+}
+
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
@@ -2455,6 +2498,29 @@ PYBIND11_MODULE(slaythespire, m) {
 #endif
             return copy;
         }, "return an independent deep copy of the complete combat state")
+        .def("remap_draw_selection_from", &remapDrawSelection,
+             pybind11::arg("source"), pybind11::arg("action_bits"),
+             "map a public draw selection to this sampled clone by stable card identity; returns legal complete action bits without executing")
+        .def("preview_end_turn_result", [](const BattleContext &bc,
+                                           std::uint32_t actionBits) {
+            const search::Action action(actionBits);
+            if (bc.outcome != Outcome::UNDECIDED ||
+                action.getActionType() != search::ActionType::END_TURN ||
+                !action.isValidAction(bc)) {
+                throw std::invalid_argument("end-turn preview requires a legal live END_TURN action");
+            }
+            BattleContext boundary(bc);
+#ifdef STS_ENABLE_RULE_TRACE
+            boundary.atomicStepObserver = {};
+#endif
+            boundary.stopAfterEnemyTurn = true;
+            action.execute(boundary);
+            if (!boundary.postEnemyTurnBoundary && boundary.outcome == Outcome::UNDECIDED) {
+                throw std::runtime_error("end-turn preview stopped before the enemy boundary");
+            }
+            return rawCombatState(boundary);
+        }, pybind11::arg("action_bits"),
+           "execute once on a clone and return the post-enemy boundary or terminal raw result; never mutates the source")
         .def("preview_end_turn_boundary", [](const BattleContext &bc,
                                                std::uint32_t actionBits) {
             const search::Action action(actionBits);
@@ -2764,4 +2830,3 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-
