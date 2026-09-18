@@ -45,6 +45,31 @@ def _planner():
         master_nonce=20260918))
 
 
+def test_end_turn_choice_is_planned_then_replanned_on_real_observation(combat_factory):
+    # Nilry's Codex pauses END before enemies act; the real environment then
+    # asks a second decision. Both decisions must use the same turn horizon.
+    battle = combat_factory(['DEFEND_RED'] * 10, relics=["Nilry's Codex"]).thick.bc
+    battle.apply_custom_state({'player': {'energy': 0},
+                               'monsters': [{'move': 'JAW_WORM_CHOMP'}]})
+    before = _snapshot(battle)
+    before_turn = battle.to_dict()['turn']
+    planner = _planner()
+    first = planner.choose(battle, state_nonce=1)
+    assert first.action_bits == 4 << 29
+    assert first.diagnostics['fallback_leaves'] == 0
+    assert _snapshot(battle) == before
+    battle.execute(_assert_legal(battle, first))
+    assert battle.select_info()['context'] == 'CODEX'
+    assert int(battle.input_state) == 2
+    pending = _snapshot(battle)
+    second = planner.choose(battle, state_nonce=2)
+    assert second.diagnostics['fallback_leaves'] == 0
+    assert _snapshot(battle) == pending
+    battle.execute(_assert_legal(battle, second))
+    assert int(battle.input_state) == 1
+    assert battle.to_dict()['turn'] == before_turn + 1
+
+
 def test_reaper_heals_before_an_available_immediate_kill(combat_factory):
     # Native controls: Strike+ kills at71HP; Reaper -> Strike+ kills at79HP.
     battle = _battle(combat_factory, {

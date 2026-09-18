@@ -131,7 +131,7 @@ python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 204
 
 仍可用 `--upper-strategy rules` 替换上层。战斗叶子完全由人工状态价值评价；
 上层模型的使用不代表战斗搜索调用神经网络。`effective_strategy` 记录完整配置和信息边界。
-需要重建包含 `preview_end_turn_result` 与 `remap_draw_selection_from` 的 native 扩展；
+需要重建包含 `execute_to_enemy_boundary` 与 `remap_draw_selection_from` 的 native 扩展；
 旧模型维度不变。普通 `--trace` 记录完整原生首步、根值及排序后的 draw 多重集；
 `--compare-combats` 暂不支持这个动作契约，CLI 明确拒绝。
 步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。

@@ -13,12 +13,11 @@ import math
 import time
 
 from env.core import _BUILD  # noqa: F401  (explicit native build bootstrap)
-import slaythespire as sts
 from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v1'
+PLANNER_VERSION = 'ironclad-turn-v1.1'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -155,22 +154,23 @@ class NativeTurnPlanner:
         frontier = []
         serial = 0
         best = -math.inf
+        best_partial = -math.inf
 
         def take(state, action, depth):
-            nonlocal serial, best
+            nonlocal serial, best, best_partial
             stats['native_transitions'] += 1
-            if action == _END:
-                boundary = state.preview_end_turn_result(action)
-                best = max(best, state_value(boundary))
-                return
             child = state.clone()
-            child.execute(sts.Action(action))
-            raw = child.to_dict()
-            if raw['outcome'] != 0:
+            # End Turn can pause for Codex; a normal card can force the turn
+            # to end (Time Eater). Keep the cloned boundary flag across either
+            # path and continue intermediate selections without a new draw.
+            raw = child.execute_to_enemy_boundary(action)
+            if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 best = max(best, state_value(raw))
                 return
+            partial = state_value(raw, partial=True)
+            best_partial = max(best_partial, partial)
             serial += 1
-            heapq.heappush(frontier, (-state_value(raw, partial=True), serial, depth, child))
+            heapq.heappush(frontier, (-partial, serial, depth, child))
 
         take(branch, bits, 1)
         while frontier and stats['native_transitions'] < quota:
@@ -199,5 +199,5 @@ class NativeTurnPlanner:
             # A pending selection may outlast the allocated expansion. This is
             # explicitly approximate; never execute extra unbudgeted rollouts.
             stats['fallback_leaves'] += 1
-            best = -frontier[0][0] if frontier else state_value(branch.to_dict(), partial=True)
+            best = best_partial
         return best, stats

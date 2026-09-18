@@ -39,9 +39,10 @@ checkpoint 的动作含义均未重映射。该模式不为旧神经策略补齐
 
 native-v1 仅在完整合法集合也为空时将战斗判作 dead_screen。因此当前 thin mask
 可以全 False，而完整候选仍可执行；旧模型必须继续使用 legacy 默认。分支复制保持
-候选身份，选择之后才进入后续随机未来。**现有 NOSL redeterminize 会重排 draw**：
-已打开的 draw-select 不允许将原环境索引带入重排后的副本；新 planner 应先在当前
-公开候选上完成选择，再对后续隐藏状态采样。native_index 是执行句柄，不能用来
+候选身份。**现有 NOSL redeterminize 会重排 draw**：
+已打开的 draw-select 不允许将原环境索引带入重排后的副本；新 planner 应先采样，
+再用 `remap_draw_selection_from` 按原生实体身份映射选择。不能先执行选择，否则排队的
+Dark Embrace 等效果可能读到真实未来。native_index 是执行句柄，不能用来
 推断后续抽牌顺序。此阶段没有修改旧 NOSL/训练语义。
 
 回归入口：`tests/integration/test_native_action_contract.py`。legacy 的 F03 strict
