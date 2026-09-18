@@ -54,10 +54,16 @@ trace 对照真实动作/结果验证，不能直接把分项当作游戏规则�
 位置参数始终是上层；`--combat-checkpoint` 指定下层，仅在 combat 阶段使用。
 
 ```bash
-python -m rl.evaluation.eval UPPER.zip --solver rules --episodes 16 --seed 20000 --device cpu --num-envs 1 --max-steps 6000 --timeout 600 --output runs/local/rules-holdout.json
-python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver policy --episodes 16 --seed 20000 --device cpu --num-envs 1 --max-steps 6000 --timeout 600 --output runs/local/policy-holdout.json
-python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver native --search-mode strict --simulations 128 --depth 0 --episodes 16 --seed 20000 --device cpu --num-envs 1 --max-steps 6000 --timeout 3600 --output runs/local/search-holdout.json
+python -m rl.evaluation.eval UPPER.zip --solver rules --episodes 128 --seed 10000 --device cpu --num-envs 32 --max-steps 6000 --timeout 600 --output runs/local/rules-development.json
+python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver policy --episodes 128 --seed 10000 --device cpu --num-envs 32 --max-steps 6000 --timeout 600 --output runs/local/policy-development.json
+python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver native --search-mode strict --simulations 128 --depth 0 --leaf-batch-size 1 --episodes 128 --seed 10000 --device cuda --num-envs 32 --max-steps 6000 --timeout 3600 --output runs/local/search-development.json
 ```
+
+整局候选筛选和冻结后验证每组至少 128 局；固定状态的机制回归测试可以更小。
+上面是开发集示例，验证集每轮在 worklog 预先声明，不能将已看过的种子重新称为留出。
+可以拆为四个不重叠的 32 局分片，但须保留相同 `num_envs`、各片 seed/config/源码与模型哈希，
+合并时检查唯一 seed、自然结束、进程退出码及截断情况。分片评测不能声称是单次 128 宽 batch。
+搜索可显式添加 `--leaf-inference cuda-graph`；其 FP32/CUDA 支持范围与验证边界见上级 README。
 
 固定上层权重并不固定其之后的选择：战斗造成不同 HP/药水/奖励状态，上层可能改变路线和抓牌。
 同 seed 整局比较因此衡量整个组合效果。为隔离战斗，沿明确的参考策略轨迹抽取前 N 个战斗开局，
@@ -84,15 +90,15 @@ JSON 记录上下层/native 文件哈希、逐局结果和 `combat_rows`，包�
 `step_limit`/超时必须单列，未完成组不能伪装成完整样本。CLI 超时是合作式；正式批次还需
 外部进程监督硬超时。trace 拒绝覆盖现有文件。
 
-开发种子固定为 10000–10003；留出从 20000 开始。只针对开发 bad case 调整规则，冻结版本后
-跑留出；若查看留出并修改，就把它标为新的开发集并另选留出。报告样本数和不确定性，不能从
+只针对每轮声明的开发 bad case 调整规则，冻结版本后跑新留出；若查看留出并修改，就把它
+标为新的开发集并另选留出。历史种子范围及其后续用途以 worklog 为准。报告样本数和不确定性，不能从
 几局/单个怪物声称总体胜率优越，也不能拿 W&B 滚动训练指标代替固定 checkpoint 评测。
 
 ## 可选择的上层规则
 
 ```bash
-python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --solver rules --episodes 32 --seed 30000 --device cpu --max-steps 6000 --timeout 300 --output runs/local/joint-rules.json
-python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoint COMBAT.zip --solver native --search-mode strict --simulations 128 --depth 0 --episodes 8 --seed 30000 --device cpu --max-steps 6000 --timeout 1200 --output runs/local/rule-upper-search.json
+python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --solver rules --episodes 128 --seed 10000 --device cpu --num-envs 32 --max-steps 6000 --timeout 600 --output runs/local/joint-rules-development.json
+python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoint COMBAT.zip --solver native --search-mode strict --simulations 128 --depth 0 --leaf-batch-size 1 --episodes 128 --seed 10000 --device cuda --num-envs 32 --max-steps 6000 --timeout 3600 --output runs/local/rule-upper-search-development.json
 ```
 
 `OverworldRuleStrategy` 依据公开牌组缺口、重复牌和力量/消耗/格挡配合评估奖励及跳过，按价格
