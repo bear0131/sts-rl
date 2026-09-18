@@ -21,6 +21,21 @@ def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
             if previous[key] != actual[key]} == {"nosl_is_az_upper_strategy": (None, "rules")}
 
 
+def test_u40_fourfold_preset_carries_validated_rollout_tuning():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+    ])
+
+    assert args.nosl_is_az_updates == 40
+    assert args.nosl_is_az_inference_batch_size == 128
+    assert args.nosl_is_az_inference_max_wait_ms == 0
+    assert args.nosl_is_az_inference_schedule == "fixed_wait"
+    assert args.leaf_graph_batch_multiple == 32
+    assert args.leaf_graph_profile_interval == 512
+    assert args.rollout_resource_interval == 2
+
+
 @pytest.mark.parametrize("name", ["nosl_paper_replay_fresh10_20260913",
                                  "nosl_paper_noetl_noreplay_e288_20260913",
                                  "nosl_fixed_fpu_20260909"])
@@ -104,12 +119,6 @@ def test_u40_sixteenfold_width_preset_scales_coupled_geometry():
         "envs_per_worker": (4, 16),
         "n_envs": (96, 384),
         "nosl_is_az_batch_size": (98304, 393216),
-        "nosl_is_az_inference_batch_size": (None, 128),
-        "nosl_is_az_inference_max_wait_ms": (None, 0),
-        "nosl_is_az_inference_schedule": (None, "fixed_wait"),
-        "leaf_graph_batch_multiple": (0, 32),
-        "leaf_graph_profile_interval": (0, 512),
-        "rollout_resource_interval": (0, 2),
         "nosl_is_az_micro_batch_size": (2048, 8192),
         "nosl_is_az_replay_capacity": (524288, 2097152),
         "nosl_is_az_replay_max_old_fraction": (0.9, 1.0),
@@ -150,15 +159,7 @@ def test_u10x4_preset_carries_rollout_tuning():
         for key, value in vars(args).items()
         if previous[key] != value
     }
-    assert differences == {
-        "nosl_is_az_updates": (40, 10),
-        "nosl_is_az_inference_batch_size": (None, 128),
-        "nosl_is_az_inference_max_wait_ms": (None, 0),
-        "nosl_is_az_inference_schedule": (None, "fixed_wait"),
-        "leaf_graph_batch_multiple": (0, 32),
-        "leaf_graph_profile_interval": (0, 512),
-        "rollout_resource_interval": (0, 2),
-    }
+    assert differences == {"nosl_is_az_updates": (40, 10)}
 
 
 def test_u40x4_uniform_replay_only_removes_freshness_ratio():
