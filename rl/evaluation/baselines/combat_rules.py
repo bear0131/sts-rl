@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-artifact-v1'
+RULE_VERSION = 'ironclad-artifact-v2'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -297,6 +297,11 @@ def artifact_opening(card, monster, view, remaining):
     stripped = before-after
     if not stripped:
         return 0.
+    landed, _ = resolved_debuffs(card, monster, before, 0)
+    following = dict(monster, powers=dict(monster['powers']))
+    for effect, power in (('weak', 'Weakened'), ('vulnerable', 'Vulnerable')):
+        if landed.get(effect):
+            following['powers'][power] = 1
     immediate = 0.
     for followup in view.hand:
         if followup is card or not card_debuffs(followup) or cost(followup, view) > remaining:
@@ -304,7 +309,7 @@ def artifact_opening(card, monster, view, remaining):
         attacks = [c for c in view.hand if c is not card and c is not followup and kind(c) == 'attack']
         affordable = min(len(attacks), remaining-cost(followup, view)+sum(cost(c, view) == 0 for c in attacks))
         old, _ = resolved_debuffs(followup, monster, before, affordable)
-        new, _ = resolved_debuffs(followup, monster, after, affordable)
+        new, _ = resolved_debuffs(followup, following, after, affordable)
         immediate = max(immediate, .5*(sum(new.values())-sum(old.values())))
     future_effects = sum(len(card_debuffs(c)) for c in view.hand+view.piles['draw']+view.piles['discard'] if c is not card)
     future = .75*stripped if horizon(view) > 1 and future_effects > after else 0.

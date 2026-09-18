@@ -329,3 +329,16 @@ def test_killed_enemy_gets_neither_debuff_nor_artifact_credit(view):
     view.hand = [card('Uppercut', 2), card('Disarm')]
     parts = card_score(view.hand[0], 0, view)[1]
     assert not any(parts.get(k) for k in ('weak', 'vulnerable', 'artifact_opening'))
+
+
+def test_artifact_opening_does_not_credit_already_landed_vulnerable(view):
+    from rl.evaluation.baselines.combat_rules import artifact_opening
+    view.monsters[0].update(hp=35, powers={'Artifact': 1})
+    view.hand = [card('Shockwave', 2), card('Bash', 2)]
+    view.piles = dict(draw=[], discard=[], exhaust=[], generated=[])
+    view.player['energy'] = 4
+    # Shockwave's first Weak removes Artifact; its own Vulnerable lands.
+    # A later Bash cannot add another first-application Vulnerable benefit.
+    assert artifact_opening(view.hand[0], view.monsters[0], view, 2) == 0
+    assert view.monsters[0]['powers'] == {'Artifact': 1}
+    assert card_score(view.hand[0], 0, view)[1]['vulnerable'] > 0
