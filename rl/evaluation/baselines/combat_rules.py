@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v3'
+RULE_VERSION = 'ironclad-hand-finish-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -244,6 +244,53 @@ def attack_followups(card, monster, view, energy):
     return total
 
 
+def visible_hand_finish(card, view):
+    """A conservative affordable attack packet against the sole live enemy.
+
+    This sums fixed visible damage in one greedy ordering; it does not step,
+    fork or query the simulator, enumerate draws, or predict enemy moves.
+    Reactive block, temporary damage boosts, forced draws and self-damage are
+    excluded because adding independent card numbers would not prove a finish.
+    """
+    if len(view.alive) != 1 or not any(card is c for c in view.hand):
+        return False
+    monster = view.alive[0]  # AOE codec target0 may be an empty/dead slot.
+    mp, pp = monster['powers'], view.player['powers']
+    if monster['id'] in ('AwakenedOne', 'TheGuardian'):
+        return False
+    if any(mp.get(k, 0) for k in ('Curl Up', 'Malleable', 'Mode Shift', 'Invincible', 'Thorns', 'Sharp Hide', 'Beat of Death', 'BeatOfDeath')):
+        return False
+    if any(pp.get(k, 0) for k in ('Vigor', 'Double Damage', 'DoubleDamage', 'Double Tap', 'DoubleTap', 'Dark Embrace')):
+        return False
+    if any(r in view.relics for r in ('Dead Branch', 'Ink Bottle', 'Velvet Choker')) or view.player.get('combat_counters', {}).get('pen_nib', 0) == 9:
+        return False
+    if any(c['id'] in ('Normality', 'Pain') for c in view.hand):
+        return False
+    def eligible(c):
+        return kind(c) == 'attack' and c['id'] not in DRAW and c['id'] not in (
+            'Fiend Fire', 'Whirlwind', 'Hemokinesis', 'Dropkick') and (
+            c['id'] != 'Clash' or all(kind(x) == 'attack' for x in view.hand))
+    if not eligible(card):
+        return False
+    energy = view.player['energy']-cost(card, view)
+    if energy < 0:
+        return False
+    cards_left = 12-mp.get('Time Warp', 0) if monster['id'] == 'TimeEater' else 10
+    total, played = damage(card, monster, view), 1
+    needed = monster['hp']+monster['block']
+    followers = [c for c in view.hand if c is not card and eligible(c)]
+    followers.sort(key=lambda c: -damage(c, monster, view)/max(.5, cost(c, view)))
+    for followup in followers:
+        if total >= needed:
+            break
+        spend = cost(followup, view)
+        if spend <= energy and played < cards_left:
+            energy -= spend
+            total += damage(followup, monster, view)
+            played += 1
+    return played <= cards_left and total >= needed
+
+
 def passive_damage(monster, view, *, before_enemy=False):
     """Only deterministic visible passives; Mercury occurs AFTER enemy attacks."""
     value = view.player['powers'].get('Combust', 0)
@@ -298,12 +345,8 @@ def card_score(card, target, view):
                 old_loss = max(0, survivor_damage-p['block'])
                 new_loss = max(0, survivor_damage*1.5-p['block'])
                 parts['spore_cloud'] = -1.7 * (new_loss-old_loss) - 2 * (len(alive)-kills)
-        if len(alive) == 1 and not kills and remaining and target_monster:
-            # Reward progressing toward a same-turn finish so that blocking
-            # does not consume the energy needed by a plainly available combo.
-            followup = attack_followups(card, target_monster, view, remaining)
-            if raw_damage + followup >= target_monster['hp'] + target_monster['block']:
-                parts['hand_finish'] = min(18, 6 + .7 * view.deficit)
+        if not kills and visible_hand_finish(card, view):
+            parts['hand_finish'] = 1000
         for m in affected:
             if m.get('move') == 'LAGAVULIN_SLEEP' and m['powers'].get('Metallicize', 0) >= 8 and view.turn < 3:
                 # Use free sleeping turns to find/play permanent setup. An

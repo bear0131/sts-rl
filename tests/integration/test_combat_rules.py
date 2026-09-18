@@ -131,3 +131,62 @@ def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     assert raw_moves[0] != raw_moves[1]
     assert views[0] == views[1]
     assert decisions[0] == decisions[1]
+
+
+@pytest.mark.parametrize('counter,finishes', [(10, True), (11, False)])
+def test_native_visible_hand_finish_obeys_time_warp_boundary(combat_factory, counter, finishes):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    env = combat_factory(['STRIKE_RED']*5, encounter='Time Eater').fork_combat()
+    # Advance the real public clock through legal zero-cost cards. The native
+    # fixture setter deliberately does not expose Time Warp mutation.
+    for _ in range(counter):
+        env.thick.bc.apply_custom_state({'hand': [('INTIMIDATE',0)]})
+        env._invalidate_backend_cache(); env.step(A._PLAY)
+        if env._info().get('pending'):
+            env.step(A._TARGET)
+    env.thick.bc.apply_custom_state({'hand': [('STRIKE_RED',0,1), ('STRIKE_RED',0,1)],
+        'monsters': [{'hp': 12}]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert view.monsters[0]['powers']['Time Warp'] == counter
+    assert visible_hand_finish(view.hand[0], view) is finishes
+    env.step(A._PLAY); env.step(A._TARGET)
+    if finishes:
+        env.step(A._PLAY); env.step(A._TARGET)
+        assert env.thick.bc.outcome == 1
+    else:
+        assert env.thick.bc.outcome != 1
+        assert visible_combat(request(env)).turn == view.turn+1
+
+
+def test_native_aoe_finish_keeps_dead_slot_codec_identity(combat_factory):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    env = combat_factory(['STRIKE_RED']*5, encounter='Centurion And Healer').fork_combat()
+    env.thick.bc.apply_custom_state({'hand': [('STRIKE_RED',0,1)],
+        'monsters': [{'hp': 1}, {'hp': 12}]})
+    env._invalidate_backend_cache(); env.step(A._PLAY); env.step(A._TARGET)
+    env.thick.bc.apply_custom_state({'hand': [('CLEAVE',0,1), ('STRIKE_RED',0,1)]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert view.monsters[0]['hp'] == 0
+    assert view.targets[('play', 0)] == [0]
+    assert visible_hand_finish(view.hand[0], view)
+    env.step(A._PLAY); env.step(A._TARGET)
+    env.step(A._PLAY); env.step(A._TARGET+1)
+    assert env.thick.bc.outcome == 1
+
+
+def test_native_fiend_fire_cannot_use_exhausted_followup_attack(combat_factory):
+    from rl.evaluation.baselines.combat_rules import card_score, visible_hand_finish
+    env = combat_factory(['STRIKE_RED']*5, encounter='Cultist').fork_combat()
+    env.thick.bc.apply_custom_state({'hand': [('FIEND_FIRE',0,2), ('STRIKE_RED',0,1), ('DEFEND_RED',0,1)],
+        'monsters': [{'hp': 20}]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert not visible_hand_finish(view.hand[0], view)
+    assert 'hand_finish' not in card_score(view.hand[0], 0, view)[1]
+    env.step(A._PLAY); env.step(A._TARGET)
+    after = visible_combat(request(env))
+    assert after.monsters[0]['hp'] == 6
+    assert after.hand == []
+    assert any(c['id'] == 'Strike_R' for c in after.piles['exhaust'])

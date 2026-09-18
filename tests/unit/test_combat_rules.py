@@ -298,3 +298,35 @@ def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
     view.piles['draw'] = [card('Defend_R')]
     view.targets = {('play', 0): [None], ('play', 1): [0]}
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_hand_finish_uses_live_enemy_instead_of_aoe_dummy_slot(view):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    view.monsters = [monster(hp=0), monster(hp=12, attack=40)]
+    view.hand = [card('Cleave'), card('Strike_R'), card('Defend_R')]
+    view.player['energy'] = 2
+    view.targets = {('play', 0): [0], ('play', 1): [1], ('play', 2): [0]}
+    assert visible_hand_finish(view.hand[0], view)
+    assert pick(view, A._PLAY, A._PLAY+1, A._PLAY+2) != A._PLAY+2
+    view.monsters[1]['hp'] = 100
+    assert not visible_hand_finish(view.hand[0], view)
+    assert 'hand_finish' not in card_score(view.hand[0], 0, view)[1]
+
+
+def test_hand_finish_checks_energy_time_warp_and_reactive_powers(view):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    view.hand = [card('Strike_R'), card('Strike_R')]
+    view.monsters[0].update(id='TimeEater', hp=12, powers={'Time Warp': 10})
+    assert visible_hand_finish(view.hand[0], view)
+    view.monsters[0]['powers']['Time Warp'] = 11
+    assert not visible_hand_finish(view.hand[0], view)
+    view.monsters[0]['powers'] = {}
+    view.player['energy'] = 1
+    assert not visible_hand_finish(view.hand[0], view)
+    view.player['energy'] = 2
+    for power in ('Curl Up', 'Malleable', 'Thorns', 'Sharp Hide'):
+        view.monsters[0]['powers'] = {power: 1}
+        assert not visible_hand_finish(view.hand[0], view)
+    view.monsters[0]['powers'] = {}
+    view.player['powers'] = {'Vigor': 10}
+    assert not visible_hand_finish(view.hand[0], view)
