@@ -1,5 +1,6 @@
 """Explicit graph mode preserves defaults and upper/combat ownership."""
 from types import SimpleNamespace
+import json
 import sys
 
 import numpy as np
@@ -94,3 +95,46 @@ def test_explicit_backend_does_not_change_legacy_model_backend():
     np.testing.assert_array_equal(inherited_again[0], 7.0)
     assert model._native_leaf_inference is backend
     assert calls == [1, 1]
+
+
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_cli_reports_final_candidate_cache_statistics(tmp_path, monkeypatch, interrupted):
+    class Cache:
+        def __init__(self, core, device, **kwargs):
+            self.__dict__.update(kwargs)
+            self.captures = 0
+        def statistics(self):
+            return {'captures': self.captures}
+
+    monkeypatch.setattr(S, 'CombatLeafGraphs', Cache)
+    frozen = model('cuda')
+    frozen.set_random_seed = lambda seed: None
+    monkeypatch.setattr(cli, 'load_checkpoint', lambda *a, **kw: frozen)
+    monkeypatch.setattr(cli, 'make_scenario', lambda *a: None)
+    output = tmp_path / 'eval.json'
+    monkeypatch.setattr(sys, 'argv', ['eval', 'unused.zip', '--solver', 'native',
+        '--leaf-inference', 'cuda-graph', '--compare-combats', '1', '--episodes', '1',
+        '--output', str(output)])
+
+    def finish(audit, *a, **kw):
+        reference = audit.reference.routes['combat'].leaf_backend
+        candidate = audit.candidates['native'].routes['combat'].leaf_backend
+        assert reference is not candidate
+        reference.captures = 2
+        candidate.captures = 7
+        yield dict(episode=0, seed=10000, result='win', floor=55, act=4, steps=3, raw_return=1.)
+        if interrupted:
+            raise TimeoutError('fixture budget')
+
+    monkeypatch.setattr(cli, 'evaluate', finish)
+    if interrupted:
+        with pytest.raises(TimeoutError, match='fixture budget'):
+            cli.main()
+    else:
+        cli.main()
+    payload = json.loads(output.read_text())
+    assert payload['state'] == ('error' if interrupted else 'complete')
+    candidate = payload['combat_candidates']['native']['phases']['combat']['leaf_inference']
+    reference = payload['effective_strategy']['phases']['combat']['leaf_inference']
+    assert candidate['statistics'] == {'captures': 7}
+    assert reference['statistics'] == {'captures': 2}
