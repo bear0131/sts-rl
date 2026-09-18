@@ -289,6 +289,24 @@ STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': val
               'turn-planner': turn_planner_strategy}
 
 
+def overworld_rule_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
+    return OverworldRuleStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_demand_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_demand import EnemyDemandUpperStrategy
+    return EnemyDemandUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+# Upper factories are independent of combat solver registration and the CLI.
+UPPER_STRATEGIES = {
+    'model': lambda model, args, trace=None: policy_strategy(model, args),
+    'rules': overworld_rule_strategy,
+    'demand': overworld_demand_strategy,
+}
+
+
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
@@ -296,9 +314,11 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
         strategy.routes['combat'].trace = trace
     if combat_model is not None:
         strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
-    if getattr(args, 'upper_strategy', 'model') == 'rules':
-        from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
-        upper = OverworldRuleStrategy(fallback=policy_strategy(upper_model, args), trace=trace)
+    upper_name = getattr(args, 'upper_strategy', 'model')
+    if upper_name not in UPPER_STRATEGIES:
+        raise ValueError(f'unknown upper strategy: {upper_name}')
+    if upper_name != 'model':
+        upper = UPPER_STRATEGIES[upper_name](upper_model, args, trace=trace)
         strategy = PhaseStrategy(upper, {'combat': strategy})
     if getattr(args, 'route', 'model') != 'model':
         strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
