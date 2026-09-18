@@ -17,7 +17,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v4'
+PLANNER_VERSION = 'ironclad-turn-v5-avoid-sampled-death'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -199,6 +199,40 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     return value
 
 
+def leaf_value(raw, *, public_relics=None, horizon=None):
+    """Lexicographic terminal class and the unchanged scalar heuristic.
+
+    The heuristic alone is not a terminal utility: a huge live power can exceed
+    the historical victory bonus. Keep it for ordering within a terminal class.
+    """
+    rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
+    value = state_value(raw, public_relics=public_relics, horizon=horizon)
+    if not math.isfinite(value):
+        raise ValueError('planner leaf heuristic must be finite')
+    return rank, value
+
+
+def aggregate_world_values(values):
+    """Prefer fewer sampled deaths, then more wins, then mean old heuristic.
+
+    This is an explicit conservative risk preference, not a win probability or
+    an equivalent rescaling. Equal-world roots are compared lexicographically.
+    All-live roots retain exactly the previous arithmetic mean and ordering.
+    """
+    if not values:
+        raise ValueError('world values must not be empty')
+    if any(rank not in (-1, 0, 1) or not math.isfinite(value) for rank, value in values):
+        raise ValueError('world outcomes and heuristic values must be valid and finite')
+    mean = sum(value for _, value in values) / len(values)
+    if not math.isfinite(mean):
+        # Avoid overflowing the sum of otherwise finite extreme fixture values.
+        mean = math.fsum(value / len(values) for _, value in values)
+    if not math.isfinite(mean):
+        raise ValueError('world mean must be finite')
+    return (-sum(rank == -1 for rank, _ in values),
+            sum(rank == 1 for rank, _ in values), mean)
+
+
 class NativeTurnPlanner:
     """Receding-horizon best-first beams, averaged across sampled futures.
 
@@ -231,6 +265,7 @@ class NativeTurnPlanner:
         budget = max(self.config.node_budget, 2 * len(roots))
         quota = budget // len(roots)
         values = {bits: [] for bits in roots}
+        unresolved = {bits: 0 for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0)
@@ -242,13 +277,18 @@ class NativeTurnPlanner:
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics, horizon)
                 values[bits].append(score)
+                unresolved[bits] += counts['fallback_leaves']
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves'):
                     stats[key] += counts[key]
                 stats['budget_exhausted'] |= counts['budget_exhausted']
             stats['worlds_completed'] += 1
-        mean = {bits: sum(scores) / len(scores) for bits, scores in values.items()}
-        selected = max(roots, key=lambda bits: (mean[bits], -bits))
-        stats.update(root_values={str(k): v for k, v in mean.items()},
+        priorities = {bits: aggregate_world_values(scores) for bits, scores in values.items()}
+        selected = max(roots, key=lambda bits: (priorities[bits], -bits))
+        stats.update(root_values={str(k): v[2] for k, v in priorities.items()},
+            root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
+                                       unresolved=unresolved[k],
+                                       boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
+                                       heuristic_mean=v[2]) for k, v in priorities.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
@@ -257,8 +297,8 @@ class NativeTurnPlanner:
                      budget_exhausted=False)
         frontier = []
         serial = 0
-        best = -math.inf
-        best_partial = -math.inf
+        best = None
+        best_partial = None
 
         def take(state, action, depth):
             nonlocal serial, best, best_partial
@@ -269,10 +309,13 @@ class NativeTurnPlanner:
             # path and continue intermediate selections without a new draw.
             raw = child.execute_to_enemy_boundary(action)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
-                best = max(best, state_value(raw, public_relics=public_relics, horizon=horizon))
+                value = leaf_value(raw, public_relics=public_relics, horizon=horizon)
+                best = value if best is None else max(best, value)
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
-            best_partial = max(best_partial, partial)
+            if not math.isfinite(partial):
+                raise ValueError('planner partial heuristic must be finite')
+            best_partial = partial if best_partial is None else max(best_partial, partial)
             serial += 1
             heapq.heappush(frontier, (-partial, serial, depth, child))
 
@@ -299,9 +342,11 @@ class NativeTurnPlanner:
                 frontier = heapq.nsmallest(self.config.beam_width, frontier)
                 heapq.heapify(frontier)
         stats['budget_exhausted'] |= bool(frontier)
-        if best == -math.inf:
+        if best is None:
             # A pending selection may outlast the allocated expansion. This is
             # explicitly approximate; never execute extra unbudgeted rollouts.
             stats['fallback_leaves'] += 1
-            best = best_partial
+            if best_partial is None:
+                raise RuntimeError('planner produced no complete or partial leaf')
+            best = (0, best_partial)
         return best, stats

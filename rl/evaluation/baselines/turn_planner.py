@@ -26,7 +26,9 @@ class TurnPlannerStrategy:
             leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
             resources='conservative-no-output-guard-with-public-relics',
             enemy_progress='native-threshold-slime-phase-potential',
-            value_horizon='shared-root-public-enemy-hp-and-strength')
+            value_horizon='shared-root-public-enemy-hp-and-strength',
+            terminal_priority='per-world-death-live-win',
+            world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []

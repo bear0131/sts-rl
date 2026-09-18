@@ -103,3 +103,31 @@ burst kills can skip phases. Native HP, loss of debuffs on split, actual incomin
 damage and terminal outcomes still determine the other value terms. The root
 power horizon remains the v3 public-state anchor. Regression entrypoint:
 `tests/integration/test_turn_planner_phases.py`.
+
+
+## Terminal priority candidate v5
+
+`ironclad-turn-v5-avoid-sampled-death` keeps the v4 ordinary-state heuristic and
+partial-frontier ordering. Within each sampled world, complete leaves compare
+`(terminal_rank, heuristic)`, where death < live boundary < victory. Terminal
+classification takes precedence over arbitrarily large Strength or other powers.
+The original scalar `state_value` remains a heuristic, not a terminal utility.
+
+Root actions compare `(-sampled_death_count, sampled_win_count, mean_heuristic)`
+lexicographically across the same number of worlds. This explicitly prefers any
+alternative with fewer sampled deaths, even if accepting a sampled death would
+buy more wins in other worlds. It is a conservative risk preference, not a win
+probability, calibrated risk estimate, or semantics-preserving optimization.
+When all sampled leaves are live, the old arithmetic mean and ordinary ordering
+are retained. The heuristic mean only breaks ties in both terminal counts.
+Partial fallback leaves remain live/uncertain, never invented wins.
+
+Finite `root_outcomes` trace records report deaths, wins, nonterminal worlds,
+`unresolved` partial fallbacks, actual `boundary_live` leaves and heuristic mean
+separately. `live` includes unresolved prefixes and is not a survival certificate; `root_values` remains the scalar mean for diagnostics and no
+longer alone determines the chosen action. Structured fields never enter numeric
+Decision metrics. Non-finite leaf values are rejected rather than written as
+Infinity/NaN; an overflowing finite sum is averaged in scaled form.
+Regression: `tests/integration/test_turn_planner_terminal_priority.py`, including
+Strength500 versus immediate native victory and four actual NOSL Havoc futures
+(one win/three deaths) versus Defend surviving every world.
