@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-end-damage-v1'
+RULE_VERSION = 'ironclad-leader-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -267,6 +267,19 @@ def damage_source_count(view):
     return sum(kind(c) == 'attack' for c in view.hand + view.piles['draw'] + view.piles['discard'])
 
 
+def kills_end_combat(killed, view):
+    """Public death boundary, including Awakened One's visible phase marker.
+
+    Monster::die wins immediately for Minion Leader; Awakened One only gains
+    that status on rebirth. Its first HP bar, even when alone, is not terminal.
+    """
+    if any(m and m['id'] == 'AwakenedOne' and not m['powers'].get('Minion Leader', 0)
+           for m in view.monsters):
+        return False
+    return bool(killed) and (any(m['powers'].get('Minion Leader', 0) for m in killed)
+        or all(any(m is dead for dead in killed) for m in view.alive))
+
+
 def card_score(card, target, view):
     cid, up = card['id'], int(bool(card.get('up')))
     p, pp = view.player, view.player['powers']
@@ -293,7 +306,7 @@ def card_score(card, target, view):
         parts['damage'] = .85 * damage_total
         parts['break_block'] = .65 * broken_block
         parts['kill'] = 22 * kills + 1.5 * avoided
-        if alive and kills == len(alive):
+        if kills_end_combat(killed, view):
             parts['combat_lethal'] = 10000
         # A passive kill after the enemy acts has less future value, but never
         # removes the value of preventing that enemy's current attack.

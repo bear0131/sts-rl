@@ -318,3 +318,22 @@ def test_hp_loss_is_not_mistaken_for_blockable_damage(view):
     view.targets = {('play', 0): [None]}
     assert view.incoming == 0
     assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+
+
+def test_minion_leader_kill_ends_combat_before_more_dangerous_minion(view):
+    view.monsters = [monster(hp=6, attack=0, **{'Minion Leader': 1}), monster(hp=6, attack=80)]
+    view.monsters[0]['id'] = 'Reptomancer'
+    view.pending = ('play', 0)
+    assert pick(view, A._TARGET, A._TARGET+1) == A._TARGET
+    assert card_score(view.hand[0], 0, view)[1]['combat_lethal'] == 10000
+
+
+def test_awakened_first_bar_and_rebirth_are_not_terminal(view):
+    view.monsters[0].update(id='AwakenedOne', hp=6, powers={'Curiosity': 1})
+    assert 'combat_lethal' not in card_score(view.hand[0], 0, view)[1]
+    # During visible rebirth, killing the last Cultist still does not win.
+    view.monsters[0]['hp'] = 0
+    view.monsters.append(monster(hp=6))
+    assert 'combat_lethal' not in card_score(view.hand[0], 1, view)[1]
+    view.monsters[0].update(hp=6, powers={'Minion Leader': 1})
+    assert card_score(view.hand[0], 0, view)[1]['combat_lethal'] == 10000

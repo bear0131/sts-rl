@@ -150,3 +150,55 @@ def test_native_constricted_is_public_and_blockable(combat_factory):
         env.step(A._TARGET)
     env.step(A.END_TURN)
     assert visible_combat(request(env)).player['hp'] == hp-5
+
+
+def test_native_minion_leader_death_wins_with_living_minions(combat_factory):
+    env = combat_factory(['STRIKE_RED']*5, encounter='Reptomancer').fork_combat()
+    view = visible_combat(request(env))
+    slot = next(i for i, m in enumerate(view.monsters) if m and m['id'] == 'Reptomancer')
+    assert view.monsters[slot]['powers']['Minion Leader'] == 1
+    assert len(view.alive) > 1
+    edits = [{} for _ in view.monsters]
+    edits[slot] = {'hp': 6}
+    env.thick.bc.apply_custom_state({'monsters': edits})
+    env._invalidate_backend_cache()
+    env.step(A._PLAY)
+    action = CombatRuleStrategy().decide([request(env)])[0].action
+    assert action == A._TARGET+slot
+    env.step(action)
+    assert env.thick.bc.outcome == 1
+    assert any(m and m['hp'] > 0 for i, m in enumerate(visible_combat(request(env)).monsters) if i != slot)
+
+
+def test_native_awakened_first_bar_rebirth_then_terminal_second_bar(combat_factory):
+    from rl.evaluation.baselines.combat_rules import card_score
+    env = combat_factory(['STRIKE_RED']*5, encounter='Awakened One').fork_combat()
+    view = visible_combat(request(env))
+    slot = next(i for i, m in enumerate(view.monsters) if m and m['id'] == 'AwakenedOne')
+    assert view.monsters[slot]['powers']['Curiosity'] == 1
+    assert not view.monsters[slot]['powers'].get('Minion Leader')
+    # Remove Cultists through real damage so monstersAlive is also correct.
+    edits = [{'hp': 40 if i == slot else 1} if m else {} for i, m in enumerate(view.monsters)]
+    env.thick.bc.apply_custom_state({'monsters': edits, 'hand': [('CLEAVE', 0, 1)]})
+    env._invalidate_backend_cache(); env.step(A._PLAY)
+    if env._info().get('pending'):
+        env.step(A._TARGET)
+    assert len(visible_combat(request(env)).alive) == 1
+    edits = [{} for _ in view.monsters]; edits[slot] = {'hp': 6}
+    env.thick.bc.apply_custom_state({'monsters': edits, 'hand': [('STRIKE_RED', 0, 1)]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert 'combat_lethal' not in card_score(view.hand[0], slot, view)[1]
+    env.step(A._PLAY); env.step(A._TARGET+slot)
+    assert env.thick.bc.outcome != 1
+    env.thick.bc.apply_custom_state({'player': {'block': 1000}})
+    env._invalidate_backend_cache(); env.step(A.END_TURN)
+    view = visible_combat(request(env))
+    assert view.monsters[slot]['powers']['Minion Leader'] == 1
+    edits[slot] = {'hp': 6}
+    env.thick.bc.apply_custom_state({'monsters': edits, 'hand': [('STRIKE_RED', 0, 1)]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert card_score(view.hand[0], slot, view)[1]['combat_lethal'] == 10000
+    env.step(A._PLAY); env.step(A._TARGET+slot)
+    assert env.thick.bc.outcome == 1
