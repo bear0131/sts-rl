@@ -231,8 +231,11 @@ class SlayTheSpireEnv(gym.Env):
                  card_language=False, combat_language=False,
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
-                 interactive_reasoning=False):
+                 interactive_reasoning=False, combat_action_contract='legacy'):
         super().__init__()
+        if combat_action_contract not in ('legacy', 'native-v1'):
+            raise ValueError('combat_action_contract must be legacy or native-v1')
+        self.combat_action_contract = combat_action_contract
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
                 character=character,
@@ -563,7 +566,45 @@ class SlayTheSpireEnv(gym.Env):
         also has no legal action, but that is a `terminated`, not a dead screen."""
         if self._multi_desc() is not None:
             return False
+        if (self.combat_action_contract == 'native-v1'
+                and self._phase() == 'combat' and self._pending is None):
+            return not self.native_combat_actions()
         return not self.action_masks().any()
+
+    def native_combat_actions(self):
+        """Complete legal bits for the current live root; no legacy slot mapping."""
+        if (self.thick is None or self._phase() != 'combat'
+                or self.thick.is_over or self._pending is not None):
+            return ()
+        from .native_actions import complete_actions
+        return complete_actions(self.thick.bc)
+
+    def combat_selection_candidates(self):
+        """Versioned public entity map for the currently open single-pick screen."""
+        if self.thick is None or self._phase() != 'combat' or self.thick.is_over:
+            return ()
+        from .native_actions import selection_candidates
+        return selection_candidates(self.thick.bc)
+
+    def step_native_combat(self, action_bits):
+        """Execute native-v1 bits atomically through the existing reward/settle path.
+
+        Explicit opt-in preserves legacy checkpoint masks, observations and dead
+        screen behavior. A pending thin target/multi pick cannot be bypassed.
+        """
+        if self.combat_action_contract != 'native-v1':
+            raise RuntimeError('complete actions require combat_action_contract=native-v1')
+        if self._pending is not None or self._multi:
+            raise ValueError('cannot replace an unfinished thin action with native bits')
+        bits = int(action_bits)
+        if bits != action_bits or bits not in self.native_combat_actions():
+            raise ValueError(f'illegal native combat action {action_bits}')
+        self._nosl_cpp_pending = None
+        self._multi = None
+        _canon, reward, terminated, tinfo = self._backend_step_native_combat(bits)
+        result = self._post_step(reward, terminated, tinfo)
+        result[4]['native_action'] = bits
+        return result
 
     def _truncate_dead(self):
         """The clean 5-tuple for truncating on a dead screen: a valid (current)
@@ -1772,6 +1813,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _info(self):
         info = {
+            "combat_action_contract": self.combat_action_contract,
             "action_mask": self.action_masks(),
             "phase": self._phase(),
             "arg_step": self._arg_step(),

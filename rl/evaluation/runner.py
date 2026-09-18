@@ -94,11 +94,17 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
             for index, request, decision in zip(indices, requests, decisions):
                 check()
                 env, state = environments[index], active[index]
-                mask = np.asarray(env.action_masks(), dtype=bool)
                 action = decision.action
-                if action < 0 or action >= len(mask) or not mask[action]:
-                    raise ValueError(f'{decision.source} returned illegal action {action}')
-                observation, reward, terminated, truncated, info = env.step(action)
+                if decision.native_action is not None:
+                    step_native = getattr(env, 'step_native_combat', None)
+                    if step_native is None:
+                        raise TypeError('environment must explicitly expose step_native_combat; wrappers must forward its transition contract')
+                    observation, reward, terminated, truncated, info = step_native(decision.native_action)
+                else:
+                    mask = np.asarray(env.action_masks(), dtype=bool)
+                    if action < 0 or action >= len(mask) or not mask[action]:
+                        raise ValueError(f'{decision.source} returned illegal action {action}')
+                    observation, reward, terminated, truncated, info = env.step(action)
                 state['steps'] += 1
                 state['raw_return'] += float(reward)
                 state.update(observation=observation, info=info)
@@ -108,6 +114,7 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                     progress(dict(current_episode=state['episode'] + 1, current_steps=state['steps'],
                                   current_floor=info.get('run_stats', {}).get('floor', 0),
                                   current_phase=info.get('phase'), current_action=action,
+                                  current_native_action=decision.native_action,
                                   current_action_source=decision.source, active_workers=len(active)))
                 limited = state['steps'] >= config.max_steps and not (terminated or truncated)
                 if terminated or truncated or limited:
@@ -117,6 +124,8 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                     row = {key: state[key] for key in ('episode', 'seed', 'steps', 'raw_return')}
                     row.update(outcome, **state['metrics'])
                     row['strategy'] = strategy.name
+                    if 'combat_action_contract' in info:
+                        row['combat_action_contract'] = info['combat_action_contract']
                     yield row
                     replacement = start(env)
                     if replacement is None:

@@ -28,9 +28,14 @@ class DecisionRequest:
 
 @dataclass(frozen=True)
 class Decision:
-    action: int
+    action: int | None
     source: str
     diagnostics: dict = field(default_factory=dict)
+    native_action: int | None = None
+
+    def __post_init__(self):
+        if (self.action is None) == (self.native_action is None):
+            raise ValueError('Decision requires exactly one thin or complete native action')
 
 
 class DecisionStrategy(Protocol):
@@ -42,6 +47,8 @@ class DecisionStrategy(Protocol):
 def strategy_manifest(strategy):
     """Record effective composition and search settings, including inherited values."""
     result = {'name': strategy.name}
+    if getattr(strategy, 'combat_action_contract', None):
+        result['combat_action_contract'] = strategy.combat_action_contract
     if getattr(strategy, 'version', None):
         result['version'] = strategy.version
     if getattr(strategy, 'fallback', None) is not None:
