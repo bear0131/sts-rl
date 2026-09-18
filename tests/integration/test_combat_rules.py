@@ -150,3 +150,21 @@ def test_native_constricted_is_public_and_blockable(combat_factory):
         env.step(A._TARGET)
     env.step(A.END_TURN)
     assert visible_combat(request(env)).player['hp'] == hp-5
+
+
+def test_native_transient_shifting_reduces_visible_attack_then_resets(combat_factory):
+    env = combat_factory(['STRIKE_RED']*5, encounter='Transient')
+    before = visible_combat(request(env))
+    assert before.monsters[0]['powers']['Shifting'] == 1
+    assert before.monsters[0]['powers']['Fading'] == 5
+    env.step(A._PLAY)
+    if env._info().get('pending'):
+        env.step(A._TARGET)
+    after = visible_combat(request(env))
+    assert after.monsters[0]['adjusted_damage'] == before.monsters[0]['adjusted_damage']-6
+    env.thick.bc.apply_custom_state({'player': {'block': 1000}})
+    env._invalidate_backend_cache()
+    env.step(A.END_TURN)
+    next_turn = visible_combat(request(env))
+    assert next_turn.monsters[0]['powers'].get('Strength', 0) == 0
+    assert next_turn.monsters[0]['powers']['Fading'] == 4

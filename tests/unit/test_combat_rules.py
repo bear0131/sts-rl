@@ -318,3 +318,24 @@ def test_hp_loss_is_not_mistaken_for_blockable_damage(view):
     view.targets = {('play', 0): [None]}
     assert view.incoming == 0
     assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+
+
+def test_shifting_damage_is_current_turn_mitigation(view):
+    view.monsters[0].update(id='Transient', hp=999, max_hp=999, adjusted_damage=30,
+                           powers={'Shifting': 1, 'Fading': 5})
+    view.hand = [card('Carnage', 2), card('Defend_R')]
+    view.targets = {('play', 0): [0], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY
+    assert card_score(view.hand[0], 0, view)[1]['shifting_mitigation'] > 0
+    view.monsters[0]['block'] = 20
+    assert 'shifting_mitigation' not in card_score(view.hand[0], 0, view)[1]
+
+
+def test_final_fading_turn_does_not_protect_future_growth(view):
+    view.monsters[0].update(id='Transient', hp=999, max_hp=999, adjusted_damage=70,
+                           powers={'Shifting': 1, 'Fading': 1})
+    view.hand = [card('Fiend Fire', 2), card('Demon Form', 3), card('Brutality', 0), card('Defend_R')]
+    view.targets = {('play', 0): [0], ('play', 1): [None], ('play', 2): [None], ('play', 3): [None]}
+    assert card_score(view.hand[0], 0, view)[1]['exhaust_setup'] == 0
+    assert card_score(view.hand[1], None, view)[1]['power'] == 0
+    assert pick(view, A._PLAY, A._PLAY+1, A._PLAY+2, A._PLAY+3) == A._PLAY

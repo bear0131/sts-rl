@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-end-damage-v1'
+RULE_VERSION = 'ironclad-transient-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -227,9 +227,14 @@ def block_value(amount, view):
     return useful * danger + carry
 
 
+def fading_turns(view):
+    alive = view.alive
+    return max(m['powers']['Fading'] for m in alive) if alive and all(m['powers'].get('Fading', 0) for m in alive) else None
+
+
 def horizon(view):
-    """Coarse remaining-turn estimate from public HP, not future draws/moves."""
-    return min(8., max(1., sum(m['hp'] for m in view.alive) / 35))
+    """Public HP estimate capped by a visible encounter-expiration counter."""
+    return min(fading_turns(view) or 8., max(1., sum(m['hp'] for m in view.alive) / 35))
 
 
 def attack_followups(card, monster, view, energy):
@@ -262,7 +267,7 @@ def passive_damage(monster, view, *, before_enemy=False):
 
 def damage_source_count(view):
     """Keep a way to finish: exhaust can otherwise leave a defense-only deck."""
-    if view.player['powers'].get('Combust', 0):
+    if view.player['powers'].get('Combust', 0) or fading_turns(view) == 1:
         return 3
     return sum(kind(c) == 'attack' for c in view.hand + view.piles['draw'] + view.piles['discard'])
 
@@ -277,6 +282,7 @@ def card_score(card, target, view):
     attack = kind(card) == 'attack'
     parts = {}
     damage_total, broken_block, kills, avoided, retaliation = 0., 0., 0, 0., 0.
+    shifting_avoided = 0.
     killed = []
     if attack:
         for m in affected:
@@ -284,13 +290,21 @@ def card_score(card, target, view):
             broken_block += min(raw_damage, m['block'])
             dealt = max(0, raw_damage - m['block'])
             damage_total += min(m['hp'], dealt)
+            if m['powers'].get('Shifting', 0):
+                # Transient loses Strength equal to actual unblocked damage,
+                # then restores it after its attack. This is current-turn
+                # mitigation from public state, not predicted future intent.
+                multiplier = .75 if m['powers'].get('Weakened', 0) else 1.
+                if pp.get('Vulnerable', 0):
+                    multiplier *= 1.25 if 'Odd Mushroom' in view.relics else 1.5
+                shifting_avoided += min(intent(m), math.floor(dealt*multiplier)*intent_hits(m))
             guaranteed = cid != 'Sword Boomerang' or len(alive) == 1
             if dealt >= m['hp'] and guaranteed:
                 kills += 1
                 avoided += intent(m)
                 killed.append(m)
             retaliation += m['powers'].get('Thorns', 0) + m['powers'].get('Sharp Hide', 0)
-        parts['damage'] = .85 * damage_total
+        parts['damage'] = (.085 if fading_turns(view) else .85) * damage_total
         parts['break_block'] = .65 * broken_block
         parts['kill'] = 22 * kills + 1.5 * avoided
         if alive and kills == len(alive):
@@ -339,6 +353,8 @@ def card_score(card, target, view):
     if pp.get('NoBlock', 0):
         block = 0
     parts['block'] = block_value(block, view)
+    if shifting_avoided:
+        parts['shifting_mitigation'] = block_value(block+shifting_avoided, view)-block_value(block, view)
     if block and any(c['id'] == 'Body Slam' and cost(c, view) <= remaining for c in view.hand if c is not card):
         parts['body_slam_setup'] = .85 * block
     if cid == 'Flame Barrier':
@@ -366,19 +382,20 @@ def card_score(card, target, view):
     if hp_cost:
         parts['hp_cost'] = -hp_cost * (1000 if hp_cost >= p['hp'] else 1.7)
     turns_left = horizon(view)
+    future_turns = max(0, turns_left-1) if fading_turns(view) else turns_left
     if cid in ('Flex', 'Inflame', 'Spot Weakness', 'Limit Break', 'Jax'):
         gain = {'Flex': 4 if up else 2, 'Inflame': 3 if up else 2,
                 'Spot Weakness': 4 if up else 3, 'Limit Break': max(0, pp.get('Strength', 0)),
                 'Jax': 3 if up else 2}[cid]
         if cid == 'Spot Weakness' and (not target_monster or not intent(target_monster)):
             gain = 0
-        parts['strength'] = gain * (affordable_attacks + (0 if cid == 'Flex' else max(2.5, turns_left)))
+        parts['strength'] = gain * (affordable_attacks + (0 if cid == 'Flex' else future_turns if fading_turns(view) else max(2.5, turns_left)))
         if affordable_attacks and gain and cost(card, view) + sum(cost(c, view) for c in attacks) <= p['energy']:
             # If setup and all attacks fit, spend the setup before the attacks.
             parts['setup_order'] = 8
     all_cards = view.hand + view.piles['draw'] + view.piles['discard']
     exhaust_count = sum(c['id'] in BAD_CARDS or c['id'] in ('True Grit', 'Burning Pact', 'Second Wind', 'Fiend Fire', 'Offering', 'Warcry') for c in all_cards)
-    power_values = {'Metallicize': (4 if up else 3) * turns_left, 'Demon Form': (3 if up else 2) * turns_left * 2,
+    power_values = {'Metallicize': (4 if up else 3) * turns_left, 'Demon Form': (3 if up else 2) * future_turns * 2,
         'Combust': (7 if up else 5) * len(alive) * turns_left - 2,
         'Feel No Pain': (4 if up else 3) * min(4, exhaust_count),
         'Dark Embrace': 3 * min(4, exhaust_count),
@@ -389,7 +406,7 @@ def card_score(card, target, view):
             if any(c['id'] in ('Entrench', 'Impervious', 'Body Slam') for c in all_cards) else 1,
         'Corruption': 4 * sum(kind(c) == 'skill' and cost(c, view) > 0 for c in view.hand if c is not card),
         'Berserk': 4 * turns_left - view.deficit * .6,
-        'Brutality': 2 * turns_left, 'Rupture': 4 * sum(c['id'] in ('Offering', 'Bloodletting', 'Hemokinesis', 'Combust') for c in all_cards),
+        'Brutality': 2 * future_turns, 'Rupture': 4 * sum(c['id'] in ('Offering', 'Bloodletting', 'Hemokinesis', 'Combust') for c in all_cards),
         'Juggernaut': 8, 'Panache': 6}
     if cid in power_values:
         parts['power'] = power_values[cid]
@@ -433,7 +450,7 @@ def card_score(card, target, view):
             parts['unlock_clash'] = .9 * sum(numbers(c)[1] for c in attacks if c['id'] == 'Clash') / len(blockers)
     if cid == 'Fiend Fire' and not parts.get('combat_lethal'):
         parts['exhaust_hand'] = -2 * sum(c['id'] not in BAD_CARDS and c is not card for c in view.hand)
-        parts['exhaust_setup'] = -6 * sum(kind(c) == 'power' for c in view.hand if c is not card) * min(3, turns_left)
+        parts['exhaust_setup'] = -6 * sum(kind(c) == 'power' for c in view.hand if c is not card) * min(3, future_turns)
     if cid in ('True Grit', 'Burning Pact') and (cid != 'True Grit' or not up):
         remaining_hand = [c for c in view.hand if c is not card]
         attacks_at_risk = sum(kind(c) == 'attack' for c in remaining_hand)
