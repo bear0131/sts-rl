@@ -18,11 +18,72 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v1'
+PLANNER_VERSION = 'ironclad-turn-v2'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
     'DOUBT', 'SHAME', 'PAIN', 'REGRET', 'DECAY', 'NORMALITY', 'WRITHE'))
+
+# A closed set is intentional: an unknown card may generate an Attack, recover
+# an exhausted card, or deal conditional damage. Never call it harmless merely
+# because it is not one of Ironclad's familiar attacks. Body Slam, Flame Barrier,
+# Infernal Blade, Exhume and all Powers therefore remain potential damage sources.
+_NO_DAMAGE_CARDS = _JUNK | frozenset((
+    'DEFEND_RED', 'ARMAMENTS', 'BATTLE_TRANCE', 'BLOODLETTING', 'BURNING_PACT',
+    'DISARM', 'DUAL_WIELD', 'ENTRENCH', 'FLEX', 'HAVOC', 'INTIMIDATE',
+    'POWER_THROUGH', 'RAGE', 'SECOND_WIND', 'SEEING_RED', 'SENTINEL',
+    'SHOCKWAVE', 'SHRUG_IT_OFF', 'TRUE_GRIT', 'WARCRY', 'IMPERVIOUS',
+    'GHOSTLY_ARMOR', 'LIMIT_BREAK', 'ASCENDERS_BANE', 'CLUMSY', 'CURSE_OF_THE_BELL',
+    'NECRONOMICURSE', 'PARASITE', 'PRIDE', 'WRITHE',
+))
+_NON_DAMAGE_POWERS = frozenset((
+    'strength', 'dexterity', 'artifact', 'weak', 'vulnerable', 'frail',
+    'metallicize', 'platedarmor', 'barricade', 'berserk', 'demonform',
+    'feelnopain', 'darkembrace', 'corruption', 'evolve', 'rupture', 'rage',
+    'nodraw', 'drawreduction', 'entangled', 'confused', 'intangible', 'buffer',
+    'energized', 'noblock', 'hex', 'constricted', 'drawcardnextturn',
+    'doubletap', 'doubledamage', 'vigor', 'losestrength', 'dexteritydown',
+))
+_DAMAGE_OR_CARD_RELICS = frozenset((
+    'mercuryhourglass', 'bronzescales', 'charonsashes', 'letteropener',
+    'stonecalendar', 'deadbranch', 'nilryscodex', 'tingsha', 'toolbox',
+))
+
+
+def no_remaining_damage_source(raw, public_relics=None):
+    """Recognize a narrow, proven resource dead end; unknown means possible.
+
+    This does not certify that an existing channel can finish the fight. A
+    remaining Attack, damage/creation Power, potion, damage relic, future bomb,
+    enemy Poison/Fading, or unresolved selection conservatively disables it.
+    Relics are supplied by the public run state; BattleContext.to_dict omits
+    them, so callers without that context must not infer their absence.
+    """
+    if public_relics is None or raw['outcome'] != 0 or raw['input_state'] == 2:
+        return False
+    cards = raw['hand'] + raw['draw'] + raw['discard']
+    if any(card[0] not in _NO_DAMAGE_CARDS for card in cards):
+        return False
+    powers = _powers(raw['player'])
+    if any(value > 0 and name not in _NON_DAMAGE_POWERS for name, value in powers.items()):
+        return False
+    counters = raw['player'].get('combat_counters', {})
+    if any(counters.get(f'bomb_{n}', 0) > 0 for n in (1, 2, 3)):
+        return False
+    if any(p not in ('INVALID', 'EMPTY_POTION_SLOT') for p in raw['potions']):
+        return False
+    relics = {''.join(c for c in name.lower() if c.isalnum()) for name in public_relics}
+    if relics & _DAMAGE_OR_CARD_RELICS:
+        return False
+    for monster in raw['monsters']:
+        if monster['hp'] <= 0 or monster['gone']:
+            continue
+        mp = _powers(monster)
+        if any(mp.get(name, 0) > 0 for name in ('poison', 'choked', 'fading', 'explosive')):
+            return False
+        if monster['id'] in ('TRANSIENT', 'DAGGER', 'EXPLODER'):
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -50,7 +111,7 @@ def _powers(raw):
             for name, value in raw.get('powers', ())}
 
 
-def state_value(raw, *, partial=False):
+def state_value(raw, *, partial=False, public_relics=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -69,6 +130,10 @@ def state_value(raw, *, partial=False):
     value += 5 * sum(x not in ('INVALID', 'EMPTY_POTION_SLOT') for x in raw['potions'])
     if raw['outcome'] == 1:
         return value + 1000
+    if no_remaining_damage_source(raw, public_relics):
+        # Losing every remaining output channel is worse than ordinary HP or
+        # damage differences, but remains separate from an actual native death.
+        value -= 10000
     value -= .26 * remaining + 10 * len(monsters)
     for m in monsters:
         mp = _powers(m)
@@ -112,7 +177,7 @@ class NativeTurnPlanner:
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
-    def choose(self, battle, *, state_nonce: int, check=None) -> PlanResult:
+    def choose(self, battle, *, state_nonce: int, check=None, public_relics=None) -> PlanResult:
         check = check or (lambda: None)
         check()
         started = time.monotonic()
@@ -137,7 +202,7 @@ class NativeTurnPlanner:
             for bits in roots:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
-                score, counts = self._root(sample, action, quota, check)
+                score, counts = self._root(sample, action, quota, check, public_relics)
                 values[bits].append(score)
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves'):
                     stats[key] += counts[key]
@@ -149,7 +214,7 @@ class NativeTurnPlanner:
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check):
+    def _root(self, branch, bits, quota, check, public_relics=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False)
         frontier = []
@@ -161,16 +226,16 @@ class NativeTurnPlanner:
             stats['native_transitions'] += 1
             if action == _END:
                 boundary = state.preview_end_turn_result(action)
-                best = max(best, state_value(boundary))
+                best = max(best, state_value(boundary, public_relics=public_relics))
                 return
             child = state.clone()
             child.execute(sts.Action(action))
             raw = child.to_dict()
             if raw['outcome'] != 0:
-                best = max(best, state_value(raw))
+                best = max(best, state_value(raw, public_relics=public_relics))
                 return
             serial += 1
-            heapq.heappush(frontier, (-state_value(raw, partial=True), serial, depth, child))
+            heapq.heappush(frontier, (-state_value(raw, partial=True, public_relics=public_relics), serial, depth, child))
 
         take(branch, bits, 1)
         while frontier and stats['native_transitions'] < quota:
@@ -199,5 +264,5 @@ class NativeTurnPlanner:
             # A pending selection may outlast the allocated expansion. This is
             # explicitly approximate; never execute extra unbudgeted rollouts.
             stats['fallback_leaves'] += 1
-            best = -frontier[0][0] if frontier else state_value(branch.to_dict(), partial=True)
+            best = -frontier[0][0] if frontier else state_value(branch.to_dict(), partial=True, public_relics=public_relics)
         return best, stats
