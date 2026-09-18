@@ -299,11 +299,17 @@ def overworld_demand_strategy(model, args, *, trace=None):
     return EnemyDemandUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
 
 
+def overworld_potion_shop_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_potion_shop import PotionShopUpperStrategy
+    return PotionShopUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
 # Upper factories are independent of combat solver registration and the CLI.
 UPPER_STRATEGIES = {
     'model': lambda model, args, trace=None: policy_strategy(model, args),
     'rules': overworld_rule_strategy,
     'demand': overworld_demand_strategy,
+    'potion-shop': overworld_potion_shop_strategy,
 }
 
 

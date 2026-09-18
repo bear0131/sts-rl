@@ -123,6 +123,16 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 库调用可用 `strategies.UPPER_STRATEGIES` 或直接组合 `EnemyDemandUpperStrategy`，
 不需要导入 CLI。默认仍为 `--upper-strategy model`。
 
+`--upper-strategy potion-shop` 选择独立候选 `ironclad-overworld-potion-shop-v1`。
+只在第二幕商店、v1本来会离店、整条实际药水带为空且无Sozu时，考虑补一瓶白名单战斗药水；
+不叠加demand/energy。先保留v1已有购物优先级，要求售价不超过当前金币一半且买后剩至少75金。
+伤害/格挡/力量等确定效果用公开牌组角色先验减去实际显示价格排序；分值不是预计HP收益。
+不重算折扣，不缓存Courier库存；取得一瓶后停止本候选的补货。随机生牌等未覆盖效果沿用v1。
+`overworld_potion_shop_decisions` / `overworld_potion_shop_changed_decisions` 记录实际补货；
+trace给出原动作、药水角色、价格和剩余金币。共享下层决定何时使用，不能保证保留至精英战。
+满槽/Sozu购买扣空钱是既有SHOP01；本候选只保护新增补货，v1原本会买的行为仍完整委托。
+该候选未经过整局性能验收；至少128配对整局只切换rules/potion-shop并固定其他配置后再判断。
+
 跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表
 上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
 下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision
