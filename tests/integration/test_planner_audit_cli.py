@@ -17,7 +17,7 @@ def combat_leaf(strategy):
     return strategy
 
 
-@pytest.mark.parametrize('upper', ['model', 'rules', 'demand', 'energy'])
+@pytest.mark.parametrize('upper', ['model', 'rules', 'demand', 'energy', 'potion-shop'])
 def test_cli_planner_audit_runs_all_four_candidates_without_sharing_reference(
         tmp_path, monkeypatch, combat_factory, upper):
     root = combat_factory(['STRIKE_RED'] * 5)
@@ -80,13 +80,14 @@ def test_cli_planner_audit_runs_all_four_candidates_without_sharing_reference(
     assert payload['effective_strategy']['combat_action_contract'] == 'native-v1'
     assert payload['combat_candidates']['turn-planner']['combat_action_contract'] == 'native-v1'
     assert payload['combat_audit']['decision_step_origin'] == 'fork-local-zero'
-    if upper in ('rules', 'demand', 'energy'):
+    if upper != 'model':
         default = payload['effective_strategy']['default']
         assert default['name'] == f'overworld-{upper}'
         assert default['fallback']['name'] == 'policy'
         assert default['version'] == {'rules': 'ironclad-overworld-v1',
                                       'demand': 'ironclad-overworld-demand-v1',
-                                      'energy': 'ironclad-overworld-energy-v1'}[upper]
+                                      'energy': 'ironclad-overworld-energy-v1',
+                                      'potion-shop': 'ironclad-overworld-potion-shop-v1'}[upper]
         if upper == 'energy':
             assert default['scope'] == 'boss-relic-only'
             assert default['base_version'] == 'ironclad-overworld-v1'

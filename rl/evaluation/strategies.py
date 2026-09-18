@@ -304,6 +304,10 @@ def overworld_energy_strategy(model, args, *, trace=None):
     from rl.evaluation.baselines.overworld_energy import EnergyAwareUpperStrategy
     return EnergyAwareUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
 
+def overworld_potion_shop_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_potion_shop import PotionShopUpperStrategy
+    return PotionShopUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
 
 # Upper factories are independent of combat solver registration and the CLI.
 UPPER_STRATEGIES = {
@@ -311,6 +315,8 @@ UPPER_STRATEGIES = {
     'rules': overworld_rule_strategy,
     'demand': overworld_demand_strategy,
     'energy': overworld_energy_strategy,
+
+    'potion-shop': overworld_potion_shop_strategy,
 }
 
 
