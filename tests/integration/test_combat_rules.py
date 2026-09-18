@@ -131,3 +131,38 @@ def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     assert raw_moves[0] != raw_moves[1]
     assert views[0] == views[1]
     assert decisions[0] == decisions[1]
+
+
+@pytest.mark.parametrize('native_card', ['UPPERCUT', 'SHOCKWAVE'])
+@pytest.mark.parametrize('artifact', [1, 2])
+def test_native_dual_debuff_consumes_artifact_in_queue_order(combat_factory, native_card, artifact):
+    from rl.evaluation.baselines.combat_rules import card_score
+    env = combat_factory(['STRIKE_RED']*5, encounter='Cultist').fork_combat()
+    env.thick.bc.apply_custom_state({'hand': [(native_card,0)],
+        'monsters': [{'powers': [('ARTIFACT',artifact)]}]})
+    env._invalidate_backend_cache()
+    before = visible_combat(request(env))
+    parts = card_score(before.hand[0], 0, before)[1]
+    assert not parts.get('weak')
+    assert bool(parts.get('vulnerable')) == (artifact == 1)
+    env.step(A._PLAY); env.step(A._TARGET)
+    after = visible_combat(request(env)).monsters[0]['powers']
+    assert not after.get('Artifact') and not after.get('Weakened')
+    assert bool(after.get('Vulnerable')) == (artifact == 1)
+
+
+def test_native_artifact_three_opens_visible_uppercut_followup(combat_factory):
+    env = combat_factory(['STRIKE_RED']*5, encounter='Cultist').fork_combat()
+    env.thick.bc.apply_custom_state({'player': {'energy': 4},
+        'hand': [('SHOCKWAVE',0), ('UPPERCUT',0)],
+        'monsters': [{'powers': [('ARTIFACT',3)]}]})
+    env._invalidate_backend_cache()
+    from rl.evaluation.baselines.combat_rules import card_score
+    before = visible_combat(request(env))
+    assert card_score(before.hand[0], 0, before)[1]['artifact_opening'] > 0
+    env.step(A._PLAY); env.step(A._TARGET)
+    assert visible_combat(request(env)).monsters[0]['powers']['Artifact'] == 1
+    env.step(A._PLAY); env.step(A._TARGET)
+    after = visible_combat(request(env)).monsters[0]['powers']
+    assert not after.get('Artifact') and not after.get('Weakened')
+    assert after['Vulnerable'] == 1

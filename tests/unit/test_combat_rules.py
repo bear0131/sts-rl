@@ -298,3 +298,34 @@ def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
     view.piles['draw'] = [card('Defend_R')]
     view.targets = {('play', 0): [None], ('play', 1): [0]}
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_second_debuff_lands_after_first_removes_last_artifact(view):
+    view.monsters[0]['powers'] = {'Artifact': 1}
+    view.hand = [card('Shockwave', 2), card('Strike_R')]
+    parts = card_score(view.hand[0], 0, view)[1]
+    assert parts['vulnerable'] == 7
+    assert not parts.get('weak')
+    view.monsters[0]['powers']['Artifact'] = 2
+    parts = card_score(view.hand[0], 0, view)[1]
+    assert not parts.get('vulnerable') and not parts.get('weak')
+
+
+def test_artifact_opening_needs_visible_debuff_followup(view):
+    view.monsters[0].update(hp=100, powers={'Artifact': 3})
+    view.hand = [card('Shockwave', 2), card('Strike_R')]
+    view.piles = dict(draw=[], discard=[], exhaust=[], generated=[])
+    assert not card_score(view.hand[0], 0, view)[1].get('artifact_opening')
+    view.hand.append(card('Uppercut', 2))
+    view.player['energy'] = 4
+    assert card_score(view.hand[0], 0, view)[1]['artifact_opening'] > 0
+    # Artifact2 consumes both Shockwave effects; no pretend immediate Weak.
+    view.monsters[0]['powers']['Artifact'] = 2
+    assert not card_score(view.hand[0], 0, view)[1].get('weak')
+
+
+def test_killed_enemy_gets_neither_debuff_nor_artifact_credit(view):
+    view.monsters[0].update(hp=1, powers={'Artifact': 1})
+    view.hand = [card('Uppercut', 2), card('Disarm')]
+    parts = card_score(view.hand[0], 0, view)[1]
+    assert not any(parts.get(k) for k in ('weak', 'vulnerable', 'artifact_opening'))

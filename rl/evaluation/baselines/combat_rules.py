@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v3'
+RULE_VERSION = 'ironclad-artifact-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -261,6 +261,56 @@ def damage_source_count(view):
     return sum(kind(c) == 'attack' for c in view.hand + view.piles['draw'] + view.piles['discard'])
 
 
+def card_debuffs(card):
+    """Native queue order; Artifact consumes one application, not one card."""
+    cid = card['id']
+    if cid in ('Uppercut', 'Shockwave'):
+        return ('weak', 'vulnerable')
+    if cid in ('Bash', 'Thunderclap', 'Trip'):
+        return ('vulnerable',)
+    if cid in ('Clothesline', 'Intimidate', 'Blind'):
+        return ('weak',)
+    return ('strength_down',) if cid == 'Disarm' else ()
+
+
+def resolved_debuffs(card, monster, artifact, attacks):
+    """Value only effects that survive the visible Artifact applications."""
+    parts = {}
+    for effect in card_debuffs(card):
+        if artifact:
+            artifact -= 1
+            continue
+        if effect == 'vulnerable':
+            value = 0 if monster['powers'].get('Vulnerable', 0) else 4+3*attacks
+        elif effect == 'weak':
+            value = 0 if monster['powers'].get('Weakened', 0) else 3+.35*intent(monster)
+        else:
+            value = (3 if card.get('up') else 2)*(2.5+1.5*intent_hits(monster))
+        parts[effect] = parts.get(effect, 0)+value
+    return parts, artifact
+
+
+def artifact_opening(card, monster, view, remaining):
+    """Discounted visible follow-up value; no prediction of future draw order."""
+    before = monster['powers'].get('Artifact', 0)
+    after = max(0, before-len(card_debuffs(card)))
+    stripped = before-after
+    if not stripped:
+        return 0.
+    immediate = 0.
+    for followup in view.hand:
+        if followup is card or not card_debuffs(followup) or cost(followup, view) > remaining:
+            continue
+        attacks = [c for c in view.hand if c is not card and c is not followup and kind(c) == 'attack']
+        affordable = min(len(attacks), remaining-cost(followup, view)+sum(cost(c, view) == 0 for c in attacks))
+        old, _ = resolved_debuffs(followup, monster, before, affordable)
+        new, _ = resolved_debuffs(followup, monster, after, affordable)
+        immediate = max(immediate, .5*(sum(new.values())-sum(old.values())))
+    future_effects = sum(len(card_debuffs(c)) for c in view.hand+view.piles['draw']+view.piles['discard'] if c is not card)
+    future = .75*stripped if horizon(view) > 1 and future_effects > after else 0.
+    return max(immediate, future)
+
+
 def card_score(card, target, view):
     cid, up = card['id'], int(bool(card.get('up')))
     p, pp = view.player, view.player['powers']
@@ -339,14 +389,20 @@ def card_score(card, target, view):
         parts['counterattack'] = (6 if up else 4) * sum(intent_hits(m) for m in alive if intent(m)) * .7
     attacks = [c for c in view.hand if c is not card and kind(c) == 'attack']
     affordable_attacks = min(len(attacks), remaining + sum(cost(c, view) == 0 for c in attacks))
-    if cid in ('Bash', 'Thunderclap', 'Shockwave', 'Uppercut', 'Trip'):
-        victims = alive if cid in ('Thunderclap', 'Shockwave') or (cid == 'Trip' and up) else ([target_monster] if target_monster else [])
-        parts['vulnerable'] = sum(4 + 3 * affordable_attacks for m in victims if all(m is not dead for dead in killed) and not m['powers'].get('Vulnerable', 0) and not m['powers'].get('Artifact', 0))
-    if cid in ('Clothesline', 'Uppercut', 'Shockwave', 'Intimidate', 'Blind'):
-        victims = alive if cid in ('Shockwave', 'Intimidate') or (cid == 'Blind' and up) else ([target_monster] if target_monster else [])
-        parts['weak'] = sum(3 + .35 * intent(m) for m in victims if all(m is not dead for dead in killed) and not m['powers'].get('Weakened', 0) and not m['powers'].get('Artifact', 0))
-    if cid == 'Disarm' and target_monster and not target_monster['powers'].get('Artifact', 0):
-        parts['strength_down'] = (3 if up else 2) * (2.5 + 1.5 * intent_hits(target_monster))
+    if card_debuffs(card):
+        for effect in card_debuffs(card):
+            parts.setdefault(effect, 0.)
+        all_targets = cid in ('Thunderclap', 'Shockwave', 'Intimidate') or cid in ('Trip', 'Blind') and up
+        victims = alive if all_targets else ([target_monster] if target_monster else [])
+        for monster in victims:
+            if any(monster is dead for dead in killed):
+                continue
+            applied, _ = resolved_debuffs(card, monster, monster['powers'].get('Artifact', 0), affordable_attacks)
+            for effect, value in applied.items():
+                parts[effect] = parts.get(effect, 0)+value
+            opening = artifact_opening(card, monster, view, remaining)
+            if opening:
+                parts['artifact_opening'] = parts.get('artifact_opening', 0)+opening
     if cid in DRAW:
         draw = min(DRAW[cid][up], 11-len(view.hand), len(view.piles['draw'])+len(view.piles['discard']))
         parts['draw'] = 0 if pp.get('No Draw', 0) or pp.get('NoDraw', 0) else draw * (3.5 if remaining > 0 else .6)
