@@ -5,7 +5,7 @@ comparison boundaries. Rule version changes when scoring behavior changes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 
 import numpy as np
@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v3'
+RULE_VERSION = 'ironclad-strength-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -244,6 +244,40 @@ def attack_followups(card, monster, view, energy):
     return total
 
 
+def strength_hand_damage(gain, setup, view, energy):
+    """Affordable visible attack gains, including hits, modifiers and overkill.
+
+    This is a greedy resource estimate, not a simulated action sequence. It
+    never reads draw order or assumes the identity of a generated card.
+    """
+    if gain <= 0:
+        return 0.
+    view = replace(view, player=dict(view.player, energy=energy))
+    powers = dict(view.player['powers'])
+    powers['Strength'] = powers.get('Strength', 0) + gain
+    stronger = replace(view, player=dict(view.player, powers=powers))
+    candidates = []
+    for attack in view.hand:
+        if attack is setup or kind(attack) != 'attack' or attack['id'] in ('Clash', 'Fiend Fire'):
+            continue
+        spend = cost(attack, view)
+        if spend > energy:
+            continue
+        deltas = []
+        for monster in view.alive:
+            before = min(monster['hp'], max(0, damage(attack, monster, view)-monster['block']))
+            after = min(monster['hp'], max(0, damage(attack, monster, stronger)-monster['block']))
+            deltas.append(max(0, after-before))
+        value = sum(deltas) if attack['id'] in AOE or attack['id'] in ('Sword Boomerang', 'Dramatic Entrance') else max(deltas, default=0)
+        candidates.append((value/max(.5, spend), value, spend))
+    total = 0.
+    for _, value, spend in sorted(candidates, reverse=True):
+        if spend <= energy:
+            total += value
+            energy -= spend
+    return total
+
+
 def passive_damage(monster, view, *, before_enemy=False):
     """Only deterministic visible passives; Mercury occurs AFTER enemy attacks."""
     value = view.player['powers'].get('Combust', 0)
@@ -366,7 +400,7 @@ def card_score(card, target, view):
                 'Jax': 3 if up else 2}[cid]
         if cid == 'Spot Weakness' and (not target_monster or not intent(target_monster)):
             gain = 0
-        parts['strength'] = gain * (affordable_attacks + (0 if cid == 'Flex' else max(2.5, turns_left)))
+        parts['strength'] = strength_hand_damage(gain, card, view, remaining) + gain * (0 if cid == 'Flex' else max(2.5, turns_left))
         if affordable_attacks and gain and cost(card, view) + sum(cost(c, view) for c in attacks) <= p['energy']:
             # If setup and all attacks fit, spend the setup before the attacks.
             parts['setup_order'] = 8

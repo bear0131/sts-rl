@@ -131,3 +131,23 @@ def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     assert raw_moves[0] != raw_moves[1]
     assert views[0] == views[1]
     assert decisions[0] == decisions[1]
+
+
+def test_native_flex_multihit_gain_matches_public_hand_arithmetic(combat_factory):
+    from rl.evaluation.baselines.combat_rules import damage, strength_hand_damage
+    env = combat_factory(['FLEX']*5, encounter='Cultist').fork_combat()
+    env.thick.bc.apply_custom_state({'hand': [('FLEX',0,0), ('PUMMEL',0,1)]})
+    env._invalidate_backend_cache()
+    before = visible_combat(request(env))
+    expected = damage(before.hand[1], before.monsters[0], before)
+    gain = strength_hand_damage(2, before.hand[0], before, 3)
+    assert gain == 8
+    assert CombatRuleStrategy().decide([request(env)])[0].action == A._PLAY
+    env.step(A._PLAY)
+    if env._info().get('pending'):
+        env.step(A._TARGET)
+    env.step(A._PLAY)
+    if env._info().get('pending'):
+        env.step(A._TARGET)
+    after = visible_combat(request(env))
+    assert before.monsters[0]['hp']-after.monsters[0]['hp'] == expected+gain == 16

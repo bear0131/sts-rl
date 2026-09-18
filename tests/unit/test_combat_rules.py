@@ -298,3 +298,33 @@ def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
     view.piles['draw'] = [card('Defend_R')]
     view.targets = {('play', 0): [None], ('play', 1): [0]}
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_strength_setup_values_actual_affordable_hits(view):
+    from rl.evaluation.baselines.combat_rules import strength_hand_damage
+    view.hand = [card('Flex', 0), card('Pummel'), card('Heavy Blade', 2)]
+    assert strength_hand_damage(2, view.hand[0], view, 1) == 8
+    assert strength_hand_damage(2, view.hand[0], view, 3) == 14
+    assert card_score(view.hand[0], None, view)[1]['strength'] == 14
+    assert view.player['powers'] == {}
+
+
+def test_strength_setup_accounts_for_modifiers_block_and_overkill(view):
+    from rl.evaluation.baselines.combat_rules import strength_hand_damage
+    view.hand = [card('Flex', 0), card('Pummel')]
+    view.player['powers'] = {'Weakened': 1}
+    view.monsters[0]['powers'] = {'Vulnerable': 1}
+    # Per hit floor(2*.75*1.5)=2 versus floor(4*.75*1.5)=4.
+    assert strength_hand_damage(2, view.hand[0], view, 1) == 8
+    view.monsters[0]['block'] = 16
+    assert strength_hand_damage(2, view.hand[0], view, 1) == 0
+    view.monsters[0].update(hp=2, block=0)
+    assert strength_hand_damage(2, view.hand[0], view, 1) == 0
+    view.monsters[0].update(hp=40, block=0)
+    assert strength_hand_damage(2, view.hand[0], view, 0) == 0
+
+
+def test_strength_setup_uses_energy_after_setup_for_whirlwind(view):
+    from rl.evaluation.baselines.combat_rules import strength_hand_damage
+    view.hand = [card('Inflame'), card('Whirlwind', -1)]
+    assert strength_hand_damage(2, view.hand[0], view, 2) == 4
