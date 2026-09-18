@@ -183,3 +183,31 @@ as episode numeric metrics. Regression:
 `tests/integration/test_turn_planner_winning_depth.py`. The Medical Kit/Hex/Dark
 Embrace fixture verifies the current native simulator, not an independent audit
 of the commercial game's event ordering or a replay of the original full run.
+
+### Opt-in public binary powers candidate
+
+`ironclad-turn-v7-public-flags-v1` adds a separate, read-only native
+`BattleContext.public_player_power_flags()` contract. Schema 1 returns
+`{"schema_version": 1, "flags": {...}}`, with boolean values for the explicit
+public whitelist `CORRUPTION`, `BARRICADE`, `CONFUSED`, `HEX`, `PEN_NIB`, and
+`SURROUNDED`. All six keys are present, including inactive effects. This is not
+an export of arbitrary simulator bitsets or support for every character's powers.
+
+Legacy `to_dict().player.powers`, canonical/encoded observations, packed leaf
+arrays, action semantics, and native state hashing remain unchanged. The new
+planner reads each sampled clone's flags into its own snapshot under
+`player.public_power_flags`; its trace includes the same public field. Existing
+checkpoints continue to receive the original observations. An old native build
+can still run policy/rules paths; explicitly constructing the new planner fails
+with a capability error instead of silently treating missing flags as false.
+
+Only the new handwritten planner's normalized power lookup uses these flags.
+Corruption and Barricade now activate their existing value terms after actual
+native play, which changes strategy preferences and needs an independent eval.
+Those terms remain human priors, not complete estimates of exhaust or block
+retention value. Barricade, Pen Nib and Surrounded are explicitly classified as
+not independently producing damage, so their newly visible flags do not invent
+an output channel in the resource guard. Turn/risk/winning-depth priorities and budgets are unchanged.
+The strategy manifest names the private flag contract explicitly. Native
+mechanism and compatibility contracts are in
+`tests/integration/test_public_power_flags.py`.

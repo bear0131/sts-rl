@@ -4,7 +4,7 @@ from dataclasses import asdict
 import numpy as np
 
 from env.core.native_actions import complete_actions
-from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig
+from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig, public_planner_state
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
 from rl.evaluation.strategies import Decision
 
@@ -31,7 +31,8 @@ class TurnPlannerStrategy:
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
-            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
+            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins',
+            public_power_flags='native-public-player-power-flags-v1-private-planner-state')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []
@@ -63,7 +64,7 @@ class TurnPlannerStrategy:
                      if isinstance(value, (int, float)) and key != 'max_action_depth'},
                     native_action=plan.action_bits)
             if self.trace:
-                raw = env.thick.bc.to_dict()
+                raw = public_planner_state(env.thick.bc)
                 raw['draw'] = sorted(raw['draw'])
                 if dome:
                     # Pure fallback already handles hidden intent; trace only
