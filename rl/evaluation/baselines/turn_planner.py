@@ -28,7 +28,8 @@ class TurnPlannerStrategy:
             enemy_progress='native-threshold-slime-phase-potential',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
-            world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic')
+            world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
+            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []

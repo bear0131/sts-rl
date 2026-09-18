@@ -17,7 +17,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v5-avoid-sampled-death'
+PLANNER_VERSION = 'ironclad-turn-v6-shortest-equivalent-win'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -266,6 +266,7 @@ class NativeTurnPlanner:
         quota = budget // len(roots)
         values = {bits: [] for bits in roots}
         unresolved = {bits: 0 for bits in roots}
+        winning_steps = {bits: 0 for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0)
@@ -278,23 +279,30 @@ class NativeTurnPlanner:
                 score, counts = self._root(sample, action, quota, check, public_relics, horizon)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
+                winning_steps[bits] += counts['winning_steps']
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves'):
                     stats[key] += counts[key]
                 stats['budget_exhausted'] |= counts['budget_exhausted']
             stats['worlds_completed'] += 1
         priorities = {bits: aggregate_world_values(scores) for bits, scores in values.items()}
-        selected = max(roots, key=lambda bits: (priorities[bits], -bits))
+        # Only break an exact tie in death count, win count and mean utility.
+        # Otherwise receding-horizon planning can forever postpone an equally
+        # good proved win behind a harmless, self-replacing zero-cost card.
+        # Nonwinning roots have zero winning steps, preserving their old tie.
+        selected = max(roots, key=lambda bits: (priorities[bits], -winning_steps[bits], -bits))
         stats.update(root_values={str(k): v[2] for k, v in priorities.items()},
             root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
                                        unresolved=unresolved[k],
                                        boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
-                                       heuristic_mean=v[2]) for k, v in priorities.items()},
+                                       heuristic_mean=v[2], winning_steps_total=winning_steps[k],
+                                       winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
+                           for k, v in priorities.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics=None, horizon=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
-                     budget_exhausted=False)
+                     budget_exhausted=False, winning_steps=0)
         frontier = []
         serial = 0
         best = None
@@ -310,7 +318,11 @@ class NativeTurnPlanner:
             raw = child.execute_to_enemy_boundary(action)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon)
-                best = value if best is None else max(best, value)
+                if best is None or value > best:
+                    best = value
+                    stats['winning_steps'] = depth if value[0] == 1 else 0
+                elif value == best and value[0] == 1:
+                    stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
             if not math.isfinite(partial):

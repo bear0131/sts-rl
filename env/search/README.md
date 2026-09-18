@@ -131,3 +131,20 @@ Infinity/NaN; an overflowing finite sum is averaged in scaled form.
 Regression: `tests/integration/test_turn_planner_terminal_priority.py`, including
 Strength500 versus immediate native victory and four actual NOSL Havoc futures
 (one win/three deaths) versus Defend surviving every world.
+
+`ironclad-turn-v6-shortest-equivalent-win` retains the v5 terminal counts and
+mean heuristic as the primary comparison. Only when all three are exactly equal,
+it prefers fewer native actions needed to reach the selected winning leaves.
+Within a world, equal winning leaf values retain their shortest observed depth;
+across worlds the winning depths are summed (equivalent to comparing their means
+when win counts tie). Live/death leaves contribute no winning length, preserving
+the previous tie for roots with no proved wins. Higher-HP wins can still justify
+more actions. This prevents repeatedly postponing an equally good available win.
+
+`root_outcomes` additionally records finite `winning_steps_total` and
+`winning_steps_mean`; the latter is conditional on winning worlds and is zero
+when no win was found. These remain structured per-root trace data, never summed
+as episode numeric metrics. Regression:
+`tests/integration/test_turn_planner_winning_depth.py`. The Medical Kit/Hex/Dark
+Embrace fixture verifies the current native simulator, not an independent audit
+of the commercial game's event ordering or a replay of the original full run.
