@@ -21,7 +21,9 @@ class TurnPlannerStrategy:
         self.trace = trace
 
     def manifest(self):
-        return dict(config=asdict(self.config), horizon='current-player-turn-plus-enemy-phase',
+        return dict(config=asdict(self.config), horizon=(
+            'current-player-turn-plus-enemy-phase' if self.config.lookahead_turns == 1
+            else 'two-player-turns-through-second-enemy-phase'),
             information='independent-NOSL-futures', dome='visible-rule-fallback',
             leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
             resources='conservative-no-output-guard-with-public-relics',
@@ -57,7 +59,8 @@ class TurnPlannerStrategy:
                                            public_relics=public_relics)
                 decision = Decision(None, self.name,
                     {key: value for key, value in plan.diagnostics.items()
-                     if isinstance(value, (int, float))}, native_action=plan.action_bits)
+                     if isinstance(value, (int, float)) and key != 'max_action_depth'},
+                    native_action=plan.action_bits)
             if self.trace:
                 raw = env.thick.bc.to_dict()
                 raw['draw'] = sorted(raw['draw'])

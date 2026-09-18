@@ -110,11 +110,13 @@ def test_shared_runner_executes_complete_target_and_preserves_rich_trace(combat_
     assert rows[0]['search_decisions'] == 1
     assert rows[0]['worlds_completed'] == 2
     assert 'root_values' not in rows[0]  # Structured data belongs in trace, not numeric sums.
+    assert 'max_action_depth' not in rows[0]  # Maxima must not become misleading runner sums.
     assert trace[0]['action'] is None
     action = sts.Action(trace[0]['native_action'])
     assert action.action_type == sts.ActionType.CARD
     assert action.source_idx == 0 and action.target_idx == 1
     assert isinstance(trace[0]['diagnostics']['root_values'], dict)
+    assert trace[0]['diagnostics']['max_action_depth'] >= 1
     assert progress[0]['current_native_action'] == trace[0]['native_action']
     json.dumps({'rows': rows, 'trace': trace, 'progress': progress})
 
@@ -143,4 +145,5 @@ def test_cli_composition_preserves_planner_budget_and_supplied_upper():
     manifest = strategy_manifest(strategy)['phases']['combat']
     assert manifest['combat_action_contract'] == 'native-v1'
     assert manifest['config'] == dict(
-        worlds=3, node_budget=97, beam_width=4, max_depth=9, master_nonce=777)
+        worlds=3, node_budget=97, beam_width=4, max_depth=9, master_nonce=777,
+        lookahead_turns=1)
