@@ -141,6 +141,25 @@ class PhaseStrategy:
         self.predicates = dict(predicates or {})
         self.name = '+'.join([default.name, *[f'{phase}:{solver.name}' for phase, solver in self.routes.items()]])
 
+    @property
+    def combat_action_contract(self):
+        """Union of contracts that can actually receive a combat request.
+
+        Native-v1 accepts complete actions as well as ordinary thin decisions.
+        A predicate can select either the combat route or the default, so both
+        must be supported. Non-combat routes impose no combat requirement.
+        Nested compositions expose the same property; strategy names play no role.
+        """
+        possible = [self.routes.get('combat', self.default)]
+        if 'combat' in self.routes and 'combat' in self.predicates:
+            possible.append(self.default)
+        contracts = {getattr(strategy, 'combat_action_contract', 'legacy')
+                     for strategy in possible}
+        unknown = contracts - {'legacy', 'native-v1'}
+        if unknown:
+            raise ValueError(f'unsupported combat action contracts: {unknown}')
+        return 'native-v1' if 'native-v1' in contracts else 'legacy'
+
     def decide(self, requests, *, check=lambda: None):
         grouped = {}
         for index, request in enumerate(requests):
