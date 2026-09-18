@@ -5,7 +5,7 @@ comparison boundaries. Rule version changes when scoring behavior changes.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import math
 
 import numpy as np
@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-end-damage-v1'
+RULE_VERSION = 'ironclad-hand-potions-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -496,6 +496,35 @@ def potion_score(slot, target, view):
         value = amount * 6 * min(4, turns_left) * 1.5
     elif 'cultist' in name:
         value = amount * turns_left * max(0, turns_left-1)
+    elif 'blessing of the forge' in name:
+        # UpgradeAllCardsInHand: evaluate visible upgrades, preserving any
+        # temporary cost change rather than resetting Snecko/discounted costs.
+        gains = []
+        for index, card in enumerate(view.hand):
+            if card.get('up') or card['id'] in BAD_CARDS:
+                continue
+            upgraded = dict(card, up=1)
+            upgraded['cost'] = max(0, cost(card, view)+numbers(upgraded)[0]-numbers(card)[0])
+            changed = replace(view, hand=[upgraded if i == index else c for i, c in enumerate(view.hand)])
+            targets = [i for i, monster in enumerate(view.monsters) if monster and monster['hp'] > 0]
+            old = max((card_score(card, target, view)[0] for target in targets), default=0)
+            new = max((card_score(upgraded, target, changed)[0] for target in targets), default=0)
+            if cost(card, view) <= p['energy'] or cost(upgraded, changed) <= p['energy']:
+                gains.append(min(18, max(0, new-old)))
+        value = sum(gains)
+    elif 'gamblers' in name:
+        replaceable = sum(c['id'] in BAD_CARDS or cost(c, view) > p['energy']
+            or (numbers(c)[2] and not view.deficit and kind(c) != 'attack') for c in view.hand)
+        accessible = len(view.piles['draw']) + len(view.piles['discard'])
+        value = min(replaceable, accessible) * (5 if p['energy'] > 0 else 2)
+    elif 'snecko oil' in name:
+        # Native draws five then randomizes costs. Use aggregate costs only;
+        # a cheap playable hand should not be scrambled for no reason.
+        demand = sum(cost(c, view) for c in view.hand if c['id'] not in BAD_CARDS)
+        draw = min(5*amount, 10-len(view.hand), len(view.piles['draw'])+len(view.piles['discard']))
+        value = 3*draw + 3*max(0, demand-1.5*len(view.hand))
+        if p['energy'] == 0:
+            value += 2*sum(cost(c, view) > 0 and c['id'] not in BAD_CARDS for c in view.hand)
     elif 'energy' in name:
         value = 6*min(2*amount, max(0, sum(cost(c, view) for c in view.hand)-p['energy']))
     elif 'blood' in name:
@@ -559,6 +588,8 @@ def selection_score(index, view):
             score -= 30
     elif context in ('WARCRY', 'FORETHOUGHT', 'SETUP', 'GAMBLE'):
         score = -score + (6 if cost(card, view) > view.player['energy'] else 0)
+        if context == 'GAMBLE' and cost(card, view) > view.player['energy']:
+            score = 8  # An unplayable nominal lethal is still unusable this turn.
     elif context == 'ARMAMENTS':
         original = score
         upgraded = dict(card, up=1)

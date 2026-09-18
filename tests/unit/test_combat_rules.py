@@ -318,3 +318,30 @@ def test_hp_loss_is_not_mistaken_for_blockable_damage(view):
     view.targets = {('play', 0): [None]}
     assert view.incoming == 0
     assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+
+
+def test_forge_values_visible_upgrades_before_spending_hand(view):
+    view.potions = ['Blessing Of The Forge']
+    view.hand = [card('Defend_R')]*3 + [card('Strike_R')]*2
+    assert potion_score(0, None, view)[0] > 0
+    view.hand = [card('Defend_R', up=1)]*3 + [card('Strike_R', up=1)]*2
+    assert potion_score(0, None, view)[0] < 0
+
+
+def test_gamblers_replaces_unplayable_hand_without_using_draw_order(view):
+    view.potions = ['Gamblers Brew']
+    view.player['energy'] = 1
+    view.hand = [card('Bludgeon', 3)]*3 + [card('Wound')]
+    assert potion_score(0, None, view)[0] > 0
+    view.select = {'context': 'GAMBLE'}
+    view.monsters[0]['hp'] = 1
+    assert pick(view, A._PICK, A._CONFIRM) == A._PICK
+
+
+def test_snecko_oil_retains_a_cheap_playable_hand(view):
+    view.potions = ['Snecko Oil']
+    view.hand = [card('Anger', 0)]*8
+    assert potion_score(0, None, view)[0] < 0
+    view.hand = [card('Bludgeon', 3)]*4
+    view.player['energy'] = 0
+    assert potion_score(0, None, view)[0] > 0
