@@ -112,6 +112,17 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 `--trace` 同时记录 `overworld_decision` 的公开状态、排序、实际动作和来源；
 `effective_strategy` 记录上下层组合、规则版本和回退策略。
 
+`--upper-strategy demand` 选择独立候选 `ironclad-overworld-demand-v1`，与 `rules`
+共享下层与模型回退。它只在第二幕部分奖励选牌中，加上公开牌组在假设均匀五张手牌中、
+保留一点进攻能量后可支付的重复直接格挡覆盖增量；以已公开 boss 的一种普通攻击作上限。
+此值不表示实际起手、完整战斗计划或预计 HP 损耗。未建模的消耗/格挡引擎及随机费用等
+组合退回上层 v1，其余选牌、升级、路线与商店规则均保持 v1。
+该候选尚无胜率改进结论；配对评估只切换 `--upper-strategy rules/demand`，固定所有战斗
+参数、checkpoint、native 和种子。统计 `overworld_demand_decisions`、
+`overworld_demand_changed_decisions`、模型回退数和自然终局；少量选择改变不代表胜率提升。
+库调用可用 `strategies.UPPER_STRATEGIES` 或直接组合 `EnemyDemandUpperStrategy`，
+不需要导入 CLI。默认仍为 `--upper-strategy model`。
+
 跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表
 上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
 下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision

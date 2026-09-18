@@ -12,7 +12,7 @@ from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
-from rl.evaluation.strategies import STRATEGIES, compose_strategy, strategy_manifest
+from rl.evaluation.strategies import STRATEGIES, UPPER_STRATEGIES, compose_strategy, strategy_manifest
 from rl.search.combat_value_search import add_combat_search_args
 
 
@@ -27,8 +27,8 @@ def build_parser():
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
-    parser.add_argument('--upper-strategy', choices=['model', 'rules'], default='model',
-                        help='Keep the upper checkpoint, or use overworld rules with explicit model fallback')
+    parser.add_argument('--upper-strategy', choices=tuple(UPPER_STRATEGIES), default='model',
+                        help='Upper checkpoint, overworld rules, or opt-in Act 2 demand rules; rules use explicit model fallback')
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--seed', type=int, default=10000)
     parser.add_argument('--ascension', type=int, default=0)
