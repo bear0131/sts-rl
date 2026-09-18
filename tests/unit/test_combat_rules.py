@@ -330,3 +330,16 @@ def test_hand_finish_checks_energy_time_warp_and_reactive_powers(view):
     view.monsters[0]['powers'] = {}
     view.player['powers'] = {'Vigor': 10}
     assert not visible_hand_finish(view.hand[0], view)
+
+
+@pytest.mark.parametrize('copier', ['Duplication', 'Echo Form', 'Necronomicon'])
+def test_hand_finish_excludes_extra_plays_at_public_time_warp_counter(view, copier):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    view.monsters[0].update(id='TimeEater', hp=26, powers={'Time Warp': 10})
+    view.hand = [card('Strike_R'), card('Carnage', 2)]
+    assert visible_hand_finish(view.hand[0], view)
+    if copier == 'Necronomicon':
+        view.relics[copier] = 0
+    else:
+        view.player['powers'][copier] = 1
+    assert not visible_hand_finish(view.hand[0], view)

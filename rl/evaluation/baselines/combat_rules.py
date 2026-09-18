@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-hand-finish-v1'
+RULE_VERSION = 'ironclad-hand-finish-v2'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -226,24 +226,6 @@ def horizon(view):
     return min(8., max(1., sum(m['hp'] for m in view.alive) / 35))
 
 
-def attack_followups(card, monster, view, energy):
-    """Greedy hand arithmetic; no transitions, generated cards or draw ordering.
-
-    Only fixed-damage attacks participate. The result is a planning preference,
-    never a proof that random/conditional effects allow a guaranteed lethal.
-    """
-    candidates = [c for c in view.hand if c is not card and kind(c) == 'attack'
-        and c['id'] not in ('Clash', 'Fiend Fire', 'Whirlwind', 'Sword Boomerang', 'Body Slam')]
-    candidates.sort(key=lambda c: -damage(c, monster, view) / max(.5, cost(c, view)))
-    total = 0.
-    for candidate in candidates:
-        spend = cost(candidate, view)
-        if spend <= energy:
-            energy -= spend
-            total += damage(candidate, monster, view)
-    return total
-
-
 def visible_hand_finish(card, view):
     """A conservative affordable attack packet against the sole live enemy.
 
@@ -260,9 +242,9 @@ def visible_hand_finish(card, view):
         return False
     if any(mp.get(k, 0) for k in ('Curl Up', 'Malleable', 'Mode Shift', 'Invincible', 'Thorns', 'Sharp Hide', 'Beat of Death', 'BeatOfDeath')):
         return False
-    if any(pp.get(k, 0) for k in ('Vigor', 'Double Damage', 'DoubleDamage', 'Double Tap', 'DoubleTap', 'Dark Embrace')):
+    if any(pp.get(k, 0) for k in ('Vigor', 'Double Damage', 'DoubleDamage', 'Double Tap', 'DoubleTap', 'Dark Embrace', 'Duplication', 'Echo Form')):
         return False
-    if any(r in view.relics for r in ('Dead Branch', 'Ink Bottle', 'Velvet Choker')) or view.player.get('combat_counters', {}).get('pen_nib', 0) == 9:
+    if any(r in view.relics for r in ('Dead Branch', 'Ink Bottle', 'Velvet Choker', 'Necronomicon')) or view.player.get('combat_counters', {}).get('pen_nib', 0) == 9:
         return False
     if any(c['id'] in ('Normality', 'Pain') for c in view.hand):
         return False

@@ -190,3 +190,26 @@ def test_native_fiend_fire_cannot_use_exhausted_followup_attack(combat_factory):
     assert after.monsters[0]['hp'] == 6
     assert after.hand == []
     assert any(c['id'] == 'Strike_R' for c in after.piles['exhaust'])
+
+
+def test_native_necronomicon_copy_consumes_time_warp_slot(combat_factory):
+    from rl.evaluation.baselines.combat_rules import visible_hand_finish
+    env = combat_factory(['STRIKE_RED']*5, encounter='Time Eater',
+                         relics=['Necronomicon']).fork_combat()
+    for _ in range(10):
+        env.thick.bc.apply_custom_state({'hand': [('INTIMIDATE',0)]})
+        env._invalidate_backend_cache(); env.step(A._PLAY)
+        if env._info().get('pending'):
+            env.step(A._TARGET)
+    env.thick.bc.apply_custom_state({'player': {'energy': 4}, 'monsters': [{'hp': 22}],
+        'hand': [('BASH',0), ('HEAVY_BLADE',0)]})
+    env._invalidate_backend_cache()
+    before = visible_combat(request(env))
+    assert before.monsters[0]['powers']['Time Warp'] == 10
+    assert 'Necronomicon' in before.relics
+    assert not visible_hand_finish(before.hand[0], before)
+    env.step(A._PLAY); env.step(A._TARGET)
+    after = visible_combat(request(env))
+    assert after.turn == before.turn+1  # copied Bash is the12th card
+    assert after.monsters[0]['hp'] == 2  # 8 then vulnerable12; Heavy Blade never played
+    assert env.thick.bc.outcome != 1
