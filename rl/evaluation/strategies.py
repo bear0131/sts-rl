@@ -10,9 +10,11 @@ from typing import Any, Callable, Protocol
 import time
 
 import numpy as np
+import torch
 
 from rl.policies.model import observation_for_policy
-from rl.search.native import NativeSearchConfig, complete_searches, forward_root, supports_compact
+from rl.search.native import MODEL_LEAF_BACKEND, NativeSearchConfig, complete_searches, forward_root, supports_compact
+from rl.search.inference import CombatLeafGraphs
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,13 @@ def strategy_manifest(strategy):
         result['predicate_phases'] = sorted(strategy.predicates)
     if isinstance(strategy, NativeStrategy):
         result.update(config=asdict(strategy.config), master_nonce=strategy.master_nonce)
+        backend = (getattr(strategy.model, '_native_leaf_inference', None)
+                   if strategy.leaf_backend is MODEL_LEAF_BACKEND else strategy.leaf_backend)
+        result['leaf_inference'] = {'backend': 'eager' if backend is None else type(backend).__name__}
+        if isinstance(backend, CombatLeafGraphs):
+            result['leaf_inference'] = dict(backend='cuda-graph', amp=backend.amp,
+                capacity=backend.capacity, batch_multiple=backend.batch_multiple,
+                statistics=backend.statistics())
     if isinstance(strategy, PolicyStrategy):
         result['deterministic'] = strategy.deterministic
     return result
@@ -76,9 +85,11 @@ class PolicyStrategy:
 class NativeStrategy:
     name = 'native'
 
-    def __init__(self, model, config: NativeSearchConfig, *, master_nonce=0, lock=None):
+    def __init__(self, model, config: NativeSearchConfig, *, master_nonce=0, lock=None,
+                 leaf_backend=MODEL_LEAF_BACKEND):
         self.model, self.config, self.lock = model, config, lock
         self.master_nonce = int(master_nonce)
+        self.leaf_backend = leaf_backend
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
@@ -100,7 +111,8 @@ class NativeStrategy:
                 self.model, lambda method, calls: {
                     i: getattr(requests[i].env.unwrapped, method)(*args, **kw)
                     for i, (args, kw) in calls.items()}, responses,
-                leaf_batch_size=self.config.leaf_batch_size, compact=compact, lock=self.lock, check=check)
+                leaf_batch_size=self.config.leaf_batch_size, compact=compact, lock=self.lock,
+                check=check, leaf_backend=self.leaf_backend)
         except BaseException:
             for request in requests:
                 request.env.unwrapped.nosl_is_az_cpp_abort()
@@ -193,12 +205,28 @@ def policy_strategy(model, args, lock=None):
 
 
 def native_strategy(model, args, lock=None):
+    leaf_inference = getattr(args, 'leaf_inference', 'eager')
+    backend = None
+    if leaf_inference not in ('eager', 'cuda-graph'):
+        raise ValueError('leaf inference must be eager or cuda-graph')
+    if leaf_inference == 'cuda-graph':
+        if torch.device(model.device).type != 'cuda':
+            raise ValueError('cuda-graph leaf inference requires a CUDA combat model')
+        if not supports_compact(model):
+            raise ValueError('cuda-graph leaf inference requires compact combat observations')
+        if model.policy.training or any(p.dtype != torch.float32 for p in model.policy.parameters()):
+            raise ValueError('cuda-graph evaluation requires an eval-mode FP32 combat model')
+        # Exact shapes preserve the eager batch geometry. This runtime-only
+        # cache changes neither the model weights nor per-tree leaf concurrency.
+        backend = CombatLeafGraphs(model.policy.core, model.device,
+            amp='off', capacity=32, batch_multiple=0)
     modes = {'puct': 0, 'gumbel': 1, 'full': 2, 'strict': 2}
     config = NativeSearchConfig.from_model(model, simulations=args.simulations, depth=args.depth,
         leaf_batch_size=args.leaf_batch_size, root_search_mode=modes[args.search_mode],
         paper_full_gumbel=args.search_mode == 'strict')
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
-        model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock)},
+        model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
+        leaf_backend=backend)},
         predicates={'combat': lambda request: getattr(request.env.unwrapped, '_pending', None) is None})
 
 
