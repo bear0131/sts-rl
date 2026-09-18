@@ -31,6 +31,7 @@ class CombatAuditStrategy:
                  trace=None, max_steps=2000, timeout=300.):
         self.reference = reference
         self.name = reference.name
+        self.combat_action_contract = getattr(reference, 'combat_action_contract', 'legacy')
         self.candidates = dict(candidates or {})
         self.limit = limit
         self.rows = rows if rows is not None else []
@@ -38,6 +39,13 @@ class CombatAuditStrategy:
         self.max_steps, self.timeout = max_steps, timeout
         self._active = {}
         self._starts = 0
+
+    def manifest(self):
+        from rl.evaluation.strategies import strategy_manifest
+        return dict(reference=strategy_manifest(self.reference), audit=dict(
+            limit=self.limit, max_steps=self.max_steps, timeout=self.timeout,
+            candidates={name: strategy_manifest(strategy)
+                        for name, strategy in self.candidates.items()}))
 
     def decide(self, requests, *, check):
         views = {}
@@ -61,15 +69,19 @@ class CombatAuditStrategy:
                 request, decision = requests[index], decisions[index]
                 ranking = rank_actions(view, np.flatnonzero(request.env.action_masks()))
                 native = getattr(request.env.unwrapped, '_nosl_cpp_pending', None)
+                bits = decision.native_action
+                if bits is None and native is not None:
+                    bits = int(native[1])
                 native_action = None
-                if native is not None:
+                if bits is not None:
                     import slaythespire as sts
-                    complete = sts.Action(int(native[1]))
-                    native_action = dict(bits=int(native[1]), kind=complete.action_type.name,
+                    complete = sts.Action(int(bits))
+                    native_action = dict(bits=int(bits), kind=complete.action_type.name,
                                          source=complete.source_idx, target=complete.target_idx)
                 self.trace(dict(kind='reference_decision', seed=request.seed, step=request.step,
                     floor=request.info.get('run_stats', {}).get('floor'), source=decision.source,
-                    action=decision.action, native_action=native_action, rule_action=ranking[0]['action'],
+                    action=decision.action, native_action=native_action,
+                    rule_action=ranking[0]['action'] if ranking else None,
                     state=public_state(view), ranked=ranking))
         return decisions
 
@@ -81,18 +93,28 @@ class CombatAuditStrategy:
                        floor=request.info.get('run_stats', {}).get('floor', 0),
                        initial_hp=view.player['hp'], initial_potions=list(view.potions),
                        visible_state_sha256=digest,
+                       reference_combat_action_contract=root.combat_action_contract,
                        encounter=[m['id'] for m in view.alive])
         if self.trace:
             self.trace(dict(kind='combat_start', **context, state=initial))
         for name, candidate in self.candidates.items():
             check()
+            contract = getattr(candidate, 'combat_action_contract', 'legacy')
+            if contract not in ('legacy', 'native-v1'):
+                raise ValueError(f'unsupported candidate combat_action_contract: {contract}')
             branch = root.fork_combat()
+            # A fork copies the reference's contract, but each candidate owns
+            # its action representation and legacy dead-screen behavior.
+            branch.combat_action_contract = contract
+            branch._invalidate_backend_cache()
             def outcome(env, info, terminated, truncated):
                 raw = env.unwrapped.thick.bc.to_dict()
                 won = env.unwrapped.thick.bc.outcome == _OUTCOME_VICTORY
-                return dict(result='win' if won else 'other_truncation' if truncated else 'death',
+                return dict(result='win' if won else 'dead_screen' if truncated and info.get('dead_screen')
+                            else 'other_truncation' if truncated else 'death',
                             floor=context['floor'], final_hp=raw['player']['hp'],
-                            final_potions=raw['potions'])
+                            final_potions=raw['potions'], terminated=bool(terminated),
+                            truncated=bool(truncated))
             scenario = Scenario('matched-combat-start', lambda: branch, outcome,
                                 reset=lambda env, seed: (env._obs(), env._info()))
             config = EvaluationConfig(episodes=1, seed=request.seed, max_steps=self.max_steps,
@@ -105,8 +127,22 @@ class CombatAuditStrategy:
                 candidate = CombatAuditStrategy(candidate,
                     trace=lambda event: self.trace(dict(event, candidate=name, combat=self._starts)))
             started = time.monotonic()
-            rows = list(evaluate(candidate, scenario, config, cancelled=cancelled))
-            row = dict(rows[0], **context, candidate=name)
+            # A native reference can already be parked on an F03 selection
+            # outside the legacy mask. The shared runner assumes reset is live;
+            # do not ask a legacy policy to choose from an empty initial mask.
+            # Preserve the env's existing truncation contract with zero actions.
+            if not branch.thick.is_over and branch._no_legal_action():
+                try:
+                    _, reward, terminated, truncated, info = branch._truncate_dead()
+                    rows = [dict(episode=0, seed=request.seed, steps=0, raw_return=reward,
+                        strategy=candidate.name, combat_action_contract=contract,
+                        initial_dead_screen=True, **outcome(branch, info, terminated, truncated))]
+                finally:
+                    branch.close()
+            else:
+                rows = list(evaluate(candidate, scenario, config, cancelled=cancelled))
+            row = dict(rows[0], **context, candidate=name,
+                       candidate_combat_action_contract=contract)
             row['wall_seconds'] = time.monotonic()-started
             row['hp_loss'] = context['initial_hp']-row['final_hp']
             self.rows.append(row)
