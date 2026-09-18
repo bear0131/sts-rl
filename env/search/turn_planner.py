@@ -17,7 +17,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v3'
+PLANNER_VERSION = 'ironclad-turn-v4'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -117,6 +117,32 @@ def power_horizon(raw):
     return min(5., max(1., remaining / max(25., 25 + 3 * strength)))
 
 
+def enemy_burden(monsters):
+    """Approximate remaining damage and bodies through public slime phases.
+
+    Assume a split at the native half-HP threshold, counting the HP inherited
+    by the children. Below that threshold a split inherits the current HP.
+    This is a progress potential, not minimum lethal damage: a burst kill can
+    bypass phases entirely. Odd max HP follows native integer division.
+    """
+    damage, bodies = 0, 0
+    for monster in monsters:
+        hp = monster['hp']
+        if hp <= 0 or monster['gone']:
+            continue
+        split_hp = min(hp, monster['max_hp'] // 2)
+        if monster['id'] in ('ACID_SLIME_L', 'SPIKE_SLIME_L'):
+            damage += hp + split_hp
+            bodies += 2
+        elif monster['id'] == 'SLIME_BOSS':
+            damage += hp + split_hp + 2 * (split_hp // 2)
+            bodies += 4
+        else:
+            damage += hp
+            bodies += 1
+    return damage, bodies
+
+
 def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
@@ -132,7 +158,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         return -100000.0
     powers = _powers(p)
     monsters = [m for m in raw['monsters'] if m['hp'] > 0 and not m['gone']]
-    remaining = sum(m['hp'] for m in monsters)
+    remaining, future_bodies = enemy_burden(monsters)
     horizon = power_horizon(raw) if horizon is None else horizon
     value = (1.3 * p['hp'] + 12 * math.log(max(.01, p['hp'] / p['max_hp']))
              + 1.8 * p['max_hp'] + .025 * p['gold'])
@@ -143,7 +169,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         # Losing every remaining output channel is worse than ordinary HP or
         # damage differences, but remains separate from an actual native death.
         value -= 10000
-    value -= .26 * remaining + 10 * len(monsters)
+    value -= .26 * remaining + 10 * future_bodies
     for m in monsters:
         mp = _powers(m)
         value -= 1.6 * horizon * mp.get('strength', 0)

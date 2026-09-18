@@ -92,3 +92,14 @@ pending choices should clone explicitly and use the mutator above. The legacy
 result. `execute` and the existing NOSL search control remain unchanged.
 
 Regression entrypoint: `tests/integration/test_native_boundary_execution.py`.
+
+`ironclad-turn-v4` adds a public phase-progress prior for splitting slimes. The
+remaining damage potential includes expected descendant HP at the native half-HP
+threshold (integer division), and the encounter-count term anticipates two medium
+slimes per large slime, or four per boss. Native splitting at unchanged HP is
+therefore continuous instead of falsely increasing remaining burden. This is an
+approximation assuming threshold splits, not minimum damage or a combat oracle;
+burst kills can skip phases. Native HP, loss of debuffs on split, actual incoming
+damage and terminal outcomes still determine the other value terms. The root
+power horizon remains the v3 public-state anchor. Regression entrypoint:
+`tests/integration/test_turn_planner_phases.py`.
