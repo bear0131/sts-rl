@@ -7,6 +7,7 @@
 | BASE01 | 初版已验收 | 固定上层，仅替换 combat 的可解释规则策略；DecisionStrategy/PhaseStrategy/runner、独立下层 checkpoint、目标/选牌区域与 trace 已接入；留出8整局规则/policy/native分别0/0/1胜，24同初态战斗分别23/19/24胜。方法与局限见 [基线协议](rl/evaluation/baselines/README.md)，结果见 [实验记录](worklog/2026-09-18.md#base01-held-out-evaluation) |
 | BASE02 | 本地对照完成，四机新32局评测中 | `rl/evaluation/baselines/combat_rules.py`：依据开发 bad case 补 Spore Cloud 等死亡效果、Mercury Hourglass 等被动伤害时序、睡眠怪开战时机及生成/无色牌；从两方参考轨迹扩展战斗语料，保持未看过的留出种子；F01/F02/F03 表示缺陷、搜索预算、药水策略分开消融，不把整个战斗组件差异都归因于搜索本身；上层规则另作独立实验 |
 | BASE03 | 上层v1完成，v2独立新种子验证中 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；公开牌组/地图/商店/选项做可解释决策，未知事件显式回退并计数；与固定上层分开评估，冻结后新种子对照及 bad case 迭代 |
+| EVAL01 | 待实验 | 当前 inner-only NOSL rollout 的冻结上层按 masked categorical 随机采样，正式 eval 默认按 masked argmax；固定上层/战斗 checkpoint、combat solver、环境种子后，分别用 deterministic 上层和多个独立 action RNG nonce 跑足量配对评测，按 phase 记录 `p_max`、entropy、非 argmax 率及牌组/路线/血量/药水和战斗初态分布；部署动作规则作为主口径，另一模式作为分布敏感性消融，不把单次随机8局归因为战斗算法差异 |
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
 | [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
 | [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确 |
