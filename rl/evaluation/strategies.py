@@ -51,6 +51,8 @@ def strategy_manifest(strategy):
         result['combat_action_contract'] = strategy.combat_action_contract
     if getattr(strategy, 'version', None):
         result['version'] = strategy.version
+    if callable(getattr(strategy, 'manifest', None)):
+        result.update(strategy.manifest())
     if getattr(strategy, 'fallback', None) is not None:
         result['fallback'] = strategy_manifest(strategy.fallback)
     if isinstance(strategy, PhaseStrategy):
@@ -250,15 +252,29 @@ def rule_strategy(model, args, lock=None):
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': CombatRuleStrategy()})
 
 
+def turn_planner_strategy(model, args, lock=None):
+    from env.search.turn_planner import TurnPlannerConfig
+    from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
+    config = TurnPlannerConfig(worlds=getattr(args, 'planner_worlds', 2),
+        node_budget=getattr(args, 'planner_nodes', 512),
+        beam_width=getattr(args, 'planner_beam', 8),
+        max_depth=getattr(args, 'planner_depth', 16),
+        master_nonce=getattr(args, 'planner_nonce', 20260918))
+    return PhaseStrategy(policy_strategy(model, args, lock), {'combat': TurnPlannerStrategy(config)})
+
+
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
-              'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy}
+              'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy,
+              'turn-planner': turn_planner_strategy}
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
+    if args.solver == 'turn-planner':
+        strategy.routes['combat'].trace = trace
     if combat_model is not None:
         strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
     if getattr(args, 'upper_strategy', 'model') == 'rules':

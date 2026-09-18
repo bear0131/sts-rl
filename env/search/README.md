@@ -25,3 +25,28 @@ draw-select 的索引属于当前公开候选实体。`nosl_redeterminize` 会�
 `preview_end_turn_boundary` 在 terminal 时返回 None、调用方再次 execute 的重复
 模拟。旧 API 和旧 NOSL 的重采样/训练语义均保持兼容；采用新 helper 的 planner
 需要显式加载含这些绑定的新 native 构建。
+
+## 无模型回合规划
+
+`turn_planner.py` 的 `NativeTurnPlanner` 在独立 NOSL 样本中搜索当前玩家回合，
+用 native transition 处理出牌、目标、选牌、药水和敌方完整行动，再用人工状态价值评价。
+它属于规则与搜索结合的实验策略，不是纯规则 v3，也不是原有神经 Full Gumbel。
+每次只执行首个完整动作，再观察并重新规划；每个首步动作有独立等额预算和有界 frontier，
+跨样本平均各自找到的最好结果。样本内的乐观续局不等于精确信息集搜索。
+
+`TurnPlannerConfig.node_budget` 是每个样本的原生 transition 上限；为覆盖全部合法根动作，
+有效下限为 `2 * root_actions`。`effective_node_budget` 报告每样本上限，
+`effective_total_budget` 乘以 worlds，`native_transitions` 报告实际总执行数。
+`beam_width` 限制每个首步分支保留的 frontier，`max_depth` 限制玩家动作深度；
+不会将原始字典当作完整状态做不可靠的 transposition 合并。搜索不足以完成 pending 时
+使用并记录 `fallback_leaves` 近似值。标量值是人工偏好，不是胜率或经校准的 Q。
+
+调用方必须保证当前敌人意图公开。评测 adapter 遇 Runic Dome 回退遮罩后的 v3 规则；
+其遗留 thin 候选为空时按完整合法动作顺序选择，不窥探 native 当前意图。
+根部抽牌堆选择先重采样，再按原生实体身份映射候选，不能先执行选择：后续 exhaust/draw
+触发器可能读取真实牌堆顶。独立 master nonce 和决策计数不读取实际游戏 seed/RNG。
+
+方法参考 bottled_ai 的当回合结果比较，没有复制其实现或独立制作卡牌模拟器。
+参考版本 `7b47a877d626cdb4fbeeb423c46472b15dd2ac00` 的
+[路径搜索](https://github.com/xaved88/bottled_ai/blob/7b47a877d626cdb4fbeeb423c46472b15dd2ac00/rs/calculator/play_path.py)
+及 [结果比较](https://github.com/xaved88/bottled_ai/blob/7b47a877d626cdb4fbeeb423c46472b15dd2ac00/rs/common/comparators/core/comparisons.py)。

@@ -116,3 +116,22 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
 下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision
 重跑。全局胜率、不同参考轨迹的配对战斗、人工牌组压力测试分别报告，不混合样本数。
+
+## 规则与原生回合搜索
+
+`--solver turn-planner` 使用 [无模型回合规划](../../../env/search/README.md)，
+沿用同一 upper checkpoint 和 runner，自动选择显式 `native-v1` 完整动作接口。
+默认每次决策采样 2 个独立未来，每样本 512 次 transition；可调整
+`--planner-nodes`、`--planner-worlds`、`--planner-beam`、`--planner-depth` 和
+`--planner-nonce`。有效预算的根动作覆盖下限与实际用量都记录在诊断中。
+
+```bash
+python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 2048 --planner-worlds 2 --episodes 128 --seed 150000 --device cpu --num-envs 8 --max-steps 6000 --timeout 1800 --output runs/local/turn-planner-development.json
+```
+
+仍可用 `--upper-strategy rules` 替换上层。战斗叶子完全由人工状态价值评价；
+上层模型的使用不代表战斗搜索调用神经网络。`effective_strategy` 记录完整配置和信息边界。
+需要重建包含 `preview_end_turn_result` 与 `remap_draw_selection_from` 的 native 扩展；
+旧模型维度不变。普通 `--trace` 记录完整原生首步、根值及排序后的 draw 多重集；
+`--compare-combats` 暂不支持这个动作契约，CLI 明确拒绝。
+步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。
