@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-end-damage-v1'
+RULE_VERSION = 'ironclad-end-damage-orichalcum-v2'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -80,10 +80,14 @@ class CombatView:
         return sum(intent(m) for m in self.alive) + sum(end_turn_hits)
 
     @property
-    def deficit(self):
+    def end_turn_block(self):
         powers = self.player['powers']
-        return max(0, self.incoming - self.player['block'] - powers.get('Metallicize', 0)
-                   - powers.get('Plated Armor', 0))
+        orichalcum = 6 if 'Orichalcum' in self.relics and self.player['block'] == 0 else 0
+        return self.player['block'] + powers.get('Metallicize', 0) + powers.get('Plated Armor', 0) + orichalcum
+
+    @property
+    def deficit(self):
+        return max(0, self.incoming - self.end_turn_block)
 
 
 def visible_combat(request):
@@ -216,8 +220,12 @@ def damage(card, monster, view):
 
 
 def block_value(amount, view):
-    useful = min(amount, view.deficit)
-    carry = max(0, amount-useful) * (.6 if view.player['powers'].get('Barricade', 0) else 0)
+    # Orichalcum checks current block before end-turn power block. Playing a
+    # small block card can switch off six free block; value only the change.
+    lost_orichalcum = 6 if amount > 0 and view.player['block'] == 0 and 'Orichalcum' in view.relics else 0
+    protection_after = view.end_turn_block + amount - lost_orichalcum
+    useful = view.deficit - max(0, view.incoming-protection_after)
+    carry = (amount-lost_orichalcum-useful) * (.6 if view.player['powers'].get('Barricade', 0) else 0)
     # Permanent Siphon debuffs and visible growth powers punish indefinite
     # partial blocking. Race them while HP permits; lethal prevention remains
     # urgent. This depends on public monster identity/powers, never next moves.
@@ -339,6 +347,28 @@ def card_score(card, target, view):
     if pp.get('NoBlock', 0):
         block = 0
     parts['block'] = block_value(block, view)
+    if block and p['block'] == 0 and 'Orichalcum' in view.relics and cid not in ('True Grit', 'Second Wind'):
+        # A first Defend can be inferior to free six block while two Defends
+        # together are worthwhile. Reserve only visible affordable block cards;
+        # exclude cards whose exhaust could destroy the rest of the sequence.
+        sequence = []
+        for other in view.hand:
+            if other is card or other['id'] in ('True Grit', 'Second Wind'):
+                continue
+            base_block = numbers(other)[2]
+            if base_block:
+                gain = max(0, base_block+pp.get('Dexterity', 0))
+                if pp.get('Frail', 0):
+                    gain = math.floor(.75*gain)
+                sequence.append((gain, cost(other, view)))
+        energy_left, total_block = remaining, block
+        for gain, spend in sorted(sequence, key=lambda x: -x[0]/max(.5, x[1])):
+            if spend <= energy_left:
+                energy_left -= spend
+                total_block += gain
+        if total_block > block:
+            share = block_value(total_block, view) * block/total_block
+            parts['orichalcum_block_sequence'] = max(0, share-parts['block'])
     if block and any(c['id'] == 'Body Slam' and cost(c, view) <= remaining for c in view.hand if c is not card):
         parts['body_slam_setup'] = .85 * block
     if cid == 'Flame Barrier':

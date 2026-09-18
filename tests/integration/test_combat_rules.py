@@ -150,3 +150,36 @@ def test_native_constricted_is_public_and_blockable(combat_factory):
         env.step(A._TARGET)
     env.step(A.END_TURN)
     assert visible_combat(request(env)).player['hp'] == hp-5
+
+
+def test_native_orichalcum_base_defend_loses_one_hp_and_energy(combat_factory):
+    env = combat_factory(['DEFEND_RED']*5, relics=['Orichalcum'])
+    env.thick.bc.apply_custom_state({'hand': [('DEFEND_RED',0,1)],
+        'monsters': [{'move': 'JAW_WORM_CHOMP'}]})
+    env._invalidate_backend_cache()
+    root = visible_combat(request(env))
+    assert root.incoming > 6
+    assert CombatRuleStrategy().decide([request(env)])[0].action == A.END_TURN
+    blocked = env.fork_combat()
+    blocked.step(A._PLAY)
+    if blocked._info().get('pending'):
+        blocked.step(A._TARGET)
+    env.step(A.END_TURN)
+    blocked.step(A.END_TURN)
+    assert visible_combat(request(env)).player['hp'] == visible_combat(request(blocked)).player['hp']+1
+
+
+def test_native_orichalcum_two_defends_can_outperform_free_block(combat_factory):
+    env = combat_factory(['DEFEND_RED']*5, relics=['Orichalcum'])
+    env.thick.bc.apply_custom_state({'hand': [('DEFEND_RED',0,1),('DEFEND_RED',0,1)],
+        'player': {'energy': 2}, 'monsters': [{'move': 'JAW_WORM_CHOMP'}]})
+    env._invalidate_backend_cache()
+    reference = env.fork_combat()
+    for _ in range(2):
+        assert CombatRuleStrategy().decide([request(env)])[0].action == A._PLAY
+        env.step(A._PLAY)
+        if env._info().get('pending'):
+            env.step(A._TARGET)
+    env.step(A.END_TURN)
+    reference.step(A.END_TURN)
+    assert visible_combat(request(env)).player['hp'] == visible_combat(request(reference)).player['hp']+4

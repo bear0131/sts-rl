@@ -318,3 +318,44 @@ def test_hp_loss_is_not_mistaken_for_blockable_damage(view):
     view.targets = {('play', 0): [None]}
     assert view.incoming == 0
     assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN
+
+
+def test_orichalcum_makes_small_block_worse_than_free_block(view):
+    view.relics = {'Orichalcum': 0}
+    assert view.deficit == 4
+    assert pick(view, A._PLAY+1, A.END_TURN) == A.END_TURN
+    view.hand[1]['up'] = 1
+    assert pick(view, A._PLAY+1, A.END_TURN) == A._PLAY+1
+    view.player['block'] = 1
+    assert view.deficit == 9
+    assert pick(view, A._PLAY+1, A.END_TURN) == A._PLAY+1
+
+
+def test_orichalcum_checks_before_metallicize(view):
+    view.relics = {'Orichalcum': 0}
+    view.player['powers'] = {'Metallicize': 3}
+    assert view.end_turn_block == 9
+    assert view.deficit == 1
+    assert pick(view, A._PLAY+1, A.END_TURN) == A.END_TURN
+
+
+def test_orichalcum_allows_starting_affordable_cumulative_block(view):
+    view.relics = {'Orichalcum': 0}
+    view.monsters[0]['adjusted_damage'] = 12
+    view.player['energy'] = 2
+    view.hand = [card('Defend_R'), card('Defend_R')]
+    view.targets = {('play', 0): [None], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A._PLAY
+    view.player['energy'] = 1
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A.END_TURN
+
+
+def test_orichalcum_does_not_forbid_body_slam_or_combat_lethal(view):
+    view.relics = {'Orichalcum': 0}
+    view.monsters[0].update(hp=5, adjusted_damage=0)
+    view.hand = [card('Defend_R'), card('Body Slam')]
+    view.targets = {('play', 0): [None], ('play', 1): [0]}
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A._PLAY
+    view.hand = [card('Strike_R'), card('Defend_R')]
+    view.targets = {('play', 0): [0], ('play', 1): [None]}
+    assert pick(view, A._PLAY, A._PLAY+1, A.END_TURN) == A._PLAY
