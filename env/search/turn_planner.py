@@ -17,7 +17,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v2'
+PLANNER_VERSION = 'ironclad-turn-v3'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -110,12 +110,22 @@ def _powers(raw):
             for name, value in raw.get('powers', ())}
 
 
-def state_value(raw, *, partial=False, public_relics=None):
+def power_horizon(raw):
+    """Estimate payoff duration once from the public decision root."""
+    remaining = sum(m['hp'] for m in raw['monsters'] if m['hp'] > 0 and not m['gone'])
+    strength = _powers(raw['player']).get('strength', 0)
+    return min(5., max(1., remaining / max(25., 25 + 3 * strength)))
+
+
+def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
     potions, end-turn damage and enemy mechanics. Partial values only order the
     bounded frontier; completed turn leaves decide between root alternatives.
+    The planner supplies one root-anchored horizon to every leaf. Recomputing it
+    after dealing damage can subtract more power value than the damage gains.
+    Standalone callers may omit it to evaluate an isolated state as before.
     """
     p = raw['player']
     if p['hp'] <= 0 or raw['outcome'] == 2:
@@ -123,7 +133,7 @@ def state_value(raw, *, partial=False, public_relics=None):
     powers = _powers(p)
     monsters = [m for m in raw['monsters'] if m['hp'] > 0 and not m['gone']]
     remaining = sum(m['hp'] for m in monsters)
-    horizon = min(5., max(1., remaining / max(25., 25 + 3 * powers.get('strength', 0))))
+    horizon = power_horizon(raw) if horizon is None else horizon
     value = (1.3 * p['hp'] + 12 * math.log(max(.01, p['hp'] / p['max_hp']))
              + 1.8 * p['max_hp'] + .025 * p['gold'])
     value += 5 * sum(x not in ('INVALID', 'EMPTY_POTION_SLOT') for x in raw['potions'])
@@ -184,6 +194,9 @@ class NativeTurnPlanner:
         if not roots:
             raise ValueError('turn planner requires a live combat decision')
         original = battle.to_dict()
+        # A shared public reference makes the payoff duration comparable across
+        # damage, growth and enemy debuff branches, worlds, and partial leaves.
+        horizon = power_horizon(original)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -201,7 +214,7 @@ class NativeTurnPlanner:
             for bits in roots:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
-                score, counts = self._root(sample, action, quota, check, public_relics)
+                score, counts = self._root(sample, action, quota, check, public_relics, horizon)
                 values[bits].append(score)
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves'):
                     stats[key] += counts[key]
@@ -213,7 +226,7 @@ class NativeTurnPlanner:
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check, public_relics=None):
+    def _root(self, branch, bits, quota, check, public_relics=None, horizon=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False)
         frontier = []
@@ -230,9 +243,9 @@ class NativeTurnPlanner:
             # path and continue intermediate selections without a new draw.
             raw = child.execute_to_enemy_boundary(action)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
-                best = max(best, state_value(raw, public_relics=public_relics))
+                best = max(best, state_value(raw, public_relics=public_relics, horizon=horizon))
                 return
-            partial = state_value(raw, partial=True, public_relics=public_relics)
+            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
             best_partial = max(best_partial, partial)
             serial += 1
             heapq.heappush(frontier, (-partial, serial, depth, child))

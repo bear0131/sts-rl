@@ -24,7 +24,8 @@ class TurnPlannerStrategy:
         return dict(config=asdict(self.config), horizon='current-player-turn-plus-enemy-phase',
             information='independent-NOSL-futures', dome='visible-rule-fallback',
             leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
-            resources='conservative-no-output-guard-with-public-relics')
+            resources='conservative-no-output-guard-with-public-relics',
+            value_horizon='shared-root-public-enemy-hp-and-strength')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []
