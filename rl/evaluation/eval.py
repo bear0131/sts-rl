@@ -126,7 +126,7 @@ def main():
             trace_stream.write(json.dumps(event)+'\n')
     strategy = compose_strategy(model, args, combat_model if args.combat_checkpoint else None, trace=trace)
     configured_strategy = strategy
-    candidate_manifests = {}
+    candidate_strategies = {}
     started = last_report = time.monotonic()
 
     def progress(event):
@@ -151,7 +151,7 @@ def main():
                             'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
                 max_steps=args.max_steps, timeout=args.timeout,
                 trace=trace if trace_stream else None)
-            candidate_manifests = {name: strategy_manifest(solver) for name, solver in strategy.candidates.items()}
+            candidate_strategies = strategy.candidates
         for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
@@ -175,7 +175,8 @@ def main():
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
-            effective_strategy=strategy_manifest(configured_strategy), combat_candidates=candidate_manifests,
+            effective_strategy=strategy_manifest(configured_strategy),
+            combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
         print(json.dumps(summary, ensure_ascii=False), flush=True)
         if args.output:
