@@ -15,6 +15,28 @@ import subprocess
 import sys
 
 
+def _record(values, name, value):
+    import numpy as np
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu().numpy()
+    if isinstance(value, np.ndarray):
+        assert value.dtype != object, name
+        values[name] = dict(dtype=value.dtype.str, shape=list(value.shape),
+                            sha256=hashlib.sha256(value.tobytes(order="C")).hexdigest())
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _record(values, f"{name}/{key}", item)
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _record(values, f"{name}/{index}", item)
+    elif value is None or isinstance(value, (str, bool, int, float, np.generic)):
+        values[name] = value.item() if isinstance(value, np.generic) else value
+    else:
+        raise TypeError(f"unsupported snapshot field {name}: {type(value)}")
+
+
 def capture(output: Path, restore: Path | None) -> None:
     import platform
     import numpy as np
@@ -32,22 +54,7 @@ def capture(output: Path, restore: Path | None) -> None:
     values = {}
 
     def record(name, value):
-        if isinstance(value, torch.Tensor):
-            value = value.detach().cpu().numpy()
-        if isinstance(value, np.ndarray):
-            assert value.dtype != object, name
-            values[name] = dict(dtype=value.dtype.str, shape=list(value.shape),
-                                sha256=hashlib.sha256(value.tobytes(order="C")).hexdigest())
-        elif isinstance(value, dict):
-            for key, item in value.items():
-                record(f"{name}/{key}", item)
-        elif isinstance(value, (list, tuple)):
-            for index, item in enumerate(value):
-                record(f"{name}/{index}", item)
-        elif value is None or isinstance(value, (str, bool, int, float, np.generic)):
-            values[name] = value.item() if isinstance(value, np.generic) else value
-        else:
-            raise TypeError(f"unsupported snapshot field {name}: {type(value)}")
+        _record(values, name, value)
 
     class ShortCombatEnv(SlayTheSpireEnv):
         def reset(self, **kwargs):
@@ -148,16 +155,137 @@ def capture(output: Path, restore: Path | None) -> None:
     print(f"captured {len(values)} fields: {output}")
 
 
-def compare(baseline: Path, candidate: Path) -> None:
+def capture_search(output: Path, repeats: int) -> None:
+    import platform
+    import time
+    import numpy as np
+    import torch
+    from env.core.run_env import SlayTheSpireEnv
+    import slaythespire as sts
+
+    torch.set_num_threads(1)
+    build = Path(os.environ["STS_LIGHTSPEED_BUILD_DIR"]).resolve()
+    native = Path(sts.__file__).resolve()
+    if native.parent != build:
+        raise ValueError(f"loaded unexpected native build: {native}")
+    cache = {}
+    for line in (build / "CMakeCache.txt").read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith(("#", "//")) and "=" in line and ":" in line:
+            key, value = line.split("=", 1)
+            cache[key.split(":", 1)[0]] = value
+    compiler = cache["CMAKE_CXX_COMPILER"]
+    compiler_version = subprocess.check_output([compiler, "--version"], text=True)
+    identity = dict(kind="native-search", python=platform.python_version(),
+                    platform=platform.platform(), torch=torch.__version__, numpy=np.__version__,
+                    native_sha256=hashlib.sha256(native.read_bytes()).hexdigest(), threads=1,
+                    device="cpu", hashseed=os.environ["PYTHONHASHSEED"],
+                    compiler_sha256=hashlib.sha256(compiler_version.encode()).hexdigest(),
+                    build_flags={key: cache.get(key) for key in (
+                        "CMAKE_BUILD_TYPE", "CMAKE_CXX_FLAGS", "CMAKE_CXX_FLAGS_RELEASE",
+                        "STS_ENABLE_RULE_TRACE", "PYTHON_VERSION", "PYBIND11_INTERNALS_VERSION")})
+    values, timings = {}, []
+    decks = {
+        "basic": ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4 + ["BASH"],
+        "armaments": ["ARMAMENTS", "ANGER", "SHRUG_IT_OFF", "RAMPAGE", "POMMEL_STRIKE"] * 2,
+        "long": ["STRIKE_RED"] * 70,
+        "exhume": ["EXHUME"] * 5,
+    }
+    cases = [(deck, encounter, mode, strict, batch, depth, boundary)
+             for deck, encounter in (("basic", "Jaw Worm"), ("armaments", "Two Louse"),
+                                     ("long", "Gremlin Leader"), ("exhume", "Jaw Worm"))
+             for mode, strict, batch, depth, boundary in (
+                 (2, True, 1, 0, False), (2, False, 4, 3, False),
+                 (0, False, 1, 2, True))]
+    for repeat in range(repeats):
+        for case_index, (deck, encounter, mode, strict, batch, depth, boundary) in enumerate(cases):
+            for packed in (False, True):
+                game = sts.GameContext(sts.CharacterClass.IRONCLAD, 19 + case_index, 0)
+                game.floor_num = 1
+                game.set_deck([(card, 0) for card in decks[deck]])
+                battle = sts.create_battle(game, encounter)
+                if deck == "exhume":
+                    battle.apply_custom_state({"player": {"energy": 3}, "hand": ["EXHUME"],
+                                               "draw": [], "discard": [],
+                                               "exhaust": ["STRIKE_RED"] * 129})
+                before = battle.to_dict()
+                logits = np.linspace(-0.7, 0.9, 181, dtype=np.float64)
+                started = time.perf_counter()
+                session = battle.nosl_neural_search_begin(
+                    logits, simulations=128, depth=depth, nonce=173 + case_index,
+                    root_search_mode=mode, paper_full_gumbel=strict, root_value=0.37,
+                    end_turn_as_leaf=boundary, dirichlet_alpha=0.3,
+                    dirichlet_epsilon=0.25)
+                prefix = f"r{repeat}/c{case_index}/packed{packed}"
+                elapsed = time.perf_counter() - started
+                leaves = batches = 0
+                while not session.done():
+                    started = time.perf_counter()
+                    requests = session.next_batch_packed(batch) if packed else session.next_batch(batch)
+                    elapsed += time.perf_counter() - started
+                    ids = requests["request_ids"] if packed else [r["request_id"] for r in requests]
+                    if not ids:
+                        assert session.done(), prefix
+                        break
+                    if packed:
+                        _record(values, f"{prefix}/batch{batches}", requests)
+                    else:
+                        for leaf in requests:
+                            leaf = dict(leaf)
+                            state = leaf.pop("state")
+                            leaf["state_sha256"] = hashlib.sha256(json.dumps(
+                                state, sort_keys=True, allow_nan=False).encode()).hexdigest()
+                            _record(values, f"{prefix}/batch{batches}/{leaf['request_id']}", leaf)
+                    leaf_values = np.asarray([0.15 + (int(i) % 11) * 0.06 for i in ids])
+                    policy = np.stack([logits + np.sin(np.arange(181) + int(i)) * 0.1 for i in ids])
+                    started = time.perf_counter()
+                    if packed:
+                        session.backprop_batch_array(np.asarray(ids, dtype=np.uint64), leaf_values, policy)
+                    else:
+                        for request_id, value, row in zip(ids, leaf_values, policy):
+                            session.backprop(request_id, value, row)
+                    elapsed += time.perf_counter() - started
+                    leaves += len(ids)
+                    batches += 1
+                    assert batches <= 128, prefix
+                started = time.perf_counter()
+                result = session.result()
+                elapsed += time.perf_counter() - started
+                assert result["simulations"] == 128
+                assert battle.to_dict() == before, prefix
+                _record(values, f"{prefix}/result", result)
+                _record(values, f"{prefix}/root", session.tree_snapshot([], 256))
+                for index in range(len(session.tree_snapshot([], 256)["children"])):
+                    _record(values, f"{prefix}/child{index}", session.tree_snapshot([index], 256))
+                # Compare future live transitions as well as the exposed parent state.
+                for step in range(3):
+                    battle.execute(sts.Action(sts.ActionType.END_TURN))
+                    _record(values, f"{prefix}/future{step}", battle.to_dict())
+                    if battle.is_battle_over:
+                        break
+                timings.append(dict(repeat=repeat, case=case_index, packed=packed, simulations=128,
+                                    leaves=leaves, batches=batches, elapsed_sec=elapsed))
+    output.write_text(json.dumps(dict(identity=identity, values=values, timings=timings),
+                                 allow_nan=False) + "\n", encoding="utf-8")
+    print(f"captured {len(values)} fields / {len(timings) * 128} simulations: {output}")
+
+
+def compare(baseline: Path, candidate: Path, *, allow_native_rebuild=False) -> None:
     a, b = (json.loads(p.read_text(encoding="utf-8")) for p in (baseline, candidate))
-    if a["identity"] != b["identity"]:
+    identities = [dict(row["identity"]) for row in (a, b)]
+    if allow_native_rebuild:
+        if any(row.get("kind") != "native-search" or "compiler_sha256" not in row
+               or "build_flags" not in row for row in identities):
+            raise SystemExit("native rebuild comparison requires capture-search build identities")
+        for row in identities:
+            row.pop("native_sha256")
+    if identities[0] != identities[1]:
         raise SystemExit("runtime/native identities differ; cannot claim same-runtime bitwise")
     missing = object()
     differences = [k for k in sorted(a["values"].keys() | b["values"].keys())
                    if a["values"].get(k, missing) != b["values"].get(k, missing)]
     if differences:
         raise SystemExit("bitwise differences:\n" + "\n".join(differences[:80]))
-    print(f"BITWISE PASS: {len(a['values'])} fields; {a['commit']} -> {b['commit']}")
+    print(f"BITWISE PASS: {len(a['values'])} fields; native rebuild allowed={allow_native_rebuild}")
 
 
 def main():
@@ -168,14 +296,23 @@ def main():
     cap.add_argument("--restore", type=Path, help="baseline checkpoint directory")
     cap.add_argument("--timeout", type=float, default=180)
     cap.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    search = sub.add_parser("capture-search", help="fixed native128 traces across explicit native rebuilds")
+    search.add_argument("--output", type=Path, required=True)
+    search.add_argument("--repeats", type=int, default=1, choices=range(1, 11))
+    search.add_argument("--timeout", type=float, default=180)
+    search.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     comp = sub.add_parser("compare")
     comp.add_argument("baseline", type=Path)
     comp.add_argument("candidate", type=Path)
+    comp.add_argument("--allow-native-rebuild", action="store_true")
     args = parser.parse_args()
     if args.command == "compare":
-        compare(args.baseline, args.candidate)
+        compare(args.baseline, args.candidate, allow_native_rebuild=args.allow_native_rebuild)
     elif args.worker:
-        capture(args.output, args.restore)
+        if args.command == "capture-search":
+            capture_search(args.output, args.repeats)
+        else:
+            capture(args.output, args.restore)
     else:
         if args.output.exists():
             parser.error("output exists; choose a fresh evidence path")

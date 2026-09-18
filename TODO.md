@@ -42,5 +42,6 @@
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
 | R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见 [恢复交接](docs/2026-09-14/nosl-performance-recovery-handoff.md)。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
 | R03 | 共享后端已落实 | episode runner/策略组合、native eval/rollout/watch、固定场景库已共享并合批；仍需 corpus/历史基准协议迁接、完整评测集与统计定义，关联 F05/F16/PERF01 |
+| PERF04 | 实现及条件交接进行中 | 原生 NOSL 搜索等价常数优化；明确 baseline/candidate 构建，验证叶子顺序、动作、Q/visits/targets、父状态及完整预算性能。2026-09-19 06:23:29+08:00 判断 TRAIN02 历史 `game/floor_mean` 是否曾严格超过29；仅在未超过且完整历史可核查时保存停机、从 TRAIN01 四机 step1622016 replay/Adam/RNG 快照恢复40-update训练。见 [意图和验收](worklog/2026-09-19.md#perf04-equivalent-native-search-optimization-and-conditional-train02-handoff) |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
