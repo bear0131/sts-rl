@@ -103,3 +103,38 @@ burst kills can skip phases. Native HP, loss of debuffs on split, actual incomin
 damage and terminal outcomes still determine the other value terms. The root
 power horizon remains the v3 public-state anchor. Regression entrypoint:
 `tests/integration/test_turn_planner_phases.py`.
+
+## Optional two-turn planning
+
+`ironclad-turn-v5` adds `TurnPlannerConfig(lookahead_turns=2)` and eval
+`--planner-turns 2`. The default remains1 with v4 decisions/values unchanged.
+In a fresh independently sampled clone, first-turn actions use ordinary native
+`execute`, including Codex choices and TimeWarp's early END, so native start
+effects, energy and draw lead into the next player turn. Only actions in the
+last requested player turn arm `execute_to_enemy_boundary`. Do not resample at
+the intervening turn: that would erase publicly chosen Headbutt top cards and
+replace one sampled world with an inconsistent continuation.
+
+No new native binding is needed. Existing projected enemy-boundary states are
+not resumable: projection settles end-of-round effects and erases next enemy
+moves. The planner rejects those roots; two-turn mode also rejects an unexpected
+early projection from a private pending clone already armed by the boundary API.
+Use real game inputs or pending choices produced by ordinary execution. The
+live BattleContext remains unchanged. Dome still bypasses all native planning.
+
+`node_budget` covers both turns together per sampled world. The reported minimum
+is `(lookahead_turns + 1) * root_actions`; root coverage does not guarantee a
+complete horizon under every pending/depth limit. `native_transitions` counts
+both execute APIs, including END/start-of-next-turn work and choices. Two-turn
+`max_depth` counts every action over both turns and does not append an uncounted
+END past its cap. `fallback_leaves` explicitly counts roots/worlds evaluated from
+unfinished prefixes; `second_turn_entries`, `completed_horizon_leaves` and
+`max_action_depth` distinguish actual horizon coverage from requested settings.
+The per-decision maximum depth stays in the full trace, not the runner's additive
+episode metrics; it is not meaningful to sum it and label that sum a maximum.
+The root power horizon stays anchored throughout the complete decision.
+
+More turns increase branching and determinization optimism; they do not certify
+better decisions. A new real decision still samples the draw multiset afresh,
+so preserving publicly known deck-top constraints across separate decisions
+remains outside this change. Tests: `tests/integration/test_turn_planner_two_turns.py`.

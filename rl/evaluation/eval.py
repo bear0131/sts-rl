@@ -47,10 +47,11 @@ def build_parser():
     parser.add_argument('--search-mode', choices=['puct', 'gumbel', 'full', 'strict'], default='strict')
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
-    parser.add_argument('--planner-nodes', type=int, default=512, help='Native transitions per sampled turn; root coverage sets a reported minimum')
+    parser.add_argument('--planner-nodes', type=int, default=512, help='Native transitions per sampled world across the requested turns; root coverage sets a reported minimum')
     parser.add_argument('--planner-worlds', type=int, default=2)
     parser.add_argument('--planner-beam', type=int, default=8)
     parser.add_argument('--planner-depth', type=int, default=16)
+    parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
     parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',

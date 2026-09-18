@@ -1,6 +1,6 @@
 """Bounded, model-free combat planning over independent hidden-state samples.
 
-Only the current player turn is searched. Native transitions own all card and
+One or two player turns are searched. Native transitions own all card and
 enemy mechanics; the scalar leaf heuristic expresses preferences, not a learned
 win probability. Samples never use the live future RNG or draw order. Per-root
 budgets prevent beam pruning from excluding an entire first-action alternative.
@@ -13,11 +13,12 @@ import math
 import time
 
 from env.core import _BUILD  # noqa: F401  (explicit native build bootstrap)
+import slaythespire as sts
 from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v4'
+PLANNER_VERSION = 'ironclad-turn-v5'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -92,8 +93,11 @@ class TurnPlannerConfig:
     beam_width: int = 8
     max_depth: int = 16
     master_nonce: int = 20260918
+    lookahead_turns: int = 1
 
     def __post_init__(self):
+        if self.lookahead_turns not in (1, 2):
+            raise ValueError('lookahead_turns must be 1 or 2')
         for key in ('worlds', 'node_budget', 'beam_width', 'max_depth'):
             if getattr(self, key) < 1:
                 raise ValueError(f'{key} must be positive')
@@ -220,6 +224,9 @@ class NativeTurnPlanner:
         if not roots:
             raise ValueError('turn planner requires a live combat decision')
         original = battle.to_dict()
+        if original['post_enemy_turn_boundary']:
+            raise ValueError('turn planner requires a live decision, not a projected enemy boundary')
+        final_player_turn = original['turn'] + self.config.lookahead_turns - 1
         # A shared public reference makes the payoff duration comparable across
         # damage, growth and enemy debuff branches, worlds, and partial leaves.
         horizon = power_horizon(original)
@@ -228,22 +235,26 @@ class NativeTurnPlanner:
         # pending exhaust/draw triggers may otherwise reveal the live future.
         select_draw = (original['input_state'] == 2
                        and original['select']['context'] in _DRAW_SELECT)
-        budget = max(self.config.node_budget, 2 * len(roots))
+        budget = max(self.config.node_budget, (self.config.lookahead_turns + 1) * len(roots))
         quota = budget // len(roots)
         values = {bits: [] for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
-            effective_total_budget=budget * self.config.worlds, fallback_leaves=0)
+            effective_total_budget=budget * self.config.worlds, fallback_leaves=0,
+            second_turn_entries=0, completed_horizon_leaves=0, max_action_depth=0)
         for world in range(self.config.worlds):
             sample = self.sampler.clone_and_redeterminize(
                 battle, state_nonce=state_nonce, simulation_index=world)
             for bits in roots:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
-                score, counts = self._root(sample, action, quota, check, public_relics, horizon)
+                score, counts = self._root(sample, action, quota, check, public_relics,
+                                           horizon, final_player_turn)
                 values[bits].append(score)
-                for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves'):
+                for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves',
+                            'second_turn_entries', 'completed_horizon_leaves'):
                     stats[key] += counts[key]
+                stats['max_action_depth'] = max(stats['max_action_depth'], counts['max_action_depth'])
                 stats['budget_exhausted'] |= counts['budget_exhausted']
             stats['worlds_completed'] += 1
         mean = {bits: sum(scores) / len(scores) for bits, scores in values.items()}
@@ -252,9 +263,10 @@ class NativeTurnPlanner:
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check, public_relics=None, horizon=None):
+    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
-                     budget_exhausted=False)
+                     budget_exhausted=False, second_turn_entries=0,
+                     completed_horizon_leaves=0, max_action_depth=0)
         frontier = []
         serial = 0
         best = -math.inf
@@ -263,12 +275,25 @@ class NativeTurnPlanner:
         def take(state, action, depth):
             nonlocal serial, best, best_partial
             stats['native_transitions'] += 1
+            stats['max_action_depth'] = max(stats['max_action_depth'], depth)
             child = state.clone()
             # End Turn can pause for Codex; a normal card can force the turn
             # to end (Time Eater). Keep the cloned boundary flag across either
             # path and continue intermediate selections without a new draw.
-            raw = child.execute_to_enemy_boundary(action)
+            if self.config.lookahead_turns == 1 or state.turn >= final_player_turn:
+                raw = child.execute_to_enemy_boundary(action)
+            else:
+                # Stay in the same independently sampled world. Normal execute
+                # owns enemy actions, next-turn powers/draw and pending choices;
+                # redeterminizing here would erase known Headbutt top cards.
+                child.execute(sts.Action(action))
+                raw = child.to_dict()
+                if raw['post_enemy_turn_boundary']:
+                    raise ValueError('two-turn planning cannot resume an already armed search boundary')
+                if raw['outcome'] == 0 and raw['turn'] >= final_player_turn:
+                    stats['second_turn_entries'] += 1
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
+                stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 best = max(best, state_value(raw, public_relics=public_relics, horizon=horizon))
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
@@ -282,8 +307,12 @@ class NativeTurnPlanner:
             _, _, depth, node = heapq.heappop(frontier)
             stats['expanded_nodes'] += 1
             legal = complete_actions(node)
-            # Every expanded normal node first contributes a feasible complete
-            # turn; incomplete prefixes must not win because of unused energy.
+            # Two-turn depth counts every action across both turns, including
+            # END and pending selections; do not sneak a last END past its cap.
+            if self.config.lookahead_turns == 2 and depth >= self.config.max_depth:
+                continue
+            # END prioritizes a feasible continuation. In two-turn mode the
+            # first END can start another player turn rather than finish a leaf.
             if _END in legal:
                 take(node, _END, depth + 1)
             if depth >= self.config.max_depth:
