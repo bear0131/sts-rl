@@ -31,7 +31,7 @@ from env.core.card_language import (
     card_program,
 )
 from env.core.encounters import ACT_POOLS
-from env.core.ironclad_cards import ATTACK, SKILL, IRONCLAD_CARDS
+from env.core.ironclad_cards import ATTACK, SKILL, POWER, IRONCLAD_CARDS
 from env.core.rule_language import COMBAT_RELIC_RULES
 from rl.rules.rule_vector_model import (
     RELIC_RULE_INDEX,
@@ -237,13 +237,11 @@ def _canonical_state(rng: random.Random, floor: int, encounter: str, kind: str, 
     }
 
 
-def _add_pile(state: dict[str, Any], zone: str, count: int, rng: random.Random) -> None:
-    state["combat"][zone].extend(_pile(rng, max(0, count)))
-
-
 def _draw(state: dict[str, Any], amount: int, rng: random.Random) -> None:
-    amount = max(0, int(amount))
-    del state["combat"]["draw"][max(0, len(state["combat"]["draw"]) - min(amount, len(state["combat"]["draw"]))) :]
+    combat = state["combat"]
+    amount = min(max(0, int(amount)), len(combat["draw"]), max(0, 10 - len(combat["hand"])))
+    for _ in range(amount):
+        combat["hand"].append(combat["draw"].pop())
 
 
 def _add_status(mapping: dict[str, int], name: str, amount: int) -> None:
@@ -516,6 +514,7 @@ def _effect_record(before: dict[str, Any], action: dict[str, Any], config: State
         if cost < 1:
             raise ValueError("X-cost action requires at least one energy")
     def play_card(s: dict[str, Any]) -> None:
+        s["combat"]["hand"].remove(action)
         player = s["combat"]["player"]
         player["energy"] = max(0, int(player["energy"]) - cost)
 
@@ -702,6 +701,7 @@ def _effect_record(before: dict[str, Any], action: dict[str, Any], config: State
         draw_amount = 0
     elif card_id == "Dropkick":
         current = _make_event(current, events, config, "EVENT_ENERGY", "ENTITY_SELF", lambda s: s["combat"]["player"].__setitem__("energy", s["combat"]["player"]["energy"] + 1))
+    draw_amount = min(draw_amount, max(0, 10 - len(current["combat"]["hand"])))
     if draw_amount:
         first_draw = min(draw_amount, len(current["combat"]["draw"]))
         if first_draw:
@@ -731,17 +731,30 @@ def _effect_record(before: dict[str, Any], action: dict[str, Any], config: State
                 })
             current = _make_event(current, events, config, "EVENT_DRAW", "ENTITY_SELF", lambda s, amount=remaining: _draw(s, amount, rng))
 
-    if card_id in {"Burning Pact", "True Grit", "Second Wind", "Fiend Fire"}:
-        exhaust_count = 1 if card_id in {"Burning Pact", "True Grit"} else max(1, len(current["combat"]["hand"]) - 1)
+    if card_id in {"Burning Pact", "True Grit", "Second Wind", "Fiend Fire"} and current["combat"]["hand"]:
+        exhaust_count = 1 if card_id in {"Burning Pact", "True Grit"} else len(current["combat"]["hand"])
         current = _make_event(current, events, config, "EVENT_EXHAUST", "ENTITY_PILES", lambda s, amount=exhaust_count, rng=rng: (s["combat"]["exhaust"].extend(s["combat"]["hand"][:amount]), s["combat"].__setitem__("hand", s["combat"]["hand"][amount:])))
-    exhaust_self = card_id in {"Carnage", "Pummel", "Warcry", "True Grit", "Burning Pact", "Seeing Red", "Sentinel", "Sever Soul", "Shockwave", "Feed", "Fiend Fire", "Offering", "Reaper", "Impervious", "Immolate", "Exhume", "Intimidate", "Second Wind"}
-    destination = "exhaust" if exhaust_self else "discard"
-    current = _make_event(current, events, config, "EVENT_EXHAUST" if exhaust_self else "EVENT_PILE_DELTA", "ENTITY_PILES", lambda s, destination=destination: _add_pile(s, destination, 1, rng))
-    events[-1]["phase"] = "COMMIT_DESTINATION"
+    # Read the explicit self-exhaust trait, not another card's exhaust effect
+    # (True Grit/Burning Pact) or an end-of-turn ethereal trait (Carnage).
+    program = card_program(card_id, bool(upgraded))
+    exhaust_self = any(pair == ("TRAIT", "EXHAUST") for pair in zip(program, program[1:]))
+    destination = None if info.kind == POWER else ("exhaust" if exhaust_self else "discard")
+    if destination is not None:
+        current = _make_event(
+            current, events, config, "EVENT_EXHAUST" if exhaust_self else "EVENT_PILE_DELTA",
+            "ENTITY_PILES", lambda s: s["combat"][destination].append(copy.deepcopy(action)),
+        )
+        events[-1]["phase"] = "COMMIT_DESTINATION"
     if card_id in {"Anger", "Immolate"}:
-        current = _make_event(current, events, config, "EVENT_CARD_CREATE", "ENTITY_PILES", lambda s: _add_pile(s, "discard", 1, rng))
+        created = action if card_id == "Anger" else {"id": "Burn", "up": 0}
+        current = _make_event(current, events, config, "EVENT_CARD_CREATE", "ENTITY_PILES",
+                              lambda s: s["combat"]["discard"].append(copy.deepcopy(created)))
     if card_id in {"Wild Strike", "Reckless Charge"}:
-        current = _make_event(current, events, config, "EVENT_PILE_SHUFFLE", "ENTITY_PILES", lambda s: _add_pile(s, "draw", 1, rng))
+        created = {"id": "Wound" if card_id == "Wild Strike" else "Dazed", "up": 0}
+        def insert_status(s: dict[str, Any]) -> None:
+            draw = s["combat"]["draw"]
+            draw.insert(rng.randrange(len(draw) + 1), copy.deepcopy(created))
+        current = _make_event(current, events, config, "EVENT_PILE_SHUFFLE", "ENTITY_PILES", insert_status)
 
     current = _make_event(current, events, config, "EVENT_ACTION_COMPLETE", "ENTITY_SELF", None)
     events[-1]["phase"] = "COMMIT_COMPLETE"
@@ -798,7 +811,7 @@ def build_record_with_canonical(
                 for slot, (relic, counter) in enumerate(zip(relics, counters))
             ],
         },
-        "metadata": {"sample_index": index, "floor": floor, "act": act, "encounter_kind": kind, "encounter": encounter, "relics": relics, "hand_size": len(hand)},
+        "metadata": {"teacher": "approximate-ironclad-v2-card-identity", "sample_index": index, "floor": floor, "act": act, "encounter_kind": kind, "encounter": encounter, "relics": relics, "hand_size": len(hand)},
     }
     return record, canonical
 

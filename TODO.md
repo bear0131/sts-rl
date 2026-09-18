@@ -11,7 +11,7 @@
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
 | [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
 | [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构，选牌截断已复现 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确。Secret Technique/Weapon原生draw候选index>=10被71-action绑定/薄层丢弃，可使存活战斗dead_screen；验收须覆盖draw/discard/exhaust长候选、明确候选→native索引映射、71/181 checkpoint兼容及同seed110104独立回归。具体strict xfail：`tests/integration/test_environment_contracts.py::test_draw_selection_remains_actionable_beyond_hand_slots`；[新增证据](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction) |
-| [F04](docs/2026-09-13/codebase-audit.md#f04) | 待重构 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致 |
+| [F04](docs/2026-09-13/codebase-audit.md#f04) | 部分修复 | approximate-ironclad-v2-card-identity 已修出牌身份/归属、抽牌守恒、生成牌身份；20个原生对照验证普通/升级版出牌归属。仍需完整效果、选牌/触发顺序与原生一致，近似 teacher 不是 oracle |
 | [F05](docs/2026-09-13/codebase-audit.md#f05) | 待重构 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义 |
 | [F06](docs/2026-09-13/codebase-audit.md#f06) | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |
 | [F07](docs/2026-09-13/codebase-audit.md#f07) | 已修 | Gauntlet 复用 native 持久状态提交，保存 max HP、药水、遗物计数、永久牌值和 RNG；保留无胜利回血/奖励界面契约，连续换场回归通过 |

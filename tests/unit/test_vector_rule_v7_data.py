@@ -370,7 +370,13 @@ def test_v7_training_length_limit_applies_to_outer_and_local_scopes_only():
     assert max(len(example.target_ids) for example in examples) <= longest_scope
 
 
-def test_v7_model_calculations_read_runtime_numbers_but_keep_card_numbers_in_header():
+def test_v7_model_calculations_read_runtime_numbers_but_keep_card_numbers_in_header(monkeypatch):
+    # Guarantee a damage calculation instead of depending on a random power's
+    # (previously incorrect) discard event to produce runtime reads.
+    from rl.rules.data import make_vector_rule_training_data as teacher
+    original = teacher._card_instance
+    monkeypatch.setattr(teacher, "_card_instance", lambda rng, *, action=False:
+                        {"id": "Bash", "up": 0} if action else original(rng))
     config = StateVectorConfig()
     record = build_v7_record(3, config, random.Random(23))
     assert "CALCULATION_BEGIN" in record["tokens"]
