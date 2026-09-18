@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v7'
+PLANNER_VERSION = 'ironclad-turn-v8-awakened-phase'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -122,16 +122,31 @@ def power_horizon(raw):
 
 
 def enemy_burden(monsters):
-    """Approximate remaining damage and bodies through public slime phases.
+    """Approximate remaining damage and bodies through public monster phases.
 
     Assume a split at the native half-HP threshold, counting the HP inherited
     by the children. Below that threshold a split inherits the current HP.
     This is a progress potential, not minimum lethal damage: a burst kill can
-    bypass phases entirely. Odd max HP follows native integer division.
+    bypass slime phases entirely. Odd max HP follows native integer division.
+    Awakened One's public Curiosity marks its first life; half_dead marks the
+    zero-HP rebirth interval. Both still owe another life, approximated by
+    visible max HP: exact at native A0 (300), up to 20 HP low at higher
+    ascensions where native first-life HP is sampled but rebirth is fixed320.
     """
     damage, bodies = 0, 0
     for monster in monsters:
         hp = monster['hp']
+        if monster['id'] == 'AWAKENED_ONE':
+            if monster.get('half_dead', False):
+                # Native gone includes half-dead; rebirth is neither a corpse
+                # nor a victory. Retain the expected second-life burden.
+                damage += monster['max_hp']
+                bodies += 1
+                continue
+            if hp > 0 and not monster['gone'] and _powers(monster).get('curiosity', 0) > 0:
+                damage += hp + monster['max_hp']
+                bodies += 1
+                continue
         if hp <= 0 or monster['gone']:
             continue
         split_hp = min(hp, monster['max_hp'] // 2)
@@ -162,7 +177,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         return -100000.0
     powers = _powers(p)
     monsters = [m for m in raw['monsters'] if m['hp'] > 0 and not m['gone']]
-    remaining, future_bodies = enemy_burden(monsters)
+    remaining, future_bodies = enemy_burden(raw['monsters'])
     horizon = power_horizon(raw) if horizon is None else horizon
     value = (1.3 * p['hp'] + 12 * math.log(max(.01, p['hp'] / p['max_hp']))
              + 1.8 * p['max_hp'] + .025 * p['gold'])

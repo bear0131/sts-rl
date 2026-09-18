@@ -27,7 +27,7 @@ class TurnPlannerStrategy:
             information='independent-NOSL-futures', dome='visible-rule-fallback',
             leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
             resources='conservative-no-output-guard-with-public-relics',
-            enemy_progress='native-threshold-slime-phase-potential',
+            enemy_progress='public-slime-and-awakened-phase-potential',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
