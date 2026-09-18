@@ -5,7 +5,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BASE01 | 初版已验收 | 固定上层，仅替换 combat 的可解释规则策略；DecisionStrategy/PhaseStrategy/runner、独立下层 checkpoint、目标/选牌区域与 trace 已接入；留出8整局规则/policy/native分别0/0/1胜，24同初态战斗分别23/19/24胜。方法与局限见 [基线协议](rl/evaluation/baselines/README.md)，结果见 [实验记录](worklog/2026-09-18.md#base01-held-out-evaluation) |
-| BASE02 | 本地对照完成，四机新32局评测中 | `rl/evaluation/baselines/combat_rules.py`：依据开发 bad case 补 Spore Cloud 等死亡效果、Mercury Hourglass 等被动伤害时序、睡眠怪开战时机及生成/无色牌；从两方参考轨迹扩展战斗语料，保持未看过的留出种子；F01/F02/F03 表示缺陷、搜索预算、药水策略分开消融，不把整个战斗组件差异都归因于搜索本身；上层规则另作独立实验 |
+| BASE02 | v3保留，128局新种子验证完成 | `rl/evaluation/baselines/combat_rules.py`：固定上层 v3 8/128胜、均楼层38.8828；终局修正版8/128、38.8125，未显示整体提升，候选留在独立分支。四上层32局规则/搜索/直接策略对照完成；F01/F02/F03、搜索预算与药水差异继续分开解释。结果与下一轮 bad case 范围见 [128局记录](worklog/2026-09-18.md#rule-128-results-and-candidate-decision) |
 | BASE03 | 上层v1保留，v2新种子退步未晋级 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；公开牌组/地图/商店/选项做可解释决策，未知事件显式回退并计数；与固定上层分开评估，冻结后新种子对照及 bad case 迭代 |
 | EVAL01 | 待实验 | 当前 inner-only NOSL rollout 的冻结上层按 masked categorical 随机采样，正式 eval 默认按 masked argmax；固定上层/战斗 checkpoint、combat solver、环境种子后，分别用 deterministic 上层和多个独立 action RNG nonce 跑足量配对评测，按 phase 记录 `p_max`、entropy、非 argmax 率及牌组/路线/血量/药水和战斗初态分布；部署动作规则作为主口径，另一模式作为分布敏感性消融，不把单次随机8局归因为战斗算法差异 |
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
@@ -34,7 +34,7 @@
 | CI01 | 已修并通过托管 CI | 历史路径 PermissionError 已修；df65017 的 correctness #2 全部成功，运行链接见 worklog/2026-09-14.md。生产 PPO/NOSL 上报、保存/恢复、旧部署模块遮蔽和 SSH 路径边界已补入 CI；CUDA 合同另需 GPU runner |
 | PERF01 | rollout 单机对照与四机恢复验收完成 | 共享 CUDA graph 分桶、grouped IPC 和零主动等待；384env/strict128 固定 checkpoint 的同机完整 collection 从803.56s降至241.75s，四机恢复后的首轮rollout239–251s、整轮808–813s，step2162688模型/Adam跨rank一致。CPU/GPU/内存与数值边界见 [rollout 实测](worklog/2026-09-16.md#rollout-optimization-bounded-graphs-ipc-and-measured-scheduling)。不减少simulation，不宣称改变batch形状后bitwise；多seed长程吞吐与收敛仍需后续验证；本轮 learner/worker/transport 等价优化已过固定输入与完整单机 collection，见 [09-17验证](worklog/2026-09-17.md#perf01-decode-grouped-leaves-once-per-contiguous-source-span)，四机已恢复至step3342336，40updates与模型/Adam跨rank一致，见 [恢复验收](worklog/2026-09-18.md#perf01-four-rank-optimized-run-recovery-accepted) |
 | PERF02 | 已修并完成四机首轮验收 | 旧 `u40x4-u10` 派生 preset 遗漏 CUDA graph 分桶及调度参数，96env 生产轮发生约 1.7–1.94 万次 capture/eviction、rollout 425–499s。`u10x4` 修正版对齐优化后的 `u40x16` 调度；相近 0.89M leaves 的四机首轮 rollout 为 139–148s，capture 约 13 次/0.25s、零 eviction，四 rank step49152 bundle 校验通过。batch 形状变化不宣称 bitwise 等价。 |
-| PERF03 | 实验中 | `rl/evaluation/eval.py`、`strategies.py`：显式可选的 CUDA graph 叶子推理，默认 eager；只复用现有 cache、冻结模型参数，验证同设备同形状数值/完整搜索动作、变 batch/淘汰/释放后回放及长过程资源生命周期；整局速度另测，不把 leaf 微基准倍数当端到端加速 |
+| PERF03 | 冻结评测已验收，可选开启 | `rl/evaluation/eval.py`、`strategies.py`：`--leaf-inference cuda-graph`，默认 eager；独立策略 cache、同设备数值/完整搜索动作及释放后回放测试通过。32局、1410289叶子评估，682s→416s，逐局行除耗时外一致；显存采样峰值903→2841MiB。仅冻结评测范围，不代表训练 collection 或跨设备验收，见 [最终记录](worklog/2026-09-18.md#perf03-final-frozen-source-evaluation-and-candidate-reporting) |
 | OPS01 | 已完成 | 四机 NOSL replay 由本地 `manage_nosl_replay_4way.ps1` 统一预检、启动、状态和指定 recovery step 验收；密码不入库，恢复前校验四 rank bundle 身份与 checksum |
 | OPS02 | 待修 | 分布式训练单轮约 20 分钟且只在轮末调用 `wandb.log` 时，W&B `heartbeatAt` 停在上一轮指标、run 会在活进程仍正常运行时被误标为 `crashed`；需用受测的独立低频 heartbeat 或显式 lifecycle 更新保持 Running 状态，且不得改变训练 step/图表语义 |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |

@@ -22,6 +22,57 @@ from rl.evaluation.strategies import DecisionRequest, NativeStrategy
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph search requires a GPU runner')
+def test_eval_graph_preserves_strict_native_complete_actions(combat_factory, request):
+    from rl.evaluation.eval import build_parser
+    from rl.evaluation.strategies import native_strategy, strategy_manifest
+
+    previous_precision = torch.get_float32_matmul_precision()
+    request.addfinalizer(lambda: torch.set_float32_matmul_precision(previous_precision))
+    torch.set_float32_matmul_precision('highest')
+    envs = [combat_factory(['BASH'] + ['STRIKE_RED'] * 4, seed=seed) for seed in (42, 43)]
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, envs[0], device='cuda', seed=7,
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+    model.policy.set_training_mode(False)
+    weights = {key: value.clone() for key, value in model.policy.state_dict().items()}
+    parsed = build_parser().parse_args(['unused.zip', '--solver', 'native', '--simulations', '128',
+                                      '--depth', '0', '--leaf-batch-size', '1'])
+    requests = [DecisionRequest(env, env._obs(), env._info(), seed, 0)
+                for env, seed in zip(envs, (42, 43))]
+    eager = native_strategy(model, parsed).decide(requests)
+    eager_actions = [env._nosl_cpp_pending for env in envs]
+    # Complete native actions may be staged on the wrapper; abort restores the
+    # untouched game roots before comparing the second backend.
+    for env in envs:
+        env.nosl_is_az_cpp_abort()
+    parsed.leaf_inference = 'cuda-graph'
+    strategy = native_strategy(model, parsed)
+    graphed = strategy.decide(requests)
+    assert [d.action for d in graphed] == [d.action for d in eager]
+    assert [env._nosl_cpp_pending for env in envs] == eager_actions
+    for left, right in zip(eager, graphed):
+        assert {k:v for k,v in left.diagnostics.items() if k != 'search_seconds'} == {
+            k:v for k,v in right.diagnostics.items() if k != 'search_seconds'}
+    assert all(torch.equal(value, weights[key]) for key, value in model.policy.state_dict().items())
+    assert strategy_manifest(strategy)['phases']['combat']['leaf_inference']['statistics']['captures'] > 0
+    graph_cache = strategy.routes['combat'].leaf_backend
+    snapshot = graph_cache.statistics()
+    parsed.leaf_inference = 'eager'
+    eager_after_graph = native_strategy(model, parsed)
+    parsed.leaf_inference = 'cuda-graph'
+    second_graph = native_strategy(model, parsed)
+    assert second_graph.routes['combat'].leaf_backend is not graph_cache
+    for alternate in (eager_after_graph, second_graph, eager_after_graph):
+        for env in envs:
+            env.nosl_is_az_cpp_abort()
+        decisions = alternate.decide(requests)
+        assert [d.action for d in decisions] == [d.action for d in eager]
+        assert [env._nosl_cpp_pending for env in envs] == eager_actions
+    assert graph_cache.statistics() == snapshot
+    assert not hasattr(model, '_native_leaf_inference')
+    assert strategy_manifest(eager_after_graph)['phases']['combat']['leaf_inference'] == {'backend': 'eager'}
+
+
 class _LocalGroupedMethodStream:
     """Exercise the streamed scheduler against real env methods in one process."""
 

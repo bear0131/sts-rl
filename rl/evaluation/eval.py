@@ -48,6 +48,8 @@ def build_parser():
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
     parser.add_argument('--leaf-batch-size', type=int)
+    parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
+                        help='Native leaf backend; cuda-graph requires a CUDA FP32 combat model and keeps exact batch shapes')
     add_combat_search_args(parser)
     return parser
 
@@ -107,6 +109,8 @@ def main():
         if args.solver not in ('policy', 'value'):
             raise ValueError('--combat-search cannot be combined with a different solver')
         args.solver = 'value'
+    if args.leaf_inference != 'eager' and (args.solver != 'native' or args.task != 'wholerun'):
+        raise ValueError('--leaf-inference cuda-graph requires --solver native --task wholerun')
     model = load_checkpoint(args.checkpoint, device=args.device, card_vector_checkpoint=args.card_vector_checkpoint)
     model.set_random_seed(args.seed)
     combat_model = model
@@ -121,8 +125,8 @@ def main():
         if trace_stream:
             trace_stream.write(json.dumps(event)+'\n')
     strategy = compose_strategy(model, args, combat_model if args.combat_checkpoint else None, trace=trace)
-    effective_strategy = strategy_manifest(strategy)
-    candidate_manifests = {}
+    configured_strategy = strategy
+    candidate_strategies = {}
     started = last_report = time.monotonic()
 
     def progress(event):
@@ -147,7 +151,7 @@ def main():
                             'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
                 max_steps=args.max_steps, timeout=args.timeout,
                 trace=trace if trace_stream else None)
-            candidate_manifests = {name: strategy_manifest(solver) for name, solver in strategy.candidates.items()}
+            candidate_strategies = strategy.candidates
         for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
@@ -171,7 +175,8 @@ def main():
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
-            effective_strategy=effective_strategy, combat_candidates=candidate_manifests,
+            effective_strategy=strategy_manifest(configured_strategy),
+            combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
         print(json.dumps(summary, ensure_ascii=False), flush=True)
         if args.output:

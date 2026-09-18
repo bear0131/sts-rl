@@ -22,6 +22,15 @@
 
 一次评估复用常驻模型，指定独立 combat checkpoint 时加载上下层各一份；多环境的直接策略和 native 叶子批量前推。num_envs 表示常驻环境数；改变 batch size 可能改变浮点舍入，随机策略的 RNG 消费顺序也可能变化。参数预设在 configs/eval，结果在 runs/local。生成器调用方提前停止消费时应显式 close，以释放环境。
 
+Native whole-run 评估可显式加 `--leaf-inference cuda-graph`，复用已有
+`CombatLeafGraphs`；默认 `eager` 保持原路径。图后端只支持 CUDA、eval 模式、FP32
+的 compact combat 模型，其他组合明确报错。缓存归各个搜索策略独立所有；同一模型上的
+eager/graph 策略和 paired-combat 候选不会重配置彼此。独立 `--combat-checkpoint` 时
+缓存只引用下层，上层仍走原策略。缓存容量为32，使用实际 batch/遗物宽度，不补齐 batch、不启用
+AMP，不改变搜索 simulations/depth/leaf concurrency 或模型参数。最终
+`effective_strategy` 记录后端配置、capture/hit/eviction 与时间统计。固定叶批的热态
+收益不能替代整局计时或生产长度 collection 的 CUDA 资源生命周期验收。
+
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
 
 ## 固定血量敏感性协议
