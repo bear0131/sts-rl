@@ -133,5 +133,12 @@ python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 204
 上层模型的使用不代表战斗搜索调用神经网络。`effective_strategy` 记录完整配置和信息边界。
 需要重建包含 `execute_to_enemy_boundary` 与 `remap_draw_selection_from` 的 native 扩展；
 旧模型维度不变。普通 `--trace` 记录完整原生首步、根值及排序后的 draw 多重集；
-`--compare-combats` 暂不支持这个动作契约，CLI 明确拒绝。
+`--compare-combats N` 支持同初态配对：保留 rules、policy、native 对照，另建一个同配置的
+planner 候选，与参考策略的搜索对象隔离。每个候选 fork 使用自身声明的动作契约；
+legacy 候选遇到 F03 空动作表时保留 `dead_screen` 和截断标记，初态已不可操作则记零步，
+不会把它改成死亡或把非法动作交给策略。嵌套 `PhaseStrategy` 递归合并可到达的战斗契约；
+有 predicate fallback 时包含默认策略，`native-v1` 环境仍接受合法 thin 动作。
+配对 fork 的决策计数沿用从零开始的协议，结果同时记录 `reference_step` 和
+`fork_decision_step_origin`，manifest 标明 `fork-local-zero`；它不是原轨迹随机样本的逐步重放。
+`combat_rows` 是参考路径上的战斗组件对照，不能与整局 `rows` 合并统计胜率或样本数。
 步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。

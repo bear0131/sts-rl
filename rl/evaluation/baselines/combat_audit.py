@@ -44,6 +44,7 @@ class CombatAuditStrategy:
         from rl.evaluation.strategies import strategy_manifest
         return dict(reference=strategy_manifest(self.reference), audit=dict(
             limit=self.limit, max_steps=self.max_steps, timeout=self.timeout,
+            decision_step_origin='fork-local-zero',
             candidates={name: strategy_manifest(strategy)
                         for name, strategy in self.candidates.items()}))
 
@@ -92,6 +93,7 @@ class CombatAuditStrategy:
         context = dict(combat=self._starts, seed=request.seed, reference_step=request.step,
                        floor=request.info.get('run_stats', {}).get('floor', 0),
                        initial_hp=view.player['hp'], initial_potions=list(view.potions),
+                       fork_decision_step_origin=0,
                        visible_state_sha256=digest,
                        reference_combat_action_contract=root.combat_action_contract,
                        encounter=[m['id'] for m in view.alive])

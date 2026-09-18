@@ -22,7 +22,7 @@ def build_parser():
     parser.add_argument('--combat-checkpoint', type=Path,
                         help='Separate combat model; positional checkpoint remains the upper policy')
     parser.add_argument('--compare-combats', type=int, default=0,
-                        help='Audit first N combat starts against rules, policy and native on identical forks')
+                        help='Audit first N combat starts against rules, policy, native and the selected solver on identical forks')
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
@@ -59,7 +59,7 @@ def build_parser():
     return parser
 
 
-def make_scenario(model, args, combat_model=None):
+def make_scenario(model, args, combat_model=None, combat_action_contract='legacy'):
     if args.task == 'combat':
         from rl.tasks.combat import CombatTask
         if args.solver in ('native', 'rules', 'turn-planner'):
@@ -82,7 +82,7 @@ def make_scenario(model, args, combat_model=None):
         return any(feature(m) for m in models)
     return Scenario('wholerun', lambda: SlayTheSpireEnv(
         ascension=args.ascension,
-        combat_action_contract='native-v1' if args.solver == 'turn-planner' else 'legacy',
+        combat_action_contract=combat_action_contract,
         global_map_view=uses(policy_model.uses_global_map_observation),
         card_language=uses(policy_model.uses_card_language),
         combat_language=uses(policy_model.uses_combat_language),
@@ -109,8 +109,6 @@ def main():
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:
         raise ValueError('paired combat auditing requires deterministic policy decisions')
-    if args.solver == 'turn-planner' and args.compare_combats:
-        raise ValueError('paired CombatAuditStrategy currently requires the legacy action contract')
     if args.upper_strategy != 'model' and args.task != 'wholerun':
         raise ValueError('--upper-strategy requires wholerun')
     if args.combat_search_depth > 0:
@@ -134,6 +132,7 @@ def main():
             trace_stream.write(json.dumps(event)+'\n')
     strategy = compose_strategy(model, args, combat_model if args.combat_checkpoint else None, trace=trace)
     configured_strategy = strategy
+    audit_strategy = None
     candidate_strategies = {}
     started = last_report = time.monotonic()
 
@@ -153,14 +152,23 @@ def main():
         if args.compare_combats or (args.trace and args.solver != 'turn-planner'):
             from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
             from rl.evaluation.baselines.combat_audit import CombatAuditStrategy
+            if args.compare_combats:
+                candidate_strategies = {'rules': CombatRuleStrategy(),
+                    'policy': STRATEGIES['policy'](combat_model, args),
+                    'native': STRATEGIES['native'](combat_model, args)}
+                if args.solver not in candidate_strategies:
+                    # Fresh strategy/search state, never an object extracted
+                    # from the live reference composition. Model weights are
+                    # shared read-only, as for existing policy/native audits.
+                    candidate_strategies[args.solver] = STRATEGIES[args.solver](combat_model, args)
             strategy = CombatAuditStrategy(strategy, rows=combat_rows, limit=args.compare_combats,
-                candidates={'rules': CombatRuleStrategy(),
-                            'policy': STRATEGIES['policy'](combat_model, args),
-                            'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
+                candidates=candidate_strategies,
                 max_steps=args.max_steps, timeout=args.timeout,
                 trace=trace if trace_stream else None)
+            audit_strategy = strategy
             candidate_strategies = strategy.candidates
-        for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
+        contract = getattr(configured_strategy, 'combat_action_contract', 'legacy')
+        for row in evaluate(strategy, make_scenario(model, args, combat_model, contract), config, progress=progress):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
                 print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
@@ -184,6 +192,7 @@ def main():
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
             effective_strategy=strategy_manifest(configured_strategy),
+            combat_audit=(audit_strategy.manifest()['audit'] if audit_strategy is not None else None),
             combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
         print(json.dumps(summary, ensure_ascii=False), flush=True)
