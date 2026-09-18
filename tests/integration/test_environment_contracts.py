@@ -4,7 +4,6 @@ import pytest
 
 from env.core import action_space as A, encode, vocab as V
 from env.core.run_env import SlayTheSpireEnv
-from env.core.combat_backend import SimCombatBackend
 from schemas.combat_state import normalize_sim
 import slaythespire as sts
 
@@ -98,20 +97,8 @@ def test_draw_selection_remains_actionable_beyond_hand_slots(combat_factory, car
     assert battle.to_dict()["hand"][0][0] == choices[0]
 
 
-@pytest.mark.xfail(reason="F07: gauntlet does not commit Feed max HP",
-                   strict=True, raises=AssertionError)
-def test_gauntlet_preserves_feed_max_hp():
-    def factory(_rng):
-        def make():
-            gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 42, 0)
-            gc.floor_num = 1
-            gc.set_relics([])
-            gc.set_deck([("FEED", 0)] * 5)
-            return gc
-        return make, lambda _gc: "Jaw Worm"
-
-    env = SimCombatBackend(factory)
-    env.reset(seed=42)
+def test_gauntlet_preserves_feed_max_hp(gauntlet_factory):
+    env = gauntlet_factory(["FEED"] * 5)
     env.bc.set_player_strength(999)
     env.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     won = env.bc.to_dict()
@@ -171,3 +158,46 @@ def test_native_fork_is_read_only_until_committed(combat_factory):
     fork.step(A.END_TURN)
     assert env.thick.bc.to_dict() == before
     assert fork.thick.bc.to_dict() != before
+
+
+@pytest.mark.parametrize("relic", ["Burning Blood", "Black Blood", "Meat on the Bone"])
+def test_gauntlet_commits_counters_without_victory_healing(gauntlet_factory, relic):
+    env = gauntlet_factory(["STRIKE_RED"] * 5, relics=(relic, "Pen Nib"), hp=30)
+    for count in (1, 2):
+        env.bc.set_player_strength(999)
+        env.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+        env._settle()
+        assert env.combats_won == count and not env.is_over
+        assert env.bc.to_dict()["player"]["hp"] == env.gc.cur_hp == 30
+        assert next(r["counter"] for r in env.gc.relic_state() if r["id"] == "Pen Nib") == count
+
+
+def test_gauntlet_potions_obtained_and_discarded_persist(gauntlet_factory):
+    env = gauntlet_factory(["STRIKE_RED"] * 5, seed=0)
+    assert env.gc.get_neow_options()[1]["bonus"] == "Obtain three potions."
+    env.gc.choose_neow_option(1)
+    for _ in range(3):
+        env.gc.claim_potion(0)
+    env.bc = sts.create_battle(env.gc, "Jaw Worm")
+    potions = env.bc.potions
+    assert env.bc.legal_potions()
+    env.bc.set_player_strength(999)
+    env.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env._settle()
+    assert env.bc.potions == env.gc.overworld_potions == potions
+    env.bc.discard_potion(0)
+    empty = env.bc.potions
+    assert empty != potions
+    slot = next(i for i, c in enumerate(env.bc.to_dict()["hand"]) if c[0] == "STRIKE_RED")
+    env.bc.set_player_strength(999)
+    env.bc.execute(sts.Action(sts.ActionType.CARD, slot, 0))
+    env._settle()
+    assert env.bc.potions == env.gc.overworld_potions == empty
+
+
+def test_gauntlet_preserves_ritual_dagger_growth(gauntlet_factory):
+    env = gauntlet_factory(["RITUAL_DAGGER"] * 5)
+    env.bc.set_player_strength(999)
+    env.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    env._settle()
+    assert sorted(card.misc for card in env.gc.deck) == [0, 0, 0, 0, 3]

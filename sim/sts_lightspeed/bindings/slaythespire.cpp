@@ -2824,6 +2824,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def_property_readonly("outcome", [](const BattleContext &bc) { return static_cast<int>(bc.outcome); })
         .def_property_readonly("input_state", [](const BattleContext &bc) { return static_cast<int>(bc.inputState); })
         .def_property_readonly("is_battle_over", [](const BattleContext &bc) { return bc.outcome != Outcome::UNDECIDED; })
+        .def("commit_battle_state", &BattleContext::commitBattleState,
+             pybind11::arg("gc"), pybind11::arg("heal_on_victory") = true,
+             "commit persistent combat state without invoking run screen callbacks")
         .def("exit_battle", [](const BattleContext &bc, GameContext &gc) { bc.exitBattle(gc); },
              "write combat results back into the GameContext (hp/gold/deck/rng) and open the reward screen on victory")
         .def("drink_potion", [](BattleContext &bc, int idx, int target) { bc.drinkPotion(idx, target); },

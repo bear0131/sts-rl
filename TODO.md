@@ -14,7 +14,7 @@
 | [F04](docs/2026-09-13/codebase-audit.md#f04) | 待重构 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致 |
 | [F05](docs/2026-09-13/codebase-audit.md#f05) | 待重构 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义 |
 | [F06](docs/2026-09-13/codebase-audit.md#f06) | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |
-| [F07](docs/2026-09-13/codebase-audit.md#f07) | 待重构 | Gauntlet 提交 max HP、药水、遗物计数等持久状态 |
+| [F07](docs/2026-09-13/codebase-audit.md#f07) | 已修 | Gauntlet 复用 native 持久状态提交，保存 max HP、药水、遗物计数、永久牌值和 RNG；保留无胜利回血/奖励界面契约，连续换场回归通过 |
 | [F08](docs/2026-09-13/codebase-audit.md#f08) | 已修 | 显式 seed 后的自动 reset 序列可复现；普通/分层 PPO CPU 重复训练逐位对齐 |
 | [F09](docs/2026-09-13/codebase-audit.md#f09) | 已修 | Python NOSL depth=0 真正推进搜索；同步和分批入口在新叶处停止 |
 | [F10](docs/2026-09-13/codebase-audit.md#f10) | 已修 | Impatience 条件抽牌及 exhaust unique-ID fallback；覆盖过时、负数和越界 hint |

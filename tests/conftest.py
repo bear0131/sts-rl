@@ -57,3 +57,24 @@ def short_combat_env_type():
             self._invalidate_backend_cache()
             return self._obs(), self._info()
     return ShortCombatEnv
+
+
+@pytest.fixture
+def gauntlet_factory():
+    from env.core.combat_backend import SimCombatBackend
+
+    def make(deck, *, relics=(), hp=80, seed=42):
+        def factory(_rng):
+            def make_gc():
+                gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, 0)
+                gc.floor_num = 1
+                gc.set_relics(list(relics))
+                gc.set_deck([(card, 0) for card in deck])
+                gc.cur_hp = hp
+                return gc
+            return make_gc, lambda _gc: "Jaw Worm"
+        env = SimCombatBackend(factory)
+        env.reset(seed=42)
+        return env
+
+    return make

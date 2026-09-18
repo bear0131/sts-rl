@@ -14,7 +14,7 @@
 纯 encode/vocab/action 模块不加载 simulator；原生环境与工厂加载 simulator。env 不依赖 rl/apps/tools/tests，依赖方向由 tests/unit/test_repository_layout.py 检查。
 共享状态规范化在 bridge/schemas；模型额外观测裁剪在 rl/policies/model.py。不要因当前模型不使用某字段就改变环境实际状态或动作语义。
 
-测试在 ../tests。已知实体槽位、pending 来源、候选区域、gauntlet 持久状态问题仍见根 TODO F01/F02/F03/F07；目录整理没有修复这些语义缺陷。
+测试在 ../tests。已知实体槽位、pending 来源、候选区域问题仍见根 TODO F01/F02/F03；gauntlet 通过 native commit_battle_state 保存持久状态，同时禁用胜利回血与奖励界面回调；目录整理没有修复这些语义缺陷。
 
 ## 完整战斗动作契约 native-v1
 
