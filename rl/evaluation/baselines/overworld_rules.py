@@ -15,7 +15,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v1'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v2-probe'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -121,8 +121,16 @@ def card_value(card, state, *, adding=True):
         value += min(5, 2 * sum(counts[c] for c in ('Combust', 'Brutality', 'Hemokinesis', 'Offering')))
     if cid in ('Evolve', 'Fire Breathing'):
         value += min(3, sum(counts[c] for c in ('Power Through', 'Wild Strike', 'Reckless Charge')))
-    if cid == 'Demon Form' and strength:
-        value -= 3
+    repeatable_strength = counts['Demon Form'] or counts['Spot Weakness'] or (counts['Limit Break'] and strength)
+    if cid == 'Demon Form':
+        # A single Inflame/Vajra helps hallway fights but does not replace an
+        # engine for long boss fights. By the first boss reward, reserve room
+        # for one repeatable Strength source instead of indefinitely adding
+        # frontloaded damage or max-HP growth cards.
+        if repeatable_strength:
+            value -= 3
+        elif int(g.get('floor', 1)) >= 15:
+            value += 3
     if cid == 'Feed':
         value -= max(0, int(g.get('floor', 1)) - 15) * .12
     if adding and len(g.get('deck', ())) > 23 and cid not in DRAW:

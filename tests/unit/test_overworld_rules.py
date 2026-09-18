@@ -158,3 +158,15 @@ def test_unavailable_campfire_actions_do_not_attract_route_to_dead_rest():
     s['global']['relics'] = ['Coffee Dripper', 'Fusion Hammer']
     scores = route_scores(s, [(0, 0), (1, 1)], Map(), 8)
     assert scores[0] < scores[1]
+
+
+def test_first_boss_reward_fills_repeatable_scaling_gap_before_feed():
+    s = state(cards=[('Feed', 0), ('Demon Form', 0), ('Exhume', 0)])
+    s['global']['floor'] = 16
+    s['global']['deck'].extend((cid, 0) for cid in
+        ('Whirlwind', 'Uppercut', 'Headbutt', 'Cleave', 'Pommel Strike'))
+    assert choose(s, A._RCARD, A._RCARD + 1, A._RCARD + 2, A._RSKIP) == A._RCARD + 1
+    s['global']['deck'].append(('Inflame', 1))
+    assert choose(s, A._RCARD, A._RCARD + 1, A._RCARD + 2, A._RSKIP) == A._RCARD + 1
+    s['global']['deck'].append(('Spot Weakness', 0))
+    assert card_value(('Demon Form', 0), s) < card_value(('Feed', 0), s)
