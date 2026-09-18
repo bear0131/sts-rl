@@ -23,7 +23,8 @@ class TurnPlannerStrategy:
     def manifest(self):
         return dict(config=asdict(self.config), horizon='current-player-turn-plus-enemy-phase',
             information='independent-NOSL-futures', dome='visible-rule-fallback',
-            leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity')
+            leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
+            resources='conservative-no-output-guard-with-public-relics')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []
@@ -34,7 +35,8 @@ class TurnPlannerStrategy:
                 raise ValueError('turn planner requires native-v1 environment')
             # The native clone contains the actual current hidden intent with
             # Dome. Do not expose it to transition search or leaf evaluation.
-            dome = any(r['id'] == 'Runic Dome' for r in env.thick.gc.relic_state())
+            public_relics = tuple(r['id'] for r in env.thick.gc.relic_state())
+            dome = 'Runic Dome' in public_relics
             if dome:
                 if np.any(env.action_masks()):
                     chosen = self.fallback.decide([request], check=check)[0]
@@ -47,7 +49,8 @@ class TurnPlannerStrategy:
                 # Per-episode step is an opaque decision counter, not game seed
                 # or simulator RNG. Identical public inputs at the same counter
                 # get identical hidden samples regardless of the actual future.
-                plan = self.planner.choose(env.thick.bc, state_nonce=request.step, check=check)
+                plan = self.planner.choose(env.thick.bc, state_nonce=request.step, check=check,
+                                           public_relics=public_relics)
                 decision = Decision(None, self.name,
                     {key: value for key, value in plan.diagnostics.items()
                      if isinstance(value, (int, float))}, native_action=plan.action_bits)
