@@ -123,6 +123,17 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 库调用可用 `strategies.UPPER_STRATEGIES` 或直接组合 `EnemyDemandUpperStrategy`，
 不需要导入 CLI。默认仍为 `--upper-strategy model`。
 
+`--upper-strategy energy` 选择独立 `ironclad-overworld-energy-v1`，只改 Boss 遗物
+选择，仍以原上层 v1 为基础，不叠加 demand。它枚举公开无序牌组的假设均匀五张手牌，
+计算现有能量和多一点能量下可支付的 v1 牌效先验总值，加入有界评分修正。
+这是费用约束下的静态近似，不是实际出牌计划或预计损血；抽牌牌只保留其原先验，
+不会免费增加手牌。当前临时能量、动态费用、Snecko/Pyramid/Choker 等未建模组合
+退回 v1；原遗物副作用先验保留。痛苦印记的两张伤口作为抽牌稀释计入，医疗箱
+不免此成本；该均匀分布也不表示原生的首轮起手，因为伤口在初始抽牌之后加入。
+奴隶项圈按普通战斗/精英或 Boss 各半的显式先验处理。trace 写入原评分、边际容量
+与修正；结果计数 `overworld_energy_decisions`、`overworld_energy_changed_decisions`
+和 `overworld_energy_abstentions`。评测固定同一下层，仅切换 rules/energy。
+
 跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表
 上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
 下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision
