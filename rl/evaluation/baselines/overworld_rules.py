@@ -15,7 +15,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v2-probe'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v3-probe'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -99,7 +99,11 @@ def card_value(card, state, *, adding=True):
         value += min(1.5, upgrade_value((cid, 0), state) / 7) if upgraded else 0
     if cid in AOE and not any(counts[c] for c in AOE):
         value += 1.8
-    strength = sum(counts[c] for c in STRENGTH) + int(has_relic(state, 'GIRYA', 'VAJRA'))
+    # Girya has no starting Strength until the player has actually lifted.
+    # Its public counter is parallel to the canonical relic-id list.
+    girya_strength = any(_item_key(relic) == 'GIRYA' and counter > 0
+        for relic, counter in zip(g.get('relics', ()), g.get('relic_counters', ())))
+    strength = sum(counts[c] for c in STRENGTH) + int(has_relic(state, 'VAJRA') or girya_strength)
     if cid in STRENGTH and not strength:
         value += 2 if act > 1 else .5
     if cid in ('Heavy Blade', 'Sword Boomerang', 'Pummel', 'Reaper', 'Limit Break'):
@@ -121,7 +125,10 @@ def card_value(card, state, *, adding=True):
         value += min(5, 2 * sum(counts[c] for c in ('Combust', 'Brutality', 'Hemokinesis', 'Offering')))
     if cid in ('Evolve', 'Fire Breathing'):
         value += min(3, sum(counts[c] for c in ('Power Through', 'Wild Strike', 'Reckless Charge')))
-    repeatable_strength = counts['Demon Form'] or counts['Spot Weakness'] or (counts['Limit Break'] and strength)
+    # Base Limit Break exhausts; only the upgraded card remains in the cycle.
+    repeatable_limit_break = any(cid == 'Limit Break' and up > 0
+        for cid, up in g.get('deck', ()))
+    repeatable_strength = counts['Demon Form'] or counts['Spot Weakness'] or (repeatable_limit_break and strength)
     if cid == 'Demon Form':
         # A single Inflame/Vajra helps hallway fights but does not replace an
         # engine for long boss fights. By the first boss reward, reserve room

@@ -170,3 +170,33 @@ def test_first_boss_reward_fills_repeatable_scaling_gap_before_feed():
     assert choose(s, A._RCARD, A._RCARD + 1, A._RCARD + 2, A._RSKIP) == A._RCARD + 1
     s['global']['deck'].append(('Spot Weakness', 0))
     assert card_value(('Demon Form', 0), s) < card_value(('Feed', 0), s)
+
+
+def test_base_limit_break_does_not_replace_repeatable_boss_scaling():
+    s = state(cards=[('Demon Form', 0), ('Feed', 0)])
+    s['global'].update(floor=33, act=2)
+    s['global']['deck'].extend([('Inflame', 1), ('Limit Break', 0)])
+    assert choose(s, A._RCARD, A._RCARD + 1, A._RSKIP) == A._RCARD
+    # Upgrade identity is stored separately; the card id does not change.
+    s['global']['deck'][-1] = ('Limit Break', 1)
+    assert choose(s, A._RCARD, A._RCARD + 1, A._RSKIP) == A._RCARD + 1
+
+
+def test_limit_break_needs_actual_girya_lifts_not_merely_the_relic():
+    s = state(cards=[('Limit Break', 0)])
+    s['global'].update(relics=['Girya'], relic_counters=[0])
+    no_strength = card_value(('Limit Break', 0), s)
+    assert choose(s, A._RCARD, A._RSKIP) == A._RSKIP
+    s['global']['relic_counters'] = [1]
+    assert card_value(('Limit Break', 0), s) > no_strength
+    # A missing counter is unknown, never evidence that lifting already occurred.
+    s['global']['relic_counters'] = []
+    assert card_value(('Limit Break', 0), s) == no_strength
+
+
+def test_vajra_and_positive_girya_supply_the_same_existing_strength_proxy():
+    s = state()
+    s['global'].update(relics=['Vajra'], relic_counters=[0])
+    vajra = card_value(('Limit Break', 0), s)
+    s['global'].update(relics=['Girya'], relic_counters=[3])
+    assert card_value(('Limit Break', 0), s) == vajra
