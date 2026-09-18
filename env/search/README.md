@@ -183,3 +183,22 @@ as episode numeric metrics. Regression:
 `tests/integration/test_turn_planner_winning_depth.py`. The Medical Kit/Hex/Dark
 Embrace fixture verifies the current native simulator, not an independent audit
 of the commercial game's event ordering or a replay of the original full run.
+
+## Awakened One phase potential candidate v8
+
+`ironclad-turn-v8-awakened-phase` extends only the remaining-enemy-HP prior.
+Existing public `Curiosity` identifies the first life, so its burden includes
+current HP plus one additional visible max-HP life. The native `half_dead` flag
+identifies the zero-HP rebirth interval; this still counts one max-HP threat even
+though native also marks that slot `gone`. After rebirth, Curiosity is absent and
+Minion Leader is present: only current HP counts, with no further extra life.
+Actual native outcome remains the sole terminal truth. Slime and ordinary-enemy
+potentials and all search/HP/debuff coefficients remain unchanged.
+
+Visible max HP is a heuristic for the future life, exact at native A0 (300).
+Native high-ascension first-life HP is sampled in300–320 while rebirth fixes320,
+so it may underestimate by0–20HP; no private difficulty/RNG field is read and no
+observation contract is expanded. Debuffs disappearing on first death are still
+valued as a real cost. This is not a requirement to switch phase immediately in
+every state: two-turn plans can still value delaying the stronger second phase.
+Regression entrypoint: `tests/integration/test_turn_planner_awakened_phase.py`.
