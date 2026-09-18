@@ -131,3 +131,22 @@ def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     assert raw_moves[0] != raw_moves[1]
     assert views[0] == views[1]
     assert decisions[0] == decisions[1]
+
+
+def test_native_constricted_is_public_and_blockable(combat_factory):
+    env = combat_factory(['DEFEND_RED']*5, encounter='Spire Growth')
+    env.thick.bc.apply_custom_state({'monsters': [{'move': 'SPIRE_GROWTH_CONSTRICT'}]})
+    env._invalidate_backend_cache()
+    env.step(A.END_TURN)
+    env.thick.bc.apply_custom_state({'hand': [('DEFEND_RED', 0, 1)],
+        'monsters': [{'move': 'SPIRE_GROWTH_CONSTRICT'}]})
+    env._invalidate_backend_cache()
+    view = visible_combat(request(env))
+    assert view.player['powers']['Constricted'] == 10
+    assert view.incoming == 10
+    hp = view.player['hp']
+    env.step(A._PLAY)
+    if env._info().get('pending'):
+        env.step(A._TARGET)
+    env.step(A.END_TURN)
+    assert visible_combat(request(env)).player['hp'] == hp-5

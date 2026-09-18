@@ -298,3 +298,23 @@ def test_random_exhaust_can_destroy_the_only_remaining_attack(view):
     view.piles['draw'] = [card('Defend_R')]
     view.targets = {('play', 0): [None], ('play', 1): [0]}
     assert pick(view, A._PLAY, A._PLAY+1) == A._PLAY+1
+
+
+def test_end_turn_damage_is_a_blockable_threat_without_enemy_attack(view):
+    view.monsters[0]['adjusted_damage'] = 0
+    view.player['powers'] = {'Constricted': 10}
+    view.hand = [card('Defend_R'), card('Burn'), card('Burn', up=1), card('Decay')]
+    view.targets = {('play', 0): [None]}
+    assert view.incoming == 18
+    assert pick(view, A._PLAY, A.END_TURN) == A._PLAY
+    view.player['powers']['Intangible'] = 1
+    assert view.incoming == 4
+
+
+def test_hp_loss_is_not_mistaken_for_blockable_damage(view):
+    view.monsters[0]['adjusted_damage'] = 0
+    view.player['powers'] = {'Combust': 5}
+    view.hand = [card('Defend_R'), card('Regret')]
+    view.targets = {('play', 0): [None]}
+    assert view.incoming == 0
+    assert pick(view, A._PLAY, A.END_TURN) == A.END_TURN

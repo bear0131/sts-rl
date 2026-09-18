@@ -14,7 +14,7 @@ from env.core import action_space as A, actions, game_actions as ga
 from env.core.ironclad_cards import IRONCLAD_CARDS, card_numbers
 from schemas.combat_state import normalize_sim, _norm_sim_monster, _sim_card_id
 
-RULE_VERSION = 'ironclad-v3'
+RULE_VERSION = 'ironclad-end-damage-v1'
 BAD_CARDS = frozenset(('Wound', 'Dazed', 'Burn', 'Void', 'Slimed', 'AscendersBane',
     'Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay', 'Normality', 'Clumsy',
     'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride', 'Necronomicurse'))
@@ -69,9 +69,15 @@ class CombatView:
 
     @property
     def incoming(self):
+        # These public end-of-turn effects use DamagePlayer, so block absorbs
+        # them before enemy attacks. Regret/Combust HP loss bypasses block and
+        # must not be counted here (BattleContext::useNoTriggerCard/Player).
+        end_turn_hits = [self.player['powers'].get('Constricted', 0)]
+        end_turn_hits += [4 if c.get('up') else 2 for c in self.hand if c['id'] == 'Burn']
+        end_turn_hits += [2 for c in self.hand if c['id'] == 'Decay']
         if self.player['powers'].get('Intangible', 0):
-            return sum(intent_hits(m) for m in self.alive if intent(m))
-        return sum(intent(m) for m in self.alive)
+            return sum(intent_hits(m) for m in self.alive if intent(m)) + sum(x > 0 for x in end_turn_hits)
+        return sum(intent(m) for m in self.alive) + sum(end_turn_hits)
 
     @property
     def deficit(self):
