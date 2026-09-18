@@ -9,6 +9,18 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+            f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}"]
+    previous = vars(parser.parse_args(base))
+    actual = vars(parser.parse_args(base + [f"@{ROOT / 'configs/train/nosl_ruleupper_v1.args'}"]))
+    assert actual["nosl_is_az_updates"] == 40
+    assert actual["nosl_is_az_simulations"] == 128
+    assert {key: (previous[key], actual[key]) for key in previous
+            if previous[key] != actual[key]} == {"nosl_is_az_upper_strategy": (None, "rules")}
+
+
 @pytest.mark.parametrize("name", ["nosl_paper_replay_fresh10_20260913",
                                  "nosl_paper_noetl_noreplay_e288_20260913",
                                  "nosl_fixed_fpu_20260909"])

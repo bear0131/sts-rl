@@ -15,8 +15,8 @@ from rl.training.reward import ShapedRewardWrapper
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl', [False, True])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
+@pytest.mark.parametrize('nosl,upper', [(False, 'model'), (True, 'model'), (True, 'rules')])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper):
     def make_env(*_):
         return DummyVecEnv([lambda: TimeLimit(
             ShapedRewardWrapper(short_combat_env_type()), max_episode_steps=12)] * 2)
@@ -26,6 +26,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4), device='cpu', seed=42,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
+        nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
@@ -84,9 +85,12 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         hp_order_fraction(p) or 0.0) for p in payloads)
     if nosl:
         assert all(p[HP_ORDER_PREFIX + '_fraction'] == .01 for p in payloads)
+        assert all('nosl_is_az/overworld_rule_decisions' in p and
+                   'nosl_is_az/overworld_fallback_decisions' in p for p in payloads)
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [True]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
+    assert restored.nosl_is_az_upper_strategy == upper
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'

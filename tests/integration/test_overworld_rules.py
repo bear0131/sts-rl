@@ -17,6 +17,7 @@ def test_native_neow_is_public_deterministic_and_does_not_mutate_state():
         request = DecisionRequest(env, obs, info, 10000, 0)
         strategy = OverworldRuleStrategy()
         first = strategy.decide([request])[0]
+        assert env.overworld_rule_decision() == first.action
         assert first == strategy.decide([request])[0]
         assert env.action_masks()[first.action]
         assert env.thick.obs_canonical() == before

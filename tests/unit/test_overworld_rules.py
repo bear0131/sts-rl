@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from env.core import action_space as A
+from env.core.run_env import SlayTheSpireEnv
+from env.search import overworld_rules as shared_rules
 from rl.evaluation.baselines.overworld_rules import (
     OverworldRuleStrategy, card_value, rank_overworld, relic_value, route_scores,
 )
@@ -125,6 +127,23 @@ def test_big_fish_heals_wounded_player_and_healthy_player_takes_max_hp(event):
 def test_combat_request_is_rejected_instead_of_silently_using_upper_model():
     with pytest.raises(ValueError, match='combat strategy'):
         rank_overworld(state('combat'), [A.END_TURN])
+
+
+def test_worker_uses_same_core_and_explicit_unknown_event_fallback():
+    assert rank_overworld is shared_rules.rank_overworld
+    s = state('event')
+    s['options']['event'] = 'NEW_UNDOCUMENTED_EVENT'
+    env = object.__new__(SlayTheSpireEnv)
+    env.thick = SimpleNamespace(obs_canonical=lambda: s, rmap=None,
+                                gc=SimpleNamespace(cur_map_node_y=0))
+    env._phase = lambda: s['phase']
+    mask = np.zeros(A.N_ACTIONS, dtype=bool)
+    mask[A._EVENT + 1] = True
+    env.action_masks = lambda: mask
+    assert env.overworld_rule_decision() is None
+    s['phase'] = 'combat'
+    with pytest.raises(RuntimeError, match='non-combat'):
+        env.overworld_rule_decision()
 
 
 def test_permanent_curse_does_not_make_expensive_shop_removal_look_good():

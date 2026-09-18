@@ -742,6 +742,18 @@ class SlayTheSpireEnv(gym.Env):
             return True, None
         return False, self.action_masks()
 
+    def overworld_rule_decision(self):
+        """Choose a legal public-state upper action, or request model fallback."""
+        if self.thick is None or self._phase() == "combat":
+            raise RuntimeError("overworld rules require a live non-combat state")
+        from env.search.overworld_rules import rank_overworld
+
+        ranked = rank_overworld(
+            self.thick.obs_canonical(), np.flatnonzero(self.action_masks()),
+            rmap=self.thick.rmap, current_y=self.thick.gc.cur_map_node_y,
+        )
+        return None if ranked is None else int(ranked[0]["action"])
+
     def nosl_is_az_decide(
         self,
         prior_logits,

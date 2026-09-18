@@ -198,6 +198,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning-batch-size", type=int, default=128)
     parser.add_argument("--reasoning-updates", type=int, default=4)
     parser.add_argument(
+        "--nosl-is-az-upper-strategy", choices=("model", "rules"), default=None,
+        help="Frozen upper decision strategy in inner-only NOSL: sampled model "
+             "or overworld-v1 rules with deterministic model fallback.",
+    )
+    parser.add_argument(
         "--nosl-is-az-simulations",
         type=int,
         default=None,
@@ -1369,6 +1374,8 @@ _DISTRIBUTED_GAME_METRIC_KEYS = (
 # set so every rank participates in the same scalar all-reduce even when a
 # rank has no completed combat in a particular rollout.
 _DISTRIBUTED_NOSL_METRIC_KEYS = (
+    "nosl_is_az/overworld_rule_decisions",
+    "nosl_is_az/overworld_fallback_decisions",
     "nosl_is_az/combat_roots",
     "nosl_is_az/combat_policy_roots",
     "nosl_is_az/value_only_samples",
@@ -1742,6 +1749,23 @@ def main() -> None:
             f"{frozen:,} parameters; {trainable:,} combat parameters trainable",
             flush=True,
         )
+    upper_strategy = args.nosl_is_az_upper_strategy or getattr(
+        model, "nosl_is_az_upper_strategy", "model"
+    )
+    if upper_strategy not in ("model", "rules"):
+        raise ValueError("NOSL-IS-AZ upper strategy must be model or rules")
+    if upper_strategy == "rules" and not (
+        model.nosl_is_az and model.nosl_is_az_inner_only
+    ):
+        raise ValueError("--nosl-is-az-upper-strategy rules requires inner-only NOSL")
+    model.nosl_is_az_upper_strategy = args.nosl_is_az_upper_strategy = upper_strategy
+    from env.search.overworld_rules import OVERWORLD_RULE_VERSION
+    args.nosl_is_az_upper_strategy_version = (
+        OVERWORLD_RULE_VERSION if upper_strategy == "rules" else "checkpoint-model"
+    )
+    print(f"[rank {args.rank}] NOSL upper strategy: {upper_strategy} "
+          f"version={args.nosl_is_az_upper_strategy_version} "
+          f"fallback={'masked-argmax' if upper_strategy == 'rules' else 'sampled'}", flush=True)
     if args.nosl_is_az_updates is not None:
         if not bool(getattr(model, "nosl_is_az", False)):
             raise ValueError(
@@ -2480,6 +2504,12 @@ def main() -> None:
             # to W&B, so the dashboard represents the global rollout rather
             # than rank 0's local subset.
             callback_scalars = logger_scalars(model)
+            upper_counts = getattr(model, "_nosl_is_az_rollout_upper_counts", {})
+            record["nosl_is_az_upper_strategy"] = model.nosl_is_az_upper_strategy
+            record["nosl_is_az_upper_strategy_version"] = args.nosl_is_az_upper_strategy_version
+            for name, value in upper_counts.items():
+                record[name + "_local"] = float(value)
+                callback_scalars["nosl_is_az/" + name] = float(value)
             if nosl_update is not None:
                 callback_scalars.update({
                     f"nosl_is_az/{key}": float(value)
