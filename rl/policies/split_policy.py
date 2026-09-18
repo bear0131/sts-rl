@@ -991,6 +991,7 @@ class SplitStSPolicyCore(nn.Module):
         card_vector_checkpoint: str | None = None,
         features_dim: int = 256,
         vf_arch: tuple[int, ...] = (256,),
+        combat_arch: str = "transformer",
     ) -> None:
         super().__init__()
         if card_vector_checkpoint is not None:
@@ -1031,15 +1032,18 @@ class SplitStSPolicyCore(nn.Module):
             card_dim=card_dim,
             card_embedding=card_embedding,
         )
-        combat_encoder = CombatEncoder(
-            observation_space,
-            d_model=d_model,
-            n_layers=combat_layers,
-            n_heads=n_heads,
-            features_dim=features_dim,
-            combat_language=combat_language,
-            card_dim=card_dim,
-        )
+        if combat_arch not in {"transformer", "mlp"}:
+            raise ValueError("combat_arch must be transformer or mlp")
+        if combat_arch == "transformer":
+            combat_encoder = CombatEncoder(
+                observation_space,
+                d_model=d_model,
+                n_layers=combat_layers,
+                n_heads=n_heads,
+                features_dim=features_dim,
+                combat_language=combat_language,
+                card_dim=card_dim,
+            )
         overworld_encoder = OverworldEncoder(
             observation_space,
             d_model=d_model,
@@ -1048,13 +1052,18 @@ class SplitStSPolicyCore(nn.Module):
             features_dim=features_dim,
             map_dag=map_dag,
         )
-        self.combat = _SpecialistActorCritic(
-            combat_encoder,
-            d_model=d_model,
-            features_dim=features_dim,
-            vf_arch=vf_arch,
-            kind="combat",
-        )
+        if combat_arch == "mlp":
+            from rl.policies.combat_mlp import CombatMLPActorCritic
+
+            self.combat = CombatMLPActorCritic(observation_space, COMBAT_OBSERVATION_KEYS)
+        else:
+            self.combat = _SpecialistActorCritic(
+                combat_encoder,
+                d_model=d_model,
+                features_dim=features_dim,
+                vf_arch=vf_arch,
+                kind="combat",
+            )
         self.overworld = _SpecialistActorCritic(
             overworld_encoder,
             d_model=d_model,
@@ -1171,6 +1180,8 @@ class CombatStSPolicyCore(nn.Module):
         **_unused,
     ) -> None:
         super().__init__()
+        if _unused.get("combat_arch", "transformer") != "transformer":
+            raise ValueError("combat-only pretraining currently supports transformer combat_arch only")
         if card_vector_checkpoint is not None:
             if card_embedding is not None:
                 raise ValueError(
@@ -1252,6 +1263,7 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
         combat_language: bool = False,
         map_dag: bool = False,
         card_vector_checkpoint: str | None = None,
+        combat_arch: str = "transformer",
         **kwargs,
     ) -> None:
         self._core_cfg = dict(
@@ -1262,6 +1274,7 @@ class SplitStSPointerPolicy(MaskableMultiInputActorCriticPolicy):
             combat_language=combat_language,
             map_dag=map_dag,
             card_vector_checkpoint=card_vector_checkpoint,
+            combat_arch=combat_arch,
         )
         kwargs["features_extractor_class"] = _NullExtractor
         kwargs.pop("features_extractor_kwargs", None)

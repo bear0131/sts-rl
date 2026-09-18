@@ -15,8 +15,10 @@ from rl.training.reward import ShapedRewardWrapper
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl,upper', [(False, 'model'), (True, 'model'), (True, 'rules')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper):
+@pytest.mark.parametrize('nosl,upper,combat_arch', [
+    (False, 'model', 'transformer'), (True, 'model', 'transformer'),
+    (True, 'rules', 'transformer'), (True, 'rules', 'mlp')])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch):
     def make_env(*_):
         return DummyVecEnv([lambda: TimeLimit(
             ShapedRewardWrapper(short_combat_env_type()), max_episode_steps=12)] * 2)
@@ -24,7 +26,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     env = make_env()
     model = AccumulatingMaskablePPO(
         SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
-        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4), device='cpu', seed=42,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch), device='cpu', seed=42,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
@@ -91,6 +93,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [True]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     assert restored.nosl_is_az_upper_strategy == upper
+    assert restored.policy_kwargs['combat_arch'] == combat_arch
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
