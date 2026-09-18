@@ -5,11 +5,11 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BASE01 | 初版已验收 | 固定上层，仅替换 combat 的可解释规则策略；DecisionStrategy/PhaseStrategy/runner、独立下层 checkpoint、目标/选牌区域与 trace 已接入；留出8整局规则/policy/native分别0/0/1胜，24同初态战斗分别23/19/24胜。方法与局限见 [基线协议](rl/evaluation/baselines/README.md)，结果见 [实验记录](worklog/2026-09-18.md#base01-held-out-evaluation) |
-| BASE02 | 384局搜索对照完成；v3保留，Artifact候选验证中 | `rl/evaluation/baselines/combat_rules.py`：70000–70383规则/native128/native32分别24/22/8胜，规则对native128胜率优势未证实；hand-finish新种子固定上层21→24/384、规则上层41→37/384，不晋级通用默认。Strength/HP-budget/upper acquisition开发筛选未通过；独立Artifact修正版冻结后用90000新种子验证。F01/F02/F03、搜索预算与药水差异分开解释；见 [本轮结果与验收](worklog/2026-09-18.md#resumed-campaign-results-and-final-artifact-validation) |
-| BASE03 | 上层v1保留，v2新种子退步未晋级 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；公开牌组/地图/商店/选项做可解释决策，未知事件显式回退并计数；与固定上层分开评估，冻结后新种子对照及 bad case 迭代 |
+| BASE02 | 本轮确认完成；v3保留，Artifact候选独立保存 | `rl/evaluation/baselines/combat_rules.py`：384局规则/native128/native32为24/22/8胜；Artifact独立1024确认固定上层48→52胜、规则上层79→88胜，但固定上层双方同seed各1次F03 dead_screen，未过全自然晋级门槛且胜率优势尚不稳定。hand-finish跨上层结果不一致，其他开发候选未晋级。下一步先解决F03选牌覆盖，再验证安全斩杀前回血；新策略须冻结后至少128新种子、按上层分别验证，不覆盖已有未决样本。见 [本轮结果](worklog/2026-09-18.md#resumed-campaign-results-and-final-artifact-validation) 与 [确认及诊断](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction) |
+| BASE03 | 上层v1保留，独立候选未晋级 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；v2成长权重在旧验证退步；重复伤害牌获取候选b5fcbf4在128开发集胜场/均楼层均与v1相同（9胜/33.3047），不晋级。未知事件显式回退计数；与固定上层分开评估，新改动须冻结后新种子验证 |
 | [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
 | [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
-| [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确 |
+| [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构，选牌截断已复现 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确。Secret Technique/Weapon原生draw候选index>=10被71-action绑定/薄层丢弃，可使存活战斗dead_screen；验收须覆盖draw/discard/exhaust长候选、明确候选→native索引映射、71/181 checkpoint兼容及同seed110104独立回归。具体strict xfail：`tests/integration/test_environment_contracts.py::test_draw_selection_remains_actionable_beyond_hand_slots`；[新增证据](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction) |
 | [F04](docs/2026-09-13/codebase-audit.md#f04) | 待重构 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致 |
 | [F05](docs/2026-09-13/codebase-audit.md#f05) | 待重构 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义 |
 | [F06](docs/2026-09-13/codebase-audit.md#f06) | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |

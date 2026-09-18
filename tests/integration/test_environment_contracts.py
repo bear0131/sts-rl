@@ -66,6 +66,38 @@ def test_headbutt_candidates_are_discard_cards(combat_factory):
     np.testing.assert_array_equal(env._obs()["select_card_ids"][:2], expected)
 
 
+@pytest.mark.parametrize("card, filler, choices", [
+    ("SECRET_TECHNIQUE", "STRIKE_RED", ["DEFEND_RED", "SHRUG_IT_OFF"]),
+    ("SECRET_WEAPON", "DEFEND_RED", ["STRIKE_RED", "BASH"]),
+])
+@pytest.mark.parametrize("padding", [
+    0,
+    pytest.param(10, marks=pytest.mark.xfail(
+        reason="F03: legal draw-pile choices at native indices >=10 vanish from the thin mask",
+        strict=True, raises=pytest.fail.Exception)),
+])
+def test_draw_selection_remains_actionable_beyond_hand_slots(combat_factory, card, filler, choices, padding):
+    env = combat_factory([card] * 5)
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        "player": {"energy": 3}, "hand": [card],
+        "draw": [filler] * padding + choices, "discard": [], "exhaust": [],
+    })
+    battle.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+    native_choices = battle.legal_actions()
+    assert [a.source_idx for a in native_choices] == [padding, padding + 1]
+    assert all(a.action_type == sts.ActionType.SINGLE_CARD_SELECT for a in native_choices)
+
+    mask = env.action_masks()
+    if np.count_nonzero(mask) != 2:
+        pytest.fail("Native draw choices must remain selectable through the thin API")
+    _, _, terminated, truncated, _ = env.step(int(np.flatnonzero(mask)[0]))
+    assert not terminated and not truncated
+    assert env.thick.select_descriptor() is None
+    assert battle.to_dict()["hand"][0][0] == choices[0]
+
+
 @pytest.mark.xfail(reason="F07: gauntlet does not commit Feed max HP",
                    strict=True, raises=AssertionError)
 def test_gauntlet_preserves_feed_max_hp():
