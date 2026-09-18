@@ -2501,6 +2501,22 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("remap_draw_selection_from", &remapDrawSelection,
              pybind11::arg("source"), pybind11::arg("action_bits"),
              "map a public draw selection to this sampled clone by stable card identity; returns legal complete action bits without executing")
+        .def("execute_to_enemy_boundary", [](BattleContext &bc,
+                                             std::uint32_t actionBits) {
+            const search::Action action(actionBits);
+            if (bc.outcome != Outcome::UNDECIDED || bc.postEnemyTurnBoundary ||
+                !action.isValidAction(bc)) {
+                throw std::invalid_argument("boundary execution requires a legal live action before the enemy boundary");
+            }
+            // This is a persistent control flag, not a boundary marker. A legal
+            // action may stop at ordinary player input or at a pending choice
+            // (e.g. Nilry's Codex) before enemy execution has finished. Keeping
+            // it armed also catches card-triggered early END, e.g. Time Warp.
+            bc.stopAfterEnemyTurn = true;
+            action.execute(bc);
+            return rawCombatState(bc);
+        }, pybind11::arg("action_bits"),
+           "mutate one legal action and pump until input, terminal, or the post-enemy boundary; preserve the boundary stop across pending selections")
         .def("preview_end_turn_result", [](const BattleContext &bc,
                                            std::uint32_t actionBits) {
             const search::Action action(actionBits);
@@ -2515,12 +2531,12 @@ PYBIND11_MODULE(slaythespire, m) {
 #endif
             boundary.stopAfterEnemyTurn = true;
             action.execute(boundary);
-            if (!boundary.postEnemyTurnBoundary && boundary.outcome == Outcome::UNDECIDED) {
-                throw std::runtime_error("end-turn preview stopped before the enemy boundary");
-            }
+            // END can legitimately pause for a choice before the enemy phase,
+            // notably Nilry's Codex. The raw result preserves that distinction;
+            // callers needing to continue it must use a clone and the mutator.
             return rawCombatState(boundary);
         }, pybind11::arg("action_bits"),
-           "execute once on a clone and return the post-enemy boundary or terminal raw result; never mutates the source")
+           "execute END once on a clone and return pending-choice, post-enemy-boundary, or terminal raw state; never mutates the source")
         .def("preview_end_turn_boundary", [](const BattleContext &bc,
                                                std::uint32_t actionBits) {
             const search::Action action(actionBits);

@@ -50,3 +50,27 @@ draw-select 的索引属于当前公开候选实体。`nosl_redeterminize` 会�
 参考版本 `7b47a877d626cdb4fbeeb423c46472b15dd2ac00` 的
 [路径搜索](https://github.com/xaved88/bottled_ai/blob/7b47a877d626cdb4fbeeb423c46472b15dd2ac00/rs/calculator/play_path.py)
 及 [结果比较](https://github.com/xaved88/bottled_ai/blob/7b47a877d626cdb4fbeeb423c46472b15dd2ac00/rs/common/comparators/core/comparisons.py)。
+
+
+## Native one-turn execution and pending choices
+
+`bc.execute_to_enemy_boundary(action_bits)` mutates a search clone using one legal
+complete native action. It arms `stopAfterEnemyTurn` before execution and keeps
+that control across ordinary player input and pending choices. A later action
+that ends the turn, including Time Eater's twelfth-card trigger, stops after the
+complete enemy phase and deterministic cleanup, before player start effects,
+draw, and energy recharge. Cloning a pending state preserves the control flag.
+The returned raw state is the clone's current state; ordinary playable input and
+pending input are intermediate nodes, not value boundaries. Terminal states and
+states with `post_enemy_turn_boundary=True` must not be expanded; the mutator
+rejects actions there, and rejects illegal actions without changing state.
+
+`bc.preview_end_turn_result(END_bits)` executes once on a temporary clone and
+returns one of three distinct results: (1) a pending choice such as Nilry's Codex,
+(2) a post-enemy boundary, or (3) a terminal outcome. It never mutates the source.
+Its raw dictionary cannot be resumed as a simulator: searches needing to resolve
+pending choices should clone explicitly and use the mutator above. The legacy
+`preview_end_turn_boundary` API still returns `None` for a pending or terminal
+result. `execute` and the existing NOSL search control remain unchanged.
+
+Regression entrypoint: `tests/integration/test_native_boundary_execution.py`.
