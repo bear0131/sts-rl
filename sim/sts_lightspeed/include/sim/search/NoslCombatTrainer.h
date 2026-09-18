@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -186,6 +187,12 @@ public:
 
 private:
     struct Node;
+    struct ActionLabel {
+        CardInstance card;
+        const char *targetName = nullptr;
+        std::string eager;
+        bool deferred = false;
+    };
     struct Edge {
         Action action;
         // NOSL samples can reach the same action prefix with different public
@@ -197,13 +204,13 @@ private:
         int virtualVisits = 0;
         double valueSum = 0.0;
         double prior = 0.0;
+        double logPrior = 0.0;
         double propagatedValue = 0.0;
         bool propagatedValid = false;
         std::uint64_t semanticKey = 0;
         bool targeted = false;
-        std::string label;
-        Edge(Action a, double p, bool targeted, std::string label)
-            : action(a), prior(p), targeted(targeted), label(std::move(label)) {}
+        ActionLabel label;
+        Edge(Action a, double p, bool targeted, ActionLabel label);
         Edge(Edge &&) noexcept = default;
         Edge &operator=(Edge &&) noexcept = default;
         Edge(const Edge &) = delete;
@@ -225,7 +232,7 @@ private:
 
     struct Pending {
         std::uint64_t id = 0;
-        BattleContext state;
+        std::unique_ptr<BattleContext> state;
         std::vector<Node *> nodes;
         std::vector<Edge *> edges;
         std::vector<Action> legalActions;
@@ -245,6 +252,12 @@ private:
     int simulationsCompleted_ = 0;
     std::uint64_t nextRequestId_ = 1;
     std::unordered_map<std::uint64_t, Pending> pending_;
+    std::vector<std::tuple<int, int, int, int, int, int, int>> stateKeyScratch_;
+    // Sessions are sequential; these buffers never outlive the owning tree.
+    mutable std::vector<double> rawQScratch_;
+    mutable std::vector<double> scaledQScratch_;
+    mutable std::vector<double> rootScoreScratch_;
+    mutable std::vector<double> interiorLogitScratch_;
     std::vector<int> gumbelActiveEdges_;
     // Initial Gumbel-Top-k set.  `gumbelActiveEdges_` is narrowed after each
     // Sequential-Halving round, so retaining both sets is useful for audit/UI.
@@ -277,8 +290,9 @@ private:
                               const std::vector<Action> &actions);
     static bool actionTargetsEnemy(const BattleContext &state,
                                    const Action &action);
-    static std::string actionLabel(const BattleContext &state,
+    static ActionLabel actionLabel(const BattleContext &state,
                                    const Action &action);
+    static std::string formatActionLabel(const Edge &edge);
     int selectPuct(const Node &node) const;
     int selectFullGumbelInterior(const Node &node,
                                  bool *usedCoverage = nullptr) const;
@@ -290,8 +304,11 @@ private:
         std::vector<double> scaled;
     };
     QTransformDetails completedQDetails(const Node &node) const;
-    std::vector<double> completedQTransform(const Node &node) const;
-    std::vector<double> rootCompletedScores(bool includeNoise) const;
+    void fillCompletedQ(const Node &node, std::vector<double> &scaled,
+                        std::vector<double> *raw = nullptr,
+                        std::vector<double> *normalized = nullptr) const;
+    const std::vector<double> &completedQTransform(const Node &node) const;
+    const std::vector<double> &rootCompletedScores(bool includeNoise) const;
     std::vector<double> rootPolicyTarget() const;
     // Recompute the structural value after a leaf backup.  An Edge is a
     // chance/world-line aggregation over its public-state children; a Node

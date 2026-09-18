@@ -260,12 +260,7 @@ struct Row {
     std::array<float, kFloatSize> scalars{};
 };
 
-inline int intentCategory(const sts::Monster &monster, int baseDamage) {
-    if (baseDamage > 0) return 1; // attack
-    const auto move = monster.moveHistory[0];
-    const int moveId = static_cast<int>(move);
-    if (moveId <= 0 || moveId >= kNativeMoves) return 0;
-    const std::string name(sts::monsterMoveStrings[moveId]);
+inline int intentCategoryFromName(const std::string &name) {
     auto has = [&name](const char *token) {
         return name.find(token) != std::string::npos;
     };
@@ -291,6 +286,20 @@ inline int intentCategory(const sts::Monster &monster, int baseDamage) {
         has("DROOL") || has("FLY") || has("CAW") || has("IMPLANT") ||
         has("ECHO")) return 3;
     return 0;
+}
+
+inline int intentCategory(const sts::Monster &monster, int baseDamage) {
+    if (baseDamage > 0) return 1;
+    const int moveId = static_cast<int>(monster.moveHistory[0]);
+    if (moveId <= 0 || moveId >= kNativeMoves) return 0;
+    static const auto categories = [] {
+        std::array<int, kNativeMoves> result{};
+        for (int id = 1; id < kNativeMoves; ++id) {
+            result[id] = intentCategoryFromName(sts::monsterMoveStrings[id]);
+        }
+        return result;
+    }();
+    return categories[moveId];
 }
 
 inline int monsterStatusValue(const sts::Monster &monster, int status) {
@@ -349,6 +358,8 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
 
 inline Row pack(const sts::BattleContext &bc) {
     Row row;
+    std::array<int, kMaxMonsters> baseDamages{};
+    std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
     for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
         row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
@@ -371,8 +382,10 @@ inline Row pack(const sts::BattleContext &bc) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
         const auto damage = monster.getMoveBaseDamage(bc);
+        baseDamages[monsterCount] = std::max(0, damage.damage);
+        attackCounts[monsterCount] = damage.attackCount;
         row.categorical[c + monsterCount] = intentCategory(
-            monster, std::max(0, damage.damage));
+            monster, baseDamages[monsterCount]);
         ++monsterCount;
     }
     c += kMaxMonsters;
@@ -433,8 +446,7 @@ inline Row pack(const sts::BattleContext &bc) {
          ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
-        const auto damage = monster.getMoveBaseDamage(bc);
-        const int baseDamage = std::max(0, damage.damage);
+        const int baseDamage = baseDamages[monsterCount];
         const int adjusted = baseDamage > 0
             ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
         row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
@@ -442,7 +454,7 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f++] = static_cast<float>(monster.maxHp);
         row.scalars[f++] = static_cast<float>(monster.block);
         row.scalars[f++] = static_cast<float>(adjusted);
-        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? damage.attackCount : 0);
+        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[monsterCount] : 0);
         ++monsterCount;
     }
     f += 6 * (kMaxMonsters - monsterCount);

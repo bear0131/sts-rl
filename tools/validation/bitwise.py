@@ -155,13 +155,14 @@ def capture(output: Path, restore: Path | None) -> None:
     print(f"captured {len(values)} fields: {output}")
 
 
-def capture_search(output: Path, repeats: int) -> None:
+def capture_search(output: Path, repeats: int, record_repeats: int) -> None:
     import platform
     import time
     import numpy as np
     import torch
     from env.core.run_env import SlayTheSpireEnv
     import slaythespire as sts
+    import psutil
 
     torch.set_num_threads(1)
     build = Path(os.environ["STS_LIGHTSPEED_BUILD_DIR"]).resolve()
@@ -184,6 +185,10 @@ def capture_search(output: Path, repeats: int) -> None:
                         "CMAKE_BUILD_TYPE", "CMAKE_CXX_FLAGS", "CMAKE_CXX_FLAGS_RELEASE",
                         "STS_ENABLE_RULE_TRACE", "PYTHON_VERSION", "PYBIND11_INTERNALS_VERSION")})
     values, timings = {}, []
+    process = psutil.Process()
+    capture_started = time.perf_counter()
+    cpu_before = process.cpu_times()
+    available_before = psutil.virtual_memory().available
     decks = {
         "basic": ["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4 + ["BASH"],
         "armaments": ["ARMAMENTS", "ANGER", "SHRUG_IT_OFF", "RAMPAGE", "POMMEL_STRIKE"] * 2,
@@ -199,6 +204,7 @@ def capture_search(output: Path, repeats: int) -> None:
     for repeat in range(repeats):
         for case_index, (deck, encounter, mode, strict, batch, depth, boundary) in enumerate(cases):
             for packed in (False, True):
+                recording = repeat < record_repeats
                 game = sts.GameContext(sts.CharacterClass.IRONCLAD, 19 + case_index, 0)
                 game.floor_num = 1
                 game.set_deck([(card, 0) for card in decks[deck]])
@@ -210,6 +216,7 @@ def capture_search(output: Path, repeats: int) -> None:
                 before = battle.to_dict()
                 logits = np.linspace(-0.7, 0.9, 181, dtype=np.float64)
                 started = time.perf_counter()
+                session_started = started
                 session = battle.nosl_neural_search_begin(
                     logits, simulations=128, depth=depth, nonce=173 + case_index,
                     root_search_mode=mode, paper_full_gumbel=strict, root_value=0.37,
@@ -226,9 +233,9 @@ def capture_search(output: Path, repeats: int) -> None:
                     if not ids:
                         assert session.done(), prefix
                         break
-                    if packed:
+                    if recording and packed:
                         _record(values, f"{prefix}/batch{batches}", requests)
-                    else:
+                    elif recording:
                         for leaf in requests:
                             leaf = dict(leaf)
                             state = leaf.pop("state")
@@ -250,21 +257,36 @@ def capture_search(output: Path, repeats: int) -> None:
                 started = time.perf_counter()
                 result = session.result()
                 elapsed += time.perf_counter() - started
+                end_to_end = time.perf_counter() - session_started
                 assert result["simulations"] == 128
                 assert battle.to_dict() == before, prefix
-                _record(values, f"{prefix}/result", result)
-                _record(values, f"{prefix}/root", session.tree_snapshot([], 256))
-                for index in range(len(session.tree_snapshot([], 256)["children"])):
-                    _record(values, f"{prefix}/child{index}", session.tree_snapshot([index], 256))
-                # Compare future live transitions as well as the exposed parent state.
-                for step in range(3):
-                    battle.execute(sts.Action(sts.ActionType.END_TURN))
-                    _record(values, f"{prefix}/future{step}", battle.to_dict())
-                    if battle.is_battle_over:
-                        break
+                if recording:
+                    _record(values, f"{prefix}/result", result)
+                    root = session.tree_snapshot([], 256)
+                    _record(values, f"{prefix}/root", root)
+                    for index in range(len(root["children"])):
+                        _record(values, f"{prefix}/child{index}", session.tree_snapshot([index], 256))
+                    # Compare future live transitions as well as the exposed parent state.
+                    for step in range(3):
+                        battle.execute(sts.Action(sts.ActionType.END_TURN))
+                        _record(values, f"{prefix}/future{step}", battle.to_dict())
+                        if battle.is_battle_over:
+                            break
                 timings.append(dict(repeat=repeat, case=case_index, packed=packed, simulations=128,
-                                    leaves=leaves, batches=batches, elapsed_sec=elapsed))
-    output.write_text(json.dumps(dict(identity=identity, values=values, timings=timings),
+                                    leaves=leaves, batches=batches, elapsed_sec=elapsed,
+                                    end_to_end_sec=end_to_end))
+    cpu_after = process.cpu_times()
+    wall = time.perf_counter() - capture_started
+    memory = process.memory_info()
+    resources = dict(capture_wall_sec=wall,
+                     process_cpu_sec=(cpu_after.user + cpu_after.system - cpu_before.user - cpu_before.system),
+                     process_rss_bytes=memory.rss,
+                     peak_rss_bytes=getattr(memory, "peak_wset", None),
+                     system_available_bytes=min(available_before, psutil.virtual_memory().available),
+                     resource_samples=2, gpu_util=None, device_vram=None,
+                     torch_allocated=None, torch_reserved=None, torch_peak=None,
+                     note="CPU-only fixed callback benchmark; resources include trace recording; no GPU query")
+    output.write_text(json.dumps(dict(identity=identity, values=values, timings=timings, resources=resources),
                                  allow_nan=False) + "\n", encoding="utf-8")
     print(f"captured {len(values)} fields / {len(timings) * 128} simulations: {output}")
 
@@ -299,6 +321,7 @@ def main():
     search = sub.add_parser("capture-search", help="fixed native128 traces across explicit native rebuilds")
     search.add_argument("--output", type=Path, required=True)
     search.add_argument("--repeats", type=int, default=1, choices=range(1, 11))
+    search.add_argument("--record-repeats", type=int, default=1, choices=range(1, 11))
     search.add_argument("--timeout", type=float, default=180)
     search.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     comp = sub.add_parser("compare")
@@ -310,7 +333,9 @@ def main():
         compare(args.baseline, args.candidate, allow_native_rebuild=args.allow_native_rebuild)
     elif args.worker:
         if args.command == "capture-search":
-            capture_search(args.output, args.repeats)
+            if args.record_repeats > args.repeats:
+                parser.error("record-repeats cannot exceed repeats")
+            capture_search(args.output, args.repeats, args.record_repeats)
         else:
             capture(args.output, args.restore)
     else:
