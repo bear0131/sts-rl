@@ -63,6 +63,9 @@ struct NoslCombatSearchConfig {
     // before this setting is applied.
     int gumbelInteriorValueMode = 2;
     double gumbelInteriorMaxMixVisits = 64.0;
+    // Sample hidden randomness once per decision and reuse that future for
+    // every simulation.  False preserves the usual independent world lines.
+    bool fixedWorldline = false;
 };
 
 struct NoslCombatSearchStats {

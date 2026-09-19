@@ -107,6 +107,7 @@ def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
         "gumbel_interior_value_mode": 2,
         "paper_full_gumbel": False,
         "end_turn_as_leaf": False,
+        "fixed_worldline": False,
         "stochastic": False,
         "dirichlet_alpha": 0.0,
         "dirichlet_epsilon": 0.0,
@@ -257,7 +258,10 @@ def test_dashboard_assets_expose_and_send_strict_paper_mode():
 
     assert 'id="watchPaperFullGumbel"' in html
     assert 'id="evalPaperFullGumbel"' in html
+    assert 'id="watchFixedWorldline"' in html
+    assert 'id="evalFixedWorldline"' in html
     assert "paper_full_gumbel: $(`${prefix}PaperFullGumbel`).checked" in javascript
+    assert "fixed_worldline: $(`${prefix}FixedWorldline`).checked" in javascript
     assert '"Strict paper Full Gumbel"' in javascript
 
 
@@ -407,7 +411,7 @@ def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
             self.unwrapped = BaseEnv()
 
     config = dashboard._evaluation_search_config(
-        Model(), simulations=32, depth=0
+        Model(), simulations=32, depth=0, fixed_worldline=True
     )
     env = Env()
 
@@ -424,6 +428,7 @@ def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
     assert call["dirichlet_epsilon"] == 0.0
     assert call["root_value"] == pytest.approx(0.37)
     assert call["prior_temperature"] == pytest.approx(1.0)
+    assert call["fixed_worldline"] is True
     assert result["action"] == 17
     assert result["leaf_evaluations"] == 0
 

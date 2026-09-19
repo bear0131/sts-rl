@@ -560,10 +560,22 @@ NoslCombatDecision NoslCombatTrainer::search(const BattleContext &rootState,
     NoslCombatSearchStats localStats;
     Node root;
     const auto rootKey = stateKey(rootState);
+    std::unique_ptr<BattleContext> fixedRootState;
+    if (config_.fixedWorldline) {
+        fixedRootState = std::make_unique<BattleContext>(rootState);
+        noslRedeterminize(*fixedRootState, noslMix(searchNonce));
+    }
 
     for (int simulation = 0; simulation < config_.simulations; ++simulation) {
-        BattleContext state(rootState);
-        noslRedeterminize(state, noslMix(searchNonce + static_cast<std::uint64_t>(simulation)));
+        BattleContext state(
+            config_.fixedWorldline ? *fixedRootState : rootState
+        );
+        if (!config_.fixedWorldline) {
+            noslRedeterminize(
+                state,
+                noslMix(searchNonce + static_cast<std::uint64_t>(simulation))
+            );
+        }
 
         Node *node = &root;
         std::vector<Node *> nodePath{node};
@@ -794,6 +806,9 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         [](const CardInstance &lhs, const CardInstance &rhs) {
             return lhs.getUniqueId() < rhs.getUniqueId();
         });
+    if (config_.fixedWorldline) {
+        noslRedeterminizeCanonical(rootState_, noslMix(searchNonce_));
+    }
     if (config_.simulations < 1) {
         config_.simulations = 1;
     }
@@ -1875,9 +1890,11 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         Pending pending;
         pending.state = std::make_unique<BattleContext>(rootState_);
         auto &state = *pending.state;
-        noslRedeterminizeCanonical(
-            state, noslMix(searchNonce_ + static_cast<std::uint64_t>(
-                                   simulationsStarted_)));
+        if (!config_.fixedWorldline) {
+            noslRedeterminizeCanonical(
+                state, noslMix(searchNonce_ + static_cast<std::uint64_t>(
+                                       simulationsStarted_)));
+        }
         ++simulationsStarted_;
 
         pending.id = nextRequestId_++;

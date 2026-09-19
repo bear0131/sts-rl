@@ -1286,6 +1286,7 @@ class SlayTheSpireEnv(gym.Env):
         gumbel_interior_value_mode: int = 2,
         gumbel_interior_max_mix_visits: float = 64.0,
         paper_full_gumbel: bool = False,
+        fixed_worldline: bool = False,
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
@@ -1318,35 +1319,16 @@ class SlayTheSpireEnv(gym.Env):
                 int(gumbel_interior_value_mode),
                 float(gumbel_interior_max_mix_visits),
                 bool(paper_full_gumbel),
+                bool(fixed_worldline),
             )
         except TypeError as error:
             if "incompatible function arguments" not in str(error):
                 raise
-            # A legacy extension can still serve ordinary PUCT searches, but
-            # it cannot honor Full-Gumbel arguments.  Do not silently run the
-            # old algorithm while the dashboard/trainer reports the requested
-            # newer mode; that makes the tree diagnostics and actual action
-            # selection semantically false.
-            if (
-                int(root_search_mode) != 0
-                or int(gumbel_candidates) != 0
-                or float(gumbel_scale) != 1.0
-                or float(gumbel_value_scale) != 0.1
-                or float(gumbel_max_visit_init) != 50.0
-                or bool(end_turn_as_leaf)
-                or not bool(gumbel_rescale_q)
-                or not bool(gumbel_use_mixed_value)
-                or float(gumbel_interior_uniformity) != 0.0
-                or int(gumbel_interior_min_visits) != 1
-                or float(gumbel_interior_coverage_fraction) != 0.0
-                or int(gumbel_interior_value_mode) != 2
-                or float(gumbel_interior_max_mix_visits) != 64.0
-                or bool(paper_full_gumbel)
-            ):
+            if bool(fixed_worldline):
                 raise RuntimeError(
-                    "loaded simulator extension does not support the requested "
-                    "Full-Gumbel/NOSL search parameters; rebuild or set "
-                    "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                    "loaded simulator extension does not support fixed-worldline "
+                    "NOSL search; rebuild or set STS_LIGHTSPEED_BUILD_DIR to the "
+                    "current extension"
                 ) from error
             try:
                 self._nosl_cpp_az_session = session_factory(
@@ -1355,21 +1337,66 @@ class SlayTheSpireEnv(gym.Env):
                     int(state_nonce) & ((1 << 64) - 1),
                     float(dirichlet_alpha), float(dirichlet_epsilon),
                     float(root_value), float(prior_temperature),
+                    bool(end_turn_as_leaf),
+                    int(root_search_mode), int(gumbel_candidates),
+                    float(gumbel_scale), float(gumbel_value_scale),
+                    float(gumbel_max_visit_init), bool(gumbel_rescale_q),
+                    bool(gumbel_use_mixed_value),
+                    float(gumbel_interior_uniformity),
+                    int(gumbel_interior_min_visits),
+                    float(gumbel_interior_coverage_fraction),
+                    int(gumbel_interior_value_mode),
+                    float(gumbel_interior_max_mix_visits),
+                    bool(paper_full_gumbel),
                 )
-            except TypeError as legacy_error:
+            except TypeError as current_error:
+                if "incompatible function arguments" not in str(current_error):
+                    raise
+                # A legacy extension can still serve ordinary PUCT searches,
+                # but cannot honor the newer Full-Gumbel arguments.
                 if (
-                    dirichlet_alpha != 0.0
-                    or dirichlet_epsilon != 0.0
+                    int(root_search_mode) != 0
+                    or int(gumbel_candidates) != 0
+                    or float(gumbel_scale) != 1.0
+                    or float(gumbel_value_scale) != 0.1
+                    or float(gumbel_max_visit_init) != 50.0
                     or bool(end_turn_as_leaf)
+                    or not bool(gumbel_rescale_q)
+                    or not bool(gumbel_use_mixed_value)
+                    or float(gumbel_interior_uniformity) != 0.0
+                    or int(gumbel_interior_min_visits) != 1
+                    or float(gumbel_interior_coverage_fraction) != 0.0
+                    or int(gumbel_interior_value_mode) != 2
+                    or float(gumbel_interior_max_mix_visits) != 64.0
+                    or bool(paper_full_gumbel)
                 ):
-                    raise
-                if "incompatible function arguments" not in str(legacy_error):
-                    raise
-                self._nosl_cpp_az_session = session_factory(
-                    np.asarray(prior_logits, dtype=np.float64),
-                    int(simulations), int(depth), float(c_puct),
-                    int(state_nonce) & ((1 << 64) - 1),
-                )
+                    raise RuntimeError(
+                        "loaded simulator extension does not support the requested "
+                        "Full-Gumbel/NOSL search parameters; rebuild or set "
+                        "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                    ) from current_error
+                try:
+                    self._nosl_cpp_az_session = session_factory(
+                        np.asarray(prior_logits, dtype=np.float64),
+                        int(simulations), int(depth), float(c_puct),
+                        int(state_nonce) & ((1 << 64) - 1),
+                        float(dirichlet_alpha), float(dirichlet_epsilon),
+                        float(root_value), float(prior_temperature),
+                    )
+                except TypeError as legacy_error:
+                    if (
+                        dirichlet_alpha != 0.0
+                        or dirichlet_epsilon != 0.0
+                        or bool(end_turn_as_leaf)
+                    ):
+                        raise
+                    if "incompatible function arguments" not in str(legacy_error):
+                        raise
+                    self._nosl_cpp_az_session = session_factory(
+                        np.asarray(prior_logits, dtype=np.float64),
+                        int(simulations), int(depth), float(c_puct),
+                        int(state_nonce) & ((1 << 64) - 1),
+                    )
         self._nosl_cpp_stochastic = bool(stochastic)
         self._nosl_cpp_state_nonce = int(state_nonce)
         self._nosl_cpp_decision_index = int(decision_index)

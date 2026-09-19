@@ -294,6 +294,7 @@ def _evaluation_search_config(
     gumbel_interior_value_mode: int | None = None,
     paper_full_gumbel: bool | None = None,
     end_turn_as_leaf: bool | None = None,
+    fixed_worldline: bool | None = None,
 ) -> dict[str, Any]:
     supported = _supports_neural_nosl(model)
     default_simulations = _clamp_int(
@@ -421,6 +422,9 @@ def _evaluation_search_config(
     selected_end_turn_as_leaf = _model_search_bool(
         model, "nosl_is_az_end_turn_as_leaf", False
     ) if end_turn_as_leaf is None else bool(end_turn_as_leaf)
+    selected_fixed_worldline = _model_search_bool(
+        model, "nosl_is_az_fixed_worldline", False
+    ) if fixed_worldline is None else bool(fixed_worldline)
     explicit_search_override = any(
         value is not None
         for value in (
@@ -533,6 +537,7 @@ def _evaluation_search_config(
         "gumbel_interior_coverage_fraction": selected_coverage_fraction,
         "gumbel_interior_value_mode": selected_value_mode,
         "end_turn_as_leaf": selected_end_turn_as_leaf,
+        "fixed_worldline": selected_fixed_worldline,
         # Evaluation selects the root visit argmax and never injects training noise.
         "stochastic": False,
         "dirichlet_alpha": 0.0,
@@ -658,6 +663,7 @@ class WatchSession:
         self.mcts_end_turn_as_leaf = _model_search_bool(
             model, "nosl_is_az_end_turn_as_leaf", True
         )
+        self.mcts_fixed_worldline = False
         self.mcts_prior_temperature = _clamp_float(
             self._model_search_param(
                 "nosl_is_az_prior_temperature",
@@ -819,6 +825,7 @@ class WatchSession:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         stochastic: bool | None = None,
         upper_strategy: str | None = None,
         combat_strategy: str | None = None,
@@ -905,6 +912,8 @@ class WatchSession:
             self.mcts_gumbel_interior_value_mode = max(0, min(2, int(gumbel_interior_value_mode)))
         if end_turn_as_leaf is not None:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
+        if fixed_worldline is not None:
+            self.mcts_fixed_worldline = bool(fixed_worldline)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
         if upper_strategy is not None:
@@ -1052,6 +1061,7 @@ class WatchSession:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         stochastic: bool | None = None,
         combat_strategy: str | None = None,
     ):
@@ -1142,6 +1152,8 @@ class WatchSession:
             )
         if end_turn_as_leaf is not None:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
+        if fixed_worldline is not None:
+            self.mcts_fixed_worldline = bool(fixed_worldline)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
         self._set_combat_strategy(combat_strategy)
@@ -1594,6 +1606,7 @@ class WatchSession:
                         )
                     ),
                     "paper_full_gumbel": self.mcts_paper_full_gumbel,
+                    "fixed_worldline": self.mcts_fixed_worldline,
                     "simulations": int(result.get("simulations", self.mcts_simulations)),
                     "depth": self.mcts_depth,
                     "prior_temperature": self.mcts_prior_temperature,
@@ -2187,6 +2200,7 @@ class WatchSession:
             "mcts_simulations": self.mcts_simulations,
             "mcts_depth": self.mcts_depth,
             "mcts_end_turn_as_leaf": self.mcts_end_turn_as_leaf,
+            "mcts_fixed_worldline": self.mcts_fixed_worldline,
             "mcts_c_puct": self.mcts_c_puct,
             "mcts_prior_temperature": self.mcts_prior_temperature,
             "mcts_leaf_batch_size": self.mcts_leaf_batch_size,
@@ -2466,6 +2480,7 @@ class DashboardState:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         workers: int | None = None,
         upper_strategy: str = _UPPER_STRATEGY_MODEL,
         combat_strategy: str = _COMBAT_STRATEGY_MODEL,
@@ -2500,6 +2515,7 @@ class DashboardState:
                     simulations=0,
                     search_mode="direct",
                     paper_full_gumbel=False,
+                    fixed_worldline=False,
                 )
             else:
                 search_config = _evaluation_search_config(
@@ -2520,6 +2536,7 @@ class DashboardState:
                     gumbel_interior_value_mode=gumbel_interior_value_mode,
                     paper_full_gumbel=paper_full_gumbel,
                     end_turn_as_leaf=end_turn_as_leaf,
+                    fixed_worldline=fixed_worldline,
                 )
             self.eval_token = token
             self.eval_status = {
@@ -2582,6 +2599,7 @@ class DashboardState:
                     "gumbel_interior_value_mode"
                 ],
                 "end_turn_as_leaf": search_config["end_turn_as_leaf"],
+                "fixed_worldline": search_config["fixed_worldline"],
                 "stochastic": False,
                 "root_noise": False,
                 "search_decisions": 0,
@@ -2750,6 +2768,7 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                        fixed_worldline=body.get("fixed_worldline"),
                         stochastic=body.get("stochastic"),
                         upper_strategy=body.get("upper_strategy"),
                         combat_strategy=body.get("combat_strategy"),
@@ -2778,6 +2797,7 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                        fixed_worldline=body.get("fixed_worldline"),
                         stochastic=body.get("stochastic"),
                         combat_strategy=body.get("combat_strategy"),
                     )
@@ -2853,6 +2873,7 @@ class Handler(BaseHTTPRequestHandler):
                     gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                     paper_full_gumbel=body.get("paper_full_gumbel"),
                     end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                    fixed_worldline=body.get("fixed_worldline"),
                     workers=body.get("workers"),
                     upper_strategy=body.get(
                         "upper_strategy", _UPPER_STRATEGY_MODEL

@@ -58,6 +58,7 @@ class NativeSearchConfig:
     gumbel_interior_value_mode: int = 2
     gumbel_interior_max_mix_visits: float = 64.0
     paper_full_gumbel: bool = True
+    fixed_worldline: bool = False
 
     def __post_init__(self):
         if self.simulations < 1 or self.depth < 0 or self.leaf_batch_size < 1:

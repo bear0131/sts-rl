@@ -29,6 +29,7 @@
         <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="watchLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
         <label title="Node expansion depth; 0 means expand until terminal or a new leaf">Depth <input id="watchDepth" type="number" min="0" max="256" step="1" value="0"></label>
         <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="watchEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
+        <label class="gumbel-check" title="每次决策只采样一条随机未来，整棵搜索树共享该世界线"><input id="watchFixedWorldline" type="checkbox"> 固定未来</label>
         <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="watchPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
         <label title="Combat search algorithm">Search
           <select id="watchSearchMode">
@@ -235,6 +236,7 @@
           <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="evalLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
           <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="evalPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
           <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="evalEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
+          <label class="gumbel-check" title="每次决策只采样一条随机未来，整棵搜索树共享该世界线"><input id="evalFixedWorldline" type="checkbox"> 固定未来</label>
           <label title="Combat search algorithm">Search
             <select id="evalSearchMode">
               <option value="direct">Direct policy</option>

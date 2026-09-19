@@ -364,6 +364,7 @@ function gumbelSearchParams(prefix) {
     gumbel_interior_coverage_fraction: Number($(`${prefix}GumbelInteriorCoverageFraction`).value),
     gumbel_interior_value_mode: Number($(`${prefix}GumbelInteriorValueMode`)?.value ?? 2),
     end_turn_as_leaf: $(`${prefix}EndTurnAsLeaf`).checked,
+    fixed_worldline: $(`${prefix}FixedWorldline`).checked,
   };
 }
 
@@ -443,6 +444,8 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty, paperMode
     if (mixed != null) $(`${prefix}GumbelMixedValue`).checked = Boolean(mixed);
     const endTurnLeaf = source?.[`${fieldPrefix}end_turn_as_leaf`];
     if (endTurnLeaf != null) $(`${prefix}EndTurnAsLeaf`).checked = Boolean(endTurnLeaf);
+    const fixedWorldline = source?.[`${fieldPrefix}fixed_worldline`];
+    if (fixedWorldline != null) $(`${prefix}FixedWorldline`).checked = Boolean(fixedWorldline);
   }
   if (!paperModeDirty) {
     const paper = source?.[`${fieldPrefix}paper_full_gumbel`];
@@ -518,6 +521,9 @@ for (const id of ["watchGumbelRescaleQ", "watchGumbelMixedValue"]) {
   $(id).addEventListener("change", () => { watchGumbelParamsDirty = true; });
 }
 $("watchEndTurnAsLeaf").addEventListener("change", () => {
+  watchGumbelParamsDirty = true;
+});
+$("watchFixedWorldline").addEventListener("change", () => {
   watchGumbelParamsDirty = true;
 });
 $("watchPrecompute").addEventListener("change", () => { watchPrecomputeDirty = true; });
@@ -756,7 +762,7 @@ function evalCombatStrategyValue() {
 }
 const evalSearchControlIds = [
   "evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature",
-  "evalEndTurnAsLeaf", "evalSearchMode", "evalPaperFullGumbel",
+  "evalEndTurnAsLeaf", "evalFixedWorldline", "evalSearchMode", "evalPaperFullGumbel",
   "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale",
   "evalGumbelMaxVisitInit", "evalGumbelRescaleQ", "evalGumbelMixedValue",
   "evalGumbelInteriorUniformity", "evalGumbelInteriorCoverageFraction",
@@ -833,6 +839,9 @@ for (const id of ["evalGumbelRescaleQ", "evalGumbelMixedValue"]) {
   $(id).addEventListener("change", () => { evalGumbelParamsDirty = true; });
 }
 $("evalEndTurnAsLeaf").addEventListener("change", () => {
+  evalGumbelParamsDirty = true;
+});
+$("evalFixedWorldline").addEventListener("change", () => {
   evalGumbelParamsDirty = true;
 });
 for (const id of ["evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature", "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
@@ -1332,7 +1341,7 @@ function renderWatch() {
     ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
     : search
     ? (search.method === "nosl_is_az_cpp"
-      ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
+      ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${search.fixed_worldline ? " · 固定未来" : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
       : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
     : `${w.stochastic ? "stochastic" : "deterministic"} direct policy${w.mcts_simulations > 0 && w.phase !== "combat" ? " (search is combat-only)" : ""}`;
   renderSearchTree(search);
@@ -1436,7 +1445,7 @@ function renderEvaluation() {
   const searchLabel=e.search_method==="turn_planner"
     ? `回合规划下层 · ${e.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}`
     : e.search_method==="nosl_is_az_cpp"
-    ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
+    ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${e.fixed_worldline ? " · 固定未来" : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
   const upperLabel=e.upper_strategy==="rules"
     ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v1"}`

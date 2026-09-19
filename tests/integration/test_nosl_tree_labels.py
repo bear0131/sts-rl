@@ -147,6 +147,34 @@ def test_action_edge_marks_multiple_nosl_world_lines_as_chance_average():
     assert end_turn["random_split"] is True
 
 
+def test_fixed_worldline_keeps_one_child_per_action_path():
+    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
+    battle = sts.create_battle(game, "Jaw Worm")
+    root_logits = np.zeros(200, dtype=np.float64)
+    root_logits[0] = 10.0
+    session = battle.nosl_neural_search_begin(
+        root_logits,
+        simulations=32,
+        depth=2,
+        c_puct=100.0,
+        nonce=123,
+        root_value=0.2,
+        gumbel_interior_value_mode=1,
+        fixed_worldline=True,
+    )
+    while not session.done():
+        for request in session.next_batch(8):
+            value = float(request["state"]["player"]["hp"]) / 200.0
+            session.backprop(
+                request["request_id"], value, np.zeros(200, dtype=np.float64)
+            )
+
+    root = session.tree_snapshot([], 64)
+    end_turn = next(edge for edge in root["children"] if edge["action_bits"] >> 29 == 4)
+    assert end_turn["child_states"] == 1
+    assert end_turn["random_split"] is False
+
+
 def test_end_turn_value_boundary_is_fully_settled_and_non_random():
     game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
     battle = sts.create_battle(game, "Jaw Worm")

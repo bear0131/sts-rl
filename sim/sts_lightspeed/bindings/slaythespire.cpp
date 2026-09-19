@@ -2640,7 +2640,8 @@ PYBIND11_MODULE(slaythespire, m) {
                 double gumbel_interior_coverage_fraction,
                 int gumbel_interior_value_mode,
                 double gumbel_interior_max_mix_visits,
-                bool paper_full_gumbel) {
+                bool paper_full_gumbel,
+                bool fixed_worldline) {
                  std::vector<double> logits;
                  auto view = root_policy_logits.unchecked<1>();
                  logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -2669,6 +2670,7 @@ PYBIND11_MODULE(slaythespire, m) {
                  config.gumbelInteriorValueMode = gumbel_interior_value_mode;
                  config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
                  config.paperFullGumbel = paper_full_gumbel;
+                 config.fixedWorldline = fixed_worldline;
                  config.seed = nonce;
                  return std::make_shared<sts::search::NoslNeuralSearchSession>(
                      bc, logits, config, nonce, root_value);
@@ -2696,6 +2698,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("gumbel_interior_value_mode") = 2,
              pybind11::arg("gumbel_interior_max_mix_visits") = 64.0,
              pybind11::arg("paper_full_gumbel") = false,
+             pybind11::arg("fixed_worldline") = false,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;
