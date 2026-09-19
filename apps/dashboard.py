@@ -41,6 +41,7 @@ from rl.rules.visualize_card_vectors import (
 )
 from apps.watch import _action_dist
 from env.search.nosl_sampler import NOSLSampler
+from env.search.overworld_rules import OVERWORLD_RULE_VERSION
 from env.core.cards_vocab import CARD_INDEX
 from env.core.card_language import (
     TOKEN_DOC as CARD_LANGUAGE_DOC,
@@ -536,6 +537,9 @@ def _evaluation_search_config(
 _ROUTE_STEP_NORMAL = "normal"
 _ROUTE_STEP_SKIP_COMBAT = "skip_combat"
 _ROUTE_STEP_ENTER_BOSS = "enter_boss"
+_UPPER_STRATEGY_MODEL = "model"
+_UPPER_STRATEGY_RULES = "rules"
+_UPPER_STRATEGIES = {_UPPER_STRATEGY_MODEL, _UPPER_STRATEGY_RULES}
 
 
 class WatchSession:
@@ -652,6 +656,7 @@ class WatchSession:
         )
         self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
+        self.upper_strategy = _UPPER_STRATEGY_RULES
         self.precompute_enabled = False
         self.route_step_modes: list[str] = []
         self.route_preprocess_target_act: int | None = None
@@ -739,6 +744,7 @@ class WatchSession:
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
+        upper_strategy: str | None = None,
         target_boss_act: int | None = None,
     ):
         requested_simulations = (
@@ -824,6 +830,14 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        if upper_strategy is not None:
+            candidate = str(upper_strategy).strip().lower()
+            if candidate not in _UPPER_STRATEGIES:
+                raise ValueError(
+                    "upper strategy must be one of "
+                    f"{sorted(_UPPER_STRATEGIES)}, got {upper_strategy!r}"
+                )
+            self.upper_strategy = candidate
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
@@ -1274,6 +1288,17 @@ class WatchSession:
     def _abort_native_search(self):
         self.env.unwrapped.nosl_is_az_cpp_abort()
 
+    def _select_upper_action(self, model_action: int, legal, phase: str):
+        if phase == "combat" or self.upper_strategy == _UPPER_STRATEGY_MODEL:
+            return int(model_action), _UPPER_STRATEGY_MODEL
+        rule_action = self.env.overworld_rule_decision()
+        if rule_action is None:
+            return int(model_action), "model_fallback"
+        rule_action = int(rule_action)
+        if not np.any(np.asarray(legal, dtype=np.int64) == rule_action):
+            raise RuntimeError(f"illegal overworld rule action: {rule_action}")
+        return rule_action, "overworld_rules"
+
     def _prepare_decision(self):
         if self.terminated or self.truncated:
             self.decision = None
@@ -1302,9 +1327,13 @@ class WatchSession:
             model_action = int(max(legal, key=lambda i: probs[i]))
             ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[:6]
             ranked = [(int(i), float(probs[i])) for i in ranked]
-        chosen = model_action
-        search = None
         is_combat = self.info.get("phase") == "combat"
+        chosen, decision_source = self._select_upper_action(
+            model_action,
+            legal,
+            self.info.get("phase") if self.info else "unknown",
+        )
+        search = None
         native_root = getattr(self.env.unwrapped, "_pending", None) is None
         if (
             is_combat
@@ -1337,6 +1366,7 @@ class WatchSession:
                 }
             if result is not None:
                 chosen = int(result["action"])
+                decision_source = "combat_search"
                 selected_target = int(result.get("selected_target", -1))
                 selected_targeted = bool(result.get("selected_action_targeted", False))
                 native_action_bits = int(result.get("native_action_bits", 0xFFFFFFFF))
@@ -1439,7 +1469,11 @@ class WatchSession:
                 search["tree"] = self._format_native_tree_snapshot(
                     tree, native_action_bits
                 )
-        elif probs is not None and self.stochastic:
+        elif (
+            probs is not None
+            and self.stochastic
+            and (is_combat or self.upper_strategy == _UPPER_STRATEGY_MODEL)
+        ):
             weights = np.asarray([max(float(probs[i]), 0.0) for i in legal], dtype=np.float64)
             total = float(weights.sum())
             if not np.isfinite(total) or total <= 0.0:
@@ -1451,6 +1485,7 @@ class WatchSession:
                     simulation_index=self.position * 1_000_000 + 777_777,
                 )
             ).choice(legal, p=weights / total))
+            decision_source = "model_sample"
         selected_target = (
             int(search.get("selected_target"))
             if search and search.get("selected_target") is not None
@@ -1468,6 +1503,7 @@ class WatchSession:
             "label": label,
             "value": value,
             "model_action": model_action,
+            "source": decision_source,
             "search": search,
             "animation": animation,
             "top_actions": [
@@ -1865,6 +1901,17 @@ class WatchSession:
             "max_step": len(self.history),
             "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
             "precompute_enabled": self.precompute_enabled,
+            "upper_strategy": self.upper_strategy,
+            "upper_strategy_version": (
+                OVERWORLD_RULE_VERSION
+                if self.upper_strategy == _UPPER_STRATEGY_RULES
+                else "checkpoint-model"
+            ),
+            "upper_fallback": (
+                "masked_argmax"
+                if self.upper_strategy == _UPPER_STRATEGY_RULES
+                else None
+            ),
             "route_preprocess": {
                 "enabled": self.route_preprocess_target_act is not None,
                 "target_act": self.route_preprocess_target_act,
@@ -2372,6 +2419,7 @@ class Handler(BaseHTTPRequestHandler):
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
+                        upper_strategy=body.get("upper_strategy"),
                         target_boss_act=body.get("target_boss_act"),
                     )
                 self._send_json(result)

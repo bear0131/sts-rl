@@ -53,6 +53,10 @@
           <button type="button" data-stochastic="false" class="active">确定性</button>
           <button type="button" data-stochastic="true">非确定性</button>
         </div>
+        <div id="watchUpperStrategy" class="segmented watch-upper-mode" role="group" aria-label="上层决策模式">
+          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v1；未覆盖画面回退模型 argmax">规则上层</button>
+          <button type="button" data-upper-strategy="model">模型上层</button>
+        </div>
         <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
         <div class="watch-boss-control">
           <label>Boss

@@ -19,6 +19,7 @@ let watchSearchModeDirty = false;
 let watchGumbelParamsDirty = false;
 let watchPaperModeDirty = false;
 let watchPolicyModeDirty = false;
+let watchUpperStrategyDirty = false;
 let watchPrecomputeDirty = false;
 let evalSimulationsDirty = false;
 let evalDepthDirty = false;
@@ -464,6 +465,7 @@ $("resetButton").addEventListener("click", async () => {
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
       precompute,
     }), headers:{"Content-Type":"application/json"}});
     watchSeedDirty = false;
@@ -475,6 +477,7 @@ $("resetButton").addEventListener("click", async () => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = null;
     previewedMapKeys.clear();
@@ -530,6 +533,7 @@ $("watchBossButton").addEventListener("click", async () => {
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
       precompute: false,
       target_boss_act: targetAct,
     }), headers:{"Content-Type":"application/json"}});
@@ -542,6 +546,7 @@ $("watchBossButton").addEventListener("click", async () => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = targetAct;
     previewedMapKeys.clear();
@@ -565,6 +570,19 @@ function setWatchPolicyMode(stochastic, dirty = true) {
 }
 $("watchPolicyMode").querySelectorAll("button").forEach(button => {
   button.addEventListener("click", () => setWatchPolicyMode(button.dataset.stochastic === "true"));
+});
+function watchUpperStrategyValue() {
+  return $("watchUpperStrategy").querySelector("button.active")?.dataset.upperStrategy || "rules";
+}
+function setWatchUpperStrategy(strategy, dirty = true) {
+  const value = strategy === "model" ? "model" : "rules";
+  $("watchUpperStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.upperStrategy === value);
+  });
+  if (dirty) watchUpperStrategyDirty = true;
+}
+$("watchUpperStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setWatchUpperStrategy(button.dataset.upperStrategy));
 });
 $("watchSeed").addEventListener("keydown", event => {
   if (event.key === "Enter") $("resetButton").click();
@@ -771,6 +789,7 @@ $("winSeedList").addEventListener("click", async event => {
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
       precompute: $("watchPrecompute").checked,
     }), headers:{"Content-Type":"application/json"}});
     watchSimulationsDirty = false;
@@ -781,6 +800,7 @@ $("winSeedList").addEventListener("click", async event => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
     watchPrecomputeDirty = false;
     renderWatch();
   } catch (e) { toast(e.message); }
@@ -1158,15 +1178,17 @@ function renderWatch() {
     "watch", w, watchSearchModeDirty, watchGumbelParamsDirty, watchPaperModeDirty
   );
   if (!watchPolicyModeDirty) setWatchPolicyMode(w.stochastic !== false, false);
+  if (!watchUpperStrategyDirty) setWatchUpperStrategy(w.upper_strategy, false);
   if (!watchPrecomputeDirty && document.activeElement !== $("watchPrecompute")) {
     $("watchPrecompute").checked = Boolean(w.precompute_enabled);
   }
   const stepProgress = w.precomputed_steps ? `${w.step} / ${w.precomputed_steps}` : `${w.step}`;
   const route = w.route_preprocess || {};
   const routeStatus = route.enabled
-    ? ` · Act ${route.target_act} Boss${route.reached ? " 已就绪" : ""} · HP/药水忽略`
+    ? ` · Act ${route.target_act} Boss${route.reached ? "就绪" : ""} · 忽略 HP/药水`
     : "";
-  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}${routeStatus}`;
+  const upperStatus = w.upper_strategy === "rules" ? "规则" : "模型";
+  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)} · 上层 ${upperStatus}${routeStatus}`;
   $("undoButton").disabled = !w.can_undo;
   $("stepButton").disabled = w.done;
   const stats = w.stats || {}, canon = w.canon || {}, global = canon.global || {};

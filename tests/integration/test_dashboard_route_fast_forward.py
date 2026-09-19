@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import threading
 
 import numpy as np
+import pytest
 
 from apps import dashboard
 from env.core import game_actions as ga
@@ -32,6 +33,17 @@ class _FirstLegalWatchSession(dashboard.WatchSession):
             "animation": self._action_animation(action),
             "top_actions": [],
         }
+
+
+class _FixedModelOutputWatchSession(dashboard.WatchSession):
+    """Exercise real upper routing without requiring a serialized policy."""
+
+    def _policy_outputs(self, _observation, mask):
+        legal = np.flatnonzero(mask)
+        probs = np.zeros(len(mask), dtype=np.float32)
+        probs[legal] = np.arange(1, len(legal) + 1, dtype=np.float32)
+        probs /= probs.sum()
+        return probs, 0.0, None
 
 
 def _dummy_model():
@@ -72,6 +84,8 @@ def test_watch_route_fast_forward_stops_at_real_boss_and_replays():
         thick = session.env.unwrapped.thick
 
         assert snapshot["phase"] == "combat"
+        assert snapshot["upper_strategy"] == "rules"
+        assert snapshot["upper_strategy_version"] == "ironclad-overworld-v1"
         assert snapshot["route_preprocess"] == {
             "enabled": True,
             "target_act": 1,
@@ -100,5 +114,33 @@ def test_watch_route_fast_forward_stops_at_real_boss_and_replays():
         assert replayed["phase"] == "combat"
         assert replayed["route_preprocess"]["reached"] is True
         assert str(session.env.unwrapped.thick.gc.encounter) == boss_name
+    finally:
+        session.close()
+
+
+def test_watch_defaults_to_shared_upper_rules_and_keeps_model_option(monkeypatch):
+    session = _FixedModelOutputWatchSession(
+        _dummy_model(), threading.Lock(), seed=10000
+    )
+    try:
+        snapshot = session.snapshot()
+        assert snapshot["upper_strategy"] == "rules"
+        assert snapshot["upper_fallback"] == "masked_argmax"
+        assert snapshot["decision"]["source"] == "overworld_rules"
+        assert snapshot["decision"]["action"] == session.env.overworld_rule_decision()
+
+        snapshot = session.reset(10000, simulations=0, upper_strategy="model")
+        assert snapshot["upper_strategy"] == "model"
+        assert snapshot["decision"]["source"] == "model"
+        assert snapshot["decision"]["action"] == snapshot["decision"]["model_action"]
+
+        session.upper_strategy = "rules"
+        monkeypatch.setattr(session.env, "overworld_rule_decision", lambda: None)
+        session._prepare_decision()
+        assert session.decision["source"] == "model_fallback"
+        assert session.decision["action"] == session.decision["model_action"]
+
+        with pytest.raises(ValueError, match="upper strategy"):
+            session.reset(10000, simulations=0, upper_strategy="unknown")
     finally:
         session.close()
