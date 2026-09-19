@@ -37,7 +37,16 @@ extra=()
 if [ -n "${NOSL_OVERRIDES_FILE:-}" ]; then extra+=("@$NOSL_OVERRIDES_FILE"); fi
 if [ -n "${NOSL_RESUME_STEP:-}" ]; then
   printf -v generation 'step-%012d' "$NOSL_RESUME_STEP"
-  extra+=(--resume-state "$run_dir/recovery/rank$rank/$generation")
+  if [ -n "${NOSL_RESUME_ROOT:-}" ]; then
+    resume_state="$NOSL_RESUME_ROOT/rank$rank"
+  else
+    resume_state="$run_dir/recovery/rank$rank/$generation"
+  fi
+  if [ "${NOSL_FORK_RESUME:-0}" = 1 ]; then
+    extra+=(--fork-state "$resume_state")
+  else
+    extra+=(--resume-state "$resume_state")
+  fi
 fi
 cmd=("$python" -u -m rl.training.distributed_sb3
   --rank "$rank" --world-size 4 --run-id "$run_id"

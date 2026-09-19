@@ -53,6 +53,78 @@ class NoopCallback(BaseCallback):
         return True
 
 
+def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
+    """Advance staggered environments while discarding every warmup sample."""
+    if span_steps == 0:
+        return {}
+    if span_steps < 0 or span_steps % rollout_steps:
+        raise ValueError("startup stagger span must be a multiple of n_steps")
+    callback = NoopCallback()
+    callback.init_callback(model)
+    callback.on_training_start({}, {})
+    start_timesteps = int(model.num_timesteps)
+    started = time.perf_counter()
+    try:
+        for _ in range(span_steps // rollout_steps):
+            if not model.collect_rollouts(
+                model.env,
+                callback,
+                model.rollout_buffer,
+                n_rollout_steps=rollout_steps,
+            ):
+                raise RuntimeError("startup stagger collection returned False")
+    finally:
+        callback.on_training_end()
+    discarded_transitions = int(model.num_timesteps) - start_timesteps
+    expected_transitions = int(model.env.num_envs) * span_steps
+    if discarded_transitions != expected_transitions:
+        raise RuntimeError(
+            "startup stagger transition mismatch: "
+            f"expected {expected_transitions}, got {discarded_transitions}"
+        )
+    states = model.env.env_method("startup_stagger_state")
+    if any(int(state["remaining_hold_steps"]) for state in states):
+        raise RuntimeError("startup stagger ended before every environment was released")
+
+    # Keep the warmed environment/RNG state, but make the training boundary
+    # indistinguishable from a fresh collector to replay, Adam and counters.
+    model.num_timesteps = start_timesteps
+    model.rollout_buffer.reset()
+    model._wait_for_reasoning_samples()
+    model._reasoning_rollout_samples = []
+    model._nosl_is_az_samples = []
+    model._nosl_is_az_pending_fights = [[] for _ in range(model.env.num_envs)]
+    for name in ("ep_info_buffer", "ep_success_buffer"):
+        buffer = getattr(model, name, None)
+        if buffer is not None:
+            buffer.clear()
+    logger = getattr(model, "logger", None)
+    for name in ("name_to_value", "name_to_count", "name_to_excluded"):
+        values = getattr(logger, name, None)
+        if values is not None:
+            values.clear()
+
+    delays = [int(state["initial_hold_steps"]) for state in states]
+    ages = [int(state["steps_since_reset"]) for state in states]
+    floors = [state.get("floor") for state in states]
+    finite_floors = [int(value) for value in floors if value is not None]
+    return {
+        "span_steps": int(span_steps),
+        "rollout_blocks": int(span_steps // rollout_steps),
+        "discarded_transitions_local": discarded_transitions,
+        "delay_min": min(delays),
+        "delay_mean": float(np.mean(delays)),
+        "delay_max": max(delays),
+        "age_min": min(ages),
+        "age_mean": float(np.mean(ages)),
+        "age_max": max(ages),
+        "floor_min": min(finite_floors) if finite_floors else None,
+        "floor_mean": float(np.mean(finite_floors)) if finite_floors else None,
+        "floor_max": max(finite_floors) if finite_floors else None,
+        "wall_sec": time.perf_counter() - started,
+    }
+
+
 @dataclass(frozen=True)
 class Peer:
     rank: int
@@ -108,6 +180,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--n-envs", type=int, default=32)
     parser.add_argument("--n-steps", type=int, default=256)
+    parser.add_argument(
+        "--startup-stagger-steps",
+        type=int,
+        default=0,
+        help="Before the first update, hold each environment for an independent "
+        "stratified-random delay in [0, N], run N policy steps, then discard "
+        "all warmup samples. N must be a multiple of --n-steps.",
+    )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
     parser.add_argument("--n-epochs", type=int, default=1)
@@ -168,6 +248,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument(
+        "--fork-state",
+        type=Path,
+        help="Restore a complete recovery generation while requiring new run "
+        "and W&B identities; the source bundle remains unchanged.",
+    )
     parser.add_argument("--stop-file", type=Path, help="Request a coordinated save and stop at the next update boundary")
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
     parser.add_argument("--max-checkpoints", type=int, default=20)
@@ -1472,14 +1558,29 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.resume_state is not None and args.fork_state is not None:
+        raise ValueError("--resume-state and --fork-state are mutually exclusive")
+    recovery_state = args.resume_state or args.fork_state
+    if recovery_state is not None:
+        manifest = read_bundle(recovery_state, rank=args.rank, world_size=args.world_size)
     if args.resume_state is not None:
-        manifest = read_bundle(args.resume_state, rank=args.rank, world_size=args.world_size)
         if args.run_id is not None and args.run_id != manifest['run_id']:
             raise ValueError('resume run ID differs from recovery manifest')
         if args.wandb_id is not None and args.wandb_id != manifest['wandb_id']:
             raise ValueError('resume W&B ID differs from recovery manifest')
         args.run_id, args.wandb_id = manifest['run_id'], manifest['wandb_id']
         args.checkpoint = args.resume_state / 'model.zip'
+    elif args.fork_state is not None:
+        if not args.run_id or args.run_id == manifest['run_id']:
+            raise ValueError("--fork-state requires a new explicit --run-id")
+        if args.wandb and (
+            not args.wandb_id or args.wandb_id == manifest['wandb_id']
+        ):
+            raise ValueError("--fork-state with W&B requires a new --wandb-id")
+        args.fork_source_run_id = manifest['run_id']
+        args.fork_source_wandb_id = manifest['wandb_id']
+        args.fork_source_global_step = manifest['global_step']
+        args.checkpoint = args.fork_state / 'model.zip'
     if args.stop_file is not None and args.stop_file.exists():
         raise ValueError('remove the previous stop request before resuming')
     if args.training_state_dir is not None and (args.save_every_updates < 1 or args.max_checkpoints < 2):
@@ -1506,6 +1607,10 @@ def main() -> None:
         )
     if args.envs_per_worker < 1:
         raise ValueError("--envs-per-worker must be at least 1")
+    if args.startup_stagger_steps < 0:
+        raise ValueError("--startup-stagger-steps must be non-negative")
+    if args.startup_stagger_steps % args.n_steps:
+        raise ValueError("--startup-stagger-steps must be a multiple of --n-steps")
     if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:
         raise ValueError("--nosl-is-az-simulations must be positive")
     if args.nosl_is_az_depth is not None and args.nosl_is_az_depth < 0:
@@ -2019,7 +2124,7 @@ def main() -> None:
     # Restarted environments cannot restore native in-flight games. Choose a
     # new deterministic seed block rather than replaying the run's first games.
     model.set_random_seed(args.seed + args.rank * 1_000_003 +
-                          (int(model.num_timesteps) if args.resume_state is not None else 0))
+                          (int(model.num_timesteps) if recovery_state is not None else 0))
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
@@ -2123,9 +2228,22 @@ def main() -> None:
         tb_log_name=f"dist_sb3_rank{args.rank}",
         progress_bar=False,
     )
+    if recovery_state is not None:
+        restore_learner(model, recovery_state, rank=args.rank, world_size=args.world_size)
+    startup_stagger = run_startup_stagger(
+        model,
+        span_steps=args.startup_stagger_steps,
+        rollout_steps=args.n_steps,
+    )
+    if startup_stagger:
+        startup_stagger["discarded_transitions_global"] = (
+            startup_stagger["discarded_transitions_local"] * args.world_size
+        )
+        print(
+            "STARTUP_STAGGER " + json.dumps(startup_stagger, sort_keys=True),
+            flush=True,
+        )
     callback.on_training_start(locals(), globals())
-    if args.resume_state is not None:
-        restore_learner(model, args.resume_state, rank=args.rank, world_size=args.world_size)
 
     records = []
     try:
@@ -2481,6 +2599,8 @@ def main() -> None:
                     + reasoning_step_seconds
                 ),
             }
+            if update == 0 and startup_stagger:
+                record["startup_stagger"] = dict(startup_stagger)
             record["reasoning_time_fraction"] = (
                 record["reasoning_total_sec"]
                 / max(record["total_sec_rank"], 1e-9)
@@ -2707,6 +2827,12 @@ def main() -> None:
                             "reasoning_time_fraction"
                         ],
                     }
+                if update == 0 and startup_stagger:
+                    wandb_payload.update({
+                        f"startup_stagger/{key}": value
+                        for key, value in startup_stagger.items()
+                        if value is not None
+                    })
                 if args.hierarchical_combat_hp:
                     wandb_payload.update({
                         "train/combat_value_loss": record[

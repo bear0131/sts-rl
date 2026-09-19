@@ -21,6 +21,26 @@ def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
             if previous[key] != actual[key]} == {"nosl_is_az_upper_strategy": (None, "rules")}
 
 
+def test_staggered_ruleupper_fork_only_changes_budget_upper_and_startup():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+            f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}"]
+    previous = vars(parser.parse_args(base))
+    actual = vars(parser.parse_args(
+        base + [f"@{ROOT / 'configs/train/nosl_ruleupper_v1_stagger2048_20m.args'}"]
+    ))
+
+    assert actual["nosl_is_az_updates"] == 40
+    assert actual["n_steps"] == 128
+    assert actual["startup_stagger_steps"] == 2048
+    assert {key: (previous[key], actual[key]) for key in previous
+            if previous[key] != actual[key]} == {
+        "nosl_is_az_upper_strategy": (None, "rules"),
+        "startup_stagger_steps": (0, 2048),
+        "total_steps": (10_000_000, 20_000_000),
+    }
+
+
 def test_u40_fourfold_preset_carries_validated_rollout_tuning():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

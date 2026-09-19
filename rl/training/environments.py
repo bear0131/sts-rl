@@ -1,13 +1,94 @@
 """Checkpoint-aware environment construction shared by training and benchmarks."""
 from __future__ import annotations
 import argparse
+import hashlib
 import gymnasium as gym
+import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies import model as model_utils
 from rl.tasks.wholerun import WholeRunTask
 from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
+
+
+def startup_stagger_delays(
+    *, seed: int, rank: int, n_envs: int, span_steps: int
+) -> tuple[int, ...]:
+    """Return reproducible stratified-random startup delays for one rank."""
+    if n_envs < 1:
+        raise ValueError("n_envs must be positive")
+    if span_steps < 0:
+        raise ValueError("span_steps must be non-negative")
+    if span_steps == 0:
+        return (0,) * n_envs
+    seed_words = (
+        int(seed) & 0xFFFFFFFF,
+        int(rank) & 0xFFFFFFFF,
+        0x53544752,
+    )
+    rng = np.random.default_rng(np.random.SeedSequence(seed_words))
+    positions = (np.arange(n_envs, dtype=np.float64) + rng.random(n_envs)) / n_envs
+    rng.shuffle(positions)
+    delays = np.rint(positions * span_steps).astype(np.int64)
+    return tuple(int(value) for value in delays)
+
+
+class StartupStaggerWrapper(gym.Wrapper):
+    """Hold one environment at reset until its independent startup time."""
+
+    def __init__(self, env: gym.Env, *, hold_steps: int):
+        super().__init__(env)
+        if hold_steps < 0:
+            raise ValueError("hold_steps must be non-negative")
+        self._initial_hold_steps = int(hold_steps)
+        self._remaining_hold_steps = int(hold_steps)
+        self._released = hold_steps == 0
+        self._last_observation = None
+        self._last_info: dict = {}
+        self._steps_since_reset = 0
+
+    def reset(self, **kwargs):
+        observation, info = self.env.reset(**kwargs)
+        self._last_observation = observation
+        self._last_info = dict(info)
+        self._steps_since_reset = 0
+        return observation, info
+
+    def step(self, action):
+        if self._remaining_hold_steps > 0:
+            self._remaining_hold_steps -= 1
+            info = dict(self._last_info)
+            info["startup_stagger_hold"] = True
+            info["startup_stagger_remaining"] = self._remaining_hold_steps
+            release = self._remaining_hold_steps == 0
+            if release:
+                # VecEnv autoreset makes the next observation an explicit
+                # episode start, including when the delay spans all warmup.
+                self._released = True
+            return self._last_observation, 0.0, False, release, info
+
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        self._last_observation = observation
+        self._last_info = dict(info)
+        self._steps_since_reset += 1
+        return observation, reward, terminated, truncated, info
+
+    def startup_stagger_state(self) -> dict[str, int | bool | None]:
+        run_stats = self._last_info.get("run_stats") or {}
+        return {
+            "initial_hold_steps": self._initial_hold_steps,
+            "remaining_hold_steps": self._remaining_hold_steps,
+            "released": self._released,
+            "steps_since_reset": self._steps_since_reset,
+            "floor": run_stats.get("floor"),
+            "act": run_stats.get("act"),
+        }
+
+
+def startup_stagger_digest(delays: tuple[int, ...]) -> str:
+    payload = ",".join(str(value) for value in delays).encode("ascii")
+    return hashlib.sha256(payload).hexdigest()
 
 
 class CheckpointObservationCompat(gym.ObservationWrapper):
@@ -81,13 +162,26 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     base_env_fn = WholeRunTask().make_env_fn(env_args)
     expected_space = getattr(model, "observation_space", None)
 
-    def compat_env_fn():
-        env = base_env_fn()
-        if expected_space is not None:
-            env = CheckpointObservationCompat(env, expected_space)
-        return env
+    stagger_steps = int(getattr(args, "startup_stagger_steps", 0))
+    stagger_delays = startup_stagger_delays(
+        seed=args.seed,
+        rank=args.rank,
+        n_envs=args.n_envs,
+        span_steps=stagger_steps,
+    )
 
-    env_fns = [compat_env_fn for _ in range(args.n_envs)]
+    def compat_env_fn(hold_steps: int):
+        def make():
+            env = base_env_fn()
+            if expected_space is not None:
+                env = CheckpointObservationCompat(env, expected_space)
+            if stagger_steps:
+                env = StartupStaggerWrapper(env, hold_steps=hold_steps)
+            return env
+
+        return make
+
+    env_fns = [compat_env_fn(delay) for delay in stagger_delays]
     if args.vec == "subproc":
         if args.envs_per_worker == 1:
             venv = CachedMaskSubprocVecEnv(
@@ -107,5 +201,10 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv)
+    venv.startup_stagger_delays = stagger_delays
+    args.startup_stagger_delays_sha256 = startup_stagger_digest(stagger_delays)
+    args.startup_stagger_delay_min = min(stagger_delays)
+    args.startup_stagger_delay_mean = float(np.mean(stagger_delays))
+    args.startup_stagger_delay_max = max(stagger_delays)
     venv.seed(args.seed + args.rank * 1_000_003)
     return venv

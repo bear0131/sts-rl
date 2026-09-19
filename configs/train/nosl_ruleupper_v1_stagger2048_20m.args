@@ -1,0 +1,6 @@
+--nosl-is-az-upper-strategy
+rules
+--total-steps
+20000000
+--startup-stagger-steps
+2048

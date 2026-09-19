@@ -29,6 +29,12 @@ param(
     [string]$OverridesFile = "",
     [string]$Checkpoint = "migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip",
     [long]$ResumeStep = 0,
+    [string]$ResumeRoot = "",
+    [switch]$ForkResume,
+    [ValidatePattern("^[A-Za-z0-9_-]+$")]
+    [string]$ResumeSourceRunId = "",
+    [ValidatePattern("^[A-Za-z0-9_-]+$")]
+    [string]$ResumeSourceWandbId = "",
     [long]$TargetStep = 0,
     [switch]$WaitForTarget,
     [int]$TimeoutSeconds = 1200,
@@ -58,6 +64,12 @@ if ($BuildDirs.Count -ne $WorldSize) {
 }
 if ($ResumeStep -lt 0 -or $TargetStep -lt 0) {
     throw "ResumeStep and TargetStep must be non-negative."
+}
+if ($ForkResume -and ($ResumeStep -le 0 -or -not $ResumeRoot -or -not $ResumeSourceRunId -or -not $ResumeSourceWandbId)) {
+    throw "ForkResume requires ResumeStep, ResumeRoot, ResumeSourceRunId, and ResumeSourceWandbId."
+}
+if (-not $ForkResume -and $ResumeRoot) {
+    throw "ResumeRoot is only supported with ForkResume."
 }
 if ($TimeoutSeconds -le 0 -or $PollSeconds -le 0) {
     throw "TimeoutSeconds and PollSeconds must be positive."
@@ -140,10 +152,17 @@ fi
 "@
     if ($ResumeStep -gt 0) {
         $generation = "step-{0:D12}" -f $ResumeStep
-        $recoveryPath = ConvertTo-BashQuote "$RemoteRepo/runs/$RunId/recovery/rank$($Peer.Rank)/$generation"
+        $sourceRunId = if ($ForkResume) { $ResumeSourceRunId } else { $RunId }
+        $sourceWandbId = if ($ForkResume) { $ResumeSourceWandbId } else { $WandbId }
+        $rawRecoveryPath = if ($ForkResume) {
+            "$(Resolve-RemotePath $ResumeRoot)/rank$($Peer.Rank)"
+        } else {
+            "$RemoteRepo/runs/$RunId/recovery/rank$($Peer.Rank)/$generation"
+        }
+        $recoveryPath = ConvertTo-BashQuote $rawRecoveryPath
         $recoveryBlock = @"
 generation=$recoveryPath
-PYTHONPATH="`$repo" "`$python" - "`$generation" $($Peer.Rank) $WorldSize $(ConvertTo-BashQuote $RunId) $(ConvertTo-BashQuote $WandbId) $ResumeStep <<'PY'
+PYTHONPATH="`$repo" "`$python" - "`$generation" $($Peer.Rank) $WorldSize $(ConvertTo-BashQuote $sourceRunId) $(ConvertTo-BashQuote $sourceWandbId) $ResumeStep <<'PY'
 import sys
 from rl.training.checkpoints import read_bundle
 
@@ -195,6 +214,12 @@ function Get-LaunchCommand($Peer) {
     if ($ResumeStep -gt 0) {
         $resumeLine = "export NOSL_RESUME_STEP=$ResumeStep"
     }
+    $resumeRootLine = "unset NOSL_RESUME_ROOT"
+    $forkResumeLine = "unset NOSL_FORK_RESUME"
+    if ($ForkResume) {
+        $resumeRootLine = "export NOSL_RESUME_ROOT=$(ConvertTo-BashQuote (Resolve-RemotePath $ResumeRoot))"
+        $forkResumeLine = "export NOSL_FORK_RESUME=1"
+    }
     $overridesLine = "unset NOSL_OVERRIDES_FILE"
     if ($OverridesFile) {
         $overridesLine = "export NOSL_OVERRIDES_FILE=$(ConvertTo-BashQuote (Resolve-RemotePath $OverridesFile))"
@@ -215,6 +240,8 @@ export NOSL_RING_PORT=$RingPort
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
 export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
+$resumeRootLine
+$forkResumeLine
 $overridesLine
 bash experiments/launchers/launch_nosl_replay.sh $($Peer.Rank)
 "@
@@ -298,7 +325,7 @@ echo "running=`$running latest=`${latest:-none}"
 }
 
 if ($Action -eq "plan") {
-    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints"
+    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints"
     foreach ($peer in $Peers) {
         Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
     }
