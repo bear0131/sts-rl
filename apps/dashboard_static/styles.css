@@ -318,6 +318,8 @@ main { min-height: calc(100vh - 58px); }
 .variance { position: absolute; right: 14px; bottom: 12px; color: var(--muted); font-size: 12px; }
 .eval-heading { align-items: center; }
 .eval-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.eval-strategy-mode { display: inline-flex; align-items: center; }
+.eval-strategy-mode button { min-height: 32px; padding: 0 9px; font-size: 12px; }
 .metric-strip { margin: 0 28px; display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--line); }
 .metric-strip > div { padding: 14px 16px; border-right: 1px solid var(--line); }
 .metric-strip > div:last-child { border: 0; }

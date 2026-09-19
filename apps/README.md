@@ -16,3 +16,8 @@ Watch 可选择 Act 1/2/3 并“快进 Boss”。目标 Boss 前的战斗由模�
 HP 和最大 HP 固定为开局值并清空药水，但保留牌组、遗物、金币、奖励及地图进度。目标
 Boss 是真实战斗，停在所选下层策略的第一手决策。此功能是查看指定 Boss 打牌的路线
 沙盒，不是可用于胜率统计的自然整局评测。
+
+“完整爬塔评测”独立选择上层与下层。上层支持 checkpoint masked argmax，或
+`ironclad-overworld-v1`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
+搜索，或无模型 fallback 的 `rules-ironclad-v3`。评测状态会记录两项选择及版本，切换
+规则下层时搜索参数不参与执行。

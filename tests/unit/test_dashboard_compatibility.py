@@ -279,6 +279,80 @@ def test_dashboard_assets_expose_route_only_boss_fast_forward():
     assert "忽略 HP/药水" in javascript
 
 
+def test_dashboard_assets_expose_independent_evaluation_strategies():
+    static = Path(dashboard.__file__).with_name("dashboard_static")
+    html = (static / "index.html").read_text(encoding="utf-8")
+    javascript = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="evalUpperStrategy"' in html
+    assert 'data-eval-upper-strategy="model" class="active"' in html
+    assert 'id="evalCombatStrategy"' in html
+    assert 'data-eval-combat-strategy="model" class="active"' in html
+    assert "upper_strategy: evalUpperStrategyValue()" in javascript
+    assert "combat_strategy: evalCombatStrategyValue()" in javascript
+
+
+def test_dashboard_composes_evaluation_upper_and_combat_strategies():
+    model = object()
+    lock = threading.Lock()
+    strategy = dashboard._evaluation_strategy(
+        model,
+        lock,
+        {"method": "direct_policy"},
+        upper_strategy="rules",
+        combat_strategy="rules",
+    )
+
+    assert isinstance(strategy, dashboard.PhaseStrategy)
+    assert isinstance(strategy.default, dashboard.OverworldRuleStrategy)
+    assert isinstance(strategy.default.fallback, dashboard.PolicyStrategy)
+    assert isinstance(strategy.routes["combat"], dashboard.CombatRuleStrategy)
+
+    strategy = dashboard._evaluation_strategy(
+        model,
+        lock,
+        {
+            "method": "nosl_is_az_cpp",
+            "simulations": 1,
+            "paper_full_gumbel": False,
+            "root_search_mode": 0,
+        },
+        upper_strategy="model",
+        combat_strategy="model",
+    )
+    assert isinstance(strategy, dashboard.PhaseStrategy)
+    assert isinstance(strategy.default, dashboard.PolicyStrategy)
+    combat = strategy.routes["combat"]
+    assert isinstance(combat, dashboard.PhaseStrategy)
+    assert isinstance(combat.default, dashboard.PolicyStrategy)
+    assert isinstance(combat.routes["combat"], dashboard.NativeStrategy)
+
+
+def test_dashboard_evaluation_status_records_selected_strategies(monkeypatch):
+    state = dashboard.DashboardState()
+    state.model = object()
+    monkeypatch.setattr(threading.Thread, "start", lambda _thread: None)
+
+    state.start_evaluation(
+        episodes=1,
+        seed=0,
+        upper_strategy="rules",
+        combat_strategy="rules",
+    )
+
+    assert state.eval_status["upper_strategy"] == "rules"
+    assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v1"
+    assert state.eval_status["upper_fallback"] == "masked_argmax"
+    assert state.eval_status["combat_strategy"] == "rules"
+    assert state.eval_status["combat_strategy_version"] == "ironclad-v3"
+    assert state.eval_status["search_method"] == "combat_rules"
+
+    with pytest.raises(ValueError, match="upper strategy"):
+        state.start_evaluation(1, 0, upper_strategy="unknown")
+    with pytest.raises(ValueError, match="combat strategy"):
+        state.start_evaluation(1, 0, combat_strategy="unknown")
+
+
 def test_paper_full_gumbel_dashboard_can_select_direct_policy():
     class Core:
         actor_critic = object()

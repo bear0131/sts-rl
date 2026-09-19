@@ -217,11 +217,19 @@
 
     <section id="evaluationView" class="view">
       <div class="section-heading eval-heading">
-        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，战斗使用 NOSL AlphaZero 搜索，外层使用冻结策略</p></div>
+        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，独立选择上层路线与下层战斗策略</p></div>
         <div class="eval-controls">
           <label>局数 <input id="evalEpisodes" type="number" min="1" max="10000" value="50"></label>
           <label>Seed <input id="evalSeed" type="number" value="0"></label>
           <label title="Parallel evaluation episodes">Workers <input id="evalWorkers" type="number" min="1" max="64" step="1" value="4"></label>
+          <div id="evalUpperStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测上层决策模式">
+            <button type="button" data-eval-upper-strategy="model" class="active">模型上层</button>
+            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v1；未覆盖画面回退模型 argmax">规则上层</button>
+          </div>
+          <div id="evalCombatStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测下层决策模式">
+            <button type="button" data-eval-combat-strategy="model" class="active">模型/搜索下层</button>
+            <button type="button" data-eval-combat-strategy="rules" title="rules-ironclad-v3 纯规则战斗策略">规则下层</button>
+          </div>
           <label title="每个战斗决策的 neural NOSL 模拟次数；0 为 direct policy">Simulations <input id="evalSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
           <label title="搜索深度；0 为 AlphaZero 式自动展开">Depth <input id="evalDepth" type="number" min="0" max="256" step="1" value="0"></label>
           <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="evalLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>

@@ -35,6 +35,7 @@ from rl.evaluation.baselines.combat_rules import (
     CombatRuleStrategy,
     RULE_VERSION as COMBAT_RULE_VERSION,
 )
+from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
 from dataclasses import fields
 from rl.search.native import (
@@ -552,6 +553,48 @@ _UPPER_STRATEGIES = {_UPPER_STRATEGY_MODEL, _UPPER_STRATEGY_RULES}
 _COMBAT_STRATEGY_MODEL = "model"
 _COMBAT_STRATEGY_RULES = "rules"
 _COMBAT_STRATEGIES = {_COMBAT_STRATEGY_MODEL, _COMBAT_STRATEGY_RULES}
+
+
+def _evaluation_strategy(
+    model,
+    model_lock,
+    search_config,
+    *,
+    upper_strategy: str,
+    combat_strategy: str,
+):
+    """Compose independent upper/combat choices on the shared eval contract."""
+    policy = PolicyStrategy(model, lock=model_lock)
+    upper = (
+        OverworldRuleStrategy(policy)
+        if upper_strategy == _UPPER_STRATEGY_RULES
+        else policy
+    )
+    if combat_strategy == _COMBAT_STRATEGY_RULES:
+        combat = CombatRuleStrategy()
+    elif search_config.get("method") == "nosl_is_az_cpp":
+        combat = PhaseStrategy(
+            policy,
+            {
+                "combat": NativeStrategy(
+                    model,
+                    NativeSearchConfig.from_mapping(search_config),
+                    master_nonce=search_config.get("master_nonce", 0),
+                    lock=model_lock,
+                )
+            },
+            predicates={
+                "combat": lambda request: getattr(
+                    request.env.unwrapped, "_pending", None
+                )
+                is None
+            },
+        )
+    else:
+        combat = policy
+    if upper is policy and combat is policy:
+        return policy
+    return PhaseStrategy(upper, {"combat": combat})
 
 
 class WatchSession:
@@ -2275,8 +2318,22 @@ class DashboardState:
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         workers: int | None = None,
+        upper_strategy: str = _UPPER_STRATEGY_MODEL,
+        combat_strategy: str = _COMBAT_STRATEGY_MODEL,
     ):
         episodes = max(1, min(int(episodes), 10_000))
+        upper_strategy = str(upper_strategy).strip().lower()
+        combat_strategy = str(combat_strategy).strip().lower()
+        if upper_strategy not in _UPPER_STRATEGIES:
+            raise ValueError(
+                "upper strategy must be one of "
+                f"{sorted(_UPPER_STRATEGIES)}, got {upper_strategy!r}"
+            )
+        if combat_strategy not in _COMBAT_STRATEGIES:
+            raise ValueError(
+                "combat strategy must be one of "
+                f"{sorted(_COMBAT_STRATEGIES)}, got {combat_strategy!r}"
+            )
         worker_count = _clamp_int(
             workers,
             min(DEFAULT_EVAL_WORKERS, episodes),
@@ -2288,25 +2345,33 @@ class DashboardState:
             if self.model is None:
                 raise RuntimeError("no checkpoint loaded")
             model = self.model
-            search_config = _evaluation_search_config(
-                model,
-                simulations=simulations,
-                depth=depth,
-                leaf_batch_size=leaf_batch_size,
-                prior_temperature=prior_temperature,
-                search_mode=search_mode,
-                gumbel_candidates=gumbel_candidates,
-                gumbel_scale=gumbel_scale,
-                gumbel_value_scale=gumbel_value_scale,
-                gumbel_max_visit_init=gumbel_max_visit_init,
-                gumbel_rescale_q=gumbel_rescale_q,
-                gumbel_use_mixed_value=gumbel_use_mixed_value,
-                gumbel_interior_uniformity=gumbel_interior_uniformity,
-                gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
-                gumbel_interior_value_mode=gumbel_interior_value_mode,
-                paper_full_gumbel=paper_full_gumbel,
-                end_turn_as_leaf=end_turn_as_leaf,
-            )
+            if combat_strategy == _COMBAT_STRATEGY_RULES:
+                search_config = _evaluation_search_config(
+                    model,
+                    simulations=0,
+                    search_mode="direct",
+                    paper_full_gumbel=False,
+                )
+            else:
+                search_config = _evaluation_search_config(
+                    model,
+                    simulations=simulations,
+                    depth=depth,
+                    leaf_batch_size=leaf_batch_size,
+                    prior_temperature=prior_temperature,
+                    search_mode=search_mode,
+                    gumbel_candidates=gumbel_candidates,
+                    gumbel_scale=gumbel_scale,
+                    gumbel_value_scale=gumbel_value_scale,
+                    gumbel_max_visit_init=gumbel_max_visit_init,
+                    gumbel_rescale_q=gumbel_rescale_q,
+                    gumbel_use_mixed_value=gumbel_use_mixed_value,
+                    gumbel_interior_uniformity=gumbel_interior_uniformity,
+                    gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
+                    gumbel_interior_value_mode=gumbel_interior_value_mode,
+                    paper_full_gumbel=paper_full_gumbel,
+                    end_turn_as_leaf=end_turn_as_leaf,
+                )
             self.eval_token = token
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
@@ -2314,7 +2379,29 @@ class DashboardState:
                 "death_seeds": {}, "win_seeds": [], "current_episode": 1,
                 "current_steps": 0, "current_floor": 0,
                 "current_phase": None, "current_action": None,
-                "search_method": search_config["method"],
+                "upper_strategy": upper_strategy,
+                "upper_strategy_version": (
+                    OVERWORLD_RULE_VERSION
+                    if upper_strategy == _UPPER_STRATEGY_RULES
+                    else "checkpoint-model"
+                ),
+                "upper_fallback": (
+                    "masked_argmax"
+                    if upper_strategy == _UPPER_STRATEGY_RULES
+                    else None
+                ),
+                "combat_strategy": combat_strategy,
+                "combat_strategy_version": (
+                    COMBAT_RULE_VERSION
+                    if combat_strategy == _COMBAT_STRATEGY_RULES
+                    else "checkpoint-model+configured-search"
+                ),
+                "search_method": (
+                    "combat_rules"
+                    if combat_strategy == _COMBAT_STRATEGY_RULES
+                    else search_config["method"]
+                ),
+                "configured_search_method": search_config["method"],
                 "search_supported": search_config["supported"],
                 "search_mode": search_config["search_mode"],
                 "search_mode_label": search_config["search_mode_label"],
@@ -2352,12 +2439,31 @@ class DashboardState:
             }
         threading.Thread(
             target=self._evaluate,
-            args=(token, model, episodes, int(seed), search_config, worker_count),
+            args=(
+                token,
+                model,
+                episodes,
+                int(seed),
+                search_config,
+                worker_count,
+                upper_strategy,
+                combat_strategy,
+            ),
             daemon=True,
             name="dashboard-eval",
         ).start()
 
-    def _evaluate(self, token, model, episodes, seed, search_config, worker_count):
+    def _evaluate(
+        self,
+        token,
+        model,
+        episodes,
+        seed,
+        search_config,
+        worker_count,
+        upper_strategy,
+        combat_strategy,
+    ):
         rows = []
 
         def cancelled():
@@ -2369,12 +2475,14 @@ class DashboardState:
                     self.eval_status.update(event, last_progress_at=time.time())
 
         try:
-            strategy = PolicyStrategy(model, lock=self.model_lock)
-            if search_config.get("method") == "nosl_is_az_cpp":
-                strategy = PhaseStrategy(strategy, {"combat": NativeStrategy(
-                    model, NativeSearchConfig.from_mapping(search_config),
-                    master_nonce=search_config.get("master_nonce", 0), lock=self.model_lock)},
-                    predicates={"combat": lambda request: getattr(request.env.unwrapped, "_pending", None) is None})
+            strategy = _evaluation_strategy(
+                model,
+                self.model_lock,
+                search_config,
+                upper_strategy=upper_strategy,
+                combat_strategy=combat_strategy,
+            )
+            progress({"strategy": strategy.name})
             scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
                 global_map_view=_model.uses_global_map_observation(model),
                 card_language=_model.uses_card_language(model),
@@ -2587,6 +2695,12 @@ class Handler(BaseHTTPRequestHandler):
                     paper_full_gumbel=body.get("paper_full_gumbel"),
                     end_turn_as_leaf=body.get("end_turn_as_leaf"),
                     workers=body.get("workers"),
+                    upper_strategy=body.get(
+                        "upper_strategy", _UPPER_STRATEGY_MODEL
+                    ),
+                    combat_strategy=body.get(
+                        "combat_strategy", _COMBAT_STRATEGY_MODEL
+                    ),
                 )
                 self._send_json(APP.public_state()["evaluation"])
             else:

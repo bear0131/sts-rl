@@ -29,6 +29,8 @@ let evalPriorTemperatureDirty = false;
 let evalSearchModeDirty = false;
 let evalGumbelParamsDirty = false;
 let evalPaperModeDirty = false;
+let evalUpperStrategyDirty = false;
+let evalCombatStrategyDirty = false;
 let seeking = false;
 let selectedMapAct = null;
 let mapPreviewing = false;
@@ -739,6 +741,46 @@ async function autoplay() {
   setTimeout(autoplay, Number($("speedSelect").value));
 }
 
+function evalUpperStrategyValue() {
+  return $("evalUpperStrategy").querySelector("button.active")?.dataset.evalUpperStrategy || "model";
+}
+function setEvalUpperStrategy(strategy, dirty = true) {
+  const value = strategy === "rules" ? "rules" : "model";
+  $("evalUpperStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.evalUpperStrategy === value);
+  });
+  if (dirty) evalUpperStrategyDirty = true;
+}
+function evalCombatStrategyValue() {
+  return $("evalCombatStrategy").querySelector("button.active")?.dataset.evalCombatStrategy || "model";
+}
+const evalSearchControlIds = [
+  "evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature",
+  "evalEndTurnAsLeaf", "evalSearchMode", "evalPaperFullGumbel",
+  "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale",
+  "evalGumbelMaxVisitInit", "evalGumbelRescaleQ", "evalGumbelMixedValue",
+  "evalGumbelInteriorUniformity", "evalGumbelInteriorCoverageFraction",
+  "evalGumbelInteriorValueMode",
+];
+function syncEvalSearchControls() {
+  const disabled = evalCombatStrategyValue() === "rules";
+  evalSearchControlIds.forEach(id => { $(id).disabled = disabled; });
+}
+function setEvalCombatStrategy(strategy, dirty = true) {
+  const value = strategy === "rules" ? "rules" : "model";
+  $("evalCombatStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.evalCombatStrategy === value);
+  });
+  if (dirty) evalCombatStrategyDirty = true;
+  syncEvalSearchControls();
+}
+$("evalUpperStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setEvalUpperStrategy(button.dataset.evalUpperStrategy));
+});
+$("evalCombatStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setEvalCombatStrategy(button.dataset.evalCombatStrategy));
+});
+
 $("evalButton").addEventListener("click", async () => {
   try {
     appState.evaluation = await api("/api/eval/start", {method:"POST", body:JSON.stringify({
@@ -749,6 +791,8 @@ $("evalButton").addEventListener("click", async () => {
       depth: Number($("evalDepth").value),
       leaf_batch_size: Number($("evalLeafBatchSize").value),
       prior_temperature: Number($("evalPriorTemperature").value),
+      upper_strategy: evalUpperStrategyValue(),
+      combat_strategy: evalCombatStrategyValue(),
       ...gumbelSearchParams("eval"),
     }), headers:{"Content-Type":"application/json"}});
     evalSimulationsDirty = false;
@@ -758,6 +802,8 @@ $("evalButton").addEventListener("click", async () => {
     evalSearchModeDirty = false;
     evalGumbelParamsDirty = false;
     evalPaperModeDirty = false;
+    evalUpperStrategyDirty = false;
+    evalCombatStrategyDirty = false;
     renderEvaluation();
   } catch (e) { toast(e.message); }
 });
@@ -1372,6 +1418,8 @@ $("tokenCanvas").addEventListener("mouseleave",()=>$("tokenTooltip").style.displ
 
 function renderEvaluation() {
   const e=appState?.evaluation || {}, done=e.completed||0, total=e.episodes||0, results=e.results||{};
+  if (!evalUpperStrategyDirty && e.upper_strategy) setEvalUpperStrategy(e.upper_strategy, false);
+  if (!evalCombatStrategyDirty && e.combat_strategy) setEvalCombatStrategy(e.combat_strategy, false);
   if ($("evalWorkers") && e.workers != null && document.activeElement !== $("evalWorkers")) $("evalWorkers").value = e.workers;
   if (!evalSimulationsDirty && e.simulations != null) $("evalSimulations").value = e.simulations;
   if (!evalDepthDirty && e.depth != null) $("evalDepth").value = e.depth;
@@ -1384,10 +1432,16 @@ function renderEvaluation() {
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
-  const searchLabel=e.search_method==="nosl_is_az_cpp"
+  const searchLabel=e.search_method==="combat_rules"
+    ? `纯规则下层 · ${e.combat_strategy_version || "ironclad-v3"}`
+    : e.search_method==="nosl_is_az_cpp"
     ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
-  $("evalStatus").textContent=searchLabel?`${stateLabel} · ${searchLabel}`:stateLabel;
+  const upperLabel=e.upper_strategy==="rules"
+    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v1"}`
+    : e.upper_strategy==="model"?"模型上层":"";
+  const labels=[stateLabel, upperLabel, searchLabel].filter(Boolean);
+  $("evalStatus").textContent=labels.join(" · ");
   const winSeeds = evaluationWinSeeds(e);
   $("winSeedCount").textContent = String(winSeeds.length);
   $("winSeedList").innerHTML = winSeeds.length
