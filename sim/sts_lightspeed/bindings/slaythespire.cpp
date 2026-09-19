@@ -1460,6 +1460,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 }
             }, "the player's character class as a stable enum-name string")
         .def_readwrite("ascension", &GameContext::ascension)
+        .def_readwrite("skip_battles", &GameContext::skipBattles)
         .def("boss_relic_ids", [](const GameContext &gc) {
             pybind11::list out;
             for (int i = 0; i < 3; ++i)

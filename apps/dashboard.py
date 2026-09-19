@@ -533,6 +533,11 @@ def _evaluation_search_config(
 
 
 
+_ROUTE_STEP_NORMAL = "normal"
+_ROUTE_STEP_SKIP_COMBAT = "skip_combat"
+_ROUTE_STEP_ENTER_BOSS = "enter_boss"
+
+
 class WatchSession:
     def __init__(self, model: Any, model_lock: threading.Lock, seed: int = 0):
         self.model = model
@@ -648,6 +653,10 @@ class WatchSession:
         self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
         self.precompute_enabled = False
+        self.route_step_modes: list[str] = []
+        self.route_preprocess_target_act: int | None = None
+        self.route_preprocess_hp: int | None = None
+        self.route_preprocess_boss_step: int | None = None
         self._mcts_sampler = NOSLSampler(MCTS_MASTER_NONCE)
         self.reset(seed)
 
@@ -730,6 +739,7 @@ class WatchSession:
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
+        target_boss_act: int | None = None,
     ):
         requested_simulations = (
             self.mcts_simulations if simulations is None else int(simulations)
@@ -817,13 +827,30 @@ class WatchSession:
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
+        if target_boss_act is not None:
+            target_boss_act = int(target_boss_act)
+            if target_boss_act < 1 or target_boss_act > 3:
+                raise ValueError(
+                    f"target boss act must be between 1 and 3, got {target_boss_act}"
+                )
+            if precompute:
+                raise ValueError(
+                    "whole-run precompute and route-only boss fast-forward are exclusive"
+                )
         self.precompute_enabled = bool(precompute)
         self.history = []
         self.native_history = []
+        self.route_step_modes = []
         self.position = 0
         self.timeline = []
         self.timeline_exhausted = False
+        self.route_preprocess_target_act = target_boss_act
+        self.route_preprocess_hp = None
+        self.route_preprocess_boss_step = None
         self.obs, self.info = self.env.reset(seed=self.seed)
+        if target_boss_act is not None:
+            self.route_preprocess_hp = int(self.env.unwrapped.thick.gc.max_hp)
+            self._apply_route_step_mode(self._route_mode_for_current_state())
         self.terminated = self.truncated = False
         self.total_reward = 0.0
         self.last_action = None
@@ -833,6 +860,8 @@ class WatchSession:
         self.card_reward_choices = []
         self._search_generation = 0
         self._prepare_decision()
+        if target_boss_act is not None:
+            return self.fast_forward_to_boss(target_boss_act)
         if precompute:
             return self.precompute_run()
         return self.snapshot()
@@ -851,6 +880,8 @@ class WatchSession:
         if thick is None:
             self.reset(self.seed)
             thick = self.env.unwrapped.thick
+        if hasattr(thick.gc, "skip_battles"):
+            thick.gc.skip_battles = False
         encounter = str(spec.get("encounter") or "Cultist")
         names = set(sts.encounter_names())
         if encounter not in names:
@@ -889,9 +920,13 @@ class WatchSession:
         self.env._invalidate_backend_cache()
         self.history = []
         self.native_history = []
+        self.route_step_modes = []
         self.position = 0
         self.timeline = []
         self.timeline_exhausted = False
+        self.route_preprocess_target_act = None
+        self.route_preprocess_hp = None
+        self.route_preprocess_boss_step = None
         self.terminated = False
         self.truncated = False
         self.total_reward = 0.0
@@ -1023,6 +1058,114 @@ class WatchSession:
         # leak into the next direct-policy/search step.
         self.env.unwrapped._nosl_cpp_pending = None
         self._prepare_decision()
+        return self.snapshot()
+
+    def _at_route_target_boss(self) -> bool:
+        target_act = self.route_preprocess_target_act
+        thick = self.env.unwrapped.thick
+        if target_act is None or thick is None or thick.bc is None:
+            return False
+        room = str(thick.gc.cur_room).split(".")[-1]
+        return (
+            self.info is not None
+            and self.info.get("phase") == "combat"
+            and int(thick.gc.act) == int(target_act)
+            and room == "BOSS"
+        )
+
+    def _route_mode_for_current_state(self) -> str:
+        target_act = self.route_preprocess_target_act
+        if target_act is None:
+            return _ROUTE_STEP_NORMAL
+        if (
+            self.route_preprocess_boss_step is not None
+            and self.position >= self.route_preprocess_boss_step
+        ):
+            return _ROUTE_STEP_NORMAL
+        phase = self.info.get("phase") if self.info else None
+        if phase == "combat":
+            return _ROUTE_STEP_NORMAL
+        gc = self.env.unwrapped.thick.gc
+        if (
+            phase == "map"
+            and int(gc.act) == int(target_act)
+            and int(gc.cur_map_node_y) >= 14
+        ):
+            return _ROUTE_STEP_ENTER_BOSS
+        return _ROUTE_STEP_SKIP_COMBAT
+
+    def _apply_route_step_mode(self, mode: str) -> None:
+        if mode not in {
+            _ROUTE_STEP_NORMAL,
+            _ROUTE_STEP_SKIP_COMBAT,
+            _ROUTE_STEP_ENTER_BOSS,
+        }:
+            raise ValueError(f"unknown route preprocessing mode: {mode!r}")
+        thick = self.env.unwrapped.thick
+        gc = thick.gc
+        if mode == _ROUTE_STEP_NORMAL:
+            if hasattr(gc, "skip_battles"):
+                gc.skip_battles = False
+            return
+        if thick.bc is not None:
+            raise RuntimeError("route preprocessing cannot mutate a live combat")
+        if not hasattr(gc, "skip_battles"):
+            raise RuntimeError(
+                "Boss fast-forward requires a simulator build with "
+                "GameContext.skip_battles"
+            )
+        gc.skip_battles = mode == _ROUTE_STEP_SKIP_COMBAT
+        hp = self.route_preprocess_hp
+        if hp is None:
+            raise RuntimeError("route preprocessing HP baseline is missing")
+        gc.max_hp = max(1, int(hp))
+        gc.cur_hp = max(1, int(hp))
+        thick._prev_hp = int(gc.cur_hp)
+        for slot in range(len(gc.overworld_potions)):
+            gc.discard_potion(slot)
+        self.env._invalidate_backend_cache()
+        self.obs, self.info = self.env._obs(), self.env._info()
+
+    def fast_forward_to_boss(self, target_act: int):
+        target_act = int(target_act)
+        if target_act < 1 or target_act > 3:
+            raise ValueError(
+                f"target boss act must be between 1 and 3, got {target_act}"
+            )
+        if self.route_preprocess_target_act != target_act:
+            raise RuntimeError("Boss fast-forward must start from reset")
+
+        steps = 0
+        while not self._at_route_target_boss():
+            if self.terminated or self.truncated:
+                stats = self.info.get("run_stats", {}) if self.info else {}
+                raise RuntimeError(
+                    "route preprocessing ended before the requested boss "
+                    f"(target Act {target_act}, reached Act {stats.get('act', '?')} "
+                    f"floor {stats.get('floor', '?')})"
+                )
+            if self.decision is None:
+                phase = self.info.get("phase") if self.info else "unknown"
+                raise RuntimeError(
+                    "route preprocessing reached a screen with no model action "
+                    f"(phase={phase})"
+                )
+            mode = self._route_mode_for_current_state()
+            if mode == _ROUTE_STEP_NORMAL:
+                raise RuntimeError(
+                    "route preprocessing reached combat before the requested boss"
+                )
+            previous_position = self.position
+            self._advance_one(route_mode=mode)
+            steps += 1
+            if self.position == previous_position:
+                raise RuntimeError("route preprocessing made no progress")
+            if mode == _ROUTE_STEP_ENTER_BOSS and not self._at_route_target_boss():
+                raise RuntimeError(
+                    f"Act {target_act} boss entrance did not create a live combat"
+                )
+            if steps >= 5000:
+                raise RuntimeError("route preprocessing exceeded 5000 actions")
         return self.snapshot()
 
     def precompute_run(self):
@@ -1420,7 +1563,7 @@ class WatchSession:
         self._advance_one()
         return self.snapshot()
 
-    def _advance_one(self):
+    def _advance_one(self, *, route_mode: str | None = None):
         if self.decision is None:
             return
         decision_before = self.decision
@@ -1449,10 +1592,22 @@ class WatchSession:
             and self.native_history[self.position] is not None
             else None
         )
+        requested_route_mode = (
+            self._route_mode_for_current_state()
+            if route_mode is None
+            else str(route_mode)
+        )
+        historical_route_mode = (
+            self.route_step_modes[self.position]
+            if replaying and self.position < len(self.route_step_modes)
+            else _ROUTE_STEP_NORMAL
+        )
         same_action = replaying and historical_action == displayed_action
         same_native = historical_native == pending_native
-        if replaying and same_action and same_native:
+        same_route_mode = historical_route_mode == requested_route_mode
+        if replaying and same_action and same_native and same_route_mode:
             action = historical_action
+            active_route_mode = historical_route_mode
             if historical_native is not None:
                 self.env.unwrapped._nosl_cpp_pending = (
                     int(action), int(historical_native)
@@ -1461,9 +1616,18 @@ class WatchSession:
             if replaying:
                 del self.history[self.position:]
                 del self.native_history[self.position:]
+                del self.route_step_modes[self.position:]
+                if (
+                    self.route_preprocess_boss_step is not None
+                    and self.position < self.route_preprocess_boss_step
+                ):
+                    self.route_preprocess_boss_step = None
             action = displayed_action
+            active_route_mode = requested_route_mode
             self.history.append(action)
             self.native_history.append(pending_native)
+            self.route_step_modes.append(active_route_mode)
+        self._apply_route_step_mode(active_route_mode)
         label = (
             decision_before.get("label")
             if int(decision_before.get("action", -1)) == int(action)
@@ -1474,6 +1638,13 @@ class WatchSession:
         self._record_card_reward_choice(action, canon_before)
         self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
         self.position += 1
+        if active_route_mode == _ROUTE_STEP_SKIP_COMBAT:
+            self._apply_route_step_mode(active_route_mode)
+        elif (
+            active_route_mode == _ROUTE_STEP_ENTER_BOSS
+            and self._at_route_target_boss()
+        ):
+            self.route_preprocess_boss_step = self.position
         if self.terminated or self.truncated:
             self.timeline_exhausted = True
         self.last_action = {
@@ -1508,6 +1679,12 @@ class WatchSession:
         self.map_state = None
         self.card_reward_choices = []
         for index, action in enumerate(self.history[:target_step]):
+            route_mode = (
+                self.route_step_modes[index]
+                if index < len(self.route_step_modes)
+                else _ROUTE_STEP_NORMAL
+            )
+            self._apply_route_step_mode(route_mode)
             if index < len(self.native_history):
                 native = self.native_history[index]
                 if native is not None:
@@ -1519,6 +1696,8 @@ class WatchSession:
             )
             self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
             self.position += 1
+            if route_mode == _ROUTE_STEP_SKIP_COMBAT:
+                self._apply_route_step_mode(route_mode)
             self.total_reward += float(reward)
             self.last_reward = float(reward)
             self.last_action = {
@@ -1531,6 +1710,12 @@ class WatchSession:
             self._record_timeline(map_snapshot, canon)
             if self.terminated or self.truncated:
                 break
+        next_route_mode = (
+            self.route_step_modes[self.position]
+            if self.position < len(self.route_step_modes)
+            else self._route_mode_for_current_state()
+        )
+        self._apply_route_step_mode(next_route_mode)
         self._prepare_decision()
         return self.snapshot()
 
@@ -1680,6 +1865,21 @@ class WatchSession:
             "max_step": len(self.history),
             "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
             "precompute_enabled": self.precompute_enabled,
+            "route_preprocess": {
+                "enabled": self.route_preprocess_target_act is not None,
+                "target_act": self.route_preprocess_target_act,
+                "reached": (
+                    self.route_preprocess_boss_step is not None
+                    and self.position >= self.route_preprocess_boss_step
+                ),
+                "boss_step": self.route_preprocess_boss_step,
+                "baseline_hp": self.route_preprocess_hp,
+                "ignored_resources": ["hp", "max_hp", "potions"],
+                "route_steps": sum(
+                    mode != _ROUTE_STEP_NORMAL
+                    for mode in self.route_step_modes[:self.position]
+                ),
+            },
             "mcts_simulations": self.mcts_simulations,
             "mcts_depth": self.mcts_depth,
             "mcts_end_turn_as_leaf": self.mcts_end_turn_as_leaf,
@@ -2172,6 +2372,7 @@ class Handler(BaseHTTPRequestHandler):
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
+                        target_boss_act=body.get("target_boss_act"),
                     )
                 self._send_json(result)
             elif path == "/api/watch/apply":

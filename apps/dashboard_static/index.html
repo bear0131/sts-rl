@@ -54,6 +54,16 @@
           <button type="button" data-stochastic="true">非确定性</button>
         </div>
         <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
+        <div class="watch-boss-control">
+          <label>Boss
+            <select id="watchBossAct">
+              <option value="1" selected>Act 1</option>
+              <option value="2">Act 2</option>
+              <option value="3">Act 3</option>
+            </select>
+          </label>
+          <button id="watchBossButton" type="button" title="仅推进外层决策，忽略 HP、最大 HP 和药水，并停在指定 Boss 战">快进 Boss</button>
+        </div>
         <button id="resetButton">重开</button>
         <button id="undoButton" class="icon-command" title="撤销上一步"><span>↶</span>撤销</button>
         <button id="stepButton" class="primary">单步</button>

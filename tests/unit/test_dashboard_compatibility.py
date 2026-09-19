@@ -261,6 +261,17 @@ def test_dashboard_assets_expose_and_send_strict_paper_mode():
     assert '"Strict paper Full Gumbel"' in javascript
 
 
+def test_dashboard_assets_expose_route_only_boss_fast_forward():
+    static = Path(dashboard.__file__).with_name("dashboard_static")
+    html = (static / "index.html").read_text(encoding="utf-8")
+    javascript = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="watchBossAct"' in html
+    assert 'id="watchBossButton"' in html
+    assert "target_boss_act: targetAct" in javascript
+    assert "HP/药水忽略" in javascript
+
+
 def test_paper_full_gumbel_dashboard_can_select_direct_policy():
     class Core:
         actor_critic = object()

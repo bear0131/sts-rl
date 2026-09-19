@@ -41,6 +41,7 @@
 | OPS01 | 已完成 | 四机 NOSL replay 由本地 `manage_nosl_replay_4way.ps1` 统一预检、启动、状态和指定 recovery step 验收；密码不入库，恢复前校验四 rank bundle 身份与 checksum |
 | OPS02 | 待修 | 分布式训练单轮约 20 分钟且只在轮末调用 `wandb.log` 时，W&B `heartbeatAt` 停在上一轮指标、run 会在活进程仍正常运行时被误标为 `crashed`；需用受测的独立低频 heartbeat 或显式 lifecycle 更新保持 Running 状态，且不得改变训练 step/图表语义 |
 | OPS03 | 四机数据盘清理完成 | 不停止/重启或修改当前 TRAIN01 的前提下，永久删除已停用 `u40x16-uniform-replay-fresh-20260917` 各 rank 的旧 step9830400 recovery generation，释放约9.33-9.37GB/机；其经 checksum 和跨rank policy/Adam 校验的最新完整 step10027008 保留。清理后可用10.50/10.85/11.14/11.58GB，当前四机PID未变且共同推进至step6438912；见 [清理记录](worklog/2026-09-19.md#ops03-four-rank-data-disk-cleanup-without-training-mutation) |
+| UI01 | 已完成并部署本地前端 | Watch 支持只预处理外层路线并快进 Act 1/2/3 Boss：checkpoint 处理所有外层选择，非目标战斗用原生 `skipBattles` 结算，路线期间固定初始 HP/最大 HP、清空药水，保留牌组/遗物/金币/奖励/地图，目标 Boss 恢复真实战斗并停在第一手；撤销/重放保存每步模式。33 passed、6个已有严格xfail；当前本地8765使用四机共同完整 step7520256，跨rank policy/Adam成员哈希一致，远端训练未改动。见 [实现与部署记录](worklog/2026-09-19.md#ui01-route-only-boss-fast-forward-and-current-checkpoint-deployment) |
 | R01 | 已落实 | canonical 运行时/工具/apps、tests、configs、归档分离；退役旧链路/CLI，20 个 checkpoint 库别名保留；迁移查询 tools/validation/migrations.json |
 | R02 | 部分完成 | 更新原语/梯度同步与生产环境构造已共享；per-rank replay/RNG/Adam 保存恢复及四机同步验收已完成，见 [恢复交接](docs/2026-09-14/nosl-performance-recovery-handoff.md)。仍需拆巨型 collector/learner 与 main；活 simulator/未完成战斗不支持精确恢复 |
 | R03 | 共享后端已落实 | episode runner/策略组合、native eval/rollout/watch、固定场景库已共享并合批；仍需 corpus/历史基准协议迁接、完整评测集与统计定义，关联 F05/F16/PERF01 |

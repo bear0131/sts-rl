@@ -513,6 +513,46 @@ $("watchEndTurnAsLeaf").addEventListener("change", () => {
   watchGumbelParamsDirty = true;
 });
 $("watchPrecompute").addEventListener("change", () => { watchPrecomputeDirty = true; });
+$("watchBossButton").addEventListener("click", async () => {
+  if (!appState?.watch) return;
+  pause();
+  const button = $("watchBossButton");
+  const targetAct = Number($("watchBossAct").value);
+  button.disabled = true;
+  button.textContent = "快进中...";
+  $("watchMeta").textContent = `正在推进到 Act ${targetAct} Boss...`;
+  try {
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({
+      seed: Number($("watchSeed").value),
+      simulations: Number($("watchSimulations").value),
+      depth: Number($("watchDepth").value),
+      leaf_batch_size: Number($("watchLeafBatchSize").value),
+      prior_temperature: Number($("watchPriorTemperature").value),
+      ...gumbelSearchParams("watch"),
+      stochastic: watchStochasticValue(),
+      precompute: false,
+      target_boss_act: targetAct,
+    }), headers:{"Content-Type":"application/json"}});
+    watchSeedDirty = false;
+    watchSimulationsDirty = false;
+    watchDepthDirty = false;
+    watchLeafBatchSizeDirty = false;
+    watchPriorTemperatureDirty = false;
+    watchSearchModeDirty = false;
+    watchGumbelParamsDirty = false;
+    watchPaperModeDirty = false;
+    watchPolicyModeDirty = false;
+    watchPrecomputeDirty = false;
+    selectedMapAct = targetAct;
+    previewedMapKeys.clear();
+    renderWatch();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "快进 Boss";
+  }
+});
 function watchStochasticValue() {
   return $("watchPolicyMode").querySelector("button.active")?.dataset.stochastic !== "false";
 }
@@ -1122,7 +1162,11 @@ function renderWatch() {
     $("watchPrecompute").checked = Boolean(w.precompute_enabled);
   }
   const stepProgress = w.precomputed_steps ? `${w.step} / ${w.precomputed_steps}` : `${w.step}`;
-  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}`;
+  const route = w.route_preprocess || {};
+  const routeStatus = route.enabled
+    ? ` · Act ${route.target_act} Boss${route.reached ? " 已就绪" : ""} · HP/药水忽略`
+    : "";
+  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}${routeStatus}`;
   $("undoButton").disabled = !w.can_undo;
   $("stepButton").disabled = w.done;
   const stats = w.stats || {}, canon = w.canon || {}, global = canon.global || {};
