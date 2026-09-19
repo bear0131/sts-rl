@@ -21,6 +21,7 @@ from rl.search.native import apply_strict_training_settings
 import argparse
 import hashlib
 import json
+import random
 import shlex
 import subprocess
 import time
@@ -157,6 +158,120 @@ def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
     }
 
 
+def run_startup_occupancy(
+    model, *, budget_steps: int, rollout_steps: int, seed: int
+) -> dict:
+    """Start from independent live occupancy samples without a warmup update."""
+    if budget_steps == 0:
+        return {}
+    if budget_steps < 0 or budget_steps % rollout_steps:
+        raise ValueError("occupancy budget must be a positive multiple of n_steps")
+    if not getattr(model, "nosl_is_az", False):
+        raise ValueError("occupancy startup currently requires NOSL-IS-AZ collection")
+    callback = NoopCallback()
+    callback.init_callback(model)
+    callback.on_training_start({}, {})
+    start_timesteps = int(model.num_timesteps)
+    started = time.perf_counter()
+    replay = getattr(model, "_nosl_is_az_replay", None)
+    replay_cursor_before = None if replay is None else (
+        int(replay.position), int(replay.size), int(replay.total_added)
+    )
+    numpy_state = np.random.get_state()
+    python_state = random.getstate()
+    torch_state = th.get_rng_state()
+    cuda_state = (
+        th.cuda.get_rng_state_all() if model.device.type == "cuda" else None
+    )
+    warmup_seed = int(seed) & 0xFFFFFFFF
+    np.random.seed(warmup_seed)
+    random.seed(warmup_seed)
+    th.manual_seed(warmup_seed)
+    if model.device.type == "cuda":
+        th.cuda.manual_seed_all(warmup_seed)
+    old_nonce_rng = getattr(model, "_startup_occupancy_nonce_rng", None)
+    model._startup_occupancy_nonce_rng = np.random.default_rng(
+        np.random.SeedSequence((warmup_seed, 0x4E4F4E43))
+    )
+    model._startup_occupancy_sampling = True
+    try:
+        for _ in range(budget_steps // rollout_steps):
+            states = model.env.env_method("startup_occupancy_state")
+            if all(state["accepted"] for state in states):
+                break
+            if not model.collect_rollouts(
+                model.env, callback, model.rollout_buffer,
+                n_rollout_steps=rollout_steps,
+            ):
+                raise RuntimeError("occupancy collection returned False")
+    finally:
+        callback.on_training_end()
+        model._startup_occupancy_sampling = False
+        model._startup_occupancy_nonce_rng = old_nonce_rng
+        np.random.set_state(numpy_state)
+        random.setstate(python_state)
+        th.set_rng_state(torch_state)
+        if cuda_state is not None:
+            th.cuda.set_rng_state_all(cuda_state)
+    states = model.env.env_method("startup_occupancy_state")
+    if not all(state["accepted"] for state in states):
+        raise RuntimeError(
+            "occupancy startup exhausted its budget without all environments "
+            "accepted; no formal collection or optimizer update was started"
+        )
+    model.env.env_method("startup_occupancy_release")
+    if hasattr(model.env, "episode_lengths"):
+        model.env.episode_lengths[:] = [state["age"] for state in states]
+    if hasattr(model.env, "episode_returns"):
+        model.env.episode_returns[:] = [
+            state["episode_return"] for state in states
+        ]
+    model._last_episode_starts = np.asarray(
+        [state["age"] == 0 for state in states], dtype=bool
+    )
+    discarded = int(model.num_timesteps) - start_timesteps
+    if discarded % (model.env.num_envs * rollout_steps):
+        raise RuntimeError("occupancy startup transition count is misaligned")
+    model.num_timesteps = start_timesteps
+    model.rollout_buffer.reset()
+    model._wait_for_reasoning_samples()
+    model._reasoning_rollout_samples = []
+    discarded_completed_roots = len(model._nosl_is_az_samples)
+    discarded_pending_roots = sum(
+        len(roots) for roots in model._nosl_is_az_pending_fights
+    )
+    model._nosl_is_az_samples = []
+    # Formal sampling begins at the accepted state. Warmup roots before that
+    # boundary must not later enter replay when the current fight terminates.
+    model._nosl_is_az_pending_fights = [[] for _ in range(model.env.num_envs)]
+    replay_cursor_after = None if replay is None else (
+        int(replay.position), int(replay.size), int(replay.total_added)
+    )
+    if replay_cursor_after != replay_cursor_before:
+        raise RuntimeError("occupancy startup mutated replay before formal training")
+    for name in ("ep_info_buffer", "ep_success_buffer"):
+        buffer = getattr(model, name, None)
+        if buffer is not None:
+            buffer.clear()
+    logger = getattr(model, "logger", None)
+    for name in ("name_to_value", "name_to_count", "name_to_excluded"):
+        values = getattr(logger, name, None)
+        if values is not None:
+            values.clear()
+    return {
+        "discarded_transitions_local": discarded,
+        "collection_blocks": discarded // (model.env.num_envs * rollout_steps),
+        "rejected_episodes": sum(state["rejected_episodes"] for state in states),
+        "real_transitions_local": sum(state["real_steps"] for state in states),
+        "discarded_completed_combat_roots": discarded_completed_roots,
+        "discarded_pending_combat_roots": discarded_pending_roots,
+        "replay_size": 0 if replay is None else int(replay.size),
+        "active_age_mean": float(np.mean([state["age"] for state in states])),
+        "active_age_max": max(state["age"] for state in states),
+        "wall_sec": time.perf_counter() - started,
+    }
+
+
 @dataclass(frozen=True)
 class Peer:
     rank: int
@@ -219,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Before the first update, hold each environment for an independent "
         "stratified-random delay in [0, N], run N policy steps, then discard "
         "all warmup samples. N must be a multiple of --n-steps.",
+    )
+    parser.add_argument(
+        "--startup-occupancy-budget", type=int, default=0,
+        help="Maximum pre-training real environment steps per env, in n_steps "
+        "blocks. Rejection-sample episode ages from the live frozen-policy "
+        "occupancy distribution. Fail closed if any env remains unaccepted.",
     )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -1643,6 +1764,10 @@ def main() -> None:
         raise ValueError("--startup-stagger-steps must be non-negative")
     if args.startup_stagger_steps % args.n_steps:
         raise ValueError("--startup-stagger-steps must be a multiple of --n-steps")
+    if args.startup_occupancy_budget < 0 or args.startup_occupancy_budget % args.n_steps:
+        raise ValueError("--startup-occupancy-budget must be a non-negative multiple of --n-steps")
+    if args.startup_occupancy_budget and args.startup_stagger_steps:
+        raise ValueError("occupancy sampling and startup stagger are mutually exclusive")
     if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:
         raise ValueError("--nosl-is-az-simulations must be positive")
     if args.nosl_is_az_depth is not None and args.nosl_is_az_depth < 0:
@@ -2275,6 +2400,16 @@ def main() -> None:
             "STARTUP_STAGGER " + json.dumps(startup_stagger, sort_keys=True),
             flush=True,
         )
+    startup_occupancy = run_startup_occupancy(
+        model, budget_steps=args.startup_occupancy_budget,
+        rollout_steps=args.n_steps,
+        seed=args.seed + args.rank * 1_000_003 + 0x4F434355,
+    )
+    if startup_occupancy:
+        startup_occupancy["discarded_transitions_global"] = (
+            startup_occupancy["discarded_transitions_local"] * args.world_size
+        )
+        print("STARTUP_OCCUPANCY " + json.dumps(startup_occupancy, sort_keys=True), flush=True)
     callback.on_training_start(locals(), globals())
 
     records = []
@@ -2633,6 +2768,8 @@ def main() -> None:
             }
             if update == 0 and startup_stagger:
                 record["startup_stagger"] = dict(startup_stagger)
+            if update == 0 and startup_occupancy:
+                record["startup_occupancy"] = dict(startup_occupancy)
             record["reasoning_time_fraction"] = (
                 record["reasoning_total_sec"]
                 / max(record["total_sec_rank"], 1e-9)
@@ -2864,6 +3001,11 @@ def main() -> None:
                         f"startup_stagger/{key}": value
                         for key, value in startup_stagger.items()
                         if value is not None
+                    })
+                if update == 0 and startup_occupancy:
+                    wandb_payload.update({
+                        f"startup_occupancy/{key}": value
+                        for key, value in startup_occupancy.items()
                     })
                 if args.hierarchical_combat_hp:
                     wandb_payload.update({

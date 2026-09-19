@@ -1,12 +1,17 @@
 from collections import deque
+import random
 from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
+import pytest
+import torch
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
-from rl.training.distributed_sb3 import run_startup_stagger
-from rl.training.environments import StartupStaggerWrapper, startup_stagger_delays
+from rl.training.distributed_sb3 import run_startup_occupancy, run_startup_stagger
+from rl.training.environments import (
+    StartupOccupancyWrapper, StartupStaggerWrapper, startup_stagger_delays,
+)
 
 
 class CounterEnv(gym.Env):
@@ -82,6 +87,8 @@ class FakeBuffer:
 class FakeModel:
     def __init__(self, env):
         self.env = env
+        self.device = SimpleNamespace(type="cpu")
+        self.nosl_is_az = True
         self.num_timesteps = 100
         self.rollout_buffer = FakeBuffer()
         self._last_obs = env.reset()
@@ -160,4 +167,115 @@ def test_active_floor_is_not_the_final_floor_of_completed_episodes():
     assert result["completed_win_rate_last_100"] == 0.0
     assert result["synthetic_release_count"] == 1
     assert model.num_timesteps == 100
+    env.close()
+
+
+class RandomLengthEnv(CounterEnv):
+    def reset(self, *, seed=None, options=None):
+        observation, info = super().reset(seed=seed, options=options)
+        self.length = 1 if self.np_random.integers(2) else 3
+        return observation, info
+
+    def step(self, action):
+        observation, reward, _, _, info = super().step(action)
+        return observation, reward, self.value >= self.length, False, info
+
+
+def test_occupancy_sampler_weights_episode_length_not_episode_count():
+    ages = []
+    for seed in range(1500):
+        env = StartupOccupancyWrapper(
+            RandomLengthEnv(), max_episode_steps=3, seed=seed,
+        )
+        env.reset(seed=seed + 100_000)
+        for _ in range(120):
+            if env.startup_occupancy_state()["accepted"]:
+                ages.append(env.startup_occupancy_state()["age"])
+                break
+            _, _, terminated, truncated, _ = env.step(0)
+            if terminated or truncated:
+                env.reset()
+        else:
+            pytest.fail("occupancy rejection did not accept within budget")
+        env.close()
+    proportions = np.bincount(ages, minlength=3) / len(ages)
+    # L=1 and L=3 are equiprobable. Across all real decision instants,
+    # ages 0,1,2 have expected masses 2/4,1/4,1/4, not 1/3 each.
+    np.testing.assert_allclose(proportions, [0.5, 0.25, 0.25], atol=0.045)
+
+
+def test_occupancy_accepted_state_does_not_advance_before_release():
+    env = StartupOccupancyWrapper(CounterEnv(), max_episode_steps=3, seed=4)
+    env.reset()
+    env._target_age = 1
+    env._accepted = False
+    observation, reward, *_ = env.step(0)
+    assert observation.tolist() == [1]
+    assert reward == 1
+    for _ in range(4):
+        observation, reward, terminated, truncated, info = env.step(0)
+        assert observation.tolist() == [1]
+        assert reward == 0
+        assert not terminated and not truncated
+        assert info["startup_occupancy_paused"] is True
+    assert env.startup_occupancy_state()["real_steps"] == 1
+    env.startup_occupancy_release()
+    assert env.step(0)[0].tolist() == [2]
+    env.close()
+
+
+def test_occupancy_startup_preserves_replay_rng_and_drops_warmup_roots():
+    env = VecMonitor(DummyVecEnv([
+        lambda: StartupOccupancyWrapper(
+            gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=3),
+            max_episode_steps=3, seed=10,
+        ),
+        lambda: StartupOccupancyWrapper(
+            gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=3),
+            max_episode_steps=3, seed=11,
+        ),
+    ]))
+    model = FakeModel(env)
+    model._nosl_is_az_pending_fights = [["live-0"], ["live-1"]]
+    model._nosl_is_az_replay = SimpleNamespace(
+        position=37, size=524288, total_added=3000000,
+    )
+    numpy_rng, python_rng, torch_rng = (
+        np.random.get_state(), random.getstate(), torch.get_rng_state().clone()
+    )
+    result = run_startup_occupancy(
+        model, budget_steps=40, rollout_steps=2, seed=2026,
+    )
+    assert result["collection_blocks"] >= 1
+    assert result["discarded_transitions_local"] == 4 * result["collection_blocks"]
+    assert model.num_timesteps == 100
+    assert model._nosl_is_az_pending_fights == [[], []]
+    assert model._nosl_is_az_samples == []
+    assert (model._nosl_is_az_replay.position, model._nosl_is_az_replay.size,
+            model._nosl_is_az_replay.total_added) == (37, 524288, 3000000)
+    assert result["real_transitions_local"] < result["discarded_transitions_local"]
+    assert list(env.episode_lengths) == [
+        state["age"] for state in env.env_method("startup_occupancy_state")
+    ]
+    np.testing.assert_allclose(
+        env.episode_returns,
+        [state["episode_return"] for state in env.env_method("startup_occupancy_state")],
+    )
+    assert np.array_equal(np.random.get_state()[1], numpy_rng[1])
+    assert random.getstate() == python_rng
+    assert torch.equal(torch.get_rng_state(), torch_rng)
+    assert list(model.ep_info_buffer) == []
+    assert all(state["accepted"] for state in env.env_method("startup_occupancy_state"))
+    env.close()
+
+
+def test_occupancy_budget_exhaustion_does_not_start_formal_update():
+    env = DummyVecEnv([lambda: StartupOccupancyWrapper(
+        gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=1),
+        max_episode_steps=3, seed=0,
+    )])
+    model = FakeModel(env)
+    with pytest.raises(RuntimeError, match="exhausted its budget"):
+        run_startup_occupancy(model, budget_steps=2, rollout_steps=2, seed=77)
+    assert model.num_timesteps == 102
     env.close()

@@ -8,7 +8,7 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies import model as model_utils
-from rl.tasks.wholerun import WholeRunTask
+from rl.tasks.wholerun import WholeRunTask, _MAX_EPISODE_STEPS
 from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
 
 
@@ -83,6 +83,89 @@ class StartupStaggerWrapper(gym.Wrapper):
             "steps_since_reset": self._steps_since_reset,
             "floor": run_stats.get("floor"),
             "act": run_stats.get("act"),
+        }
+
+
+class StartupOccupancyWrapper(gym.Wrapper):
+    """Select a live state from the frozen policy's renewal occupancy measure.
+
+    Draw an age uniformly from the episode cap and reject the whole attempt if
+    the episode ends earlier. Each live (trajectory, age) pair then has equal
+    unnormalized probability, so long episodes receive their natural weight.
+    Accepted environments remain paused until formal collection begins.
+    """
+
+    def __init__(self, env: gym.Env, *, max_episode_steps: int, seed: int):
+        super().__init__(env)
+        if max_episode_steps < 1:
+            raise ValueError("occupancy sampling requires a positive episode cap")
+        self._max_episode_steps = int(max_episode_steps)
+        self._age_rng = np.random.default_rng(seed)
+        self._target_age = 0
+        self._age = 0
+        self._episode_return = 0.0
+        self._accepted = False
+        self._released = False
+        self._rejected_episodes = 0
+        self._real_steps = 0
+        self._last_observation = None
+        self._last_info: dict = {}
+
+    def reset(self, **kwargs):
+        observation, info = self.env.reset(**kwargs)
+        self._last_observation = observation
+        self._last_info = dict(info)
+        self._age = 0
+        self._episode_return = 0.0
+        if not self._accepted:
+            self._target_age = int(self._age_rng.integers(self._max_episode_steps))
+            self._accepted = self._target_age == 0
+        return observation, info
+
+    def step(self, action):
+        if self._accepted and not self._released:
+            info = {
+                key: value for key, value in self._last_info.items()
+                if key not in (
+                    "nosl_value_boundary_observation",
+                    "nosl_value_terminal_observation",
+                    "reasoning_trace",
+                    "episode",
+                )
+            }
+            info["startup_occupancy_paused"] = True
+            return (
+                self._last_observation, 0.0, False, False, info,
+            )
+        observation, reward, terminated, truncated, info = self.env.step(action)
+        self._real_steps += 1
+        self._episode_return += float(reward)
+        self._last_observation = observation
+        self._last_info = dict(info)
+        self._age += 1
+        if not self._accepted:
+            if terminated or truncated:
+                self._rejected_episodes += 1
+            elif self._age == self._target_age:
+                self._accepted = True
+                info = {**info, "startup_occupancy_accepted": True}
+        return observation, reward, terminated, truncated, info
+
+    def startup_occupancy_release(self) -> dict[str, int | bool | float]:
+        if not self._accepted:
+            raise RuntimeError("cannot release an unaccepted occupancy sample")
+        self._released = True
+        return self.startup_occupancy_state()
+
+    def startup_occupancy_state(self) -> dict[str, int | bool | float]:
+        return {
+            "accepted": self._accepted,
+            "released": self._released,
+            "age": self._age,
+            "episode_return": self._episode_return,
+            "target_age": self._target_age,
+            "rejected_episodes": self._rejected_episodes,
+            "real_steps": self._real_steps,
         }
 
 
@@ -163,6 +246,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     expected_space = getattr(model, "observation_space", None)
 
     stagger_steps = int(getattr(args, "startup_stagger_steps", 0))
+    occupancy_budget = int(getattr(args, "startup_occupancy_budget", 0))
+    if stagger_steps and occupancy_budget:
+        raise ValueError("startup stagger and occupancy sampling are mutually exclusive")
     stagger_delays = startup_stagger_delays(
         seed=args.seed,
         rank=args.rank,
@@ -170,18 +256,26 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         span_steps=stagger_steps,
     )
 
-    def compat_env_fn(hold_steps: int):
+    def compat_env_fn(hold_steps: int, env_index: int):
         def make():
             env = base_env_fn()
             if expected_space is not None:
                 env = CheckpointObservationCompat(env, expected_space)
             if stagger_steps:
                 env = StartupStaggerWrapper(env, hold_steps=hold_steps)
+            if occupancy_budget:
+                env = StartupOccupancyWrapper(
+                    env, max_episode_steps=_MAX_EPISODE_STEPS,
+                    seed=int(np.random.SeedSequence((
+                        int(args.seed) & 0xFFFFFFFF, int(args.rank), env_index,
+                        0x4F434355,
+                    )).generate_state(1)[0]),
+                )
             return env
 
         return make
 
-    env_fns = [compat_env_fn(delay) for delay in stagger_delays]
+    env_fns = [compat_env_fn(delay, index) for index, delay in enumerate(stagger_delays)]
     if args.vec == "subproc":
         if args.envs_per_worker == 1:
             venv = CachedMaskSubprocVecEnv(

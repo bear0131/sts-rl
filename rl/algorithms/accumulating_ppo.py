@@ -860,6 +860,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
         }
         n_steps = 0
         action_masks = None
+        startup_paused: set[int] = set()
+        if getattr(self, "_startup_occupancy_sampling", False):
+            startup_paused = {
+                index for index, state in enumerate(
+                    env.env_method("startup_occupancy_state")
+                )
+                if state["accepted"] and not state["released"]
+            }
         started = time.perf_counter()
 
         upper_rules = getattr(self, "nosl_is_az_upper_strategy", "model") == "rules"
@@ -941,12 +949,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # sends distinct logits/nonces to all combat workers concurrently.
             combat_indices = [
                 index for index in range(env.num_envs)
-                if int(phase[index]) == combat_phase
+                if int(phase[index]) == combat_phase and index not in startup_paused
             ]
             if upper_rules:
                 upper_results = call_workers("overworld_rule_decision", {
                     index: ((), {}) for index in range(env.num_envs)
-                    if int(phase[index]) != combat_phase
+                    if int(phase[index]) != combat_phase and index not in startup_paused
                 })
                 for index, action in upper_results.items():
                     if action is None:
@@ -961,7 +969,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
             if combat_indices:
                 begin_calls = {}
                 for env_index in combat_indices:
+                    startup_nonce_rng = getattr(
+                        self, "_startup_occupancy_nonce_rng", None
+                    )
                     state_nonce = (
+                        int(startup_nonce_rng.integers(
+                            0, 1 << 64, dtype=np.uint64
+                        ))
+                        if startup_nonce_rng is not None else
                         int(self.nosl_is_az_master_nonce)
                         ^ (int(self.num_timesteps) * 0x9E3779B97F4A7C15)
                         ^ (int(n_steps) * 0xD1B54A32D192ED03)
@@ -1180,7 +1195,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 result_by_index[index] = response["result"]
 
             for env_index in range(env.num_envs):
-                if int(phase[env_index]) != combat_phase:
+                if (
+                    int(phase[env_index]) != combat_phase
+                    or env_index in startup_paused
+                ):
                     continue
                 result = result_by_index[env_index]
                 actions_np[env_index] = int(result["action"])
@@ -1226,6 +1244,22 @@ class AccumulatingMaskablePPO(MaskablePPO):
             log_probs = distribution.log_prob(actions).float()
             env_started = time.perf_counter()
             new_obs, rewards, dones, infos = env.step(actions_np)
+            if getattr(self, "_startup_occupancy_sampling", False):
+                startup_paused.update(
+                    index for index, info in enumerate(infos)
+                    if info.get("startup_occupancy_accepted")
+                )
+                reset_indices = np.flatnonzero(dones).tolist()
+                if reset_indices:
+                    startup_paused.update(
+                        index for index, state in zip(
+                            reset_indices,
+                            env.env_method(
+                                "startup_occupancy_state", indices=reset_indices,
+                            ),
+                        )
+                        if state["accepted"] and not state["released"]
+                    )
             nosl_timings["env_step_seconds"] += (
                 time.perf_counter() - env_started
             )
@@ -1235,7 +1269,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 new_obs, dones, infos
             )
             for env_index in range(env.num_envs):
-                if int(phase[env_index]) != combat_phase:
+                if (
+                    int(phase[env_index]) != combat_phase
+                    or env_index in startup_paused
+                ):
                     continue
                 # Only the boundary on the action actually taken belongs to
                 # this trajectory.  It receives the fight's eventual HP label

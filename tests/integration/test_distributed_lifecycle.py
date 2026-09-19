@@ -10,7 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.training import distributed_sb3
-from rl.training.environments import StartupStaggerWrapper
+from rl.training.environments import StartupOccupancyWrapper, StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
@@ -21,6 +21,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer'), (True, 'rules', 'mlp')])
 def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
+    occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
 
     def make_env(*_):
         def factory(hold_steps):
@@ -31,7 +32,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                 )
                 return (
                     StartupStaggerWrapper(env, hold_steps=hold_steps)
-                    if staggered else env
+                    if staggered else
+                    StartupOccupancyWrapper(env, max_episode_steps=12, seed=hold_steps + 11)
+                    if occupancy else env
                 )
             return build
 
@@ -92,6 +95,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         '--rollout-resource-interval', '0.1']
     if staggered:
         argv += ['--startup-stagger-steps', '16']
+    if occupancy:
+        argv += ['--startup-occupancy-budget', '160']
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -109,6 +114,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     if staggered:
         assert payloads[0]['startup_stagger/span_steps'] == 16
         assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32
+    if occupancy:
+        assert payloads[0]['startup_occupancy/discarded_transitions_local'] >= 32
+        assert payloads[0]['startup_occupancy/collection_blocks'] >= 1
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [True]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
