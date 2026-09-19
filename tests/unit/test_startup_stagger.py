@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import gymnasium as gym
 import numpy as np
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
 from rl.training.distributed_sb3 import run_startup_stagger
 from rl.training.environments import StartupStaggerWrapper, startup_stagger_delays
@@ -107,12 +107,12 @@ class FakeModel:
         rollout_buffer.reset()
         callback.on_rollout_start()
         for _ in range(n_rollout_steps):
-            self._last_obs, _rewards, dones, _infos = env.step(
+            self._last_obs, _rewards, dones, infos = env.step(
                 np.zeros(env.num_envs, dtype=np.int64)
             )
             self._last_episode_starts = dones
             self.num_timesteps += env.num_envs
-            callback.update_locals({})
+            callback.update_locals({"infos": infos})
             assert callback.on_step()
         callback.on_rollout_end()
         return True
@@ -131,8 +131,33 @@ def test_warmup_discards_counters_samples_and_keeps_staggered_states():
     assert result["discarded_transitions_local"] == 8
     assert result["age_min"] == 0
     assert result["age_max"] == 4
+    assert result["completed_episode_count"] == 0
+    assert result["synthetic_release_count"] == 1
     assert model._nosl_is_az_samples == []
     assert model._nosl_is_az_pending_fights == [[], []]
     assert list(model.ep_info_buffer) == []
     assert model.logger.name_to_value == {}
+    env.close()
+
+
+def test_active_floor_is_not_the_final_floor_of_completed_episodes():
+    env = VecMonitor(DummyVecEnv([
+        lambda: StartupStaggerWrapper(
+            gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=3),
+            hold_steps=0,
+        ),
+        lambda: StartupStaggerWrapper(
+            gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=3),
+            hold_steps=4,
+        ),
+    ]))
+    model = FakeModel(env)
+    result = run_startup_stagger(model, span_steps=6, rollout_steps=2)
+
+    assert result["active_floor_mean"] == 1.0
+    assert result["completed_episode_count"] == 2
+    assert result["completed_floor_mean_last_100"] == 3.0
+    assert result["completed_win_rate_last_100"] == 0.0
+    assert result["synthetic_release_count"] == 1
+    assert model.num_timesteps == 100
     env.close()

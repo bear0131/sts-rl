@@ -53,13 +53,35 @@ class NoopCallback(BaseCallback):
         return True
 
 
+class StartupStaggerMetricsCallback(NoopCallback):
+    def __init__(self) -> None:
+        super().__init__()
+        self.completed_floors: list[int] = []
+        self.completed_wins: list[int] = []
+        self.synthetic_releases = 0
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", ()):
+            if info.get("startup_stagger_hold"):
+                self.synthetic_releases += int(info.get("startup_stagger_remaining") == 0)
+                continue
+            if "episode" not in info or "run_stats" not in info:
+                continue
+            stats = info["run_stats"]
+            self.completed_floors.append(int(stats["floor"]))
+            self.completed_wins.append(int(
+                stats["act"] > 3 or stats.get("outcome") == "PLAYER_VICTORY"
+            ))
+        return True
+
+
 def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
     """Advance staggered environments while discarding every warmup sample."""
     if span_steps == 0:
         return {}
     if span_steps < 0 or span_steps % rollout_steps:
         raise ValueError("startup stagger span must be a multiple of n_steps")
-    callback = NoopCallback()
+    callback = StartupStaggerMetricsCallback()
     callback.init_callback(model)
     callback.on_training_start({}, {})
     start_timesteps = int(model.num_timesteps)
@@ -107,7 +129,8 @@ def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
     delays = [int(state["initial_hold_steps"]) for state in states]
     ages = [int(state["steps_since_reset"]) for state in states]
     floors = [state.get("floor") for state in states]
-    finite_floors = [int(value) for value in floors if value is not None]
+    active_floors = [int(value) for value in floors if value is not None]
+    recent_completed = callback.completed_floors[-100:]
     return {
         "span_steps": int(span_steps),
         "rollout_blocks": int(span_steps // rollout_steps),
@@ -118,9 +141,18 @@ def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
         "age_min": min(ages),
         "age_mean": float(np.mean(ages)),
         "age_max": max(ages),
-        "floor_min": min(finite_floors) if finite_floors else None,
-        "floor_mean": float(np.mean(finite_floors)) if finite_floors else None,
-        "floor_max": max(finite_floors) if finite_floors else None,
+        "active_floor_min": min(active_floors) if active_floors else None,
+        "active_floor_mean": float(np.mean(active_floors)) if active_floors else None,
+        "active_floor_max": max(active_floors) if active_floors else None,
+        "completed_episode_count": len(callback.completed_floors),
+        "completed_floor_mean_last_100": (
+            float(np.mean(recent_completed)) if recent_completed else None
+        ),
+        "completed_win_rate_last_100": (
+            float(np.mean(callback.completed_wins[-100:]))
+            if recent_completed else None
+        ),
+        "synthetic_release_count": callback.synthetic_releases,
         "wall_sec": time.perf_counter() - started,
     }
 
