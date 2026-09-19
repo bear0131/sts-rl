@@ -247,6 +247,7 @@ def test_occupancy_startup_preserves_replay_rng_and_drops_warmup_roots():
         model, budget_steps=40, rollout_steps=2, seed=2026,
     )
     assert result["collection_blocks"] >= 1
+    assert result["max_age"] == 3
     assert result["discarded_transitions_local"] == 4 * result["collection_blocks"]
     assert model.num_timesteps == 100
     assert model._nosl_is_az_pending_fights == [[], []]

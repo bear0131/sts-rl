@@ -266,6 +266,7 @@ def run_startup_occupancy(
         "discarded_completed_combat_roots": discarded_completed_roots,
         "discarded_pending_combat_roots": discarded_pending_roots,
         "replay_size": 0 if replay is None else int(replay.size),
+        "max_age": int(states[0]["max_age"]),
         "active_age_mean": float(np.mean([state["age"] for state in states])),
         "active_age_max": max(state["age"] for state in states),
         "wall_sec": time.perf_counter() - started,
@@ -340,6 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum pre-training real environment steps per env, in n_steps "
         "blocks. Rejection-sample episode ages from the live frozen-policy "
         "occupancy distribution. Fail closed if any env remains unaccepted.",
+    )
+    parser.add_argument(
+        "--startup-occupancy-max-age", type=int, default=6000,
+        help="Exclusive upper bound for sampled startup ages. Values below "
+        "the environment episode cap sample the occupancy distribution "
+        "truncated to this many decisions without truncating formal episodes.",
     )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -1766,6 +1773,8 @@ def main() -> None:
         raise ValueError("--startup-stagger-steps must be a multiple of --n-steps")
     if args.startup_occupancy_budget < 0 or args.startup_occupancy_budget % args.n_steps:
         raise ValueError("--startup-occupancy-budget must be a non-negative multiple of --n-steps")
+    if args.startup_occupancy_max_age < 1:
+        raise ValueError("--startup-occupancy-max-age must be positive")
     if args.startup_occupancy_budget and args.startup_stagger_steps:
         raise ValueError("occupancy sampling and startup stagger are mutually exclusive")
     if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:

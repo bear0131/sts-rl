@@ -96,7 +96,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     if staggered:
         argv += ['--startup-stagger-steps', '16']
     if occupancy:
-        argv += ['--startup-occupancy-budget', '160']
+        argv += [
+            '--startup-occupancy-max-age', '12',
+            '--startup-occupancy-budget', '160',
+        ]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -115,6 +118,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert payloads[0]['startup_stagger/span_steps'] == 16
         assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32
     if occupancy:
+        assert payloads[0]['startup_occupancy/max_age'] == 12
         assert payloads[0]['startup_occupancy/discarded_transitions_local'] >= 32
         assert payloads[0]['startup_occupancy/collection_blocks'] >= 1
     assert identities[0]['id'] == 'ci-existing-run'

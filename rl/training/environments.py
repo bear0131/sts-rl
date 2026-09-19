@@ -161,6 +161,7 @@ class StartupOccupancyWrapper(gym.Wrapper):
         return {
             "accepted": self._accepted,
             "released": self._released,
+            "max_age": self._max_episode_steps,
             "age": self._age,
             "episode_return": self._episode_return,
             "target_age": self._target_age,
@@ -247,6 +248,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
 
     stagger_steps = int(getattr(args, "startup_stagger_steps", 0))
     occupancy_budget = int(getattr(args, "startup_occupancy_budget", 0))
+    occupancy_max_age = int(getattr(
+        args, "startup_occupancy_max_age", _MAX_EPISODE_STEPS,
+    ))
     if stagger_steps and occupancy_budget:
         raise ValueError("startup stagger and occupancy sampling are mutually exclusive")
     stagger_delays = startup_stagger_delays(
@@ -265,7 +269,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                 env = StartupStaggerWrapper(env, hold_steps=hold_steps)
             if occupancy_budget:
                 env = StartupOccupancyWrapper(
-                    env, max_episode_steps=_MAX_EPISODE_STEPS,
+                    env, max_episode_steps=occupancy_max_age,
                     seed=int(np.random.SeedSequence((
                         int(args.seed) & 0xFFFFFFFF, int(args.rank), env_index,
                         0x4F434355,
