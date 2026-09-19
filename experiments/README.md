@@ -22,3 +22,10 @@ artifact 传输。
 拼在双引号字符串中；它们可能先被本地 PowerShell 展开。优先复用 launcher 中
 `Invoke-Remote` 的 UTF-8/base64 命令封装。临时只读命令若不能复用该入口，应先把完整
 命令编码后发送，再在远端解码交给 Bash；不要靠多层反斜杠猜测两边 shell 的转义顺序。
+
+训练进入正式更新循环后应通过 `--stop-file` 协调停止。若必须在首轮更新前中止预热，
+只向 launcher 记录的父 PID 发信号并不够：`SubprocVecEnv` 的 worker 会保留相同的
+`rl.training.distributed_sb3` 命令行并可能成为孤儿。此时必须先按完整 `--run-id` 核对
+命令行，再终止该 run 的全部匹配进程；随后在每台机器确认
+`pgrep -fc '[r]l.training.distributed_sb3'` 为0，才能启动下一 run。launcher 的 `status`
+只验证 pid 文件中的父进程，不能用它单独证明 worker 已清空。
