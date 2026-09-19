@@ -293,6 +293,8 @@ def test_dashboard_assets_expose_independent_evaluation_strategies():
     assert 'data-eval-combat-strategy="planner"' in html
     assert "upper_strategy: evalUpperStrategyValue()" in javascript
     assert "combat_strategy: evalCombatStrategyValue()" in javascript
+    assert "function drawDistribution()" in javascript
+    assert '$("distributionCanvas").addEventListener("mousemove"' in javascript
 
 
 def test_dashboard_composes_evaluation_upper_and_combat_strategies():

@@ -1450,6 +1450,82 @@ function renderEvaluation() {
     : "—";
   drawDistribution();
 }
+
+function drawDistribution() {
+  const canvas = $("distributionCanvas");
+  if (!canvas.offsetParent) return;
+  const {ctx, w, h} = canvasSetup(canvas);
+  ctx.clearRect(0, 0, w, h);
+  distributionBars = [];
+
+  const rows = Object.entries(appState?.evaluation?.death_floors || {})
+    .map(([floor, count]) => ({floor: Number(floor), count: Number(count)}))
+    .filter(row => Number.isFinite(row.floor) && Number.isFinite(row.count) && row.count > 0)
+    .sort((a, b) => a.floor - b.floor);
+  if (!rows.length) {
+    ctx.fillStyle = "#8f9993";
+    ctx.font = '13px "Microsoft YaHei", sans-serif';
+    ctx.fillText("等待死亡楼层样本", 30, 45);
+    $("distributionTooltip").style.display = "none";
+    return;
+  }
+
+  const maxCount = Math.max(...rows.map(row => row.count));
+  const left = 42, bottom = 35, top = 20;
+  const barWidth = (w - left - 20) / rows.length;
+  ctx.strokeStyle = "#46514b";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, h - bottom);
+  ctx.lineTo(w - 15, h - bottom);
+  ctx.stroke();
+  ctx.textAlign = "center";
+  ctx.font = '11px "Segoe UI", sans-serif';
+
+  rows.forEach((row, index) => {
+    const barHeight = (h - bottom - top) * row.count / maxCount;
+    const x = left + index * barWidth + 2;
+    const width = Math.max(3, barWidth - 4);
+    const y = h - bottom - barHeight;
+    distributionBars.push({
+      floor: row.floor, count: row.count, x, y, w: width, h: barHeight,
+    });
+    ctx.fillStyle = row.floor === 16 ? "#d0a94f" : "#be4c43";
+    ctx.fillRect(x, y, width, barHeight);
+    ctx.fillStyle = "#aeb5b0";
+    if (rows.length < 25 || index % 2 === 0) {
+      ctx.fillText(row.floor, x + width / 2, h - 16);
+    }
+    if (barWidth > 24) ctx.fillText(row.count, x + width / 2, y - 5);
+  });
+}
+
+$("distributionCanvas").addEventListener("mousemove", event => {
+  const canvas = event.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const bar = distributionBars.find(item =>
+    x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h
+  );
+  const tooltip = $("distributionTooltip");
+  if (!bar) {
+    tooltip.style.display = "none";
+    return;
+  }
+  const seeds = appState?.evaluation?.death_seeds?.[bar.floor] || [];
+  const shown = seeds.slice(0, 12);
+  const remaining = Math.max(0, seeds.length - shown.length);
+  tooltip.innerHTML = `<strong>第 ${bar.floor} 层 · ${bar.count} 次死亡</strong><br>Seeds：${shown.map(escapeHtml).join("、")}${remaining ? `<br>另有 ${remaining} 个 seed` : ""}`;
+  tooltip.style.display = "block";
+  tooltip.style.left = `${Math.min(canvas.offsetLeft + x + 14, canvas.parentElement.clientWidth - 260)}px`;
+  tooltip.style.top = `${Math.max(48, canvas.offsetTop + y - 58)}px`;
+});
+$("distributionCanvas").addEventListener("mouseleave", () => {
+  $("distributionTooltip").style.display = "none";
+});
+
 function setDefaultInput(id, value) {
   const node = $(id);
   if (node && !node.value && value != null) node.value = value;
