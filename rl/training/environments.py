@@ -108,6 +108,7 @@ class StartupOccupancyWrapper(gym.Wrapper):
         self._released = False
         self._rejected_episodes = 0
         self._real_steps = 0
+        self._exclude_current_episode_from_metrics = False
         self._last_observation = None
         self._last_info: dict = {}
 
@@ -149,12 +150,20 @@ class StartupOccupancyWrapper(gym.Wrapper):
             elif self._age == self._target_age:
                 self._accepted = True
                 info = {**info, "startup_occupancy_accepted": True}
+        elif self._released and (terminated or truncated):
+            if self._exclude_current_episode_from_metrics:
+                info = {
+                    **info,
+                    "startup_occupancy_incumbent_episode": True,
+                }
+            self._exclude_current_episode_from_metrics = False
         return observation, reward, terminated, truncated, info
 
     def startup_occupancy_release(self) -> dict[str, int | bool | float]:
         if not self._accepted:
             raise RuntimeError("cannot release an unaccepted occupancy sample")
         self._released = True
+        self._exclude_current_episode_from_metrics = True
         return self.startup_occupancy_state()
 
     def startup_occupancy_state(self) -> dict[str, int | bool | float]:

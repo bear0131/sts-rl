@@ -218,6 +218,7 @@ def _group_worker(
     remote: mp.connection.Connection,
     parent_remote: mp.connection.Connection,
     env_fn_wrappers: list[CloudpickleWrapper],
+    group_index: int,
 ) -> None:
     """Run several independent Gym envs behind one pipe.
 
@@ -225,7 +226,14 @@ def _group_worker(
     simulator state, RNG and NOSL search session.  Commands are batched only
     at the transport boundary; no search tree or hidden state is shared.
     """
+    import faulthandler
+
     from stable_baselines3.common.env_util import is_wrapped
+
+    try:
+        faulthandler.enable(all_threads=True)
+    except (OSError, RuntimeError):
+        pass
 
     parent_remote.close()
     envs = [_patch_env(wrapper.var()) for wrapper in env_fn_wrappers]
@@ -397,11 +405,16 @@ class GroupedMethodStream:
         """Return every group currently ready, or an empty list on timeout."""
         if not self._pending:
             return []
-        ready = wait_for_connections(tuple(self._pending), timeout=timeout)
+        ready = self._owner._wait_for_worker_connections(
+            tuple(self._pending), timeout=timeout,
+        )
         packets = []
         for remote in ready:
             group_index, method_name, submitted_at = self._pending.pop(remote)
-            local_responses = _unpack_leaf_responses(remote.recv())
+            try:
+                local_responses = _unpack_leaf_responses(remote.recv())
+            except (EOFError, BrokenPipeError, OSError) as exc:
+                self._owner._raise_worker_failure(group_index, exc)
             group = self._owner._groups[group_index]
             responses = {
                 int(group[int(local_index)]): response
@@ -460,20 +473,27 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             *[ctx.Pipe() for _group in self._groups], strict=True
         )
         self.processes = []
-        for work_remote, remote, group in zip(
+        for group_index, (work_remote, remote, group) in enumerate(zip(
             self.work_remotes, self.remotes, self._groups, strict=True
-        ):
+        )):
             wrappers = [CloudpickleWrapper(env_fns[index]) for index in group]
             process = ctx.Process(
                 target=_group_worker,
-                args=(work_remote, remote, wrappers),
+                args=(work_remote, remote, wrappers, group_index),
+                name=f"sts-env-group-{group_index}",
                 daemon=True,
             )
             process.start()
             self.processes.append(process)
             work_remote.close()
+        self._worker_sentinels = {
+            process.sentinel: group_index
+            for group_index, process in enumerate(self.processes)
+        }
         self.remotes[0].send(("get_spaces", None))
-        observation_space, action_space = self.remotes[0].recv()
+        observation_space, action_space = self._receive_groups({
+            self.remotes[0]: 0,
+        })[0]
         super().__init__(len(env_fns), observation_space, action_space)
         self._cached_action_masks: list[np.ndarray | None] = [
             None for _ in range(self.num_envs)
@@ -494,10 +514,38 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
     def _receive_groups(self, pending: dict[Any, int]) -> dict[int, Any]:
         results: dict[int, Any] = {}
         while pending:
-            for remote in wait_for_connections(tuple(pending)):
+            for remote in self._wait_for_worker_connections(tuple(pending)):
                 group_index = pending.pop(remote)
-                results[group_index] = _unpack_leaf_responses(remote.recv())
+                try:
+                    results[group_index] = _unpack_leaf_responses(remote.recv())
+                except (EOFError, BrokenPipeError, OSError) as exc:
+                    self._raise_worker_failure(group_index, exc)
         return results
+
+    def _raise_worker_failure(
+        self, group_index: int, cause: BaseException | None = None,
+    ) -> None:
+        process = self.processes[group_index]
+        process.join(timeout=0.1)
+        error = RuntimeError(
+            "grouped environment worker exited unexpectedly: "
+            f"group={group_index} logical_envs={self._groups[group_index]} "
+            f"pid={process.pid} exitcode={process.exitcode}"
+        )
+        if cause is not None:
+            raise error from cause
+        raise error
+
+    def _wait_for_worker_connections(
+        self, connections: tuple[Any, ...], timeout: float | None = None,
+    ) -> list[Any]:
+        watched = (*connections, *self._worker_sentinels)
+        ready = wait_for_connections(watched, timeout=timeout)
+        for item in ready:
+            group_index = self._worker_sentinels.get(item)
+            if group_index is not None:
+                self._raise_worker_failure(group_index)
+        return [item for item in ready if item in connections]
 
     def step_async(self, actions: np.ndarray) -> None:
         actions = np.asarray(actions)
@@ -516,13 +564,15 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             remote: group_index
             for group_index, remote in enumerate(self.remotes)
         }
-        grouped_results = self._receive_groups(pending)
+        try:
+            grouped_results = self._receive_groups(pending)
+        finally:
+            self.waiting = False
         results = [
             grouped_results[group_index][local_index]
             for group_index, group in enumerate(self._groups)
             for local_index, _env_index in enumerate(group)
         ]
-        self.waiting = False
         observations, rewards, dones, infos, self.reset_infos = zip(
             *results, strict=True
         )
@@ -566,11 +616,23 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
         if self.closed:
             return
         if self.waiting:
-            self.step_wait()
-        for remote in self.remotes:
-            remote.send(("close", None))
+            try:
+                self.step_wait()
+            except RuntimeError:
+                pass
+        for remote, process in zip(self.remotes, self.processes, strict=True):
+            if process.is_alive():
+                try:
+                    remote.send(("close", None))
+                except (EOFError, BrokenPipeError, OSError):
+                    pass
         for process in self.processes:
-            process.join()
+            process.join(timeout=5)
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        for remote in self.remotes:
+            remote.close()
         self.closed = True
 
     def get_images(self):

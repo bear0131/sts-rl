@@ -61,7 +61,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             stop_file.touch()
     def init(**kwargs):
         identities.append(kwargs)
-        return SimpleNamespace(finish=lambda: finished.append(True))
+        return SimpleNamespace(
+            finish=lambda *, exit_code=0: finished.append(exit_code)
+        )
     # Replace only the external service; the production payload construction runs.
     monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
         init=init, config=SimpleNamespace(update=lambda *a, **kw: None),
@@ -106,7 +108,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert [p['global_step'] for p in payloads] == [32, 64]
     assert [p['legacy_step'] for p in payloads] == [1, 2]
     assert all(p['dist/avg_grad_sec'] == 0 for p in payloads)
-    assert all('game/layer_5_win_rate' in p for p in payloads)
+    assert all('game/episodes_window' in p for p in payloads)
+    assert all(
+        ('game/layer_5_win_rate' in p) == (p['game/episodes_window'] > 0)
+        for p in payloads
+    )
     from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
     assert all(p[HP_ORDER_PREFIX + '_fraction'] == pytest.approx(
         hp_order_fraction(p) or 0.0) for p in payloads)
@@ -122,7 +128,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert payloads[0]['startup_occupancy/discarded_transitions_local'] >= 32
         assert payloads[0]['startup_occupancy/collection_blocks'] >= 1
     assert identities[0]['id'] == 'ci-existing-run'
-    assert finished == [True]
+    assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     assert restored.nosl_is_az_upper_strategy == upper
     assert restored.policy_kwargs['combat_arch'] == combat_arch
@@ -134,7 +140,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
-    assert finished == [True, True]
+    assert finished == [0, 0]
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()

@@ -1616,6 +1616,60 @@ _DISTRIBUTED_GAME_METRIC_KEYS = (
     *(f"game/floor_won/{floor:02d}" for floor in range(5, 55, 5)),
 )
 
+_DISTRIBUTED_GAME_COUNT_KEYS = (
+    "game/episodes_window",
+    "game/episodes_total",
+    "game/startup_episodes_excluded_total",
+)
+
+
+def _prepare_distributed_game_scalars(
+    callback_scalars: dict[str, float],
+) -> dict[str, float]:
+    """Weight rolling game means by the number of represented episodes."""
+    game_window = float(callback_scalars.get("game/episodes_window", 0.0))
+    values = {
+        key: float(callback_scalars.get(key, 0.0)) * game_window
+        for key in _DISTRIBUTED_GAME_METRIC_KEYS
+    }
+    values.update({
+        key: float(callback_scalars.get(key, 0.0))
+        for key in _DISTRIBUTED_GAME_COUNT_KEYS
+    })
+    return values
+
+
+def _finalize_distributed_game_scalars(
+    aggregate_scalars: dict[str, float], *, world_size: int,
+) -> None:
+    """Convert rank-mean weighted sums and counts into global statistics."""
+    game_window_mean = aggregate_scalars["game/episodes_window"]
+    for key in _DISTRIBUTED_GAME_METRIC_KEYS:
+        aggregate_scalars[key] = (
+            aggregate_scalars[key] / game_window_mean
+            if game_window_mean > 0.0 else 0.0
+        )
+    for key in _DISTRIBUTED_GAME_COUNT_KEYS:
+        aggregate_scalars[key] *= world_size
+
+
+def _add_game_metrics_to_wandb_payload(
+    payload: dict[str, object], record: dict[str, object],
+) -> None:
+    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_COUNT_KEYS})
+    if float(record["game/episodes_window"]) <= 0.0:
+        return
+    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_METRIC_KEYS})
+    for floor in range(5, 55, 5):
+        payload[f"game/layer_{floor}_win_rate"] = record[
+            f"game/floor_won/{floor:02d}"
+        ]
+    for layer in (1, 2, 3):
+        value = payload.get(f"game/act_{layer}_won_mean")
+        if value is not None:
+            payload[f"game/layer_{layer}_win_rate"] = value
+
+
 # NOSL metrics are emitted by the local collector/trainer.  Keep a fixed key
 # set so every rank participates in the same scalar all-reduce even when a
 # rank has no completed combat in a particular rollout.
@@ -2422,6 +2476,7 @@ def main() -> None:
     callback.on_training_start(locals(), globals())
 
     records = []
+    training_failed = False
     try:
         for update in range(args.updates):
             if model.device.type == "cuda":
@@ -2842,10 +2897,9 @@ def main() -> None:
                     "reasoning_time_fraction",
                 )
             }
-            aggregate_scalars.update({
-                key: float(callback_scalars.get(key, 0.0))
-                for key in _DISTRIBUTED_GAME_METRIC_KEYS
-            })
+            aggregate_scalars.update(
+                _prepare_distributed_game_scalars(callback_scalars)
+            )
             aggregate_scalars.update({
                 key: float(callback_scalars.get(key, 0.0))
                 for key in _DISTRIBUTED_NOSL_METRIC_KEYS
@@ -2861,6 +2915,9 @@ def main() -> None:
                 })
             aggregate_scalars = average_scalar_dict(
                 aggregate_scalars, ring_transport
+            )
+            _finalize_distributed_game_scalars(
+                aggregate_scalars, world_size=args.world_size,
             )
             # Both counters underwent the same mean reduction, so their ratio
             # is sum(matches)/sum(count), even with unequal rank populations.
@@ -3025,22 +3082,11 @@ def main() -> None:
                             "overworld_value_loss_mean"
                         ],
                     })
-                wandb_payload.update({
-                    key: record[key]
-                    for key in _DISTRIBUTED_GAME_METRIC_KEYS
-                })
+                _add_game_metrics_to_wandb_payload(wandb_payload, record)
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS
                 })
-                for floor in range(5, 55, 5):
-                    wandb_payload[f"game/layer_{floor}_win_rate"] = record[
-                        f"game/floor_won/{floor:02d}"
-                    ]
-                for layer in (1, 2, 3):
-                    value = wandb_payload.get(f"game/act_{layer}_won_mean")
-                    if value is not None:
-                        wandb_payload[f"game/layer_{layer}_win_rate"] = value
                 legacy_step = wandb_step_for_timesteps(
                     global_timesteps=global_timesteps,
                     global_rollout_size=global_rollout_size,
@@ -3117,13 +3163,16 @@ def main() -> None:
                 args.checkpoint_prefix,
                 args.max_checkpoints,
             )
+    except BaseException:
+        training_failed = True
+        raise
     finally:
         callback.on_training_end()
         if ring_transport is not None:
             ring_transport.close()
         env.close()
         if wandb_run is not None:
-            wandb_run.finish()
+            wandb_run.finish(exit_code=1 if training_failed else 0)
 
     summary = {
         "rank": args.rank,

@@ -8,6 +8,7 @@ import pytest
 import torch
 from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
 
+from rl.tasks.wholerun import StSMetricsCallback
 from rl.training.distributed_sb3 import run_startup_occupancy, run_startup_stagger
 from rl.training.environments import (
     StartupOccupancyWrapper, StartupStaggerWrapper, startup_stagger_delays,
@@ -222,6 +223,72 @@ def test_occupancy_accepted_state_does_not_advance_before_release():
     env.startup_occupancy_release()
     assert env.step(0)[0].tolist() == [2]
     env.close()
+
+
+def test_occupancy_marks_only_the_incumbent_episode_after_release():
+    env = StartupOccupancyWrapper(
+        gym.wrappers.TimeLimit(CounterEnv(), max_episode_steps=3),
+        max_episode_steps=3,
+        seed=4,
+    )
+    env.reset()
+    env._target_age = 1
+    env._accepted = False
+    assert env.step(0)[4]["startup_occupancy_accepted"] is True
+    env.startup_occupancy_release()
+
+    _obs, _reward, terminated, truncated, _info = env.step(0)
+    assert not terminated and not truncated
+    _obs, _reward, _terminated, truncated, info = env.step(0)
+    assert truncated is True
+    assert info["startup_occupancy_incumbent_episode"] is True
+
+    env.reset()
+    env.step(0)
+    env.step(0)
+    _obs, _reward, _terminated, truncated, info = env.step(0)
+    assert truncated is True
+    assert "startup_occupancy_incumbent_episode" not in info
+    env.close()
+
+
+def test_metrics_callback_excludes_incumbent_episode_entirely():
+    recorded = {}
+    callback = StSMetricsCallback(window=100)
+    callback.model = SimpleNamespace(
+        logger=SimpleNamespace(
+            record=lambda key, value: recorded.__setitem__(key, value)
+        )
+    )
+    callback.locals = {"infos": [
+        {
+            "episode": {"r": 999.0, "l": 999},
+            "run_stats": {
+                "floor": 55, "act": 4, "deck_size": 99,
+                "outcome": "PLAYER_VICTORY",
+            },
+            "startup_occupancy_incumbent_episode": True,
+        },
+        {
+            "episode": {"r": 1.0, "l": 7},
+            "run_stats": {
+                "floor": 8, "act": 1, "deck_size": 12,
+                "outcome": "UNDECIDED",
+            },
+        },
+    ]}
+
+    assert callback._on_step() is True
+    callback._on_rollout_end()
+
+    assert recorded["game/episodes_total"] == 1
+    assert recorded["game/episodes_window"] == 1
+    assert recorded["game/startup_episodes_excluded_total"] == 1
+    assert recorded["game/win_rate"] == 0.0
+    assert recorded["game/floor_mean"] == 8
+    assert recorded["game/deck_size_mean"] == 12
+    assert recorded["rollout/ep_rew_mean"] == 1.0
+    assert recorded["rollout/ep_len_mean"] == 7
 
 
 def test_occupancy_startup_preserves_replay_rng_and_drops_warmup_roots():
