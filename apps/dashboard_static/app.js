@@ -595,7 +595,7 @@ function watchCombatStrategyValue() {
   return $("watchCombatStrategy").querySelector("button.active")?.dataset.combatStrategy || "model";
 }
 function setWatchCombatStrategy(strategy, dirty = true) {
-  const value = strategy === "rules" ? "rules" : "model";
+  const value = strategy === "planner" ? "planner" : "model";
   $("watchCombatStrategy").querySelectorAll("button").forEach(button => {
     button.classList.toggle("active", button.dataset.combatStrategy === value);
   });
@@ -641,7 +641,7 @@ $("watchSearchApply").addEventListener("click", async () => {
     watchPolicyModeDirty = false;
     watchCombatStrategyDirty = false;
     renderWatch();
-    toast(appState.watch.combat_strategy === "rules" ? "规则下层已应用" : "Neural NOSL search settings applied");
+    toast(appState.watch.combat_strategy === "planner" ? "回合规划下层已应用" : "Neural NOSL search settings applied");
   } catch (e) {
     toast(e.message);
   } finally {
@@ -763,11 +763,11 @@ const evalSearchControlIds = [
   "evalGumbelInteriorValueMode",
 ];
 function syncEvalSearchControls() {
-  const disabled = evalCombatStrategyValue() === "rules";
+  const disabled = evalCombatStrategyValue() === "planner";
   evalSearchControlIds.forEach(id => { $(id).disabled = disabled; });
 }
 function setEvalCombatStrategy(strategy, dirty = true) {
-  const value = strategy === "rules" ? "rules" : "model";
+  const value = strategy === "planner" ? "planner" : "model";
   $("evalCombatStrategy").querySelectorAll("button").forEach(button => {
     button.classList.toggle("active", button.dataset.evalCombatStrategy === value);
   });
@@ -1308,8 +1308,8 @@ function renderWatch() {
     }
   }
   const d = w.decision;
-  const combatRulesActive = w.phase === "combat" && w.combat_strategy === "rules";
-  $("decisionHeading").textContent = combatRulesActive ? "规则决策" : "模型决策";
+  const turnPlannerActive = w.phase === "combat" && w.combat_strategy === "planner";
+  $("decisionHeading").textContent = turnPlannerActive ? "回合规划决策" : "模型决策";
   $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
   const search = d?.search;
@@ -1327,8 +1327,9 @@ function renderWatch() {
       : "";
     return `<div class="action-row${selected ? " selected" : ""}"><b>${probability}</b><span>${escapeHtml(actionDisplayText(a, w.event))}${detail ? `<small>${detail}</small>` : ""}</span><div class="prob-track"><i style="width:${actingProb == null ? 0 : actingProb*100}%"></i></div></div>`;
   }).join("");
-  $("searchStatus").textContent = combatRulesActive
-    ? `纯规则下层 · ${w.combat_strategy_version || "ironclad-v3"} · 下方为 checkpoint prior 对照`
+  const planner = d?.combat_planner;
+  $("searchStatus").textContent = turnPlannerActive
+    ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
     : search
     ? (search.method === "nosl_is_az_cpp"
       ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
@@ -1432,8 +1433,8 @@ function renderEvaluation() {
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
-  const searchLabel=e.search_method==="combat_rules"
-    ? `纯规则下层 · ${e.combat_strategy_version || "ironclad-v3"}`
+  const searchLabel=e.search_method==="turn_planner"
+    ? `回合规划下层 · ${e.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}`
     : e.search_method==="nosl_is_az_cpp"
     ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";

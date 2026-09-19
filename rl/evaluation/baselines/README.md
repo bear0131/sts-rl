@@ -65,6 +65,17 @@ python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver n
 合并时检查唯一 seed、自然结束、进程退出码及截断情况。分片评测不能声称是单次 128 宽 batch。
 搜索可显式添加 `--leaf-inference cuda-graph`；其 FP32/CUDA 支持范围与验证边界见上级 README。
 
+`--solver turn-planner` 使用 `env/search/turn_planner.py`，自动要求 `native-v1` 完整动作契约。
+配置项为 `--planner-nodes`、`--planner-worlds`、`--planner-beam`、`--planner-depth`、
+`--planner-turns` 和 `--planner-nonce`；`effective_strategy` 记录实际配置及版本。例如：
+
+```bash
+python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 8192 --planner-worlds 2 --planner-beam 8 --planner-depth 16 --planner-turns 1 --planner-nonce 20260918 --episodes 128 --seed 150000 --device cpu --num-envs 8 --max-steps 6000 --timeout 1800 --output runs/local/turn-planner-development.json
+```
+
+它沿用 upper checkpoint，但战斗叶子由人工状态价值评价；可与 `--upper-strategy rules` 组合。
+完整 native action 和 thin action 的 step 数不可直接作为等量吞吐指标。
+
 固定上层权重并不固定其之后的选择：战斗造成不同 HP/药水/奖励状态，上层可能改变路线和抓牌。
 同 seed 整局比较因此衡量整个组合效果。为隔离战斗，沿明确的参考策略轨迹抽取前 N 个战斗开局，
 从**同一完整初态和 RNG** 分别 fork 给规则、下层直接 policy 和 native 搜索。fork/推进只在

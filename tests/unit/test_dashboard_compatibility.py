@@ -272,6 +272,8 @@ def test_dashboard_assets_expose_route_only_boss_fast_forward():
     assert 'data-upper-strategy="rules" class="active"' in html
     assert 'id="watchCombatStrategy"' in html
     assert 'data-combat-strategy="model" class="active"' in html
+    assert 'data-combat-strategy="planner"' in html
+    assert 'ironclad-turn-v8-awakened-phase' in html
     assert 'id="decisionHeading"' in html
     assert "target_boss_act: targetAct" in javascript
     assert "upper_strategy: watchUpperStrategyValue()" in javascript
@@ -288,6 +290,7 @@ def test_dashboard_assets_expose_independent_evaluation_strategies():
     assert 'data-eval-upper-strategy="model" class="active"' in html
     assert 'id="evalCombatStrategy"' in html
     assert 'data-eval-combat-strategy="model" class="active"' in html
+    assert 'data-eval-combat-strategy="planner"' in html
     assert "upper_strategy: evalUpperStrategyValue()" in javascript
     assert "combat_strategy: evalCombatStrategyValue()" in javascript
 
@@ -300,13 +303,15 @@ def test_dashboard_composes_evaluation_upper_and_combat_strategies():
         lock,
         {"method": "direct_policy"},
         upper_strategy="rules",
-        combat_strategy="rules",
+        combat_strategy="planner",
     )
 
     assert isinstance(strategy, dashboard.PhaseStrategy)
     assert isinstance(strategy.default, dashboard.OverworldRuleStrategy)
     assert isinstance(strategy.default.fallback, dashboard.PolicyStrategy)
-    assert isinstance(strategy.routes["combat"], dashboard.CombatRuleStrategy)
+    combat = strategy.routes["combat"]
+    assert isinstance(combat, dashboard.TurnPlannerStrategy)
+    assert combat.config == dashboard._TURN_PLANNER_CONFIG
 
     strategy = dashboard._evaluation_strategy(
         model,
@@ -337,15 +342,15 @@ def test_dashboard_evaluation_status_records_selected_strategies(monkeypatch):
         episodes=1,
         seed=0,
         upper_strategy="rules",
-        combat_strategy="rules",
+        combat_strategy="planner",
     )
 
     assert state.eval_status["upper_strategy"] == "rules"
     assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v1"
     assert state.eval_status["upper_fallback"] == "masked_argmax"
-    assert state.eval_status["combat_strategy"] == "rules"
-    assert state.eval_status["combat_strategy_version"] == "ironclad-v3"
-    assert state.eval_status["search_method"] == "combat_rules"
+    assert state.eval_status["combat_strategy"] == "planner"
+    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+    assert state.eval_status["search_method"] == "turn_planner"
 
     with pytest.raises(ValueError, match="upper strategy"):
         state.start_evaluation(1, 0, upper_strategy="unknown")

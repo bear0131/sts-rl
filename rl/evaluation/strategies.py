@@ -28,9 +28,14 @@ class DecisionRequest:
 
 @dataclass(frozen=True)
 class Decision:
-    action: int
+    action: int | None
     source: str
     diagnostics: dict = field(default_factory=dict)
+    native_action: int | None = None
+
+    def __post_init__(self):
+        if (self.action is None) == (self.native_action is None):
+            raise ValueError('Decision requires exactly one thin or complete native action')
 
 
 class DecisionStrategy(Protocol):
@@ -42,8 +47,12 @@ class DecisionStrategy(Protocol):
 def strategy_manifest(strategy):
     """Record effective composition and search settings, including inherited values."""
     result = {'name': strategy.name}
+    if getattr(strategy, 'combat_action_contract', None):
+        result['combat_action_contract'] = strategy.combat_action_contract
     if getattr(strategy, 'version', None):
         result['version'] = strategy.version
+    if callable(getattr(strategy, 'manifest', None)):
+        result.update(strategy.manifest())
     if getattr(strategy, 'fallback', None) is not None:
         result['fallback'] = strategy_manifest(strategy.fallback)
     if isinstance(strategy, PhaseStrategy):
@@ -131,6 +140,20 @@ class PhaseStrategy:
         self.default, self.routes = default, dict(routes)
         self.predicates = dict(predicates or {})
         self.name = '+'.join([default.name, *[f'{phase}:{solver.name}' for phase, solver in self.routes.items()]])
+
+    @property
+    def combat_action_contract(self):
+        possible = [self.routes.get('combat', self.default)]
+        if 'combat' in self.routes and 'combat' in self.predicates:
+            possible.append(self.default)
+        contracts = {
+            getattr(strategy, 'combat_action_contract', 'legacy')
+            for strategy in possible
+        }
+        unknown = contracts - {'legacy', 'native-v1'}
+        if unknown:
+            raise ValueError(f'unsupported combat action contracts: {unknown}')
+        return 'native-v1' if 'native-v1' in contracts else 'legacy'
 
     def decide(self, requests, *, check=lambda: None):
         grouped = {}
@@ -243,15 +266,35 @@ def rule_strategy(model, args, lock=None):
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': CombatRuleStrategy()})
 
 
+def turn_planner_strategy(model, args, lock=None):
+    from env.search.turn_planner import TurnPlannerConfig
+    from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
+    config = TurnPlannerConfig(
+        worlds=getattr(args, 'planner_worlds', 2),
+        node_budget=getattr(args, 'planner_nodes', 512),
+        beam_width=getattr(args, 'planner_beam', 8),
+        max_depth=getattr(args, 'planner_depth', 16),
+        lookahead_turns=getattr(args, 'planner_turns', 1),
+        master_nonce=getattr(args, 'planner_nonce', 20260918),
+    )
+    return PhaseStrategy(
+        policy_strategy(model, args, lock),
+        {'combat': TurnPlannerStrategy(config)},
+    )
+
+
 # Registration is deliberately a plain mapping, not discovery/import magic.
 # Embedders can pass any DecisionStrategy directly without registering a CLI.
 STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': value_strategy,
-              'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy}
+              'leftmost': lambda model, args, lock=None: LeftmostStrategy(), 'rules': rule_strategy,
+              'turn-planner': turn_planner_strategy}
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
+    if args.solver == 'turn-planner':
+        strategy.routes['combat'].trace = trace
     if combat_model is not None:
         strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
     if getattr(args, 'upper_strategy', 'model') == 'rules':

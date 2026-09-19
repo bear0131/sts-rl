@@ -31,13 +31,10 @@ from rl.evaluation.strategies import (
     PhaseStrategy,
     PolicyStrategy,
 )
-from rl.evaluation.baselines.combat_rules import (
-    CombatRuleStrategy,
-    RULE_VERSION as COMBAT_RULE_VERSION,
-)
 from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
+from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
-from dataclasses import fields
+from dataclasses import asdict, fields
 from rl.search.native import (
     STRICT_SEARCH_DEFAULTS,
     NativeSearchConfig,
@@ -52,6 +49,7 @@ from rl.rules.visualize_card_vectors import (
 from apps.watch import _action_dist
 from env.search.nosl_sampler import NOSLSampler
 from env.search.overworld_rules import OVERWORLD_RULE_VERSION
+from env.search.turn_planner import PLANNER_VERSION, TurnPlannerConfig
 from env.core.cards_vocab import CARD_INDEX
 from env.core.card_language import (
     TOKEN_DOC as CARD_LANGUAGE_DOC,
@@ -551,8 +549,16 @@ _UPPER_STRATEGY_MODEL = "model"
 _UPPER_STRATEGY_RULES = "rules"
 _UPPER_STRATEGIES = {_UPPER_STRATEGY_MODEL, _UPPER_STRATEGY_RULES}
 _COMBAT_STRATEGY_MODEL = "model"
-_COMBAT_STRATEGY_RULES = "rules"
-_COMBAT_STRATEGIES = {_COMBAT_STRATEGY_MODEL, _COMBAT_STRATEGY_RULES}
+_COMBAT_STRATEGY_PLANNER = "planner"
+_COMBAT_STRATEGIES = {_COMBAT_STRATEGY_MODEL, _COMBAT_STRATEGY_PLANNER}
+_TURN_PLANNER_CONFIG = TurnPlannerConfig(
+    worlds=2,
+    node_budget=8192,
+    beam_width=8,
+    max_depth=16,
+    lookahead_turns=1,
+    master_nonce=20260918,
+)
 
 
 def _evaluation_strategy(
@@ -570,8 +576,8 @@ def _evaluation_strategy(
         if upper_strategy == _UPPER_STRATEGY_RULES
         else policy
     )
-    if combat_strategy == _COMBAT_STRATEGY_RULES:
-        combat = CombatRuleStrategy()
+    if combat_strategy == _COMBAT_STRATEGY_PLANNER:
+        combat = TurnPlannerStrategy(_TURN_PLANNER_CONFIG)
     elif search_config.get("method") == "nosl_is_az_cpp":
         combat = PhaseStrategy(
             policy,
@@ -614,6 +620,7 @@ class WatchSession:
             and hasattr(core, "combat_observation_keys")
         )
         self.env = SlayTheSpireEnv(
+            combat_action_contract="native-v1",
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
@@ -622,8 +629,9 @@ class WatchSession:
             event_option_observation=_model.uses_event_option_observation(model),
         )
         self.seed = seed
-        self.history: list[int] = []
+        self.history: list[int | None] = []
         self.native_history: list[int | None] = []
+        self.native_direct_history: list[bool] = []
         self.position = 0
         self.timeline: list[dict] = []
         self.timeline_exhausted = False
@@ -713,7 +721,7 @@ class WatchSession:
         self.stochastic = False
         self.upper_strategy = _UPPER_STRATEGY_RULES
         self.combat_strategy = _COMBAT_STRATEGY_MODEL
-        self._combat_rules = CombatRuleStrategy()
+        self._turn_planner = TurnPlannerStrategy(_TURN_PLANNER_CONFIG)
         self.precompute_enabled = False
         self.route_step_modes: list[str] = []
         self.route_preprocess_target_act: int | None = None
@@ -924,6 +932,7 @@ class WatchSession:
         self.precompute_enabled = bool(precompute)
         self.history = []
         self.native_history = []
+        self.native_direct_history = []
         self.route_step_modes = []
         self.position = 0
         self.timeline = []
@@ -1004,6 +1013,7 @@ class WatchSession:
         self.env._invalidate_backend_cache()
         self.history = []
         self.native_history = []
+        self.native_direct_history = []
         self.route_step_modes = []
         self.position = 0
         self.timeline = []
@@ -1371,7 +1381,7 @@ class WatchSession:
             raise RuntimeError(f"illegal overworld rule action: {rule_action}")
         return rule_action, "overworld_rules"
 
-    def _select_combat_rule_action(self, legal):
+    def _select_combat_planner_action(self, legal):
         request = DecisionRequest(
             self.env,
             self.obs,
@@ -1379,11 +1389,53 @@ class WatchSession:
             self.seed,
             self.position,
         )
-        decision = self._combat_rules.decide([request])[0]
+        decision = self._turn_planner.decide([request])[0]
+        if decision.native_action is not None:
+            native = int(decision.native_action)
+            if native not in self.env.native_combat_actions():
+                raise RuntimeError(f"illegal turn-planner native action: {native}")
+            action = self.env.unwrapped._native_action_to_thin(native)
+            return action, native, dict(decision.diagnostics), decision.source
         action = int(decision.action)
         if not np.any(np.asarray(legal, dtype=np.int64) == action):
-            raise RuntimeError(f"illegal combat rule action: {action}")
-        return action, dict(decision.diagnostics)
+            raise RuntimeError(f"illegal turn-planner fallback action: {action}")
+        return action, None, dict(decision.diagnostics), decision.source
+
+    def _describe_native_action(self, action_bits: int, thin_action: int | None):
+        action = sts.Action(int(action_bits))
+        if thin_action is not None:
+            label = self.env.describe_action(int(thin_action))
+        elif action.action_type == sts.ActionType.SINGLE_CARD_SELECT:
+            candidate = next(
+                (
+                    item
+                    for item in self.env.combat_selection_candidates()
+                    if item.action_bits == int(action_bits)
+                ),
+                None,
+            )
+            label = (
+                f"select {candidate.card[0]}"
+                if candidate is not None and candidate.card is not None
+                else "skip card selection"
+                if candidate is not None
+                else f"select card #{action.source_idx + 1}"
+            )
+        elif action.action_type == sts.ActionType.MULTI_CARD_SELECT:
+            selected = [
+                str(index + 1)
+                for index in range(16)
+                if int(action.source_idx) & (1 << index)
+            ]
+            label = "confirm cards " + (", ".join(selected) if selected else "none")
+        elif action.action_type == sts.ActionType.END_TURN:
+            label = "end turn"
+        else:
+            label = f"native action 0x{int(action_bits):08x}"
+        if action.action_type in (sts.ActionType.CARD, sts.ActionType.POTION):
+            if self.env.unwrapped.thick.bc.is_targeted_action(int(action_bits)):
+                label = f"{label} -> target monster #{int(action.target_idx) + 1}"
+        return label
 
     def _prepare_decision(self):
         if self.terminated or self.truncated:
@@ -1403,28 +1455,43 @@ class WatchSession:
         base = self.env.unwrapped
         probs, value, root_logits = self._policy_outputs(self.obs, mask)
         legal = np.flatnonzero(mask)
-        if legal.size == 0:
+        is_combat = self.info.get("phase") == "combat"
+        planner_active = (
+            is_combat and self.combat_strategy == _COMBAT_STRATEGY_PLANNER
+        )
+        if legal.size == 0 and not planner_active:
             self.decision = None
             return
-        if probs is None:
+        if legal.size == 0:
+            model_action = None
+            ranked = []
+        elif probs is None:
             model_action = int(legal[0])
             ranked = [(model_action, None)]
         else:
             model_action = int(max(legal, key=lambda i: probs[i]))
             ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[:6]
             ranked = [(int(i), float(probs[i])) for i in ranked]
-        is_combat = self.info.get("phase") == "combat"
-        chosen, decision_source = self._select_upper_action(
-            model_action,
-            legal,
-            self.info.get("phase") if self.info else "unknown",
-        )
+        chosen = None
+        decision_source = self._turn_planner.name if planner_active else None
+        if not planner_active:
+            chosen, decision_source = self._select_upper_action(
+                model_action,
+                legal,
+                self.info.get("phase") if self.info else "unknown",
+            )
         search = None
-        combat_rule = None
-        if is_combat and self.combat_strategy == _COMBAT_STRATEGY_RULES:
-            chosen, combat_rule = self._select_combat_rule_action(legal)
-            decision_source = self._combat_rules.name
-            if all(action != chosen for action, _probability in ranked):
+        combat_planner = None
+        native_action_bits = None
+        native_direct = False
+        if planner_active:
+            chosen, native_action_bits, combat_planner, decision_source = (
+                self._select_combat_planner_action(legal)
+            )
+            native_direct = native_action_bits is not None
+            if chosen is not None and all(
+                action != chosen for action, _probability in ranked
+            ):
                 ranked.append(
                     (chosen, None if probs is None else float(probs[chosen]))
                 )
@@ -1593,10 +1660,20 @@ class WatchSession:
             else -1
         )
         selected_targeted = bool(search and search.get("selected_action_targeted"))
-        label = self.env.describe_action(chosen)
+        label = (
+            self._describe_native_action(native_action_bits, chosen)
+            if native_direct
+            else self.env.describe_action(chosen)
+        )
         if selected_targeted and selected_target >= 0:
             label = f"{label} -> target monster #{selected_target + 1}"
-        animation = self._action_animation(chosen)
+        animation = self._action_animation(chosen) if chosen is not None else None
+        if native_direct:
+            native_action = sts.Action(int(native_action_bits))
+            if native_action.action_type in (sts.ActionType.CARD, sts.ActionType.POTION):
+                if base.thick.bc.is_targeted_action(int(native_action_bits)):
+                    selected_target = int(native_action.target_idx)
+                    selected_targeted = True
         if selected_targeted and selected_target >= 0 and animation is not None:
             animation["target_slot"] = selected_target
         self.decision = {
@@ -1605,7 +1682,9 @@ class WatchSession:
             "value": value,
             "model_action": model_action,
             "source": decision_source,
-            "combat_rule": combat_rule,
+            "combat_planner": combat_planner,
+            "native_action_bits": native_action_bits,
+            "native_direct": native_direct,
             "search": search,
             "animation": animation,
             "top_actions": [
@@ -1705,13 +1784,23 @@ class WatchSession:
         if self.decision is None:
             return
         decision_before = self.decision
-        displayed_action = int(decision_before["action"])
+        displayed_action = decision_before.get("action")
+        displayed_action = (
+            int(displayed_action) if displayed_action is not None else None
+        )
+        direct_native = bool(decision_before.get("native_direct"))
+        decision_native = (
+            int(decision_before["native_action_bits"])
+            if direct_native
+            else None
+        )
         pending = self.env.unwrapped._nosl_cpp_pending
         pending_native = (
             int(pending[1])
             if pending is not None and int(pending[0]) == displayed_action
             else None
         )
+        displayed_native = decision_native if direct_native else pending_native
 
         # ``seek``/``undo`` rebuild the current decision but historically left
         # the future action history intact.  Replaying that suffix blindly can
@@ -1722,13 +1811,20 @@ class WatchSession:
         # branch from the current state and discard the stale suffix.
         replaying = self.position < len(self.history)
         historical_action = (
-            int(self.history[self.position]) if replaying else None
+            self.history[self.position] if replaying else None
         )
+        if historical_action is not None:
+            historical_action = int(historical_action)
         historical_native = (
             int(self.native_history[self.position])
             if replaying and self.position < len(self.native_history)
             and self.native_history[self.position] is not None
             else None
+        )
+        historical_direct = bool(
+            replaying
+            and self.position < len(self.native_direct_history)
+            and self.native_direct_history[self.position]
         )
         requested_route_mode = (
             self._route_mode_for_current_state()
@@ -1741,19 +1837,29 @@ class WatchSession:
             else _ROUTE_STEP_NORMAL
         )
         same_action = replaying and historical_action == displayed_action
-        same_native = historical_native == pending_native
+        same_native = historical_native == displayed_native
+        same_native_mode = historical_direct == direct_native
         same_route_mode = historical_route_mode == requested_route_mode
-        if replaying and same_action and same_native and same_route_mode:
+        if (
+            replaying
+            and same_action
+            and same_native
+            and same_native_mode
+            and same_route_mode
+        ):
             action = historical_action
+            native = historical_native
+            execute_native = historical_direct
             active_route_mode = historical_route_mode
-            if historical_native is not None:
+            if native is not None and not execute_native:
                 self.env.unwrapped._nosl_cpp_pending = (
-                    int(action), int(historical_native)
+                    int(action), int(native)
                 )
         else:
             if replaying:
                 del self.history[self.position:]
                 del self.native_history[self.position:]
+                del self.native_direct_history[self.position:]
                 del self.route_step_modes[self.position:]
                 if (
                     self.route_preprocess_boss_step is not None
@@ -1761,20 +1867,41 @@ class WatchSession:
                 ):
                     self.route_preprocess_boss_step = None
             action = displayed_action
+            native = displayed_native
+            execute_native = direct_native
             active_route_mode = requested_route_mode
             self.history.append(action)
-            self.native_history.append(pending_native)
+            self.native_history.append(native)
+            self.native_direct_history.append(execute_native)
             self.route_step_modes.append(active_route_mode)
         self._apply_route_step_mode(active_route_mode)
         label = (
             decision_before.get("label")
-            if int(decision_before.get("action", -1)) == int(action)
+            if displayed_action == action
+            and displayed_native == native
+            and direct_native == execute_native
+            else self._describe_native_action(native, action)
+            if execute_native
             else self.env.describe_action(action)
         )
-        animation = self._action_animation(action)
+        animation = (
+            decision_before.get("animation")
+            if displayed_action == action
+            and displayed_native == native
+            and direct_native == execute_native
+            else self._action_animation(action) if action is not None else None
+        )
         canon_before = self.env.unwrapped.thick.obs_canonical()
-        self._record_card_reward_choice(action, canon_before)
-        self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+        if action is not None:
+            self._record_card_reward_choice(action, canon_before)
+        if execute_native:
+            self.obs, reward, self.terminated, self.truncated, self.info = (
+                self.env.step_native_combat(native)
+            )
+        else:
+            self.obs, reward, self.terminated, self.truncated, self.info = (
+                self.env.step(action)
+            )
         self.position += 1
         if active_route_mode == _ROUTE_STEP_SKIP_COMBAT:
             self._apply_route_step_mode(active_route_mode)
@@ -1823,16 +1950,33 @@ class WatchSession:
                 else _ROUTE_STEP_NORMAL
             )
             self._apply_route_step_mode(route_mode)
+            direct_native = bool(
+                index < len(self.native_direct_history)
+                and self.native_direct_history[index]
+            )
+            native = None
             if index < len(self.native_history):
                 native = self.native_history[index]
-                if native is not None:
+                if native is not None and not direct_native:
                     self.env.unwrapped._nosl_cpp_pending = (int(action), int(native))
-            label = self.env.describe_action(action)
-            canon_before = self.env.unwrapped.thick.obs_canonical()
-            self._record_card_reward_choice(
-                action, canon_before, include_current_prob=False
+            label = (
+                self._describe_native_action(native, action)
+                if direct_native
+                else self.env.describe_action(action)
             )
-            self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+            canon_before = self.env.unwrapped.thick.obs_canonical()
+            if action is not None:
+                self._record_card_reward_choice(
+                    action, canon_before, include_current_prob=False
+                )
+            if direct_native:
+                self.obs, reward, self.terminated, self.truncated, self.info = (
+                    self.env.step_native_combat(native)
+                )
+            else:
+                self.obs, reward, self.terminated, self.truncated, self.info = (
+                    self.env.step(action)
+                )
             self.position += 1
             if route_mode == _ROUTE_STEP_SKIP_COMBAT:
                 self._apply_route_step_mode(route_mode)
@@ -1841,7 +1985,7 @@ class WatchSession:
             self.last_action = {
                 "action": action,
                 "label": label,
-                "animation": self._action_animation(action),
+                "animation": self._action_animation(action) if action is not None else None,
             }
             canon = self.env.unwrapped.thick.obs_canonical()
             map_snapshot = self._update_map(canon)
@@ -2016,9 +2160,14 @@ class WatchSession:
             ),
             "combat_strategy": self.combat_strategy,
             "combat_strategy_version": (
-                COMBAT_RULE_VERSION
-                if self.combat_strategy == _COMBAT_STRATEGY_RULES
+                PLANNER_VERSION
+                if self.combat_strategy == _COMBAT_STRATEGY_PLANNER
                 else "checkpoint-model+configured-search"
+            ),
+            "combat_strategy_config": (
+                asdict(_TURN_PLANNER_CONFIG)
+                if self.combat_strategy == _COMBAT_STRATEGY_PLANNER
+                else None
             ),
             "route_preprocess": {
                 "enabled": self.route_preprocess_target_act is not None,
@@ -2345,7 +2494,7 @@ class DashboardState:
             if self.model is None:
                 raise RuntimeError("no checkpoint loaded")
             model = self.model
-            if combat_strategy == _COMBAT_STRATEGY_RULES:
+            if combat_strategy == _COMBAT_STRATEGY_PLANNER:
                 search_config = _evaluation_search_config(
                     model,
                     simulations=0,
@@ -2392,13 +2541,18 @@ class DashboardState:
                 ),
                 "combat_strategy": combat_strategy,
                 "combat_strategy_version": (
-                    COMBAT_RULE_VERSION
-                    if combat_strategy == _COMBAT_STRATEGY_RULES
+                    PLANNER_VERSION
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
                     else "checkpoint-model+configured-search"
                 ),
+                "combat_strategy_config": (
+                    asdict(_TURN_PLANNER_CONFIG)
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else None
+                ),
                 "search_method": (
-                    "combat_rules"
-                    if combat_strategy == _COMBAT_STRATEGY_RULES
+                    "turn_planner"
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
                     else search_config["method"]
                 ),
                 "configured_search_method": search_config["method"],
@@ -2484,6 +2638,11 @@ class DashboardState:
             )
             progress({"strategy": strategy.name})
             scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
+                combat_action_contract=(
+                    "native-v1"
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else "legacy"
+                ),
                 global_map_view=_model.uses_global_map_observation(model),
                 card_language=_model.uses_card_language(model),
                 combat_language=_model.uses_combat_language(model),

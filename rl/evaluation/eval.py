@@ -47,6 +47,12 @@ def build_parser():
     parser.add_argument('--search-mode', choices=['puct', 'gumbel', 'full', 'strict'], default='strict')
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
+    parser.add_argument('--planner-nodes', type=int, default=512)
+    parser.add_argument('--planner-worlds', type=int, default=2)
+    parser.add_argument('--planner-beam', type=int, default=8)
+    parser.add_argument('--planner-depth', type=int, default=16)
+    parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
                         help='Native leaf backend; cuda-graph requires a CUDA FP32 combat model and keeps exact batch shapes')
@@ -54,11 +60,11 @@ def build_parser():
     return parser
 
 
-def make_scenario(model, args, combat_model=None):
+def make_scenario(model, args, combat_model=None, combat_action_contract='legacy'):
     if args.task == 'combat':
         from rl.tasks.combat import CombatTask
-        if args.solver in ('native', 'rules'):
-            raise ValueError('native/rules currently require the wholerun thin environment')
+        if args.solver in ('native', 'rules', 'turn-planner'):
+            raise ValueError('native/rules/turn-planner currently require the wholerun environment')
         if not 1 <= args.floor_lo <= args.floor_hi <= 50:
             raise ValueError('expected 1 <= floor-lo <= floor-hi <= 50')
         options = argparse.Namespace(floor_lo=args.floor_lo, floor_hi=args.floor_hi,
@@ -77,6 +83,7 @@ def make_scenario(model, args, combat_model=None):
         return any(feature(m) for m in models)
     return Scenario('wholerun', lambda: SlayTheSpireEnv(
         ascension=args.ascension,
+        combat_action_contract=combat_action_contract,
         global_map_view=uses(policy_model.uses_global_map_observation),
         card_language=uses(policy_model.uses_card_language),
         combat_language=uses(policy_model.uses_combat_language),
@@ -115,8 +122,8 @@ def main():
     model.set_random_seed(args.seed)
     combat_model = model
     if args.combat_checkpoint:
-        if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules'):
-            raise ValueError('--combat-checkpoint requires wholerun policy/native/value/rules')
+        if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules', 'turn-planner'):
+            raise ValueError('--combat-checkpoint requires a supported wholerun solver')
         combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
                                        card_vector_checkpoint=args.card_vector_checkpoint)
         combat_model.set_random_seed(args.seed)
@@ -139,12 +146,12 @@ def main():
     combat_rows = []
     failure = None
     try:
-        if args.compare_combats or args.trace:
+        if args.trace:
+            args.trace.parent.mkdir(parents=True, exist_ok=True)
+            trace_stream = args.trace.open('x', encoding='utf-8')
+        if args.compare_combats or (args.trace and args.solver != 'turn-planner'):
             from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
             from rl.evaluation.baselines.combat_audit import CombatAuditStrategy
-            if args.trace:
-                args.trace.parent.mkdir(parents=True, exist_ok=True)
-                trace_stream = args.trace.open('x', encoding='utf-8')
             strategy = CombatAuditStrategy(strategy, rows=combat_rows, limit=args.compare_combats,
                 candidates={'rules': CombatRuleStrategy(),
                             'policy': STRATEGIES['policy'](combat_model, args),
@@ -152,7 +159,12 @@ def main():
                 max_steps=args.max_steps, timeout=args.timeout,
                 trace=trace if trace_stream else None)
             candidate_strategies = strategy.candidates
-        for row in evaluate(strategy, make_scenario(model, args, combat_model), config, progress=progress):
+        contract = getattr(configured_strategy, 'combat_action_contract', 'legacy')
+        for row in evaluate(
+                strategy,
+                make_scenario(model, args, combat_model, contract),
+                config,
+                progress=progress):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
                 print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)

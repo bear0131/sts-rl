@@ -148,49 +148,50 @@ def test_watch_defaults_to_shared_upper_rules_and_keeps_model_option(monkeypatch
         session.close()
 
 
-def test_watch_can_switch_between_shared_combat_rules_and_model():
+def test_watch_can_execute_replay_and_switch_from_turn_planner():
     session = _FixedModelOutputWatchSession(
         _dummy_model(), threading.Lock(), seed=0
     )
-    state = {
-        "encounter": "Cultist",
-        "player": {
-            "hp": 80,
-            "max_hp": 80,
-            "energy": 3,
-            "block": 0,
-            "powers": [],
-            "counters": {},
-        },
-        "monsters": [
-            {
-                "hp": 48,
-                "max_hp": 48,
-                "block": 0,
-                "move": "INCANTATION",
-                "powers": [],
-            }
-        ],
-        "hand": [["STRIKE_RED", 0], ["DEFEND_RED", 0], ["BASH", 0]],
-        "draw_pile": [],
-        "discard_pile": [],
-        "exhaust_pile": [],
-        "relics": [],
-    }
     try:
-        session.configure_search(simulations=0, combat_strategy="rules")
-        snapshot = session.apply_custom_state(state)
-
-        assert snapshot["combat_strategy"] == "rules"
-        assert snapshot["combat_strategy_version"] == "ironclad-v3"
-        assert snapshot["decision"]["source"] == "rules-ironclad-v3"
-        assert snapshot["decision"]["combat_rule"]["rule_decisions"] == 1
-        assert snapshot["decision"]["action"] in np.flatnonzero(
-            session.env.action_masks()
+        session._turn_planner = dashboard.TurnPlannerStrategy(
+            dashboard.TurnPlannerConfig(
+                worlds=2,
+                node_budget=32,
+                beam_width=8,
+                max_depth=16,
+                lookahead_turns=1,
+                master_nonce=20260918,
+            )
         )
-        assert snapshot["decision"]["action"] in {
-            item["action"] for item in snapshot["decision"]["top_actions"]
-        }
+        for _ in range(64):
+            if session.info["phase"] == "combat":
+                break
+            session.step()
+        assert session.info["phase"] == "combat"
+        snapshot = session.configure_search(
+            simulations=0, combat_strategy="planner"
+        )
+
+        assert snapshot["combat_strategy"] == "planner"
+        assert snapshot["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+        assert snapshot["decision"]["source"] == "turn-planner"
+        assert snapshot["decision"]["native_direct"] is True
+        native = snapshot["decision"]["native_action_bits"]
+        assert native in session.env.native_combat_actions()
+        assert snapshot["decision"]["combat_planner"]["worlds_completed"] == 2
+
+        combat_step = snapshot["step"]
+        after = session.step()
+        assert after["step"] == combat_step + 1
+        assert session.native_history[combat_step] == native
+        assert session.native_direct_history[combat_step] is True
+        after_state = session.env.thick.bc.to_dict()
+
+        before = session.undo()
+        assert before["step"] == combat_step
+        replayed = session.step()
+        assert replayed["step"] == combat_step + 1
+        assert session.env.thick.bc.to_dict() == after_state
 
         snapshot = session.configure_search(combat_strategy="model")
         assert snapshot["combat_strategy"] == "model"
