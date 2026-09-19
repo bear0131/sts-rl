@@ -57,6 +57,10 @@
           <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v1；未覆盖画面回退模型 argmax">规则上层</button>
           <button type="button" data-upper-strategy="model">模型上层</button>
         </div>
+        <div id="watchCombatStrategy" class="segmented watch-combat-mode" role="group" aria-label="下层决策模式">
+          <button type="button" data-combat-strategy="model" class="active">模型/搜索下层</button>
+          <button type="button" data-combat-strategy="rules" title="rules-ironclad-v3 纯规则战斗策略">规则下层</button>
+        </div>
         <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
         <div class="watch-boss-control">
           <label>Boss
@@ -115,7 +119,7 @@
         </section>
 
         <aside class="decision-panel">
-          <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
+          <div class="panel-heading"><span id="decisionHeading">模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="searchStatus" class="search-status"></div>
           <div id="actionList" class="action-list"></div>

@@ -25,7 +25,16 @@ from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
 from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
 from rl.evaluation.runner import is_win
-from rl.evaluation.strategies import PolicyStrategy, NativeStrategy, PhaseStrategy
+from rl.evaluation.strategies import (
+    DecisionRequest,
+    NativeStrategy,
+    PhaseStrategy,
+    PolicyStrategy,
+)
+from rl.evaluation.baselines.combat_rules import (
+    CombatRuleStrategy,
+    RULE_VERSION as COMBAT_RULE_VERSION,
+)
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
 from dataclasses import fields
 from rl.search.native import (
@@ -540,6 +549,9 @@ _ROUTE_STEP_ENTER_BOSS = "enter_boss"
 _UPPER_STRATEGY_MODEL = "model"
 _UPPER_STRATEGY_RULES = "rules"
 _UPPER_STRATEGIES = {_UPPER_STRATEGY_MODEL, _UPPER_STRATEGY_RULES}
+_COMBAT_STRATEGY_MODEL = "model"
+_COMBAT_STRATEGY_RULES = "rules"
+_COMBAT_STRATEGIES = {_COMBAT_STRATEGY_MODEL, _COMBAT_STRATEGY_RULES}
 
 
 class WatchSession:
@@ -657,6 +669,8 @@ class WatchSession:
         self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
         self.upper_strategy = _UPPER_STRATEGY_RULES
+        self.combat_strategy = _COMBAT_STRATEGY_MODEL
+        self._combat_rules = CombatRuleStrategy()
         self.precompute_enabled = False
         self.route_step_modes: list[str] = []
         self.route_preprocess_target_act: int | None = None
@@ -671,6 +685,17 @@ class WatchSession:
 
     def _model_search_float(self, name: str, default: float) -> float:
         return _model_search_float(self.model, name, default)
+
+    def _set_combat_strategy(self, strategy: str | None) -> None:
+        if strategy is None:
+            return
+        candidate = str(strategy).strip().lower()
+        if candidate not in _COMBAT_STRATEGIES:
+            raise ValueError(
+                "combat strategy must be one of "
+                f"{sorted(_COMBAT_STRATEGIES)}, got {strategy!r}"
+            )
+        self.combat_strategy = candidate
 
     def _apply_paper_full_gumbel_defaults(self, *, preserve_overrides: bool = False):
         """Keep Watch's displayed/native settings on the mctx paper path."""
@@ -745,6 +770,7 @@ class WatchSession:
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
         upper_strategy: str | None = None,
+        combat_strategy: str | None = None,
         target_boss_act: int | None = None,
     ):
         requested_simulations = (
@@ -838,6 +864,7 @@ class WatchSession:
                     f"{sorted(_UPPER_STRATEGIES)}, got {upper_strategy!r}"
                 )
             self.upper_strategy = candidate
+        self._set_combat_strategy(combat_strategy)
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
@@ -973,6 +1000,7 @@ class WatchSession:
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
         stochastic: bool | None = None,
+        combat_strategy: str | None = None,
     ):
         """Apply search settings without resetting the current run."""
         requested_simulations = (
@@ -1063,6 +1091,7 @@ class WatchSession:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        self._set_combat_strategy(combat_strategy)
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
@@ -1299,6 +1328,20 @@ class WatchSession:
             raise RuntimeError(f"illegal overworld rule action: {rule_action}")
         return rule_action, "overworld_rules"
 
+    def _select_combat_rule_action(self, legal):
+        request = DecisionRequest(
+            self.env,
+            self.obs,
+            self.info,
+            self.seed,
+            self.position,
+        )
+        decision = self._combat_rules.decide([request])[0]
+        action = int(decision.action)
+        if not np.any(np.asarray(legal, dtype=np.int64) == action):
+            raise RuntimeError(f"illegal combat rule action: {action}")
+        return action, dict(decision.diagnostics)
+
     def _prepare_decision(self):
         if self.terminated or self.truncated:
             self.decision = None
@@ -1334,9 +1377,18 @@ class WatchSession:
             self.info.get("phase") if self.info else "unknown",
         )
         search = None
+        combat_rule = None
+        if is_combat and self.combat_strategy == _COMBAT_STRATEGY_RULES:
+            chosen, combat_rule = self._select_combat_rule_action(legal)
+            decision_source = self._combat_rules.name
+            if all(action != chosen for action, _probability in ranked):
+                ranked.append(
+                    (chosen, None if probs is None else float(probs[chosen]))
+                )
         native_root = getattr(self.env.unwrapped, "_pending", None) is None
         if (
             is_combat
+            and self.combat_strategy == _COMBAT_STRATEGY_MODEL
             and native_root
             and self.mcts_search_mode != "direct"
             and self.mcts_simulations > 0
@@ -1472,7 +1524,13 @@ class WatchSession:
         elif (
             probs is not None
             and self.stochastic
-            and (is_combat or self.upper_strategy == _UPPER_STRATEGY_MODEL)
+            and (
+                (is_combat and self.combat_strategy == _COMBAT_STRATEGY_MODEL)
+                or (
+                    not is_combat
+                    and self.upper_strategy == _UPPER_STRATEGY_MODEL
+                )
+            )
         ):
             weights = np.asarray([max(float(probs[i]), 0.0) for i in legal], dtype=np.float64)
             total = float(weights.sum())
@@ -1504,6 +1562,7 @@ class WatchSession:
             "value": value,
             "model_action": model_action,
             "source": decision_source,
+            "combat_rule": combat_rule,
             "search": search,
             "animation": animation,
             "top_actions": [
@@ -1911,6 +1970,12 @@ class WatchSession:
                 "masked_argmax"
                 if self.upper_strategy == _UPPER_STRATEGY_RULES
                 else None
+            ),
+            "combat_strategy": self.combat_strategy,
+            "combat_strategy_version": (
+                COMBAT_RULE_VERSION
+                if self.combat_strategy == _COMBAT_STRATEGY_RULES
+                else "checkpoint-model+configured-search"
             ),
             "route_preprocess": {
                 "enabled": self.route_preprocess_target_act is not None,
@@ -2420,6 +2485,7 @@ class Handler(BaseHTTPRequestHandler):
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
                         upper_strategy=body.get("upper_strategy"),
+                        combat_strategy=body.get("combat_strategy"),
                         target_boss_act=body.get("target_boss_act"),
                     )
                 self._send_json(result)
@@ -2446,6 +2512,7 @@ class Handler(BaseHTTPRequestHandler):
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
                         stochastic=body.get("stochastic"),
+                        combat_strategy=body.get("combat_strategy"),
                     )
                 self._send_json(result)
             elif path == "/api/custom-combat/apply":

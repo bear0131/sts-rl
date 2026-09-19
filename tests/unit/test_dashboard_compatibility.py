@@ -270,8 +270,12 @@ def test_dashboard_assets_expose_route_only_boss_fast_forward():
     assert 'id="watchBossButton"' in html
     assert 'id="watchUpperStrategy"' in html
     assert 'data-upper-strategy="rules" class="active"' in html
+    assert 'id="watchCombatStrategy"' in html
+    assert 'data-combat-strategy="model" class="active"' in html
+    assert 'id="decisionHeading"' in html
     assert "target_boss_act: targetAct" in javascript
     assert "upper_strategy: watchUpperStrategyValue()" in javascript
+    assert "combat_strategy: watchCombatStrategyValue()" in javascript
     assert "忽略 HP/药水" in javascript
 
 

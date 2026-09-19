@@ -125,6 +125,8 @@ def test_watch_defaults_to_shared_upper_rules_and_keeps_model_option(monkeypatch
     try:
         snapshot = session.snapshot()
         assert snapshot["upper_strategy"] == "rules"
+        assert snapshot["combat_strategy"] == "model"
+        assert snapshot["combat_strategy_version"] == "checkpoint-model+configured-search"
         assert snapshot["upper_fallback"] == "masked_argmax"
         assert snapshot["decision"]["source"] == "overworld_rules"
         assert snapshot["decision"]["action"] == session.env.overworld_rule_decision()
@@ -142,5 +144,59 @@ def test_watch_defaults_to_shared_upper_rules_and_keeps_model_option(monkeypatch
 
         with pytest.raises(ValueError, match="upper strategy"):
             session.reset(10000, simulations=0, upper_strategy="unknown")
+    finally:
+        session.close()
+
+
+def test_watch_can_switch_between_shared_combat_rules_and_model():
+    session = _FixedModelOutputWatchSession(
+        _dummy_model(), threading.Lock(), seed=0
+    )
+    state = {
+        "encounter": "Cultist",
+        "player": {
+            "hp": 80,
+            "max_hp": 80,
+            "energy": 3,
+            "block": 0,
+            "powers": [],
+            "counters": {},
+        },
+        "monsters": [
+            {
+                "hp": 48,
+                "max_hp": 48,
+                "block": 0,
+                "move": "INCANTATION",
+                "powers": [],
+            }
+        ],
+        "hand": [["STRIKE_RED", 0], ["DEFEND_RED", 0], ["BASH", 0]],
+        "draw_pile": [],
+        "discard_pile": [],
+        "exhaust_pile": [],
+        "relics": [],
+    }
+    try:
+        session.configure_search(simulations=0, combat_strategy="rules")
+        snapshot = session.apply_custom_state(state)
+
+        assert snapshot["combat_strategy"] == "rules"
+        assert snapshot["combat_strategy_version"] == "ironclad-v3"
+        assert snapshot["decision"]["source"] == "rules-ironclad-v3"
+        assert snapshot["decision"]["combat_rule"]["rule_decisions"] == 1
+        assert snapshot["decision"]["action"] in np.flatnonzero(
+            session.env.action_masks()
+        )
+        assert snapshot["decision"]["action"] in {
+            item["action"] for item in snapshot["decision"]["top_actions"]
+        }
+
+        snapshot = session.configure_search(combat_strategy="model")
+        assert snapshot["combat_strategy"] == "model"
+        assert snapshot["decision"]["source"] == "model"
+
+        with pytest.raises(ValueError, match="combat strategy"):
+            session.configure_search(combat_strategy="unknown")
     finally:
         session.close()

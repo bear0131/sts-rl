@@ -20,6 +20,7 @@ let watchGumbelParamsDirty = false;
 let watchPaperModeDirty = false;
 let watchPolicyModeDirty = false;
 let watchUpperStrategyDirty = false;
+let watchCombatStrategyDirty = false;
 let watchPrecomputeDirty = false;
 let evalSimulationsDirty = false;
 let evalDepthDirty = false;
@@ -466,6 +467,7 @@ $("resetButton").addEventListener("click", async () => {
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
       upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
       precompute,
     }), headers:{"Content-Type":"application/json"}});
     watchSeedDirty = false;
@@ -478,6 +480,7 @@ $("resetButton").addEventListener("click", async () => {
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = null;
     previewedMapKeys.clear();
@@ -534,6 +537,7 @@ $("watchBossButton").addEventListener("click", async () => {
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
       upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
       precompute: false,
       target_boss_act: targetAct,
     }), headers:{"Content-Type":"application/json"}});
@@ -547,6 +551,7 @@ $("watchBossButton").addEventListener("click", async () => {
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = targetAct;
     previewedMapKeys.clear();
@@ -584,6 +589,19 @@ function setWatchUpperStrategy(strategy, dirty = true) {
 $("watchUpperStrategy").querySelectorAll("button").forEach(button => {
   button.addEventListener("click", () => setWatchUpperStrategy(button.dataset.upperStrategy));
 });
+function watchCombatStrategyValue() {
+  return $("watchCombatStrategy").querySelector("button.active")?.dataset.combatStrategy || "model";
+}
+function setWatchCombatStrategy(strategy, dirty = true) {
+  const value = strategy === "rules" ? "rules" : "model";
+  $("watchCombatStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.combatStrategy === value);
+  });
+  if (dirty) watchCombatStrategyDirty = true;
+}
+$("watchCombatStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setWatchCombatStrategy(button.dataset.combatStrategy));
+});
 $("watchSeed").addEventListener("keydown", event => {
   if (event.key === "Enter") $("resetButton").click();
 });
@@ -607,6 +625,7 @@ $("watchSearchApply").addEventListener("click", async () => {
         prior_temperature: Number($("watchPriorTemperature").value),
         ...gumbelSearchParams("watch"),
         stochastic: watchStochasticValue(),
+        combat_strategy: watchCombatStrategyValue(),
       }),
       headers: {"Content-Type": "application/json"},
     });
@@ -618,8 +637,9 @@ $("watchSearchApply").addEventListener("click", async () => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchCombatStrategyDirty = false;
     renderWatch();
-    toast("Neural NOSL search settings applied");
+    toast(appState.watch.combat_strategy === "rules" ? "规则下层已应用" : "Neural NOSL search settings applied");
   } catch (e) {
     toast(e.message);
   } finally {
@@ -790,6 +810,7 @@ $("winSeedList").addEventListener("click", async event => {
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
       upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
       precompute: $("watchPrecompute").checked,
     }), headers:{"Content-Type":"application/json"}});
     watchSimulationsDirty = false;
@@ -801,6 +822,7 @@ $("winSeedList").addEventListener("click", async event => {
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
     watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
     watchPrecomputeDirty = false;
     renderWatch();
   } catch (e) { toast(e.message); }
@@ -1179,6 +1201,7 @@ function renderWatch() {
   );
   if (!watchPolicyModeDirty) setWatchPolicyMode(w.stochastic !== false, false);
   if (!watchUpperStrategyDirty) setWatchUpperStrategy(w.upper_strategy, false);
+  if (!watchCombatStrategyDirty) setWatchCombatStrategy(w.combat_strategy, false);
   if (!watchPrecomputeDirty && document.activeElement !== $("watchPrecompute")) {
     $("watchPrecompute").checked = Boolean(w.precompute_enabled);
   }
@@ -1239,6 +1262,8 @@ function renderWatch() {
     }
   }
   const d = w.decision;
+  const combatRulesActive = w.phase === "combat" && w.combat_strategy === "rules";
+  $("decisionHeading").textContent = combatRulesActive ? "规则决策" : "模型决策";
   $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
   const search = d?.search;
@@ -1256,7 +1281,9 @@ function renderWatch() {
       : "";
     return `<div class="action-row${selected ? " selected" : ""}"><b>${probability}</b><span>${escapeHtml(actionDisplayText(a, w.event))}${detail ? `<small>${detail}</small>` : ""}</span><div class="prob-track"><i style="width:${actingProb == null ? 0 : actingProb*100}%"></i></div></div>`;
   }).join("");
-  $("searchStatus").textContent = search
+  $("searchStatus").textContent = combatRulesActive
+    ? `纯规则下层 · ${w.combat_strategy_version || "ironclad-v3"} · 下方为 checkpoint prior 对照`
+    : search
     ? (search.method === "nosl_is_az_cpp"
       ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
       : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
