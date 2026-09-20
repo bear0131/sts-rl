@@ -237,3 +237,5 @@ not a claim that future Strength is harmless or an oracle damage estimate.
 Regression: `tests/integration/test_turn_planner_angry_progress.py` verifies safe
 progress across actual repeated decisions and a lethal-retaliation case where
 blocking remains preferred. Whole-run acceptance belongs to A20 evaluations.
+
+`TurnPlannerConfig.damage_weight` (CLI `--planner-damage-weight`, default `0.26`) exposes the scalar cost of remaining phase-adjusted enemy HP for controlled attack/block preference experiments. It must be finite and positive, applies to both partial ordering and completed leaves, and cannot override the lexicographic sampled death/win outcome. Changing it changes the policy, not merely the search budget; report it with every result.

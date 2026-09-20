@@ -97,8 +97,11 @@ class TurnPlannerConfig:
     max_depth: int = 16
     master_nonce: int = 20260918
     lookahead_turns: int = 1
+    damage_weight: float = .26
 
     def __post_init__(self):
+        if not math.isfinite(self.damage_weight) or self.damage_weight <= 0:
+            raise ValueError('damage_weight must be finite and positive')
         if self.lookahead_turns not in (1, 2):
             raise ValueError('lookahead_turns must be 1 or 2')
         for key in ('worlds', 'node_budget', 'beam_width', 'max_depth'):
@@ -186,7 +189,7 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None):
+def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -212,7 +215,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         # Losing every remaining output channel is worse than ordinary HP or
         # damage differences, but remains separate from an actual native death.
         value -= 10000
-    value -= .26 * remaining + 10 * future_bodies
+    value -= damage_weight * remaining + 10 * future_bodies
     for m in monsters:
         mp = _powers(m)
         # Angry is reactive growth on every hit, not free growth from waiting.
@@ -247,14 +250,15 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     return value
 
 
-def leaf_value(raw, *, public_relics=None, horizon=None):
+def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
     the historical victory bonus. Keep it for ordering within a terminal class.
     """
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
-    value = state_value(raw, public_relics=public_relics, horizon=horizon)
+    value = state_value(raw, public_relics=public_relics, horizon=horizon,
+                        damage_weight=damage_weight)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -402,7 +406,8 @@ class NativeTurnPlanner:
             raw = public_planner_state(child, raw)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
-                value = leaf_value(raw, public_relics=public_relics, horizon=horizon)
+                value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
+                                   damage_weight=self.config.damage_weight)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -412,7 +417,8 @@ class NativeTurnPlanner:
                     if value[0] == 1:
                         stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
-            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
+            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
+                                  damage_weight=self.config.damage_weight)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

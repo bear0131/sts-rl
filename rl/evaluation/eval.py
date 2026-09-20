@@ -54,6 +54,8 @@ def build_parser():
     parser.add_argument('--planner-beam', type=int, default=8)
     parser.add_argument('--planner-depth', type=int, default=16)
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--planner-damage-weight', type=float, default=.26,
+                        help='Experimental leaf utility per remaining enemy HP; changing it changes the policy')
     parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
