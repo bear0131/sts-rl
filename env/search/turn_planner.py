@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v13-persistent-block'
+PLANNER_VERSION = 'ironclad-turn-v14-icecream'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -274,6 +274,14 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
     value -= 2 * min(horizon, powers.get('vulnerable', 0))
     if powers.get('barricade', 0):
         value += .55 * min(150, p['block']) + 4 * horizon
+    if (not partial and raw.get('post_enemy_turn_boundary', False)
+            and any(name in ('Ice Cream', 'ICE_CREAM', 'IceCream')
+                    for name in (public_relics or ()))):
+        # Native boundaries retain energy only with Ice Cream. It can buy
+        # future actions, unlike ordinary unused end-turn energy. Cap the
+        # near-term spending credit so banking hundreds of energy never
+        # overwhelms real HP/damage or rewards pointless energy generation.
+        value += 1.5 * min(max(0, p['energy']), 6., 2 * horizon)
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
     if partial:
