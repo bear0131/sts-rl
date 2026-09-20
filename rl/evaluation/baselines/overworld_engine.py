@@ -16,11 +16,12 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from rl.evaluation.baselines.overworld_rules import (
     CARD_VALUE, CURSES, OverworldRuleStrategy, _item_key,
-    rank_overworld, relic_value, remove_value, upgrade_value,
+    cost_only_upgrade_under_snecko, rank_overworld, relic_strength_sources,
+    relic_value, remove_value, upgrade_value,
 )
 from rl.evaluation.strategies import Decision
 
-OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2-boss-readiness'
+OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2.1-relic-contracts'
 ENERGY_RELICS = frozenset(('CURSEDKEY', 'SOZU', 'COFFEEDRIPPER', 'FUSIONHAMMER',
     'PHILOSOPHERSSTONE', 'RUNICDOME', 'VELVETCHOKER', 'MARKOFPAIN', 'ECTOPLASM', 'BUSTEDCROWN'))
 EXHAUST_ONCE = frozenset(('Offering', 'Disarm', 'Shockwave', 'Impervious', 'Fiend Fire',
@@ -73,7 +74,7 @@ def engine_profile(state):
     if counts['Corruption']:
         fuel += min(7, skills * .65)
     strength = sum(counts[c] for c in ('Inflame', 'Spot Weakness', 'Demon Form'))
-    strength += int('VAJRA' in relics)
+    strength += relic_strength_sources(state)
     if counts['Rupture'] and any(counts[c] for c in ('Combust', 'Brutality', 'Bloodletting', 'Hemokinesis')):
         strength += 1
     block = sum(n for c, n in counts.items() if c in IRONCLAD_CARDS
@@ -220,7 +221,7 @@ def engine_card_value(card, state, profile=None, *, adding=True):
         if info.cost[0] >= 2 and expensive_setup >= 2:
             value -= 2
     if 'SNECKOEYE' in r and info:
-        value += 1.8 if info.cost[bool(up)] >= 2 else -1.4 if info.cost[bool(up)] == 0 else 0
+        value += 1.8 if info.cost[0] >= 2 else -1.4 if info.cost[0] == 0 else 0
     # Only repeatable scaling/payoff cards saturate sharply. Multiple cheap draw
     # and block cards remain useful when a large exhaust engine consumes fuel.
     duplicate_penalty = 2.7 if c in ('Corruption', 'Dark Embrace', 'Demon Form', 'Barricade',
@@ -292,6 +293,8 @@ def engine_upgrade_value(card, state, profile=None):
     p = profile or engine_profile(state)
     c, up = card[:2]
     if up and c != 'Searing Blow':
+        return 0.0
+    if cost_only_upgrade_under_snecko(card, state):
         return 0.0
     value = upgrade_value(card, state)
     if c in ('Corruption', 'Dark Embrace'):
