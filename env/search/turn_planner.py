@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v9-completed-progress'
+PLANNER_VERSION = 'ironclad-turn-v10-angry-progress'
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -191,7 +191,12 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     value -= .26 * remaining + 10 * future_bodies
     for m in monsters:
         mp = _powers(m)
-        value -= 1.6 * horizon * mp.get('strength', 0)
+        # Angry is reactive growth on every hit, not free growth from waiting.
+        # The native enemy boundary already charges this turn's stronger hit.
+        # Applying the generic multi-turn Strength penalty again can make
+        # every safe Strike worse than blocking forever against Mad Gremlin.
+        strength_weight = .5 if mp.get('angry', 0) > 0 else 1.6 * horizon
+        value -= strength_weight * mp.get('strength', 0)
         value -= horizon * mp.get('ritual', 0)
         value += 3 * min(horizon, mp.get('weak', 0))
         value += 3 * min(horizon, mp.get('vulnerable', 0))
