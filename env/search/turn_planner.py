@@ -7,6 +7,7 @@ budgets prevent beam pruning from excluding an entire first-action alternative.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import heapq
 import math
@@ -18,11 +19,13 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v16-pocketwatch'
+PLANNER_VERSION = 'ironclad-turn-v17-upgrades'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
+_COST_ONLY_UPGRADES = frozenset(('BODY_SLAM', 'CORRUPTION', 'DARK_EMBRACE',
+    'BARRICADE', 'ENTRENCH', 'INFERNAL_BLADE', 'SEEING_RED', 'EXHUME', 'APOTHEOSIS'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
     'DOUBT', 'SHAME', 'PAIN', 'REGRET', 'DECAY', 'NORMALITY', 'WRITHE'))
 
@@ -171,6 +174,43 @@ def has_reusable_debuff_source(raw):
                for card in raw[zone])
 
 
+def upgrade_reference(raw, horizon, public_relics=None):
+    """Freeze only public upgrade counts, never identities or draw order.
+
+    Plain cards in exhaust remain in the deficit: merely exhausting a plain
+    card must not look like upgrading it. Future benefit, however, requires an
+    additional upgraded card in a reusable pile. This conservative matching can
+    undercount if an old upgraded copy is exhausted while another is upgraded.
+    """
+    active = raw['hand'] + raw['draw'] + raw['discard']
+    plain = Counter(card[0] for card in active + raw['exhaust'] if not card[1])
+    upgraded = Counter(card[0] for card in active if card[1])
+    relics = {''.join(c for c in name.lower() if c.isalnum())
+              for name in public_relics or ()}
+    if _powers(raw['player']).get('confused', 0) or 'sneckoeye' in relics:
+        # Future draw randomizes cost again; actual current-hand savings are
+        # already observed by native transitions inside this horizon.
+        for cid in _COST_ONLY_UPGRADES:
+            plain.pop(cid, None)
+    # A rough chance of replay within the root horizon, capped at1.5 per card.
+    # No reward for Searing Blow's upgrades beyond its first in this candidate.
+    payoff = min(1.5, 5. * horizon / max(5, len(active)))
+    return plain, upgraded, payoff
+
+
+def upgrade_potential(raw, reference):
+    """Credit a lost plain copy only when an upgraded reusable copy also appears."""
+    if reference is None:
+        return 0.
+    root_plain, root_upgraded, payoff = reference
+    active = raw['hand'] + raw['draw'] + raw['discard']
+    plain = Counter(card[0] for card in active + raw['exhaust'] if not card[1])
+    upgraded = Counter(card[0] for card in active if card[1])
+    gains = sum(max(0, min(count - plain[cid], upgraded[cid] - root_upgraded[cid]))
+                for cid, count in root_plain.items())
+    return payoff * gains
+
+
 def scaling_damage_premiums(raw, base_damage_weight=.26):
     """Root-anchored marginal urgency for visible Ritual's growing attacks.
 
@@ -238,7 +278,7 @@ def enemy_burden(monsters):
 
 
 def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False):
+                damage_premiums=None, artifact_potential=False, upgrades=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -320,6 +360,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         value += min(3, max(0, capacity - resources['base_draw']))
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
+    value += upgrade_potential(raw, upgrades)
     if partial:
         incoming = sum(max(0, m['adjusted_damage']) * max(0, m['hits']) for m in monsters)
         value -= 1.3 * max(0, incoming - p['block'])
@@ -328,7 +369,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
 
 
 def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False):
+                damage_premiums=None, artifact_potential=False, upgrades=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -337,7 +378,7 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
                         damage_weight=damage_weight, damage_premiums=damage_premiums,
-                        artifact_potential=artifact_potential)
+                        artifact_potential=artifact_potential, upgrades=upgrades)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -397,6 +438,7 @@ class NativeTurnPlanner:
         horizon = power_horizon(original)
         damage_premiums = scaling_damage_premiums(original, self.config.damage_weight)
         artifact_potential = has_reusable_debuff_source(original)
+        upgrades = upgrade_reference(original, horizon, public_relics)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -419,7 +461,7 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn, damage_premiums, artifact_potential)
+                                           horizon, final_player_turn, damage_premiums, artifact_potential, upgrades)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -454,13 +496,15 @@ class NativeTurnPlanner:
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
             root_artifact_potential={'enabled': artifact_potential, 'per_enemy_ceiling': 3.},
+            root_upgrade_potential={'plain_count': sum(upgrades[0].values()),
+                                    'per_card_payoff': upgrades[2]},
             root_damage_premiums={f'{slot}:{enemy}': value
                                   for (slot, enemy), value in damage_premiums.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
-              damage_premiums=None, artifact_potential=False):
+              damage_premiums=None, artifact_potential=False, upgrades=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -495,7 +539,7 @@ class NativeTurnPlanner:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
                                    damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
-                                   artifact_potential=artifact_potential)
+                                   artifact_potential=artifact_potential, upgrades=upgrades)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -507,7 +551,7 @@ class NativeTurnPlanner:
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
-                                  artifact_potential=artifact_potential)
+                                  artifact_potential=artifact_potential, upgrades=upgrades)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

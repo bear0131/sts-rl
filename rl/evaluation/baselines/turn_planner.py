@@ -35,6 +35,7 @@ class TurnPlannerStrategy:
             artifact='bounded-charge-potential-if-root-has-reusable-debuff-attack',
 
             delayed_draw='pocketwatch-public-boundary-resources-v1-cap-extra-draw-by-space-and-cards',
+            upgrades='root-public-multiset-gains-require-new-upgraded-reusable-copy',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
