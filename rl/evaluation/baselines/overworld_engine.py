@@ -20,7 +20,7 @@ from rl.evaluation.baselines.overworld_rules import (
 )
 from rl.evaluation.strategies import Decision
 
-OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v1'
+OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2-boss-readiness'
 ENERGY_RELICS = frozenset(('CURSEDKEY', 'SOZU', 'COFFEEDRIPPER', 'FUSIONHAMMER',
     'PHILOSOPHERSSTONE', 'RUNICDOME', 'VELVETCHOKER', 'MARKOFPAIN', 'ECTOPLASM', 'BUSTEDCROWN'))
 EXHAUST_ONCE = frozenset(('Offering', 'Disarm', 'Shockwave', 'Impervious', 'Fiend Fire',
@@ -228,9 +228,64 @@ def engine_card_value(card, state, profile=None, *, adding=True):
     if c in ('Shrug It Off', 'Burning Pact', 'Offering', 'Disarm'):
         duplicate_penalty = .65
     value -= duplicate_penalty * copies
+    value += boss_card_adjustment(card, state, p)
     if up:
         value += min(1.8, engine_upgrade_value((c, 0), state, p) / 6)
     return float(value)
+
+
+def _public_status_boss(state):
+    g = state['global']
+    boss = _item_key(g.get('boss', ''))
+    return (boss in ('HEXAGHOST', 'SLIMEBOSS', 'DONUANDDECA') or
+        (boss == 'TIMEEATER' and int(g.get('ascension', 0)) >= 19))
+
+
+def boss_card_adjustment(card, state, profile=None):
+    """Deck-readiness-gated priors for the currently displayed public boss.
+
+    Boss-created statuses are not permanent-deck generators. They justify one
+    answer for the upcoming fight, not an unlimited status-engine commitment.
+    At A20 this reads only the displayed boss, never the unrevealed second one.
+    """
+    p = profile or engine_profile(state)
+    c = card[0]
+    n, g = p.counts, state['global']
+    boss = _item_key(g.get('boss', ''))
+    if p.act == 1 and (p.floor < 8 or p.frontload < 2):
+        return 0.0
+    late = p.floor >= {1: 10, 2: 27, 3: 43}.get(p.act, 43)
+    scale = 1.0 if late else .7
+    statuses = _public_status_boss(state)
+    bonus = 0.0
+    if statuses and not n[c]:
+        if c == 'Evolve':
+            bonus += 3.5 * scale
+        elif c == 'Fire Breathing' and boss in ('HEXAGHOST', 'SLIMEBOSS'):
+            bonus += 4.8 * scale
+        elif c == 'True Grit' and card[1] and not any(n[x] for x in EXHAUST_TOOLS):
+            bonus += 1.3 * scale
+    if boss in ('HEXAGHOST', 'CHAMP') and not p.strength:
+        if c in ('Inflame', 'Spot Weakness'):
+            bonus += (2.8 if boss == 'CHAMP' else 2.2) * scale
+        elif c == 'Demon Form' and p.act > 1 and (p.energy >= 4 or p.block_sources >= 3):
+            bonus += 2.8 * scale
+    if boss == 'CHAMP' and p.strength and c == 'Limit Break' and not n[c]:
+        bonus += 1.5 * scale
+    if p.act == 1 and p.block_sources < 2 and not n[c] and c in ('True Grit', 'Ghostly Armor'):
+        # A compact deck still needs playable defense. Do not wait for a rare
+        # engine payoff while passing the first useful bridge block cards.
+        bonus = max(bonus, 1.5 * scale)
+    if boss == 'THEGUARDIAN' and p.block_sources < 2 and c in (
+            'Shrug It Off', 'Flame Barrier', 'Ghostly Armor', 'Power Through', 'Impervious'):
+        bonus = max(bonus, 1.8 * scale)
+    if boss in ('HEXAGHOST', 'THEGUARDIAN', 'AWAKENEDONE') and c == 'Disarm' and not n[c]:
+        bonus += 1.5 * scale
+    if boss == 'AWAKENEDONE' and c in ('Metallicize', 'Brutality', 'Combust', 'Fire Breathing'):
+        # Do not penalize Corruption / Dark Embrace / Feel No Pain or the first
+        # persistent strength source that makes the deck work across both lives.
+        bonus -= 1.8 * scale
+    return bonus
 
 
 def engine_upgrade_value(card, state, profile=None):
@@ -249,8 +304,10 @@ def engine_upgrade_value(card, state, profile=None):
         value += 4
     if c == 'Body Slam' and ('block' in p.commitments or p.block_sources >= 3):
         value += 5
-    if c == 'Evolve' and p.status_sources:
-        value += 4
+    if c == 'Evolve':
+        boss_ready = p.act > 1 or (p.floor >= 8 and p.frontload >= 2)
+        if p.status_sources or (boss_ready and _public_status_boss(state)):
+            value += 4
     return float(value)
 
 
@@ -349,7 +406,8 @@ class EngineUpperStrategy:
     def manifest(self):
         return dict(scope='deck-acquisition-removal-upgrade-and-relics',
             base_version=self._base.version, commitment='public-deck-derived',
-            card_threshold='act-and-deck-size', future_information=False)
+            card_threshold='act-and-deck-size', boss_prior='displayed-boss-after-opening-readiness',
+            future_information=False)
 
     def decide(self, requests, *, check=lambda: None):
         result, delegated, indices = [None] * len(requests), [], []
@@ -374,7 +432,8 @@ class EngineUpperStrategy:
                 self.trace(dict(kind='overworld_decision', seed=request.seed, step=request.step,
                     phase=state['phase'], version=self.version, ranked=rows, state=state,
                     action=action, source=self.name, v1_action=original,
-                    engine=profile.trace(), skip_threshold=engine_skip_threshold(profile)))
+                    engine=profile.trace(), public_boss=state['global'].get('boss'),
+                    skip_threshold=engine_skip_threshold(profile)))
         if delegated:
             decisions = self._base.decide(delegated, check=check)
             if len(decisions) != len(delegated):
