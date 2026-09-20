@@ -68,7 +68,7 @@ def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     assert args.nosl_is_az_updates == 40
     assert args.nosl_is_az_simulations == 128
     assert args.nosl_is_az_batch_size == 98_304
-    assert args.nosl_is_az_micro_batch_size == 10_240
+    assert args.nosl_is_az_micro_batch_size == 12_288
     assert args.nosl_is_az_inference_batch_size == 128
     assert args.nosl_is_az_inference_max_wait_ms == 0
     assert args.nosl_is_az_inference_schedule == "fixed_wait"
