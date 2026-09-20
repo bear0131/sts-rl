@@ -121,3 +121,46 @@ def test_engine_growth_upper_composes_map_and_rest_without_replacing_combat():
     assert strategy.default.routes['map'].name == 'overworld-growth'
     assert strategy.default.routes['rest'] is strategy.default.routes['map']
     assert strategy.routes['combat'].routes['combat'].name == 'turn-planner'
+
+
+@pytest.mark.parametrize('navigation', S.UPPER_NAVIGATION)
+def test_navigation_override_owns_only_map_and_rest(monkeypatch, navigation):
+    upper, lower, acquisition, nav = [Sentinel(n) for n in ('upper-model', 'lower', 'acquisition', 'nav')]
+    monkeypatch.setattr(S, 'policy_strategy', lambda model, args: model)
+    monkeypatch.setitem(S.STRATEGIES, 'fixture', lambda model, args: model)
+    monkeypatch.setitem(S.UPPER_STRATEGIES, 'fixture', lambda model, args, trace=None: acquisition)
+    if navigation != 'default':
+        monkeypatch.setitem(S.UPPER_STRATEGIES, navigation, lambda model, args, trace=None: nav)
+    args = Namespace(solver='fixture', upper_strategy='fixture', upper_navigation=navigation, route='model')
+    strategy = S.compose_strategy(upper, args, lower)
+    phases = ('map', 'combat', 'rest', 'reward', 'shop', 'event')
+    batch = [S.DecisionRequest(None, {}, {'phase': phase}, 1, i) for i, phase in enumerate(phases)]
+    result = strategy.decide(batch)
+    selected = 'acquisition' if navigation == 'default' else 'nav'
+    assert [d.source for d in result] == [selected, 'lower', selected, 'acquisition', 'acquisition', 'acquisition']
+    assert lower.phases == ['combat']
+    assert nav.phases == ([] if navigation == 'default' else ['map', 'rest'])
+
+
+def test_fuel_and_navigation_cli_manifest():
+    from rl.evaluation.eval import build_parser
+    model = object()
+    parser = build_parser()
+    assert parser.parse_args(['unused.zip']).upper_navigation == 'default'
+    args = parser.parse_args(['unused.zip', '--solver', 'turn-planner',
+                             '--upper-strategy', 'fuel', '--upper-navigation', 'model'])
+    strategy = S.compose_strategy(model, args)
+    assert strategy.routes['map'].model is model
+    assert strategy.routes['rest'] is strategy.routes['map']
+    assert strategy.default.default.name == 'overworld-fuel'
+    assert strategy.default.default.fallback.model is model
+    manifest = S.strategy_manifest(strategy)
+    assert manifest['combat_action_contract'] == 'native-v1'
+    assert manifest['default']['default']['draft_profile'] == 'fuel'
+    assert manifest['phases']['map']['name'] == 'policy'
+
+
+def test_unknown_navigation_selection_fails_explicitly(monkeypatch):
+    monkeypatch.setitem(S.STRATEGIES, 'fixture', lambda model, args: Sentinel('x'))
+    with pytest.raises(ValueError, match='unknown upper navigation strategy'):
+        S.compose_strategy(None, Namespace(solver='fixture', upper_navigation='missing'))

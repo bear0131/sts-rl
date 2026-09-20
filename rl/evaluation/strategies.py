@@ -320,6 +320,11 @@ def overworld_engine_strategy(model, args, *, trace=None):
     return EngineUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
 
 
+def overworld_fuel_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_engine import FuelUpperStrategy
+    return FuelUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
 def overworld_growth_strategy(model, args, *, trace=None):
     from rl.evaluation.baselines.overworld_survival import GrowthUpperStrategy
     return GrowthUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
@@ -346,10 +351,13 @@ UPPER_STRATEGIES = {
     'potion-shop': overworld_potion_shop_strategy,
     'survival': overworld_survival_strategy,
     'engine': overworld_engine_strategy,
+    'fuel': overworld_fuel_strategy,
     'growth': overworld_growth_strategy,
     'readiness': overworld_readiness_strategy,
     'engine-growth': overworld_engine_growth_strategy,
 }
+
+UPPER_NAVIGATION = ('default', 'model', 'survival', 'growth', 'readiness')
 
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
@@ -365,6 +373,12 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     if upper_name != 'model':
         upper = UPPER_STRATEGIES[upper_name](upper_model, args, trace=trace)
         strategy = PhaseStrategy(upper, {'combat': strategy})
+    navigation_name = getattr(args, 'upper_navigation', 'default')
+    if navigation_name not in UPPER_NAVIGATION:
+        raise ValueError(f'unknown upper navigation strategy: {navigation_name}')
+    if navigation_name != 'default':
+        navigation = UPPER_STRATEGIES[navigation_name](upper_model, args, trace=trace)
+        strategy = PhaseStrategy(strategy, {'map': navigation, 'rest': navigation})
     if getattr(args, 'route', 'model') != 'model':
         strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
     return strategy

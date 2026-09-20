@@ -7,6 +7,12 @@
 `--upper-strategy rules` 另外替换抓牌、路线、商店、营火等上层决策；未覆盖的事件显式回退到
 位置参数的模型，并记录回退次数。两个开关独立，可比较固定上层和联合规则；
 `--route min-elite-max-rest` 最后覆盖地图决策。默认 `--upper-strategy model` 保持原有行为。
+
+`--upper-strategy fuel` 为具备抽牌支持的 Corruption 消耗引擎保留实用技能耗材，
+`engine` 仍保留紧凑牌组偏好。`--upper-navigation model|survival|growth|readiness`
+可单独选择地图和营火策略，与抓牌、商店策略交叉评测；默认 `default` 保留原上层。
+例如 `--upper-strategy fuel --upper-navigation readiness`。组合只使用 PhaseStrategy，
+完整组件版本和来源记录在结果的 `effective_strategy`，不会替换已选战斗策略。
 `--combat-checkpoint LOWER.zip` 可为 policy/native/value 单独指定下层；`--compare-combats N`
 沿参考轨迹取前 N 场开局，在相同完整初态上配对规则/policy/native；`--trace FILE.jsonl`
 保存可见状态、选择与规则分项。信息边界、支持范围与开发/留出协议见
