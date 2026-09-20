@@ -32,6 +32,7 @@ class TurnPlannerStrategy:
             scaling_pressure='root-anchored-visible-ritual-marginal-damage-cost-cap2',
             enemy_block='uncapped-visible-barricade-otherwise-cap30',
             artifact='bounded-charge-potential-if-root-has-reusable-debuff-attack',
+            upgrades='root-public-multiset-gains-require-new-upgraded-reusable-copy',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',

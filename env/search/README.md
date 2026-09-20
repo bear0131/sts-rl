@@ -285,3 +285,17 @@ Weak/Vulnerable and opportunity costs, including Velvet Choker's last play.
 This candidate has not demonstrated a whole-run improvement; keep its identity
 separate when evaluating. Regression:
 `tests/integration/test_turn_planner_artifact_potential.py`.
+
+`ironclad-turn-v14-upgrade-potential` adds a conservative future payoff for combat
+upgrades. A public root multiset freezes plain-card counts across all four piles
+and upgraded-card counts in hand/draw/discard. A leaf earns credit only when the
+plain count falls and the corresponding reusable upgraded count rises; exhausting
+plain cards, upgrading exhausted-only resources, already-upgraded starting cards,
+and repeating Apotheosis do not earn new credit. The payoff per matched card is
+`min(1.5, 5 * root_horizon / max(5, root_reusable_pile_size))`; it estimates future
+replays, not exact card strength. Cost-only upgrades have no future payoff under
+public Confused/Snecko Eye. Immediate effects remain native transition values.
+This intentionally undercounts when an old upgraded copy exhausts as another copy
+upgrades, does not value later Searing Blow upgrades, and cannot identify arbitrary
+card-creation/removal combinations from counts alone. No pile order, live RNG,
+checkpoint observation, native mechanic, or terminal ordering changes.
