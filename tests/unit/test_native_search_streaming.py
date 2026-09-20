@@ -146,6 +146,35 @@ def test_streamed_search_rejects_multiple_pending_leaves_per_tree():
         raise AssertionError("streaming accepted multiple leaves per tree")
 
 
+def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch):
+    batch_sizes = []
+
+    def fake_forward(_model, observations, **_kwargs):
+        size = len(observations["x"])
+        batch_sizes.append(size)
+        return np.zeros((size, 3), dtype=np.float32), np.zeros(size)
+
+    monkeypatch.setattr(native, "forward_leaves", fake_forward)
+    stream = _FakeGroupedSearchStream()
+    results, stats = native.complete_searches_streaming(
+        object(),
+        stream,
+        {index: ((np.zeros(3),), {}) for index in range(6)},
+        leaf_batch_size=1,
+        schedule=native.LeafInferenceSchedule(
+            target_batch_size=128,
+            max_wait_seconds=0.001,
+            mode="fixed_wait",
+        ),
+    )
+
+    assert set(results) == set(range(6))
+    assert batch_sizes == [6, 6]
+    assert stats["inference_batch_size_max"] == 6
+    assert stats["inference_watchdog_flushes"] == 0
+    assert stats["inference_target_batch_sum"] == 12
+
+
 def test_adaptive_controller_moves_between_fixed_buckets_with_hysteresis():
     shrinking = native.AdaptiveLeafBatchController(
         256, initial_batch_size=128, window_batches=2, evidence_windows=2

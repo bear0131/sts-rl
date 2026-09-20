@@ -56,6 +56,23 @@ def test_u40_fourfold_preset_carries_validated_rollout_tuning():
     assert args.rollout_resource_interval == 2
 
 
+def test_occ1k_resume_override_uses_cuda_graph_aligned_leaf_batches():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_occupancy1000_30m.args'}",
+    ])
+
+    assert args.total_steps == 30_000_000
+    assert args.startup_occupancy_max_age == 1000
+    assert args.nosl_is_az_updates == 40
+    assert args.nosl_is_az_simulations == 128
+    assert args.nosl_is_az_inference_batch_size == 64
+    assert args.nosl_is_az_inference_max_wait_ms == 1
+    assert args.nosl_is_az_inference_schedule == "fixed_wait"
+    assert args.leaf_graph_batch_multiple == 32
+
+
 @pytest.mark.parametrize("name", ["nosl_paper_replay_fresh10_20260913",
                                  "nosl_paper_noetl_noreplay_e288_20260913",
                                  "nosl_fixed_fpu_20260909"])

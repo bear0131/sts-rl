@@ -6,3 +6,7 @@ rules
 1000
 --startup-occupancy-budget
 131072
+--nosl-is-az-inference-batch-size
+64
+--nosl-is-az-inference-max-wait-ms
+1

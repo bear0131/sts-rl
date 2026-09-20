@@ -544,6 +544,11 @@ def complete_searches_streaming(
     ready = deque()
     ready_leaf_count = 0
 
+    def batch_target(active_capacity):
+        if controller is not None:
+            return controller.target(active_capacity)
+        return max(1, min(schedule.target_batch_size, int(active_capacity)))
+
     def receive(timeout, *, ready_empty=False):
         started = time.perf_counter()
         packets = stream.receive(timeout=timeout)
@@ -584,11 +589,7 @@ def complete_searches_streaming(
         if ready:
             batch_cycle_started = time.perf_counter()
             active_capacity = len(expected) - len(results)
-            target = (
-                controller.target(active_capacity)
-                if controller is not None
-                else schedule.target_batch_size
-            )
+            target = batch_target(active_capacity)
             flush_reason = None
             while ready_leaf_count < target and stream.pending:
                 oldest_at = ready[0][0]
@@ -607,11 +608,7 @@ def complete_searches_streaming(
                     break
                 ingest(packets)
                 active_capacity = len(expected) - len(results)
-                target = (
-                    controller.target(active_capacity)
-                    if controller is not None
-                    else schedule.target_batch_size
-                )
+                target = batch_target(active_capacity)
 
             # Drain packets already waiting in the OS pipe. This does not wait,
             # but exposes producer backlog to the controller before selection.
@@ -622,7 +619,7 @@ def complete_searches_streaming(
                         break
                     ingest(packets)
                     active_capacity = len(expected) - len(results)
-                    target = controller.target(active_capacity)
+                    target = batch_target(active_capacity)
 
             if ready_leaf_count >= target:
                 flush_reason = 'full'
