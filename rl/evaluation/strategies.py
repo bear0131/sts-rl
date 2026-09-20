@@ -319,6 +319,11 @@ def overworld_engine_strategy(model, args, *, trace=None):
     return EngineUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
 
 
+def overworld_growth_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_survival import GrowthUpperStrategy
+    return GrowthUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
 # Upper factories are independent of combat solver registration and the CLI.
 UPPER_STRATEGIES = {
     'model': lambda model, args, trace=None: policy_strategy(model, args),
@@ -329,6 +334,7 @@ UPPER_STRATEGIES = {
     'potion-shop': overworld_potion_shop_strategy,
     'survival': overworld_survival_strategy,
     'engine': overworld_engine_strategy,
+    'growth': overworld_growth_strategy,
 }
 
 
