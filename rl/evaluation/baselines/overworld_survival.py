@@ -25,6 +25,7 @@ from rl.evaluation.strategies import Decision
 
 OVERWORLD_SURVIVAL_VERSION = 'ironclad-overworld-survival-v1'
 OVERWORLD_GROWTH_VERSION = 'ironclad-overworld-growth-v1'
+OVERWORLD_READINESS_VERSION = 'ironclad-overworld-readiness-v1'
 FRONTLOAD = frozenset(('Anger', 'Carnage', 'Hemokinesis', 'Bludgeon',
     'Immolate', 'Fiend Fire', 'Perfected Strike', 'Pommel Strike', 'Twin Strike',
     'Headbutt', 'Uppercut', 'Clothesline', 'Wild Strike', 'Cleave', 'Whirlwind'))
@@ -46,10 +47,13 @@ class UpperProfile:
     smith_multiplier: float
     rest_targets: tuple[float, float, float]
     boss_rest_targets: tuple[float, float, float]
+    elite_policy: str = 'standard'
 
 
 SURVIVAL_PROFILE = UpperProfile('survival', 0.0, 1.0, (.68, .76, .76), (.82, .82, .82))
 GROWTH_PROFILE = UpperProfile('growth', 6.0, 1.4, (.46, .56, .62), (.60, .70, .78))
+READINESS_PROFILE = UpperProfile('readiness', 0.0, 1.0, (.68, .76, .76),
+                                (.82, .82, .82), elite_policy='readiness')
 
 
 @dataclass(frozen=True)
@@ -234,17 +238,21 @@ rest become unattractive as the projected budget falls. Replan every room.
             cost = elite_cost if room == 'ELITE' else hall_cost
             own = (7.0 if act == 1 else 5.0) if room == 'ELITE' else (2.7 if act == 1 and p.frontload < 4 else .2)
             risk_buffer = .25
-            if profile.elite_growth_bonus:
+            if profile.elite_growth_bonus or profile.elite_policy == 'readiness':
                 if room == 'ELITE':
                     cost += min(6, 3 * potion_count) - min(6, 3 * reserves)
                     ready = elite_ready(state, potion_reserves=reserves)
-                    if ready and hp >= max(.45 * max_hp, cost + .15 * max_hp):
+                    if profile.elite_policy == 'readiness':
+                        hp_floor = (.60, .68, .70)[min(max(act, 1), 3) - 1]
+                        if not ready or hp < max(hp_floor * max_hp, cost + .25 * max_hp):
+                            own, risk_buffer = 1.0, .35
+                    elif ready and hp >= max(.45 * max_hp, cost + .15 * max_hp):
                         own += profile.elite_growth_bonus
                         own += 2 if has_relic(state, 'BLACK_STAR') else 0
                         cost -= 5 if has_relic(state, 'PRESERVED_INSECT') else 0
                         risk_buffer = .15
                     next_reserves = max(0, reserves - 1)
-                elif act == 1 and p.frontload < 5:
+                elif profile.elite_growth_bonus and act == 1 and p.frontload < 5:
                     own += 1.2  # More card rewards before an elite, not only HP conservation.
             own -= .10 * cost + 12 * max(0.0, (cost + risk_buffer * max_hp - hp) / max_hp)
             if hp <= cost:
@@ -386,3 +394,10 @@ class GrowthUpperStrategy(SurvivalUpperStrategy):
     name = 'overworld-growth'
     version = OVERWORLD_GROWTH_VERSION
     profile = GROWTH_PROFILE
+
+
+class ReadinessUpperStrategy(SurvivalUpperStrategy):
+    """Survival's draft/rest policy with elite reward gated by public readiness."""
+    name = 'overworld-readiness'
+    version = OVERWORLD_READINESS_VERSION
+    profile = READINESS_PROFILE

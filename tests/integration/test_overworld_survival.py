@@ -6,12 +6,14 @@ import pytest
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
-from rl.evaluation.baselines.overworld_survival import GrowthUpperStrategy, SurvivalUpperStrategy, rank_survival
+from rl.evaluation.baselines.overworld_survival import (
+    GrowthUpperStrategy, ReadinessUpperStrategy, SurvivalUpperStrategy, rank_survival,
+)
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate
 from rl.evaluation.strategies import DecisionRequest, LeftmostStrategy, PhaseStrategy
 
 
-@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy])
+@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy, ReadinessUpperStrategy])
 def test_native_a20_neow_and_map_decisions_are_public_legal_and_nonmutating(strategy_type):
     env = SlayTheSpireEnv(ascension=20)
     try:
@@ -62,7 +64,7 @@ def test_native_a20_shop_potion_purchase_has_real_inventory_and_gold_effect():
         env.close()
 
 
-@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy])
+@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy, ReadinessUpperStrategy])
 def test_bounded_a20_joint_rule_smoke_uses_existing_runner(strategy_type):
     strategy = PhaseStrategy(strategy_type(LeftmostStrategy()),
                              {'combat': CombatRuleStrategy()})
