@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v16-pocketwatch'
+PLANNER_VERSION = 'ironclad-turn-v16.1-pocketwatch-capacity'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -314,10 +314,13 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
     if (not partial and raw.get('post_enemy_turn_boundary', False) and resources
             and resources['pocketwatch'] and resources['cards_played'] <= 3):
         # Eligibility was public before native cleanup. Credit only additional
-        # draw opportunities beyond the normal draw, respecting Pyramid's
-        # retained hand and the remaining public draw/discard card count.
+        # draw opportunities beyond normal and guaranteed Brutality draws,
+        # respecting Pyramid's retained hand and the public remaining cards.
+        # Native Brutality draws after Pocketwatch; count the marginal total
+        # cards, so an already full next hand does not earn Pocketwatch credit.
         capacity = min(max(0, 10 - len(raw['hand'])), len(raw['draw']) + len(raw['discard']))
-        value += min(3, max(0, capacity - resources['base_draw']))
+        guaranteed_draw = resources['base_draw'] + max(0, powers.get('brutality', 0))
+        value += min(3, max(0, capacity - guaranteed_draw))
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
     if partial:

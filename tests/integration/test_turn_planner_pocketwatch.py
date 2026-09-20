@@ -100,6 +100,38 @@ def test_pyramid_capacity_bounds_pocketwatch_additional_draw(combat_factory, ret
     assert len(_end(battle, boundary=False).to_dict()['hand']) == 10
 
 
+@pytest.mark.parametrize('retained,brutality,extra', [
+    (2, 3, 0), (4, 1, 0), (2, 1, 2), (0, 3, 2), (0, 2, 3), (0, 0, 3),
+])
+def test_pocketwatch_counts_only_draws_beyond_guaranteed_brutality(
+        combat_factory, retained, brutality, extra):
+    actual = []
+    for pocketwatch in (False, True):
+        relics = ['Runic Pyramid'] + (['Pocketwatch'] if pocketwatch else [])
+        env = combat_factory(['STRIKE_RED'] * 20, relics=relics)
+        env.thick.gc.ascension = 20
+        battle = sts.create_battle(env.thick.gc, 'Jaw Worm')
+        battle.apply_custom_state({
+            'player': {'hp': 75, 'max_hp': 75, 'energy': 3},
+            'monsters': [{'hp': 100, 'block': 0, 'move': 'JAW_WORM_BELLOW'}],
+            'hand': ['BRUTALITY'] * brutality + ['DEFEND_RED'] * (3 - brutality)
+                + ['ANGER'] * retained,
+            'draw': ['ANGER'] * 20, 'discard': [], 'exhaust': [],
+        })
+        for _ in range(3):
+            battle.execute(sts.Action(sts.ActionType.CARD, 0))
+        # Real power plays, not a fabricated numeric status, produce the exact
+        # native start-of-turn draw amount that the public heuristic discounts.
+        assert dict(battle.to_dict()['player']['powers']).get('Brutality', 0) == brutality
+        boundary = public_planner_state(_end(battle))
+        assert _credit(boundary) == (extra if pocketwatch else 0)
+        played = _end(battle, boundary=False).to_dict()
+        assert played['player']['hp'] == 75 - brutality
+        assert all(card[0] == 'ANGER' for card in played['hand'])
+        actual.append(len(played['hand']))
+    assert actual[1] - actual[0] == extra
+
+
 def test_empty_future_piles_do_not_invent_bonus_draws(combat_factory):
     battle = _third_card(combat_factory)
     battle.apply_custom_state({'hand': [], 'draw': ['ANGER'] * 2, 'discard': []})

@@ -117,8 +117,9 @@ def test_private_flags_are_traced_and_manifested(combat_factory, turns):
     strategy.decide([DecisionRequest(env, env._obs(), env._info(), 42, 0)])
     assert traces[0]['state']['player']['public_power_flags']['flags']['CORRUPTION'] is True
     manifest = strategy_manifest(strategy)
-    assert manifest['version'] == 'ironclad-turn-v16-pocketwatch'
+    assert manifest['version'] == 'ironclad-turn-v16.1-pocketwatch-capacity'
     assert manifest['public_power_flags'] == 'native-public-player-power-flags-v1-private-planner-state'
+    assert manifest['delayed_draw'] == 'pocketwatch-public-boundary-resources-v1-cap-after-base-and-brutality-draw'
     assert env.thick.bc.to_dict() == before
     json.dumps(traces, allow_nan=False)
 
