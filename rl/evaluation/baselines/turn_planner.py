@@ -1,5 +1,5 @@
 """DecisionStrategy adapter for the model-free native turn planner."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import numpy as np
 
@@ -40,6 +40,10 @@ class TurnPlannerStrategy:
             winning_tie_break='fewest-actions-to-equally-valued-sampled-wins',
             completed_tie_break='fewest-actions-if-all-tied-roots-fully-resolved-and-surviving')
 
+    def _plan(self, battle, *, state_nonce, check, public_relics):
+        return self.planner.choose(battle, state_nonce=state_nonce, check=check,
+                                   public_relics=public_relics)
+
     def decide(self, requests, *, check=lambda: None):
         decisions = []
         for request in requests:
@@ -63,8 +67,8 @@ class TurnPlannerStrategy:
                 # Per-episode step is an opaque decision counter, not game seed
                 # or simulator RNG. Identical public inputs at the same counter
                 # get identical hidden samples regardless of the actual future.
-                plan = self.planner.choose(env.thick.bc, state_nonce=request.step, check=check,
-                                           public_relics=public_relics)
+                plan = self._plan(env.thick.bc, state_nonce=request.step, check=check,
+                                  public_relics=public_relics)
                 decision = Decision(None, self.name,
                     {key: value for key, value in plan.diagnostics.items()
                      if isinstance(value, (int, float)) and key != 'max_action_depth'},
@@ -82,3 +86,59 @@ class TurnPlannerStrategy:
                     source=decision.source, diagnostics=(decision.diagnostics if dome else plan.diagnostics)))
             decisions.append(decision)
         return decisions
+
+
+class SelectiveTurnPlannerStrategy(TurnPlannerStrategy):
+    """Spend a deeper search only at public card-count opportunity boundaries."""
+    name = 'selective-turn-planner'
+    version = PLANNER_VERSION + '-selective-v1'
+
+    def __init__(self, config=TurnPlannerConfig(), *, trace=None):
+        if config.lookahead_turns != 1:
+            raise ValueError('selective turn planner requires a one-turn base config')
+        super().__init__(config, trace=trace)
+        self.deep_config = replace(config, lookahead_turns=2,
+                                   node_budget=4 * config.node_budget)
+        self.deep_planner = NativeTurnPlanner(self.deep_config)
+
+    def manifest(self):
+        return dict(super().manifest(), horizon='public-counter-selected-one-or-two-turns',
+            selective_search={
+                'triggers': ['public-pocketwatch-cards-played-exactly-three',
+                             'public-live-time-eater-time-warp-eleven',
+                             'public-intangible-nemesis-and-fiend-fire-in-hand'],
+                'ordinary_config': asdict(self.config),
+                'triggered_config': asdict(self.deep_config),
+                'per_decision_config': 'trace.diagnostics.selected_search',
+                'deep_decision_count': 'deep_search_decisions',
+            })
+
+    def _plan(self, battle, *, state_nonce, check, public_relics):
+        # No draw order, RNG, next intent or unobserved card state is inspected.
+        # Runic Dome's base-class fallback executes before this hook is called.
+        raw = battle.to_dict()
+        relics = {''.join(c for c in name.lower() if c.isalnum())
+                  for name in public_relics}
+        triggers = []
+        if ('pocketwatch' in relics
+                and raw['player']['combat_counters']['cards_played'] == 3):
+            triggers.append('pocketwatch-three')
+        if any(monster['id'] == 'TIME_EATER' and monster['hp'] > 0
+               and not monster['gone']
+               and dict(monster['powers']).get('Time Warp', 0) == 11
+               for monster in raw['monsters']):
+            triggers.append('time-warp-eleven')
+        if (any(card[0] == 'FIEND_FIRE' for card in raw['hand'])
+                and any(monster['id'] == 'NEMESIS' and monster['hp'] > 0
+                        and not monster['gone']
+                        and dict(monster['powers']).get('Intangible', 0) > 0
+                        for monster in raw['monsters'])):
+            triggers.append('intangible-nemesis-fiend-fire')
+        planner = self.deep_planner if triggers else self.planner
+        plan = planner.choose(battle, state_nonce=state_nonce, check=check,
+                              public_relics=public_relics)
+        plan.diagnostics['selected_search'] = {
+            'triggers': triggers, 'config': asdict(planner.config),
+        }
+        plan.diagnostics['deep_search_decisions'] = int(bool(triggers))
+        return plan

@@ -174,3 +174,17 @@ legacy 候选遇到 F03 空动作表时保留 `dead_screen` 和截断标记，�
 `fork_decision_step_origin`，manifest 标明 `fork-local-zero`；它不是原轨迹随机样本的逐步重放。
 `combat_rows` 是参考路径上的战斗组件对照，不能与整局 `rows` 合并统计胜率或样本数。
 步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。
+
+`SelectiveTurnPlannerStrategy` is an optional adapter over the same planner and
+leaf values. Its base config must use one turn; a public Pocketwatch count of
+exactly3, a live Time Eater's public Time Warp11, or a live Intangible Nemesis
+while Fiend Fire is in hand, selects two turns with four
+times the configured node budget. Worlds/beam/depth/nonce and other config fields
+stay fixed. Each decision reselects the mode, so ordinary states use the original
+planner. The manifest declares both configs; trace `selected_search` records the
+actual config and triggering counters, alongside native effective-budget and
+transition counts. `deep_search_decisions` is an additive episode count. Root
+coverage floors still apply, so four times configured nodes need not mean exactly
+four times actual transitions. Runic Dome retains the common visible-rule fallback.
+This candidate reuses `decide`, pending-action handling, tracing and the runner;
+it does not establish a win-rate improvement or change any state-value rule.
