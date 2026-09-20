@@ -15,7 +15,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v1.1-relic-contracts'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v1.2-potion-contracts'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -70,6 +70,15 @@ def _item_key(name):
 def has_relic(state, *names):
     held = {_item_key(name) for name in state['global'].get('relics', ())}
     return bool(held & {_item_key(name) for name in names})
+
+
+EMPTY_POTION_SLOTS = frozenset(('', 'EMPTY_POTION_SLOT'))
+
+
+def can_obtain_potion(state):
+    """A public empty usable slot and no Sozu are both required."""
+    return (not has_relic(state, 'SOZU') and
+        any(p in EMPTY_POTION_SLOTS for p in state['global'].get('potions', ())))
 
 
 COST_ONLY_UPGRADES = frozenset(('Body Slam', 'Corruption', 'Dark Embrace',
@@ -366,7 +375,8 @@ def rank_overworld(state, legal, *, rmap=None, current_y=-1):
             reason = f'buy:{relic}'
         elif kind == 'SHOP_POTION':
             _, price = opts['shop_potions'][i]
-            score = (3 if hp / max_hp < .55 else 1) - price / 25
+            score = ((3 if hp / max_hp < .55 else 1) - price / 25
+                if can_obtain_potion(state) else -100)
         elif kind == 'SHOP_REMOVE':
             score = max((remove_value(c, state) for c in g.get('deck', ())), default=0) - opts['shop_remove_cost'] / 20
         elif kind == 'EVENT_OPT' and event is not None:

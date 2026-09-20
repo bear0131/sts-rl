@@ -7,7 +7,7 @@ import pytest
 
 from env.core import action_space as A
 from rl.evaluation.baselines.overworld_rules import (
-    OverworldRuleStrategy, card_value, rank_overworld, relic_value, route_scores,
+    OverworldRuleStrategy, can_obtain_potion, card_value, rank_overworld, relic_value, route_scores,
 )
 from rl.evaluation.strategies import Decision, DecisionRequest
 
@@ -58,6 +58,20 @@ def test_shop_compares_real_price_and_skips_bad_card():
     assert choose(s, A._SHOP_CARD, A._SHOP_CARD + 1, A._PROCEED) == A._SHOP_CARD + 1
     s['options']['shop_cards'][1] = ('Clash', 0, 150)
     assert choose(s, A._SHOP_CARD, A._SHOP_CARD + 1, A._PROCEED) == A._PROCEED
+
+
+@pytest.mark.parametrize('belt,obtainable', [([], False), (['INVALID'], False),
+    (['Fire Potion', 'Block Potion'], False), ([''], True),
+    (['INVALID', 'EMPTY_POTION_SLOT'], True), (['Fire Potion', 'EMPTY_POTION_SLOT'], True)])
+def test_shop_obtainability_uses_public_capacity_and_bridge_empty_slots(belt, obtainable):
+    s = state('shop', hp=30)
+    s['options']['shop_potions'] = [('Block Potion', 25)]
+    s['global']['potions'] = belt
+    assert can_obtain_potion(s) is obtainable
+    assert choose(s, A._SHOP_POTION, A._PROCEED) == (A._SHOP_POTION if obtainable else A._PROCEED)
+    s['global']['relics'] = ['SOZU']
+    assert not can_obtain_potion(s)
+    assert choose(s, A._SHOP_POTION, A._PROCEED) == A._PROCEED
 
 
 def test_actual_relic_id_spelling_and_dome_drawback_are_understood():

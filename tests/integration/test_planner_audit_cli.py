@@ -84,13 +84,13 @@ def test_cli_planner_audit_runs_all_four_candidates_without_sharing_reference(
         default = payload['effective_strategy']['default']
         assert default['name'] == f'overworld-{upper}'
         assert default['fallback']['name'] == 'policy'
-        assert default['version'] == {'rules': 'ironclad-overworld-v1.1-relic-contracts',
+        assert default['version'] == {'rules': 'ironclad-overworld-v1.2-potion-contracts',
                                       'demand': 'ironclad-overworld-demand-v1',
                                       'energy': 'ironclad-overworld-energy-v1',
                                       'potion-shop': 'ironclad-overworld-potion-shop-v1'}[upper]
         if upper == 'energy':
             assert default['scope'] == 'boss-relic-only'
-            assert default['base_version'] == 'ironclad-overworld-v1.1-relic-contracts'
+            assert default['base_version'] == 'ironclad-overworld-v1.2-potion-contracts'
     else:
         assert payload['effective_strategy']['default']['name'] == 'policy'
     events = [json.loads(line) for line in trace.read_text().splitlines()]

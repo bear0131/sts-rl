@@ -141,7 +141,9 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 不重算折扣，不缓存Courier库存；取得一瓶后停止本候选的补货。随机生牌等未覆盖效果沿用v1。
 `overworld_potion_shop_decisions` / `overworld_potion_shop_changed_decisions` 记录实际补货；
 trace给出原动作、药水角色、价格和剩余金币。共享下层决定何时使用，不能保证保留至精英战。
-满槽/Sozu购买扣空钱是既有SHOP01；本候选只保护新增补货，v1原本会买的行为仍完整委托。
+满槽/Sozu购买扣空钱是既有SHOP01；共享 `can_obtain_potion` 现在保护所有规则上层的商店购买，
+包括本候选委托的基础规则和 engine/fuel。它只依据实际可用空槽及公开 Sozu 拒绝空买，
+不改变原生合法动作、扣金机制或正常可获得药水的购物排序。
 该候选未经过整局性能验收；至少128配对整局只切换rules/potion-shop并固定其他配置后再判断。
 
 跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表

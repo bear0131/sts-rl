@@ -21,8 +21,8 @@ from rl.evaluation.baselines.overworld_rules import (
 )
 from rl.evaluation.strategies import Decision
 
-OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2.1-relic-contracts'
-OVERWORLD_FUEL_VERSION = 'ironclad-overworld-fuel-v1'
+OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2.2-potion-contracts'
+OVERWORLD_FUEL_VERSION = 'ironclad-overworld-fuel-v1.1-potion-contracts'
 ENERGY_RELICS = frozenset(('CURSEDKEY', 'SOZU', 'COFFEEDRIPPER', 'FUSIONHAMMER',
     'PHILOSOPHERSSTONE', 'RUNICDOME', 'VELVETCHOKER', 'MARKOFPAIN', 'ECTOPLASM', 'BUSTEDCROWN'))
 EXHAUST_ONCE = frozenset(('Offering', 'Disarm', 'Shockwave', 'Impervious', 'Fiend Fire',

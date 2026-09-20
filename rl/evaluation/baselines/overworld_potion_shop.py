@@ -8,11 +8,13 @@ import numpy as np
 
 from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
-from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy, _item_key, rank_overworld
+from rl.evaluation.baselines.overworld_rules import (
+    EMPTY_POTION_SLOTS as EMPTY_SLOTS, OverworldRuleStrategy, _item_key,
+    can_obtain_potion, rank_overworld,
+)
 from rl.evaluation.strategies import Decision
 
 OVERWORLD_POTION_SHOP_VERSION = 'ironclad-overworld-potion-shop-v1'
-EMPTY_SLOTS = frozenset(('', 'EMPTY_POTION_SLOT'))
 FAST_AOE = frozenset(('Cleave', 'Whirlwind', 'Immolate', 'Thunderclap'))
 MULTIHIT = frozenset(('Twin Strike', 'Sword Boomerang', 'Pummel', 'Heavy Blade', 'Whirlwind'))
 
@@ -57,7 +59,7 @@ def rank_potion_shop(state, legal):
     # INVALID is not an obtainable empty slot; honor the actual exposed belt.
     if not held or any(p not in EMPTY_SLOTS for p in held):
         return None
-    if 'SOZU' in {_item_key(r) for r in g.get('relics', ())}:
+    if not can_obtain_potion(state):
         return None
     ranked = rank_overworld(state, legal)
     if ranked is None or A.segment_of(ranked[0]['action'])[0] != 'PROCEED':
