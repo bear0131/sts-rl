@@ -299,3 +299,13 @@ This intentionally undercounts when an old upgraded copy exhausts as another cop
 upgrades, does not value later Searing Blow upgrades, and cannot identify arbitrary
 card-creation/removal combinations from counts alone. No pile order, live RNG,
 checkpoint observation, native mechanic, or terminal ordering changes.
+
+`ironclad-turn-v15-time-warp-window` is a narrow Time Eater timing prior. Only a
+public root with Time Warp11 and current Ripple/Haste activates a fixed delay cost
+`3.2 * root_horizon + 4`: the estimated future cost of the eventual+2Strength and
+a modest lost-play opportunity. A leaf keeps this cost while the same native
+enemy still has11; only native resetting removes it. The actual enemy Strength
+cost, forced end, damage, and death/live/win ordering remain intact. Attacking
+roots and roots below11 get no such prior, so it cannot reward manufacturing a
+fresh eleven-card cycle. This is not a general value identity: a future one-card
+kill or a deck expecting only one useful play can make postponement harmless.
