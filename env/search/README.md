@@ -258,3 +258,15 @@ No unseen pending Ritual buff is guessed. Existing native death/win priority and
 all ordinary monsters without visible Ritual remain unaffected by this premium.
 The trace exposes `root_damage_premiums`; it stays out of numeric episode metrics.
 Regression: `tests/integration/test_turn_planner_ritual_pressure.py`.
+
+## Persistent enemy Barricade block
+
+The enemy block cost remains0.6 per point, but its30-point cap now applies only
+when the enemy lacks visible positive Barricade. Spheric Guardian retains its
+shield across turns; eroding75 block to69 is actual future progress even though
+neither HP nor the capped old value changes. Fully counting persistent block
+keeps the planner from skipping useful attacks while that shield grows. Ordinary
+temporary block retains its prior cap because it will disappear on the next
+native enemy turn. This changes only the public leaf prior, not native block,
+actions, HP weights or player Barricade semantics. Regression:
+`tests/integration/test_turn_planner_persistent_block.py`.

@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v12-ritual-public-progress'
+PLANNER_VERSION = 'ironclad-turn-v13-persistent-block'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -257,7 +257,10 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         value -= horizon * mp.get('ritual', 0)
         value += 3 * min(horizon, mp.get('weak', 0))
         value += 3 * min(horizon, mp.get('vulnerable', 0))
-        value -= .6 * min(m['block'], 30)
+        # Barricade's shield survives future enemy turns. Capping it erases
+        # all progress above30 block and can make free attacks tie with END.
+        block_burden = m['block'] if mp.get('barricade', 0) > 0 else min(m['block'], 30)
+        value -= .6 * block_burden
     value += horizon * (2.3 * powers.get('strength', 0)
         + 1.8 * powers.get('dexterity', 0)
         + .8 * powers.get('metallicize', 0)
