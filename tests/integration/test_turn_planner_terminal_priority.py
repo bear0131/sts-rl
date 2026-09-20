@@ -88,7 +88,7 @@ def test_structured_outcomes_stay_in_trace_not_numeric_decision_metrics(combat_f
 
 def test_manifest_declares_risk_contract_and_trace_only_structured_diagnostics():
     strategy = TurnPlannerStrategy()
-    assert strategy.version == 'ironclad-turn-v11-ritual-pressure'
+    assert strategy.version == 'ironclad-turn-v12-persistent-block'
     manifest = strategy.manifest()
     assert manifest['terminal_priority'] == 'per-world-death-live-win'
     assert manifest['world_aggregation'] == 'lexicographic-fewer-deaths-more-wins-mean-heuristic'
