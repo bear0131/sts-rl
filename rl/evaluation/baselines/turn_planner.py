@@ -31,7 +31,8 @@ class TurnPlannerStrategy:
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
-            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
+            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins',
+            completed_tie_break='fewest-actions-if-all-tied-roots-fully-resolved-and-surviving')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []

@@ -91,7 +91,7 @@ def test_slower_higher_hp_victory_still_beats_immediate_kill(combat_factory, loo
 
 
 @pytest.mark.parametrize('lookahead_turns', [1, 2])
-def test_nonwinning_roots_keep_previous_tie_break(combat_factory, lookahead_turns):
+def test_equivalent_nonwinning_roots_prefer_completed_boundary(combat_factory, lookahead_turns):
     battle = _chosen_loop(combat_factory, combust=False)
     result = _planner(lookahead_turns).choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
     outcomes = result.diagnostics['root_outcomes']
@@ -100,10 +100,12 @@ def test_nonwinning_roots_keep_previous_tie_break(combat_factory, lookahead_turn
     previous = max((int(bits) for bits in outcomes), key=lambda bits: (
         -outcomes[str(bits)]['deaths'], outcomes[str(bits)]['wins'],
         outcomes[str(bits)]['heuristic_mean'], -bits))
-    assert result.action_bits == previous
+    if lookahead_turns == 2:
+        assert result.action_bits == previous
     if lookahead_turns == 1:
         assert len({o['heuristic_mean'] for o in outcomes.values()}) == 1
-        assert result.action_bits == 0
+        assert previous == 0
+        assert result.action_bits == END
 
 
 def test_manifest_declares_secondary_winning_length_preference():
