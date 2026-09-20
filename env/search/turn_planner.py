@@ -19,7 +19,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v19-time-warp'
+PLANNER_VERSION = 'ironclad-turn-v20-status-engines'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -54,6 +54,31 @@ _DAMAGE_OR_CARD_RELICS = frozenset((
     'mercuryhourglass', 'bronzescales', 'charonsashes', 'letteropener',
     'stonecalendar', 'deadbranch', 'nilryscodex', 'tingsha', 'toolbox',
 ))
+
+
+_STATUS_CARDS = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED'))
+_CURSE_CARDS = frozenset(('ASCENDERS_BANE', 'CLUMSY', 'CURSE_OF_THE_BELL',
+    'DECAY', 'DOUBT', 'INJURY', 'NECRONOMICURSE', 'NORMALITY', 'PAIN',
+    'PARASITE', 'PRIDE', 'REGRET', 'SHAME', 'WRITHE'))
+_ETHEREAL_JUNK = frozenset(('ASCENDERS_BANE', 'CLUMSY', 'DAZED', 'VOID'))
+
+
+def status_engine_opportunities(raw, horizon):
+    """Bounded future trigger exposure from the public root multiset only.
+
+    Freeze this before scoring branches: drawing/exhausting junk must not erase
+    an installed engine's credit and make productive draw look backwards.
+    Ethereal junk already in hand will vanish before a future draw; exhausted
+    cards and hypothetical enemy/generated statuses provide no opportunity.
+    """
+    cards = raw['draw'] + raw['discard'] + [
+        card for card in raw['hand'] if card[0] not in _ETHEREAL_JUNK]
+    scale = 5 * horizon / max(5, len(cards))
+    status = sum(card[0] in _STATUS_CARDS for card in cards)
+    curse = sum(card[0] in _CURSE_CARDS for card in cards)
+    return {'evolve': min(3., status * scale),
+            'firebreathing': min(3., (status + curse) * scale),
+            'targets': min(3, sum(m['hp'] > 0 and not m['gone'] for m in raw['monsters']))}
 
 
 def no_remaining_damage_source(raw, public_relics=None):
@@ -295,7 +320,8 @@ def enemy_burden(monsters):
 
 
 def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
+                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
+                status_opportunities=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -372,6 +398,12 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         # near-term spending credit so banking hundreds of energy never
         # overwhelms real HP/damage or rewards pointless energy generation.
         value += 1.5 * min(max(0, p['energy']), 6., 2 * horizon)
+    if status_opportunities:
+        # Human prior for real delayed triggers, fixed across all leaves. Its
+        # bounds prevent status engines from overwhelming known HP/terminals.
+        value += 2 * min(2, powers.get('evolve', 0)) * status_opportunities['evolve']
+        value += min(20., damage_weight * powers.get('firebreathing', 0)
+                     * status_opportunities['firebreathing'] * status_opportunities['targets'])
     resources = p.get('boundary_resources')
     if (not partial and raw.get('post_enemy_turn_boundary', False) and resources
             and resources['pocketwatch'] and resources['cards_played'] <= 3):
@@ -394,7 +426,8 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
 
 
 def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
+                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
+                status_opportunities=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -404,7 +437,7 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
                         damage_weight=damage_weight, damage_premiums=damage_premiums,
                         artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties)
+                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -466,6 +499,7 @@ class NativeTurnPlanner:
         artifact_potential = has_reusable_debuff_source(original)
         upgrades = upgrade_reference(original, horizon, public_relics)
         time_warp_penalties = deferred_time_warp_penalties(original, horizon)
+        status_opportunities = status_engine_opportunities(original, horizon)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -489,7 +523,7 @@ class NativeTurnPlanner:
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
                                            horizon, final_player_turn, damage_premiums, artifact_potential,
-                                           upgrades, time_warp_penalties)
+                                           upgrades, time_warp_penalties, status_opportunities)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -528,13 +562,15 @@ class NativeTurnPlanner:
                                       for (slot, enemy), value in time_warp_penalties.items()},
             root_upgrade_potential={'plain_count': sum(upgrades[0].values()),
                                     'per_card_payoff': upgrades[2]},
+            root_status_opportunities=status_opportunities,
             root_damage_premiums={f'{slot}:{enemy}': value
                                   for (slot, enemy), value in damage_premiums.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
-              damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
+              damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
+                status_opportunities=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -570,7 +606,7 @@ class NativeTurnPlanner:
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
                                    damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
                                    artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties)
+                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -583,7 +619,7 @@ class NativeTurnPlanner:
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
                                   artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties)
+                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

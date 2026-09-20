@@ -320,7 +320,7 @@ This candidate has not demonstrated a whole-run improvement; keep its identity
 separate when evaluating. Regression:
 `tests/integration/test_turn_planner_artifact_potential.py`.
 
-`ironclad-turn-v14-upgrade-potential` adds a conservative future payoff for combat
+`ironclad-turn-v17-upgrades` adds a conservative future payoff for combat
 upgrades. A public root multiset freezes plain-card counts across all four piles
 and upgraded-card counts in hand/draw/discard. A leaf earns credit only when the
 plain count falls and the corresponding reusable upgraded count rises; exhausting
@@ -334,7 +334,7 @@ upgrades, does not value later Searing Blow upgrades, and cannot identify arbitr
 card-creation/removal combinations from counts alone. No pile order, live RNG,
 checkpoint observation, native mechanic, or terminal ordering changes.
 
-`ironclad-turn-v15-time-warp-window` is a narrow Time Eater timing prior. Only a
+`ironclad-turn-v19-time-warp` is a narrow Time Eater timing prior. Only a
 public root with Time Warp11 and current Ripple/Haste activates a fixed delay cost
 `3.2 * root_horizon + 4`: the estimated future cost of the eventual+2Strength and
 a modest lost-play opportunity. A leaf keeps this cost while the same native
@@ -343,3 +343,22 @@ cost, forced end, damage, and death/live/win ordering remain intact. Attacking
 roots and roots below11 get no such prior, so it cannot reward manufacturing a
 fresh eleven-card cycle. This is not a general value identity: a future one-card
 kill or a deck expecting only one useful play can make postponement harmless.
+
+## Status-triggered Evolve and Fire Breathing
+
+`ironclad-turn-v20-status-engines` values installed Evolve and Fire Breathing
+only when the decision root contains public future trigger cards. Evolve counts
+statuses; Fire Breathing counts statuses and curses. Exhausted cards and
+ethereal junk already in hand are excluded. Enemy identity, hypothetical future
+status generation and hidden draw order do not create opportunities.
+
+The root multiset supplies `min(3, 5 * root_horizon * trigger_count / max(5,
+remaining_card_count))` trigger opportunities. Every complete and partial leaf
+uses this same record, so drawing/exhausting junk cannot erase engine credit and
+make productive actions appear worse. Evolve contributes2points per opportunity
+and level, capped at2levels; Fire Breathing uses the configured damage weight,
+its actual power amount and up to3root enemies, capped at20points total. These
+are deliberately bounded human priors, not predicted win probabilities or an
+exact draw simulator. All terminal priority rules remain unchanged. The trace
+records `root_status_opportunities`; it is not summed into episode metrics.
+Regression: `tests/integration/test_turn_planner_status_engines.py`.
