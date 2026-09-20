@@ -99,9 +99,23 @@ at `min(6, 2 * root_horizon)` energy. This bounded human prior makes safe Seeing
 Red banking distinguishable from END without rewarding unbounded energy hoards.
 It applies only with the public relic and an actual completed enemy boundary;
 ordinary unused energy, partial frontier scores, and terminal values retain
-their prior behavior. No future draw order is read. Pocketwatch eligibility and
-retained-hand value remain separate unresolved resources. Regression:
+their prior behavior. No future draw order is read. Regression:
 `tests/integration/test_turn_planner_icecream.py`.
+
+The `ironclad-turn-v13-pocketwatch-v1` candidate additionally preserves public
+Pocketwatch eligibility at the value boundary. The additive native method
+`public_boundary_resources()` schema1 returns `cards_played`, `base_draw`, and
+`pocketwatch`. At a projected boundary, `cards_played` is the public count before
+cleanup; elsewhere it is the current turn's count. Clone preserves this
+search-only record; ordinary turn execution, initialization and custom-state
+setup reset it. Existing raw, packed and encoded observations do not change.
+The planner's private snapshot credits eligible additional draws by1 each,
+capped at3 and by retained-hand capacity and available draw/discard cards after
+normal draw. This is a bounded draw-opportunity prior, not an estimate of the
+drawn cards' actual value or a simulation of all start-of-turn effects. Lethal
+and survival outcomes retain priority. Rebuild native before constructing the
+planner; missing metadata fails explicitly. Regression:
+`tests/integration/test_turn_planner_pocketwatch.py`.
 
 `ironclad-turn-v4` adds a public phase-progress prior for splitting slimes. The
 remaining damage potential includes expected descendant HP at the native half-HP

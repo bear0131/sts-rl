@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v15-artifact'
+PLANNER_VERSION = 'ironclad-turn-v16-pocketwatch'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -138,6 +138,17 @@ def public_planner_state(battle, raw=None):
         raise ValueError('unsupported public_player_power_flags schema')
     raw = battle.to_dict() if raw is None else raw
     raw['player']['public_power_flags'] = record
+    read_resources = getattr(battle, 'public_boundary_resources', None)
+    if not callable(read_resources):
+        raise RuntimeError('resource planner requires native public_boundary_resources schema 1')
+    resources = read_resources()
+    if (set(resources) != {'schema_version', 'cards_played', 'base_draw', 'pocketwatch'}
+            or type(resources['schema_version']) is not int or resources['schema_version'] != 1
+            or type(resources['cards_played']) is not int or resources['cards_played'] < 0
+            or type(resources['base_draw']) is not int or resources['base_draw'] < 0
+            or type(resources['pocketwatch']) is not bool):
+        raise ValueError('unsupported public_boundary_resources schema')
+    raw['player']['boundary_resources'] = resources
     return raw
 
 
@@ -299,6 +310,14 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         # near-term spending credit so banking hundreds of energy never
         # overwhelms real HP/damage or rewards pointless energy generation.
         value += 1.5 * min(max(0, p['energy']), 6., 2 * horizon)
+    resources = p.get('boundary_resources')
+    if (not partial and raw.get('post_enemy_turn_boundary', False) and resources
+            and resources['pocketwatch'] and resources['cards_played'] <= 3):
+        # Eligibility was public before native cleanup. Credit only additional
+        # draw opportunities beyond the normal draw, respecting Pyramid's
+        # retained hand and the remaining public draw/discard card count.
+        capacity = min(max(0, 10 - len(raw['hand'])), len(raw['draw']) + len(raw['discard']))
+        value += min(3, max(0, capacity - resources['base_draw']))
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
     if partial:
@@ -357,6 +376,8 @@ class NativeTurnPlanner:
     def __init__(self, config: TurnPlannerConfig = TurnPlannerConfig()):
         if not callable(getattr(sts.BattleContext, 'public_player_power_flags', None)):
             raise RuntimeError('public-flags planner requires native public_player_power_flags schema 1')
+        if not callable(getattr(sts.BattleContext, 'public_boundary_resources', None)):
+            raise RuntimeError('resource planner requires native public_boundary_resources schema 1')
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
