@@ -24,6 +24,7 @@ from rl.evaluation.baselines.overworld_rules import (
 from rl.evaluation.strategies import Decision
 
 OVERWORLD_SURVIVAL_VERSION = 'ironclad-overworld-survival-v1'
+OVERWORLD_GROWTH_VERSION = 'ironclad-overworld-growth-v1'
 FRONTLOAD = frozenset(('Anger', 'Carnage', 'Hemokinesis', 'Bludgeon',
     'Immolate', 'Fiend Fire', 'Perfected Strike', 'Pommel Strike', 'Twin Strike',
     'Headbutt', 'Uppercut', 'Clothesline', 'Wild Strike', 'Cleave', 'Whirlwind'))
@@ -36,6 +37,19 @@ ENGINE = frozenset(('Barricade', 'Entrench', 'Dark Embrace', 'Corruption',
 ENERGY_RELICS = frozenset(('CURSEDKEY', 'SOZU', 'COFFEEDRIPPER', 'FUSIONHAMMER',
     'PHILOSOPHERSSTONE', 'RUNICDOME', 'VELVETCHOKER', 'MARKOFPAIN',
     'ECTOPLASM', 'BUSTEDCROWN'))
+
+
+@dataclass(frozen=True)
+class UpperProfile:
+    name: str
+    elite_growth_bonus: float
+    smith_multiplier: float
+    rest_targets: tuple[float, float, float]
+    boss_rest_targets: tuple[float, float, float]
+
+
+SURVIVAL_PROFILE = UpperProfile('survival', 0.0, 1.0, (.68, .76, .76), (.82, .82, .82))
+GROWTH_PROFILE = UpperProfile('growth', 6.0, 1.4, (.46, .56, .62), (.60, .70, .78))
 
 
 @dataclass(frozen=True)
@@ -60,6 +74,28 @@ def coverage(state):
         sum(counts[c] for c in EXHAUST), sum(counts[c] for c in DRAW),
         3 + len(relics & ENERGY_RELICS),
     )
+
+
+def elite_ready(state, *, potion_reserves=None):
+    """A deliberately conservative unlock for growth's extra elite reward.
+
+This only inspects the actual public deck/potions, not an unseen elite identity.
+The route approximation consumes one available reserve per projected elite, so
+one potion cannot unlock an arbitrary chain of future elite fights.
+"""
+    g, p, counts = state['global'], coverage(state), deck_counts(state)
+    if potion_reserves is None:
+        potion_reserves = sum(bool(potion_preference(x, state)) for x in g.get('potions', ()))
+    act = int(g.get('act', 1))
+    if act == 1:
+        upgraded_nuke = any(c in ('Carnage', 'Immolate', 'Bludgeon', 'Fiend Fire') and up
+                            for c, up in g.get('deck', ()))
+        return p.frontload >= 3 or (p.frontload >= 2 and (upgraded_nuke or potion_reserves > 0))
+    if act == 2:
+        return p.frontload >= 3 and p.aoe >= 1 and p.defense >= 2 and (p.weak > 0 or potion_reserves > 0)
+    engine = (counts['Corruption'] and counts['Feel No Pain']) or (
+        counts['Barricade'] and (counts['Impervious'] or counts['Power Through']))
+    return p.aoe >= 1 and p.defense >= 3 and (p.strength > 0 or bool(engine))
 
 
 def survival_card_value(card, state, *, adding=True):
@@ -167,7 +203,7 @@ def survival_upgrade_value(card, state):
     return value
 
 
-def survival_route_scores(state, choices, rmap, current_y):
+def survival_route_scores(state, choices, rmap, current_y, *, profile=SURVIVAL_PROFILE):
     """Discounted visible routes with consecutive-fight and recovery awareness.
 
 Risk costs below are coarse HP-budget priors, deliberately not forecasts. A
@@ -188,22 +224,37 @@ rest become unattractive as the projected budget falls. Replan every room.
         heal_after_fight = 0
 
     @lru_cache(None)
-    def visit(x, y, hp_bin):
+    def visit(x, y, hp_bin, reserves):
         if y > MAX_Y:
             return 0.0
         hp, room = hp_bin * 4.0, rmap.room_type(x, y)
         own, after = 0.0, hp
+        next_reserves = reserves
         if room in ('MONSTER', 'ELITE'):
             cost = elite_cost if room == 'ELITE' else hall_cost
             own = (7.0 if act == 1 else 5.0) if room == 'ELITE' else (2.7 if act == 1 and p.frontload < 4 else .2)
-            own -= .10 * cost + 12 * max(0.0, (cost + .25 * max_hp - hp) / max_hp)
+            risk_buffer = .25
+            if profile.elite_growth_bonus:
+                if room == 'ELITE':
+                    cost += min(6, 3 * potion_count) - min(6, 3 * reserves)
+                    ready = elite_ready(state, potion_reserves=reserves)
+                    if ready and hp >= max(.45 * max_hp, cost + .15 * max_hp):
+                        own += profile.elite_growth_bonus
+                        own += 2 if has_relic(state, 'BLACK_STAR') else 0
+                        cost -= 5 if has_relic(state, 'PRESERVED_INSECT') else 0
+                        risk_buffer = .15
+                    next_reserves = max(0, reserves - 1)
+                elif act == 1 and p.frontload < 5:
+                    own += 1.2  # More card rewards before an elite, not only HP conservation.
+            own -= .10 * cost + 12 * max(0.0, (cost + risk_buffer * max_hp - hp) / max_hp)
             if hp <= cost:
                 own -= 20  # An earlier reward cannot compensate likely death.
             after = max(0, hp - cost) + heal_after_fight
         elif room == 'REST':
             heal = min(.3 * max_hp, max_hp - hp) if can_heal else 0
-            own = max(smith / 5, heal / 5)
-            after = hp + heal if heal >= smith else hp
+            smith_score = smith * profile.smith_multiplier
+            own = max(smith_score / 5, heal / 5)
+            after = hp + heal if heal >= smith_score else hp
         elif room == 'SHOP':
             own = min(5, max(-2, (g.get('gold', 0) - 70) / 45))
         elif room == 'EVENT':
@@ -212,13 +263,13 @@ rest become unattractive as the projected budget falls. Replan every room.
             own = 3.0
         children = rmap.reachable(x, y) if y < MAX_Y else ()
         next_hp = int(min(max_hp, after) // 4)
-        future = max((visit(child, y + 1, next_hp) for child in children), default=0)
+        future = max((visit(child, y + 1, next_hp, next_reserves) for child in children), default=0)
         return own + .82 * future
 
-    return {action: visit(x, max(0, current_y + 1), int(g['hp'] // 4)) for x, action in choices}
+    return {action: visit(x, max(0, current_y + 1), int(g['hp'] // 4), potion_count) for x, action in choices}
 
 
-def rank_survival(state, legal, *, rmap=None, current_y=-1):
+def rank_survival(state, legal, *, rmap=None, current_y=-1, profile=SURVIVAL_PROFILE):
     rows = rank_overworld(state, legal, rmap=rmap, current_y=current_y)
     if rows is None:
         return None
@@ -228,7 +279,7 @@ def rank_survival(state, legal, *, rmap=None, current_y=-1):
     routes = {}
     if state['phase'] == 'map':
         choices = [(i, a) for a in legal for kind, i in [A.segment_of(a)] if kind == 'MAP_NODE']
-        routes = survival_route_scores(state, choices, rmap, current_y)
+        routes = survival_route_scores(state, choices, rmap, current_y, profile=profile)
     for row in rows:
         kind, i = A.segment_of(row['action'])
         row['v1_score'] = row['score']
@@ -246,10 +297,12 @@ def rank_survival(state, legal, *, rmap=None, current_y=-1):
             if name == 'rest':
                 missing = max(0, g['max_hp'] - g['hp'])
                 near_boss = current_y >= 13
-                target = .82 if near_boss else .68 if act == 1 else .76
+                targets = profile.boss_rest_targets if near_boss else profile.rest_targets
+                target = targets[min(max(act, 1), 3) - 1]
                 row['score'] = min(missing, .3 * g['max_hp']) * (.85 if hp_ratio < target else .22)
             elif name == 'smith':
-                row['score'] = max((survival_upgrade_value(c, state) for c in g.get('deck', ())), default=0)
+                row['score'] = profile.smith_multiplier * max(
+                    (survival_upgrade_value(c, state) for c in g.get('deck', ())), default=0)
         elif kind == 'SHOP_CARD':
             cid, up, price = opts['shop_cards'][i]
             row['score'] = survival_card_value((cid, up), state) * 2 - price / 25
@@ -291,6 +344,7 @@ def rank_survival(state, legal, *, rmap=None, current_y=-1):
 class SurvivalUpperStrategy:
     name = 'overworld-survival'
     version = OVERWORLD_SURVIVAL_VERSION
+    profile = SURVIVAL_PROFILE
 
     def __init__(self, fallback=None, *, trace=None):
         self.fallback, self.trace = fallback, trace
@@ -299,7 +353,7 @@ class SurvivalUpperStrategy:
     def manifest(self):
         return dict(scope='ironclad-public-overworld', acquisition='encounter-coverage-before-engine',
             route='visible-map-coarse-risk-budget', base_events=self._base.version,
-            values='uncalibrated-human-priors', private_outcomes=False)
+            values='uncalibrated-human-priors', private_outcomes=False, profile=asdict(self.profile))
 
     def decide(self, requests, *, check=lambda: None):
         results, delegated, indices = [None] * len(requests), [], []
@@ -308,14 +362,14 @@ class SurvivalUpperStrategy:
             base = request.env.unwrapped.thick
             state = base.obs_canonical()
             rows = rank_survival(state, np.flatnonzero(request.env.action_masks()),
-                                 rmap=base.rmap, current_y=base.gc.cur_map_node_y)
+                                 rmap=base.rmap, current_y=base.gc.cur_map_node_y, profile=self.profile)
             if rows is None:
                 delegated.append(request)
                 indices.append(index)
                 continue
             action = rows[0]['action']
             results[index] = Decision(action, self.name,
-                dict(overworld_rule_decisions=1, overworld_survival_decisions=1))
+                dict(overworld_rule_decisions=1, **{f'overworld_{self.profile.name}_decisions': 1}))
             if self.trace:
                 self.trace(dict(kind='overworld_decision', seed=request.seed, step=request.step,
                     phase=state['phase'], version=self.version, ranked=rows, state=state,
@@ -325,3 +379,10 @@ class SurvivalUpperStrategy:
             for index, decision in zip(indices, decisions):
                 results[index] = decision
         return results
+
+
+class GrowthUpperStrategy(SurvivalUpperStrategy):
+    """Same role-aware draft, but spend prepared HP/potions on relics and smiths."""
+    name = 'overworld-growth'
+    version = OVERWORLD_GROWTH_VERSION
+    profile = GROWTH_PROFILE
