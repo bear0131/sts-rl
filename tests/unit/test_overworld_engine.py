@@ -7,7 +7,7 @@ import pytest
 
 from env.core import action_space as A
 from rl.evaluation.baselines.overworld_engine import (
-    EngineUpperStrategy, engine_card_value, engine_profile, engine_relic_value,
+    EngineUpperStrategy, boss_card_adjustment, engine_card_value, engine_profile, engine_relic_value,
     engine_remove_value, engine_skip_threshold, engine_upgrade_value,
     rank_engine_overworld,
 )
@@ -200,3 +200,95 @@ def test_unmodified_event_decisions_equal_baseline(state):
     assert rows == rank_overworld(state, legal)
     assert rows[0]['action'] == original
     assert not touched
+
+
+@pytest.mark.parametrize('boss', ['HEXAGHOST', 'SLIME_BOSS', 'DONU_AND_DECA', 'TIME_EATER'])
+def test_public_status_boss_enables_one_evolve_without_self_generated_status(state, boss):
+    state['global'].update(act=3 if boss in ('DONU_AND_DECA', 'TIME_EATER') else 1,
+        floor=45 if boss in ('DONU_AND_DECA', 'TIME_EATER') else 12, boss=boss)
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0)]
+    assert engine_profile(state).status_sources == 0
+    assert boss_card_adjustment(('Evolve', 0), state) > 0
+    assert choose(state, ('Evolve', 0)) == A._RCARD
+    # A boss produces temporary status cards, not permanent deck fuel. Do not
+    # turn that one fight into a fictitious multi-copy engine commitment.
+    state['global']['deck'] += [('Evolve', 0)]
+    assert boss_card_adjustment(('Evolve', 0), state) == 0
+    assert choose(state, ('Evolve', 0)) == A._RSKIP
+    assert 'status' not in engine_profile(state).commitments
+
+
+@pytest.mark.parametrize('boss', ['THE_GUARDIAN', 'AUTOMATON', 'COLLECTOR', 'CHAMP', 'UNKNOWN'])
+def test_ordinary_or_unknown_boss_does_not_invent_status_fuel(state, boss):
+    state['global'].update(act=2, floor=29, boss=boss)
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0)]
+    assert boss_card_adjustment(('Evolve', 0), state) == 0
+    assert choose(state, ('Evolve', 0), ('Fire Breathing', 0)) == A._RSKIP
+    # Independently owned status generators still make Evolve useful.
+    state['global']['deck'] += [('Power Through', 0), ('Immolate', 0)]
+    assert choose(state, ('Evolve', 0)) == A._RCARD
+
+
+def test_status_boss_prior_waits_for_opening_damage_readiness(state):
+    state['global']['boss'] = 'HEXAGHOST'
+    assert boss_card_adjustment(('Evolve', 0), state) == 0
+    assert choose(state, ('Evolve', 0), ('Carnage', 0)) == A._RCARD + 1
+    state['global']['floor'] = 12
+    assert boss_card_adjustment(('Evolve', 0), state) == 0
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0)]
+    assert boss_card_adjustment(('Evolve', 0), state) > 0
+
+
+def test_time_eater_status_prior_has_actual_ascension_boundary(state):
+    state['global'].update(act=3, floor=45, boss='TIME_EATER', ascension=18)
+    assert boss_card_adjustment(('Evolve', 0), state) == 0
+    state['global']['ascension'] = 19
+    assert boss_card_adjustment(('Evolve', 0), state) > 0
+
+
+def test_hexaghost_and_champ_missing_scaling_get_access_not_extra_setup(state):
+    state['global'].update(floor=13, boss='HEXAGHOST')
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0)]
+    assert choose(state, ('Cleave', 0), ('Spot Weakness', 0)) == A._RCARD + 1
+    assert boss_card_adjustment(('Demon Form', 0), state) == 0
+    state['global']['deck'] += [('Inflame', 0)]
+    assert boss_card_adjustment(('Spot Weakness', 0), state) == 0
+    state['global'].update(act=2, floor=29, boss='CHAMP')
+    assert boss_card_adjustment(('Limit Break', 0), state) > 0
+    state['global']['deck'] = [('Strike_R', 0)] * 5
+    assert boss_card_adjustment(('Limit Break', 0), state) == 0
+    assert choose(state, ('Limit Break', 0)) == A._RSKIP
+
+
+def test_guardian_block_gap_and_awakened_selective_power_caution(state):
+    state['global'].update(floor=13, boss='THE_GUARDIAN')
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0)]
+    assert boss_card_adjustment(('Shrug It Off', 0), state) > 0
+    state['global']['deck'] += [('Shrug It Off', 0), ('Power Through', 0)]
+    assert boss_card_adjustment(('Shrug It Off', 0), state) == 0
+    state['global'].update(act=3, floor=45, boss='AWAKENED_ONE')
+    assert boss_card_adjustment(('Brutality', 0), state) < 0
+    assert boss_card_adjustment(('Metallicize', 0), state) < 0
+    for core in ('Corruption', 'Dark Embrace', 'Feel No Pain', 'Inflame'):
+        assert boss_card_adjustment((core, 0), state) == 0
+
+
+def test_owned_evolve_upgrade_remains_useful_against_public_status_boss(state):
+    state['global'].update(floor=13, boss='HEXAGHOST')
+    state['global']['deck'] += [('Carnage', 0), ('Anger', 0), ('Evolve', 0)]
+    needed = engine_upgrade_value(('Evolve', 0), state)
+    state['global']['boss'] = 'THE_GUARDIAN'
+    assert engine_upgrade_value(('Evolve', 0), state) < needed
+    state['global']['deck'] += [('Power Through', 0)]
+    assert engine_upgrade_value(('Evolve', 0), state) == needed
+
+
+@pytest.mark.parametrize('block', ['True Grit', 'Ghostly Armor'])
+def test_compact_deck_does_not_skip_needed_bridge_block_before_first_boss(state, block):
+    state['global'].update(floor=12, boss='HEXAGHOST')
+    assert boss_card_adjustment((block, 0), state) == 0  # opening damage missing
+    state['global']['deck'] += [('Anger', 0), ('Carnage', 0)]
+    assert choose(state, (block, 0)) == A._RCARD
+    state['global']['deck'] += [('Power Through', 0), ('Shrug It Off', 0)]
+    assert boss_card_adjustment((block, 0), state) == 0
+    assert choose(state, (block, 0)) == A._RSKIP
