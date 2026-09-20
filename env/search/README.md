@@ -93,6 +93,16 @@ result. `execute` and the existing NOSL search control remain unchanged.
 
 Regression entrypoint: `tests/integration/test_native_boundary_execution.py`.
 
+Ice Cream's completed boundary retains energy before the next recharge. The
+`ironclad-turn-v13-icecream-v1` candidate credits each banked energy by1.5, capped
+at `min(6, 2 * root_horizon)` energy. This bounded human prior makes safe Seeing
+Red banking distinguishable from END without rewarding unbounded energy hoards.
+It applies only with the public relic and an actual completed enemy boundary;
+ordinary unused energy, partial frontier scores, and terminal values retain
+their prior behavior. No future draw order is read. Pocketwatch eligibility and
+retained-hand value remain separate unresolved resources. Regression:
+`tests/integration/test_turn_planner_icecream.py`.
+
 `ironclad-turn-v4` adds a public phase-progress prior for splitting slimes. The
 remaining damage potential includes expected descendant HP at the native half-HP
 threshold (integer division), and the encounter-count term anticipates two medium
