@@ -204,3 +204,22 @@ every state: two-turn plans can still value delaying the stronger second phase.
 Regression entrypoint: `tests/integration/test_turn_planner_awakened_phase.py`.
 
 The A20 planner also reads native `public_player_power_flags()` schema 1 for public binary powers (Corruption, Barricade, Confused, Hex, Pen Nib, Surrounded). These flags enrich only its private snapshot and trace; checkpoint observations and numeric power getters retain their existing schemas. Rebuild the extension before using this planner; an older extension fails the planner capability check explicitly.
+
+## Completed-plan progress tie v9
+
+`ironclad-turn-v9-completed-progress` additionally breaks exact live-plan ties by
+shortest observed action count to the chosen completed leaves. Death count, win
+count, mean heuristic and the existing winning-depth comparison remain primary.
+The new comparison applies only when every tied root has completed all sampled
+worlds with no death: partial fallback values do not prove equivalent plans, and
+we do not introduce a preference for dying sooner. Per-world equal-quality live
+boundaries retain the shortest observed depth. `completed_steps_total` is trace
+metadata for selected surviving completed leaves; unresolved/death worlds add
+zero and must be interpreted with their separate outcome counts.
+
+This resolves a receding-horizon failure where Medical Kit/Hex/Dark Embrace
+repeatedly played a self-replacing Dazed before an equally valued Iron Wave.
+Feel No Pain can make the same Dazed loop productive; greater final block/HP
+utility still wins even if it takes more actions. This is a tie rule, not a cycle
+proof or a change to the native legality of status cards. Regression:
+`tests/integration/test_turn_planner_completed_progress.py`.
