@@ -18,7 +18,7 @@ from env.core.spiremap import MAX_Y
 from rl.evaluation.baselines.overworld_potion_shop import EMPTY_SLOTS, potion_preference
 from rl.evaluation.baselines.overworld_rules import (
     CARD_VALUE, CURSES, DRAW, EXHAUST, STRENGTH, OverworldRuleStrategy,
-    _item_key, deck_counts, has_relic, rank_overworld, relic_value,
+    _item_key, can_obtain_potion, deck_counts, has_relic, rank_overworld, relic_value,
     relic_strength_sources, remove_value, upgrade_value,
 )
 from rl.evaluation.strategies import Decision
@@ -317,7 +317,7 @@ def rank_survival(state, legal, *, rmap=None, current_y=-1, profile=SURVIVAL_PRO
         elif kind == 'SHOP_POTION':
             potion, price = opts['shop_potions'][i]
             held = g.get('potions', ())
-            can_obtain = any(x in EMPTY_SLOTS for x in held) and not has_relic(state, 'SOZU')
+            can_obtain = can_obtain_potion(state)
             pref = potion_preference(potion, state)
             reserves = sum(x not in EMPTY_SLOTS and x != 'INVALID' for x in held)
             row['score'] = -100

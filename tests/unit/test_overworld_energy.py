@@ -161,7 +161,7 @@ def test_decision_batch_fallback_trace_and_factory_metadata():
     assert all(t['kind'] == 'overworld_decision' and 'action' in t for t in traces)
     assert boss == before
     manifest = strategy_manifest(policy)
-    assert manifest['scope'] == 'boss-relic-only' and manifest['base_version'] == 'ironclad-overworld-v1.1-relic-contracts'
+    assert manifest['scope'] == 'boss-relic-only' and manifest['base_version'] == 'ironclad-overworld-v1.2-potion-contracts'
     assert manifest['fallback']['name'] == Fallback.name
     model = object()
     made = UPPER_STRATEGIES['energy'](model, SimpleNamespace(stochastic=False))
