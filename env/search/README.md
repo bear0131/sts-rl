@@ -223,3 +223,17 @@ Feel No Pain can make the same Dazed loop productive; greater final block/HP
 utility still wins even if it takes more actions. This is a tie rule, not a cycle
 proof or a change to the native legality of status cards. Regression:
 `tests/integration/test_turn_planner_completed_progress.py`.
+
+## Angry reactive growth candidate
+
+A20 Mad Gremlin gains2 Strength for every damaging hit. Native completed leaves
+already charge the current retaliation. The generic future Strength penalty can
+then outweigh every safe6-damage Strike even with enough block to lose no HP,
+rewarding indefinite delay. For visible `Angry` only, the candidate uses a bounded
+0.5 heuristic points per future Strength instead of `1.6 * power_horizon`.
+Ordinary Strength-bearing enemies keep their prior valuation, and native sampled
+death still outranks this heuristic. This is an explicit short-fight prior,
+not a claim that future Strength is harmless or an oracle damage estimate.
+Regression: `tests/integration/test_turn_planner_angry_progress.py` verifies safe
+progress across actual repeated decisions and a lethal-retaliation case where
+blocking remains preferred. Whole-run acceptance belongs to A20 evaluations.
