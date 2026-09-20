@@ -28,7 +28,7 @@ def build_parser():
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
     parser.add_argument('--upper-strategy', choices=tuple(UPPER_STRATEGIES), default='model',
-                        help='Upper checkpoint or opt-in rules/demand/energy/potion-shop; rules use explicit model fallback')
+                        help='Upper checkpoint or an opt-in rule strategy; rule strategies use explicit model fallback')
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--seed', type=int, default=10000)
     parser.add_argument('--seed-file', type=Path,
