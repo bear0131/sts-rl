@@ -1,6 +1,7 @@
 """Checkpoint-aware environment construction shared by training and benchmarks."""
 from __future__ import annotations
 import argparse
+import copy
 import hashlib
 import gymnasium as gym
 import numpy as np
@@ -10,6 +11,7 @@ from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies import model as model_utils
 from rl.tasks.wholerun import WholeRunTask, _MAX_EPISODE_STEPS
 from rl.training.cached_mask_vec_env import CachedMaskSubprocVecEnv, GroupedCachedMaskSubprocVecEnv
+from rl.training.reward import ShapedRewardWrapper
 
 
 def startup_stagger_delays(
@@ -211,6 +213,153 @@ class CheckpointObservationCompat(gym.ObservationWrapper):
             if key in self._keys
         }
 
+
+class TrainingStateWrapper(gym.Wrapper):
+    """Export and restore the complete mutable state of the training stack."""
+
+    training_state_checkpointable = True
+
+    @staticmethod
+    def _kind(wrapper):
+        if isinstance(wrapper, StartupOccupancyWrapper):
+            return "startup_occupancy"
+        if isinstance(wrapper, StartupStaggerWrapper):
+            return "startup_stagger"
+        if isinstance(wrapper, CheckpointObservationCompat):
+            return "observation_compat"
+        if isinstance(wrapper, gym.wrappers.TimeLimit):
+            return "time_limit"
+        if isinstance(wrapper, ShapedRewardWrapper):
+            return "shaped_reward"
+        raise TypeError(
+            "unsupported mutable training wrapper: "
+            f"{type(wrapper).__module__}.{type(wrapper).__qualname__}"
+        )
+
+    def _chain(self):
+        wrappers = []
+        current = self.env
+        while isinstance(current, gym.Wrapper):
+            wrappers.append(current)
+            current = current.env
+        return wrappers, current
+
+    @staticmethod
+    def _wrapper_state(wrapper, kind):
+        if kind == "startup_occupancy":
+            return {
+                "max_episode_steps": wrapper._max_episode_steps,
+                "age_rng_state": copy.deepcopy(
+                    wrapper._age_rng.bit_generator.state
+                ),
+                "target_age": wrapper._target_age,
+                "age": wrapper._age,
+                "episode_return": wrapper._episode_return,
+                "accepted": wrapper._accepted,
+                "released": wrapper._released,
+                "rejected_episodes": wrapper._rejected_episodes,
+                "real_steps": wrapper._real_steps,
+                "exclude_current_episode_from_metrics": (
+                    wrapper._exclude_current_episode_from_metrics
+                ),
+                "last_info": copy.deepcopy(wrapper._last_info),
+            }
+        if kind == "startup_stagger":
+            return {
+                "initial_hold_steps": wrapper._initial_hold_steps,
+                "remaining_hold_steps": wrapper._remaining_hold_steps,
+                "released": wrapper._released,
+                "steps_since_reset": wrapper._steps_since_reset,
+                "last_info": copy.deepcopy(wrapper._last_info),
+            }
+        if kind == "time_limit":
+            return {
+                "max_episode_steps": wrapper._max_episode_steps,
+                "elapsed_steps": wrapper._elapsed_steps,
+            }
+        if kind == "shaped_reward":
+            return {"previous": copy.deepcopy(wrapper._prev)}
+        return {}
+
+    def _visible_observation(self, wrappers, base_observation):
+        observation = base_observation
+        for wrapper in reversed(wrappers):
+            if isinstance(wrapper, gym.ObservationWrapper):
+                observation = wrapper.observation(observation)
+        return observation
+
+    def export_training_state(self):
+        wrappers, base = self._chain()
+        if not hasattr(base, "export_training_state"):
+            raise TypeError("training environment does not support state export")
+        kinds = [self._kind(wrapper) for wrapper in wrappers]
+        base_state = base.export_training_state()
+        observation = self._visible_observation(wrappers, base._obs())
+        return {
+            "schema_version": 1,
+            "base": base_state,
+            "wrappers": [
+                {"kind": kind, "state": self._wrapper_state(wrapper, kind)}
+                for wrapper, kind in zip(wrappers, kinds, strict=True)
+            ],
+            "visible_observation_sha256": base._array_mapping_digest(observation),
+        }
+
+    def restore_training_state(self, state):
+        if state.get("schema_version") != 1:
+            raise ValueError("unsupported training wrapper state schema")
+        wrappers, base = self._chain()
+        saved_wrappers = state.get("wrappers", [])
+        kinds = [self._kind(wrapper) for wrapper in wrappers]
+        saved_kinds = [item.get("kind") for item in saved_wrappers]
+        if kinds != saved_kinds:
+            raise ValueError(
+                f"training wrapper mismatch: expected {saved_kinds}, got {kinds}"
+            )
+
+        observation, info = base.restore_training_state(state["base"])
+        for wrapper, saved in reversed(list(zip(
+            wrappers, saved_wrappers, strict=True
+        ))):
+            kind = saved["kind"]
+            values = saved["state"]
+            if kind == "shaped_reward":
+                wrapper._prev = copy.deepcopy(values["previous"])
+            elif kind == "time_limit":
+                if wrapper._max_episode_steps != values["max_episode_steps"]:
+                    raise ValueError("environment TimeLimit mismatch")
+                wrapper._elapsed_steps = values["elapsed_steps"]
+            elif kind == "observation_compat":
+                observation = wrapper.observation(observation)
+            elif kind == "startup_stagger":
+                if wrapper._initial_hold_steps != values["initial_hold_steps"]:
+                    raise ValueError("startup stagger configuration mismatch")
+                wrapper._remaining_hold_steps = values["remaining_hold_steps"]
+                wrapper._released = values["released"]
+                wrapper._steps_since_reset = values["steps_since_reset"]
+                wrapper._last_observation = observation
+                wrapper._last_info = copy.deepcopy(values["last_info"])
+            elif kind == "startup_occupancy":
+                if wrapper._max_episode_steps != values["max_episode_steps"]:
+                    raise ValueError("startup occupancy configuration mismatch")
+                wrapper._age_rng.bit_generator.state = copy.deepcopy(
+                    values["age_rng_state"]
+                )
+                for name in (
+                    "target_age", "age", "episode_return", "accepted",
+                    "released", "rejected_episodes", "real_steps",
+                    "exclude_current_episode_from_metrics",
+                ):
+                    setattr(wrapper, "_" + name, values[name])
+                wrapper._last_observation = observation
+                wrapper._last_info = copy.deepcopy(values["last_info"])
+
+        if base._array_mapping_digest(observation) != state[
+            "visible_observation_sha256"
+        ]:
+            raise ValueError("visible environment observation diverged during replay")
+        return observation, info
+
 def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
     core = getattr(model.policy, "core", None)
     interactive_reasoning = hasattr(core, "reasoning_loss")
@@ -284,7 +433,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                         0x4F434355,
                     )).generate_state(1)[0]),
                 )
-            return env
+            return TrainingStateWrapper(env)
 
         return make
 

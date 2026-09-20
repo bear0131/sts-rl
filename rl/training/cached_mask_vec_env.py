@@ -213,6 +213,24 @@ class CachedMaskSubprocVecEnv(SubprocVecEnv):
                 results[index] = remote.recv()
         return results
 
+    def restore_training_states(self, states):
+        if len(states) != self.num_envs:
+            raise ValueError("environment recovery state count mismatch")
+        results = self.env_method_batch(
+            "restore_training_state",
+            {
+                index: ((state,), {})
+                for index, state in enumerate(states)
+            },
+        )
+        ordered = [results[index] for index in range(self.num_envs)]
+        observations, infos = zip(*ordered, strict=True)
+        self.reset_infos = list(infos)
+        self._cached_action_masks = [
+            self._info_mask(info) for info in self.reset_infos
+        ]
+        return _stack_obs(observations, self.observation_space)
+
 
 def _group_worker(
     remote: mp.connection.Connection,
@@ -607,6 +625,24 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
         self.reset_infos = list(self.reset_infos)
         self._reset_seeds()
         self._reset_options()
+        self._cached_action_masks = [
+            self._info_mask(info) for info in self.reset_infos
+        ]
+        return _stack_obs(observations, self.observation_space)
+
+    def restore_training_states(self, states):
+        if len(states) != self.num_envs:
+            raise ValueError("environment recovery state count mismatch")
+        results = self.env_method_batch(
+            "restore_training_state",
+            {
+                index: ((state,), {})
+                for index, state in enumerate(states)
+            },
+        )
+        ordered = [results[index] for index in range(self.num_envs)]
+        observations, infos = zip(*ordered, strict=True)
+        self.reset_infos = list(infos)
         self._cached_action_masks = [
             self._info_mask(info) for info in self.reset_infos
         ]

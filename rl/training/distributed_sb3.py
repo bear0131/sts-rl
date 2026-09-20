@@ -2449,8 +2449,24 @@ def main() -> None:
         progress_bar=False,
     )
     if recovery_state is not None:
-        restore_learner(model, recovery_state, rank=args.rank, world_size=args.world_size)
-    startup_stagger = run_startup_stagger(
+        recovery_manifest = restore_learner(
+            model, recovery_state, rank=args.rank, world_size=args.world_size
+        )
+    else:
+        recovery_manifest = None
+    environment_restored = bool(getattr(
+        model, "_recovery_environment_restored", False
+    ))
+    if environment_restored:
+        print(
+            "ENVIRONMENT_RESTORED " + json.dumps({
+                "global_step": int(model.num_timesteps),
+                "schema_version": int(recovery_manifest["schema_version"]),
+                "environments": int(model.env.num_envs),
+            }, sort_keys=True),
+            flush=True,
+        )
+    startup_stagger = {} if environment_restored else run_startup_stagger(
         model,
         span_steps=args.startup_stagger_steps,
         rollout_steps=args.n_steps,
@@ -2463,7 +2479,7 @@ def main() -> None:
             "STARTUP_STAGGER " + json.dumps(startup_stagger, sort_keys=True),
             flush=True,
         )
-    startup_occupancy = run_startup_occupancy(
+    startup_occupancy = {} if environment_restored else run_startup_occupancy(
         model, budget_steps=args.startup_occupancy_budget,
         rollout_steps=args.n_steps,
         seed=args.seed + args.rank * 1_000_003 + 0x4F434355,

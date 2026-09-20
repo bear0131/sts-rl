@@ -38,6 +38,7 @@ let rl/train.py bridge it to sb3-contrib via ActionMasker.
 """
 
 import copy
+import hashlib
 
 import numpy as np
 import gymnasium as gym
@@ -281,6 +282,8 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_state_nonce = 0
         self._nosl_cpp_decision_index = 0
         self._nosl_value_capture_pending = False
+        self._episode_backend_seed = None
+        self._episode_action_journal = []
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
@@ -300,6 +303,8 @@ class SlayTheSpireEnv(gym.Env):
         # A new backend must continue Gym's seeded episode stream on autoreset.
         backend_seed = seed if seed is not None else int(self.np_random.integers(0, 2**63))
         self.thick.reset(seed=backend_seed)
+        self._episode_backend_seed = int(backend_seed)
+        self._episode_action_journal = []
         self._pending = None
         self._multi = None
         self._nosl_is_az_session = None
@@ -315,6 +320,98 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_value_capture_pending = False
         self._invalidate_backend_cache()
         return self._obs(), self._info()
+
+    @staticmethod
+    def _array_mapping_digest(values):
+        digest = hashlib.sha256()
+        for key in sorted(values):
+            value = np.ascontiguousarray(values[key])
+            digest.update(key.encode("utf-8"))
+            digest.update(value.dtype.str.encode("ascii"))
+            digest.update(repr(value.shape).encode("ascii"))
+            digest.update(value.tobytes())
+        return digest.hexdigest()
+
+    def export_training_state(self):
+        """Return a replayable snapshot of the current live episode.
+
+        The native simulator contains callback objects that are not safely
+        serializable.  A backend seed plus the exact committed action stream
+        reconstructs those callbacks through the normal transition path.
+        """
+        if self.thick is None or self._episode_backend_seed is None:
+            raise RuntimeError("cannot checkpoint an environment before reset")
+        if self._nosl_is_az_session is not None or self._nosl_cpp_az_session is not None:
+            raise RuntimeError("cannot checkpoint an active search session")
+        if self._nosl_cpp_pending is not None:
+            raise RuntimeError("cannot checkpoint an uncommitted native action")
+        observation = self._obs()
+        action_mask = self.action_masks()
+        return {
+            "schema_version": 1,
+            "combat_action_contract": self.combat_action_contract,
+            "backend_seed": int(self._episode_backend_seed),
+            "actions": copy.deepcopy(self._episode_action_journal),
+            "np_random_state": copy.deepcopy(self.np_random.bit_generator.state),
+            "pending": copy.deepcopy(self._pending),
+            "multi": None if self._multi is None else sorted(self._multi),
+            "nosl_cpp_state_nonce": int(self._nosl_cpp_state_nonce),
+            "nosl_cpp_decision_index": int(self._nosl_cpp_decision_index),
+            "nosl_cpp_stochastic": bool(self._nosl_cpp_stochastic),
+            "nosl_value_capture_pending": bool(self._nosl_value_capture_pending),
+            "observation_sha256": self._array_mapping_digest(observation),
+            "action_mask_sha256": self._array_mapping_digest({"mask": action_mask}),
+        }
+
+    def restore_training_state(self, state):
+        """Rebuild one live episode and reject any replay divergence."""
+        if state.get("schema_version") != 1:
+            raise ValueError("unsupported environment state schema")
+        if state.get("combat_action_contract") != self.combat_action_contract:
+            raise ValueError("environment combat action contract mismatch")
+
+        # Bypass subclass reset hooks: production state is defined by this
+        # environment's backend seed and journal, not fixture/setup actions.
+        SlayTheSpireEnv.reset(self, seed=int(state["backend_seed"]))
+        for position, record in enumerate(state["actions"]):
+            kind = record.get("kind")
+            if kind == "thin":
+                pending = record.get("native_pending")
+                self._nosl_cpp_pending = (
+                    None if pending is None
+                    else (int(pending[0]), int(pending[1]))
+                )
+                result = self._step_impl(int(record["action"]))
+            elif kind == "native":
+                result = self._step_native_combat_impl(int(record["action_bits"]))
+            else:
+                raise ValueError(f"invalid environment journal record at {position}")
+            if result[2] or result[3]:
+                raise ValueError(
+                    f"environment journal terminated before live state at {position}"
+                )
+
+        self.np_random.bit_generator.state = copy.deepcopy(state["np_random_state"])
+        self._nosl_cpp_state_nonce = int(state["nosl_cpp_state_nonce"])
+        self._nosl_cpp_decision_index = int(state["nosl_cpp_decision_index"])
+        self._nosl_cpp_stochastic = bool(state["nosl_cpp_stochastic"])
+        self._nosl_value_capture_pending = bool(
+            state["nosl_value_capture_pending"]
+        )
+        self._episode_action_journal = copy.deepcopy(state["actions"])
+
+        expected_pending = state.get("pending")
+        expected_multi = state.get("multi")
+        actual_multi = None if self._multi is None else sorted(self._multi)
+        if self._pending != expected_pending or actual_multi != expected_multi:
+            raise ValueError("environment thin action state diverged during replay")
+        observation = self._obs()
+        action_mask = self.action_masks()
+        if self._array_mapping_digest(observation) != state["observation_sha256"]:
+            raise ValueError("environment observation diverged during replay")
+        if self._array_mapping_digest({"mask": action_mask}) != state["action_mask_sha256"]:
+            raise ValueError("environment action mask diverged during replay")
+        return observation, self._info()
 
     def fork_combat(self):
         """Return an isolated thin-env branch for combat-only lookahead."""
@@ -334,6 +431,9 @@ class SlayTheSpireEnv(gym.Env):
         branch._nosl_cpp_stochastic = False
         branch._nosl_cpp_state_nonce = 0
         branch._nosl_cpp_decision_index = 0
+        branch._episode_action_journal = copy.deepcopy(
+            self._episode_action_journal
+        )
         branch._invalidate_backend_cache()
         return branch
 
@@ -586,7 +686,7 @@ class SlayTheSpireEnv(gym.Env):
         from .native_actions import selection_candidates
         return selection_candidates(self.thick.bc)
 
-    def step_native_combat(self, action_bits):
+    def _step_native_combat_impl(self, action_bits):
         """Execute native-v1 bits atomically through the existing reward/settle path.
 
         Explicit opt-in preserves legacy checkpoint masks, observations and dead
@@ -604,6 +704,14 @@ class SlayTheSpireEnv(gym.Env):
         _canon, reward, terminated, tinfo = self._backend_step_native_combat(bits)
         result = self._post_step(reward, terminated, tinfo)
         result[4]['native_action'] = bits
+        return result
+
+    def step_native_combat(self, action_bits):
+        result = self._step_native_combat_impl(action_bits)
+        self._episode_action_journal.append({
+            "kind": "native",
+            "action_bits": int(action_bits),
+        })
         return result
 
     def _truncate_dead(self):
@@ -654,7 +762,7 @@ class SlayTheSpireEnv(gym.Env):
             info["nosl_value_terminal_observation"] = terminal_observation
         return self._obs(), reward, terminated, False, info
 
-    def step(self, action_id):
+    def _step_impl(self, action_id):
         aid = int(action_id)
 
         # Dead-screen guard at the TOP of step (defense in depth): if we are parked
@@ -729,6 +837,19 @@ class SlayTheSpireEnv(gym.Env):
         # Complete semantic action -> drive the thick backend one decision.
         _canon, reward, terminated, tinfo = self._backend_step(semantic)
         return self._post_step(reward, terminated, tinfo, action_id=aid)
+
+    def step(self, action_id):
+        pending_native = self._nosl_cpp_pending
+        result = self._step_impl(action_id)
+        self._episode_action_journal.append({
+            "kind": "thin",
+            "action": int(action_id),
+            "native_pending": (
+                None if pending_native is None
+                else (int(pending_native[0]), int(pending_native[1]))
+            ),
+        })
+        return result
 
     def search_step(self, action_id, *, validate=True):
         """Advance one legal combat action for model-free search.

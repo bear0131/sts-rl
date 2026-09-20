@@ -1,9 +1,5 @@
-"""Atomic per-rank learner recovery bundles, separate from inference checkpoints.
-
-Environment instances restart on recovery. Incomplete fights are discarded;
-completed replay targets, policy/Adam, parent RNG and global step are restored.
-This is learner recovery, not bitwise continuation of live simulator instances.
-"""
+"""Atomic per-rank learner and live-environment recovery bundles."""
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -23,12 +19,73 @@ def _sha(path):
     return digest.hexdigest()
 
 
+def _observation_sha256(observation):
+    digest = hashlib.sha256()
+    values = observation if isinstance(observation, dict) else {"observation": observation}
+    for key in sorted(values):
+        value = np.ascontiguousarray(values[key])
+        digest.update(key.encode("utf-8"))
+        digest.update(value.dtype.str.encode("ascii"))
+        digest.update(repr(value.shape).encode("ascii"))
+        digest.update(value.tobytes())
+    return digest.hexdigest()
+
+
+def _capture_environment(model):
+    env = model.get_env()
+    if env is None:
+        return None
+    supported = env.has_attr("training_state_checkpointable")
+    if not supported:
+        return None
+    states = env.env_method("export_training_state")
+    if len(states) != env.num_envs:
+        raise ValueError("environment export count mismatch")
+    return {
+        "schema_version": 1,
+        "states": states,
+        "episode_returns": np.asarray(
+            getattr(env, "episode_returns", np.zeros(env.num_envs)),
+            dtype=np.float32,
+        ).copy(),
+        "episode_lengths": np.asarray(
+            getattr(env, "episode_lengths", np.zeros(env.num_envs)),
+            dtype=np.int32,
+        ).copy(),
+        "episode_count": int(getattr(env, "episode_count", 0)),
+        "last_observation_sha256": _observation_sha256(model._last_obs),
+    }
+
+
+def _restore_environment_states(env, states):
+    try:
+        restore_many = env.restore_training_states
+    except AttributeError:
+        restored = [
+            env.env_method(
+                "restore_training_state", state, indices=index
+            )[0]
+            for index, state in enumerate(states)
+        ]
+        observations = [item[0] for item in restored]
+        if isinstance(observations[0], dict):
+            return {
+                key: np.stack([observation[key] for observation in observations])
+                for key in observations[0]
+            }
+        return np.stack(observations)
+    return restore_many(states)
+
+
 def read_bundle(path, *, rank, world_size):
     path = Path(path)
     manifest = json.loads((path / 'manifest.json').read_text())
-    if manifest['schema_version'] != 1 or (manifest['rank'], manifest['world_size']) != (rank, world_size):
+    if manifest['schema_version'] not in (1, 2) or (manifest['rank'], manifest['world_size']) != (rank, world_size):
         raise ValueError('recovery bundle rank/world size mismatch')
-    for name in ('model.zip', 'learner.pt'):
+    required = ('model.zip', 'learner.pt') + (
+        ('environment.pt',) if manifest['schema_version'] >= 2 else ()
+    )
+    for name in required:
         if _sha(path / name) != manifest['sha256'][name]:
             raise ValueError('recovery bundle checksum mismatch: ' + name)
     return manifest
@@ -59,19 +116,41 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
     temporary = destination
     temporary.mkdir(exist_ok=True)
     try:
+        environment = _capture_environment(model)
+        schema_version = 2 if environment is not None else 1
         model.save(temporary / 'model.zip')
         replay = getattr(model, '_nosl_is_az_replay', None)
-        state = dict(schema_version=1, global_step=step,
+        state = dict(schema_version=schema_version, global_step=step,
             replay=None if replay is None else replay.state_dict(),
             numpy_rng=np.random.get_state(), python_rng=random.getstate(),
             torch_rng=torch.get_rng_state(),
             cuda_rng=torch.cuda.get_rng_state_all() if model.device.type == 'cuda' else None)
+        if schema_version >= 2:
+            state.update(
+                last_episode_starts=np.asarray(
+                    model._last_episode_starts, dtype=bool
+                ).copy(),
+                nosl_is_az_pending_fights=copy.deepcopy(getattr(
+                    model, '_nosl_is_az_pending_fights', None,
+                )),
+                ep_info_buffer=copy.deepcopy(list(model.ep_info_buffer or ())),
+                ep_success_buffer=copy.deepcopy(list(model.ep_success_buffer or ())),
+                episode_num=int(getattr(model, '_episode_num', 0)),
+            )
         torch.save(state, temporary / 'learner.pt')
-        manifest = dict(schema_version=1, rank=rank, world_size=world_size,
+        files = ['model.zip', 'learner.pt']
+        if environment is not None:
+            torch.save(environment, temporary / 'environment.pt')
+            files.append('environment.pt')
+        manifest = dict(schema_version=schema_version, rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,
-            environment_resume='restart; unfinished fights discarded',
+            environment_resume=(
+                'action-journal replay; live episodes restored'
+                if schema_version >= 2
+                else 'restart; unfinished fights discarded'
+            ),
             config={k:str(v) if isinstance(v,Path) else v for k,v in config.items()},
-            sha256={name:_sha(temporary / name) for name in ('model.zip','learner.pt')})
+            sha256={name:_sha(temporary / name) for name in files})
         marker = temporary / '.manifest.tmp'
         marker.write_text(json.dumps(manifest,indent=2),encoding='utf-8')
         marker.replace(temporary / 'manifest.json')
@@ -90,7 +169,7 @@ def restore_learner(model, path, *, rank, world_size):
     if manifest['global_step'] != model.num_timesteps:
         raise ValueError('policy and learner global steps disagree')
     state = torch.load(Path(path) / 'learner.pt', map_location='cpu', weights_only=False)
-    if state['schema_version'] != 1 or state['global_step'] != model.num_timesteps:
+    if state['schema_version'] != manifest['schema_version'] or state['global_step'] != model.num_timesteps:
         raise ValueError('invalid learner recovery state')
     if state['replay'] is not None:
         model._ensure_nosl_is_az_replay().load_state_dict(state['replay'])
@@ -101,6 +180,45 @@ def restore_learner(model, path, *, rank, world_size):
         if model.device.type != 'cuda':
             raise ValueError('CUDA learner RNG requires CUDA recovery')
         torch.cuda.set_rng_state_all(state['cuda_rng'])
+    model._recovery_environment_restored = False
+    if manifest['schema_version'] >= 2:
+        environment = torch.load(
+            Path(path) / 'environment.pt', map_location='cpu', weights_only=False
+        )
+        env = model.get_env()
+        if env is not None:
+            if environment.get('schema_version') != 1:
+                raise ValueError('invalid environment recovery state')
+            observations = _restore_environment_states(
+                env, environment['states']
+            )
+            if _observation_sha256(observations) != environment[
+                'last_observation_sha256'
+            ]:
+                raise ValueError('learner/environment observation mismatch')
+            model._last_obs = observations
+            model._last_episode_starts = np.asarray(
+                state['last_episode_starts'], dtype=bool
+            ).copy()
+            if hasattr(env, 'episode_returns'):
+                env.episode_returns[:] = environment['episode_returns']
+            if hasattr(env, 'episode_lengths'):
+                env.episode_lengths[:] = environment['episode_lengths']
+            if hasattr(env, 'episode_count'):
+                env.episode_count = int(environment['episode_count'])
+            model._nosl_is_az_pending_fights = copy.deepcopy(
+                state['nosl_is_az_pending_fights']
+            )
+            if model.ep_info_buffer is not None:
+                model.ep_info_buffer.clear()
+                model.ep_info_buffer.extend(copy.deepcopy(state['ep_info_buffer']))
+            if model.ep_success_buffer is not None:
+                model.ep_success_buffer.clear()
+                model.ep_success_buffer.extend(copy.deepcopy(
+                    state['ep_success_buffer']
+                ))
+            model._episode_num = int(state['episode_num'])
+            model._recovery_environment_restored = True
     return manifest
 
 
