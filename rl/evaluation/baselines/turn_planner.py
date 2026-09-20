@@ -36,6 +36,7 @@ class TurnPlannerStrategy:
 
             delayed_draw='pocketwatch-public-boundary-resources-v1-cap-after-base-and-brutality-draw',
             upgrades='root-public-multiset-gains-require-new-upgraded-reusable-copy',
+            time_warp='root-eleven-visible-nonattack-deferred-play-opportunity',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',

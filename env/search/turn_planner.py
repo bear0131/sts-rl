@@ -19,7 +19,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v18-draw-capacity'
+PLANNER_VERSION = 'ironclad-turn-v19-time-warp'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -211,6 +211,23 @@ def upgrade_potential(raw, reference):
     return payoff * gains
 
 
+def deferred_time_warp_penalties(raw, horizon):
+    """A narrow public opportunity prior for safely clearing Time Warp eleven.
+
+    With Ripple/Haste visible, triggering now spends no extra incoming attack.
+    Carrying eleven instead leaves just one play next turn; the eventual trigger
+    still grants Strength and may force END before defending. Charge this delay
+    at the root's generic two-Strength cost plus a modest four-point lost-play
+    prior. This is not a value identity: next-turn one-card lethal can evade it.
+    Native actual Strength/retaliation and terminal ranking remain unchanged.
+    """
+    return {(slot, monster['id']): 3.2 * horizon + 4.
+            for slot, monster in enumerate(raw['monsters'])
+            if monster['id'] == 'TIME_EATER' and monster['hp'] > 0
+            and not monster['gone'] and _powers(monster).get('timewarp', 0) == 11
+            and monster['move'] in ('TIME_EATER_RIPPLE', 'TIME_EATER_HASTE')}
+
+
 def scaling_damage_premiums(raw, base_damage_weight=.26):
     """Root-anchored marginal urgency for visible Ritual's growing attacks.
 
@@ -278,7 +295,7 @@ def enemy_burden(monsters):
 
 
 def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None):
+                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -309,6 +326,11 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         value -= sum(damage_premiums.get((slot, monster['id']), 0.) * monster['hp']
                      for slot, monster in enumerate(raw['monsters'])
                      if monster['hp'] > 0 and not monster['gone'])
+    if time_warp_penalties:
+        value -= sum(time_warp_penalties.get((slot, monster['id']), 0.)
+                     for slot, monster in enumerate(raw['monsters'])
+                     if monster['hp'] > 0 and not monster['gone']
+                     and _powers(monster).get('timewarp', 0) == 11)
     for m in monsters:
         mp = _powers(m)
         # Angry is reactive growth on every hit, not free growth from waiting.
@@ -372,7 +394,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
 
 
 def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None):
+                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -381,7 +403,8 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
                         damage_weight=damage_weight, damage_premiums=damage_premiums,
-                        artifact_potential=artifact_potential, upgrades=upgrades)
+                        artifact_potential=artifact_potential, upgrades=upgrades,
+                                   time_warp_penalties=time_warp_penalties)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -442,6 +465,7 @@ class NativeTurnPlanner:
         damage_premiums = scaling_damage_premiums(original, self.config.damage_weight)
         artifact_potential = has_reusable_debuff_source(original)
         upgrades = upgrade_reference(original, horizon, public_relics)
+        time_warp_penalties = deferred_time_warp_penalties(original, horizon)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -464,7 +488,8 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn, damage_premiums, artifact_potential, upgrades)
+                                           horizon, final_player_turn, damage_premiums, artifact_potential,
+                                           upgrades, time_warp_penalties)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -499,6 +524,8 @@ class NativeTurnPlanner:
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
             root_artifact_potential={'enabled': artifact_potential, 'per_enemy_ceiling': 3.},
+            root_time_warp_penalties={f'{slot}:{enemy}': value
+                                      for (slot, enemy), value in time_warp_penalties.items()},
             root_upgrade_potential={'plain_count': sum(upgrades[0].values()),
                                     'per_card_payoff': upgrades[2]},
             root_damage_premiums={f'{slot}:{enemy}': value
@@ -507,7 +534,7 @@ class NativeTurnPlanner:
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
-              damage_premiums=None, artifact_potential=False, upgrades=None):
+              damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -542,7 +569,8 @@ class NativeTurnPlanner:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
                                    damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
-                                   artifact_potential=artifact_potential, upgrades=upgrades)
+                                   artifact_potential=artifact_potential, upgrades=upgrades,
+                                   time_warp_penalties=time_warp_penalties)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -554,7 +582,8 @@ class NativeTurnPlanner:
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
-                                  artifact_potential=artifact_potential, upgrades=upgrades)
+                                  artifact_potential=artifact_potential, upgrades=upgrades,
+                                   time_warp_penalties=time_warp_penalties)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)
