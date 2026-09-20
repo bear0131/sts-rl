@@ -22,6 +22,7 @@ from rl.evaluation.baselines.overworld_rules import (
 from rl.evaluation.strategies import Decision
 
 OVERWORLD_ENGINE_VERSION = 'ironclad-overworld-engine-v2.1-relic-contracts'
+OVERWORLD_FUEL_VERSION = 'ironclad-overworld-fuel-v1'
 ENERGY_RELICS = frozenset(('CURSEDKEY', 'SOZU', 'COFFEEDRIPPER', 'FUSIONHAMMER',
     'PHILOSOPHERSSTONE', 'RUNICDOME', 'VELVETCHOKER', 'MARKOFPAIN', 'ECTOPLASM', 'BUSTEDCROWN'))
 EXHAUST_ONCE = frozenset(('Offering', 'Disarm', 'Shockwave', 'Impervious', 'Fiend Fire',
@@ -314,14 +315,14 @@ def engine_upgrade_value(card, state, profile=None):
     return float(value)
 
 
-def engine_remove_value(card, state, profile=None):
+def engine_remove_value(card, state, profile=None, *, card_value_fn=engine_card_value):
     p = profile or engine_profile(state)
     c, up = card[:2]
     if c in CURSES or c == 'Strike_R':
         return remove_value(card, state) + (1.5 if c == 'Strike_R' and p.frontload >= 3 else 0)
     if c == 'Defend_R':
         return (3 if p.counts['Corruption'] and p.skills < 9 else 6) - 2 * bool(up)
-    return 6 - engine_card_value(card, state, p, adding=False)
+    return 6 - card_value_fn(card, state, p, adding=False)
 
 
 def engine_relic_value(relic, state, profile=None):
@@ -353,7 +354,65 @@ def engine_relic_value(relic, state, profile=None):
     return float(value)
 
 
-def rank_engine_overworld(state, legal, *, rmap=None, current_y=-1):
+def fuel_card_value(card, state, profile=None, *, adding=True):
+    """Value supported conversion fuel, without rewarding arbitrary deck growth.
+
+    Corruption makes skills free; Feel No Pain / Dark Embrace convert their
+    exhaustion into block / draw. A large deck still needs access to that setup,
+    so extra fuel requires draw support as well as an actual conversion engine.
+    """
+    p = profile or engine_profile(state)
+    value = engine_card_value(card, state, p, adding=adding)
+    c, up = card[:2]
+    n, relics = p.counts, p.relics
+    opening_ready = p.act > 1 or p.frontload >= 2
+    if not opening_ready:
+        return value
+    copies = n[c] if adding else max(0, n[c] - 1)
+    supported = bool(n['Corruption'] and (n['Feel No Pain'] or n['Dark Embrace']))
+    draw_ready = bool(n['Dark Embrace'] or p.draw >= 3 or 'SNECKOEYE' in relics)
+    info = IRONCLAD_CARDS.get(c)
+    useful_skill = info is not None and info.kind == 'skill' and (
+        info.block[bool(up)] > 0 or c in ('Burning Pact', 'Battle Trance', 'Offering',
+            'Disarm', 'Shockwave', 'Intimidate', 'Seeing Red') or (c == 'Warcry' and up))
+    if supported and draw_ready and useful_skill:
+        # Cancel only this fuel card's raw-size surcharge. Ordinary attacks,
+        # unknown skills and speculative payoffs still pay the full dilution cost.
+        value += min(2.2, max(0, p.size - 18) * .16)
+        value += .8 * min(2, n['Feel No Pain']) + 1.0 * min(1, n['Dark Embrace'])
+        value += .8 * int('CHARONSASHES' in relics)
+        # Duplicate free skills remain fuel, but cannot grow without bound.
+        if copies >= 3:
+            value -= 1.5 * (copies - 2)
+    if c == 'Feel No Pain' and supported and draw_ready and p.skills >= 8 and 1 <= copies < 3:
+        # Stacks add real block per exhaust; they are not redundant on/off powers.
+        value += min(3.2, p.skills * .25)
+    if info is not None and info.kind == 'power' and value >= 6:
+        # These bonuses need a worthwhile power, not merely the POWER card type.
+        # Canonical "Bird Faced Urn" / "Mummified Hand" and native enum spellings
+        # share the existing punctuation-insensitive relic key normalizer.
+        value += 1.6 * int('MUMMIFIEDHAND' in relics)
+        value += 1.2 * int('BIRDFACEDURN' in relics)
+    return float(value)
+
+
+def fuel_relic_value(relic, state, profile=None):
+    p = profile or engine_profile(state)
+    value = engine_relic_value(relic, state, p)
+    powers = sum(n for c, n in p.counts.items()
+        if c in IRONCLAD_CARDS and IRONCLAD_CARDS[c].kind == 'power')
+    key = _item_key(relic)
+    if key == 'MUMMIFIEDHAND':
+        value += min(5, powers * .9)
+    elif key == 'BIRDFACEDURN':
+        value += min(5, powers)
+    elif key == 'CHARONSASHES':
+        value += min(4, p.exhaust_fuel * .4)
+    return float(value)
+
+
+def rank_engine_overworld(state, legal, *, rmap=None, current_y=-1,
+        card_value_fn=engine_card_value, relic_value_fn=engine_relic_value):
     ranked = rank_overworld(state, legal, rmap=rmap, current_y=current_y)
     if ranked is None:
         return None
@@ -366,30 +425,32 @@ def rank_engine_overworld(state, legal, *, rmap=None, current_y=-1):
         kind, index = A.segment_of(row['action'])
         old = row['score']
         if kind == 'REWARD_CARD':
-            row['score'] = engine_card_value(opts['cards'][index], state, p) - threshold
+            row['score'] = card_value_fn(opts['cards'][index], state, p) - threshold
         elif kind == 'SHOP_CARD':
             cid, up, price = opts['shop_cards'][index]
-            row['score'] = (engine_card_value((cid, up), state, p) - threshold) * 2 - price / 35
+            row['score'] = (card_value_fn((cid, up), state, p) - threshold) * 2 - price / 35
         elif kind == 'BOSS_RELIC':
-            row['score'] = engine_relic_value(state['global']['boss_relics'][index], state, p)
+            row['score'] = relic_value_fn(state['global']['boss_relics'][index], state, p)
         elif kind == 'SHOP_RELIC':
             relic, price = opts['shop_relics'][index]
-            row['score'] = engine_relic_value(relic, state, p) - price / 35
+            row['score'] = relic_value_fn(relic, state, p) - price / 35
         elif kind == 'SHOP_REMOVE':
-            row['score'] = max((engine_remove_value(c, state, p) for c in state['global'].get('deck', ())), default=0) - opts['shop_remove_cost'] / 20
+            row['score'] = max((engine_remove_value(c, state, p, card_value_fn=card_value_fn) for c in state['global'].get('deck', ())), default=0) - opts['shop_remove_cost'] / 20
         elif kind == 'PICK_CARD':
             card = opts['cards'][index]
             if context == 'UPGRADE':
                 row['score'] = engine_upgrade_value(card, state, p)
             elif context in ('REMOVE', 'TRANSFORM', 'TRANSFORM_UPGRADE'):
-                row['score'] = engine_remove_value(card, state, p)
+                row['score'] = engine_remove_value(card, state, p, card_value_fn=card_value_fn)
             elif context in ('OBTAIN', 'DUPLICATE'):
-                row['score'] = engine_card_value(card, state, p)
+                row['score'] = card_value_fn(card, state, p)
             else:
                 continue
         elif kind == 'CAMPFIRE' and A._CAMP_NAME_BY_IDX[index] in ('smith', 'toke'):
-            valuation = engine_upgrade_value if A._CAMP_NAME_BY_IDX[index] == 'smith' else engine_remove_value
-            row['score'] = max((valuation(c, state, p) for c in state['global'].get('deck', ())), default=0)
+            values = (engine_upgrade_value(c, state, p) if A._CAMP_NAME_BY_IDX[index] == 'smith'
+                else engine_remove_value(c, state, p, card_value_fn=card_value_fn)
+                for c in state['global'].get('deck', ()))
+            row['score'] = max(values, default=0)
         else:
             continue
         row['v1_score'] = old
@@ -401,6 +462,9 @@ def rank_engine_overworld(state, legal, *, rmap=None, current_y=-1):
 class EngineUpperStrategy:
     name = 'overworld-engine'
     version = OVERWORLD_ENGINE_VERSION
+    draft_profile = 'compact'
+    card_value_fn = staticmethod(engine_card_value)
+    relic_value_fn = staticmethod(engine_relic_value)
 
     def __init__(self, fallback=None, *, trace=None):
         self.fallback, self.trace = fallback, trace
@@ -408,7 +472,8 @@ class EngineUpperStrategy:
 
     def manifest(self):
         return dict(scope='deck-acquisition-removal-upgrade-and-relics',
-            base_version=self._base.version, commitment='public-deck-derived',
+            base_version=self._base.version, draft_profile=self.draft_profile,
+            commitment='public-deck-derived',
             card_threshold='act-and-deck-size', boss_prior='displayed-boss-after-opening-readiness',
             future_information=False)
 
@@ -419,7 +484,8 @@ class EngineUpperStrategy:
             base = request.env.unwrapped.thick
             state = base.obs_canonical()
             ranking = rank_engine_overworld(state, np.flatnonzero(request.env.action_masks()),
-                rmap=base.rmap, current_y=base.gc.cur_map_node_y)
+                rmap=base.rmap, current_y=base.gc.cur_map_node_y,
+                card_value_fn=self.card_value_fn, relic_value_fn=self.relic_value_fn)
             if ranking is None:
                 delegated.append(request)
                 indices.append(index)
@@ -428,6 +494,8 @@ class EngineUpperStrategy:
             action = rows[0]['action']
             diagnostics = dict(overworld_rule_decisions=1, overworld_engine_decisions=int(touched),
                 overworld_engine_changed_decisions=int(action != original))
+            if self.draft_profile == 'fuel':
+                diagnostics['overworld_fuel_decisions'] = int(touched)
             for family in profile.commitments:
                 diagnostics[f'overworld_engine_{family}_decisions'] = int(touched)
             result[index] = Decision(action, self.name, diagnostics)
@@ -435,7 +503,8 @@ class EngineUpperStrategy:
                 self.trace(dict(kind='overworld_decision', seed=request.seed, step=request.step,
                     phase=state['phase'], version=self.version, ranked=rows, state=state,
                     action=action, source=self.name, v1_action=original,
-                    engine=profile.trace(), public_boss=state['global'].get('boss'),
+                    engine=profile.trace(), draft_profile=self.draft_profile,
+                    public_boss=state['global'].get('boss'),
                     skip_threshold=engine_skip_threshold(profile)))
         if delegated:
             decisions = self._base.decide(delegated, check=check)
@@ -444,3 +513,12 @@ class EngineUpperStrategy:
             for index, decision in zip(indices, decisions):
                 result[index] = decision
         return result
+
+
+class FuelUpperStrategy(EngineUpperStrategy):
+    """Independent exhaust-fuel challenger; compact engine remains the control."""
+    name = 'overworld-fuel'
+    version = OVERWORLD_FUEL_VERSION
+    draft_profile = 'fuel'
+    card_value_fn = staticmethod(fuel_card_value)
+    relic_value_fn = staticmethod(fuel_relic_value)
