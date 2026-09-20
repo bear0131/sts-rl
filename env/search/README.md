@@ -294,3 +294,22 @@ temporary block retains its prior cap because it will disappear on the next
 native enemy turn. This changes only the public leaf prior, not native block,
 actions, HP weights or player Barricade semantics. Regression:
 `tests/integration/test_turn_planner_persistent_block.py`.
+
+## Status-triggered Evolve and Fire Breathing
+
+`ironclad-turn-v13-status-engine-v1` values installed Evolve and Fire Breathing
+only when the decision root contains public future trigger cards. Evolve counts
+statuses; Fire Breathing counts statuses and curses. Exhausted cards and
+ethereal junk already in hand are excluded. Enemy identity, hypothetical future
+status generation and hidden draw order do not create opportunities.
+
+The root multiset supplies `min(3, 5 * root_horizon * trigger_count / max(5,
+remaining_card_count))` trigger opportunities. Every complete and partial leaf
+uses this same record, so drawing/exhausting junk cannot erase engine credit and
+make productive actions appear worse. Evolve contributes2points per opportunity
+and level, capped at2levels; Fire Breathing uses the configured damage weight,
+its actual power amount and up to3root enemies, capped at20points total. These
+are deliberately bounded human priors, not predicted win probabilities or an
+exact draw simulator. All terminal priority rules remain unchanged. The trace
+records `root_status_opportunities`; it is not summed into episode metrics.
+Regression: `tests/integration/test_turn_planner_status_engines.py`.
