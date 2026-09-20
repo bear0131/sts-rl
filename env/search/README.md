@@ -117,6 +117,12 @@ and survival outcomes retain priority. Rebuild native before constructing the
 planner; missing metadata fails explicitly. Regression:
 `tests/integration/test_turn_planner_pocketwatch.py`.
 
+`ironclad-turn-v16.1-pocketwatch-capacity` subtracts the guaranteed public
+Brutality draw count as well as normal draw before crediting Pocketwatch's
+marginal extra cards. Thus Pyramid plus enough Brutality to fill the next hand
+does not receive a redundant draw bonus. This remains a bounded prior; unknown
+start-of-turn generation and unsupported Machine Learning effects are not assumed.
+
 `ironclad-turn-v4` adds a public phase-progress prior for splitting slimes. The
 remaining damage potential includes expected descendant HP at the native half-HP
 threshold (integer division), and the encounter-count term anticipates two medium
