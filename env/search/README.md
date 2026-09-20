@@ -266,3 +266,22 @@ temporary block retains its prior cap because it will disappear on the next
 native enemy turn. This changes only the public leaf prior, not native block,
 actions, HP weights or player Barricade semantics. Regression:
 `tests/integration/test_turn_planner_persistent_block.py`.
+
+## Conditional enemy Artifact potential candidate
+
+If the public root's hand/draw/discard contains Bash, Clothesline, Thunderclap or
+Uppercut, it has a known reusable debuff source. The candidate then prices each
+live enemy's remaining Artifact charges at `3 * charges / (charges + 1)` heuristic
+points. The potential is bounded by3 but strictly improves on every charge
+reduction, with the last charge nearest to enabling an actual debuff. A free
+Intimidate can therefore prepare a later Bash instead of tying with END.
+
+The eligibility decision stays fixed throughout this root search. Consuming the
+only debuff source cannot create an immediate bonus by switching off a penalty
+inside one branch. A lone exhausting Intimidate and an already exhausted Bash
+do not enable this prior. The closed list deliberately undercounts unusual
+cross-character or generated effects. Native transitions still own immediate
+Weak/Vulnerable and opportunity costs, including Velvet Choker's last play.
+This candidate has not demonstrated a whole-run improvement; keep its identity
+separate when evaluating. Regression:
+`tests/integration/test_turn_planner_artifact_potential.py`.
