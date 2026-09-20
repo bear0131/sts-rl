@@ -8,8 +8,9 @@ import pytest
 
 from env.core import action_space as A
 from rl.evaluation.baselines.overworld_survival import (
-    GROWTH_PROFILE, GrowthUpperStrategy, SurvivalUpperStrategy, coverage,
-    elite_ready, rank_survival, survival_card_value, survival_route_scores,
+    GROWTH_PROFILE, READINESS_PROFILE, GrowthUpperStrategy, ReadinessUpperStrategy,
+    SurvivalUpperStrategy, coverage, elite_ready, rank_survival,
+    survival_card_value, survival_route_scores,
 )
 from rl.evaluation.strategies import Decision, DecisionRequest
 
@@ -264,3 +265,45 @@ def test_growth_profile_is_immutable_and_card_acquisition_is_controlled(make_sta
     assert rank_survival(state, actions) == rank_survival(state, actions, profile=GROWTH_PROFILE)
     assert GrowthUpperStrategy().manifest()['profile']['name'] == 'growth'
     assert SurvivalUpperStrategy().manifest()['profile']['name'] == 'survival'
+
+
+def test_readiness_does_not_commit_unprepared_deck_to_back_to_back_elites(make_state):
+    class Map:
+        rooms = {0: ['ELITE', 'MONSTER', 'ELITE'], 1: ['REST', 'ELITE', 'MONSTER']}
+        def room_type(self, x, y):
+            return self.rooms[x][y]
+        def reachable(self, x, y):
+            return [x] if y < 2 else []
+    state = make_state('map', hp=56, relics=['Burning Blood'],
+        deck=[('Carnage', 0), ('Pommel Strike', 0), ('True Grit', 0)])
+    scores = survival_route_scores(state, [(0, 100), (1, 101)], Map(), -1,
+                                   profile=READINESS_PROFILE)
+    assert not elite_ready(state)
+    assert scores[101] > scores[100]
+
+
+def test_readiness_preserves_full_elite_reward_for_prepared_healthy_deck(make_state):
+    class Map:
+        def room_type(self, x, y):
+            return 'ELITE' if x == 0 else 'EVENT'
+        def reachable(self, x, y):
+            return []
+    state = make_state('map', deck=[('Carnage', 1), ('Pommel Strike', 1), ('Immolate', 1)])
+    before = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 5)
+    after = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 5,
+                                  profile=READINESS_PROFILE)
+    assert after == before
+    assert after[100] > after[101]
+    state['global']['hp'] = 32
+    after = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 5,
+                                  profile=READINESS_PROFILE)
+    assert after[101] > after[100]
+
+
+def test_readiness_profile_changes_only_routes(make_state):
+    for phase, actions in [('combat_reward', [A._RCARD, A._RCARD + 1, A._RSKIP]),
+                           ('rest', [A._CAMP, A._CAMP + 1])]:
+        state = make_state(phase, hp=47, act=2, cards=[('Carnage', 0), ('Demon Form', 0)],
+                           deck=[('Carnage', 0)])
+        assert rank_survival(state, actions) == rank_survival(state, actions, profile=READINESS_PROFILE)
+    assert ReadinessUpperStrategy().manifest()['profile']['elite_policy'] == 'readiness'
