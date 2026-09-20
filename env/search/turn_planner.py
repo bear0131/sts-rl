@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v14-icecream'
+PLANNER_VERSION = 'ironclad-turn-v15-artifact'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -148,6 +148,17 @@ def power_horizon(raw):
     return min(5., max(1., remaining / max(25., 25 + 3 * strength)))
 
 
+def has_reusable_debuff_source(raw):
+    """Conservative Ironclad attacks that can use a later broken Artifact stack.
+
+    A lone exhausting Intimidate does not justify stripping charges when there
+    is no later debuff to land. These known attacks stay reusable under Corruption;
+    unknown/generated/exhausted cards are deliberately not assumed recoverable.
+    """
+    reusable = {'BASH', 'CLOTHESLINE', 'THUNDERCLAP', 'UPPERCUT'}
+    return any(card[0] in reusable for zone in ('hand', 'draw', 'discard')
+               for card in raw[zone])
+
 
 def scaling_damage_premiums(raw, base_damage_weight=.26):
     """Root-anchored marginal urgency for visible Ritual's growing attacks.
@@ -215,7 +226,8 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26, damage_premiums=None):
+def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26,
+                damage_premiums=None, artifact_potential=False):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -255,6 +267,11 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         strength_weight = .5 if mp.get('angry', 0) > 0 else 1.6 * horizon
         value -= strength_weight * mp.get('strength', 0)
         value -= horizon * mp.get('ritual', 0)
+        if artifact_potential:
+            # Finite, bounded shield potential; every real charge reduction is
+            # progress, with the last charge closest to enabling an actual debuff.
+            artifact = max(0, mp.get('artifact', 0))
+            value -= 3. * artifact / (artifact + 1.)
         value += 3 * min(horizon, mp.get('weak', 0))
         value += 3 * min(horizon, mp.get('vulnerable', 0))
         # Barricade's shield survives future enemy turns. Capping it erases
@@ -291,7 +308,8 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
     return value
 
 
-def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26, damage_premiums=None):
+def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
+                damage_premiums=None, artifact_potential=False):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -299,7 +317,8 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26, dama
     """
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
-                        damage_weight=damage_weight, damage_premiums=damage_premiums)
+                        damage_weight=damage_weight, damage_premiums=damage_premiums,
+                        artifact_potential=artifact_potential)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -356,6 +375,7 @@ class NativeTurnPlanner:
         # damage, growth and enemy debuff branches, worlds, and partial leaves.
         horizon = power_horizon(original)
         damage_premiums = scaling_damage_premiums(original, self.config.damage_weight)
+        artifact_potential = has_reusable_debuff_source(original)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -378,7 +398,7 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn, damage_premiums)
+                                           horizon, final_player_turn, damage_premiums, artifact_potential)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -412,13 +432,14 @@ class NativeTurnPlanner:
                                        winning_steps_total=winning_steps[k],
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
+            root_artifact_potential={'enabled': artifact_potential, 'per_enemy_ceiling': 3.},
             root_damage_premiums={f'{slot}:{enemy}': value
                                   for (slot, enemy), value in damage_premiums.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
-              damage_premiums=None):
+              damage_premiums=None, artifact_potential=False):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -452,7 +473,8 @@ class NativeTurnPlanner:
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
-                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums)
+                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
+                                   artifact_potential=artifact_potential)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -463,7 +485,8 @@ class NativeTurnPlanner:
                         stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
-                                  damage_weight=self.config.damage_weight, damage_premiums=damage_premiums)
+                                  damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
+                                  artifact_potential=artifact_potential)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)
