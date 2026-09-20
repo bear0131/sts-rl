@@ -107,3 +107,17 @@ def test_unknown_upper_selection_fails_explicitly(monkeypatch):
     monkeypatch.setitem(S.STRATEGIES, 'fixture', lambda model, args: Sentinel('x'))
     with pytest.raises(ValueError, match='unknown upper strategy'):
         S.compose_strategy(None, Namespace(solver='fixture', upper_strategy='missing'))
+
+
+def test_engine_growth_upper_composes_map_and_rest_without_replacing_combat():
+    from rl.evaluation.eval import build_parser
+    from rl.evaluation.strategies import compose_strategy
+    model = object()
+    args = build_parser().parse_args(['unused.zip', '--solver', 'turn-planner',
+                                     '--upper-strategy', 'engine-growth'])
+    strategy = compose_strategy(model, args)
+    assert strategy.default.default.name == 'overworld-engine'
+    assert set(strategy.default.routes) == {'map', 'rest'}
+    assert strategy.default.routes['map'].name == 'overworld-growth'
+    assert strategy.default.routes['rest'] is strategy.default.routes['map']
+    assert strategy.routes['combat'].routes['combat'].name == 'turn-planner'

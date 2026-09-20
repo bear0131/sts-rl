@@ -325,6 +325,17 @@ def overworld_growth_strategy(model, args, *, trace=None):
     return GrowthUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
 
 
+def overworld_readiness_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_survival import ReadinessUpperStrategy
+    return ReadinessUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_engine_growth_strategy(model, args, *, trace=None):
+    engine = overworld_engine_strategy(model, args, trace=trace)
+    growth = overworld_growth_strategy(model, args, trace=trace)
+    return PhaseStrategy(engine, {'map': growth, 'rest': growth})
+
+
 # Upper factories are independent of combat solver registration and the CLI.
 UPPER_STRATEGIES = {
     'model': lambda model, args, trace=None: policy_strategy(model, args),
@@ -336,6 +347,8 @@ UPPER_STRATEGIES = {
     'survival': overworld_survival_strategy,
     'engine': overworld_engine_strategy,
     'growth': overworld_growth_strategy,
+    'readiness': overworld_readiness_strategy,
+    'engine-growth': overworld_engine_growth_strategy,
 }
 
 
