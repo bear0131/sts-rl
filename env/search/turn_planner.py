@@ -18,7 +18,7 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v11-angry-public-progress'
+PLANNER_VERSION = 'ironclad-turn-v12-ritual-public-progress'
 _PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
                                'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
@@ -148,6 +148,32 @@ def power_horizon(raw):
     return min(5., max(1., remaining / max(25., 25 + 3 * strength)))
 
 
+
+def scaling_damage_premiums(raw, base_damage_weight=.26):
+    """Root-anchored marginal urgency for visible Ritual's growing attacks.
+
+    Eighteen damage is three ordinary Strikes, adjusted by public Strength.
+    The marginal cost of an extra turn near the estimated kill time grows with
+    Ritual. This deliberately rough, capped prior supplements the base HP cost;
+    it is neither a learned value nor a forecast of actual future draws/block.
+    Slot and ID jointly identify the root monster so transformed bodies do not
+    inherit another enemy's premium.
+    """
+    damage_rate = max(9., 18 + 3 * _powers(raw['player']).get('strength', 0))
+    premiums = {}
+    for slot, monster in enumerate(raw['monsters']):
+        ritual = _powers(monster).get('ritual', 0)
+        if monster['hp'] <= 0 or monster['gone'] or ritual <= 0:
+            continue
+        remaining_turns = monster['hp'] / damage_rate
+        attack = max(0, monster['adjusted_damage']) * max(0, monster['hits'])
+        marginal = min(2., 1.3 * (attack + ritual * remaining_turns) / damage_rate)
+        premium = max(0., marginal - base_damage_weight)
+        if premium:
+            premiums[(slot, monster['id'])] = premium
+    return premiums
+
+
 def enemy_burden(monsters):
     """Approximate remaining damage and bodies through public monster phases.
 
@@ -189,7 +215,7 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26):
+def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26, damage_premiums=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -216,6 +242,10 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
         # damage differences, but remains separate from an actual native death.
         value -= 10000
     value -= damage_weight * remaining + 10 * future_bodies
+    if damage_premiums:
+        value -= sum(damage_premiums.get((slot, monster['id']), 0.) * monster['hp']
+                     for slot, monster in enumerate(raw['monsters'])
+                     if monster['hp'] > 0 and not monster['gone'])
     for m in monsters:
         mp = _powers(m)
         # Angry is reactive growth on every hit, not free growth from waiting.
@@ -250,7 +280,7 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
     return value
 
 
-def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26):
+def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26, damage_premiums=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -258,7 +288,7 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26):
     """
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
-                        damage_weight=damage_weight)
+                        damage_weight=damage_weight, damage_premiums=damage_premiums)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -314,6 +344,7 @@ class NativeTurnPlanner:
         # A shared public reference makes the payoff duration comparable across
         # damage, growth and enemy debuff branches, worlds, and partial leaves.
         horizon = power_horizon(original)
+        damage_premiums = scaling_damage_premiums(original, self.config.damage_weight)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -336,7 +367,7 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn)
+                                           horizon, final_player_turn, damage_premiums)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -370,10 +401,13 @@ class NativeTurnPlanner:
                                        winning_steps_total=winning_steps[k],
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
+            root_damage_premiums={f'{slot}:{enemy}': value
+                                  for (slot, enemy), value in damage_premiums.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn):
+    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
+              damage_premiums=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -407,7 +441,7 @@ class NativeTurnPlanner:
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
-                                   damage_weight=self.config.damage_weight)
+                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -418,7 +452,7 @@ class NativeTurnPlanner:
                         stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
-                                  damage_weight=self.config.damage_weight)
+                                  damage_weight=self.config.damage_weight, damage_premiums=damage_premiums)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

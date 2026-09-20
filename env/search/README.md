@@ -239,3 +239,22 @@ progress across actual repeated decisions and a lethal-retaliation case where
 blocking remains preferred. Whole-run acceptance belongs to A20 evaluations.
 
 `TurnPlannerConfig.damage_weight` (CLI `--planner-damage-weight`, default `0.26`) exposes the scalar cost of remaining phase-adjusted enemy HP for controlled attack/block preference experiments. It must be finite and positive, applies to both partial ordering and completed leaves, and cannot override the lexicographic sampled death/win outcome. Changing it changes the policy, not merely the search budget; report it with every result.
+
+## Visible Ritual damage-pressure candidate
+
+For a monster with an already visible positive Ritual, the candidate estimates
+an offensive rate of `max(9, 18 + 3 * player Strength)` and the turns to remove
+its remaining HP. It estimates the marginal attack near that finish time from
+current adjusted attack plus Ritual growth, converts that into a damage weight,
+and caps the total weight at2. Only an increase over the configured base damage
+weight becomes a per-monster premium. This is a deliberately rough urgency
+prior: it does not predict future draws, block, or policy win probability.
+
+The premium is computed once at the public decision root and passed unchanged
+to every sampled complete/partial leaf. Recomputing it after damage would change
+both the enemy's remaining HP and the coefficient, creating another evaluation
+direction error. Slot plus monster ID identifies each premium's original enemy.
+No unseen pending Ritual buff is guessed. Existing native death/win priority and
+all ordinary monsters without visible Ritual remain unaffected by this premium.
+The trace exposes `root_damage_premiums`; it stays out of numeric episode metrics.
+Regression: `tests/integration/test_turn_planner_ritual_pressure.py`.
