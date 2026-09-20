@@ -319,9 +319,9 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
-                status_opportunities=None):
+def state_value(raw, *, partial=False, public_relics=None, horizon=None,
+                damage_weight=.26, damage_premiums=None, artifact_potential=False,
+                upgrades=None, time_warp_penalties=None, status_opportunities=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -426,8 +426,8 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None, damage_
 
 
 def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
-                damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
-                status_opportunities=None):
+               damage_premiums=None, artifact_potential=False, upgrades=None,
+               time_warp_penalties=None, status_opportunities=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
@@ -437,7 +437,8 @@ def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
     value = state_value(raw, public_relics=public_relics, horizon=horizon,
                         damage_weight=damage_weight, damage_premiums=damage_premiums,
                         artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
+                        time_warp_penalties=time_warp_penalties,
+                        status_opportunities=status_opportunities)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -569,8 +570,8 @@ class NativeTurnPlanner:
         return PlanResult(selected, stats)
 
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
-              damage_premiums=None, artifact_potential=False, upgrades=None, time_warp_penalties=None,
-                status_opportunities=None):
+              damage_premiums=None, artifact_potential=False, upgrades=None,
+              time_warp_penalties=None, status_opportunities=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
@@ -606,7 +607,8 @@ class NativeTurnPlanner:
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
                                    damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
                                    artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
+                                   time_warp_penalties=time_warp_penalties,
+                                   status_opportunities=status_opportunities)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
@@ -619,7 +621,8 @@ class NativeTurnPlanner:
             partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
                                   artifact_potential=artifact_potential, upgrades=upgrades,
-                                   time_warp_penalties=time_warp_penalties, status_opportunities=status_opportunities)
+                                  time_warp_penalties=time_warp_penalties,
+                                  status_opportunities=status_opportunities)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)
