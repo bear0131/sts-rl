@@ -1,19 +1,22 @@
 """Native A20 public-state/legal-action smoke for the survival upper policy."""
 from copy import deepcopy
 
+import pytest
+
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
-from rl.evaluation.baselines.overworld_survival import SurvivalUpperStrategy, rank_survival
+from rl.evaluation.baselines.overworld_survival import GrowthUpperStrategy, SurvivalUpperStrategy, rank_survival
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate
 from rl.evaluation.strategies import DecisionRequest, LeftmostStrategy, PhaseStrategy
 
 
-def test_native_a20_neow_and_map_decisions_are_public_legal_and_nonmutating():
+@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy])
+def test_native_a20_neow_and_map_decisions_are_public_legal_and_nonmutating(strategy_type):
     env = SlayTheSpireEnv(ascension=20)
     try:
         obs, info = env.reset(seed=20200920)
-        strategy = SurvivalUpperStrategy(LeftmostStrategy())
+        strategy = strategy_type(LeftmostStrategy())
         phases = set()
         for step in range(20):
             before = deepcopy(env.thick.obs_canonical())
@@ -59,10 +62,11 @@ def test_native_a20_shop_potion_purchase_has_real_inventory_and_gold_effect():
         env.close()
 
 
-def test_bounded_a20_joint_rule_smoke_uses_existing_runner():
-    strategy = PhaseStrategy(SurvivalUpperStrategy(LeftmostStrategy()),
+@pytest.mark.parametrize('strategy_type', [SurvivalUpperStrategy, GrowthUpperStrategy])
+def test_bounded_a20_joint_rule_smoke_uses_existing_runner(strategy_type):
+    strategy = PhaseStrategy(strategy_type(LeftmostStrategy()),
                              {'combat': CombatRuleStrategy()})
     scenario = Scenario('wholerun', lambda: SlayTheSpireEnv(ascension=20))
     rows = list(evaluate(strategy, scenario, EvaluationConfig(1, 20200920, 1, 3000, 20)))
     assert rows[0]['result'] in ('win', 'death')
-    assert rows[0]['overworld_survival_decisions'] > 5
+    assert rows[0][f'overworld_{strategy_type.profile.name}_decisions'] > 5

@@ -1,5 +1,6 @@
 """Public-state behavior contracts for the opt-in A20 upper challenger."""
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,8 +8,8 @@ import pytest
 
 from env.core import action_space as A
 from rl.evaluation.baselines.overworld_survival import (
-    SurvivalUpperStrategy, coverage, rank_survival, survival_card_value,
-    survival_route_scores,
+    GROWTH_PROFILE, GrowthUpperStrategy, SurvivalUpperStrategy, coverage,
+    elite_ready, rank_survival, survival_card_value, survival_route_scores,
 )
 from rl.evaluation.strategies import Decision, DecisionRequest
 
@@ -195,3 +196,71 @@ def test_boss_relic_avoids_sozu_when_healing_upgrade_available(make_state):
     assert choose(state, A._BOSS, A._BOSS + 1) == A._BOSS + 1
     state['global']['relics'] = ['Cursed Key']
     assert coverage(state).energy == 4
+
+
+def test_growth_spends_prepared_hp_on_elite_where_survival_prefers_rest(make_state):
+    class Map:
+        def room_type(self, x, y):
+            return 'ELITE' if x == 0 else 'REST'
+        def reachable(self, x, y):
+            return []
+    state = make_state('map', act=2, hp=60, deck=[('Immolate', 0), ('Carnage', 0),
+        ('Pommel Strike', 0), ('Shrug It Off', 0), ('Power Through', 0),
+        ('Flame Barrier', 0), ('Shockwave', 0)])
+    assert elite_ready(state)
+    survival = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 8)
+    growth = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 8, profile=GROWTH_PROFILE)
+    assert survival[101] > survival[100]
+    assert growth[100] > growth[101]
+    state['global']['hp'] = 20
+    growth = survival_route_scores(state, [(0, 100), (1, 101)], Map(), 8, profile=GROWTH_PROFILE)
+    assert growth[101] > growth[100]
+
+
+def test_growth_never_unlocks_elite_reward_for_unprepared_starter(make_state):
+    class Map:
+        def room_type(self, x, y):
+            return 'ELITE'
+        def reachable(self, x, y):
+            return []
+    state = make_state('map', hp=80)
+    assert not elite_ready(state)
+    survival = survival_route_scores(state, [(0, 100)], Map(), 8)
+    growth = survival_route_scores(state, [(0, 100)], Map(), 8, profile=GROWTH_PROFILE)
+    assert growth == survival
+
+
+def test_growth_potion_readiness_is_consumable_in_projected_elite_chain(make_state):
+    state = make_state('map', deck=[('Carnage', 0), ('Pommel Strike', 0)])
+    assert not elite_ready(state)
+    state['global']['potions'][0] = 'Fire Potion'
+    assert elite_ready(state)
+    assert not elite_ready(state, potion_reserves=0)
+    class Map:
+        def room_type(self, x, y):
+            return 'ELITE' if y < 2 else 'REST'
+        def reachable(self, x, y):
+            return [x] if y < 2 else []
+    one = survival_route_scores(state, [(0, 100)], Map(), -1, profile=GROWTH_PROFILE)[100]
+    state['global']['potions'][1] = 'Block Potion'
+    two = survival_route_scores(state, [(0, 100)], Map(), -1, profile=GROWTH_PROFILE)[100]
+    assert two > one
+
+
+def test_growth_upgrades_at_moderate_hp_but_heals_before_boss_or_at_death_risk(make_state):
+    state = make_state('rest', act=2, hp=47, deck=[('Carnage', 0)])
+    assert choose(state, A._CAMP, A._CAMP + 1, current_y=8) == A._CAMP
+    assert choose(state, A._CAMP, A._CAMP + 1, current_y=8, profile=GROWTH_PROFILE) == A._CAMP + 1
+    assert choose(state, A._CAMP, A._CAMP + 1, current_y=14, profile=GROWTH_PROFILE) == A._CAMP
+    state['global']['hp'] = 20
+    assert choose(state, A._CAMP, A._CAMP + 1, current_y=8, profile=GROWTH_PROFILE) == A._CAMP
+
+
+def test_growth_profile_is_immutable_and_card_acquisition_is_controlled(make_state):
+    with pytest.raises(FrozenInstanceError):
+        GROWTH_PROFILE.elite_growth_bonus = 999
+    state = make_state(cards=[('Carnage', 0), ('Demon Form', 0)])
+    actions = [A._RCARD, A._RCARD + 1, A._RSKIP]
+    assert rank_survival(state, actions) == rank_survival(state, actions, profile=GROWTH_PROFILE)
+    assert GrowthUpperStrategy().manifest()['profile']['name'] == 'growth'
+    assert SurvivalUpperStrategy().manifest()['profile']['name'] == 'survival'
