@@ -19,13 +19,13 @@ from rl.evaluation.baselines.overworld_potion_shop import EMPTY_SLOTS, potion_pr
 from rl.evaluation.baselines.overworld_rules import (
     CARD_VALUE, CURSES, DRAW, EXHAUST, STRENGTH, OverworldRuleStrategy,
     _item_key, deck_counts, has_relic, rank_overworld, relic_value,
-    remove_value, upgrade_value,
+    relic_strength_sources, remove_value, upgrade_value,
 )
 from rl.evaluation.strategies import Decision
 
-OVERWORLD_SURVIVAL_VERSION = 'ironclad-overworld-survival-v1'
-OVERWORLD_GROWTH_VERSION = 'ironclad-overworld-growth-v1'
-OVERWORLD_READINESS_VERSION = 'ironclad-overworld-readiness-v1'
+OVERWORLD_SURVIVAL_VERSION = 'ironclad-overworld-survival-v1.1-relic-contracts'
+OVERWORLD_GROWTH_VERSION = 'ironclad-overworld-growth-v1.1-relic-contracts'
+OVERWORLD_READINESS_VERSION = 'ironclad-overworld-readiness-v1.1-relic-contracts'
 FRONTLOAD = frozenset(('Anger', 'Carnage', 'Hemokinesis', 'Bludgeon',
     'Immolate', 'Fiend Fire', 'Perfected Strike', 'Pommel Strike', 'Twin Strike',
     'Headbutt', 'Uppercut', 'Clothesline', 'Wild Strike', 'Cleave', 'Whirlwind'))
@@ -74,7 +74,7 @@ def coverage(state):
     return Coverage(
         sum(counts[c] for c in FRONTLOAD), sum(counts[c] for c in FAST_AOE),
         sum(counts[c] for c in GOOD_BLOCK), sum(counts[c] for c in WEAK),
-        sum(counts[c] for c in STRENGTH) + int('VAJRA' in relics),
+        sum(counts[c] for c in STRENGTH) + relic_strength_sources(state),
         sum(counts[c] for c in EXHAUST), sum(counts[c] for c in DRAW),
         3 + len(relics & ENERGY_RELICS),
     )
