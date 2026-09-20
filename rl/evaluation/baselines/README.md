@@ -174,3 +174,5 @@ legacy 候选遇到 F03 空动作表时保留 `dead_screen` 和截断标记，�
 `fork_decision_step_origin`，manifest 标明 `fork-local-zero`；它不是原轨迹随机样本的逐步重放。
 `combat_rows` 是参考路径上的战斗组件对照，不能与整局 `rows` 合并统计胜率或样本数。
 步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。
+
+For independent random-seed confirmation, pass `--seed-file seeds.json` to the same evaluator. The file is a JSON array of unique unsigned 32-bit game seeds, with length equal to `--episodes`; `--seed` still initializes the policy RNG. Results embed the exact array and its file identity. Freeze the strategy before drawing the confirmation set, and keep development and confirmation results separate.

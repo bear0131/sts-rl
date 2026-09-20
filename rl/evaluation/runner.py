@@ -19,12 +19,22 @@ class EvaluationConfig:
     num_envs: int = 1
     max_steps: int = 20000
     timeout: float = 1800.0
+    episode_seeds: tuple[int, ...] | None = None
 
     def __post_init__(self):
         if min(self.episodes, self.num_envs, self.max_steps) < 1:
             raise ValueError('episodes, num_envs and max_steps must be positive')
         if not np.isfinite(self.timeout) or self.timeout <= 0:
             raise ValueError('timeout must be finite and positive')
+        if self.episode_seeds is not None:
+            seeds = tuple(self.episode_seeds)
+            if len(seeds) != self.episodes:
+                raise ValueError('episode_seeds must contain exactly episodes seeds')
+            if any(type(seed) is not int or not 0 <= seed < 2**32 for seed in seeds):
+                raise ValueError('episode_seeds must be unsigned 32-bit integers')
+            if len(set(seeds)) != len(seeds):
+                raise ValueError('episode_seeds must be unique')
+            object.__setattr__(self, 'episode_seeds', seeds)
 
 
 def is_win(env):
@@ -73,8 +83,9 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
             return None
         index = next_episode
         next_episode += 1
-        observation, info = scenario.reset(env, config.seed + index)
-        return dict(episode=index, seed=config.seed + index, observation=observation, info=info,
+        seed = config.seed + index if config.episode_seeds is None else config.episode_seeds[index]
+        observation, info = scenario.reset(env, seed)
+        return dict(episode=index, seed=seed, observation=observation, info=info,
                     steps=0, raw_return=0.0, metrics={})
 
     try:

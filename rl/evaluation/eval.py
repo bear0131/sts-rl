@@ -31,6 +31,8 @@ def build_parser():
                         help='Upper checkpoint or opt-in rules/demand/energy/potion-shop; rules use explicit model fallback')
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--seed', type=int, default=10000)
+    parser.add_argument('--seed-file', type=Path,
+                        help='JSON array of unique game seeds, one per episode; --seed still initializes the policy RNG')
     parser.add_argument('--ascension', type=int, default=0)
     parser.add_argument('--device', default='auto')
     parser.add_argument('--num-envs', type=int, default=1)
@@ -103,7 +105,13 @@ def file_identity(path):
 
 def main():
     args = build_parser().parse_args()
-    config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
+    episode_seeds = None
+    if args.seed_file:
+        episode_seeds = json.loads(args.seed_file.read_text(encoding='utf-8'))
+        if not isinstance(episode_seeds, list):
+            raise ValueError('--seed-file must contain a JSON array')
+    config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout,
+                              episode_seeds=episode_seeds)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
     if args.compare_combats < 0 or ((args.compare_combats or args.trace) and args.task != 'wholerun'):
@@ -188,7 +196,9 @@ def main():
         import slaythespire
         from rl.evaluation.baselines.combat_audit import summarize_pairs
         from rl.evaluation.baselines.combat_rules import RULE_VERSION
-        payload.update(identities=dict(upper=file_identity(args.checkpoint),
+        payload.update(episode_seeds=config.episode_seeds,
+            identities=dict(upper=file_identity(args.checkpoint),
+            seeds=file_identity(args.seed_file),
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,

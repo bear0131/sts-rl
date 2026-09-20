@@ -69,6 +69,22 @@ def test_step_limits_are_not_deaths():
     assert summarize(rows)['death_floors'] == {}
 
 
+def test_explicit_seed_set_survives_batched_environment_reuse():
+    envs = []
+    seeds = (82391, 7, 219341, 42, 107)
+    rows = list(evaluate(FutureStrategy(), scenario(envs),
+        EvaluationConfig(episodes=5, seed=10, num_envs=2, episode_seeds=seeds)))
+    assert [r['seed'] for r in sorted(rows, key=lambda r: r['episode'])] == list(seeds)
+    assert sorted(seed for env in envs for seed in env.resets) == sorted(seeds)
+    assert all(env.closed for env in envs)
+
+
+@pytest.mark.parametrize('seeds', [(1,), (1, 1), (True, 2), (-1, 2), (2**32, 2), (1.0, 2)])
+def test_explicit_seed_sets_reject_ambiguous_or_invalid_samples(seeds):
+    with pytest.raises(ValueError, match='episode_seeds'):
+        EvaluationConfig(episodes=2, episode_seeds=seeds)
+
+
 def test_complete_native_decisions_do_not_use_thin_masks():
     class NativeGame(Game):
         def action_masks(self):
