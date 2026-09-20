@@ -18,7 +18,9 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v8-awakened-phase'
+PLANNER_VERSION = 'ironclad-turn-v9-public-powers'
+_PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
+                               'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -43,6 +45,7 @@ _NON_DAMAGE_POWERS = frozenset((
     'nodraw', 'drawreduction', 'entangled', 'confused', 'intangible', 'buffer',
     'energized', 'noblock', 'hex', 'constricted', 'drawcardnextturn',
     'doubletap', 'doubledamage', 'vigor', 'losestrength', 'dexteritydown',
+    'barricade', 'pennib', 'surrounded',
 ))
 _DAMAGE_OR_CARD_RELICS = frozenset((
     'mercuryhourglass', 'bronzescales', 'charonsashes', 'letteropener',
@@ -110,8 +113,29 @@ class PlanResult:
 
 
 def _powers(raw):
-    return {name.replace(' ', '').replace('_', '').lower(): value
-            for name, value in raw.get('powers', ())}
+    powers = {name.replace(' ', '').replace('_', '').lower(): value
+              for name, value in raw.get('powers', ())}
+    flags = raw.get('public_power_flags')
+    if flags is not None:
+        for name, active in flags['flags'].items():
+            powers[name.replace('_', '').lower()] = int(active)
+    return powers
+
+
+def public_planner_state(battle, raw=None):
+    """Add public binary flags to a private snapshot, never checkpoint inputs."""
+    read = getattr(battle, 'public_player_power_flags', None)
+    if not callable(read):
+        raise RuntimeError('public-flags planner requires native public_player_power_flags schema 1')
+    record = read()
+    if (set(record) != {'schema_version', 'flags'}
+            or type(record['schema_version']) is not int or record['schema_version'] != 1
+            or set(record['flags']) != _PUBLIC_POWER_FLAGS
+            or any(type(v) is not bool for v in record['flags'].values())):
+        raise ValueError('unsupported public_player_power_flags schema')
+    raw = battle.to_dict() if raw is None else raw
+    raw['player']['public_power_flags'] = record
+    return raw
 
 
 def power_horizon(raw):
@@ -262,6 +286,8 @@ class NativeTurnPlanner:
     raw observations omit simulator state needed to prove transition equivalence.
     """
     def __init__(self, config: TurnPlannerConfig = TurnPlannerConfig()):
+        if not callable(getattr(sts.BattleContext, 'public_player_power_flags', None)):
+            raise RuntimeError('public-flags planner requires native public_player_power_flags schema 1')
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
@@ -272,7 +298,7 @@ class NativeTurnPlanner:
         roots = complete_actions(battle)
         if not roots:
             raise ValueError('turn planner requires a live combat decision')
-        original = battle.to_dict()
+        original = public_planner_state(battle)
         if original['post_enemy_turn_boundary']:
             raise ValueError('turn planner requires a live decision, not a projected enemy boundary')
         final_player_turn = original['turn'] + self.config.lookahead_turns - 1
@@ -355,6 +381,7 @@ class NativeTurnPlanner:
                     raise ValueError('two-turn planning cannot resume an already armed search boundary')
                 if raw['outcome'] == 0 and raw['turn'] >= final_player_turn:
                     stats['second_turn_entries'] += 1
+            raw = public_planner_state(child, raw)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
                 value = leaf_value(raw, public_relics=public_relics, horizon=horizon)

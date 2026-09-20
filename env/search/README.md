@@ -202,3 +202,5 @@ observation contract is expanded. Debuffs disappearing on first death are still
 valued as a real cost. This is not a requirement to switch phase immediately in
 every state: two-turn plans can still value delaying the stronger second phase.
 Regression entrypoint: `tests/integration/test_turn_planner_awakened_phase.py`.
+
+The A20 planner also reads native `public_player_power_flags()` schema 1 for public binary powers (Corruption, Barricade, Confused, Hex, Pen Nib, Surrounded). These flags enrich only its private snapshot and trace; checkpoint observations and numeric power getters retain their existing schemas. Rebuild the extension before using this planner; an older extension fails the planner capability check explicitly.
