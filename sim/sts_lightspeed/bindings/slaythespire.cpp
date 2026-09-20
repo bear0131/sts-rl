@@ -105,6 +105,16 @@ py::list monsterPowersToList(const sts::Monster &m) {
     return out;
 }
 
+py::dict publicBoundaryResources(const sts::BattleContext &bc) {
+    py::dict out;
+    out["schema_version"] = 1;
+    out["cards_played"] = bc.postEnemyTurnBoundary
+        ? bc.boundaryCardsPlayed : bc.player.cardsPlayedThisTurn;
+    out["base_draw"] = bc.player.cardDrawPerTurn;
+    out["pocketwatch"] = bc.player.hasRelicRuntime(sts::RelicId::POCKETWATCH);
+    return out;
+}
+
 py::dict rawCombatState(const sts::BattleContext &bc) {
     py::dict d;
     d["turn"] = bc.turn;
@@ -630,6 +640,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     bc.turnHasEnded = false;
     bc.stopAfterEnemyTurn = false;
     bc.postEnemyTurnBoundary = false;
+    bc.boundaryCardsPlayed = 0;
     bc.monsterTurnIdx = bc.monsters.monsterCount;
 }
 
@@ -2719,6 +2730,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("public_player_power_flags", &publicPlayerPowerFlags,
              "read-only schema_version=1 public boolean flags: CORRUPTION, BARRICADE, "
              "CONFUSED, HEX, PEN_NIB, SURROUNDED; leaves legacy observations unchanged")
+        .def("public_boundary_resources", &publicBoundaryResources,
+             "read-only schema_version=1 public played-card count and base draw; "
+             "retains pre-cleanup count at search boundaries without changing legacy observations")
         .def("compact_leaf_arrays", [](const BattleContext &bc) {
             // Diagnostic endpoint for packed-vs-legacy contract tests. The
             // search hot path uses next_batch_packed(), which does not expose

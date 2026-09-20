@@ -45,6 +45,7 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
     isBattleOver = false;
     stopAfterEnemyTurn = false;
     postEnemyTurnBoundary = false;
+    boundaryCardsPlayed = 0;
 
     actionQueue.clear();
     cardQueue.clear();
@@ -2266,6 +2267,7 @@ void BattleContext::enterPostEnemyTurnBoundary() {
     if (!player.hasRelic<R::ICE_CREAM>()) {
         player.energy = 0;
     }
+    boundaryCardsPlayed = player.cardsPlayedThisTurn;
     player.cardsPlayedThisTurn = 0;
     player.attacksPlayedThisTurn = 0;
     player.skillsPlayedThisTurn = 0;
@@ -2289,6 +2291,7 @@ void BattleContext::enterPostEnemyTurnBoundary() {
 
 void BattleContext::afterMonsterTurns() {
     postEnemyTurnBoundary = false;
+    boundaryCardsPlayed = 0;
     // ********* Enemy powers atEndOfRound *********
     if (!skipMonsterTurn) {
         applyEndOfRoundPowers();
