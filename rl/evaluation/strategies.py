@@ -246,7 +246,8 @@ def native_strategy(model, args, lock=None):
     modes = {'puct': 0, 'gumbel': 1, 'full': 2, 'strict': 2}
     config = NativeSearchConfig.from_model(model, simulations=args.simulations, depth=args.depth,
         leaf_batch_size=args.leaf_batch_size, root_search_mode=modes[args.search_mode],
-        paper_full_gumbel=args.search_mode == 'strict')
+        paper_full_gumbel=args.search_mode == 'strict',
+        fixed_worldline=getattr(args, 'fixed_worldline', None))
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
         model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
         leaf_backend=backend)},

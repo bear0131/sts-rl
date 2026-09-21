@@ -56,6 +56,8 @@ def build_parser():
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
                         help='Native leaf backend; cuda-graph requires a CUDA FP32 combat model and keeps exact batch shapes')
+    parser.add_argument('--fixed-worldline', action=argparse.BooleanOptionalAction, default=None,
+                        help='Keep one redeterminized future per search tree; default inherits the checkpoint setting')
     add_combat_search_args(parser)
     return parser
 

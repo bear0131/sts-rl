@@ -32,6 +32,18 @@ def test_default_backend_leaves_runtime_unmodified():
     assert not hasattr(lower, '_native_leaf_inference')
 
 
+def test_fixed_worldline_cli_override_reaches_native_config():
+    enabled = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--fixed-worldline'])
+    disabled = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--no-fixed-worldline'])
+    inherited = cli.build_parser().parse_args(['upper.zip', '--solver', 'native'])
+
+    assert S.native_strategy(model(), enabled).routes['combat'].config.fixed_worldline is True
+    assert S.native_strategy(model(), disabled).routes['combat'].config.fixed_worldline is False
+    assert inherited.fixed_worldline is None
+
+
 def test_cuda_graph_refuses_cpu():
     with pytest.raises(ValueError, match='CUDA combat model'):
         S.native_strategy(model(), args('cuda-graph'))
