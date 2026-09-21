@@ -38,7 +38,7 @@ if [ -n "${NOSL_OVERRIDES_FILE:-}" ]; then extra+=("@$NOSL_OVERRIDES_FILE"); fi
 if [ -n "${NOSL_RESUME_STEP:-}" ]; then
   printf -v generation 'step-%012d' "$NOSL_RESUME_STEP"
   if [ -n "${NOSL_RESUME_ROOT:-}" ]; then
-    resume_state="$NOSL_RESUME_ROOT/rank$rank"
+    resume_state="$NOSL_RESUME_ROOT/rank$rank/$generation"
   else
     resume_state="$run_dir/recovery/rank$rank/$generation"
   fi

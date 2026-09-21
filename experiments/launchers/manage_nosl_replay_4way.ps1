@@ -159,7 +159,7 @@ fi
         $sourceRunId = if ($ForkResume) { $ResumeSourceRunId } else { $RunId }
         $sourceWandbId = if ($ForkResume) { $ResumeSourceWandbId } else { $WandbId }
         $rawRecoveryPath = if ($ForkResume) {
-            "$(Resolve-RemotePath $ResumeRoot)/rank$($Peer.Rank)"
+            "$(Resolve-RemotePath $ResumeRoot)/rank$($Peer.Rank)/$generation"
         } else {
             "$RemoteRepo/runs/$RunId/recovery/rank$($Peer.Rank)/$generation"
         }
