@@ -62,5 +62,6 @@
 
 | EVAL02 | 已完成 | 固定 step18137088 的同 seed 200局配对评测：固定未来25/200、非固定未来28/200，配对符号检验约p=0.72；固定未来叶子评估少14.6%、最慢分片快6.1%，仅建议作为速度选项，不宣称更强策略。原始分片与合并报告见 `runs/local/fixed-worldline-ablation-step-000018137088/comparison-200.json`，详细记录见 `worklog/2026-09-21.md` |
 | EVAL03 | 已完成 | 暂停 `u40x4-ruleupper-v1-occ1k-30m-20260920` 于 step25853952，四机并行以 native PUCT（root_search_mode=0，关闭 Gumbel）评测200局；200个唯一seed、无 step_limit/timeout，胜率30/200=15.0%，Act1/Act2到达率80.5%/34.0%。报告：`runs/local/remote-eval-u40x4-step-000025853952-puct-20260921/comparison-200.json`；详见 `worklog/2026-09-21.md` |
+| TRAIN07 | 进行中 | 新建 `SplitStSPointerPolicy` fresh step0 checkpoint，保持 `n_layers=8`，用 `d_model=100/n_heads=4` 将 combat 参数缩小至725,864（约5.13x）；四机启动 `u40x4-ruleupper-v1-transformer-reduced-20260921`，规则上层、原搜索/replay/batch/graph/occupancy 配置不变，目标30M steps。首轮 fresh 恢复标志 bug 已修复；待 occupancy 完成后验收首个40-update generation。 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。

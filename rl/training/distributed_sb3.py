@@ -2454,9 +2454,10 @@ def main() -> None:
         )
     else:
         recovery_manifest = None
-    environment_restored = bool(getattr(
-        model, "_recovery_environment_restored", False
-    ))
+    environment_restored = bool(
+        recovery_manifest is not None
+        and getattr(model, "_recovery_environment_restored", False)
+    )
     if environment_restored:
         print(
             "ENVIRONMENT_RESTORED " + json.dumps({
