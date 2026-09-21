@@ -195,7 +195,12 @@ def run_startup_occupancy(
     )
     model._startup_occupancy_sampling = True
     try:
-        for _ in range(budget_steps // rollout_steps):
+        total_blocks = budget_steps // rollout_steps
+        # Occupancy startup intentionally does not emit normal training
+        # metrics. Keep a low-frequency heartbeat so a long startup is
+        # distinguishable from a stalled worker without changing sampling.
+        progress_interval = max(1, min(8, total_blocks))
+        for block in range(total_blocks):
             states = model.env.env_method("startup_occupancy_state")
             if all(state["accepted"] for state in states):
                 break
@@ -204,6 +209,29 @@ def run_startup_occupancy(
                 n_rollout_steps=rollout_steps,
             ):
                 raise RuntimeError("occupancy collection returned False")
+            completed_blocks = block + 1
+            if (
+                completed_blocks % progress_interval == 0
+                or completed_blocks == total_blocks
+            ):
+                states = model.env.env_method("startup_occupancy_state")
+                accepted = sum(bool(state["accepted"]) for state in states)
+                ages = [int(state["age"]) for state in states]
+                print(
+                    "STARTUP_OCCUPANCY_PROGRESS " + json.dumps({
+                        "blocks": completed_blocks,
+                        "blocks_total": total_blocks,
+                        "accepted_envs": accepted,
+                        "total_envs": len(states),
+                        "active_age_mean": float(np.mean(ages)) if ages else 0.0,
+                        "active_age_max": max(ages) if ages else 0,
+                        "real_transitions_local": int(sum(
+                            state["real_steps"] for state in states
+                        )),
+                        "elapsed_sec": time.perf_counter() - started,
+                    }, sort_keys=True),
+                    flush=True,
+                )
     finally:
         callback.on_training_end()
         model._startup_occupancy_sampling = False
