@@ -2508,16 +2508,10 @@ def main() -> None:
             "STARTUP_STAGGER " + json.dumps(startup_stagger, sort_keys=True),
             flush=True,
         )
-    startup_occupancy = {} if environment_restored else run_startup_occupancy(
-        model, budget_steps=args.startup_occupancy_budget,
-        rollout_steps=args.n_steps,
-        seed=args.seed + args.rank * 1_000_003 + 0x4F434355,
-    )
-    if startup_occupancy:
-        startup_occupancy["discarded_transitions_global"] = (
-            startup_occupancy["discarded_transitions_local"] * args.world_size
-        )
-        print("STARTUP_OCCUPANCY " + json.dumps(startup_occupancy, sort_keys=True), flush=True)
+    # Startup occupancy warmup was removed from the production lifecycle.  Keep
+    # the CLI fields readable for old argument files, but never spend training
+    # time on discarded rollouts or mutate the formal sampling boundary.
+    startup_occupancy = {}
     callback.on_training_start(locals(), globals())
 
     records = []
