@@ -110,7 +110,11 @@ function Invoke-Remote {
         [Parameter(Mandatory = $true)][string]$Command,
         [int]$Attempts = 3
     )
-    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
+    # PowerShell here-strings inherit this file's CRLF.  Normalize at the
+    # transport boundary so Bash does not treat trailing CR as part of a
+    # command (for example, `set +e` becomes an invalid `set +` option).
+    $normalizedCommand = $Command -replace "`r`n", "`n" -replace "`r", "`n"
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalizedCommand))
     $remoteCommand = "printf '%s' '$payload' | base64 -d | bash"
     $sshArgs = @(
         "-i", $SshKey,
