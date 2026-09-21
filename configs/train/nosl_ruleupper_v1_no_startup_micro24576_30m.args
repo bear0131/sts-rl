@@ -1,0 +1,10 @@
+--nosl-is-az-upper-strategy
+rules
+--nosl-is-az-micro-batch-size
+24576
+--total-steps
+30000000
+--startup-occupancy-max-age
+1000
+--startup-occupancy-budget
+0
