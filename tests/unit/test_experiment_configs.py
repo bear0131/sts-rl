@@ -56,6 +56,44 @@ def test_u40_fourfold_preset_carries_validated_rollout_tuning():
     assert args.rollout_resource_interval == 2
 
 
+def test_actorbatch_preset_only_rebalances_rollout_geometry_and_marks_fork_reset():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip"]
+    args = parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_no_startup_micro24576_30m.args'}",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_actorbatch_384x32.args'}",
+    ])
+
+    assert args.n_envs == 384
+    assert args.n_steps == 32
+    assert args.envs_per_worker == 16
+    assert args.n_envs * args.n_steps == 96 * 128
+    assert args.fork_reset_environments is True
+    assert args.nosl_is_az_batch_size == 98_304
+    assert args.nosl_is_az_micro_batch_size == 24_576
+    assert args.nosl_is_az_simulations == 128
+    assert args.nosl_is_az_updates == 40
+
+
+def test_actorbatch_full_preset_is_launcher_ready_without_losing_contract():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_actorbatch_384x32_30m.args'}",
+    ])
+
+    assert args.n_envs * args.n_steps == 12_288
+    assert args.envs_per_worker == 16
+    assert args.total_steps == 30_000_000
+    assert args.nosl_is_az_upper_strategy == "rules"
+    assert args.nosl_is_az_batch_size == 98_304
+    assert args.nosl_is_az_micro_batch_size == 24_576
+    assert args.nosl_is_az_replay_capacity == 524_288
+    assert args.nosl_is_az_updates == 40
+    assert args.fork_reset_environments is True
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

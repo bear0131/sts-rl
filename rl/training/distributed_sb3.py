@@ -442,6 +442,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Restore a complete recovery generation while requiring new run "
         "and W&B identities; the source bundle remains unchanged.",
     )
+    parser.add_argument(
+        "--fork-reset-environments",
+        action="store_true",
+        help="With --fork-state, keep learner/replay/RNG state but reset the "
+        "freshly constructed VecEnv. Required when changing n_envs.",
+    )
     parser.add_argument("--stop-file", type=Path, help="Request a coordinated save and stop at the next update boundary")
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
     parser.add_argument("--max-checkpoints", type=int, default=20)
@@ -1802,6 +1808,8 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.resume_state is not None and args.fork_state is not None:
         raise ValueError("--resume-state and --fork-state are mutually exclusive")
+    if args.fork_reset_environments and args.fork_state is None:
+        raise ValueError("--fork-reset-environments requires --fork-state")
     recovery_state = args.resume_state or args.fork_state
     if recovery_state is not None:
         manifest = read_bundle(recovery_state, rank=args.rank, world_size=args.world_size)
@@ -2478,8 +2486,20 @@ def main() -> None:
     )
     if recovery_state is not None:
         recovery_manifest = restore_learner(
-            model, recovery_state, rank=args.rank, world_size=args.world_size
+            model,
+            recovery_state,
+            rank=args.rank,
+            world_size=args.world_size,
+            restore_environment=not bool(args.fork_reset_environments),
         )
+        if args.fork_reset_environments:
+            print(
+                "ENVIRONMENT_RESET_ON_FORK " + json.dumps({
+                    "source_global_step": int(recovery_manifest["global_step"]),
+                    "environments": int(model.env.num_envs),
+                }, sort_keys=True),
+                flush=True,
+            )
     else:
         recovery_manifest = None
     environment_restored = bool(

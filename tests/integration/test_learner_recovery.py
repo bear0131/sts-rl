@@ -201,3 +201,90 @@ def test_schema1_bundle_remains_learner_only_compatible(tmp_path):
         assert recovered._recovery_environment_restored is False
     finally:
         env.close()
+
+
+def test_schema2_fork_can_reset_environment_geometry(tmp_path):
+    source_env = _checkpointable_vec_env()
+    model = AccumulatingMaskablePPO(
+        SplitStSPointerPolicy, source_env, n_steps=2, batch_size=2, n_epochs=1,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4),
+        device="cpu", seed=23,
+    )
+    try:
+        model.learn(4)
+        path = save_bundle(
+            model, tmp_path, rank=0, world_size=1,
+            run_id="source", wandb_id="source", config={},
+        )
+        target_env = VecMonitor(DummyVecEnv([
+            lambda: TrainingStateWrapper(TimeLimit(
+                ShapedRewardWrapper(SlayTheSpireEnv()), max_episode_steps=12,
+            )) for _ in range(3)
+        ]))
+        try:
+            recovered = AccumulatingMaskablePPO.load(
+                path / "model.zip", env=target_env, device="cpu"
+            )
+            recovered._setup_learn(
+                total_timesteps=4, callback=None,
+                reset_num_timesteps=False, progress_bar=False,
+            )
+            manifest = restore_learner(
+                recovered, path, rank=0, world_size=1,
+                restore_environment=False,
+            )
+            assert manifest["schema_version"] == 2
+            assert recovered._recovery_environment_restored is False
+            assert recovered._last_obs["phase"].shape[0] == 3
+            assert len(recovered._last_episode_starts) == 3
+            assert len(recovered._nosl_is_az_pending_fights) == 3
+            np.testing.assert_array_equal(target_env.episode_returns, np.zeros(3))
+            assert target_env.episode_count == 0
+        finally:
+            target_env.close()
+    finally:
+        source_env.close()
+
+
+def test_schema2_fork_reset_restores_learner_rng_after_env_reset(tmp_path):
+    source_env = _checkpointable_vec_env()
+    model = AccumulatingMaskablePPO(
+        SplitStSPointerPolicy, source_env, n_steps=2, batch_size=2, n_epochs=1,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4),
+        device="cpu", seed=31,
+    )
+    try:
+        model.learn(4)
+        path = save_bundle(
+            model, tmp_path, rank=0, world_size=1,
+            run_id="source", wandb_id="source", config={},
+        )
+        target_env = VecMonitor(DummyVecEnv([
+            lambda: TrainingStateWrapper(TimeLimit(
+                ShapedRewardWrapper(SlayTheSpireEnv()), max_episode_steps=12,
+            )) for _ in range(3)
+        ]))
+        try:
+            recovered = AccumulatingMaskablePPO.load(
+                path / "model.zip", env=target_env, device="cpu"
+            )
+            recovered._setup_learn(
+                total_timesteps=4, callback=None,
+                reset_num_timesteps=False, progress_bar=False,
+            )
+            expected = torch.load(
+                path / "learner.pt", map_location="cpu", weights_only=False
+            )
+            restore_learner(
+                recovered, path, rank=0, world_size=1,
+                restore_environment=False,
+            )
+            np.testing.assert_array_equal(
+                np.random.get_state()[1], expected["numpy_rng"][1]
+            )
+            assert random.getstate() == expected["python_rng"]
+            assert torch.equal(torch.get_rng_state(), expected["torch_rng"])
+        finally:
+            target_env.close()
+    finally:
+        source_env.close()

@@ -164,7 +164,17 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
     return destination
 
 
-def restore_learner(model, path, *, rank, world_size):
+def restore_learner(
+    model, path, *, rank, world_size, restore_environment: bool = True,
+):
+    """Restore learner state, optionally replacing the live environment.
+
+    ``restore_environment=False`` is an explicit fork boundary for runs that
+    intentionally change the number of actors.  Policy/Adam/replay/RNG state
+    still comes from the source bundle, while all environment-local progress is
+    reset to the freshly constructed VecEnv.  Silent state-count mismatches are
+    therefore impossible.
+    """
     manifest = read_bundle(path, rank=rank, world_size=world_size)
     if manifest['global_step'] != model.num_timesteps:
         raise ValueError('policy and learner global steps disagree')
@@ -173,15 +183,18 @@ def restore_learner(model, path, *, rank, world_size):
         raise ValueError('invalid learner recovery state')
     if state['replay'] is not None:
         model._ensure_nosl_is_az_replay().load_state_dict(state['replay'])
-    np.random.set_state(state['numpy_rng'])
-    random.setstate(state['python_rng'])
-    torch.set_rng_state(state['torch_rng'])
-    if state['cuda_rng'] is not None:
-        if model.device.type != 'cuda':
-            raise ValueError('CUDA learner RNG requires CUDA recovery')
-        torch.cuda.set_rng_state_all(state['cuda_rng'])
+    def restore_rng() -> None:
+        np.random.set_state(state['numpy_rng'])
+        random.setstate(state['python_rng'])
+        torch.set_rng_state(state['torch_rng'])
+        if state['cuda_rng'] is not None:
+            if model.device.type != 'cuda':
+                raise ValueError('CUDA learner RNG requires CUDA recovery')
+            torch.cuda.set_rng_state_all(state['cuda_rng'])
+
+    restore_rng()
     model._recovery_environment_restored = False
-    if manifest['schema_version'] >= 2:
+    if manifest['schema_version'] >= 2 and restore_environment:
         environment = torch.load(
             Path(path) / 'environment.pt', map_location='cpu', weights_only=False
         )
@@ -219,6 +232,34 @@ def restore_learner(model, path, *, rank, world_size):
                 ))
             model._episode_num = int(state['episode_num'])
             model._recovery_environment_restored = True
+    elif manifest['schema_version'] >= 2:
+        # A geometry-changing fork cannot consume the source VecEnv's state
+        # array.  Reset every environment and discard source-local pending
+        # fights/episode windows while retaining learner state above.
+        env = model.get_env()
+        if env is None:
+            raise ValueError('environment reset fork requires a live VecEnv')
+        model._last_obs = env.reset()
+        model._last_episode_starts = np.ones(env.num_envs, dtype=bool)
+        model._nosl_is_az_pending_fights = [
+            [] for _ in range(env.num_envs)
+        ]
+        if hasattr(env, 'episode_returns'):
+            env.episode_returns[...] = 0.0
+        if hasattr(env, 'episode_lengths'):
+            env.episode_lengths[...] = 0
+        if hasattr(env, 'episode_count'):
+            env.episode_count = 0
+        if model.ep_info_buffer is not None:
+            model.ep_info_buffer.clear()
+        if model.ep_success_buffer is not None:
+            model.ep_success_buffer.clear()
+        model._episode_num = 0
+        # VecEnv.reset() may execute wrappers in the parent process.  Restore
+        # the learner streams after that reset so a geometry fork cannot shift
+        # replay sampling or optimizer randomness merely by constructing new
+        # actors.
+        restore_rng()
     return manifest
 
 
