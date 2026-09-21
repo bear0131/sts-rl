@@ -12,6 +12,11 @@ args_file=${NOSL_ARGS_FILE:-$repo/configs/train/nosl_rootpaper_replay.args}
 python="$repo/.venv/bin/python"
 build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/sim/sts_lightspeed/build-gumbel-current}
 checkpoint=${NOSL_CHECKPOINT:-$repo/migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip}
+save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}
+[[ "$save_every_updates" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'NOSL_SAVE_EVERY_UPDATES must be a positive integer' >&2
+  exit 2
+}
 run_dir="$repo/runs/$run_id"
 remote_root="$repo/.tmp-dist-sb3-$run_id"
 stop_file="$run_dir/STOP"
@@ -61,7 +66,7 @@ cmd=("$python" -u -m rl.training.distributed_sb3
   --reasoning-gradient-accumulation-steps 1 --no-interactive-reasoning
   --leaf-inference "${NOSL_LEAF_INFERENCE:-cuda-graph}"
   --wandb --wandb-project sts-rl --wandb-id "$wandb_id" --wandb-name "$run_name"
-  --save-every-updates 1 --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-3}" --training-state-dir "$run_dir/recovery"
+  --save-every-updates "$save_every_updates" --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-3}" --training-state-dir "$run_dir/recovery"
   --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision high
   "${peers[@]}")
 cd "$repo"

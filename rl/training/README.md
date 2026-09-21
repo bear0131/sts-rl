@@ -16,7 +16,10 @@ Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方�
 `--rollout-resource-interval 2` 在每个 rank 的 JSON 记录中加入 collection 的
 CPU/RSS/cgroup/GPU 采样，0 关闭；定义与复现实验入口见 [资源基准](../benchmarks/README.md)。
 
-生产恢复使用 `--training-state-dir DIR --save-every-updates 1 --max-checkpoints 3`。
+生产恢复默认使用 `--training-state-dir DIR --save-every-updates 1 --max-checkpoints 3`。
+在需要测量 checkpoint 固定成本时，launcher 可通过
+`NOSL_SAVE_EVERY_UPDATES=N` 将完整 recovery bundle 改为每 N 个 update 保存一次；
+stop-file 和正常结束仍强制发布最后一个 bundle。该选项只改变恢复窗口，不改变采样、搜索、loss、optimizer 或 replay。
 每个 rank 各存 `DIR/rankN/step-XXXXXXXXXXXX/{model.zip,learner.pt,manifest.json}`，
 manifest 最后原子发布，包含配置、run/W&B ID 和文件 SHA256。恢复时四 rank 必须
 选同一个已完整保存的 global step，传入各自的 `--resume-state`；不得用 rank 0 的

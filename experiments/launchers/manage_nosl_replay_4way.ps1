@@ -42,6 +42,8 @@ param(
     [int]$RingPort = 29789,
     [ValidateRange(2, 100)]
     [int]$MaxCheckpoints = 3,
+    [ValidateRange(1, 1000000)]
+    [int]$SaveEveryUpdates = 1,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),
     [string[]]$BuildDirs = @(
         "build-gumbel-current",
@@ -242,6 +244,7 @@ export NOSL_CHECKPOINT=$checkpoint
 export NOSL_PEER_PORTS=$ports
 export NOSL_RING_PORT=$RingPort
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
+export NOSL_SAVE_EVERY_UPDATES=$SaveEveryUpdates
 export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
 $resumeRootLine
@@ -329,7 +332,7 @@ echo "running=`$running latest=`${latest:-none}"
 }
 
 if ($Action -eq "plan") {
-    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints"
+    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints save_every_updates=$SaveEveryUpdates"
     foreach ($peer in $Peers) {
         Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
     }
