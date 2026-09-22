@@ -115,6 +115,24 @@ def test_reduced_alignment_preset_matches_large_update_geometry():
     assert args.nosl_is_az_upper_strategy == "rules"
 
 
+def test_original_width_alignment_preset_uses_safe_gpu_microbatch():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_original_256_align_768x16_30m.args'}",
+    ])
+
+    assert args.n_envs * args.n_steps == 12_288
+    assert args.envs_per_worker == 32
+    assert args.learning_rate == 1e-4
+    assert args.nosl_is_az_batch_size == 98_304
+    assert args.nosl_is_az_micro_batch_size == 12_288
+    assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 8
+    assert args.nosl_is_az_updates == 40
+    assert args.nosl_is_az_replay_capacity == 524_288
+    assert args.nosl_is_az_simulations == 128
+    assert args.nosl_is_az_search_mode == "full_gumbel"
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
