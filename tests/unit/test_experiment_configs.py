@@ -104,8 +104,8 @@ def test_reduced_alignment_preset_matches_large_update_geometry():
     assert args.envs_per_worker == 32
     assert args.learning_rate == 2.5e-4
     assert args.nosl_is_az_batch_size == 98_304
-    assert args.nosl_is_az_micro_batch_size == 2_048
-    assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 48
+    assert args.nosl_is_az_micro_batch_size == 24_576
+    assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 4
     assert args.nosl_is_az_updates == 40
     assert args.nosl_is_az_replay_capacity == 524_288
     assert args.nosl_is_az_replay_max_old_fraction == 0.90
