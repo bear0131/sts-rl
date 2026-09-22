@@ -41,7 +41,7 @@ param(
     [int]$PollSeconds = 15,
     [int]$RingPort = 29789,
     [ValidateRange(2, 100)]
-    [int]$MaxCheckpoints = 3,
+    [int]$MaxCheckpoints = 2,
     [ValidateRange(1, 1000000)]
     [int]$SaveEveryUpdates = 1,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),

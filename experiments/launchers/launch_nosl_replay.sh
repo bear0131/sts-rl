@@ -66,7 +66,7 @@ cmd=("$python" -u -m rl.training.distributed_sb3
   --reasoning-gradient-accumulation-steps 1 --no-interactive-reasoning
   --leaf-inference "${NOSL_LEAF_INFERENCE:-cuda-graph}"
   --wandb --wandb-project sts-rl --wandb-id "$wandb_id" --wandb-name "$run_name"
-  --save-every-updates "$save_every_updates" --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-3}" --training-state-dir "$run_dir/recovery"
+  --save-every-updates "$save_every_updates" --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-2}" --training-state-dir "$run_dir/recovery"
   --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision high
   "${peers[@]}")
 cd "$repo"

@@ -11,6 +11,61 @@ import numpy as np
 import torch
 
 
+_BUNDLE_SPACE_RESERVE_BYTES = 256 * 1024 * 1024
+
+
+def _bundle_bytes(path):
+    return sum(item.stat().st_size for item in path.iterdir() if item.is_file())
+
+
+def _is_step_directory_name(name):
+    step = name.removeprefix('step-')
+    return name.startswith('step-') and len(step) >= 12 and step.isdigit()
+
+
+def _is_incomplete_directory_name(name):
+    if not name.startswith('.incomplete-step-'):
+        return False
+    step, separator, suffix = name.removeprefix(
+        '.incomplete-step-'
+    ).partition('-')
+    return (
+        bool(separator)
+        and len(step) >= 12
+        and step.isdigit()
+        and len(suffix) == 32
+        and all(character in '0123456789abcdef' for character in suffix)
+    )
+
+
+def ensure_bundle_disk_space(
+    root, *, rank, reserve_bytes=_BUNDLE_SPACE_RESERVE_BYTES,
+):
+    """Fail before an atomic save when another generation cannot fit."""
+    directory = Path(root) / f'rank{rank}'
+    directory.mkdir(parents=True, exist_ok=True)
+    bundles = [
+        path for path in directory.glob('step-*')
+        if (path / 'manifest.json').is_file()
+    ]
+    previous_bytes = max((_bundle_bytes(path) for path in bundles), default=0)
+    growth_reserve = max(reserve_bytes, previous_bytes // 10)
+    required_bytes = previous_bytes + growth_reserve
+    free_bytes = shutil.disk_usage(directory).free
+    if free_bytes < required_bytes:
+        raise RuntimeError(
+            'insufficient disk space for atomic recovery bundle: '
+            f'rank={rank} free_bytes={free_bytes} '
+            f'required_bytes={required_bytes} '
+            f'previous_bundle_bytes={previous_bytes}'
+        )
+    return {
+        'free_bytes': free_bytes,
+        'required_bytes': required_bytes,
+        'previous_bundle_bytes': previous_bytes,
+    }
+
+
 def _sha(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -111,6 +166,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
             if not partial.is_file() or partial.resolve().parent != destination.resolve():
                 raise ValueError('unexpected content in incomplete recovery generation')
             partial.replace(abandoned / partial.name)
+    ensure_bundle_disk_space(root.parent, rank=rank)
     # A generation becomes visible to readers only when its manifest appears.
     # Publishing a file avoids Windows directory-rename races with file scanners.
     temporary = destination
@@ -272,4 +328,21 @@ def prune_bundles(root, *, rank, keep):
         # Only complete, owned generation directories under the explicit root.
         if path.resolve().parent != directory.resolve():
             raise ValueError('recovery generation escaped its directory')
+        shutil.rmtree(path)
+    # Interrupted generations are unusable without a manifest. Retain only
+    # the newest one as diagnostic evidence so repeated restarts stay bounded.
+    incomplete = [
+        path for path in directory.iterdir()
+        if path.is_dir() and (
+            _is_incomplete_directory_name(path.name)
+            or (
+                _is_step_directory_name(path.name)
+                and not (path / 'manifest.json').is_file()
+            )
+        )
+    ] if directory.exists() else []
+    incomplete.sort(key=lambda path: (path.stat().st_mtime_ns, path.name))
+    for path in incomplete[:-1]:
+        if path.resolve().parent != directory.resolve():
+            raise ValueError('incomplete recovery generation escaped its directory')
         shutil.rmtree(path)
