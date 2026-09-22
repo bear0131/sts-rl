@@ -94,6 +94,27 @@ def test_actorbatch_full_preset_is_launcher_ready_without_losing_contract():
     assert args.fork_reset_environments is True
 
 
+def test_reduced_alignment_preset_matches_large_update_geometry():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_reduced_align_768x16_30m.args'}",
+    ])
+
+    assert args.n_envs * args.n_steps == 12_288
+    assert args.envs_per_worker == 32
+    assert args.learning_rate == 2.5e-4
+    assert args.nosl_is_az_batch_size == 98_304
+    assert args.nosl_is_az_micro_batch_size == 2_048
+    assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 48
+    assert args.nosl_is_az_updates == 40
+    assert args.nosl_is_az_replay_capacity == 524_288
+    assert args.nosl_is_az_replay_max_old_fraction == 0.90
+    assert args.nosl_is_az_simulations == 128
+    assert args.nosl_is_az_search_mode == "full_gumbel"
+    assert args.nosl_is_az_paper_full_gumbel is True
+    assert args.nosl_is_az_upper_strategy == "rules"
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
