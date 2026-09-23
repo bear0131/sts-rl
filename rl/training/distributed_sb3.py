@@ -579,7 +579,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--nosl-is-az-batch-size",
         type=int,
         default=None,
-        help="Override the number of replay roots sampled per AlphaZero update.",
+        help="Requested effective AlphaZero root batch; replay mode samples up "
+             "to this many local roots, while no-replay mode consumes all "
+             "available fresh roots and uses this as the recorded global cap.",
     )
     parser.add_argument(
         "--nosl-is-az-updates",
@@ -594,6 +596,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable the labelled-combat replay buffer. Omission preserves "
              "the checkpoint setting; legacy checkpoints default to enabled.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-train-shared-embeddings",
+        action="store_true",
+        help="Reset shared card/relic/potion embeddings with the run seed and "
+             "train them alongside the combat specialist in inner-only NOSL.",
     )
     parser.add_argument(
         "--nosl-is-az-micro-batch-size",
@@ -2129,10 +2137,19 @@ def main() -> None:
             flush=True,
         )
     if source_nosl_inner_only:
-        frozen, trainable = model.configure_nosl_is_az_inner_only()
+        if args.nosl_is_az_train_shared_embeddings:
+            embedding_count = model.reset_nosl_is_az_shared_embeddings(args.seed)
+            print(
+                f"[rank {args.rank}] reset {embedding_count} shared semantic "
+                "embedding tables with the run seed",
+                flush=True,
+            )
+        frozen, trainable = model.configure_nosl_is_az_inner_only(
+            train_shared_embeddings=args.nosl_is_az_train_shared_embeddings
+        )
         print(
             f"[rank {args.rank}] NOSL-IS-AZ inner-only: froze "
-            f"{frozen:,} parameters; {trainable:,} combat parameters trainable",
+            f"{frozen:,} parameters; {trainable:,} parameters trainable",
             flush=True,
         )
     upper_strategy = args.nosl_is_az_upper_strategy or getattr(

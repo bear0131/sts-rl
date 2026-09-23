@@ -174,6 +174,25 @@ def test_original_width_alignment_preset_uses_safe_gpu_microbatch():
     assert args.nosl_is_az_search_mode == "full_gumbel"
 
 
+def test_original_width_globalbatch_preset_uses_four_rank_root_batch():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_original_256_globalbatch_384x128_30m.args'}",
+    ])
+
+    assert args.n_envs == 384
+    assert args.envs_per_worker == 16
+    assert args.n_steps == 128
+    assert args.n_envs * args.n_steps * args.world_size == 196_608
+    assert args.learning_rate == 3e-4
+    assert args.nosl_is_az_batch_size == 196_608
+    assert args.nosl_is_az_updates == 10
+    assert args.nosl_is_az_micro_batch_size == 12_288
+    assert args.nosl_is_az_replay_enabled is False
+    assert args.nosl_is_az_train_shared_embeddings is True
+    assert args.total_steps == 30_000_000
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

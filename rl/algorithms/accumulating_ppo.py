@@ -496,12 +496,43 @@ class AccumulatingMaskablePPO(MaskablePPO):
             return th.autocast(device_type="cuda", dtype=th.bfloat16)
         return nullcontext()
 
-    def configure_nosl_is_az_inner_only(self) -> tuple[int, int]:
-        """Freeze everything except the combat specialist.
+    def reset_nosl_is_az_shared_embeddings(self, seed: int) -> int:
+        """Reset shared semantic embedding tables with a reproducible seed."""
+        if not self.nosl_is_az or not self.nosl_is_az_inner_only:
+            raise ValueError("shared embedding reset requires NOSL inner-only mode")
+        core = getattr(self.policy, "core", None)
+        shared = getattr(core, "shared", None)
+        if shared is None:
+            raise ValueError("NOSL inner-only mode requires shared semantic tokenizers")
+        embeddings = [
+            module for module in shared.modules()
+            if isinstance(module, th.nn.Embedding)
+        ]
+        if not embeddings:
+            raise ValueError("shared semantic tokenizer has no embedding tables")
+        cuda_devices = []
+        parameter = next(shared.parameters(), None)
+        if parameter is not None and parameter.is_cuda:
+            device_index = parameter.device.index
+            if device_index is not None:
+                cuda_devices = [device_index]
+        with th.random.fork_rng(devices=cuda_devices):
+            th.manual_seed(int(seed))
+            if cuda_devices:
+                th.cuda.manual_seed_all(int(seed))
+            for module in embeddings:
+                module.reset_parameters()
+        # A frozen card-rule encoder may have a materialized lookup cache.  It
+        # must not survive a reset of the underlying embedding parameters.
+        if hasattr(shared, "card_vector_cache"):
+            shared.card_vector_cache = None
+            shared.card_vector_cache_enabled = False
+        return len(embeddings)
 
-        Shared tokenizers must stay frozen as well: changing them through the
-        combat loss would also change the supposedly fixed overworld policy.
-        """
+    def configure_nosl_is_az_inner_only(
+        self, *, train_shared_embeddings: bool = False
+    ) -> tuple[int, int]:
+        """Freeze everything except combat and optionally shared embeddings."""
         if not self.nosl_is_az or not self.nosl_is_az_inner_only:
             raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
         core = getattr(self.policy, "core", None)
@@ -514,6 +545,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
             parameter.requires_grad_(False)
         for parameter in combat.parameters():
             parameter.requires_grad_(True)
+        if train_shared_embeddings:
+            shared = getattr(core, "shared", None)
+            if shared is None:
+                raise ValueError(
+                    "shared embedding training requires a split specialist policy"
+                )
+            for module in shared.modules():
+                if isinstance(module, th.nn.Embedding):
+                    for parameter in module.parameters():
+                        parameter.requires_grad_(True)
         frozen = sum(
             parameter.numel()
             for parameter in self.policy.parameters()
