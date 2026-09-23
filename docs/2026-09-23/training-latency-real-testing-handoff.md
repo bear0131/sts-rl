@@ -185,4 +185,3 @@ and its overlap semantics are stated correctly.  Update `TODO.md` and the
 current-date worklog, run `git diff --check`, and commit only the small report
 and documentation.  Do not commit credentials, raw multi-GiB bundles, or
 `runs/local` outputs.
-
