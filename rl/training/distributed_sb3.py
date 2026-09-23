@@ -35,6 +35,7 @@ from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from env.core import vocab as V
 from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
+    NOSL_LEARNER_LOCAL_TIMING_FIELDS,
     NOSL_IS_AZ_SEARCH_MODES,
 )
 from rl.training.environments import make_env
@@ -1238,6 +1239,41 @@ def average_scalar_dict(
     return {key: float(value) for key, value in zip(keys, averaged.tolist())}
 
 
+_DISTRIBUTED_LEARNER_TIMING_KEYS = (
+    "learner_total_sec",
+    "learner_replay_sample_sec",
+    "learner_materialize_sec",
+    "learner_cpu_metrics_sec",
+    "learner_h2d_sec",
+    "learner_forward_sec",
+    "learner_backward_sec",
+    "learner_gradient_sync_sec",
+    "learner_optimizer_sec",
+    "learner_optimizer_wall_sec",
+    "learner_unattributed_sec",
+)
+
+
+def _finalize_learner_timings(
+    result: dict[str, object], *, learner_started: float,
+) -> None:
+    """Finish one round's wall partition without double-counting GPU events."""
+    total = time.perf_counter() - learner_started
+    result["learner_total_sec"] = float(total)
+    wall_attributed = sum(float(result.get(name, 0.0)) for name in (
+        "learner_replay_sample_sec",
+        "learner_materialize_sec",
+        "learner_cpu_metrics_sec",
+        "learner_gradient_sync_sec",
+        "learner_optimizer_wall_sec",
+    ))
+    # H2D/forward/backward/optimizer CUDA events are an overlay on this host
+    # wall partition.  They are intentionally not subtracted a second time.
+    result["learner_unattributed_sec"] = float(max(
+        0.0, total - wall_attributed
+    ))
+
+
 def distributed_nosl_is_az_update(
     model: AccumulatingMaskablePPO,
     *,
@@ -1266,6 +1302,7 @@ def distributed_nosl_is_az_update(
     all-reduce, and Adam step; this preserves the semantics of multiple local
     optimizer steps in the distributed path.
     """
+    learner_started = time.perf_counter()
     if not model.nosl_is_az or not model.nosl_is_az_inner_only:
         raise ValueError("distributed NOSL update requires inner-only mode")
     configured_updates = int(model.nosl_is_az_updates)
@@ -1329,6 +1366,9 @@ def distributed_nosl_is_az_update(
             "roots", "global_roots", "gradient_batches", "updates", "metric_count",
             "replay_sampled_roots", "backward_sec", "sync_sec",
             "optimizer_step_sec",
+            *NOSL_LEARNER_LOCAL_TIMING_FIELDS,
+            "learner_gradient_sync_sec",
+            "learner_optimizer_wall_sec",
         }
         weights = [max(0.0, float(row.get("metric_count", 0.0))) for row in results]
         weight_total = sum(weights)
@@ -1390,6 +1430,9 @@ def distributed_nosl_is_az_update(
             values = [float(row.get(key, 0.0)) for row in results]
             aggregated[key] = float(np.mean(values)) if values else 0.0
         aggregated["grad_bytes"] = int(max(int(row.get("grad_bytes", 0)) for row in results))
+        _finalize_learner_timings(
+            aggregated, learner_started=learner_started
+        )
         return aggregated
 
     if prepare_replay:
@@ -1509,6 +1552,7 @@ def distributed_nosl_is_az_update(
     sync_mbps = 0.0
     grad_bytes = 0
     optimizer_step_seconds = 0.0
+    learner_optimizer_seconds = 0.0
     gradient_norm_preclip = 0.0
     if global_count > 0.0:
         sync = synchronize_gradient_step(
@@ -1530,11 +1574,24 @@ def distributed_nosl_is_az_update(
         grad_bytes = int(sync["grad_bytes"])
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
+            optimizer_start_event = th.cuda.Event(enable_timing=True)
+            optimizer_end_event = th.cuda.Event(enable_timing=True)
+            optimizer_start_event.record()
+        else:
+            optimizer_start_event = optimizer_end_event = None
         step_started = time.perf_counter()
-        gradient_norm_preclip = float(optimizer_step(model))
+        gradient_norm = optimizer_step(model)
+        if optimizer_end_event is not None:
+            optimizer_end_event.record()
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
+        gradient_norm_preclip = float(gradient_norm)
         optimizer_step_seconds = time.perf_counter() - step_started
+        learner_optimizer_seconds = (
+            float(optimizer_start_event.elapsed_time(optimizer_end_event) / 1000.0)
+            if optimizer_start_event is not None
+            else float(optimizer_step_seconds)
+        )
 
     # Record the value installed in the optimizer rather than only the CLI
     # request.  This catches accidental schedule/checkpoint overrides in a
@@ -1556,6 +1613,9 @@ def distributed_nosl_is_az_update(
         "sync_mbps": sync_mbps,
         "grad_bytes": grad_bytes,
         "optimizer_step_sec": optimizer_step_seconds,
+        "learner_gradient_sync_sec": sync_seconds,
+        "learner_optimizer_sec": learner_optimizer_seconds,
+        "learner_optimizer_wall_sec": optimizer_step_seconds,
         "gradient_norm_preclip": gradient_norm_preclip,
         "learning_rate": effective_learning_rate,
     }
@@ -1635,6 +1695,11 @@ def distributed_nosl_is_az_update(
         )
         if key in az_stats
     })
+    for name in NOSL_LEARNER_LOCAL_TIMING_FIELDS:
+        if name == "learner_optimizer_sec":
+            continue
+        result[name] = float(az_stats.get(name, 0.0))
+    _finalize_learner_timings(result, learner_started=learner_started)
     return result
 
 
@@ -1757,6 +1822,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/leaf_graph_h2d_ms",
     "nosl_is_az/leaf_graph_replay_ms",
     "nosl_is_az/leaf_graph_d2h_ms",
+    *(f"nosl_is_az/{name}" for name in _DISTRIBUTED_LEARNER_TIMING_KEYS),
     "nosl_is_az/dropped_unlabeled_roots",
     "nosl_is_az/roots",
     "nosl_is_az/policy_loss",
@@ -2585,6 +2651,9 @@ def main() -> None:
                 model.nosl_is_az and model.nosl_is_az_inner_only
             )
             nosl_update = None
+            learner_timings = {
+                name: 0.0 for name in _DISTRIBUTED_LEARNER_TIMING_KEYS
+            }
             if distributed_nosl:
                 nosl_update = distributed_nosl_is_az_update(
                     model,
@@ -2679,6 +2748,10 @@ def main() -> None:
                 sync_mbps.append(float(nosl_update["sync_mbps"]))
                 grad_bytes = int(nosl_update["grad_bytes"])
                 step_seconds = float(nosl_update["optimizer_step_sec"])
+                learner_timings.update({
+                    name: float(nosl_update.get(name, 0.0))
+                    for name in _DISTRIBUTED_LEARNER_TIMING_KEYS
+                })
 
             reasoning_records = []
             reasoning_sync_seconds = 0.0
@@ -2818,6 +2891,7 @@ def main() -> None:
                 # Retain the historical W&B field without double-counting it.
                 "avg_grad_sec": 0.0,
                 "optimizer_step_sec": step_seconds,
+                **learner_timings,
                 "grad_bytes": grad_bytes,
                 "reasoning_loss": reasoning_mean["loss"],
                 "reasoning_token_accuracy": reasoning_mean["token_accuracy"],
@@ -3027,6 +3101,10 @@ def main() -> None:
                         "dist/gradient_pack_sec": record["gradient_pack_sec"],
                         "dist/avg_grad_sec": record["avg_grad_sec"],
                         "dist/optimizer_step_sec": record["optimizer_step_sec"],
+                        **{
+                            f"dist/{name}": record[name]
+                            for name in _DISTRIBUTED_LEARNER_TIMING_KEYS
+                        },
                         "dist/sync_mbps": record["sync_mbps_mean"],
                         "dist/global_steps_per_second": (
                             record["transitions_global"]
@@ -3243,6 +3321,10 @@ def main() -> None:
         "mean_backward_sec": float(np.mean([r["backward_sec"] for r in records])),
         "mean_sync_sec": float(np.mean([r["sync_sec"] for r in records])),
         "mean_optimizer_step_sec": float(np.mean([r["optimizer_step_sec"] for r in records])),
+        **{
+            f"mean_{name}": float(np.mean([r[name] for r in records]))
+            for name in _DISTRIBUTED_LEARNER_TIMING_KEYS
+        },
     }
     print("SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
 

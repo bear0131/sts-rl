@@ -331,11 +331,59 @@ class NOSLLearnerDiagnosticsTest(unittest.TestCase):
                         self.assertEqual(result["gradient_batches"], 6)
                         self.assertEqual(result["metric_count"], 10)
                         self.assertEqual(result["updates"], 2)
+                        timing_fields = (
+                            "learner_replay_sample_sec",
+                            "learner_materialize_sec",
+                            "learner_cpu_metrics_sec",
+                            "learner_h2d_sec",
+                            "learner_forward_sec",
+                            "learner_backward_sec",
+                            "learner_optimizer_sec",
+                        )
+                        for name in timing_fields:
+                            self.assertTrue(np.isfinite(result[name]), name)
+                            self.assertGreaterEqual(result[name], 0.0, name)
+                        self.assertFalse(
+                            any(name in model.__dict__ for name in timing_fields)
+                        )
                         self.assertTrue(all(p.grad is None for p in model.policy.parameters()))
                         if not replay_enabled:
                             self.assertEqual(model._nosl_is_az_fresh_samples, [])
         finally:
             np.random.set_state(saved_rng)
+
+    def test_two_update_timing_resets_between_calls(self):
+        model = self.model
+        model.nosl_is_az_updates = 2
+        timing_fields = (
+            "learner_replay_sample_sec",
+            "learner_materialize_sec",
+            "learner_cpu_metrics_sec",
+            "learner_h2d_sec",
+            "learner_forward_sec",
+            "learner_backward_sec",
+            "learner_optimizer_sec",
+        )
+
+        def timed_call():
+            model._nosl_is_az_samples = copy.deepcopy(self.samples)
+            ticks = iter(float(value) for value in range(1000))
+            with patch(
+                "rl.algorithms.accumulating_ppo.time.perf_counter",
+                side_effect=lambda: next(ticks),
+            ):
+                return model._train_nosl_is_az()
+
+        first = timed_call()
+        second = timed_call()
+
+        self.assertEqual(first["updates"], 2)
+        self.assertEqual(second["updates"], 2)
+        for name in timing_fields:
+            self.assertEqual(first[name], second[name], name)
+            self.assertTrue(np.isfinite(first[name]), name)
+            self.assertGreaterEqual(first[name], 0.0, name)
+        self.assertFalse(any(name in model.__dict__ for name in timing_fields))
 
     @unittest.skipUnless(torch.cuda.is_available(), "requires a CUDA device; CPU objective test always runs")
     def test_cuda_temporary_host_sources_match_blocking_transfers_and_are_released(self):

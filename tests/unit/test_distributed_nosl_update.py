@@ -132,3 +132,19 @@ def test_distributed_no_replay_reuses_fresh_batch_for_every_update(monkeypatch):
     assert result["value_target_std"] == pytest.approx(np.sqrt(0.07))
     assert result["value_target_min"] == pytest.approx(0.1)
     assert result["value_target_max"] == pytest.approx(0.9)
+    timing_fields = (
+        "learner_total_sec",
+        "learner_replay_sample_sec",
+        "learner_materialize_sec",
+        "learner_cpu_metrics_sec",
+        "learner_h2d_sec",
+        "learner_forward_sec",
+        "learner_backward_sec",
+        "learner_gradient_sync_sec",
+        "learner_optimizer_sec",
+        "learner_unattributed_sec",
+    )
+    for name in timing_fields:
+        assert np.isfinite(result[name]), name
+        assert result[name] >= 0.0, name
+    assert result["learner_total_sec"] >= result["learner_unattributed_sec"]

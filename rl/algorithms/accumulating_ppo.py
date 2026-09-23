@@ -36,6 +36,20 @@ NOSL_IS_AZ_SEARCH_MODES = {
     "full_gumbel": 2,
 }
 
+NOSL_LEARNER_LOCAL_TIMING_FIELDS = (
+    "learner_replay_sample_sec",
+    "learner_materialize_sec",
+    "learner_cpu_metrics_sec",
+    "learner_h2d_sec",
+    "learner_forward_sec",
+    "learner_backward_sec",
+    "learner_optimizer_sec",
+)
+
+
+def _empty_nosl_learner_timings() -> dict[str, float]:
+    return {name: 0.0 for name in NOSL_LEARNER_LOCAL_TIMING_FIELDS}
+
 
 def _append_nosl_value_only_sample(
     samples: list[dict], observation, action_dim: int, *, sample_kind: str
@@ -1849,6 +1863,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "batch_fill_ratio": 0.0,
                 "metric_count": 0.0,
                 "gradient_norm_preclip": 0.0,
+                **_empty_nosl_learner_timings(),
                 **{
                     key: value
                     for key, value in prepare_stats.items()
@@ -1879,6 +1894,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
         gradient_batches = 0
         optimizer_steps = 0
         gradient_norms = []
+        learner_timings = _empty_nosl_learner_timings()
+        cuda_event_pairs: dict[str, list[tuple[th.cuda.Event, th.cuda.Event]]] = {
+            name: []
+            for name in (
+                "learner_h2d_sec",
+                "learner_forward_sec",
+                "learner_backward_sec",
+                "learner_optimizer_sec",
+            )
+        }
 
         monitor_names = (
             "target_entropy",
@@ -1924,33 +1949,64 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 host_transfer_sources.append(source)
             return source.to(device=self.device, dtype=dtype, non_blocking=True)
 
-        def transfer_observations(observation: dict) -> dict:
+        def materialize_observations(observation: dict):
             if not is_cuda:
-                return _leaf_observation_as_tensor(observation, self.device)
+                return observation
             groups = {}
             for key, value in observation.items():
                 array = np.ascontiguousarray(value)
                 groups.setdefault(array.dtype, []).append((key, array))
             if any(dtype not in (np.dtype(np.int64), np.dtype(np.float32))
                    for dtype in groups):
-                return {key: transfer_array(value)
-                        for key, value in observation.items()}
-            result = {}
+                return [
+                    (value, ((key, value.shape, value.size),))
+                    for key, value in observation.items()
+                ]
+            packed_groups = []
             for fields in groups.values():
                 flats = [array.reshape(-1) for _, array in fields]
                 packed = np.concatenate(flats) if len(flats) > 1 else flats[0]
+                layout = tuple(
+                    (key, array.shape, array.size) for key, array in fields
+                )
+                packed_groups.append((packed, layout))
+            return packed_groups
+
+        def transfer_observations(packed_observations) -> dict:
+            if not is_cuda:
+                return _leaf_observation_as_tensor(
+                    packed_observations, self.device
+                )
+            result = {}
+            for packed, layout in packed_observations:
                 tensor = transfer_array(packed)
                 offset = 0
-                for key, array in fields:
-                    result[key] = tensor[offset:offset + array.size].reshape(array.shape)
-                    offset += array.size
+                for key, shape, size in layout:
+                    result[key] = tensor[offset:offset + size].reshape(shape)
+                    offset += size
             return result
 
         micro_batches_per_update = (train_count + micro_batch_size - 1) // micro_batch_size
         diagnostics_size = len(monitor_names) * train_count + 3 * micro_batches_per_update
         diagnostics_device = None
 
+        def begin_device_stage():
+            if is_cuda:
+                event = th.cuda.Event(enable_timing=True)
+                event.record()
+                return event
+            return time.perf_counter()
+
+        def end_device_stage(name: str, started) -> None:
+            if is_cuda:
+                event = th.cuda.Event(enable_timing=True)
+                event.record()
+                cuda_event_pairs[name].append((started, event))
+            else:
+                learner_timings[name] += time.perf_counter() - started
+
         for _update in range(update_count):
+            replay_sample_started = time.perf_counter()
             indices = replay.sample_indices(
                 train_count,
                 fresh_start_id=fresh_start_id,
@@ -1958,6 +2014,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     self, "nosl_is_az_replay_max_old_fraction", 1.0
                 )),
             ) if replay_enabled else None
+            learner_timings["learner_replay_sample_sec"] += (
+                time.perf_counter() - replay_sample_started
+            )
+            materialize_started = time.perf_counter()
             if replay_enabled:
                 assert indices is not None and replay is not None
                 # Materialize the sampled effective batch once.  Slicing this
@@ -1969,11 +2029,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 sampled_batch = self._nosl_samples_to_batch(
                     fresh_samples[:train_count]
                 )
+            learner_timings["learner_materialize_sec"] += (
+                time.perf_counter() - materialize_started
+            )
             self.policy.optimizer.zero_grad()
             diagnostics_offset = 0
             for start in range(0, train_count, micro_batch_size):
                 end = min(start + micro_batch_size, train_count)
                 micro_count = end - start
+                materialize_started = time.perf_counter()
                 batch = {
                     "observations": {
                         key: value[start:end]
@@ -1991,7 +2055,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     )
                     for key, value in batch["observations"].items()
                 }
-                observations = transfer_observations(host_observations)
+                packed_observations = materialize_observations(
+                    host_observations
+                )
                 actor_kwargs = {}
                 if "relics" in host_observations and hasattr(core, "combat_actor_critic"):
                     # Match the encoder's ids.long().ne(0) prefix for this
@@ -2000,6 +2066,19 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     active = np.flatnonzero(np.any(relics != 0, axis=0))
                     actor_kwargs["active_relic_width"] = (
                         int(active[-1]) + 1 if active.size else 1
+                    )
+                observations = None
+                if not is_cuda:
+                    observations = transfer_observations(
+                        packed_observations
+                    )
+                learner_timings["learner_materialize_sec"] += (
+                    time.perf_counter() - materialize_started
+                )
+                h2d_started = begin_device_stage() if is_cuda else None
+                if is_cuda:
+                    observations = transfer_observations(
+                        packed_observations
                     )
                 masks = transfer_array(
                     batch["action_masks"], dtype=th.bool
@@ -2015,7 +2094,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 policy_weights = transfer_array(
                     batch["policy_weights"],
                     dtype=th.float32,
-                ).clamp_min(0.0)
+                )
+                if is_cuda:
+                    end_device_stage("learner_h2d_sec", h2d_started)
+                forward_started = begin_device_stage()
+                policy_weights = policy_weights.clamp_min(0.0)
                 with self.autocast_context():
                     logits, values = actor_critic(observations, **actor_kwargs)
                     masked_logits = th.where(
@@ -2071,6 +2154,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         + self.nosl_is_az_value_coef
                         * value_loss_per_sample
                     )
+                end_device_stage("learner_forward_sec", forward_started)
 
                 # Every sample contributes its exact fraction of the effective
                 # batch.  A boundary's zero policy weight removes only its
@@ -2080,7 +2164,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 )
                 if not step_optimizer:
                     backward_loss = backward_loss * float(gradient_scale)
+                backward_started = begin_device_stage()
                 backward_loss.backward()
+                end_device_stage("learner_backward_sec", backward_started)
                 loss_sums = (
                     (policy_cross_entropy_per_sample * policy_weights).sum(),
                     policy_weights.sum(),
@@ -2088,8 +2174,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 )
                 sampled_roots += micro_count
                 if replay_enabled:
+                    cpu_metrics_started = time.perf_counter()
                     sampled_old += int(
                         np.count_nonzero(batch["sample_ids"] < fresh_start_id)
+                    )
+                    learner_timings["learner_cpu_metrics_sec"] += (
+                        time.perf_counter() - cpu_metrics_started
                     )
                 gradient_batches += 1
 
@@ -2138,6 +2228,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # the original microbatch order and float64 reduction boundaries.
             diagnostics_host = diagnostics_device.cpu().numpy()
             host_transfer_sources.clear()
+            cpu_metrics_started = time.perf_counter()
             diagnostics_offset = 0
             for start in range(0, train_count, micro_batch_size):
                 end = min(start + micro_batch_size, train_count)
@@ -2156,9 +2247,35 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         array = array[policy_rows]
                     accumulate_monitor(name, array)
                 diagnostics_offset = diagnostics_end
+            learner_timings["learner_cpu_metrics_sec"] += (
+                time.perf_counter() - cpu_metrics_started
+            )
             if step_optimizer:
-                gradient_norms.append(self._optimizer_step(1))
+                optimizer_started = begin_device_stage()
+                gradient_norms.append(optimizer_step(self, 1).detach())
+                end_device_stage(
+                    "learner_optimizer_sec", optimizer_started
+                )
                 optimizer_steps += 1
+
+        if is_cuda:
+            last_event = next(
+                (
+                    pairs[-1][1]
+                    for pairs in reversed(tuple(cuda_event_pairs.values()))
+                    if pairs
+                ),
+                None,
+            )
+            if last_event is not None:
+                # One update-boundary wait resolves every recorded event.  No
+                # microbatch adds a host or device-wide synchronization.
+                last_event.synchronize()
+            for name, pairs in cuda_event_pairs.items():
+                learner_timings[name] = float(sum(
+                    started.elapsed_time(finished)
+                    for started, finished in pairs
+                ) / 1000.0)
 
         if not replay_enabled and consume_fresh_samples:
             # Fresh roots are deliberately one-shot.  This also bounds memory
@@ -2244,8 +2361,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 rollout_hp_order.get("matches", 0.0)
             ),
             "gradient_norm_preclip": float(
-                np.mean(gradient_norms) if gradient_norms else 0.0
+                np.mean(
+                    th.stack(gradient_norms).double().cpu().numpy(),
+                    dtype=np.float64,
+                )
+                if gradient_norms else 0.0
             ),
+            **learner_timings,
         }
         result.update(
             {
