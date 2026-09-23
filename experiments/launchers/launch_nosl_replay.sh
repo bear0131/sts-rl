@@ -10,7 +10,10 @@ wandb_id=${NOSL_WANDB_ID:?set a persistent W&B run ID}
 run_name=${NOSL_RUN_NAME:-nosl-rootpaper-graph-replay}
 args_file=${NOSL_ARGS_FILE:-$repo/configs/train/nosl_rootpaper_replay.args}
 python="$repo/.venv/bin/python"
-build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/sim/sts_lightspeed/build-gumbel-current}
+# Use the accepted native build by default. An explicit override remains
+# available for bounded experiments, but deleted/unknown builds must not be
+# selected implicitly by a production launch.
+build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/runs/local/search-perf04-20260919/accepted-build}
 checkpoint=${NOSL_CHECKPOINT:-$repo/migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip}
 save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}
 [[ "$save_every_updates" =~ ^[1-9][0-9]*$ ]] || {

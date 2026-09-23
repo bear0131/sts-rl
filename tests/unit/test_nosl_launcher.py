@@ -42,3 +42,13 @@ def test_fourway_manager_defaults_to_two_atomic_generations():
         r'\[int\]\$MaxCheckpoints = 2,',
         manager,
     )
+
+
+def test_launchers_default_to_the_accepted_native_build():
+    manager = (ROOT / "experiments/launchers/manage_nosl_replay_4way.ps1").read_text()
+    launcher = (ROOT / "experiments/launchers/launch_nosl_replay.sh").read_text()
+    accepted = "search-perf04-20260919/accepted-build"
+    assert manager.count(accepted) >= 4
+    assert f"$repo/runs/local/{accepted}" in launcher
+    assert "build-gumbel-current" not in manager
+    assert "build-gumbel-current}" not in launcher

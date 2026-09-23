@@ -45,11 +45,14 @@ param(
     [ValidateRange(1, 1000000)]
     [int]$SaveEveryUpdates = 1,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),
+    # The accepted native build lives under the repository's runs directory.
+    # Keep this explicit so a fresh launch cannot silently select a mutable
+    # or unvalidated build-gumbel-* directory.
     [string[]]$BuildDirs = @(
-        "build-gumbel-current",
-        "build-gumbel-current",
-        "build-gumbel-u5",
-        "build-gumbel-current"
+        "../../runs/local/search-perf04-20260919/accepted-build",
+        "../../runs/local/search-perf04-20260919/accepted-build",
+        "../../runs/local/search-perf04-20260919/accepted-build",
+        "../../runs/local/search-perf04-20260919/accepted-build"
     ),
     [string]$SshKey = "$env:USERPROFILE\.ssh\sts_dist_shared_ed25519"
 )
