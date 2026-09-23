@@ -1,0 +1,9 @@
+--nosl-is-az-upper-strategy
+rules
+--total-steps
+30000000
+--startup-occupancy-max-age
+1000
+--startup-occupancy-budget
+131072
+--nosl-is-az-train-shared-embeddings

@@ -343,10 +343,11 @@ class SlayTheSpireEnv(gym.Env):
             raise RuntimeError("cannot checkpoint an environment before reset")
         if self._nosl_is_az_session is not None or self._nosl_cpp_az_session is not None:
             raise RuntimeError("cannot checkpoint an active search session")
-        if self._nosl_cpp_pending is not None:
-            raise RuntimeError("cannot checkpoint an uncommitted native action")
         observation = self._obs()
         action_mask = self.action_masks()
+        pending_native = self._nosl_cpp_pending
+        if pending_native is not None:
+            pending_native = (int(pending_native[0]), int(pending_native[1]))
         return {
             "schema_version": 1,
             "combat_action_contract": self.combat_action_contract,
@@ -355,6 +356,7 @@ class SlayTheSpireEnv(gym.Env):
             "np_random_state": copy.deepcopy(self.np_random.bit_generator.state),
             "pending": copy.deepcopy(self._pending),
             "multi": None if self._multi is None else sorted(self._multi),
+            "nosl_cpp_pending": pending_native,
             "nosl_cpp_state_nonce": int(self._nosl_cpp_state_nonce),
             "nosl_cpp_decision_index": int(self._nosl_cpp_decision_index),
             "nosl_cpp_stochastic": bool(self._nosl_cpp_stochastic),
@@ -392,6 +394,15 @@ class SlayTheSpireEnv(gym.Env):
                 )
 
         self.np_random.bit_generator.state = copy.deepcopy(state["np_random_state"])
+        pending_native = state.get("nosl_cpp_pending")
+        if pending_native is None:
+            self._nosl_cpp_pending = None
+        else:
+            if len(pending_native) != 2:
+                raise ValueError("invalid pending native action state")
+            self._nosl_cpp_pending = (
+                int(pending_native[0]), int(pending_native[1])
+            )
         self._nosl_cpp_state_nonce = int(state["nosl_cpp_state_nonce"])
         self._nosl_cpp_decision_index = int(state["nosl_cpp_decision_index"])
         self._nosl_cpp_stochastic = bool(state["nosl_cpp_stochastic"])

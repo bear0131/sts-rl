@@ -48,6 +48,10 @@ def test_action_journal_restores_native_action_and_pending_target():
         thin_action = env._native_action_to_thin(native_bits)
         assert thin_action is not None
         env._nosl_cpp_pending = (thin_action, native_bits)
+        pending_state = env.export_training_state()
+        pending_observation, _info = restored.restore_training_state(pending_state)
+        _assert_observation_equal(env._obs(), pending_observation)
+        assert restored._nosl_cpp_pending == (thin_action, native_bits)
         env.step(thin_action)
         target_roots = [
             int(action)
