@@ -7,7 +7,8 @@ instrumentation before choosing an optimization.  This measurement must not
 change the model, search, replay distribution, effective batch, microbatch,
 AMP, loss, optimizer, or checkpoint policy.
 
-Use exactly this source unless a defect is found and separately fixed:
+Use exactly this runtime implementation unless a defect is found and
+separately fixed:
 
 - branch: `codex/learner-latency-instrumentation-20260923`
 - commit: `9f6d3ad8e3fc75fb9746c2fd5810bf059b843ada`
@@ -15,7 +16,9 @@ Use exactly this source unless a defect is found and separately fixed:
 - remote: `origin` / `git@github.com:bear0131/sts-rl.git`
 
 The branch was pushed and the local checkout was clean and tracking the
-remote branch at handoff.  Read the design and overlap contract in
+remote branch at handoff.  Documentation-only descendants of `9f6d3ad` are
+expected on that branch; they do not change the tested runtime.  Read the
+design and overlap contract in
 `docs/2026-09-22/training-latency-instrumentation-handoff.md` before running
 anything.
 
@@ -84,10 +87,13 @@ to bootstrap the public key.
    git status --short --branch
    git rev-parse HEAD
    git log -2 --oneline --decorate
+   git merge-base --is-ancestor 9f6d3ad HEAD
+   git diff --name-only 9f6d3ad HEAD
    ```
 
-   Expected HEAD is `9f6d3ad...` on the instrumentation branch with a clean
-   tree.  Do not silently test a later commit.
+   Expect a clean instrumentation branch, with `9f6d3ad` as an ancestor and
+   only `TODO.md`, `docs/`, or `worklog/` changed after it.  Do not silently
+   test a later runtime/code change.
 3. Verify key availability, then run only read-only remote checks:
 
    ```powershell
