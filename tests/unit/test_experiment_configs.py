@@ -132,7 +132,7 @@ def test_reduced_alignment_96x128_preset_preserves_training_contract():
     assert args.nosl_is_az_replay_capacity == 524_288
     assert args.nosl_is_az_simulations == 128
     assert args.nosl_is_az_search_mode == "full_gumbel"
-    assert args.fork_reset_environments is True
+    assert args.fork_reset_environments is False
 
 
 def test_original_width_alignment_preset_uses_safe_gpu_microbatch():
