@@ -380,6 +380,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=None,
+        help="Override the checkpoint gradient norm limit. Use 'inf' to "
+        "disable gradient-norm scaling while retaining norm diagnostics.",
+    )
     parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument(
@@ -1855,6 +1862,14 @@ def main() -> None:
         raise ValueError(
             "--reasoning-gradient-accumulation-steps must be at least 1"
         )
+    if (
+        args.max_grad_norm is not None
+        and (
+            np.isnan(args.max_grad_norm)
+            or args.max_grad_norm < 0.0
+        )
+    ):
+        raise ValueError("--max-grad-norm must be non-negative or inf")
     if args.envs_per_worker < 1:
         raise ValueError("--envs-per-worker must be at least 1")
     if args.startup_stagger_steps < 0:
@@ -2059,35 +2074,45 @@ def main() -> None:
         )
     env = make_env(probe_model, args)
     del probe_model
+    custom_objects = {
+        "n_steps": args.n_steps,
+        "batch_size": args.batch_size,
+        "policy_kwargs": policy_kwargs,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "n_epochs": args.n_epochs,
+        "learning_rate": args.learning_rate,
+        "ent_coef": args.ent_coef,
+        "vf_coef": args.vf_coef,
+        "gamma": args.gamma,
+        "gae_lambda": args.gae_lambda,
+        "clip_range": args.clip_range,
+        "hierarchical_combat_hp": args.hierarchical_combat_hp,
+        "combat_hp_gamma": args.combat_hp_gamma,
+        "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
+        "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,
+        "reasoning_coef": args.reasoning_coef,
+        "reasoning_batch_size": args.reasoning_batch_size,
+        "reasoning_updates": args.reasoning_updates,
+        "reasoning_gradient_accumulation_steps": (
+            args.reasoning_gradient_accumulation_steps
+        ),
+    }
+    if args.max_grad_norm is not None:
+        custom_objects["max_grad_norm"] = args.max_grad_norm
     model = AccumulatingMaskablePPO.load(
         args.checkpoint,
         env=env,
         device=args.device,
         amp_mode=args.amp_mode,
-        custom_objects={
-            "n_steps": args.n_steps,
-            "batch_size": args.batch_size,
-            "policy_kwargs": policy_kwargs,
-            "gradient_accumulation_steps": args.gradient_accumulation_steps,
-            "n_epochs": args.n_epochs,
-            "learning_rate": args.learning_rate,
-            "ent_coef": args.ent_coef,
-            "vf_coef": args.vf_coef,
-            "gamma": args.gamma,
-            "gae_lambda": args.gae_lambda,
-            "clip_range": args.clip_range,
-            "hierarchical_combat_hp": args.hierarchical_combat_hp,
-            "combat_hp_gamma": args.combat_hp_gamma,
-            "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
-            "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,
-            "reasoning_coef": args.reasoning_coef,
-            "reasoning_batch_size": args.reasoning_batch_size,
-            "reasoning_updates": args.reasoning_updates,
-            "reasoning_gradient_accumulation_steps": (
-                args.reasoning_gradient_accumulation_steps
-            ),
-        },
+        custom_objects=custom_objects,
     )
+    if args.max_grad_norm is not None:
+        print(
+            f"[rank {args.rank}] max gradient norm override: "
+            f"{model.max_grad_norm} "
+            f"({'disabled' if np.isinf(model.max_grad_norm) else 'enabled'})",
+            flush=True,
+        )
     reset_count = model.configure_hierarchical_combat_hp(
         enabled=args.hierarchical_combat_hp,
         combat_gamma=args.combat_hp_gamma,

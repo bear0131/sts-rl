@@ -135,6 +135,27 @@ def test_reduced_alignment_96x128_preset_preserves_training_contract():
     assert args.fork_reset_environments is False
 
 
+def test_original_width_96x128_noclip_preset_only_changes_width_lr_and_clip():
+    args = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_original_256_align_96x128_30m_noclip.args'}",
+    ])
+
+    assert args.n_envs == 96
+    assert args.envs_per_worker == 4
+    assert args.n_steps == 128
+    assert args.n_envs * args.n_steps == 12_288
+    assert args.learning_rate == 1e-4
+    assert args.max_grad_norm == float("inf")
+    assert args.nosl_is_az_batch_size == 98_304
+    assert args.nosl_is_az_micro_batch_size == 24_576
+    assert args.nosl_is_az_updates == 40
+    assert args.nosl_is_az_replay_capacity == 524_288
+    assert args.nosl_is_az_simulations == 128
+    assert args.nosl_is_az_search_mode == "full_gumbel"
+    assert args.fork_reset_environments is False
+
+
 def test_original_width_alignment_preset_uses_safe_gpu_microbatch():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
