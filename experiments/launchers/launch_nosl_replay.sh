@@ -42,9 +42,12 @@ test -x "$python"
 test -f "$checkpoint"
 test -f "$args_file"
 mkdir -p "$run_dir" /tmp/sts-launch
-# The transport root is disposable.  Remove leftovers from a prior crash so
-# repeated resumes cannot accumulate per-run IPC artifacts on the data disk.
-rm -rf -- "$remote_root"
+# The transport root is shared by all four ranks through SCP. It must be
+# cleaned exactly once before any rank starts; deleting it here from every
+# rank races with ready-marker exchange and can erase another rank's marker.
+if [[ "${NOSL_SKIP_TRANSPORT_CLEANUP:-0}" != 1 ]]; then
+  rm -rf -- "$remote_root"
+fi
 mkdir -p "$remote_root"
 # W&B keeps a small local directory per process even when the cloud run ID is
 # resumed.  The cloud history is durable, so old local copies for this exact

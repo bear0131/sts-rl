@@ -213,6 +213,21 @@ sha256sum "`$build"/slaythespire*.so | head -1
 "@
 }
 
+function Get-PrepareTransportCommand($Peer) {
+    $remoteRoot = ConvertTo-BashQuote "$RemoteRepo/.tmp-dist-sb3-$RunId"
+    return @"
+set -euo pipefail
+remote_root=$remoteRoot
+if pgrep -f '[r]l.training.distributed_sb3' >/dev/null 2>&1; then
+  echo 'a distributed trainer started during preflight; refusing transport cleanup' >&2
+  exit 3
+fi
+rm -rf -- "`$remote_root"
+mkdir -p "`$remote_root"
+echo "transport_root_prepared=`$remote_root"
+"@
+}
+
 function Get-LaunchCommand($Peer) {
     $repo = ConvertTo-BashQuote $RemoteRepo
     $args = ConvertTo-BashQuote (Resolve-RemotePath $ArgsFile)
@@ -248,6 +263,9 @@ export NOSL_PEER_PORTS=$ports
 export NOSL_RING_PORT=$RingPort
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
 export NOSL_SAVE_EVERY_UPDATES=$SaveEveryUpdates
+# The manager cleans the shared transport root once for all ranks before
+# launching. Per-rank cleanup would delete peer ready markers.
+export NOSL_SKIP_TRANSPORT_CLEANUP=1
 export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
 $resumeRootLine
@@ -358,6 +376,11 @@ foreach ($peer in $Peers) {
 }
 if ($Action -eq "preflight") {
     exit 0
+}
+
+foreach ($peer in $Peers) {
+    Write-Host "===== rank $($peer.Rank) transport cleanup ====="
+    Write-Host (Invoke-Remote $peer (Get-PrepareTransportCommand $peer))
 }
 
 foreach ($peer in $Peers) {

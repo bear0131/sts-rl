@@ -31,8 +31,16 @@ def test_launcher_exposes_checkpoint_cadence_override():
     launcher = (ROOT / "experiments/launchers/launch_nosl_replay.sh").read_text()
     assert 'save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}' in launcher
     assert '--save-every-updates "$save_every_updates"' in launcher
-    assert '--max-checkpoints "${NOSL_MAX_CHECKPOINTS:-2}"' in launcher
+    assert '--max-checkpoints "$max_checkpoints"' in launcher
     assert "must be a positive integer" in launcher
+
+
+def test_shared_transport_cleanup_is_manager_owned():
+    launcher = (ROOT / "experiments/launchers/launch_nosl_replay.sh").read_text()
+    manager = (ROOT / "experiments/launchers/manage_nosl_replay_4way.ps1").read_text()
+    assert 'NOSL_SKIP_TRANSPORT_CLEANUP:-0' in launcher
+    assert 'export NOSL_SKIP_TRANSPORT_CLEANUP=1' in manager
+    assert 'Get-PrepareTransportCommand' in manager
 
 
 def test_fourway_manager_defaults_to_two_atomic_generations():
