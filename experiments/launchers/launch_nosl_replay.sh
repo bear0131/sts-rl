@@ -7,6 +7,7 @@ repo=${NOSL_REPO:-/root/autodl-tmp/sts-rl}
 run_id=${NOSL_RUN_ID:?set a persistent transport run ID}
 wandb_id=${NOSL_WANDB_ID:?set a persistent W&B run ID}
 [[ "$run_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'invalid run ID' >&2; exit 2; }
+[[ "$wandb_id" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'invalid W&B run ID' >&2; exit 2; }
 run_name=${NOSL_RUN_NAME:-nosl-rootpaper-graph-replay}
 args_file=${NOSL_ARGS_FILE:-$repo/configs/train/nosl_rootpaper_replay.args}
 python="$repo/.venv/bin/python"
@@ -23,6 +24,16 @@ save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}
 run_dir="$repo/runs/$run_id"
 remote_root="$repo/.tmp-dist-sb3-$run_id"
 stop_file="$run_dir/STOP"
+max_checkpoints=${NOSL_MAX_CHECKPOINTS:-2}
+log_max_bytes=${NOSL_LOG_MAX_BYTES:-67108864}
+[[ "$max_checkpoints" =~ ^[2-9][0-9]*$ ]] || {
+  echo 'NOSL_MAX_CHECKPOINTS must be an integer >= 2' >&2
+  exit 2
+}
+[[ "$log_max_bytes" =~ ^[1-9][0-9]*$ ]] || {
+  echo 'NOSL_LOG_MAX_BYTES must be a positive integer' >&2
+  exit 2
+}
 if pgrep -f -- "--run-id $run_id( |$)" >/dev/null 2>&1; then
   echo "run $run_id already has a trainer on this machine" >&2; exit 3
 fi
@@ -30,7 +41,19 @@ test ! -e "$stop_file" || { echo 'clear the completed stop request before resumi
 test -x "$python"
 test -f "$checkpoint"
 test -f "$args_file"
-mkdir -p "$run_dir" "$remote_root" /tmp/sts-launch
+mkdir -p "$run_dir" /tmp/sts-launch
+# The transport root is disposable.  Remove leftovers from a prior crash so
+# repeated resumes cannot accumulate per-run IPC artifacts on the data disk.
+rm -rf -- "$remote_root"
+mkdir -p "$remote_root"
+# W&B keeps a small local directory per process even when the cloud run ID is
+# resumed.  The cloud history is durable, so old local copies for this exact
+# run ID can be discarded before a restart.
+wandb_root="$repo/wandb"
+if [ -d "$wandb_root" ]; then
+  find "$wandb_root" -mindepth 1 -maxdepth 1 -type d \
+    -name "run-*-$wandb_id" -exec rm -rf -- {} +
+fi
 read -r -a ports <<< "${NOSL_PEER_PORTS:-12009 17944 13500 44892}"
 [ "${#ports[@]}" -eq 4 ] || {
   echo 'NOSL_PEER_PORTS must contain four space-separated ports' >&2
@@ -69,7 +92,7 @@ cmd=("$python" -u -m rl.training.distributed_sb3
   --reasoning-gradient-accumulation-steps 1 --no-interactive-reasoning
   --leaf-inference "${NOSL_LEAF_INFERENCE:-cuda-graph}"
   --wandb --wandb-project sts-rl --wandb-id "$wandb_id" --wandb-name "$run_name"
-  --save-every-updates "$save_every_updates" --max-checkpoints "${NOSL_MAX_CHECKPOINTS:-2}" --training-state-dir "$run_dir/recovery"
+  --save-every-updates "$save_every_updates" --max-checkpoints "$max_checkpoints" --training-state-dir "$run_dir/recovery"
   --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision high
   "${peers[@]}")
 cd "$repo"
@@ -79,6 +102,15 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 printf '\n=== NOSL launch utc=%s rank=%s resume_step=%s ===\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rank" "${NOSL_RESUME_STEP:-fresh}" \
   >> "$run_dir/rank$rank.log"
+# Keep the diagnostic log bounded.  W&B remains the durable metric history;
+# retaining only the newest half keeps local disk use independent of run age.
+if [ -f "$run_dir/rank$rank.log" ]; then
+  log_bytes=$(stat -c '%s' "$run_dir/rank$rank.log")
+  if [ "$log_bytes" -gt "$log_max_bytes" ]; then
+    tail -c "$((log_max_bytes / 2))" "$run_dir/rank$rank.log" > "$run_dir/.rank$rank.log.trim"
+    mv -f -- "$run_dir/.rank$rank.log.trim" "$run_dir/rank$rank.log"
+  fi
+fi
 nohup "${cmd[@]}" >> "$run_dir/rank$rank.log" 2>&1 < /dev/null &
 pid=$!
 printf '%s\n' "$pid" > "$run_dir/rank$rank.pid"
