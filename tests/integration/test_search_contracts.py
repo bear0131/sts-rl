@@ -309,6 +309,36 @@ def test_native_batch_backprop_matches_scalar_order(combat_factory):
 
 
 @pytest.mark.native
+def test_strict_prior_temperature_reaches_native_tree(combat_factory):
+    def root_priors(temperature):
+        env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=42)
+        response = env.nosl_is_az_cpp_begin(
+            np.linspace(-2.0, 2.0, 181),
+            state_nonce=123,
+            simulations=1,
+            depth=0,
+            prior_temperature=temperature,
+            root_search_mode=2,
+            paper_full_gumbel=True,
+            leaf_batch_size=1,
+            compact_observation=False,
+        )
+        while not response["done"]:
+            response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
+                [(leaf["request_id"], 0.4, np.zeros(181))
+                 for leaf in response["leaves"]],
+                max_leaves=1,
+            )
+        return [child["prior"] for child in
+                env.nosl_is_az_cpp_tree_snapshot((), 64)["children"]]
+
+    low = root_priors(1.0)
+    high = root_priors(5.0)
+    assert len(low) == len(high) > 0
+    assert not np.allclose(low, high, rtol=0.0, atol=1e-10)
+
+
+@pytest.mark.native
 def test_strict_gumbel_matches_reference_schedule_transform_and_target(
     combat_factory,
 ):

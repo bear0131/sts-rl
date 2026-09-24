@@ -876,7 +876,6 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         config_.gumbelInteriorMaxMixVisits = 64.0;
         config_.dirichletAlpha = 0.0;
         config_.dirichletEpsilon = 0.0;
-        config_.priorTemperature = 1.0;
     }
     root_.networkValue = std::isfinite(rootValue)
         ? std::clamp(rootValue, 0.0, 1.0)

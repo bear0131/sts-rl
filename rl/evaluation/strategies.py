@@ -248,6 +248,15 @@ def native_strategy(model, args, lock=None):
         leaf_batch_size=args.leaf_batch_size, root_search_mode=modes[args.search_mode],
         paper_full_gumbel=args.search_mode == 'strict',
         fixed_worldline=getattr(args, 'fixed_worldline', None))
+    prior_temperature = getattr(args, 'prior_temperature', None)
+    if prior_temperature is not None:
+        prior_temperature = float(prior_temperature)
+        if not np.isfinite(prior_temperature) or prior_temperature <= 0.0:
+            raise ValueError('prior temperature must be finite and positive')
+        # NativeSearchConfig canonicalizes strict paper settings in
+        # __post_init__. Apply an explicit evaluation override afterwards;
+        # the native strict branch still owns all other canonical defaults.
+        object.__setattr__(config, 'prior_temperature', prior_temperature)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
         model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
         leaf_backend=backend)},

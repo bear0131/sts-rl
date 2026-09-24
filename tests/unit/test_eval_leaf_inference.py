@@ -44,6 +44,18 @@ def test_fixed_worldline_cli_override_reaches_native_config():
     assert inherited.fixed_worldline is None
 
 
+def test_explicit_prior_temperature_reaches_strict_native_config():
+    configured = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--search-mode', 'strict',
+        '--prior-temperature', '5'])
+    combat = S.native_strategy(model(), configured).routes['combat']
+    assert combat.config.paper_full_gumbel is True
+    assert combat.config.prior_temperature == 5.0
+    assert combat.config.leaf_batch_size == 1
+    assert combat.config.gumbel_candidates == 16
+    assert combat.config.gumbel_interior_min_visits == 0
+
+
 def test_cuda_graph_refuses_cpu():
     with pytest.raises(ValueError, match='CUDA combat model'):
         S.native_strategy(model(), args('cuda-graph'))

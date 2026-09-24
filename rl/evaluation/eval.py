@@ -45,6 +45,8 @@ def build_parser():
     parser.add_argument('--floor-lo', type=int, default=1)
     parser.add_argument('--floor-hi', type=int, default=50)
     parser.add_argument('--search-mode', choices=['puct', 'gumbel', 'full', 'strict'], default='strict')
+    parser.add_argument('--prior-temperature', type=float,
+                        help='Override the native policy-prior temperature for evaluation')
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
     parser.add_argument('--planner-nodes', type=int, default=512)
