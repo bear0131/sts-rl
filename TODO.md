@@ -4,6 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| EVAL04 | 进行中 | 固定本地 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，GPU 上完成连续 50 seed（18137088--18137137）评测；要求所有分片 complete、seed 无重复、无 step_limit/other_truncation，并合并胜率、楼层、步数、搜索耗时与失败分布。原始结果写入 `runs/local/value-search-512-step18137088-gpu-*.json`，记录见 `worklog/2026-09-25.md#eval04-local-512-node-learned-value-evaluation`。 |
 | BASE01 | 初版已验收 | 固定上层，仅替换 combat 的可解释规则策略；DecisionStrategy/PhaseStrategy/runner、独立下层 checkpoint、目标/选牌区域与 trace 已接入；留出8整局规则/policy/native分别0/0/1胜，24同初态战斗分别23/19/24胜。方法与局限见 [基线协议](rl/evaluation/baselines/README.md)，结果见 [实验记录](worklog/2026-09-18.md#base01-held-out-evaluation) |
 | BASE02 | 本轮确认完成；v3保留，Artifact候选独立保存 | `rl/evaluation/baselines/combat_rules.py`：384局规则/native128/native32为24/22/8胜；Artifact独立1024确认固定上层48→52胜、规则上层79→88胜，但固定上层双方同seed各1次F03 dead_screen，未过全自然晋级门槛且胜率优势尚不稳定。hand-finish跨上层结果不一致，其他开发候选未晋级。下一步先解决F03选牌覆盖，再验证安全斩杀前回血；新策略须冻结后至少128新种子、按上层分别验证，不覆盖已有未决样本。见 [本轮结果](worklog/2026-09-18.md#resumed-campaign-results-and-final-artifact-validation) 与 [确认及诊断](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction) |
 | BASE03 | 上层v1保留，独立候选未晋级 | `rl/evaluation/baselines/overworld_rules.py`，独立 `--upper-strategy rules`；v2成长权重在旧验证退步；重复伤害牌获取候选b5fcbf4在128开发集胜场/均楼层均与v1相同（9胜/33.3047），不晋级。未知事件显式回退计数；与固定上层分开评估，新改动须冻结后新种子验证 |
