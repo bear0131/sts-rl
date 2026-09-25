@@ -235,6 +235,13 @@ class WholeRunTask(Task):
                  "state. On resume, omission preserves the checkpoint mode.",
         )
         parser.add_argument(
+            "--nosl-is-az-boss-transition-target",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Opt in to post-transition act-boss terminal HP targets; "
+                 "omission preserves the checkpoint setting on resume.",
+        )
+        parser.add_argument(
             "--combat-hp-gamma",
             type=float,
             default=None,
@@ -469,6 +476,9 @@ class WholeRunTask(Task):
                 neow_observation=args.neow_observation,
                 event_option_observation=args.event_option_observation,
                 interactive_reasoning=interactive_reasoning,
+                nosl_is_az_boss_transition_target=bool(
+                    getattr(args, "nosl_is_az_boss_transition_target", False)
+                ),
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its

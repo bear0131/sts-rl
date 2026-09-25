@@ -9,6 +9,19 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_boss_transition_target_cli_is_explicit_and_defaults_to_inherit():
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "1", "--checkpoint", "unused.zip"]
+
+    assert parser.parse_args(base).nosl_is_az_boss_transition_target is None
+    assert parser.parse_args(
+        base + ["--nosl-is-az-boss-transition-target"]
+    ).nosl_is_az_boss_transition_target is True
+    assert parser.parse_args(
+        base + ["--no-nosl-is-az-boss-transition-target"]
+    ).nosl_is_az_boss_transition_target is False
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

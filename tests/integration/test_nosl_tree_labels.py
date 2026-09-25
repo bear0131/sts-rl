@@ -42,6 +42,31 @@ def test_unvisited_edge_q_uses_parent_value_minus_fpu_reduction():
     assert all(edge["value"] == pytest.approx(0.36) for edge in unvisited)
 
 
+@pytest.mark.native
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [(1, 80 / 200), (2, 67 / 200)],
+)
+def test_native_boss_transition_terminal_modes(mode, expected):
+    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 5)
+    battle = sts.create_battle(game, "Jaw Worm")
+    battle.apply_custom_state({"player": {"hp": 20}})
+    battle.set_player_strength(999)
+    logits = np.full(200, -100.0, dtype=np.float64)
+    logits[1:6] = 100.0
+    session = battle.nosl_neural_search_begin(
+        logits,
+        simulations=1,
+        depth=0,
+        nonce=5,
+        boss_transition_value_mode=mode,
+    )
+
+    assert session.next_batch(1) == []
+    assert session.done()
+    assert session.result()["root_value"] == pytest.approx(expected)
+
+
 def test_armaments_tree_uses_hypothetical_hand_labels():
     # Seed 8 draws Armaments and Anger together from this small controlled
     # deck.  The high Armaments root prior forces the relevant branch to be

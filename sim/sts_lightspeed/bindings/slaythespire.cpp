@@ -1525,6 +1525,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def_readwrite("cur_room", &GameContext::curRoom)
 //        .def_readwrite("cur_event", &GameContext::curEvent) // todo standardize event names
         .def_readwrite("boss", &GameContext::boss)
+        .def_readwrite("second_boss", &GameContext::secondBoss)
 
         .def_readwrite("cur_hp", &GameContext::curHp)
         .def_readwrite("max_hp", &GameContext::maxHp)
@@ -2583,15 +2584,17 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("nonce"),
              "replace future RNG streams and resample hidden draw-pile order")
         .def("nosl_native_search", [](const BattleContext &bc,
-                                       int simulations,
-                                       int depth,
-                                       double c_puct,
-                                       std::uint64_t nonce) {
+                                      int simulations,
+                                      int depth,
+                                      double c_puct,
+                                      std::uint64_t nonce,
+                                      int boss_transition_value_mode) {
             sts::search::NoslCombatSearchConfig config;
             config.simulations = simulations;
             config.maxDepth = depth;
             config.cPuct = c_puct;
             config.seed = nonce;
+            config.bossTransitionValueMode = boss_transition_value_mode;
             sts::search::NoslCombatTrainer trainer(config);
             sts::search::NoslCombatSearchStats stats;
             const auto decision = trainer.search(bc, nonce, &stats);
@@ -2612,6 +2615,7 @@ PYBIND11_MODULE(slaythespire, m) {
            pybind11::arg("depth") = 3,
            pybind11::arg("c_puct") = 1.5,
            pybind11::arg("nonce") = 1,
+           pybind11::arg("boss_transition_value_mode") = 0,
            "run a native NOSL combat search from this public state; each "
            "simulation clones and independently redeterminizes the root")
         .def("nosl_neural_search_begin",
@@ -2641,39 +2645,41 @@ PYBIND11_MODULE(slaythespire, m) {
                 int gumbel_interior_value_mode,
                 double gumbel_interior_max_mix_visits,
                 bool paper_full_gumbel,
-                bool fixed_worldline) {
-                 std::vector<double> logits;
-                 auto view = root_policy_logits.unchecked<1>();
-                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
-                 for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
-                     logits.push_back(view(i));
-                 }
-                 sts::search::NoslCombatSearchConfig config;
-                 config.simulations = simulations;
-                 config.maxDepth = depth;
-                 config.cPuct = c_puct;
-                 config.priorTemperature = prior_temperature;
-                 config.endTurnAsLeaf = end_turn_as_leaf;
-                 config.dirichletAlpha = dirichlet_alpha;
-                 config.dirichletEpsilon = dirichlet_epsilon;
-                 config.rootSearchMode = root_search_mode;
-                 config.gumbelCandidates = gumbel_candidates;
-                 config.gumbelScale = gumbel_scale;
-                 config.gumbelValueScale = gumbel_value_scale;
-                 config.gumbelMaxVisitInit = gumbel_max_visit_init;
-                 config.gumbelRescaleQ = gumbel_rescale_q;
-                 config.gumbelUseMixedValue = gumbel_use_mixed_value;
-                 config.gumbelInteriorUniformity = gumbel_interior_uniformity;
-                 config.gumbelInteriorMinVisits = gumbel_interior_min_visits;
-                 config.gumbelInteriorCoverageFraction =
-                     gumbel_interior_coverage_fraction;
-                 config.gumbelInteriorValueMode = gumbel_interior_value_mode;
-                 config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
-                 config.paperFullGumbel = paper_full_gumbel;
-                 config.fixedWorldline = fixed_worldline;
-                 config.seed = nonce;
-                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
-                     bc, logits, config, nonce, root_value);
+                bool fixed_worldline,
+                int boss_transition_value_mode) {
+                std::vector<double> logits;
+                auto view = root_policy_logits.unchecked<1>();
+                logits.reserve(static_cast<std::size_t>(view.shape(0)));
+                for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
+                    logits.push_back(view(i));
+                }
+                sts::search::NoslCombatSearchConfig config;
+                config.simulations = simulations;
+                config.maxDepth = depth;
+                config.cPuct = c_puct;
+                config.priorTemperature = prior_temperature;
+                config.endTurnAsLeaf = end_turn_as_leaf;
+                config.dirichletAlpha = dirichlet_alpha;
+                config.dirichletEpsilon = dirichlet_epsilon;
+                config.rootSearchMode = root_search_mode;
+                config.gumbelCandidates = gumbel_candidates;
+                config.gumbelScale = gumbel_scale;
+                config.gumbelValueScale = gumbel_value_scale;
+                config.gumbelMaxVisitInit = gumbel_max_visit_init;
+                config.gumbelRescaleQ = gumbel_rescale_q;
+                config.gumbelUseMixedValue = gumbel_use_mixed_value;
+                config.gumbelInteriorUniformity = gumbel_interior_uniformity;
+                config.gumbelInteriorMinVisits = gumbel_interior_min_visits;
+                config.gumbelInteriorCoverageFraction =
+                    gumbel_interior_coverage_fraction;
+                config.gumbelInteriorValueMode = gumbel_interior_value_mode;
+                config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
+                config.paperFullGumbel = paper_full_gumbel;
+                config.fixedWorldline = fixed_worldline;
+                config.bossTransitionValueMode = boss_transition_value_mode;
+                config.seed = nonce;
+                return std::make_shared<sts::search::NoslNeuralSearchSession>(
+                    bc, logits, config, nonce, root_value);
              },
              pybind11::arg("root_policy_logits"),
              pybind11::arg("simulations") = 128,
@@ -2699,6 +2705,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("gumbel_interior_max_mix_visits") = 64.0,
              pybind11::arg("paper_full_gumbel") = false,
              pybind11::arg("fixed_worldline") = false,
+             pybind11::arg("boss_transition_value_mode") = 0,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;

@@ -77,6 +77,7 @@ from . import actions
 from . import combat_env
 from . import encode
 from . import game_actions as ga
+from .boss_value import context_value_mode
 from .game_env import SimGameEnv
 
 
@@ -232,17 +233,24 @@ class SlayTheSpireEnv(gym.Env):
                  card_language=False, combat_language=False,
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
-                 interactive_reasoning=False, combat_action_contract='legacy'):
+                 interactive_reasoning=False, combat_action_contract='legacy',
+                 nosl_is_az_boss_transition_target=False):
         super().__init__()
         if combat_action_contract not in ('legacy', 'native-v1'):
             raise ValueError('combat_action_contract must be legacy or native-v1')
         self.combat_action_contract = combat_action_contract
+        self._nosl_is_az_boss_transition_target = bool(
+            nosl_is_az_boss_transition_target
+        )
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
                 character=character,
                 ascension=ascension,
                 global_map_view=global_map_view,
                 interactive_reasoning=interactive_reasoning,
+                nosl_is_az_boss_transition_target=(
+                    self._nosl_is_az_boss_transition_target
+                ),
             )
         )
         self._global_map_view = global_map_view
@@ -300,6 +308,8 @@ class SlayTheSpireEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
+        if self._nosl_is_az_boss_transition_target:
+            setattr(self.thick, "_nosl_is_az_boss_transition_target", True)
         # A new backend must continue Gym's seeded episode stream on autoreset.
         backend_seed = seed if seed is not None else int(self.np_random.integers(0, 2**63))
         self.thick.reset(seed=backend_seed)
@@ -625,16 +635,28 @@ class SlayTheSpireEnv(gym.Env):
     ):
         canon, reward, terminated, transition_info = result
         has_terminal_state = "nosl_value_terminal_state" in transition_info
-        if boundary_observation is None and not has_terminal_state:
+        has_terminal_target = "nosl_value_terminal_target" in transition_info
+        if (
+            boundary_observation is None
+            and not has_terminal_state
+            and not has_terminal_target
+        ):
             return result
         transition_info = dict(transition_info)
         terminal_state = transition_info.pop("nosl_value_terminal_state", None)
+        terminal_target = transition_info.pop(
+            "nosl_value_terminal_target", None
+        )
         if boundary_observation is not None:
             transition_info["nosl_value_boundary_observation"] = boundary_observation
         if include_terminal and terminal_state is not None:
             transition_info["nosl_value_terminal_observation"] = (
                 self._native_leaf_observation(terminal_state, combat_only=True)
             )
+        if terminal_target is not None:
+            # Keep zero-valued loss labels: truthiness checks would silently
+            # discard the only target that distinguishes a failed boss fight.
+            transition_info["nosl_value_terminal_target"] = float(terminal_target)
         return canon, reward, terminated, transition_info
 
     def _backend_step_fast(self, semantic):
@@ -771,6 +793,10 @@ class SlayTheSpireEnv(gym.Env):
         )
         if terminal_observation is not None:
             info["nosl_value_terminal_observation"] = terminal_observation
+        if "nosl_value_terminal_target" in (transition_info or {}):
+            info["nosl_value_terminal_target"] = float(
+                transition_info["nosl_value_terminal_target"]
+            )
         return self._obs(), reward, terminated, False, info
 
     def _step_impl(self, action_id):
@@ -941,6 +967,7 @@ class SlayTheSpireEnv(gym.Env):
         temperature: float = 1.0,
         dirichlet_alpha: float = 0.0,
         dirichlet_epsilon: float = 0.0,
+        boss_transition_target: bool = False,
     ):
         """Run one NOSL-IS-AZ root search inside the live VecEnv worker.
 
@@ -962,6 +989,7 @@ class SlayTheSpireEnv(gym.Env):
             temperature=float(temperature),
             dirichlet_alpha=float(dirichlet_alpha),
             dirichlet_epsilon=float(dirichlet_epsilon),
+            boss_transition_target=bool(boss_transition_target),
         )
         result = NOSLISAZSearch(config).choose(
             self,
@@ -983,6 +1011,7 @@ class SlayTheSpireEnv(gym.Env):
         depth: int = 3,
         c_puct: float = 1.5,
         master_nonce: int = 0,
+        boss_transition_target: bool = False,
     ):
         """Run native C++ NOSL and adapt complete actions to thin root ids.
 
@@ -1017,10 +1046,29 @@ class SlayTheSpireEnv(gym.Env):
                 "native": False,
             }
 
-        result = self.thick.bc.nosl_native_search(
-            int(simulations), int(depth), float(c_puct),
-            int(state_nonce) & ((1 << 64) - 1),
+        terminal_mode = context_value_mode(
+            enabled=bool(boss_transition_target),
+            gc=self.thick.gc,
+            bc=self.thick.bc,
         )
+        try:
+            result = self.thick.bc.nosl_native_search(
+                int(simulations), int(depth), float(c_puct),
+                int(state_nonce) & ((1 << 64) - 1), int(terminal_mode),
+            )
+        except TypeError as error:
+            if "incompatible function arguments" not in str(error):
+                raise
+            if bool(boss_transition_target):
+                raise RuntimeError(
+                    "loaded simulator extension does not support the requested "
+                    "boss-transition terminal target; rebuild or set "
+                    "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                ) from error
+            result = self.thick.bc.nosl_native_search(
+                int(simulations), int(depth), float(c_puct),
+                int(state_nonce) & ((1 << 64) - 1),
+            )
 
         def native_to_thin(bits: int) -> int | None:
             kind = (int(bits) >> 29) & 0xF
@@ -1419,6 +1467,7 @@ class SlayTheSpireEnv(gym.Env):
         gumbel_interior_max_mix_visits: float = 64.0,
         paper_full_gumbel: bool = False,
         fixed_worldline: bool = False,
+        boss_transition_target: bool = False,
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
@@ -1429,6 +1478,11 @@ class SlayTheSpireEnv(gym.Env):
         session_factory = getattr(self.thick.bc, "nosl_neural_search_begin", None)
         if session_factory is None:
             raise RuntimeError("simulator build lacks neural NOSL search")
+        terminal_mode = context_value_mode(
+            enabled=bool(boss_transition_target),
+            gc=self.thick.gc,
+            bc=self.thick.bc,
+        )
         # Keep the adapter usable while Python and the native module are
         # updated independently. Current builds take root value and prior
         # temperature after the optional root-noise arguments; older builds
@@ -1452,10 +1506,17 @@ class SlayTheSpireEnv(gym.Env):
                 float(gumbel_interior_max_mix_visits),
                 bool(paper_full_gumbel),
                 bool(fixed_worldline),
+                int(terminal_mode),
             )
         except TypeError as error:
             if "incompatible function arguments" not in str(error):
                 raise
+            if bool(boss_transition_target):
+                raise RuntimeError(
+                    "loaded simulator extension does not support the requested "
+                    "boss-transition terminal target; rebuild or set "
+                    "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                ) from error
             if bool(fixed_worldline):
                 raise RuntimeError(
                     "loaded simulator extension does not support fixed-worldline "

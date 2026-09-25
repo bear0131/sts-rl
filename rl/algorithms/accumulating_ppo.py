@@ -109,6 +109,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         performance_profile: bool = False,
         amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
+        nosl_is_az_boss_transition_target: bool = False,
         combat_hp_gamma: float = 1.0,
         combat_hp_gae_lambda: float = 0.95,
         reasoning_coef: float = 0.0,
@@ -257,6 +258,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # overworld/combat return split enabled automatically so combat PPO can
         # be removed without changing the strategic return calculation.
         self.nosl_is_az = bool(nosl_is_az)
+        # Optional boss terminal objective.  This is an additive, serialized
+        # setting; legacy checkpoints and fresh runs keep the old HP target.
+        self.nosl_is_az_boss_transition_target = bool(
+            nosl_is_az_boss_transition_target
+        )
         self.nosl_is_az_inner_only = bool(nosl_is_az_inner_only)
         self.nosl_is_az_upper_strategy = str(nosl_is_az_upper_strategy)
         self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
@@ -671,6 +677,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         next_phases = np.stack([item[2] for item in captured])
         next_hp = np.stack([item[3] for item in captured])
         interrupted = np.stack([item[4] for item in captured])
+        combat_terminal_targets = (
+            np.stack([item[5] for item in captured])
+            if len(captured[0]) > 5
+            else None
+        )
         rewards, returns, advantages, stats = compute_hierarchical_returns(
             phases=phases,
             values=rollout_buffer.values,
@@ -678,6 +689,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             dones=dones,
             next_phases=next_phases,
             next_hp=next_hp,
+            combat_terminal_targets=combat_terminal_targets,
             interrupted=interrupted,
             last_values=last_values,
             combat_phase=V.PHASE_VOCAB_INDEX["combat"],
@@ -718,12 +730,21 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 phases, hp, interrupted = self._next_phase_hp(
                     new_obs, dones, infos
                 )
+                terminal_targets = np.full(
+                    len(infos), np.nan, dtype=np.float32
+                )
+                for index, info in enumerate(infos):
+                    if "nosl_value_terminal_target" in info:
+                        value = info["nosl_value_terminal_target"]
+                        if value is not None:
+                            terminal_targets[index] = float(value)
                 captured.append((
                     np.asarray(rewards, dtype=np.float32).copy(),
                     np.asarray(dones, dtype=bool).copy(),
                     phases,
                     hp,
                     interrupted,
+                    terminal_targets,
                 ))
                 return new_obs, rewards, dones, infos
 
@@ -1055,6 +1076,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_interior_value_mode": self.nosl_is_az_gumbel_interior_value_mode,
                                 "gumbel_interior_max_mix_visits": self.nosl_is_az_gumbel_interior_max_mix_visits,
                                 "compact_observation": compact_cpp_observations,
+                                "boss_transition_target": (
+                                    self.nosl_is_az_boss_transition_target
+                                ),
                             },
                         )
                     else:
@@ -1070,6 +1094,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "temperature": self.nosl_is_az_temperature,
                                 "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,
                                 "dirichlet_epsilon": self.nosl_is_az_dirichlet_epsilon,
+                                "boss_transition_target": (
+                                    self.nosl_is_az_boss_transition_target
+                                ),
                             },
                         )
 
@@ -1332,6 +1359,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 terminal_observation = infos[env_index].pop(
                     "nosl_value_terminal_observation", None
                 )
+                terminal_target = infos[env_index].pop(
+                    "nosl_value_terminal_target", np.nan
+                )
                 if _append_nosl_value_only_sample(
                     active_combat_samples[env_index],
                     terminal_observation,
@@ -1363,9 +1393,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         rollout_hp_order_count += 1
                         if estimated_value > current_hp and current_hp >= future_hp:
                             rollout_hp_order_matches += 1
-                completed = _fill_nosl_combat_value_targets(
-                    pending, next_hp[env_index]
-                )
+                target = next_hp[env_index]
+                if np.isfinite(terminal_target):
+                    target = terminal_target
+                completed = _fill_nosl_combat_value_targets(pending, target)
                 self._nosl_is_az_samples.extend(pending)
                 completed_combat_roots += completed
                 completed_combats += 1

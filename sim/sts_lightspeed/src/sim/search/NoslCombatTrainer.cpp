@@ -21,6 +21,42 @@ namespace {
 // learner's HP target (encode.HP_SCALE).
 constexpr double HP_VALUE_SCALE = 200.0;
 
+double bossTransitionTerminalValue(const BattleContext &bc, int mode) {
+    if (mode == 0 || bc.outcome == Outcome::UNDECIDED) {
+        return std::clamp(
+            static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
+    }
+    if (bc.outcome == Outcome::PLAYER_LOSS) {
+        return 0.0;
+    }
+
+    const int combatMaximum = std::max(0, bc.player.maxHp);
+    int hp = std::clamp(bc.player.curHp, 0, combatMaximum);
+    if (bc.player.hasRelic<RelicId::BURNING_BLOOD>()) {
+        hp = std::min(combatMaximum, hp + 6);
+    } else if (bc.player.hasRelic<RelicId::BLACK_BLOOD>()) {
+        hp = std::min(combatMaximum, hp + 12);
+    }
+    if (bc.player.hasRelic<RelicId::MEAT_ON_THE_BONE>() &&
+        hp <= combatMaximum / 2) {
+        hp = std::min(combatMaximum, hp + 12);
+    }
+
+    int maximum = combatMaximum;
+    if (bc.player.hasRelic<RelicId::FACE_OF_CLERIC>()) {
+        ++maximum;
+    }
+
+    if (mode == 1) {
+        hp = maximum;
+    } else if (mode == 2) {
+        const int missing = maximum - hp;
+        hp = std::min(maximum, hp + static_cast<int>(
+            std::round(static_cast<double>(missing) * 0.75)));
+    }
+    return std::clamp(static_cast<double>(hp) / HP_VALUE_SCALE, 0.0, 1.0);
+}
+
 inline void hashCombine(std::uint64_t &hash, std::uint64_t value) {
     hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
 }
@@ -450,6 +486,10 @@ NoslCombatTrainer::NoslCombatTrainer(NoslCombatSearchConfig config)
     if (config_.maxDepth < 0) {
         config_.maxDepth = 0;
     }
+    if (config_.bossTransitionValueMode != 1 &&
+        config_.bossTransitionValueMode != 2) {
+        config_.bossTransitionValueMode = 0;
+    }
     // Zero is a valid ablation value: it removes the PUCT prior term while
     // retaining Q-based selection.  Only negative/non-finite values fall back
     // to the historical default.
@@ -542,6 +582,11 @@ int NoslCombatTrainer::selectPuct(const Node &node, const BattleContext &state) 
 }
 
 double NoslCombatTrainer::leafValue(const BattleContext &state) const {
+    if (state.outcome != Outcome::UNDECIDED &&
+        config_.bossTransitionValueMode != 0) {
+        return bossTransitionTerminalValue(
+            state, config_.bossTransitionValueMode);
+    }
     const auto it = values_.find(stateKey(state));
     if (it != values_.end() && std::isfinite(it->second)) {
         return std::clamp(it->second, 0.0, 1.0);
@@ -775,7 +820,8 @@ NoslCombatEpisodeStats NoslCombatTrainer::runEpisode(
     episode.finalHp = battle.player.curHp;
     episode.outcome = battle.outcome;
     if (train) {
-        const double target = hpValue(battle);
+        const double target = bossTransitionTerminalValue(
+            battle, config_.bossTransitionValueMode);
         for (const auto &decision : decisions) {
             updateFromDecision(decision, target);
         }
@@ -814,6 +860,10 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     }
     if (config_.maxDepth < 0) {
         config_.maxDepth = 0;
+    }
+    if (config_.bossTransitionValueMode != 1 &&
+        config_.bossTransitionValueMode != 2) {
+        config_.bossTransitionValueMode = 0;
     }
     if (config_.cPuct < 0.0 || !std::isfinite(config_.cPuct)) {
         config_.cPuct = 1.5;
@@ -2028,12 +2078,14 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 --simulationsStarted_;
                 break;
             }
-            finishTerminal(pending, hpValue(state));
+            finishTerminal(pending, bossTransitionTerminalValue(
+                state, config_.bossTransitionValueMode));
             continue;
         }
         if (state.outcome != Outcome::UNDECIDED ||
             (pending.needsPolicy && pending.legalActions.empty())) {
-            finishTerminal(pending, hpValue(state));
+            finishTerminal(pending, bossTransitionTerminalValue(
+                state, config_.bossTransitionValueMode));
             continue;
         }
 

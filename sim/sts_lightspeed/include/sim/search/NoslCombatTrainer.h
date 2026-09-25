@@ -66,6 +66,11 @@ struct NoslCombatSearchConfig {
     // Sample hidden randomness once per decision and reuse that future for
     // every simulation.  False preserves the usual independent world lines.
     bool fixedWorldline = false;
+    // Optional boss-transition terminal objective.  Zero preserves the
+    // historical combat-exit HP label.  Mode 1 labels a victory with full
+    // post-transition max HP; mode 2 applies the A5+ Act 1/2 restoration of
+    // 75% of missing HP.  Both modes label a combat loss as zero.
+    int bossTransitionValueMode = 0;
 };
 
 struct NoslCombatSearchStats {

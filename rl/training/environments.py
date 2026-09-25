@@ -390,6 +390,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.deck_size_observation = flags["deck_size_observation"]
     env_args.neow_observation = flags["neow_observation"]
     env_args.event_option_observation = flags["event_option_observation"]
+    env_args.nosl_is_az_boss_transition_target = bool(
+        getattr(args, "nosl_is_az_boss_transition_target", False)
+    )
     interactive_reasoning = (
         flags["interactive_reasoning"]
         if args.interactive_reasoning is None

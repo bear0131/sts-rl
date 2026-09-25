@@ -17,6 +17,7 @@ from typing import Any, Callable
 import numpy as np
 
 from env.core import encode
+from env.core.boss_value import context_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -31,6 +32,7 @@ class NOSLISAZConfig:
     temperature: float = 1.0
     dirichlet_alpha: float = 0.0
     dirichlet_epsilon: float = 0.0
+    boss_transition_target: bool = False
 
     def __post_init__(self) -> None:
         if self.simulations < 1:
@@ -100,7 +102,14 @@ def _redeterminized_root(env, sampler: NOSLSampler, state_nonce: int, index: int
     return branch
 
 
-def _terminal_value(branch) -> float:
+def _terminal_value(branch, *, boss_transition_target: bool = False) -> float:
+    target = context_terminal_target(
+        enabled=boss_transition_target,
+        gc=branch.thick.gc,
+        bc=branch.thick.bc,
+    )
+    if target is not None:
+        return float(target)
     hp = branch.thick.bc.projected_exit_hp(branch.thick.gc)
     return min(1.0, float(max(0.0, hp)) / encode.HP_SCALE)
 
@@ -284,7 +293,13 @@ class NOSLISAZSession:
         while self.simulation < self.config.simulations:
             branch, path, mask = self._select_branch()
             if branch.thick.bc.is_battle_over:
-                self._backup(_terminal_value(branch), path)
+                self._backup(
+                    _terminal_value(
+                        branch,
+                        boss_transition_target=self.config.boss_transition_target,
+                    ),
+                    path,
+                )
                 continue
             self.pending = (branch, path, mask)
             return {
@@ -417,7 +432,10 @@ class NOSLISAZSearch:
                     break
 
             if branch.thick.bc.is_battle_over:
-                value = _terminal_value(branch)
+                value = _terminal_value(
+                    branch,
+                    boss_transition_target=self.config.boss_transition_target,
+                )
             elif value_fn is not None:
                 value = float(value_fn(branch))
             elif leaf_value is not None:

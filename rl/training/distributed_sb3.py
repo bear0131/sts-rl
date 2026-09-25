@@ -396,6 +396,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use fight-local terminal-HP returns for combat and macro combat "
              "transitions for overworld. Omission preserves checkpoint mode.",
     )
+    parser.add_argument(
+        "--nosl-is-az-boss-transition-target",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Opt in to post-transition act-boss terminal HP targets; "
+             "omission preserves the checkpoint setting.",
+    )
     parser.add_argument("--combat-hp-gamma", type=float, default=None)
     parser.add_argument("--combat-hp-gae-lambda", type=float, default=None)
     parser.add_argument("--ent-coef", type=float, default=0.01)
@@ -2061,6 +2068,10 @@ def main() -> None:
         args.combat_hp_gae_lambda = source_combat_gae_lambda
     if args.nosl_is_az_replay_enabled is None:
         args.nosl_is_az_replay_enabled = source_nosl_is_az_replay_enabled
+    if args.nosl_is_az_boss_transition_target is None:
+        args.nosl_is_az_boss_transition_target = bool(
+            getattr(probe_model, "nosl_is_az_boss_transition_target", False)
+        )
     if not 0.0 <= args.combat_hp_gamma <= 1.0:
         raise ValueError("--combat-hp-gamma must be in [0, 1]")
     if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
@@ -2095,6 +2106,9 @@ def main() -> None:
         "gae_lambda": args.gae_lambda,
         "clip_range": args.clip_range,
         "hierarchical_combat_hp": args.hierarchical_combat_hp,
+        "nosl_is_az_boss_transition_target": (
+            args.nosl_is_az_boss_transition_target
+        ),
         "combat_hp_gamma": args.combat_hp_gamma,
         "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
         "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,

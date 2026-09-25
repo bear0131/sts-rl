@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from env.core import encode
+from env.core.boss_value import context_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 from rl.policies.model import observation_for_policy
 
@@ -38,6 +39,7 @@ class CombatValueSearchConfig:
     node_budget: int = 512
     min_value_gain: float = 0.01
     terminal_hp: bool | None = None
+    boss_transition_target: bool | None = None
     nosl: bool = True
     master_nonce: int = 0x4E4F534C_7631
 
@@ -188,6 +190,11 @@ class CombatValueSearch:
             if self.config.terminal_hp is None
             else self.config.terminal_hp
         )
+        self._boss_transition_target = (
+            bool(getattr(model, "nosl_is_az_boss_transition_target", False))
+            if self.config.boss_transition_target is None
+            else bool(self.config.boss_transition_target)
+        )
         self._nosl_sampler = (
             NOSLSampler(self.config.master_nonce) if self.config.nosl else None
         )
@@ -296,7 +303,17 @@ class CombatValueSearch:
         self._populate(live, need_policy=True)
         if self._terminal_hp:
             for node in terminal:
-                node.value = self._terminal_hp_value(node)
+                # Bind the per-search objective without mutating branch state.
+                target = context_terminal_target(
+                    enabled=self._boss_transition_target,
+                    gc=node.env.thick.gc,
+                    bc=node.env.thick.bc,
+                )
+                node.value = (
+                    float(target)
+                    if target is not None
+                    else self._terminal_hp_value(node)
+                )
         else:
             self._populate(terminal, need_policy=False)
 

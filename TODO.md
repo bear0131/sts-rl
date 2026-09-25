@@ -21,6 +21,7 @@
 | [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构，选牌截断已复现 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确。Secret Technique/Weapon原生draw候选index>=10被71-action绑定/薄层丢弃，可使存活战斗dead_screen；验收须覆盖draw/discard/exhaust长候选、明确候选→native索引映射、71/181 checkpoint兼容及同seed110104独立回归。具体strict xfail：`tests/integration/test_environment_contracts.py::test_draw_selection_remains_actionable_beyond_hand_slots`；[新增证据](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction) |
 | [F04](docs/2026-09-13/codebase-audit.md#f04) | 待重构 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致 |
 | [F05](docs/2026-09-13/codebase-audit.md#f05) | 待重构 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义 |
+| VALUE01 | 本轮完成；实验开关默认关闭 | 增加 --nosl-is-az-boss-transition-target：仅对确认的 Act 1/2/3 Boss terminal 标签使用过渡后 HP（败北0、A0-A4 Act1/2与Act3最终胜利满血、A5+ Act1/2保留25%战斗掉血），排除 A20 Act3 第一 Boss、纳入第二 Boss；环境 side-channel、hierarchical returns、Python/NOSL/native 搜索和 checkpoint resume 已对齐，旧扩展在显式开启时 fail closed。默认关闭，不改变现有 checkpoint 或运行中的训练；验收见 [实现记录](worklog/2026-09-25.md#value01-opt-in-boss-transition-value-target) |
 | [F06](docs/2026-09-13/codebase-audit.md#f06) | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |
 | [F07](docs/2026-09-13/codebase-audit.md#f07) | 待重构 | Gauntlet 提交 max HP、药水、遗物计数等持久状态 |
 | [F08](docs/2026-09-13/codebase-audit.md#f08) | 已修 | 显式 seed 后的自动 reset 序列可复现；普通/分层 PPO CPU 重复训练逐位对齐 |

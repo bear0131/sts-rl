@@ -27,6 +27,30 @@ def test_native_combat_fork_victory_does_not_settle_parent(combat_factory):
     assert json.dumps(env.thick.bc.to_dict(), sort_keys=True) == before
 
 
+def test_boss_victory_metadata_carries_transition_target(
+    combat_factory, monkeypatch
+):
+    env = combat_factory(
+        ["STRIKE_RED"] * 5,
+        encounter="The Guardian",
+        relics=("Burning Blood",),
+    )
+    env.thick._nosl_is_az_boss_transition_target = True
+    env.thick.gc.cur_room = type(env.thick.gc.cur_room).BOSS
+    env.thick.gc.boss = env.thick.gc.encounter
+    env.thick.bc.set_player_strength(999)
+    # The combat_factory starts a standalone battle without the boss-room
+    # regain-control callback. The target is captured before settlement, so
+    # suppress that unrelated callback only for this metadata-path fixture.
+    monkeypatch.setattr(env.thick, "_settle", lambda: None)
+
+    _obs, _reward, _terminated, info = env._backend_step_native_combat(0)
+
+    assert info["nosl_value_terminal_target"] == pytest.approx(
+        env.thick.bc.to_dict()["player"]["max_hp"] / 200.0
+    )
+
+
 @pytest.mark.parametrize("branch_type", [_Branch, _DeepBranch])
 def test_python_unbounded_depth_advances_beyond_root(branch_type):
     env = branch_type()
