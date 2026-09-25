@@ -377,40 +377,38 @@ class CombatValueSearch:
         )
         return ranked if limit == 0 else ranked[:limit]
 
+    def _redeterminized_root(self, env):
+        branch = env.fork_combat()
+        thick = getattr(branch, "thick", None)
+        battle_context = getattr(thick, "bc", None)
+        if battle_context is None or not hasattr(
+            battle_context, "nosl_redeterminize"
+        ):
+            raise RuntimeError(
+                "NOSL combat search requires a BattleContext with "
+                "nosl_redeterminize()"
+            )
+        branch.thick.bc = self._nosl_sampler.clone_and_redeterminize(
+            battle_context,
+            state_nonce=self._search_state_nonce,
+            simulation_index=0,
+        )
+        invalidate = getattr(branch, "_invalidate_backend_cache", None)
+        if invalidate is not None:
+            invalidate()
+        return branch
+
     def _apply(self, node: _Node, action: int) -> tuple[_Node, bool]:
         branch = node.env.fork_combat()
-        if self._nosl_sampler is not None:
-            thick = getattr(branch, "thick", None)
-            battle_context = getattr(thick, "bc", None)
-            if battle_context is None or not hasattr(
-                battle_context, "nosl_redeterminize"
-            ):
-                raise RuntimeError(
-                    "NOSL combat search requires a BattleContext with "
-                    "nosl_redeterminize()"
-                )
-            # Redeterminize after cloning the visible state and before applying
-            # the next action.  The branch's past is fixed by its state, while
-            # every future receives a fresh RNG stream independent of the live
-            # world line and of sibling branches.
-            branch.thick.bc = self._nosl_sampler.clone_and_redeterminize(
-                battle_context,
-                state_nonce=self._search_state_nonce,
-                simulation_index=self.expanded_nodes,
-            )
-            invalidate = getattr(branch, "_invalidate_backend_cache", None)
-            if invalidate is not None:
-                invalidate()
         advances = bool(branch.combat_action_advances(action))
-        obs, _reward, terminated, truncated, info = branch.step(action)
-        if truncated:
-            raise RuntimeError("combat search branch unexpectedly truncated")
         probability = float(node.probabilities[action])
-        mask = np.asarray(
-            info.get("action_mask", np.zeros_like(node.mask)), dtype=bool
+        terminated, next_mask = branch.search_step(action, validate=False)
+        obs = branch._obs()
+        mask = (
+            np.zeros_like(node.mask)
+            if terminated
+            else np.asarray(next_mask, dtype=bool)
         )
-        if not terminated and not mask.any():
-            mask = np.asarray(branch.action_masks(), dtype=bool)
         first_action = node.first_action if node.first_action is not None else action
         child = _Node(
             env=branch,
@@ -486,10 +484,19 @@ class CombatValueSearch:
         env = self._base_env(env)
         if self._phase(env) != "combat":
             raise ValueError("combat value search cannot run outside combat")
-        obs = env._obs() if obs is None else obs
-        action_mask = (
-            env.action_masks() if action_mask is None else action_mask
-        )
+        if self._nosl_sampler is not None:
+            # Match the stable training search contract: sample hidden future
+            # once at the root, then preserve that sampled world while the beam
+            # clones and advances it.  Re-sampling between thin argument steps
+            # can invalidate action ids and erases known future state.
+            env = self._redeterminized_root(env)
+            obs = env._obs()
+            action_mask = env.action_masks()
+        else:
+            obs = env._obs() if obs is None else obs
+            action_mask = (
+                env.action_masks() if action_mask is None else action_mask
+            )
         root = _Node(
             env=env,
             obs=obs,
