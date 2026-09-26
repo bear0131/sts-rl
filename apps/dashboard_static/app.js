@@ -1448,7 +1448,7 @@ function renderEvaluation() {
     ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${e.fixed_worldline ? " · 固定未来" : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
   const upperLabel=e.upper_strategy==="rules"
-    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v2"}`
+    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v3"}`
     : e.upper_strategy==="model"?"模型上层":"";
   const labels=[stateLabel, upperLabel, searchLabel].filter(Boolean);
   $("evalStatus").textContent=labels.join(" · ");

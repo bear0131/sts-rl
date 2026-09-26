@@ -376,7 +376,18 @@ def _sim_screen_options(gc, phase):
                 can_pick_zero=False, can_pick_any=False),
         }
     if phase == "event":
-        return {"event": gc.cur_event_name}
+        options = {"event": gc.cur_event_name}
+        get_details = getattr(gc, "event_option_details", None)
+        if get_details is not None:
+            details = []
+            for raw in get_details():
+                detail = dict(raw)
+                if "card" in detail:
+                    name, upgrades = detail["card"]
+                    detail["card"] = (_sim_card_id(name), int(upgrades))
+                details.append(detail)
+            options["event_choices"] = details
+        return options
     if phase == "shop":
         # The shop shelf, POSITIONAL (slot i == the buy action's id, so obs slots
         # line up with the action mask). Sold/empty slots have price -1 from the

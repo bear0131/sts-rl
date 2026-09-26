@@ -13,7 +13,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v2'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v3'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -196,6 +196,97 @@ def relic_value(relic, state):
     return value
 
 
+def potion_value(potion, state):
+    """Small public-state estimate used when an event names a held potion."""
+    key = _item_key(potion)
+    hp = state['global']['hp'] / max(1, state['global']['max_hp'])
+    values = {
+        'FAIRYINABOTTLE': 9, 'FRUITJUICE': 9, 'ENTROPICBREW': 8,
+        'GHOSTINAJAR': 9, 'AMBROSIA': 9, 'CULTISTPOTION': 7,
+        'DUPLICATIONPOTION': 7, 'LIQUIDMEMORIES': 7, 'POWERPOTION': 6,
+        'ATTACKPOTION': 5, 'SKILLPOTION': 5, 'COLORLESSPOTION': 5,
+    }
+    if key == 'BLOODPOTION':
+        return 7 if hp < .55 else 4 if hp < .8 else 2
+    return float(values.get(key, 3))
+
+
+_DYNAMIC_EVENT_KEYS = frozenset({
+    'FALLING', 'NLOTH', 'WEMEETAGAIN', 'NOTEFORYOURSELF', 'DESIGNER',
+})
+
+
+def _dynamic_event_scores(state, event):
+    """Score action-aligned, typed details exported from the visible buttons.
+
+    Returning None is deliberate when any detail is malformed.  A caller can
+    then use its explicit compatibility fallback instead of guessing what an
+    option index means.
+    """
+    choices = state['options'].get('event_choices')
+    if not isinstance(choices, (list, tuple)) or not choices:
+        return None
+    scores = {}
+    upgrades = [upgrade_value(card, state) for card in state['global'].get('deck', ())]
+    removals = [remove_value(card, state) for card in state['global'].get('deck', ())]
+    for choice in choices:
+        if not isinstance(choice, dict):
+            return None
+        try:
+            idx, kind = int(choice['index']), choice['kind']
+            if idx in scores:
+                return None
+            if event == 'FALLING':
+                score = (0.0 if kind == 'leave' else
+                         -card_value(choice['card'], state, adding=False)
+                         if kind == 'lose_card' else None)
+            elif event == 'NLOTH':
+                score = (0.0 if kind == 'leave' else
+                         6.0 - relic_value(choice['relic'], state)
+                         if kind == 'lose_relic' else None)
+            elif event == 'WEMEETAGAIN':
+                if kind == 'leave':
+                    score = 0.0
+                elif kind == 'lose_potion':
+                    score = 6.0 - potion_value(choice['potion'], state)
+                elif kind == 'lose_gold':
+                    score = 5.5 - max(0, int(choice['gold'])) / 25.0
+                elif kind == 'lose_card':
+                    score = 6.0 - card_value(choice['card'], state, adding=False)
+                else:
+                    score = None
+            elif event == 'NOTEFORYOURSELF':
+                score = (0.0 if kind == 'leave' else
+                         card_value(choice['card'], state) +
+                         max(removals, default=0) - 5.0
+                         if kind == 'gain_card_then_remove' else None)
+            else:  # Designer
+                gold_cost = max(0, int(choice.get('gold', 0))) / 15.0
+                if kind == 'upgrade_card':
+                    score = max(upgrades, default=0) - gold_cost
+                elif kind == 'remove_card':
+                    score = max(removals, default=0) - gold_cost
+                elif kind in ('upgrade_random_cards', 'transform_random_cards',
+                              'remove_card_upgrade_random'):
+                    # The simulator's random-upgrade branch omits its displayed
+                    # gold loss, while the latter two fall through later switch
+                    # cases. Keep the public choices represented, but do not
+                    # select a transition whose implementation is unsound.
+                    score = -90.0
+                elif kind == 'lose_hp':
+                    hp_cost = max(0, int(choice['hp']))
+                    hp_ratio = state['global']['hp'] / max(1, state['global']['max_hp'])
+                    score = -hp_cost * (2.0 if hp_ratio < .5 else 1.0)
+                else:
+                    score = None
+            if score is None:
+                return None
+            scores[idx] = float(score)
+        except (KeyError, TypeError, ValueError, IndexError):
+            return None
+    return scores
+
+
 def route_scores(state, choices, rmap, current_y):
     """Discounted public-map utility, recalculated after each actual room."""
     g = state['global']
@@ -296,7 +387,10 @@ def event_scores(state):
         'Liars Game': 'THE_SSSSSERPENT', 'Nest': 'THE_NEST'}
     normalized = {_item_key(name): score for name, score in fixed.items()}
     normalized.update({_item_key(name): fixed[key] for name, key in aliases.items()})
-    return normalized.get(_item_key(event))
+    event_key = _item_key(event)
+    if event_key in _DYNAMIC_EVENT_KEYS:
+        return _dynamic_event_scores(state, event_key)
+    return normalized.get(event_key)
 
 
 def rank_overworld(state, legal, *, rmap=None, current_y=-1):
@@ -307,6 +401,13 @@ def rank_overworld(state, legal, *, rmap=None, current_y=-1):
     event = event_scores(state) if phase == 'event' and not opts.get('neow') else None
     if phase == 'event' and not opts.get('neow') and event is None:
         return None
+    if event is not None and _item_key(opts.get('event', '')) in _DYNAMIC_EVENT_KEYS:
+        legal_event_options = {
+            i for action in legal for kind, i in [A.segment_of(action)]
+            if kind == 'EVENT_OPT'
+        }
+        if legal_event_options != set(event):
+            return None
     context = opts.get('select', {}).get('context')
     if phase == 'card_select' and context not in ('UPGRADE', 'REMOVE', 'TRANSFORM',
             'TRANSFORM_UPGRADE', 'DUPLICATE', 'OBTAIN', 'BOTTLE',

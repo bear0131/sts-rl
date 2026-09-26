@@ -6,8 +6,11 @@ import numpy as np
 import pytest
 
 from env.core import action_space as A
+from env.core import encode
 from env.core.run_env import SlayTheSpireEnv
 from env.search import overworld_rules as shared_rules
+from bridge.schemas.combat_state import _sim_screen_options
+from bridge.real_game_env import RealGameAdapter
 from rl.evaluation.baselines.overworld_rules import (
     OverworldRuleStrategy, card_value, rank_overworld, relic_value, route_scores,
 )
@@ -240,12 +243,164 @@ def test_bonfire_spirits_selects_the_best_public_sacrifice():
 
 @pytest.mark.parametrize('event', [
     'Falling', 'Nloth', 'WeMeetAgain', 'Note For Yourself', 'Designer',
-    'NEW_UNDOCUMENTED_EVENT',
 ])
-def test_hidden_or_dynamic_event_candidates_still_require_fallback(event):
+def test_dynamic_event_without_public_candidate_details_fails_closed(event):
     s = state('event')
     s['options']['event'] = event
     assert rank_overworld(s, [A._EVENT, A._EVENT + 1, A._EVENT + 2]) is None
+
+
+def test_dynamic_event_details_must_cover_every_legal_button():
+    s = state('event')
+    s['options'].update(event='Falling', event_choices=[
+        {'index': 0, 'kind': 'lose_card', 'card': ('Strike_R', 0)},
+        {'index': 2, 'kind': 'lose_card', 'card': ('Offering', 0)},
+    ])
+    assert rank_overworld(s, [A._EVENT, A._EVENT + 1, A._EVENT + 2]) is None
+    s['options']['event_choices'].insert(
+        1, {'index': 1, 'kind': 'lose_card', 'card': ('Defend_R', 0)})
+    assert rank_overworld(s, [A._EVENT, A._EVENT + 1]) is None
+
+
+def test_falling_loses_the_least_valuable_displayed_card():
+    s = state('event')
+    s['options'].update(event='Falling', event_choices=[
+        {'index': 0, 'kind': 'lose_card', 'card': ('Offering', 0)},
+        {'index': 1, 'kind': 'lose_card', 'card': ('Strike_R', 0)},
+        {'index': 2, 'kind': 'lose_card', 'card': ('Uppercut', 0)},
+    ])
+    assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 1
+
+
+def test_nloth_offers_the_cheaper_relic_but_keeps_two_valuable_relics():
+    s = state('event')
+    s['options'].update(event='Nloth', event_choices=[
+        {'index': 0, 'kind': 'lose_relic', 'relic': 'Anchor'},
+        {'index': 1, 'kind': 'lose_relic', 'relic': 'Strawberry'},
+        {'index': 2, 'kind': 'leave'},
+    ])
+    assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 1
+    s['options']['event_choices'][0]['relic'] = 'Dead Branch'
+    s['options']['event_choices'][1]['relic'] = 'Snecko Eye'
+    assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 2
+
+
+def test_we_meet_again_compares_the_named_potion_gold_and_card():
+    s = state('event')
+    s['options'].update(event='WeMeetAgain', event_choices=[
+        {'index': 0, 'kind': 'lose_potion', 'potion': 'Fairy in a Bottle'},
+        {'index': 1, 'kind': 'lose_gold', 'gold': 50},
+        {'index': 2, 'kind': 'lose_card', 'card': ('Clash', 0)},
+        {'index': 3, 'kind': 'leave'},
+    ])
+    actions = tuple(A._EVENT + i for i in range(4))
+    assert choose(s, *actions) == A._EVENT + 2
+    s['options']['event_choices'][1]['gold'] = 150
+    s['options']['event_choices'][2]['card'] = ('Offering', 0)
+    assert choose(s, *actions) == A._EVENT + 3
+
+
+def test_note_for_yourself_uses_the_displayed_card_and_removal_opportunity():
+    s = state('event')
+    s['options'].update(event='Note For Yourself', event_choices=[
+        {'index': 0, 'kind': 'gain_card_then_remove', 'card': ('Offering', 0)},
+        {'index': 1, 'kind': 'leave'},
+    ])
+    assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT
+    s['options']['event_choices'][0]['card'] = ('Clumsy', 0)
+    assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT + 1
+
+
+def test_designer_uses_visible_service_mode_and_avoids_broken_fallthroughs():
+    s = state('event')
+    s['options'].update(event='Designer', event_choices=[
+        {'index': 0, 'kind': 'upgrade_card', 'gold': 40},
+        {'index': 4, 'kind': 'remove_card_upgrade_random', 'gold': 90, 'count': 1},
+        {'index': 5, 'kind': 'lose_hp', 'hp': 3},
+    ])
+    assert choose(s, A._EVENT, A._EVENT + 4, A._EVENT + 5) == A._EVENT
+    s['options']['event_choices'] = [
+        {'index': 1, 'kind': 'upgrade_random_cards', 'gold': 40, 'count': 2},
+        {'index': 3, 'kind': 'transform_random_cards', 'gold': 60, 'count': 2},
+        {'index': 4, 'kind': 'remove_card_upgrade_random', 'gold': 90, 'count': 1},
+        {'index': 5, 'kind': 'lose_hp', 'hp': 3},
+    ]
+    assert choose(s, A._EVENT + 1, A._EVENT + 3, A._EVENT + 4,
+                  A._EVENT + 5) == A._EVENT + 5
+
+
+def test_sim_event_details_are_card_canonicalized_without_entering_tensor_schema():
+    gc = SimpleNamespace(cur_event_name='Falling', event_option_details=lambda: [
+        {'index': 0, 'kind': 'lose_card', 'card': ('STRIKE_RED', 1)},
+    ])
+    assert _sim_screen_options(gc, 'event') == {
+        'event': 'Falling',
+        'event_choices': [
+            {'index': 0, 'kind': 'lose_card', 'card': ('Strike_R', 1)},
+        ],
+    }
+
+
+def test_event_choice_metadata_does_not_change_the_model_observation():
+    plain = state('event')
+    plain['options'].update(event='Falling', event_options=[0, 2])
+    detailed = deepcopy(plain)
+    detailed['options']['event_choices'] = [
+        {'index': 0, 'kind': 'lose_card', 'card': ('Strike_R', 0)},
+        {'index': 2, 'kind': 'lose_card', 'card': ('Bash', 0)},
+    ]
+    plain_obs, detailed_obs = encode.encode(plain), encode.encode(detailed)
+    assert plain_obs.keys() == detailed_obs.keys()
+    for key in plain_obs:
+        np.testing.assert_array_equal(plain_obs[key], detailed_obs[key])
+
+
+def test_real_bridge_preserves_structured_public_event_details_when_available():
+    adapter = RealGameAdapter()
+    adapter.update({
+        'in_game': True,
+        'game_state': {
+            'screen_type': 'EVENT',
+            'choice_list': ['give_card', 'attack'],
+            'screen_state': {
+                'event_id': 'We Meet Again',
+                'options': [
+                    {'choice_index': 0, 'kind': 'lose_card',
+                     'card': {'id': 'Clash', 'upgrades': 1}},
+                    {'choice_index': 1, 'kind': 'leave'},
+                ],
+            },
+        },
+    })
+    assert adapter._options('event')['event_choices'] == [
+        {'index': 0, 'kind': 'lose_card', 'card': ('Clash', 1)},
+        {'index': 1, 'kind': 'leave'},
+    ]
+
+
+def test_real_bridge_does_not_guess_typed_entities_from_event_button_text():
+    adapter = RealGameAdapter()
+    adapter.update({
+        'in_game': True,
+        'game_state': {
+            'screen_type': 'EVENT',
+            'choice_list': ['give_card', 'attack'],
+            'screen_state': {
+                'event_id': 'We Meet Again',
+                'options': [
+                    {'choice_index': 0, 'text': 'Lose Clash+.'},
+                    {'choice_index': 1, 'text': 'Nothing happens.'},
+                ],
+            },
+        },
+    })
+    assert 'event_choices' not in adapter._options('event')
+
+
+def test_unknown_event_still_requires_fallback():
+    s = state('event')
+    s['options']['event'] = 'NEW_UNDOCUMENTED_EVENT'
+    assert rank_overworld(s, [A._EVENT, A._EVENT + 1]) is None
 
 
 def test_event_rules_never_return_an_unavailable_option():

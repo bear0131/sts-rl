@@ -1081,6 +1081,120 @@ py::list legalEventOptions(const sts::GameContext &gc) {
     return out;
 }
 
+// Public, action-aligned details shown on event buttons whose exact sacrifice
+// or service is selected when the event is created.  These values are already
+// displayed by ConsoleSimulator; exporting them here keeps Python policies
+// from having to guess an entity from the option index.  Other events return
+// an empty list because their stable event id + option index is sufficient.
+py::list eventOptionDetails(const sts::GameContext &gc) {
+    py::list out;
+    if (gc.screenState != sts::ScreenState::EVENT_SCREEN) {
+        return out;
+    }
+
+    const auto cardTuple = [](const sts::Card &card) {
+        return py::make_tuple(
+            sts::cardEnumStrings[static_cast<int>(card.getId())],
+            card.getUpgraded()
+        );
+    };
+    const bool unfavorable = gc.ascension >= 15;
+    for (const auto &action : sts::search::GameAction::getAllActionsInState(gc)) {
+        const int idx = action.getIdx1();
+        py::dict detail;
+        detail["index"] = idx;
+        switch (gc.curEvent) {
+            case sts::Event::FALLING: {
+                const int deckIdx = idx == 0 ? gc.info.skillCardDeckIdx
+                                  : idx == 1 ? gc.info.powerCardDeckIdx
+                                  : idx == 2 ? gc.info.attackCardDeckIdx : -1;
+                if (idx == 3) {
+                    detail["kind"] = "leave";
+                } else if (deckIdx >= 0 && deckIdx < gc.deck.size()) {
+                    detail["kind"] = "lose_card";
+                    detail["card"] = cardTuple(gc.deck.cards[deckIdx]);
+                } else {
+                    throw std::runtime_error("Falling option has no displayed card");
+                }
+                break;
+            }
+            case sts::Event::NLOTH: {
+                const int relicIdx = idx == 0 ? gc.info.relicIdx0
+                                   : idx == 1 ? gc.info.relicIdx1 : -1;
+                if (idx == 2) {
+                    detail["kind"] = "leave";
+                } else if (relicIdx >= 0 && relicIdx < gc.relics.size()) {
+                    detail["kind"] = "lose_relic";
+                    detail["relic"] = std::string(sts::relicIds[
+                        static_cast<int>(gc.relics.relics[relicIdx].id)]);
+                } else {
+                    throw std::runtime_error("N'loth option has no displayed relic");
+                }
+                break;
+            }
+            case sts::Event::WE_MEET_AGAIN:
+                if (idx == 0 && gc.info.potionIdx >= 0 &&
+                        gc.info.potionIdx < gc.potionCapacity) {
+                    detail["kind"] = "lose_potion";
+                    detail["potion"] = std::string(
+                        sts::getPotionName(gc.potions[gc.info.potionIdx]));
+                } else if (idx == 1 && gc.info.gold >= 0) {
+                    detail["kind"] = "lose_gold";
+                    detail["gold"] = gc.info.gold;
+                } else if (idx == 2 && gc.info.cardIdx >= 0 &&
+                        gc.info.cardIdx < gc.deck.size()) {
+                    detail["kind"] = "lose_card";
+                    detail["card"] = cardTuple(gc.deck.cards[gc.info.cardIdx]);
+                } else if (idx == 3) {
+                    detail["kind"] = "leave";
+                } else {
+                    throw std::runtime_error("We Meet Again option is missing displayed details");
+                }
+                break;
+            case sts::Event::NOTE_FOR_YOURSELF:
+                if (idx == 0) {
+                    detail["kind"] = "gain_card_then_remove";
+                    detail["card"] = cardTuple(gc.noteForYourselfCard);
+                } else if (idx == 1) {
+                    detail["kind"] = "leave";
+                } else {
+                    throw std::runtime_error("Note For Yourself has an invalid option");
+                }
+                break;
+            case sts::Event::DESIGNER_IN_SPIRE:
+                if (idx == 0) {
+                    detail["kind"] = "upgrade_card";
+                    detail["gold"] = unfavorable ? 50 : 40;
+                } else if (idx == 1) {
+                    detail["kind"] = "upgrade_random_cards";
+                    detail["gold"] = unfavorable ? 50 : 40;
+                    detail["count"] = 2;
+                } else if (idx == 2) {
+                    detail["kind"] = "remove_card";
+                    detail["gold"] = unfavorable ? 75 : 60;
+                } else if (idx == 3) {
+                    detail["kind"] = "transform_random_cards";
+                    detail["gold"] = unfavorable ? 75 : 60;
+                    detail["count"] = 2;
+                } else if (idx == 4) {
+                    detail["kind"] = "remove_card_upgrade_random";
+                    detail["gold"] = unfavorable ? 110 : 90;
+                    detail["count"] = 1;
+                } else if (idx == 5) {
+                    detail["kind"] = "lose_hp";
+                    detail["hp"] = unfavorable ? 5 : 3;
+                } else {
+                    throw std::runtime_error("Designer has an invalid option");
+                }
+                break;
+            default:
+                continue;
+        }
+        out.append(detail);
+    }
+    return out;
+}
+
 // valid campfire-option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,
 // 6=skip) for the current REST_ROOM, gated by relics/keys exactly as the sim's
 // own chooseCampfireOption expects.
@@ -1425,6 +1539,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("choose_campfire_option", [](GameContext &gc, int i) { gc.chooseCampfireOption(i); })
         .def("legal_event_options", &legalEventOptions,
              "valid option indices for the current event (sim-authoritative, phase/relic aware)")
+        .def("event_option_details", &eventOptionDetails,
+             "public action-aligned details for event buttons with dynamic displayed candidates")
         .def("legal_campfire_options", &legalCampfireOptions,
              "valid campfire option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,6=skip)")
         .def("choose_select_card_option", [](GameContext &gc, int i) { gc.chooseSelectCardScreenOption(i); })
