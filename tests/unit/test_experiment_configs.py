@@ -46,6 +46,39 @@ def test_standard_target_low_lr_preset_only_changes_requested_boss_target_and_lr
     }
 
 
+def test_overworld_v3_shared_unfrozen_old80_preset_has_only_planned_deltas():
+    parser = build_parser()
+    base = [
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+    ]
+    standard = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_standard_target_mb12288_lr5e-5.args'}",
+    ]))
+    shared = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args'}",
+    ]))
+
+    assert shared["nosl_is_az_upper_strategy"] == "rules"
+    assert shared["nosl_is_az_boss_transition_target"] is False
+    assert shared["learning_rate"] == 5e-5
+    assert shared["max_grad_norm"] == 0.5
+    assert shared["nosl_is_az_replay_enabled"] is True
+    assert shared["nosl_is_az_replay_capacity"] == 524_288
+    assert shared["nosl_is_az_replay_max_old_fraction"] == 0.80
+    assert shared["nosl_is_az_train_shared_embeddings"] is True
+    assert shared["total_steps"] == 30_000_000
+    assert {key: (standard[key], shared[key]) for key in standard
+            if standard[key] != shared[key]} == {
+        "max_grad_norm": (None, 0.5),
+        "nosl_is_az_replay_max_old_fraction": (0.90, 0.80),
+        "nosl_is_az_train_shared_embeddings": (False, True),
+        "total_steps": (10_000_000, 30_000_000),
+    }
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
