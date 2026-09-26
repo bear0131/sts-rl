@@ -22,6 +22,30 @@ def test_boss_transition_target_cli_is_explicit_and_defaults_to_inherit():
     ).nosl_is_az_boss_transition_target is False
 
 
+def test_standard_target_low_lr_preset_only_changes_requested_boss_target_and_lr():
+    parser = build_parser()
+    base = [
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+    ]
+    boss_target = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_boss_transition_target_mb12288.args'}",
+    ]))
+    standard_target = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_ruleupper_v1_standard_target_mb12288_lr5e-5.args'}",
+    ]))
+
+    assert standard_target["nosl_is_az_boss_transition_target"] is False
+    assert standard_target["learning_rate"] == 5e-5
+    assert {key: (boss_target[key], standard_target[key]) for key in boss_target
+            if boss_target[key] != standard_target[key]} == {
+        "learning_rate": (1e-4, 5e-5),
+        "nosl_is_az_boss_transition_target": (True, False),
+    }
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
