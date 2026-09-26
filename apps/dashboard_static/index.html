@@ -55,7 +55,7 @@
           <button type="button" data-stochastic="true">非确定性</button>
         </div>
         <div id="watchUpperStrategy" class="segmented watch-upper-mode" role="group" aria-label="上层决策模式">
-          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v1；未覆盖画面回退模型 argmax">规则上层</button>
+          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v2；未覆盖画面回退模型 argmax">规则上层</button>
           <button type="button" data-upper-strategy="model">模型上层</button>
         </div>
         <div id="watchCombatStrategy" class="segmented watch-combat-mode" role="group" aria-label="下层决策模式">
@@ -225,7 +225,7 @@
           <label title="Parallel evaluation episodes">Workers <input id="evalWorkers" type="number" min="1" max="64" step="1" value="4"></label>
           <div id="evalUpperStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测上层决策模式">
             <button type="button" data-eval-upper-strategy="model" class="active">模型上层</button>
-            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v1；未覆盖画面回退模型 argmax">规则上层</button>
+            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v2；未覆盖画面回退模型 argmax">规则上层</button>
           </div>
           <div id="evalCombatStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测下层决策模式">
             <button type="button" data-eval-combat-strategy="model" class="active">模型/搜索下层</button>

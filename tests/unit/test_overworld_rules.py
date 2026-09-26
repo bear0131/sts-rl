@@ -16,9 +16,11 @@ from rl.evaluation.strategies import Decision, DecisionRequest
 
 def state(phase='combat_reward', *, cards=(), deck=None, hp=80, **global_extra):
     deck = deck if deck is not None else [('Strike_R', 0)] * 5 + [('Defend_R', 0)] * 4 + [('Bash', 0)]
-    return {'phase': phase, 'options': {'cards': list(cards)}, 'global': dict(
+    global_state = dict(
         hp=hp, max_hp=80, gold=100, act=1, floor=3, deck=deck, relics=[],
-        potions=['EMPTY_POTION_SLOT'] * 3, **global_extra)}
+        potions=['EMPTY_POTION_SLOT'] * 3)
+    global_state.update(global_extra)
+    return {'phase': phase, 'options': {'cards': list(cards)}, 'global': global_state}
 
 
 def choose(s, *actions):
@@ -158,6 +160,98 @@ def test_legacy_event_alias_and_mindbloom_avoid_irreversible_deck_damage():
     assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT + 1
     s['options']['event'] = 'Mindbloom'
     assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT
+
+
+@pytest.mark.parametrize(('event', 'actions', 'expected'), [
+    ('Drug Dealer', (0, 1, 2), 2),
+    ('Augmenter', (0, 1, 2), 2),
+    ('Duplicator', (0, 1), 0),
+    ('Sensory Stone', (0, 1, 2), 0),
+])
+def test_public_deterministic_events_use_simple_growth_rules(event, actions, expected):
+    s = state('event')
+    s['options']['event'] = event
+    legal = tuple(A._EVENT + action for action in actions)
+    assert choose(s, *legal) == A._EVENT + expected
+
+
+@pytest.mark.parametrize(('event', 'healthy_choice', 'wounded_choice'), [
+    ('Face Trader', 0, 2),
+    ('Masked Bandits', 1, 0),
+    ('Mushrooms', 0, 1),
+    ('Mysterious Sphere', 0, 1),
+])
+def test_risky_events_use_visible_health_thresholds(event, healthy_choice, wounded_choice):
+    s = state('event', hp=70)
+    s['options']['event'] = event
+    actions = (A._EVENT, A._EVENT + 1, A._EVENT + 2)
+    if event in ('Masked Bandits', 'Mushrooms', 'Mysterious Sphere'):
+        actions = actions[:2]
+    assert choose(s, *actions) == A._EVENT + healthy_choice
+    s['global']['hp'] = 30
+    assert choose(s, *actions) == A._EVENT + wounded_choice
+
+
+def test_forgotten_altar_prefers_idol_then_health_then_curse():
+    s = state('event', hp=70)
+    s['options']['event'] = 'Forgotten Altar'
+    s['global']['relics'] = ['Golden Idol']
+    assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT
+    s['global']['relics'] = []
+    assert choose(s, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 1
+    s['global']['hp'] = 30
+    assert choose(s, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 2
+
+
+def test_red_mask_tomb_uses_only_current_legal_resource_exchange():
+    s = state('event', gold=200)
+    s['options']['event'] = 'Tomb of Lord Red Mask'
+    s['global']['relics'] = ['Red Mask']
+    assert choose(s, A._EVENT, A._EVENT + 2) == A._EVENT
+    s['global']['relics'] = []
+    assert choose(s, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 2
+    s['global']['gold'] = 50
+    assert choose(s, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 1
+
+
+def test_vampires_only_trade_blood_vial_and_never_guess_an_illegal_option():
+    s = state('event')
+    s['options']['event'] = 'Vampires'
+    s['global']['relics'] = ['Blood Vial']
+    assert choose(s, A._EVENT, A._EVENT + 1, A._EVENT + 2) == A._EVENT
+    s['global']['relics'] = []
+    assert choose(s, A._EVENT + 1, A._EVENT + 2) == A._EVENT + 2
+
+
+def test_woman_in_blue_buys_one_only_with_space_and_visible_funds():
+    s = state('event', gold=50)
+    s['options']['event'] = 'The Woman in Blue'
+    actions = tuple(A._EVENT + i for i in range(4))
+    assert choose(s, *actions) == A._EVENT
+    s['global']['potions'] = ['FIRE_POTION', 'BLOCK_POTION', 'BLOOD_POTION']
+    assert choose(s, *actions) == A._EVENT + 3
+
+
+def test_bonfire_spirits_selects_the_best_public_sacrifice():
+    s = state('card_select', cards=[('Strike_R', 0), ('Normality', 0), ('Uppercut', 0)])
+    s['options']['select'] = {'context': 'BONFIRE_SPIRITS'}
+    assert choose(s, A._PICK, A._PICK + 1, A._PICK + 2) == A._PICK + 1
+
+
+@pytest.mark.parametrize('event', [
+    'Falling', 'Nloth', 'WeMeetAgain', 'Note For Yourself', 'Designer',
+    'NEW_UNDOCUMENTED_EVENT',
+])
+def test_hidden_or_dynamic_event_candidates_still_require_fallback(event):
+    s = state('event')
+    s['options']['event'] = event
+    assert rank_overworld(s, [A._EVENT, A._EVENT + 1, A._EVENT + 2]) is None
+
+
+def test_event_rules_never_return_an_unavailable_option():
+    s = state('event')
+    s['options']['event'] = 'Drug Dealer'
+    assert choose(s, A._EVENT, A._EVENT + 1) in (A._EVENT, A._EVENT + 1)
 
 
 def test_snecko_and_pyramid_conflict_in_both_acquisition_orders():

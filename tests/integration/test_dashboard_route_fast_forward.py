@@ -85,7 +85,7 @@ def test_watch_route_fast_forward_stops_at_real_boss_and_replays():
 
         assert snapshot["phase"] == "combat"
         assert snapshot["upper_strategy"] == "rules"
-        assert snapshot["upper_strategy_version"] == "ironclad-overworld-v1"
+        assert snapshot["upper_strategy_version"] == "ironclad-overworld-v2"
         assert snapshot["route_preprocess"] == {
             "enabled": True,
             "target_act": 1,

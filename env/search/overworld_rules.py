@@ -13,7 +13,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v1'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v2'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -229,6 +229,11 @@ def event_scores(state):
     """
     g, event = state['global'], state['options'].get('event', '')
     hp = g['hp'] / max(1, g['max_hp'])
+    gold = g.get('gold', 0)
+    empty_potion_slots = sum(
+        _item_key(potion) in ('EMPTYPOTIONSLOT', 'INVALID', '')
+        for potion in g.get('potions', ())
+    )
     curses = any(c in CURSES - PERMANENT_CURSES for c, _ in g.get('deck', ()))
     fixed = {'OMINOUS_FORGE': {0: 8, 1: -6, 2: 0},
         'BIG_FISH': {0: 10 if hp < .72 else 0, 1: 5, 2: -3},
@@ -251,6 +256,33 @@ def event_scores(state):
         'GHOSTS': {0: -1, 1: 0}, 'SCRAP_OOZE': {0: 1 if hp > .8 else -2, 1: 0},
         'ANCIENT_WRITING': {0: 12 if curses else 2, 1: 6},
         'THE_JOUST': {0: 1, 1: 2}, 'WHEEL_OF_CHANGE': {0: 1},
+        # These event outcomes are fully identified by the public event id,
+        # held resources, and the legal option mask. Events whose displayed
+        # sacrifice is hidden from canonical state deliberately remain absent.
+        'DRUG_DEALER': {0: 2, 1: 3, 2: 10},
+        'DUPLICATOR': {0: 10, 1: 0},
+        'FACE_TRADER': {0: 6 if hp >= .65 else -5, 1: -6, 2: 0},
+        'FORGOTTEN_ALTAR': {
+            0: 12 if has_relic(state, 'GOLDEN_IDOL') else -100,
+            1: 3 if hp >= .7 else -10,
+            2: -6,
+        },
+        'MASKED_BANDITS': {0: 0, 1: 8 if hp >= .65 else -5},
+        'MUSHROOMS': {0: 8 if hp >= .65 else -5,
+            1: 4 if hp < .65 else -6},
+        'MYSTERIOUS_SPHERE': {0: 8 if hp >= .75 else -5, 1: 4},
+        'SENSORY_STONE': {0: 8, 1: 4 if hp >= .7 else -2,
+            2: 5 if hp >= .85 else -4},
+        'THE_WOMAN_IN_BLUE': {
+            0: 4 if empty_potion_slots and gold >= 20 else -10,
+            1: -2,
+            2: -3,
+            3: 0,
+        },
+        'TOMB_OF_LORD_RED_MASK': {0: 12,
+            1: 6 if gold <= 75 else -5, 2: 0},
+        'VAMPIRES': {0: 9 if has_relic(state, 'BLOOD_VIAL') else -100,
+            1: -8, 2: 0},
         'MINDBLOOM': {0: 8 if hp > .45 else 2, 1: -10, 2: -8, 3: 6 if hp < .5 else -3},
         'CURSED_TOME': {0: 6 if g['hp'] > 35 else -5, 1: 0,
             2: 3, 3: 3, 4: 3, 5: 8 if g['hp'] > 20 else -5, 6: 0}}
@@ -259,6 +291,7 @@ def event_scores(state):
     # normalization (e.g. "Big Fish" <-> BIG_FISH).
     aliases = {'Accursed Blacksmith': 'OMINOUS_FORGE', 'Addict': 'PLEADING_VAGRANT',
         'Back to Basics': 'ANCIENT_WRITING', 'Beggar': 'OLD_BEGGAR',
+        'Augmenter': 'DRUG_DEALER',
         'Fountain of Cleansing': 'THE_DIVINE_FOUNTAIN', 'Golden Wing': 'WING_STATUE',
         'Liars Game': 'THE_SSSSSERPENT', 'Nest': 'THE_NEST'}
     normalized = {_item_key(name): score for name, score in fixed.items()}
@@ -276,7 +309,8 @@ def rank_overworld(state, legal, *, rmap=None, current_y=-1):
         return None
     context = opts.get('select', {}).get('context')
     if phase == 'card_select' and context not in ('UPGRADE', 'REMOVE', 'TRANSFORM',
-            'TRANSFORM_UPGRADE', 'DUPLICATE', 'OBTAIN', 'BOTTLE'):
+            'TRANSFORM_UPGRADE', 'DUPLICATE', 'OBTAIN', 'BOTTLE',
+            'BONFIRE_SPIRITS'):
         return None
     hp, max_hp = g['hp'], max(1, g['max_hp'])
     route = {}
