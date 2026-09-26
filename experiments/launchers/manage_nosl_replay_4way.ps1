@@ -49,10 +49,10 @@ param(
     # Keep this explicit so a fresh launch cannot silently select a mutable
     # or unvalidated build-gumbel-* directory.
     [string[]]$BuildDirs = @(
-        "../../runs/local/search-perf04-20260919/accepted-build",
-        "../../runs/local/search-perf04-20260919/accepted-build",
-        "../../runs/local/search-perf04-20260919/accepted-build",
-        "../../runs/local/search-perf04-20260919/accepted-build"
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules"
     ),
     [string]$SshKey = "$env:USERPROFILE\.ssh\sts_dist_shared_ed25519"
 )

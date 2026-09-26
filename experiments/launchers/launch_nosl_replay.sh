@@ -14,7 +14,7 @@ python="$repo/.venv/bin/python"
 # Use the accepted native build by default. An explicit override remains
 # available for bounded experiments, but deleted/unknown builds must not be
 # selected implicitly by a production launch.
-build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/runs/local/search-perf04-20260919/accepted-build}
+build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/runs/local/search-perf04-20260919/accepted-build-latest-rules}
 checkpoint=${NOSL_CHECKPOINT:-$repo/migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip}
 save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}
 [[ "$save_every_updates" =~ ^[1-9][0-9]*$ ]] || {
