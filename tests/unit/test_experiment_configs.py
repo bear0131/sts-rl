@@ -92,9 +92,9 @@ def test_overworld_v3_fast_preset_only_rebalances_rollout_geometry():
         f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args'}",
     ]))
 
-    assert fast["n_envs"] == 768
-    assert fast["envs_per_worker"] == 32
-    assert fast["n_steps"] == 16
+    assert fast["n_envs"] == 96
+    assert fast["envs_per_worker"] == 16
+    assert fast["n_steps"] == 128
     assert fast["n_envs"] * fast["n_steps"] == 12_288
     assert fast["batch_size"] == 1_536
     # Fresh step-0 launches must not require a fork state.  The manager adds
