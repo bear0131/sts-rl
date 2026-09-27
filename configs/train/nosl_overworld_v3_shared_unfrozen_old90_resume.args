@@ -1,0 +1,3 @@
+@configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args
+--nosl-is-az-replay-max-old-fraction
+0.90

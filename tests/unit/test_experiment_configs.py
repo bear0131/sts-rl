@@ -98,6 +98,32 @@ def test_replay_old90_resume_override_only_changes_old_fraction():
     } == {"nosl_is_az_replay_max_old_fraction": (0.80, 0.90)}
 
 
+def test_old90_resume_preset_preserves_u40_geometry_and_old80_deltas():
+    parser = build_parser()
+    base = [
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+    ]
+    old80 = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args'}",
+    ]))
+    resumed = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old90_resume.args'}",
+    ]))
+
+    assert resumed["n_envs"] == 96
+    assert resumed["envs_per_worker"] == 4
+    assert resumed["n_steps"] == 128
+    assert resumed["batch_size"] == 1536
+    assert {
+        key: (old80[key], resumed[key])
+        for key in old80
+        if old80[key] != resumed[key]
+    } == {"nosl_is_az_replay_max_old_fraction": (0.80, 0.90)}
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
