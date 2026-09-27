@@ -34,12 +34,35 @@ def test_unvisited_edge_q_uses_parent_value_minus_fpu_reduction():
     )
 
     root = session.tree_snapshot([], 64)
+    assert root["network_value_valid"] is True
+    assert root["network_value"] == pytest.approx(0.37)
+    assert root["value"] == pytest.approx(0.81)
     visited = [edge for edge in root["children"] if edge["visits"] == 1]
     unvisited = [edge for edge in root["children"] if edge["visits"] == 0]
     assert len(visited) == 1
     assert unvisited
     assert visited[0]["value"] == pytest.approx(0.81)
     assert all(edge["value"] == pytest.approx(0.36) for edge in unvisited)
+
+    child = session.tree_snapshot([visited[0]["edge_index"]], 64)
+    assert child["network_value_valid"] is True
+    assert child["network_value"] == pytest.approx(0.81)
+
+    # Inspector values retain the exact model output; search still clamps its
+    # own backup value to the configured [0, 1] outcome range.
+    raw_session = battle.nosl_neural_search_begin(
+        root_logits, simulations=1, depth=1, nonce=124, root_value=1.37
+    )
+    raw_request = raw_session.next_batch(1)[0]
+    raw_session.backprop(
+        raw_request["request_id"], -0.19, np.zeros(200, dtype=np.float64)
+    )
+    raw_root = raw_session.tree_snapshot([], 64)
+    raw_visited = next(edge for edge in raw_root["children"] if edge["visits"])
+    raw_child = raw_session.tree_snapshot([raw_visited["edge_index"]], 64)
+    assert raw_root["network_value"] == pytest.approx(1.37)
+    assert raw_child["network_value"] == pytest.approx(-0.19)
+    assert raw_child["value"] == pytest.approx(0.0)
 
 
 @pytest.mark.native

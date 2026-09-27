@@ -1709,7 +1709,15 @@ class WatchSession:
     def _format_native_tree_snapshot(self, snapshot, selected_native_bits=None):
         """Add stable UI labels to the compact C++ lazy-tree response."""
         if not snapshot:
-            return {"valid": False, "path": [], "visits": 0, "value": 0.0, "children": []}
+            return {
+                "valid": False,
+                "path": [],
+                "visits": 0,
+                "value": 0.0,
+                "network_value_valid": False,
+                "network_value": None,
+                "children": [],
+            }
         root_level = not snapshot.get("path")
         children = []
         for item in snapshot.get("children", ()):
@@ -1757,6 +1765,14 @@ class WatchSession:
             "sample_value": float(snapshot.get(
                 "sample_value", snapshot.get("value", 0.0)
             )),
+            "network_value_valid": bool(snapshot.get(
+                "network_value_valid", False
+            )),
+            "network_value": (
+                float(snapshot["network_value"])
+                if bool(snapshot.get("network_value_valid", False))
+                else None
+            ),
             "children": children,
         }
 

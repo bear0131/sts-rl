@@ -14,6 +14,10 @@ checkpoint 模型/所选 NOSL 搜索，或 `ironclad-turn-v8-awakened-phase` 回
 它不调用 checkpoint 决定战斗动作；Runic Dome 等不支持的隐藏意图场景按版本契约回退
 `rules-ironclad-v3`。页面显示的 checkpoint value/prior 仅用于对照。
 
+Watch 的 native 搜索树在每个已展开节点标题中单独显示“模型直出 V”：它是该节点观测
+第一次送入 checkpoint 模型时直接得到的 value，不含搜索回传、样本平均、Q 变换或
+Gumbel 分数。未实际经过模型前向的终局节点显示“未评估”，不以 0 代替。
+
 Watch 可选择 Act 1/2/3 并“快进 Boss”。目标 Boss 前的战斗由模拟器直接结算；推进期间把
 HP 和最大 HP 固定为开局值并清空药水，但保留牌组、遗物、金币、奖励及地图进度。目标
 Boss 是真实战斗，停在所选下层策略的第一手决策。此功能是查看指定 Boss 打牌的路线

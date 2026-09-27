@@ -927,7 +927,9 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         config_.dirichletAlpha = 0.0;
         config_.dirichletEpsilon = 0.0;
     }
-    root_.networkValue = std::isfinite(rootValue)
+    root_.modelValueValid = std::isfinite(rootValue);
+    root_.modelValue = root_.modelValueValid ? rootValue : 0.0;
+    root_.networkValue = root_.modelValueValid
         ? std::clamp(rootValue, 0.0, 1.0)
         : hpValue(rootState_);
     root_.networkValueValid = true;
@@ -1963,7 +1965,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             // this state and do not request policy logits because no child
             // expansion should be installed at a truncated leaf.
             if (config_.maxDepth > 0 && depth >= config_.maxDepth) {
-                pending.leaf = nullptr;
+                pending.leaf = node;
                 pending.legalActions.clear();
                 pending.needsPolicy = false;
                 haveLeaf = true;
@@ -2111,14 +2113,20 @@ void NoslNeuralSearchSession::backprop(
     }
     Pending pending = std::move(it->second);
     pending_.erase(it);
-    if (pending.leaf != nullptr && pending.needsPolicy &&
-        pending.leaf->edges.empty()) {
-        pending.leaf->networkValue = std::isfinite(value)
-            ? std::clamp(value, 0.0, 1.0)
-            : 0.0;
-        pending.leaf->networkValueValid = true;
-        expandWithLogits(
-            *pending.leaf, *pending.state, pending.legalActions, policyLogits);
+    if (pending.leaf != nullptr) {
+        if (!pending.leaf->networkValueValid) {
+            pending.leaf->modelValueValid = std::isfinite(value);
+            pending.leaf->modelValue = pending.leaf->modelValueValid
+                ? value : 0.0;
+            pending.leaf->networkValue = std::isfinite(value)
+                ? std::clamp(value, 0.0, 1.0)
+                : 0.0;
+            pending.leaf->networkValueValid = true;
+        }
+        if (pending.needsPolicy && pending.leaf->edges.empty()) {
+            expandWithLogits(
+                *pending.leaf, *pending.state, pending.legalActions, policyLogits);
+        }
     }
     backup(pending, value);
 }
@@ -2140,15 +2148,21 @@ void NoslNeuralSearchSession::backpropBatch(
         }
         Pending pending = std::move(it->second);
         pending_.erase(it);
-        if (pending.leaf != nullptr && pending.needsPolicy &&
-            pending.leaf->edges.empty()) {
-            pending.leaf->networkValue = std::isfinite(values[i])
-                ? std::clamp(values[i], 0.0, 1.0)
-                : 0.0;
-            pending.leaf->networkValueValid = true;
-            expandWithLogits(
-                *pending.leaf, *pending.state, pending.legalActions,
-                policyLogits[i]);
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[i]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[i] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[i])
+                    ? std::clamp(values[i], 0.0, 1.0)
+                    : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    policyLogits[i]);
+            }
         }
         backupStats(pending, values[i]);
         batch.emplace_back(std::move(pending));
@@ -2174,13 +2188,20 @@ void NoslNeuralSearchSession::backpropBatchArray(
             throw std::invalid_argument("unknown NOSL neural leaf request id");
         }
         auto &pending = it->second;
-        if (pending.leaf != nullptr && pending.needsPolicy &&
-            pending.leaf->edges.empty()) {
-            pending.leaf->networkValue = std::isfinite(values[0])
-                ? std::clamp(values[0], 0.0, 1.0) : 0.0;
-            pending.leaf->networkValueValid = true;
-            expandWithLogits(*pending.leaf, *pending.state, pending.legalActions,
-                             policyWidth > 0 ? policyLogits : nullptr, policyWidth);
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[0]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[0] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[0])
+                    ? std::clamp(values[0], 0.0, 1.0) : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    policyWidth > 0 ? policyLogits : nullptr, policyWidth);
+            }
         }
         backup(pending, values[0]);
         pending_.erase(it);
@@ -2195,17 +2216,23 @@ void NoslNeuralSearchSession::backpropBatchArray(
         }
         Pending pending = std::move(it->second);
         pending_.erase(it);
-        if (pending.leaf != nullptr && pending.needsPolicy &&
-            pending.leaf->edges.empty()) {
-            pending.leaf->networkValue = std::isfinite(values[i])
-                ? std::clamp(values[i], 0.0, 1.0)
-                : 0.0;
-            pending.leaf->networkValueValid = true;
-            const double *row = policyWidth > 0
-                ? policyLogits + i * policyWidth : nullptr;
-            expandWithLogits(
-                *pending.leaf, *pending.state, pending.legalActions,
-                row, policyWidth);
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[i]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[i] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[i])
+                    ? std::clamp(values[i], 0.0, 1.0)
+                    : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                const double *row = policyWidth > 0
+                    ? policyLogits + i * policyWidth : nullptr;
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    row, policyWidth);
+            }
         }
         backupStats(pending, values[i]);
         batch.emplace_back(std::move(pending));
@@ -2315,6 +2342,8 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
     snapshot.sampleValue = node->valueVisits > 0
         ? node->valueSum / static_cast<double>(node->valueVisits)
         : nodeValueForSelection(*node);
+    snapshot.networkValueValid = node->modelValueValid;
+    snapshot.networkValue = node->modelValue;
     const QTransformDetails qDetails = completedQDetails(*node);
 
     std::vector<int> order;

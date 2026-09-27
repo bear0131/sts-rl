@@ -135,7 +135,7 @@ function treeEdgeHtml(edge, path) {
     ? ""
     : ` · CQ ${Number(edge.completed_q || 0).toFixed(3)} · score ${Number(edge.completed_score || 0).toFixed(3)}`;
   const visits = Number(edge.visits || 0);
-  const valueLabel = visits > 0 ? "Q(up)" : "FPU";
+  const valueLabel = visits > 0 ? "回传 Q" : "FPU";
   const transitionLabel = randomSplit ? " · random-world average" : "";
   const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}${transitionLabel}`;
   const branch = open
@@ -153,8 +153,11 @@ function treeEdgeHtml(edge, path) {
 function treeNodeHtml(snapshot, path) {
   const label = path.length ? `node ${path.join("/")}` : "root";
   const children = snapshot?.children || [];
+  const directModelValue = snapshot?.network_value_valid
+    ? Number(snapshot.network_value).toFixed(4)
+    : "未评估";
   return `<div class="search-tree-node">
-    <div class="search-tree-node-heading">${label} · visits ${Number(snapshot?.visits || 0)} · V(up) ${Number(snapshot?.value || 0).toFixed(3)} · V(sample) ${Number(snapshot?.sample_value ?? snapshot?.value ?? 0).toFixed(3)}</div>
+    <div class="search-tree-node-heading"><span class="search-tree-model-value" title="当前节点观测经 checkpoint 模型单次前向直接输出；不含搜索回传、Q 变换或 Gumbel 修正">模型直出 V ${directModelValue}</span> · ${label} · N ${Number(snapshot?.visits || 0)} · 回传 V ${Number(snapshot?.value || 0).toFixed(3)} · 样本均值 V ${Number(snapshot?.sample_value ?? snapshot?.value ?? 0).toFixed(3)}</div>
     <div class="search-tree-children">${children.length ? children.map(edge => treeEdgeHtml(edge, path)).join("") : `<div class="search-tree-empty">no expanded children</div>`}</div>
   </div>`;
 }
@@ -178,7 +181,7 @@ function renderSearchTree(search) {
     searchTreeCache.set("", search.tree);
   }
   const root = searchTreeCache.get("") || search.tree;
-  $("searchTreeSummary").textContent = `root visits ${Number(root.visits || 0)} · ${root.children?.length || 0} immediate edges · click an expandable edge to inspect descendants`;
+  $("searchTreeSummary").textContent = `“模型直出 V”是节点自身的一次模型前向值；回传 V/Q、样本均值与 score 都经过搜索处理。root N ${Number(root.visits || 0)} · ${root.children?.length || 0} 条边`;
   $("searchTreeRoot").innerHTML = searchTreeCollapsed ? "" : treeNodeHtml(root, []);
   $("searchTreeRoot").style.display = searchTreeCollapsed ? "none" : "grid";
   const toggle = $("searchTreeToggle");

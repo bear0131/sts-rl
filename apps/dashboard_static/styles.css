@@ -261,6 +261,7 @@ main { min-height: calc(100vh - 58px); }
 .search-tree-root { display: grid; gap: 4px; max-height: 520px; overflow: auto; padding-right: 2px; }
 .search-tree-node { display: grid; gap: 3px; min-width: 0; }
 .search-tree-node-heading { padding: 5px 7px; color: #cbd4cd; background: #1b241f; border-left: 2px solid #69786d; font-size: 10px; font-variant-numeric: tabular-nums; }
+.search-tree-model-value { display: inline-block; padding: 2px 5px; color: #fff0ae; background: #4a3e13; border: 1px solid #8f7730; border-radius: 2px; font-size: 11px; font-weight: 700; }
 .search-tree-children { display: grid; gap: 3px; margin-left: 9px; }
 .search-tree-edge { display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; align-items: center; gap: 4px; min-height: 29px; width: 100%; padding: 4px 6px; color: #c1c9c3; background: #121814; border: 1px solid #2f3b34; border-radius: 2px; text-align: left; }
 .search-tree-edge:hover { border-color: #758b78; background: #1b251e; }

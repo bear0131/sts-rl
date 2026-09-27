@@ -151,6 +151,11 @@ public:
         int valueVisits = 0;
         double value = 0.0;
         double sampleValue = 0.0;
+        // The exact finite value emitted when this public state was first
+        // sent through the model. Unlike `value` and `sampleValue`, this is
+        // neither clamped nor changed by search backup/action aggregation.
+        bool networkValueValid = false;
+        double networkValue = 0.0;
         std::vector<TreeEdgeInfo> children;
     };
 
@@ -230,9 +235,11 @@ private:
         int valueVisits = 0;
         int virtualVisits = 0;
         double valueSum = 0.0;
+        double modelValue = 0.0;
         double networkValue = 0.0;
         double propagatedValue = 0.0;
         bool propagatedValid = false;
+        bool modelValueValid = false;
         bool networkValueValid = false;
         bool expansionPending = false;
         std::vector<Edge> edges;

@@ -16,6 +16,34 @@ from stable_baselines3.common.save_util import data_to_json
 from zipfile import ZipFile
 
 
+def test_tree_snapshot_keeps_direct_model_value_distinct_from_backed_up_value():
+    session = object.__new__(dashboard.WatchSession)
+    formatted = session._format_native_tree_snapshot({
+        "valid": True,
+        "path": [],
+        "visits": 9,
+        "value_visits": 8,
+        "value": 0.83,
+        "sample_value": 0.62,
+        "network_value_valid": True,
+        "network_value": 0.41,
+        "children": [],
+    })
+
+    assert formatted["network_value_valid"] is True
+    assert formatted["network_value"] == pytest.approx(0.41)
+    assert formatted["value"] == pytest.approx(0.83)
+    assert formatted["sample_value"] == pytest.approx(0.62)
+
+
+def test_search_tree_ui_labels_direct_model_value_without_fallback_to_backup():
+    source = (dashboard.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "模型直出 V" in source
+    assert "network_value_valid" in source
+    assert "snapshot?.network_value ?? snapshot?.value" not in source
+
+
 @pytest.mark.parametrize('extension', ['', '.zip'])
 def test_remote_card_vector_path_is_rebased_to_project_root(tmp_path: Path, extension):
     local = tmp_path / "card-vector-run" / "last.pt"

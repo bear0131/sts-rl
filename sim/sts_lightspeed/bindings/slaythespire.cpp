@@ -2586,6 +2586,8 @@ PYBIND11_MODULE(slaythespire, m) {
             result["value_visits"] = snapshot.valueVisits;
             result["value"] = snapshot.value;
             result["sample_value"] = snapshot.sampleValue;
+            result["network_value_valid"] = snapshot.networkValueValid;
+            result["network_value"] = snapshot.networkValue;
             pybind11::list children;
             for (const auto &edge : snapshot.children) {
                 pybind11::dict item;

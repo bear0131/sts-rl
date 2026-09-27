@@ -1888,6 +1888,8 @@ class SlayTheSpireEnv(gym.Env):
                 "path": indexes,
                 "visits": 0,
                 "value": 0.0,
+                "network_value_valid": False,
+                "network_value": None,
                 "children": [],
             }
         raw = session.tree_snapshot(indexes, int(max_children))
@@ -1922,7 +1924,15 @@ class SlayTheSpireEnv(gym.Env):
             "valid": bool(raw.get("valid", False)),
             "path": indexes,
             "visits": int(raw.get("visits", 0)),
+            "value_visits": int(raw.get("value_visits", 0)),
             "value": float(raw.get("value", 0.0)),
+            "sample_value": float(raw.get("sample_value", raw.get("value", 0.0))),
+            "network_value_valid": bool(raw.get("network_value_valid", False)),
+            "network_value": (
+                float(raw["network_value"])
+                if bool(raw.get("network_value_valid", False))
+                else None
+            ),
             "children": children,
         }
 
