@@ -79,6 +79,49 @@ def test_overworld_v3_shared_unfrozen_old80_preset_has_only_planned_deltas():
     }
 
 
+def test_overworld_v3_fast_preset_only_rebalances_rollout_geometry():
+    parser = build_parser()
+    base = [
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old80_fast_30m.args'}",
+    ]
+    fast = vars(parser.parse_args(base))
+    current = vars(parser.parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args'}",
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args'}",
+    ]))
+
+    assert fast["n_envs"] == 768
+    assert fast["envs_per_worker"] == 32
+    assert fast["n_steps"] == 16
+    assert fast["n_envs"] * fast["n_steps"] == 12_288
+    assert fast["batch_size"] == 1_536
+    # Fresh step-0 launches must not require a fork state.  The manager adds
+    # --fork-reset-environments itself when this same preset is used for a
+    # geometry fork from a schema-2 generation.
+    assert fast["fork_reset_environments"] is False
+    # Search, replay, learner and objective settings must remain unchanged.
+    geometry = {"n_envs", "envs_per_worker", "n_steps", "batch_size",
+                "gradient_accumulation_steps", "n_epochs"}
+    assert {key: (current[key], fast[key]) for key in current
+            if current[key] != fast[key]} == {
+        key: (current[key], fast[key]) for key in geometry
+        if current[key] != fast[key]
+    }
+    for key in (
+        "nosl_is_az_simulations", "nosl_is_az_depth",
+        "nosl_is_az_search_mode", "nosl_is_az_paper_full_gumbel",
+        "nosl_is_az_leaf_batch_size", "nosl_is_az_batch_size",
+        "nosl_is_az_updates", "nosl_is_az_micro_batch_size",
+        "nosl_is_az_replay_enabled", "nosl_is_az_replay_capacity",
+        "nosl_is_az_replay_max_old_fraction", "learning_rate",
+        "max_grad_norm", "amp_mode", "nosl_is_az_upper_strategy",
+        "nosl_is_az_train_shared_embeddings", "total_steps",
+    ):
+        assert fast[key] == current[key], key
+
+
 def test_replay_old90_resume_override_only_changes_old_fraction():
     parser = build_parser()
     base = [
