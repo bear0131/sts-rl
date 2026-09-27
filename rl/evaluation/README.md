@@ -1,6 +1,27 @@
 # 评估后端
 
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
+
+要保留可对照的局外历史（不记录战斗逐动作），加上
+`--trajectory-output runs/local/<run-dir>`。入口会写出 `report.json`、
+`episodes.jsonl`、`episodes.md`、`summary.md`；历史包含地图路线、问号事件的
+每一步选项和资源差分、商店购买/删牌、战斗前后 HP 与牌/遗物/药水差分、奖励
+候选及领取、宝箱和 Boss 遗物候选/选择。事件的 typed 候选缺失时保留事件名与
+选项编号，不从本地化文本推测实体。
+
+最新规则上层 + 回合规划搜索的固定示例：
+
+```text
+python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
+  --solver turn-planner --planner-worlds 2 --planner-nodes 8192 \
+  --planner-beam 8 --planner-depth 16 --planner-turns 1 \
+  --episodes 100 --seed 200000 --num-envs 8 \
+  --trajectory-output runs/local/eval-trajectories
+```
+
+训练模型直推或搜索仍使用同一入口：省略 `--upper-strategy rules`（默认
+`model`），并按需选择 `--solver policy`、`native`、`value` 或
+`turn-planner`。因此评测算法和轨迹格式不会随 checkpoint 复制一份。
 `--solver policy` 为直接策略；`value` 为原有 value-guided lookahead；`leftmost` 为最小合法动作。`--task combat` 保留 gauntlet 的 combats_cleared 指标。native 当前只接 whole-run 场景；旧 Python NOSL fullrun/parallel、独立 eval_combat 入口已删除。
 
 `--solver rules` 只替换 combat 为规则策略，其余阶段使用位置参数的上层 checkpoint。

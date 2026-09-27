@@ -67,6 +67,8 @@ def test_step_limits_are_not_deaths():
     rows = list(evaluate(FutureStrategy(), scenario(envs), EvaluationConfig(episodes=1, max_steps=1)))
     assert rows[0]['result'] == 'step_limit'
     assert summarize(rows)['death_floors'] == {}
+    assert summarize(rows)['win_rate'] == 0.0
+    assert summarize(rows)['act1_rate'] == 1.0
 
 
 def test_complete_native_decisions_do_not_use_thin_masks():

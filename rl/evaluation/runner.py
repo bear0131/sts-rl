@@ -1,6 +1,7 @@
 """One bounded episode runner for CLI, GUI and arbitrary decision strategies."""
 from dataclasses import dataclass
 from typing import Callable
+import math
 import time
 
 import numpy as np
@@ -50,7 +51,8 @@ class Scenario:
 
 
 def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationConfig,
-             *, cancelled=lambda: False, progress=lambda event: None):
+             *, cancelled=lambda: False, progress=lambda event: None,
+             trace_factory=None):
     """Yield per-episode rows; keep environments/model resident and batch decisions.
 
     Deadlines/cancellation are checked between steps and native leaf batches.
@@ -74,8 +76,10 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
         index = next_episode
         next_episode += 1
         observation, info = scenario.reset(env, config.seed + index)
+        trace = (trace_factory(env, index, config.seed + index)
+                 if trace_factory is not None else None)
         return dict(episode=index, seed=config.seed + index, observation=observation, info=info,
-                    steps=0, raw_return=0.0, metrics={})
+                    steps=0, raw_return=0.0, metrics={}, trace=trace)
 
     try:
         for index in range(min(config.episodes, config.num_envs)):
@@ -95,6 +99,8 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                 check()
                 env, state = environments[index], active[index]
                 action = decision.action
+                if state['trace'] is not None:
+                    state['trace'].before_step(action, decision.native_action)
                 if decision.native_action is not None:
                     step_native = getattr(env, 'step_native_combat', None)
                     if step_native is None:
@@ -108,6 +114,9 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                 state['steps'] += 1
                 state['raw_return'] += float(reward)
                 state.update(observation=observation, info=info)
+                if state['trace'] is not None:
+                    state['trace'].after_step(action, reward, terminated, truncated, info,
+                                              decision.native_action)
                 for key, value in decision.diagnostics.items():
                     state['metrics'][key] = state['metrics'].get(key, 0) + value
                 if state['steps'] == 1 or state['steps'] % 25 == 0:
@@ -124,6 +133,8 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                     row = {key: state[key] for key in ('episode', 'seed', 'steps', 'raw_return')}
                     row.update(outcome, **state['metrics'])
                     row['strategy'] = strategy.name
+                    if state['trace'] is not None:
+                        row['trajectory'] = state['trace'].finish(outcome['result'])
                     if 'combat_action_contract' in info:
                         row['combat_action_contract'] = info['combat_action_contract']
                     yield row
@@ -149,11 +160,33 @@ def summarize(rows):
             floor = row['floor']
             deaths[floor] = deaths.get(floor, 0) + 1
             death_seeds.setdefault(floor, []).append(row['seed'])
-    stats = dict(completed=len(rows), results=results, death_floors=dict(sorted(deaths.items())),
+    count = len(rows)
+    win_rate = len(wins) / count if count else 0.0
+    if count:
+        z = 1.959963984540054
+        denominator = 1 + z * z / count
+        centre = (win_rate + z * z / (2 * count)) / denominator
+        margin = z * math.sqrt(win_rate * (1 - win_rate) / count + z * z / (4 * count * count)) / denominator
+        win_ci95 = [centre - margin, centre + margin]
+    else:
+        win_ci95 = [0.0, 0.0]
+    stats = dict(completed=count, results=results, death_floors=dict(sorted(deaths.items())),
                  death_seeds={key: sorted(value) for key, value in sorted(death_seeds.items())},
-                 win_seeds=sorted(wins), floor_mean=float(np.mean([r['floor'] for r in rows])) if rows else 0.0,
+                 win_seeds=sorted(wins), win_rate=win_rate, win_ci95=win_ci95,
+                 floor_mean=float(np.mean([r['floor'] for r in rows])) if rows else 0.0,
                  floor_median=float(np.median([r['floor'] for r in rows])) if rows else 0.0,
-                 steps_mean=float(np.mean([r['steps'] for r in rows])) if rows else 0.0)
+                 steps_mean=float(np.mean([r['steps'] for r in rows])) if rows else 0.0,
+                 # ``act`` is the highest live act when a run ends; this is the
+                 # same reached-act convention used by the dashboard ladder.
+                 act1_reached=sum(int(r.get('act', 0) >= 1) for r in rows),
+                 act2_reached=sum(int(r.get('act', 0) >= 2) for r in rows),
+                 act3_reached=sum(int(r.get('act', 0) >= 3) for r in rows),
+                 act1_rate=(sum(r.get('act', 0) >= 1 for r in rows) / len(rows) if rows else 0.0),
+                 act2_rate=(sum(r.get('act', 0) >= 2 for r in rows) / len(rows) if rows else 0.0),
+                 act3_rate=(sum(r.get('act', 0) >= 3 for r in rows) / len(rows) if rows else 0.0),
+                 act1_clear_rate=(sum(r.get('act', 0) >= 2 for r in rows) / len(rows) if rows else 0.0),
+                 act2_clear_rate=(sum(r.get('act', 0) >= 3 for r in rows) / len(rows) if rows else 0.0),
+                 act3_clear_rate=win_rate)
     for key in ('search_decisions', 'search_simulations', 'search_leaf_evaluations', 'search_seconds'):
         stats[key] = sum(row.get(key, 0) for row in rows)
     return stats

@@ -12,6 +12,7 @@ from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
+from rl.evaluation.trajectory import EpisodeTraceCollector, render_episode_markdown
 from rl.evaluation.strategies import STRATEGIES, compose_strategy, strategy_manifest
 from rl.search.combat_value_search import add_combat_search_args
 
@@ -42,6 +43,10 @@ def build_parser():
     parser.add_argument('--heartbeat-seconds', type=float, default=30.0)
     parser.add_argument('--output-csv', type=Path)
     parser.add_argument('--output', type=Path, help='Structured per-episode rows and summary JSON')
+    parser.add_argument('--trajectory-output', type=Path,
+                        help='Directory for sparse episode traces (episodes.jsonl, report.json, summary.md)')
+    parser.add_argument('--trajectory-format', choices=['jsonl'], default='jsonl')
+    parser.add_argument('--trajectory-detail', choices=['sparse'], default='sparse')
     parser.add_argument('--floor-lo', type=int, default=1)
     parser.add_argument('--floor-hi', type=int, default=50)
     parser.add_argument('--search-mode', choices=['puct', 'gumbel', 'full', 'strict'], default='strict')
@@ -149,6 +154,8 @@ def main():
     rows = []
     combat_rows = []
     failure = None
+    trace_factory = (lambda env, episode, seed: EpisodeTraceCollector(env, episode, seed)
+                     if args.trajectory_output else None)
     try:
         if args.trace:
             args.trace.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +175,7 @@ def main():
                 strategy,
                 make_scenario(model, args, combat_model, contract),
                 config,
-                progress=progress):
+                progress=progress, trace_factory=trace_factory):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
                 print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
@@ -205,6 +212,36 @@ def main():
                 writer = csv.DictWriter(stream, fieldnames=keys)
                 writer.writeheader()
                 writer.writerows(rows)
+        if args.trajectory_output:
+            out_dir = args.trajectory_output
+            out_dir.mkdir(parents=True, exist_ok=True)
+            episodes_path = out_dir / 'episodes.jsonl'
+            with episodes_path.open('w', encoding='utf-8') as stream:
+                for row in rows:
+                    stream.write(json.dumps(row.get('trajectory', {}),
+                                            default=str, ensure_ascii=False) + '\n')
+            with (out_dir / 'episodes.md').open('w', encoding='utf-8') as stream:
+                stream.write('# Sparse run histories\n\n')
+                for row in rows:
+                    stream.write(render_episode_markdown(row.get('trajectory', {})) + '\n')
+            report = dict(schema_version=1, task=args.task,
+                          strategy=strategy.name, config=vars(args),
+                          summary=summary, rows=rows)
+            (out_dir / 'report.json').write_text(
+                json.dumps(report, default=str, ensure_ascii=False, indent=2) + '\n',
+                encoding='utf-8')
+            result_counts = ', '.join(f'{k}={v}' for k, v in sorted(summary['results'].items()))
+            (out_dir / 'summary.md').write_text(
+                '# Trajectory evaluation report\n\n'
+                f'- episodes: {summary["completed"]}\n'
+                f'- results: {result_counts}\n'
+                f'- win rate (Wilson 95% CI): {summary["win_rate"]:.1%} '
+                f'([{summary["win_ci95"][0]:.1%}, {summary["win_ci95"][1]:.1%}])\n'
+                f'- floor mean/median: {summary["floor_mean"]:.2f}/{summary["floor_median"]:.2f}\n'
+                f'- Act1/Act2/Act3 reached: {summary["act1_rate"]:.1%}/{summary["act2_rate"]:.1%}/{summary["act3_rate"]:.1%}\n'
+                f'- strategy: `{strategy.name}`\n'
+                f'- traces: [`episodes.jsonl`](episodes.jsonl), [`episodes.md`](episodes.md)\n',
+                encoding='utf-8')
 
 
 if __name__ == '__main__':
