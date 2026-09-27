@@ -1,6 +1,6 @@
 import numpy as np
 
-from rl.evaluation.trajectory import EpisodeTraceCollector, state_diff
+from rl.evaluation.trajectory import EpisodeTraceCollector, render_episode_markdown, state_diff
 
 
 def _state(phase, *, hp=70, gold=99, deck=None, relics=None, potions=None,
@@ -76,3 +76,42 @@ def test_combat_trace_records_only_boundary_hp():
     assert row["combats"][0]["post_hp"] == 61
     assert row["combats"][0]["hp_loss"] == 9
     assert "actions" in row
+
+
+def test_markdown_uses_chinese_names_and_colored_resources():
+    trajectory = {
+        "seed": 1,
+        "result": "death",
+        "timeline": [
+            {"kind": "action", "phase": "shop", "act": 1, "floor": 2,
+             "action": "buy card #0", "item": {"kind": "card", "offer": ["Combust", 0, 50]},
+             "diff": {"gold": {"before": 99, "after": 49, "delta": -50}}},
+            {"kind": "combat", "act": 1, "floor": 3, "encounter": ["Jaw Worm"],
+             "pre_hp": 70, "post_hp": 60, "hp_loss": 10, "diff": {}},
+        ],
+        "final_state": {"act": 1, "floor": 3, "hp": 60, "max_hp": 80, "gold": 49},
+    }
+    rendered = render_episode_markdown(trajectory)
+    assert "自燃" in rendered
+    assert "燃烧" not in rendered.replace("自燃", "")
+    assert "#c58a00" in rendered  # gold
+    assert "#d64545" in rendered  # HP
+    assert "**时间线**" in rendered
+    assert "Events:" not in rendered
+    assert "Combats:" not in rendered
+
+
+def test_legacy_trace_is_rendered_in_chronological_order():
+    trajectory = {
+        "seed": 2, "result": "win", "actions": [
+            {"phase": "map", "act": 1, "floor": 0, "action": "go to map node x=1",
+             "node": {"x": 1, "room": "MONSTER"}, "diff": {}},
+            {"phase": "combat_reward", "act": 1, "floor": 1, "action": "claim gold #0",
+             "reward": {"kind": "gold", "offer": 12}, "diff": {"gold": {"before": 99, "after": 111, "delta": 12}}},
+        ],
+        "combats": [{"act": 1, "floor": 1, "encounter": ["Jaw Worm"], "pre_hp": 70,
+                      "post_hp": 65, "hp_loss": 5, "diff": {}}],
+        "final_state": {"act": 1, "floor": 1, "hp": 65, "max_hp": 80, "gold": 111},
+    }
+    rendered = render_episode_markdown(trajectory)
+    assert rendered.index("前往 普通战斗") < rendered.index("战斗：大颚虫") < rendered.index("领取金币")

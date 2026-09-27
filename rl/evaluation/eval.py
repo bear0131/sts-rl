@@ -221,7 +221,7 @@ def main():
                     stream.write(json.dumps(row.get('trajectory', {}),
                                             default=str, ensure_ascii=False) + '\n')
             with (out_dir / 'episodes.md').open('w', encoding='utf-8') as stream:
-                stream.write('# Sparse run histories\n\n')
+                stream.write('# 对局轨迹记录\n\n')
                 for row in rows:
                     stream.write(render_episode_markdown(row.get('trajectory', {})) + '\n')
             report = dict(schema_version=1, task=args.task,
@@ -232,15 +232,15 @@ def main():
                 encoding='utf-8')
             result_counts = ', '.join(f'{k}={v}' for k, v in sorted(summary['results'].items()))
             (out_dir / 'summary.md').write_text(
-                '# Trajectory evaluation report\n\n'
-                f'- episodes: {summary["completed"]}\n'
-                f'- results: {result_counts}\n'
-                f'- win rate (Wilson 95% CI): {summary["win_rate"]:.1%} '
-                f'([{summary["win_ci95"][0]:.1%}, {summary["win_ci95"][1]:.1%}])\n'
-                f'- floor mean/median: {summary["floor_mean"]:.2f}/{summary["floor_median"]:.2f}\n'
-                f'- Act1/Act2/Act3 reached: {summary["act1_rate"]:.1%}/{summary["act2_rate"]:.1%}/{summary["act3_rate"]:.1%}\n'
-                f'- strategy: `{strategy.name}`\n'
-                f'- traces: [`episodes.jsonl`](episodes.jsonl), [`episodes.md`](episodes.md)\n',
+                '# 轨迹评测报告\n\n'
+                f'- 对局数：{summary["completed"]}\n'
+                f'- 结果：{result_counts}\n'
+                f'- 胜率（Wilson 95% 区间）：{summary["win_rate"]:.1%} '
+                f'（{summary["win_ci95"][0]:.1%}–{summary["win_ci95"][1]:.1%}）\n'
+                f'- 结束楼层均值/中位数：{summary["floor_mean"]:.2f}/{summary["floor_median"]:.2f}\n'
+                f'- 到达 Act1/Act2/Act3：{summary["act1_rate"]:.1%}/{summary["act2_rate"]:.1%}/{summary["act3_rate"]:.1%}\n'
+                f'- 策略：`{strategy.name}`\n'
+                f'- 轨迹文件：[`episodes.jsonl`](episodes.jsonl)、[`episodes.md`](episodes.md)\n',
                 encoding='utf-8')
 
 
