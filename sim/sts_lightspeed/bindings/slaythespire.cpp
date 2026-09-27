@@ -2606,6 +2606,11 @@ PYBIND11_MODULE(slaythespire, m) {
                 item["gumbel"] = edge.gumbel;
                 item["gumbel_score"] = edge.gumbelScore;
                 item["completed_score"] = edge.completedScore;
+                item["successor_model_value_valid"] =
+                    edge.successorModelValueValid;
+                item["successor_model_value"] = edge.successorModelValue;
+                item["successor_model_value_count"] =
+                    edge.successorModelValueCount;
                 item["candidate"] = edge.candidate;
                 item["active_candidate"] = edge.activeCandidate;
                 item["random_split"] = edge.randomSplit;

@@ -133,6 +133,14 @@ public:
         double gumbel = 0.0;
         double gumbelScore = 0.0;
         double completedScore = 0.0;
+        // Exact model output for an action whose immediate successor is a
+        // value-only leaf (currently End Turn with endTurnAsLeaf enabled).
+        // Keep this separate from propagated Q so inspectors do not mistake
+        // the parent state's value or a search backup for the successor's
+        // direct network evaluation.
+        bool successorModelValueValid = false;
+        double successorModelValue = 0.0;
+        int successorModelValueCount = 0;
         bool candidate = false;
         bool activeCandidate = false;
         // True when this action has split into multiple NOSL public states.
@@ -219,6 +227,8 @@ private:
         double prior = 0.0;
         double logPrior = 0.0;
         double propagatedValue = 0.0;
+        double successorModelValueSum = 0.0;
+        int successorModelValueCount = 0;
         bool propagatedValid = false;
         std::uint64_t semanticKey = 0;
         bool targeted = false;
@@ -253,6 +263,10 @@ private:
         std::vector<Action> legalActions;
         Node *leaf = nullptr;
         bool needsPolicy = true;
+        // The final traversed edge directly produced the value-only state
+        // sent to the model.  This is distinct from an ordinary expanded
+        // child node and is used to retain End Turn boundary evaluations.
+        bool directSuccessorValueLeaf = false;
         // Coverage-protection simulations are retained in N for scheduling,
         // but excluded from value statistics so forced exploratory probes do
         // not bias Q/V downward.

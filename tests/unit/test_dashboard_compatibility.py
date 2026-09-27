@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,6 +19,10 @@ from zipfile import ZipFile
 
 def test_tree_snapshot_keeps_direct_model_value_distinct_from_backed_up_value():
     session = object.__new__(dashboard.WatchSession)
+    session.env = SimpleNamespace(
+        unwrapped=SimpleNamespace(_native_action_to_thin=lambda _bits: None),
+        describe_action=lambda _action: "unused",
+    )
     formatted = session._format_native_tree_snapshot({
         "valid": True,
         "path": [],
@@ -27,13 +32,21 @@ def test_tree_snapshot_keeps_direct_model_value_distinct_from_backed_up_value():
         "sample_value": 0.62,
         "network_value_valid": True,
         "network_value": 0.41,
-        "children": [],
+        "children": [{
+            "edge_index": 0,
+            "action_bits": 4 << 29,
+            "successor_model_value_valid": True,
+            "successor_model_value": 0.37,
+            "successor_model_value_count": 3,
+        }],
     })
 
     assert formatted["network_value_valid"] is True
     assert formatted["network_value"] == pytest.approx(0.41)
     assert formatted["value"] == pytest.approx(0.83)
     assert formatted["sample_value"] == pytest.approx(0.62)
+    assert formatted["children"][0]["successor_model_value"] == pytest.approx(0.37)
+    assert formatted["children"][0]["successor_model_value_count"] == 3
 
 
 def test_search_tree_ui_labels_direct_model_value_without_fallback_to_backup():
@@ -41,6 +54,7 @@ def test_search_tree_ui_labels_direct_model_value_without_fallback_to_backup():
 
     assert "模型直出 V" in source
     assert "network_value_valid" in source
+    assert "后继模型直出 V" in source
     assert "snapshot?.network_value ?? snapshot?.value" not in source
 
 

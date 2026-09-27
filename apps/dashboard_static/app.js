@@ -137,7 +137,10 @@ function treeEdgeHtml(edge, path) {
   const visits = Number(edge.visits || 0);
   const valueLabel = visits > 0 ? "回传 Q" : "FPU";
   const transitionLabel = randomSplit ? " · random-world average" : "";
-  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}${transitionLabel}`;
+  const successorModelValue = edge.successor_model_value_valid
+    ? ` · 后继模型直出 V ${Number(edge.successor_model_value).toFixed(4)}`
+    : "";
+  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${successorModelValue}${gumbelMetrics}${childSummary}${transitionLabel}`;
   const branch = open
     ? `<div class="search-tree-branch${searchTreeLoading.has(key) ? " loading" : ""}">${cached ? treeNodeHtml(cached, childPath) : "loading..."}</div>`
     : "";

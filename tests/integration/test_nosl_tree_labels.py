@@ -257,9 +257,9 @@ def test_end_turn_value_boundary_is_fully_settled_and_non_random():
     assert len(live_state["hand"]) > 0
 
 
-def test_search_end_turn_leaf_uses_stable_boundary_state():
-    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
-    battle = sts.create_battle(game, "Jaw Worm")
+def test_search_end_turn_leaf_uses_stable_boundary_state(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=8)
+    battle = env.thick.bc
     root_hp = battle.to_dict()["player"]["hp"]
     logits = np.full(200, -100.0, dtype=np.float64)
     logits[0] = 100.0
@@ -281,6 +281,25 @@ def test_search_end_turn_leaf_uses_stable_boundary_state():
     assert state["player"]["hp"] < root_hp
     assert state["player"]["block"] == 0
     assert state["player"]["combat_counters"]["cards_played"] == 0
+    session.backprop(
+        leaf["request_id"], 0.731, np.zeros(200, dtype=np.float64)
+    )
+    root = session.tree_snapshot([], 64)
+    end_turn = next(
+        edge for edge in root["children"] if edge["action_bits"] >> 29 == 4
+    )
+    assert end_turn["successor_model_value_valid"] is True
+    assert end_turn["successor_model_value"] == pytest.approx(0.731)
+    assert end_turn["successor_model_value_count"] == 1
+
+    env._nosl_cpp_last_session = session
+    adapted = env.nosl_is_az_cpp_tree_snapshot([], 64)
+    adapted_end_turn = next(
+        edge for edge in adapted["children"] if edge["action_bits"] >> 29 == 4
+    )
+    assert adapted_end_turn["successor_model_value_valid"] is True
+    assert adapted_end_turn["successor_model_value"] == pytest.approx(0.731)
+    assert adapted_end_turn["successor_model_value_count"] == 1
 
 
 def test_boundary_observation_changes_only_enemy_hp_for_hp_only_input_change():

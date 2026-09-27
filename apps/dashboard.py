@@ -1749,6 +1749,17 @@ class WatchSession:
                 **item,
                 "label": label,
                 "thin_action": thin,
+                "successor_model_value_valid": bool(item.get(
+                    "successor_model_value_valid", False
+                )),
+                "successor_model_value": (
+                    float(item["successor_model_value"])
+                    if bool(item.get("successor_model_value_valid", False))
+                    else None
+                ),
+                "successor_model_value_count": int(item.get(
+                    "successor_model_value_count", 0
+                )),
                 "selected": (
                     root_level
                     and

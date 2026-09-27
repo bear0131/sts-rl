@@ -1853,6 +1853,12 @@ int NoslNeuralSearchSession::selectFullGumbelInterior(
 }
 
 void NoslNeuralSearchSession::backupStats(Pending &pending, double value) {
+    if (pending.directSuccessorValueLeaf && !pending.edges.empty() &&
+        std::isfinite(value)) {
+        auto *edge = pending.edges.back();
+        edge->successorModelValueSum += value;
+        ++edge->successorModelValueCount;
+    }
     if (!std::isfinite(value)) {
         value = 0.0;
     }
@@ -2055,6 +2061,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 pending.leaf = nullptr;
                 pending.legalActions.clear();
                 pending.needsPolicy = false;
+                pending.directSuccessorValueLeaf = true;
                 haveLeaf = true;
                 break;
             }
@@ -2385,6 +2392,12 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
         info.sampleQ = edge.valueVisits > 0
             ? edge.valueSum / static_cast<double>(edge.valueVisits)
             : info.value;
+        if (edge.successorModelValueCount > 0) {
+            info.successorModelValueValid = true;
+            info.successorModelValueCount = edge.successorModelValueCount;
+            info.successorModelValue = edge.successorModelValueSum /
+                static_cast<double>(edge.successorModelValueCount);
+        }
         if (static_cast<std::size_t>(edgeIndex) < qDetails.raw.size()) {
             info.rawQ = qDetails.raw[static_cast<std::size_t>(edgeIndex)];
             info.normalizedQ = qDetails.normalized[

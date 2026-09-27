@@ -1914,6 +1914,17 @@ class SlayTheSpireEnv(gym.Env):
                 "gumbel": float(item.get("gumbel", 0.0)),
                 "gumbel_score": float(item.get("gumbel_score", 0.0)),
                 "completed_score": float(item.get("completed_score", 0.0)),
+                "successor_model_value_valid": bool(item.get(
+                    "successor_model_value_valid", False
+                )),
+                "successor_model_value": (
+                    float(item["successor_model_value"])
+                    if bool(item.get("successor_model_value_valid", False))
+                    else None
+                ),
+                "successor_model_value_count": int(item.get(
+                    "successor_model_value_count", 0
+                )),
                 "candidate": bool(item.get("candidate", False)),
                 "active_candidate": bool(item.get("active_candidate", False)),
                 "expandable": bool(item.get("expandable", False)),
