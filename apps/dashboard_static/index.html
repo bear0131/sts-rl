@@ -55,12 +55,12 @@
           <button type="button" data-stochastic="true">非确定性</button>
         </div>
         <div id="watchUpperStrategy" class="segmented watch-upper-mode" role="group" aria-label="上层决策模式">
-          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v3；未覆盖画面回退模型 argmax">规则上层</button>
+          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v3.1-potion-contracts；未覆盖画面回退模型 argmax">规则上层</button>
           <button type="button" data-upper-strategy="model">模型上层</button>
         </div>
         <div id="watchCombatStrategy" class="segmented watch-combat-mode" role="group" aria-label="下层决策模式">
           <button type="button" data-combat-strategy="model" class="active">模型/搜索下层</button>
-          <button type="button" data-combat-strategy="planner" title="ironclad-turn-v8-awakened-phase 回合规划器">回合规划下层</button>
+          <button type="button" data-combat-strategy="planner" title="ironclad-turn-v20-status-engines 回合规划器">回合规划下层</button>
         </div>
         <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
         <div class="watch-boss-control">
@@ -225,11 +225,11 @@
           <label title="Parallel evaluation episodes">Workers <input id="evalWorkers" type="number" min="1" max="64" step="1" value="4"></label>
           <div id="evalUpperStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测上层决策模式">
             <button type="button" data-eval-upper-strategy="model" class="active">模型上层</button>
-            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v3；未覆盖画面回退模型 argmax">规则上层</button>
+            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v3.1-potion-contracts；未覆盖画面回退模型 argmax">规则上层</button>
           </div>
           <div id="evalCombatStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测下层决策模式">
             <button type="button" data-eval-combat-strategy="model" class="active">模型/搜索下层</button>
-            <button type="button" data-eval-combat-strategy="planner" title="ironclad-turn-v8-awakened-phase 回合规划器">回合规划下层</button>
+            <button type="button" data-eval-combat-strategy="planner" title="ironclad-turn-v20-status-engines 回合规划器">回合规划下层</button>
           </div>
           <label title="每个战斗决策的 neural NOSL 模拟次数；0 为 direct policy">Simulations <input id="evalSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
           <label title="搜索深度；0 为 AlphaZero 式自动展开">Depth <input id="evalDepth" type="number" min="0" max="256" step="1" value="0"></label>

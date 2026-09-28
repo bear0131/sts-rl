@@ -5,7 +5,8 @@ from env.search.overworld_rules import (
     AOE, CARD_VALUE, CURSES, DRAW, EXHAUST, OVERWORLD_RULE_VERSION,
     PERMANENT_CURSES, SCALING, STRENGTH, card_value, deck_counts, event_scores,
     has_relic, potion_value, rank_overworld, relic_value, remove_value, route_scores,
-    upgrade_value,
+    upgrade_value, can_obtain_potion, cost_only_upgrade_under_snecko,
+    relic_strength_sources, _item_key, EMPTY_POTION_SLOTS, COST_ONLY_UPGRADES,
 )
 
 

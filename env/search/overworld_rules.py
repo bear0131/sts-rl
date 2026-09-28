@@ -13,7 +13,7 @@ from env.core import action_space as A
 from env.core.ironclad_cards import IRONCLAD_CARDS
 from env.core.spiremap import MAX_Y
 
-OVERWORLD_RULE_VERSION = 'ironclad-overworld-v3'
+OVERWORLD_RULE_VERSION = 'ironclad-overworld-v3.1-potion-contracts'
 CURSES = frozenset(('Injury', 'Doubt', 'Shame', 'Pain', 'Regret', 'Decay',
     'Normality', 'Clumsy', 'CurseOfTheBell', 'Parasite', 'Writhe', 'Pride',
     'Necronomicurse', 'AscendersBane'))
@@ -70,6 +70,40 @@ def has_relic(state, *names):
     return bool(held & {_item_key(name) for name in names})
 
 
+EMPTY_POTION_SLOTS = frozenset(('', 'EMPTY_POTION_SLOT'))
+
+
+def can_obtain_potion(state):
+    """A public empty usable slot and no Sozu are both required."""
+    return (not has_relic(state, 'SOZU') and
+        any(p in EMPTY_POTION_SLOTS for p in state['global'].get('potions', ())))
+
+
+COST_ONLY_UPGRADES = frozenset(('Body Slam', 'Corruption', 'Dark Embrace',
+    'Barricade', 'Entrench', 'Infernal Blade', 'Seeing Red', 'Exhume', 'Apotheosis'))
+
+
+def cost_only_upgrade_under_snecko(card, state):
+    """Confused overwrites printed energy cost when the card is drawn."""
+    return card[0] in COST_ONLY_UPGRADES and has_relic(state, 'SNECKO_EYE')
+
+
+def relic_strength_sources(state):
+    """Count public, persistent relic sources; this is not a Strength amount.
+
+    Girya requires an actual lift counter. Du-Vu Doll requires an actual curse;
+    carrying the relic alone is insufficient. Brimstone supplies strength every
+    turn. Red Skull / Sling of Courage are conditional and excluded here.
+    """
+    g = state['global']
+    relics = tuple(_item_key(r) for r in g.get('relics', ()))
+    counters = dict(zip(relics, g.get('relic_counters', ())))
+    held = set(relics)
+    return (int('VAJRA' in held) + int('BRIMSTONE' in held) +
+        int('GIRYA' in held and counters.get('GIRYA', 0) > 0) +
+        int('DUVUDOLL' in held and any(c[0] in CURSES for c in g.get('deck', ()))))
+
+
 def card_value(card, state, *, adding=True):
     """Value of a displayed card, including fit and redundancy in this deck."""
     cid, upgraded = card[:2]
@@ -97,7 +131,7 @@ def card_value(card, state, *, adding=True):
         value += min(1.5, upgrade_value((cid, 0), state) / 7) if upgraded else 0
     if cid in AOE and not any(counts[c] for c in AOE):
         value += 1.8
-    strength = sum(counts[c] for c in STRENGTH) + int(has_relic(state, 'GIRYA', 'VAJRA'))
+    strength = sum(counts[c] for c in STRENGTH) + relic_strength_sources(state)
     if cid in STRENGTH and not strength:
         value += 2 if act > 1 else .5
     if cid in ('Heavy Blade', 'Sword Boomerang', 'Pummel', 'Reaper', 'Limit Break'):
@@ -132,6 +166,8 @@ def upgrade_value(card, state):
     cid, upgraded = card[:2]
     if upgraded and cid != 'Searing Blow':
         return 0.0
+    if cost_only_upgrade_under_snecko(card, state):
+        return 0.0
     special = {'Bash': 7, 'Armaments': 8, 'True Grit': 8, 'Pommel Strike': 8,
         'Uppercut': 10, 'Shockwave': 9, 'Offering': 9, 'Whirlwind': 9,
         'Apotheosis': 12, 'Body Slam': 6, 'Corruption': 9, 'Dark Embrace': 9,
@@ -141,7 +177,7 @@ def upgrade_value(card, state):
     info = IRONCLAD_CARDS.get(cid)
     if not info:
         return 1.0
-    return (info.damage[1] - info.damage[0]) * .65 + (info.block[1] - info.block[0]) * .85 + max(0, info.cost[0] - info.cost[1]) * 6 + (2 if info.kind == 'power' else 0)
+    return (info.damage[1] - info.damage[0]) * .65 + (info.block[1] - info.block[0]) * .85 + max(0, info.cost[0] - info.cost[1]) * (0 if has_relic(state, 'SNECKO_EYE') else 6) + (2 if info.kind == 'power' else 0)
 
 
 def remove_value(card, state):
@@ -472,7 +508,8 @@ def rank_overworld(state, legal, *, rmap=None, current_y=-1):
             reason = f'buy:{relic}'
         elif kind == 'SHOP_POTION':
             _, price = opts['shop_potions'][i]
-            score = (3 if hp / max_hp < .55 else 1) - price / 25
+            score = ((3 if hp / max_hp < .55 else 1) - price / 25
+                if can_obtain_potion(state) else -100)
         elif kind == 'SHOP_REMOVE':
             score = max((remove_value(c, state) for c in g.get('deck', ())), default=0) - opts['shop_remove_cost'] / 20
         elif kind == 'EVENT_OPT' and event is not None:

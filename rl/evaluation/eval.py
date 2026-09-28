@@ -13,7 +13,7 @@ from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
 from rl.evaluation.trajectory import EpisodeTraceCollector, render_episode_markdown
-from rl.evaluation.strategies import STRATEGIES, compose_strategy, strategy_manifest
+from rl.evaluation.strategies import STRATEGIES, UPPER_NAVIGATION, UPPER_STRATEGIES, compose_strategy, strategy_manifest
 from rl.search.combat_value_search import add_combat_search_args
 
 
@@ -23,15 +23,19 @@ def build_parser():
     parser.add_argument('--combat-checkpoint', type=Path,
                         help='Separate combat model; positional checkpoint remains the upper policy')
     parser.add_argument('--compare-combats', type=int, default=0,
-                        help='Audit first N combat starts against rules, policy and native on identical forks')
+                        help='Audit first N combat starts against rules, policy, native and the selected solver on identical forks')
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
-    parser.add_argument('--upper-strategy', choices=['model', 'rules'], default='model',
-                        help='Keep the upper checkpoint, or use overworld rules with explicit model fallback')
+    parser.add_argument('--upper-strategy', choices=tuple(UPPER_STRATEGIES), default='model',
+                        help='Upper checkpoint or an opt-in rule strategy; rule strategies use explicit model fallback')
+    parser.add_argument('--upper-navigation', choices=UPPER_NAVIGATION, default='default',
+                        help='Optional separate map/rest strategy; default keeps the selected upper strategy')
     parser.add_argument('--episodes', type=int, default=100)
     parser.add_argument('--seed', type=int, default=10000)
+    parser.add_argument('--seed-file', type=Path,
+                        help='JSON array of unique game seeds, one per episode; --seed still initializes the policy RNG')
     parser.add_argument('--ascension', type=int, default=0)
     parser.add_argument('--device', default='auto')
     parser.add_argument('--num-envs', type=int, default=1)
@@ -54,11 +58,13 @@ def build_parser():
                         help='Override the native policy-prior temperature for evaluation')
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
-    parser.add_argument('--planner-nodes', type=int, default=512)
+    parser.add_argument('--planner-nodes', type=int, default=512, help='Native transitions per sampled world across the requested turns; root coverage sets a reported minimum')
     parser.add_argument('--planner-worlds', type=int, default=2)
     parser.add_argument('--planner-beam', type=int, default=8)
     parser.add_argument('--planner-depth', type=int, default=16)
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--planner-damage-weight', type=float, default=.26,
+                        help='Experimental leaf utility per remaining enemy HP; changing it changes the policy')
     parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
@@ -112,15 +118,19 @@ def file_identity(path):
 
 def main():
     args = build_parser().parse_args()
-    config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
+    episode_seeds = None
+    if args.seed_file:
+        episode_seeds = json.loads(args.seed_file.read_text(encoding='utf-8'))
+        if not isinstance(episode_seeds, list):
+            raise ValueError('--seed-file must contain a JSON array')
+    config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout,
+                              episode_seeds=episode_seeds)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
     if args.compare_combats < 0 or ((args.compare_combats or args.trace) and args.task != 'wholerun'):
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:
         raise ValueError('paired combat auditing requires deterministic policy decisions')
-    if args.solver == 'turn-planner' and args.compare_combats:
-        raise ValueError('paired CombatAuditStrategy currently requires the legacy action contract')
     if args.upper_strategy != 'model' and args.task != 'wholerun':
         raise ValueError('--upper-strategy requires wholerun')
     if args.combat_search_depth > 0:
@@ -144,6 +154,7 @@ def main():
             trace_stream.write(json.dumps(event)+'\n')
     strategy = compose_strategy(model, args, combat_model if args.combat_checkpoint else None, trace=trace)
     configured_strategy = strategy
+    audit_strategy = None
     candidate_strategies = {}
     started = last_report = time.monotonic()
 
@@ -165,12 +176,20 @@ def main():
         if args.compare_combats or (args.trace and args.solver != 'turn-planner'):
             from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
             from rl.evaluation.baselines.combat_audit import CombatAuditStrategy
+            if args.compare_combats:
+                candidate_strategies = {'rules': CombatRuleStrategy(),
+                    'policy': STRATEGIES['policy'](combat_model, args),
+                    'native': STRATEGIES['native'](combat_model, args)}
+                if args.solver not in candidate_strategies:
+                    # Fresh strategy/search state, never an object extracted
+                    # from the live reference composition. Model weights are
+                    # shared read-only, as for existing policy/native audits.
+                    candidate_strategies[args.solver] = STRATEGIES[args.solver](combat_model, args)
             strategy = CombatAuditStrategy(strategy, rows=combat_rows, limit=args.compare_combats,
-                candidates={'rules': CombatRuleStrategy(),
-                            'policy': STRATEGIES['policy'](combat_model, args),
-                            'native': STRATEGIES['native'](combat_model, args)} if args.compare_combats else {},
+                candidates=candidate_strategies,
                 max_steps=args.max_steps, timeout=args.timeout,
                 trace=trace if trace_stream else None)
+            audit_strategy = strategy
             candidate_strategies = strategy.candidates
         contract = getattr(configured_strategy, 'combat_action_contract', 'legacy')
         for row in evaluate(
@@ -196,11 +215,14 @@ def main():
         import slaythespire
         from rl.evaluation.baselines.combat_audit import summarize_pairs
         from rl.evaluation.baselines.combat_rules import RULE_VERSION
-        payload.update(identities=dict(upper=file_identity(args.checkpoint),
+        payload.update(episode_seeds=config.episode_seeds,
+            identities=dict(upper=file_identity(args.checkpoint),
+            seeds=file_identity(args.seed_file),
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
             native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
             effective_strategy=strategy_manifest(configured_strategy),
+            combat_audit=(audit_strategy.manifest()['audit'] if audit_strategy is not None else None),
             combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
         print(json.dumps(summary, ensure_ascii=False), flush=True)

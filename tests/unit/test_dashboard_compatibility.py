@@ -319,7 +319,7 @@ def test_dashboard_assets_expose_route_only_boss_fast_forward():
     assert 'id="watchCombatStrategy"' in html
     assert 'data-combat-strategy="model" class="active"' in html
     assert 'data-combat-strategy="planner"' in html
-    assert 'ironclad-turn-v8-awakened-phase' in html
+    assert 'ironclad-turn-v20-status-engines' in html
     assert 'id="decisionHeading"' in html
     assert "target_boss_act: targetAct" in javascript
     assert "upper_strategy: watchUpperStrategyValue()" in javascript
@@ -394,10 +394,10 @@ def test_dashboard_evaluation_status_records_selected_strategies(monkeypatch):
     )
 
     assert state.eval_status["upper_strategy"] == "rules"
-    assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v3"
+    assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v3.1-potion-contracts"
     assert state.eval_status["upper_fallback"] == "masked_argmax"
     assert state.eval_status["combat_strategy"] == "planner"
-    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v20-status-engines"
     assert state.eval_status["search_method"] == "turn_planner"
 
     with pytest.raises(ValueError, match="upper strategy"):

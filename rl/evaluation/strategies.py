@@ -143,13 +143,18 @@ class PhaseStrategy:
 
     @property
     def combat_action_contract(self):
+        """Union of contracts that can actually receive a combat request.
+
+        Native-v1 accepts complete actions as well as ordinary thin decisions.
+        A predicate can select either the combat route or the default, so both
+        must be supported. Non-combat routes impose no combat requirement.
+        Nested compositions expose the same property; strategy names play no role.
+        """
         possible = [self.routes.get('combat', self.default)]
         if 'combat' in self.routes and 'combat' in self.predicates:
             possible.append(self.default)
-        contracts = {
-            getattr(strategy, 'combat_action_contract', 'legacy')
-            for strategy in possible
-        }
+        contracts = {getattr(strategy, 'combat_action_contract', 'legacy')
+                     for strategy in possible}
         unknown = contracts - {'legacy', 'native-v1'}
         if unknown:
             raise ValueError(f'unsupported combat action contracts: {unknown}')
@@ -285,12 +290,9 @@ def turn_planner_strategy(model, args, lock=None):
         beam_width=getattr(args, 'planner_beam', 8),
         max_depth=getattr(args, 'planner_depth', 16),
         lookahead_turns=getattr(args, 'planner_turns', 1),
-        master_nonce=getattr(args, 'planner_nonce', 20260918),
-    )
-    return PhaseStrategy(
-        policy_strategy(model, args, lock),
-        {'combat': TurnPlannerStrategy(config)},
-    )
+        damage_weight=getattr(args, 'planner_damage_weight', .26),
+        master_nonce=getattr(args, 'planner_nonce', 20260918))
+    return PhaseStrategy(policy_strategy(model, args, lock), {'combat': TurnPlannerStrategy(config)})
 
 
 # Registration is deliberately a plain mapping, not discovery/import magic.
@@ -300,6 +302,75 @@ STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': val
               'turn-planner': turn_planner_strategy}
 
 
+def overworld_rule_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
+    return OverworldRuleStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_demand_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_demand import EnemyDemandUpperStrategy
+    return EnemyDemandUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_energy_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_energy import EnergyAwareUpperStrategy
+    return EnergyAwareUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+def overworld_potion_shop_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_potion_shop import PotionShopUpperStrategy
+    return PotionShopUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_survival_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_survival import SurvivalUpperStrategy
+    return SurvivalUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_engine_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_engine import EngineUpperStrategy
+    return EngineUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_fuel_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_engine import FuelUpperStrategy
+    return FuelUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_growth_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_survival import GrowthUpperStrategy
+    return GrowthUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_readiness_strategy(model, args, *, trace=None):
+    from rl.evaluation.baselines.overworld_survival import ReadinessUpperStrategy
+    return ReadinessUpperStrategy(fallback=policy_strategy(model, args), trace=trace)
+
+
+def overworld_engine_growth_strategy(model, args, *, trace=None):
+    engine = overworld_engine_strategy(model, args, trace=trace)
+    growth = overworld_growth_strategy(model, args, trace=trace)
+    return PhaseStrategy(engine, {'map': growth, 'rest': growth})
+
+
+# Upper factories are independent of combat solver registration and the CLI.
+UPPER_STRATEGIES = {
+    'model': lambda model, args, trace=None: policy_strategy(model, args),
+    'rules': overworld_rule_strategy,
+    'demand': overworld_demand_strategy,
+    'energy': overworld_energy_strategy,
+
+    'potion-shop': overworld_potion_shop_strategy,
+    'survival': overworld_survival_strategy,
+    'engine': overworld_engine_strategy,
+    'fuel': overworld_fuel_strategy,
+    'growth': overworld_growth_strategy,
+    'readiness': overworld_readiness_strategy,
+    'engine-growth': overworld_engine_growth_strategy,
+}
+
+UPPER_NAVIGATION = ('default', 'model', 'survival', 'growth', 'readiness')
+
+
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
@@ -307,10 +378,18 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
         strategy.routes['combat'].trace = trace
     if combat_model is not None:
         strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
-    if getattr(args, 'upper_strategy', 'model') == 'rules':
-        from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
-        upper = OverworldRuleStrategy(fallback=policy_strategy(upper_model, args), trace=trace)
+    upper_name = getattr(args, 'upper_strategy', 'model')
+    if upper_name not in UPPER_STRATEGIES:
+        raise ValueError(f'unknown upper strategy: {upper_name}')
+    if upper_name != 'model':
+        upper = UPPER_STRATEGIES[upper_name](upper_model, args, trace=trace)
         strategy = PhaseStrategy(upper, {'combat': strategy})
+    navigation_name = getattr(args, 'upper_navigation', 'default')
+    if navigation_name not in UPPER_NAVIGATION:
+        raise ValueError(f'unknown upper navigation strategy: {navigation_name}')
+    if navigation_name != 'default':
+        navigation = UPPER_STRATEGIES[navigation_name](upper_model, args, trace=trace)
+        strategy = PhaseStrategy(strategy, {'map': navigation, 'rest': navigation})
     if getattr(args, 'route', 'model') != 'model':
         strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})
     return strategy

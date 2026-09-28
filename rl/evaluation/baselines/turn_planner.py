@@ -4,7 +4,7 @@ from dataclasses import asdict
 import numpy as np
 
 from env.core.native_actions import complete_actions
-from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig
+from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig, public_planner_state
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
 from rl.evaluation.strategies import Decision
 
@@ -28,10 +28,22 @@ class TurnPlannerStrategy:
             leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
             resources='conservative-no-output-guard-with-public-relics',
             enemy_progress='public-slime-and-awakened-phase-potential',
+            reactive_strength='angry-half-point-future-strength-cost',
+            scaling_pressure='root-anchored-visible-ritual-marginal-damage-cost-cap2',
+            enemy_block='uncapped-visible-barricade-otherwise-cap30',
+            stored_energy='ice-cream-completed-boundary-1.5-per-energy-cap-min6-2horizon',
+            artifact='bounded-charge-potential-if-root-has-reusable-debuff-attack',
+
+            delayed_draw='pocketwatch-public-boundary-resources-v1-cap-after-base-and-brutality-draw',
+            upgrades='root-public-multiset-gains-require-new-upgraded-reusable-copy',
+            time_warp='root-eleven-visible-nonattack-deferred-play-opportunity',
+            status_engines='root-public-status-curse-opportunities-cap3-evolve-cap2-fire-value-cap20',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
             world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
-            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
+            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins',
+            public_power_flags='native-public-player-power-flags-v1-private-planner-state',
+            completed_tie_break='fewest-actions-if-all-tied-roots-fully-resolved-and-surviving')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []
@@ -63,7 +75,7 @@ class TurnPlannerStrategy:
                      if isinstance(value, (int, float)) and key != 'max_action_depth'},
                     native_action=plan.action_bits)
             if self.trace:
-                raw = env.thick.bc.to_dict()
+                raw = public_planner_state(env.thick.bc)
                 raw['draw'] = sorted(raw['draw'])
                 if dome:
                     # Pure fallback already handles hidden intent; trace only

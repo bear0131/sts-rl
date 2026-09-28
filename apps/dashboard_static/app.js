@@ -1344,7 +1344,7 @@ function renderWatch() {
   }).join("");
   const planner = d?.combat_planner;
   $("searchStatus").textContent = turnPlannerActive
-    ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
+    ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v20-status-engines"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
     : search
     ? (search.method === "nosl_is_az_cpp"
       ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${search.fixed_worldline ? " · 固定未来" : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
@@ -1449,12 +1449,12 @@ function renderEvaluation() {
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
   const searchLabel=e.search_method==="turn_planner"
-    ? `回合规划下层 · ${e.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}`
+    ? `回合规划下层 · ${e.combat_strategy_version || "ironclad-turn-v20-status-engines"}`
     : e.search_method==="nosl_is_az_cpp"
     ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${e.fixed_worldline ? " · 固定未来" : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
   const upperLabel=e.upper_strategy==="rules"
-    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v3"}`
+    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v3.1-potion-contracts"}`
     : e.upper_strategy==="model"?"模型上层":"";
   const labels=[stateLabel, upperLabel, searchLabel].filter(Boolean);
   $("evalStatus").textContent=labels.join(" · ");

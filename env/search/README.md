@@ -4,15 +4,15 @@
 
 env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一接口消费。这里解决了过去 env 反向导入 rl 的耦合。原生严格 Full Gumbel 树仍归 sim/；checkpoint value 对照搜索归 rl/search/。
 
-`overworld_rules.py` 是训练 worker 与 evaluation 共用的 Ironclad 公共状态上层规则，当前 canonical 版本由 `OVERWORLD_RULE_VERSION` 声明为 `ironclad-overworld-v3`。只对非战斗合法动作打分；未知事件/选择画面返回 `None`，由消费者显式回退。分层 NOSL 的冻结上层使用 `--nosl-is-az-upper-strategy rules`，或 canonical response file `@configs/train/nosl_ruleupper_latest.args`；该入口在代码更新后自动使用当前最新规则版本，不再绑定 `v1` 文件名。仅支持 inner-only NOSL；未覆盖画面使用冻结模型 masked argmax。默认 `model` 保留随机采样。该设置保存在 checkpoint，CLI 省略时沿用 checkpoint；不会改变战斗搜索或训练目标。
+`overworld_rules.py` 是训练 worker 与 evaluation 共用的 Ironclad 公共状态上层规则，当前 canonical 版本由 `OVERWORLD_RULE_VERSION` 声明为 `ironclad-overworld-v3.1-potion-contracts`。只对非战斗合法动作打分；未知事件/选择画面返回 `None`，由消费者显式回退。分层 NOSL 的冻结上层使用 `--nosl-is-az-upper-strategy rules`，或 canonical response file `@configs/train/nosl_ruleupper_latest.args`；该入口在代码更新后自动使用当前最新规则版本，不再绑定 `v1` 文件名。仅支持 inner-only NOSL；未覆盖画面使用冻结模型 masked argmax。默认 `model` 保留随机采样。该设置保存在 checkpoint，CLI 省略时沿用 checkpoint；不会改变战斗搜索或训练目标。
 
 启用 `--nosl-is-az-train-shared-embeddings` 会按 run seed 重置并训练 split policy 的共享 card/relic/potion embedding，projection 与整个外层 specialist 仍冻结。共享实体既作为候选 token 直接影响 `USE_POTION`、`PICK_CARD`、card/relic/potion reward、shop 与 boss relic 动作，也作为常驻 deck/relic/potion token 进入每个外层 phase 的 Transformer，因此 map、event、proceed、chest、campfire、Neow 等固定按钮 logits 也可能间接受影响。规则上层只有返回 `None` 的状态会暴露给这条 masked-argmax fallback；v3 在 v2 的确定性事件与 Bonfire Spirits 基础上，让 native canonical state 公开 Falling、N'loth、We Meet Again、Note For Yourself、Designer 按钮上已经显示的具体卡牌、遗物、药水、金额及服务模式，并据此评分。该附加元数据不进入 observation tensor；旧扩展或缺项候选仍整屏返回 `None`，不会按固定 action index 猜测。stock CommunicationMod 目前只给本地化按钮文本，真实 bridge 在收到 action-aligned typed 扩展前仍对这五类 fail closed，不从文字猜实体。
 
 `turn_planner.py` 提供无模型 native 回合规划器。它在独立 NOSL 样本中搜索完整战斗动作，
 每次只提交首个动作并重新观察；`node_budget` 是每个 sampled world 的 transition 预算，
 `worlds`、实际 transition、根覆盖下限和 fallback leaf 均进入诊断。人工状态价值不是胜率或
-游戏 oracle。`ironclad-turn-v8-awakened-phase` 在既有 slime phase、终局优先级、最短等价
-胜利和资源保护逻辑上，补充 Awakened One 可见阶段的剩余生命估值。Runic Dome 不进入
+游戏 oracle。当前 `ironclad-turn-v20-status-engines` 合并A20分支的开发实现；
+历史v8与21cda74确认候选的结果不能当作当前版本胜率。版本演进与公开状态契约见下文。Runic Dome 不进入
 native 规划，adapter 回退 `rules-ironclad-v3`。主要回归入口为
 `tests/integration/test_turn_planner*.py`。
 
@@ -62,6 +62,15 @@ draw-select 的索引属于当前公开候选实体。`nosl_redeterminize` 会�
 这是狭窄的无输出惩罚（−10000），不能证明保留的输出足以在死亡前结束战斗，
 也不估算一张消耗攻击是否足以打完剩余生命。真实胜利/失败仍按 native outcome 处理。
 
+`ironclad-turn-v3` 将人工能力收益时长固定到一次 `choose` 的公开根状态：
+仍用根敌方总 HP 和根玩家 Strength 估算并限制到1–5，但所有样本、首步分支、
+完整回合与未完成前缀共用该值。敌方 Strength/Ritual 和双方弱/易伤持续时间也用
+同一时长，避免只冻结正收益而改变负收益的比较基准。它不改变搜索深度或预算。
+这修正了伤害降低能力估值、从而奖励保留敌人 HP 的倒挂；分裂后子怪总 HP/数量
+跳变、无触发器的能力高估和极端成长值超过胜利奖励仍是独立限制。
+独立调用 `state_value` 时可显式传 `horizon` 比较同一次决策的分支；省略时保留
+把该状态视作新根的兼容行为。评测 manifest 记录 `value_horizon` 约定。
+
 调用方必须保证当前敌人意图公开。评测 adapter 遇 Runic Dome 回退遮罩后的 v3 规则；
 其遗留 thin 候选为空时按完整合法动作顺序选择，不窥探 native 当前意图。
 根部抽牌堆选择先重采样，再按原生实体身份映射候选，不能先执行选择：后续 exhaust/draw
@@ -95,3 +104,273 @@ pending choices should clone explicitly and use the mutator above. The legacy
 result. `execute` and the existing NOSL search control remain unchanged.
 
 Regression entrypoint: `tests/integration/test_native_boundary_execution.py`.
+
+Ice Cream's completed boundary retains energy before the next recharge. The
+`ironclad-turn-v13-icecream-v1` candidate credits each banked energy by1.5, capped
+at `min(6, 2 * root_horizon)` energy. This bounded human prior makes safe Seeing
+Red banking distinguishable from END without rewarding unbounded energy hoards.
+It applies only with the public relic and an actual completed enemy boundary;
+ordinary unused energy, partial frontier scores, and terminal values retain
+their prior behavior. No future draw order is read. Regression:
+`tests/integration/test_turn_planner_icecream.py`.
+
+The `ironclad-turn-v13-pocketwatch-v1` candidate additionally preserves public
+Pocketwatch eligibility at the value boundary. The additive native method
+`public_boundary_resources()` schema1 returns `cards_played`, `base_draw`, and
+`pocketwatch`. At a projected boundary, `cards_played` is the public count before
+cleanup; elsewhere it is the current turn's count. Clone preserves this
+search-only record; ordinary turn execution, initialization and custom-state
+setup reset it. Existing raw, packed and encoded observations do not change.
+The planner's private snapshot credits eligible additional draws by1 each,
+capped at3 and by retained-hand capacity and available draw/discard cards after
+normal draw. This is a bounded draw-opportunity prior, not an estimate of the
+drawn cards' actual value or a simulation of all start-of-turn effects. Lethal
+and survival outcomes retain priority. Rebuild native before constructing the
+planner; missing metadata fails explicitly. Regression:
+`tests/integration/test_turn_planner_pocketwatch.py`.
+
+`ironclad-turn-v16.1-pocketwatch-capacity` subtracts the guaranteed public
+Brutality draw count as well as normal draw before crediting Pocketwatch's
+marginal extra cards. Thus Pyramid plus enough Brutality to fill the next hand
+does not receive a redundant draw bonus. This remains a bounded prior; unknown
+start-of-turn generation and unsupported Machine Learning effects are not assumed.
+
+`ironclad-turn-v4` adds a public phase-progress prior for splitting slimes. The
+remaining damage potential includes expected descendant HP at the native half-HP
+threshold (integer division), and the encounter-count term anticipates two medium
+slimes per large slime, or four per boss. Native splitting at unchanged HP is
+therefore continuous instead of falsely increasing remaining burden. This is an
+approximation assuming threshold splits, not minimum damage or a combat oracle;
+burst kills can skip phases. Native HP, loss of debuffs on split, actual incoming
+damage and terminal outcomes still determine the other value terms. The root
+power horizon remains the v3 public-state anchor. Regression entrypoint:
+`tests/integration/test_turn_planner_phases.py`.
+
+
+## Terminal priority candidate v5
+
+`ironclad-turn-v5-avoid-sampled-death` keeps the v4 ordinary-state heuristic and
+partial-frontier ordering. Within each sampled world, complete leaves compare
+`(terminal_rank, heuristic)`, where death < live boundary < victory. Terminal
+classification takes precedence over arbitrarily large Strength or other powers.
+The original scalar `state_value` remains a heuristic, not a terminal utility.
+
+Root actions compare `(-sampled_death_count, sampled_win_count, mean_heuristic)`
+lexicographically across the same number of worlds. This explicitly prefers any
+alternative with fewer sampled deaths, even if accepting a sampled death would
+buy more wins in other worlds. It is a conservative risk preference, not a win
+probability, calibrated risk estimate, or semantics-preserving optimization.
+When all sampled leaves are live, the old arithmetic mean and ordinary ordering
+are retained. The heuristic mean only breaks ties in both terminal counts.
+Partial fallback leaves remain live/uncertain, never invented wins.
+
+Finite `root_outcomes` trace records report deaths, wins, nonterminal worlds,
+`unresolved` partial fallbacks, actual `boundary_live` leaves and heuristic mean
+separately. `live` includes unresolved prefixes and is not a survival certificate; `root_values` remains the scalar mean for diagnostics and no
+longer alone determines the chosen action. Structured fields never enter numeric
+Decision metrics. Non-finite leaf values are rejected rather than written as
+Infinity/NaN; an overflowing finite sum is averaged in scaled form.
+Regression: `tests/integration/test_turn_planner_terminal_priority.py`, including
+Strength500 versus immediate native victory and four actual NOSL Havoc futures
+(one win/three deaths) versus Defend surviving every world.
+## Optional two-turn planning
+
+`ironclad-turn-v6` combines terminal-priority planning with
+`TurnPlannerConfig(lookahead_turns=2)` / eval `--planner-turns 2`. The default
+remains one turn; both horizons use the explicit sampled-risk contract above.
+In a fresh independently sampled clone, first-turn actions use ordinary native
+`execute`, including Codex choices and TimeWarp's early END, so native start
+effects, energy and draw lead into the next player turn. Only actions in the
+last requested player turn arm `execute_to_enemy_boundary`. Do not resample at
+the intervening turn: that would erase publicly chosen Headbutt top cards and
+replace one sampled world with an inconsistent continuation.
+
+No new native binding is needed. Existing projected enemy-boundary states are
+not resumable: projection settles end-of-round effects and erases next enemy
+moves. The planner rejects those roots; two-turn mode also rejects an unexpected
+early projection from a private pending clone already armed by the boundary API.
+Use real game inputs or pending choices produced by ordinary execution. The
+live BattleContext remains unchanged. Dome still bypasses all native planning.
+
+`node_budget` covers both turns together per sampled world. The reported minimum
+is `(lookahead_turns + 1) * root_actions`; root coverage does not guarantee a
+complete horizon under every pending/depth limit. `native_transitions` counts
+both execute APIs, including END/start-of-next-turn work and choices. Two-turn
+`max_depth` counts every action over both turns and does not append an uncounted
+END past its cap. `fallback_leaves` explicitly counts roots/worlds evaluated from
+unfinished prefixes; `second_turn_entries`, `completed_horizon_leaves` and
+`max_action_depth` distinguish actual horizon coverage from requested settings.
+The per-decision maximum depth stays in the full trace, not the runner's additive
+episode metrics; it is not meaningful to sum it and label that sum a maximum.
+The root power horizon stays anchored throughout the complete decision.
+
+More turns increase branching and determinization optimism; they do not certify
+better decisions. A new real decision still samples the draw multiset afresh,
+so preserving publicly known deck-top constraints across separate decisions
+remains outside this change. Tests: `tests/integration/test_turn_planner_two_turns.py`.
+
+`ironclad-turn-v7` retains the v5 terminal counts and
+mean heuristic as the primary comparison. Only when all three are exactly equal,
+it prefers fewer native actions needed to reach the selected winning leaves.
+Within a world, equal winning leaf values retain their shortest observed depth;
+across worlds the winning depths are summed (equivalent to comparing their means
+when win counts tie). Live/death leaves contribute no winning length, preserving
+the previous tie for roots with no proved wins. Higher-HP wins can still justify
+more actions. This prevents repeatedly postponing an equally good available win.
+
+`root_outcomes` additionally records finite `winning_steps_total` and
+`winning_steps_mean`; the latter is conditional on winning worlds and is zero
+when no win was found. These remain structured per-root trace data, never summed
+as episode numeric metrics. Regression:
+`tests/integration/test_turn_planner_winning_depth.py`. The Medical Kit/Hex/Dark
+Embrace fixture verifies the current native simulator, not an independent audit
+of the commercial game's event ordering or a replay of the original full run.
+
+## Awakened One phase potential candidate v8
+
+`ironclad-turn-v8-awakened-phase` extends only the remaining-enemy-HP prior.
+Existing public `Curiosity` identifies the first life, so its burden includes
+current HP plus one additional visible max-HP life. The native `half_dead` flag
+identifies the zero-HP rebirth interval; this still counts one max-HP threat even
+though native also marks that slot `gone`. After rebirth, Curiosity is absent and
+Minion Leader is present: only current HP counts, with no further extra life.
+Actual native outcome remains the sole terminal truth. Slime and ordinary-enemy
+potentials and all search/HP/debuff coefficients remain unchanged.
+
+Visible max HP is a heuristic for the future life, exact at native A0 (300).
+Native high-ascension first-life HP is sampled in300–320 while rebirth fixes320,
+so it may underestimate by0–20HP; no private difficulty/RNG field is read and no
+observation contract is expanded. Debuffs disappearing on first death are still
+valued as a real cost. This is not a requirement to switch phase immediately in
+every state: two-turn plans can still value delaying the stronger second phase.
+Regression entrypoint: `tests/integration/test_turn_planner_awakened_phase.py`.
+
+The A20 planner also reads native `public_player_power_flags()` schema 1 for public binary powers (Corruption, Barricade, Confused, Hex, Pen Nib, Surrounded). These flags enrich only its private snapshot and trace; checkpoint observations and numeric power getters retain their existing schemas. Rebuild the extension before using this planner; an older extension fails the planner capability check explicitly.
+
+## Completed-plan progress tie v9
+
+`ironclad-turn-v9-completed-progress` additionally breaks exact live-plan ties by
+shortest observed action count to the chosen completed leaves. Death count, win
+count, mean heuristic and the existing winning-depth comparison remain primary.
+The new comparison applies only when every tied root has completed all sampled
+worlds with no death: partial fallback values do not prove equivalent plans, and
+we do not introduce a preference for dying sooner. Per-world equal-quality live
+boundaries retain the shortest observed depth. `completed_steps_total` is trace
+metadata for selected surviving completed leaves; unresolved/death worlds add
+zero and must be interpreted with their separate outcome counts.
+
+This resolves a receding-horizon failure where Medical Kit/Hex/Dark Embrace
+repeatedly played a self-replacing Dazed before an equally valued Iron Wave.
+Feel No Pain can make the same Dazed loop productive; greater final block/HP
+utility still wins even if it takes more actions. This is a tie rule, not a cycle
+proof or a change to the native legality of status cards. Regression:
+`tests/integration/test_turn_planner_completed_progress.py`.
+
+## Angry reactive growth candidate
+
+A20 Mad Gremlin gains2 Strength for every damaging hit. Native completed leaves
+already charge the current retaliation. The generic future Strength penalty can
+then outweigh every safe6-damage Strike even with enough block to lose no HP,
+rewarding indefinite delay. For visible `Angry` only, the candidate uses a bounded
+0.5 heuristic points per future Strength instead of `1.6 * power_horizon`.
+Ordinary Strength-bearing enemies keep their prior valuation, and native sampled
+death still outranks this heuristic. This is an explicit short-fight prior,
+not a claim that future Strength is harmless or an oracle damage estimate.
+Regression: `tests/integration/test_turn_planner_angry_progress.py` verifies safe
+progress across actual repeated decisions and a lethal-retaliation case where
+blocking remains preferred. Whole-run acceptance belongs to A20 evaluations.
+
+`TurnPlannerConfig.damage_weight` (CLI `--planner-damage-weight`, default `0.26`) exposes the scalar cost of remaining phase-adjusted enemy HP for controlled attack/block preference experiments. It must be finite and positive, applies to both partial ordering and completed leaves, and cannot override the lexicographic sampled death/win outcome. Changing it changes the policy, not merely the search budget; report it with every result.
+
+## Visible Ritual damage-pressure candidate
+
+For a monster with an already visible positive Ritual, the candidate estimates
+an offensive rate of `max(9, 18 + 3 * player Strength)` and the turns to remove
+its remaining HP. It estimates the marginal attack near that finish time from
+current adjusted attack plus Ritual growth, converts that into a damage weight,
+and caps the total weight at2. Only an increase over the configured base damage
+weight becomes a per-monster premium. This is a deliberately rough urgency
+prior: it does not predict future draws, block, or policy win probability.
+
+The premium is computed once at the public decision root and passed unchanged
+to every sampled complete/partial leaf. Recomputing it after damage would change
+both the enemy's remaining HP and the coefficient, creating another evaluation
+direction error. Slot plus monster ID identifies each premium's original enemy.
+No unseen pending Ritual buff is guessed. Existing native death/win priority and
+all ordinary monsters without visible Ritual remain unaffected by this premium.
+The trace exposes `root_damage_premiums`; it stays out of numeric episode metrics.
+Regression: `tests/integration/test_turn_planner_ritual_pressure.py`.
+
+## Persistent enemy Barricade block
+
+The enemy block cost remains0.6 per point, but its30-point cap now applies only
+when the enemy lacks visible positive Barricade. Spheric Guardian retains its
+shield across turns; eroding75 block to69 is actual future progress even though
+neither HP nor the capped old value changes. Fully counting persistent block
+keeps the planner from skipping useful attacks while that shield grows. Ordinary
+temporary block retains its prior cap because it will disappear on the next
+native enemy turn. This changes only the public leaf prior, not native block,
+actions, HP weights or player Barricade semantics. Regression:
+`tests/integration/test_turn_planner_persistent_block.py`.
+
+## Conditional enemy Artifact potential candidate
+
+If the public root's hand/draw/discard contains Bash, Clothesline, Thunderclap or
+Uppercut, it has a known reusable debuff source. The candidate then prices each
+live enemy's remaining Artifact charges at `3 * charges / (charges + 1)` heuristic
+points. The potential is bounded by3 but strictly improves on every charge
+reduction, with the last charge nearest to enabling an actual debuff. A free
+Intimidate can therefore prepare a later Bash instead of tying with END.
+
+The eligibility decision stays fixed throughout this root search. Consuming the
+only debuff source cannot create an immediate bonus by switching off a penalty
+inside one branch. A lone exhausting Intimidate and an already exhausted Bash
+do not enable this prior. The closed list deliberately undercounts unusual
+cross-character or generated effects. Native transitions still own immediate
+Weak/Vulnerable and opportunity costs, including Velvet Choker's last play.
+This candidate has not demonstrated a whole-run improvement; keep its identity
+separate when evaluating. Regression:
+`tests/integration/test_turn_planner_artifact_potential.py`.
+
+`ironclad-turn-v17-upgrades` adds a conservative future payoff for combat
+upgrades. A public root multiset freezes plain-card counts across all four piles
+and upgraded-card counts in hand/draw/discard. A leaf earns credit only when the
+plain count falls and the corresponding reusable upgraded count rises; exhausting
+plain cards, upgrading exhausted-only resources, already-upgraded starting cards,
+and repeating Apotheosis do not earn new credit. The payoff per matched card is
+`min(1.5, 5 * root_horizon / max(5, root_reusable_pile_size))`; it estimates future
+replays, not exact card strength. Cost-only upgrades have no future payoff under
+public Confused/Snecko Eye. Immediate effects remain native transition values.
+This intentionally undercounts when an old upgraded copy exhausts as another copy
+upgrades, does not value later Searing Blow upgrades, and cannot identify arbitrary
+card-creation/removal combinations from counts alone. No pile order, live RNG,
+checkpoint observation, native mechanic, or terminal ordering changes.
+
+`ironclad-turn-v19-time-warp` is a narrow Time Eater timing prior. Only a
+public root with Time Warp11 and current Ripple/Haste activates a fixed delay cost
+`3.2 * root_horizon + 4`: the estimated future cost of the eventual+2Strength and
+a modest lost-play opportunity. A leaf keeps this cost while the same native
+enemy still has11; only native resetting removes it. The actual enemy Strength
+cost, forced end, damage, and death/live/win ordering remain intact. Attacking
+roots and roots below11 get no such prior, so it cannot reward manufacturing a
+fresh eleven-card cycle. This is not a general value identity: a future one-card
+kill or a deck expecting only one useful play can make postponement harmless.
+
+## Status-triggered Evolve and Fire Breathing
+
+`ironclad-turn-v20-status-engines` values installed Evolve and Fire Breathing
+only when the decision root contains public future trigger cards. Evolve counts
+statuses; Fire Breathing counts statuses and curses. Exhausted cards and
+ethereal junk already in hand are excluded. Enemy identity, hypothetical future
+status generation and hidden draw order do not create opportunities.
+
+The root multiset supplies `min(3, 5 * root_horizon * trigger_count / max(5,
+remaining_card_count))` trigger opportunities. Every complete and partial leaf
+uses this same record, so drawing/exhausting junk cannot erase engine credit and
+make productive actions appear worse. Evolve contributes2points per opportunity
+and level, capped at2levels; Fire Breathing uses the configured damage weight,
+its actual power amount and up to3root enemies, capped at20points total. These
+are deliberately bounded human priors, not predicted win probabilities or an
+exact draw simulator. All terminal priority rules remain unchanged. The trace
+records `root_status_opportunities`; it is not summed into episode metrics.
+Regression: `tests/integration/test_turn_planner_status_engines.py`.

@@ -86,6 +86,9 @@ namespace sts {
         // been reached.  Keep it separate from the control flag so in-flight
         // enemy actions are never mislabeled as value boundaries.
         bool postEnemyTurnBoundary = false;
+        // Search-only public resource retained before per-turn cleanup. This
+        // never participates in ordinary gameplay or checkpoint observations.
+        int boundaryCardsPlayed = 0;
 
         ActionQueue<50> actionQueue;
         CardQueue cardQueue;

@@ -85,7 +85,7 @@ def test_watch_route_fast_forward_stops_at_real_boss_and_replays():
 
         assert snapshot["phase"] == "combat"
         assert snapshot["upper_strategy"] == "rules"
-        assert snapshot["upper_strategy_version"] == "ironclad-overworld-v3"
+        assert snapshot["upper_strategy_version"] == "ironclad-overworld-v3.1-potion-contracts"
         assert snapshot["route_preprocess"] == {
             "enabled": True,
             "target_act": 1,
@@ -173,7 +173,7 @@ def test_watch_can_execute_replay_and_switch_from_turn_planner():
         )
 
         assert snapshot["combat_strategy"] == "planner"
-        assert snapshot["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+        assert snapshot["combat_strategy_version"] == "ironclad-turn-v20-status-engines"
         assert snapshot["decision"]["source"] == "turn-planner"
         assert snapshot["decision"]["native_direct"] is True
         native = snapshot["decision"]["native_action_bits"]

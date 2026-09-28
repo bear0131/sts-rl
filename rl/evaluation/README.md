@@ -28,6 +28,12 @@ python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
 `--upper-strategy rules` 另外替换抓牌、路线、商店、营火等上层决策；未覆盖的事件显式回退到
 位置参数的模型，并记录回退次数。两个开关独立，可比较固定上层和联合规则；
 `--route min-elite-max-rest` 最后覆盖地图决策。默认 `--upper-strategy model` 保持原有行为。
+
+`--upper-strategy fuel` 为具备抽牌支持的 Corruption 消耗引擎保留实用技能耗材，
+`engine` 仍保留紧凑牌组偏好。`--upper-navigation model|survival|growth|readiness`
+可单独选择地图和营火策略，与抓牌、商店策略交叉评测；默认 `default` 保留原上层。
+例如 `--upper-strategy fuel --upper-navigation readiness`。组合只使用 PhaseStrategy，
+完整组件版本和来源记录在结果的 `effective_strategy`，不会替换已选战斗策略。
 `--combat-checkpoint LOWER.zip` 可为 policy/native/value 单独指定下层；`--compare-combats N`
 沿参考轨迹取前 N 场开局，在相同完整初态上配对规则/policy/native；`--trace FILE.jsonl`
 保存可见状态、选择与规则分项。信息边界、支持范围与开发/留出协议见
@@ -57,6 +63,33 @@ Native 搜索可用 `--fixed-worldline` / `--no-fixed-worldline` 显式控制整
 并固定 checkpoint、episode seed、搜索预算和并行度。
 
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
+
+## A20 策略开发与独立种子
+
+先构建当前 native 扩展，并通过 `STS_LIGHTSPEED_BUILD_DIR` 明确指定其目录。
+回合规划器需要公开能力标记和边界资源接口；旧扩展会明确报错。典型固定开发集：
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+python -m rl.evaluation.eval UPPER.zip --solver turn-planner \
+  --upper-strategy readiness --ascension 20 --episodes 128 --seed 200000 \
+  --planner-nodes 2048 --planner-worlds 2 --planner-turns 1 \
+  --device cpu --num-envs 8 --max-steps 6000 --timeout 1200 \
+  --output runs/local/a20-dev.json --trace runs/local/a20-dev.jsonl
+```
+
+`readiness` 使用覆盖缺口抓牌并限制未准备好的精英路线；`growth` 更积极争取精英和升级，
+`engine` 偏紧凑体系，`fuel` 在成型消耗体系里放宽技能耗材。用 `model` 固定原上层，
+或用 `--upper-navigation` 单独交叉地图/营火策略。具体实验成绩属于 worklog，不能从
+策略名称推断哪套更强。
+
+冻结代码、native、checkpoint 和预算后，把另一组随机种子保存为 JSON 数组，第二次命令
+增加 `--seed-file runs/local/fresh-seeds.json`，同时使 `--episodes` 等于数组长度。
+种子必须是互不重复的 uint32 整数；结果记录实际种子与文件身份。`--seed` 仍初始化策略
+随机数，指定文件后不会替代其中的游戏种子。不同候选使用同一文件配对，保留开发集与
+独立集的区别；查看独立集坏例子并据此修改后，后续确认需重新抽取未使用的种子。
+A20 的完整通关必须结束第二个 Act3 boss；本场景不含 Heart。报告自然胜负、截断和错误
+分别计数，不能把未完成的128局写成完整胜率。
 
 ## 固定血量敏感性协议
 

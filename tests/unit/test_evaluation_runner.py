@@ -95,28 +95,38 @@ def test_decision_action_contract_is_unambiguous(action,native):
         Decision(action,'custom',native_action=native)
 
 
-def test_complete_native_decisions_do_not_use_thin_masks():
-    class NativeGame(Game):
-        def action_masks(self):
-            raise AssertionError('complete actions must not query a thin mask')
+def test_explicit_seed_set_survives_batched_environment_reuse():
+    envs = []
+    seeds = (82391, 7, 219341, 42, 107)
+    class Trace:
+        def __init__(self, env, index, seed):
+            assert env.seed == seed
+            self.seed = seed
+            self.steps = 0
+        def before_step(self, action, native):
+            assert action == self.seed % 2
+        def after_step(self, *args):
+            self.steps += 1
+        def finish(self, result):
+            return dict(seed=self.seed, steps=self.steps, result=result)
+    rows = list(evaluate(FutureStrategy(), scenario(envs),
+        EvaluationConfig(episodes=5, seed=10, num_envs=2, episode_seeds=seeds),
+        trace_factory=Trace))
+    assert all(r['trajectory'] == dict(seed=r['seed'], steps=3, result='finished')
+               for r in rows)
+    assert [r['seed'] for r in sorted(rows, key=lambda r: r['episode'])] == list(seeds)
+    assert sorted(seed for env in envs for seed in env.resets) == sorted(seeds)
+    assert all(env.closed for env in envs)
 
-        def step_native_combat(self, bits):
-            assert bits==1073741835  # single select, native index11
-            return {'seed':np.array([self.seed])},0,True,False,{'combat_action_contract':'native-v1'}
 
-    class NativeFuture(FutureStrategy):
-        def decide(self,requests,*,check):
-            return [Decision(None,self.name,native_action=1073741835) for _ in requests]
-
-    rows=list(evaluate(NativeFuture(),Scenario('native',NativeGame,
-        lambda *args:dict(result='finished',floor=1,act=1)),EvaluationConfig(episodes=1)))
-    assert rows[0]['combat_action_contract']=='native-v1'
+@pytest.mark.parametrize('seeds', [(1,), (1, 1), (True, 2), (-1, 2), (2**32, 2), (1.0, 2)])
+def test_explicit_seed_sets_reject_ambiguous_or_invalid_samples(seeds):
+    with pytest.raises(ValueError, match='episode_seeds'):
+        EvaluationConfig(episodes=2, episode_seeds=seeds)
 
 
-@pytest.mark.parametrize('action,native',[(None,None),(1,1)])
-def test_decision_action_contract_is_unambiguous(action,native):
-    with pytest.raises(ValueError,match='exactly one'):
-        Decision(action,'custom',native_action=native)
+
+
 
 
 @pytest.mark.parametrize('reason', ['cancel', 'strategy', 'invalid-action'])

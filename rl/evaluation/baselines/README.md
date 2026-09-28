@@ -123,6 +123,40 @@ python -m rl.evaluation.eval UPPER.zip --upper-strategy rules --combat-checkpoin
 `--trace` 同时记录 `overworld_decision` 的公开状态、排序、实际动作和来源；
 `effective_strategy` 记录上下层组合、规则版本和回退策略。
 
+`--upper-strategy demand` 选择独立候选 `ironclad-overworld-demand-v1`，与 `rules`
+共享下层与模型回退。它只在第二幕部分奖励选牌中，加上公开牌组在假设均匀五张手牌中、
+保留一点进攻能量后可支付的重复直接格挡覆盖增量；以已公开 boss 的一种普通攻击作上限。
+此值不表示实际起手、完整战斗计划或预计 HP 损耗。未建模的消耗/格挡引擎及随机费用等
+组合退回上层 v1，其余选牌、升级、路线与商店规则均保持 v1。
+该候选尚无胜率改进结论；配对评估只切换 `--upper-strategy rules/demand`，固定所有战斗
+参数、checkpoint、native 和种子。统计 `overworld_demand_decisions`、
+`overworld_demand_changed_decisions`、模型回退数和自然终局；少量选择改变不代表胜率提升。
+库调用可用 `strategies.UPPER_STRATEGIES` 或直接组合 `EnemyDemandUpperStrategy`，
+不需要导入 CLI。默认仍为 `--upper-strategy model`。
+
+`--upper-strategy energy` 选择独立 `ironclad-overworld-energy-v1`，只改 Boss 遗物
+选择，仍以原上层 v1 为基础，不叠加 demand。它枚举公开无序牌组的假设均匀五张手牌，
+计算现有能量和多一点能量下可支付的 v1 牌效先验总值，加入有界评分修正。
+这是费用约束下的静态近似，不是实际出牌计划或预计损血；抽牌牌只保留其原先验，
+不会免费增加手牌。当前临时能量、动态费用、Snecko/Pyramid/Choker 等未建模组合
+退回 v1；原遗物副作用先验保留。痛苦印记的两张伤口作为抽牌稀释计入，医疗箱
+不免此成本；该均匀分布也不表示原生的首轮起手，因为伤口在初始抽牌之后加入。
+奴隶项圈按普通战斗/精英或 Boss 各半的显式先验处理。trace 写入原评分、边际容量
+与修正；结果计数 `overworld_energy_decisions`、`overworld_energy_changed_decisions`
+和 `overworld_energy_abstentions`。评测固定同一下层，仅切换 rules/energy。
+
+`--upper-strategy potion-shop` 选择独立候选 `ironclad-overworld-potion-shop-v1`。
+只在第二幕商店、v1本来会离店、整条实际药水带为空且无Sozu时，考虑补一瓶白名单战斗药水；
+不叠加demand/energy。先保留v1已有购物优先级，要求售价不超过当前金币一半且买后剩至少75金。
+伤害/格挡/力量等确定效果用公开牌组角色先验减去实际显示价格排序；分值不是预计HP收益。
+不重算折扣，不缓存Courier库存；取得一瓶后停止本候选的补货。随机生牌等未覆盖效果沿用v1。
+`overworld_potion_shop_decisions` / `overworld_potion_shop_changed_decisions` 记录实际补货；
+trace给出原动作、药水角色、价格和剩余金币。共享下层决定何时使用，不能保证保留至精英战。
+满槽/Sozu购买扣空钱是既有SHOP01；共享 `can_obtain_potion` 现在保护所有规则上层的商店购买，
+包括本候选委托的基础规则和 engine/fuel。它只依据实际可用空槽及公开 Sozu 拒绝空买，
+不改变原生合法动作、扣金机制或正常可获得药水的购物排序。
+该候选未经过整局性能验收；至少128配对整局只切换rules/potion-shop并固定其他配置后再判断。
+
 跨上层稳健性至少区分不同权重家族、路线和规则上层。不同文件名或不同下层训练步数不代表
 上层不同，应核对 shared/overworld 张量身份。已检查的 20000–20007 在后续迭代中转为开发集，
 下一轮留出声明在 worklog；每轮先冻结源码/哈希再查看新结果，旧版本通过固定 Git revision
@@ -144,5 +178,20 @@ python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 204
 上层模型的使用不代表战斗搜索调用神经网络。`effective_strategy` 记录完整配置和信息边界。
 需要重建包含 `execute_to_enemy_boundary` 与 `remap_draw_selection_from` 的 native 扩展；
 旧模型维度不变。普通 `--trace` 记录完整原生首步、根值及排序后的 draw 多重集；
-`--compare-combats` 暂不支持这个动作契约，CLI 明确拒绝。
+`--compare-combats N` 支持同初态配对：保留 rules、policy、native 对照，另建一个同配置的
+planner 候选，与参考策略的搜索对象隔离。每个候选 fork 使用自身声明的动作契约；
+legacy 候选遇到 F03 空动作表时保留 `dead_screen` 和截断标记，初态已不可操作则记零步，
+不会把它改成死亡或把非法动作交给策略。嵌套 `PhaseStrategy` 递归合并可到达的战斗契约；
+有 predicate fallback 时包含默认策略，`native-v1` 环境仍接受合法 thin 动作。
+配对 fork 的决策计数沿用从零开始的协议，结果同时记录 `reference_step` 和
+`fork_decision_step_origin`，manifest 标明 `fork-local-zero`；它不是原轨迹随机样本的逐步重放。
+`combat_rows` 是参考路径上的战斗组件对照，不能与整局 `rows` 合并统计胜率或样本数。
 步数是本接口下的完整动作及上层决策数量，不能直接与 legacy 自回归子步骤比较吞吐。
+
+For independent random-seed confirmation, pass `--seed-file seeds.json` to the same evaluator. The file is a JSON array of unique unsigned 32-bit game seeds, with length equal to `--episodes`; `--seed` still initializes the policy RNG. Results embed the exact array and its file identity. Freeze the strategy before drawing the confirmation set, and keep development and confirmation results separate.
+
+For A20 upper-policy experiments, `--upper-strategy survival` prioritizes encounter coverage and a public-map HP risk budget; `--upper-strategy engine` prioritizes supported exhaust/strength/block engines and limits redundant cards. Both are opt-in challengers with explicit model fallback for unsupported screens. Use the same frozen combat solver and seeds when comparing them with `rules`. A20 Act 3 requires both native bosses; `tests/integration/test_a20_boss_settlement.py` covers the second-battle handoff and final outcome.
+
+`--upper-strategy growth` shares survival's card choices but takes more prepared elite fights and values key upgrades more highly. Its manifest identifies the immutable route/risk profile; it is an independent experimental arm, not the default.
+
+`readiness` retains coverage drafting and discounts elite routes when the public deck, potions and HP buffer are insufficient. `engine-growth` uses `PhaseStrategy` to combine engine acquisition with growth map/rest decisions. These named upper variants expose different hypotheses for paired A20 development; they have no automatic promotion or fallback between profiles.

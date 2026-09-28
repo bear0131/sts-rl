@@ -5,12 +5,14 @@
 旧 apps.dashboard / apps.watch / apps.play_gauntlet 入口继续可用。训练和算法不能反向依赖 apps；UI 只消费 env/policy/evaluation。
 日志、截图和 dashboard session JSON 写入 runs/local，不放仓库根目录。启动前查看 --help，自行指定端口/结果路径。
 
-Dashboard 的 Watch 页可在 `ironclad-overworld-v3` 规则上层（默认）与 checkpoint 模型
+Dashboard 的 Watch 页可在 `ironclad-overworld-v3.1-potion-contracts` 规则上层（默认）与 checkpoint 模型
 上层之间切换。规则复用训练 worker 的 `overworld_rule_decision()`；未覆盖的未知画面显式
 回退 checkpoint masked argmax，因此不是完全无模型的整局策略。战斗下层可独立选择
-checkpoint 模型/所选 NOSL 搜索，或 `ironclad-turn-v8-awakened-phase` 回合规划器。规划器
+checkpoint 模型/所选 NOSL 搜索，或 `ironclad-turn-v20-status-engines` 回合规划器。规划器
 使用 native-v1 完整动作覆盖出牌、目标、选牌和药水；前端固定使用历史 R10 配置
 `worlds=2,node_budget=8192,beam_width=8,max_depth=16,lookahead_turns=1,master_nonce=20260918`。
+当前v20是A20分支的开发版本，不代表历史R10或21cda74确认候选的胜率；
+合并只保留实现与测试，重新评测须固定当前源码及策略版本。
 它不调用 checkpoint 决定战斗动作；Runic Dome 等不支持的隐藏意图场景按版本契约回退
 `rules-ironclad-v3`。页面显示的 checkpoint value/prior 仅用于对照。
 
@@ -24,6 +26,6 @@ Boss 是真实战斗，停在所选下层策略的第一手决策。此功能是
 沙盒，不是可用于胜率统计的自然整局评测。
 
 “完整爬塔评测”独立选择上层与下层。上层支持 checkpoint masked argmax，或
-`ironclad-overworld-v3`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
-搜索，或上述固定配置的 `ironclad-turn-v8-awakened-phase`。评测状态记录两项选择、版本和
+`ironclad-overworld-v3.1-potion-contracts`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
+搜索，或上述固定配置的 `ironclad-turn-v20-status-engines`。评测状态记录两项选择、版本和
 规划器配置；切换回合规划下层时 NOSL 参数不参与执行。

@@ -7,6 +7,7 @@ budgets prevent beam pruning from excluding an entire first-action alternative.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import heapq
 import math
@@ -18,9 +19,13 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v8-awakened-phase'
+PLANNER_VERSION = 'ironclad-turn-v20-status-engines'
+_PUBLIC_POWER_FLAGS = frozenset(('CORRUPTION', 'BARRICADE', 'CONFUSED',
+                               'HEX', 'PEN_NIB', 'SURROUNDED'))
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
+_COST_ONLY_UPGRADES = frozenset(('BODY_SLAM', 'CORRUPTION', 'DARK_EMBRACE',
+    'BARRICADE', 'ENTRENCH', 'INFERNAL_BLADE', 'SEEING_RED', 'EXHUME', 'APOTHEOSIS'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
     'DOUBT', 'SHAME', 'PAIN', 'REGRET', 'DECAY', 'NORMALITY', 'WRITHE'))
 
@@ -43,11 +48,37 @@ _NON_DAMAGE_POWERS = frozenset((
     'nodraw', 'drawreduction', 'entangled', 'confused', 'intangible', 'buffer',
     'energized', 'noblock', 'hex', 'constricted', 'drawcardnextturn',
     'doubletap', 'doubledamage', 'vigor', 'losestrength', 'dexteritydown',
+    'barricade', 'pennib', 'surrounded',
 ))
 _DAMAGE_OR_CARD_RELICS = frozenset((
     'mercuryhourglass', 'bronzescales', 'charonsashes', 'letteropener',
     'stonecalendar', 'deadbranch', 'nilryscodex', 'tingsha', 'toolbox',
 ))
+
+
+_STATUS_CARDS = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED'))
+_CURSE_CARDS = frozenset(('ASCENDERS_BANE', 'CLUMSY', 'CURSE_OF_THE_BELL',
+    'DECAY', 'DOUBT', 'INJURY', 'NECRONOMICURSE', 'NORMALITY', 'PAIN',
+    'PARASITE', 'PRIDE', 'REGRET', 'SHAME', 'WRITHE'))
+_ETHEREAL_JUNK = frozenset(('ASCENDERS_BANE', 'CLUMSY', 'DAZED', 'VOID'))
+
+
+def status_engine_opportunities(raw, horizon):
+    """Bounded future trigger exposure from the public root multiset only.
+
+    Freeze this before scoring branches: drawing/exhausting junk must not erase
+    an installed engine's credit and make productive draw look backwards.
+    Ethereal junk already in hand will vanish before a future draw; exhausted
+    cards and hypothetical enemy/generated statuses provide no opportunity.
+    """
+    cards = raw['draw'] + raw['discard'] + [
+        card for card in raw['hand'] if card[0] not in _ETHEREAL_JUNK]
+    scale = 5 * horizon / max(5, len(cards))
+    status = sum(card[0] in _STATUS_CARDS for card in cards)
+    curse = sum(card[0] in _CURSE_CARDS for card in cards)
+    return {'evolve': min(3., status * scale),
+            'firebreathing': min(3., (status + curse) * scale),
+            'targets': min(3, sum(m['hp'] > 0 and not m['gone'] for m in raw['monsters']))}
 
 
 def no_remaining_damage_source(raw, public_relics=None):
@@ -94,8 +125,11 @@ class TurnPlannerConfig:
     max_depth: int = 16
     master_nonce: int = 20260918
     lookahead_turns: int = 1
+    damage_weight: float = .26
 
     def __post_init__(self):
+        if not math.isfinite(self.damage_weight) or self.damage_weight <= 0:
+            raise ValueError('damage_weight must be finite and positive')
         if self.lookahead_turns not in (1, 2):
             raise ValueError('lookahead_turns must be 1 or 2')
         for key in ('worlds', 'node_budget', 'beam_width', 'max_depth'):
@@ -110,8 +144,40 @@ class PlanResult:
 
 
 def _powers(raw):
-    return {name.replace(' ', '').replace('_', '').lower(): value
-            for name, value in raw.get('powers', ())}
+    powers = {name.replace(' ', '').replace('_', '').lower(): value
+              for name, value in raw.get('powers', ())}
+    flags = raw.get('public_power_flags')
+    if flags is not None:
+        for name, active in flags['flags'].items():
+            powers[name.replace('_', '').lower()] = int(active)
+    return powers
+
+
+def public_planner_state(battle, raw=None):
+    """Add public binary flags to a private snapshot, never checkpoint inputs."""
+    read = getattr(battle, 'public_player_power_flags', None)
+    if not callable(read):
+        raise RuntimeError('public-flags planner requires native public_player_power_flags schema 1')
+    record = read()
+    if (set(record) != {'schema_version', 'flags'}
+            or type(record['schema_version']) is not int or record['schema_version'] != 1
+            or set(record['flags']) != _PUBLIC_POWER_FLAGS
+            or any(type(v) is not bool for v in record['flags'].values())):
+        raise ValueError('unsupported public_player_power_flags schema')
+    raw = battle.to_dict() if raw is None else raw
+    raw['player']['public_power_flags'] = record
+    read_resources = getattr(battle, 'public_boundary_resources', None)
+    if not callable(read_resources):
+        raise RuntimeError('resource planner requires native public_boundary_resources schema 1')
+    resources = read_resources()
+    if (set(resources) != {'schema_version', 'cards_played', 'base_draw', 'pocketwatch'}
+            or type(resources['schema_version']) is not int or resources['schema_version'] != 1
+            or type(resources['cards_played']) is not int or resources['cards_played'] < 0
+            or type(resources['base_draw']) is not int or resources['base_draw'] < 0
+            or type(resources['pocketwatch']) is not bool):
+        raise ValueError('unsupported public_boundary_resources schema')
+    raw['player']['boundary_resources'] = resources
+    return raw
 
 
 def power_horizon(raw):
@@ -119,6 +185,97 @@ def power_horizon(raw):
     remaining = sum(m['hp'] for m in raw['monsters'] if m['hp'] > 0 and not m['gone'])
     strength = _powers(raw['player']).get('strength', 0)
     return min(5., max(1., remaining / max(25., 25 + 3 * strength)))
+
+
+def has_reusable_debuff_source(raw):
+    """Conservative Ironclad attacks that can use a later broken Artifact stack.
+
+    A lone exhausting Intimidate does not justify stripping charges when there
+    is no later debuff to land. These known attacks stay reusable under Corruption;
+    unknown/generated/exhausted cards are deliberately not assumed recoverable.
+    """
+    reusable = {'BASH', 'CLOTHESLINE', 'THUNDERCLAP', 'UPPERCUT'}
+    return any(card[0] in reusable for zone in ('hand', 'draw', 'discard')
+               for card in raw[zone])
+
+
+def upgrade_reference(raw, horizon, public_relics=None):
+    """Freeze only public upgrade counts, never identities or draw order.
+
+    Plain cards in exhaust remain in the deficit: merely exhausting a plain
+    card must not look like upgrading it. Future benefit, however, requires an
+    additional upgraded card in a reusable pile. This conservative matching can
+    undercount if an old upgraded copy is exhausted while another is upgraded.
+    """
+    active = raw['hand'] + raw['draw'] + raw['discard']
+    plain = Counter(card[0] for card in active + raw['exhaust'] if not card[1])
+    upgraded = Counter(card[0] for card in active if card[1])
+    relics = {''.join(c for c in name.lower() if c.isalnum())
+              for name in public_relics or ()}
+    if _powers(raw['player']).get('confused', 0) or 'sneckoeye' in relics:
+        # Future draw randomizes cost again; actual current-hand savings are
+        # already observed by native transitions inside this horizon.
+        for cid in _COST_ONLY_UPGRADES:
+            plain.pop(cid, None)
+    # A rough chance of replay within the root horizon, capped at1.5 per card.
+    # No reward for Searing Blow's upgrades beyond its first in this candidate.
+    payoff = min(1.5, 5. * horizon / max(5, len(active)))
+    return plain, upgraded, payoff
+
+
+def upgrade_potential(raw, reference):
+    """Credit a lost plain copy only when an upgraded reusable copy also appears."""
+    if reference is None:
+        return 0.
+    root_plain, root_upgraded, payoff = reference
+    active = raw['hand'] + raw['draw'] + raw['discard']
+    plain = Counter(card[0] for card in active + raw['exhaust'] if not card[1])
+    upgraded = Counter(card[0] for card in active if card[1])
+    gains = sum(max(0, min(count - plain[cid], upgraded[cid] - root_upgraded[cid]))
+                for cid, count in root_plain.items())
+    return payoff * gains
+
+
+def deferred_time_warp_penalties(raw, horizon):
+    """A narrow public opportunity prior for safely clearing Time Warp eleven.
+
+    With Ripple/Haste visible, triggering now spends no extra incoming attack.
+    Carrying eleven instead leaves just one play next turn; the eventual trigger
+    still grants Strength and may force END before defending. Charge this delay
+    at the root's generic two-Strength cost plus a modest four-point lost-play
+    prior. This is not a value identity: next-turn one-card lethal can evade it.
+    Native actual Strength/retaliation and terminal ranking remain unchanged.
+    """
+    return {(slot, monster['id']): 3.2 * horizon + 4.
+            for slot, monster in enumerate(raw['monsters'])
+            if monster['id'] == 'TIME_EATER' and monster['hp'] > 0
+            and not monster['gone'] and _powers(monster).get('timewarp', 0) == 11
+            and monster['move'] in ('TIME_EATER_RIPPLE', 'TIME_EATER_HASTE')}
+
+
+def scaling_damage_premiums(raw, base_damage_weight=.26):
+    """Root-anchored marginal urgency for visible Ritual's growing attacks.
+
+    Eighteen damage is three ordinary Strikes, adjusted by public Strength.
+    The marginal cost of an extra turn near the estimated kill time grows with
+    Ritual. This deliberately rough, capped prior supplements the base HP cost;
+    it is neither a learned value nor a forecast of actual future draws/block.
+    Slot and ID jointly identify the root monster so transformed bodies do not
+    inherit another enemy's premium.
+    """
+    damage_rate = max(9., 18 + 3 * _powers(raw['player']).get('strength', 0))
+    premiums = {}
+    for slot, monster in enumerate(raw['monsters']):
+        ritual = _powers(monster).get('ritual', 0)
+        if monster['hp'] <= 0 or monster['gone'] or ritual <= 0:
+            continue
+        remaining_turns = monster['hp'] / damage_rate
+        attack = max(0, monster['adjusted_damage']) * max(0, monster['hits'])
+        marginal = min(2., 1.3 * (attack + ritual * remaining_turns) / damage_rate)
+        premium = max(0., marginal - base_damage_weight)
+        if premium:
+            premiums[(slot, monster['id'])] = premium
+    return premiums
 
 
 def enemy_burden(monsters):
@@ -162,7 +319,9 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None):
+def state_value(raw, *, partial=False, public_relics=None, horizon=None,
+                damage_weight=.26, damage_premiums=None, artifact_potential=False,
+                upgrades=None, time_warp_penalties=None, status_opportunities=None):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -188,14 +347,36 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         # Losing every remaining output channel is worse than ordinary HP or
         # damage differences, but remains separate from an actual native death.
         value -= 10000
-    value -= .26 * remaining + 10 * future_bodies
+    value -= damage_weight * remaining + 10 * future_bodies
+    if damage_premiums:
+        value -= sum(damage_premiums.get((slot, monster['id']), 0.) * monster['hp']
+                     for slot, monster in enumerate(raw['monsters'])
+                     if monster['hp'] > 0 and not monster['gone'])
+    if time_warp_penalties:
+        value -= sum(time_warp_penalties.get((slot, monster['id']), 0.)
+                     for slot, monster in enumerate(raw['monsters'])
+                     if monster['hp'] > 0 and not monster['gone']
+                     and _powers(monster).get('timewarp', 0) == 11)
     for m in monsters:
         mp = _powers(m)
-        value -= 1.6 * horizon * mp.get('strength', 0)
+        # Angry is reactive growth on every hit, not free growth from waiting.
+        # The native enemy boundary already charges this turn's stronger hit.
+        # Applying the generic multi-turn Strength penalty again can make
+        # every safe Strike worse than blocking forever against Mad Gremlin.
+        strength_weight = .5 if mp.get('angry', 0) > 0 else 1.6 * horizon
+        value -= strength_weight * mp.get('strength', 0)
         value -= horizon * mp.get('ritual', 0)
+        if artifact_potential:
+            # Finite, bounded shield potential; every real charge reduction is
+            # progress, with the last charge closest to enabling an actual debuff.
+            artifact = max(0, mp.get('artifact', 0))
+            value -= 3. * artifact / (artifact + 1.)
         value += 3 * min(horizon, mp.get('weak', 0))
         value += 3 * min(horizon, mp.get('vulnerable', 0))
-        value -= .6 * min(m['block'], 30)
+        # Barricade's shield survives future enemy turns. Capping it erases
+        # all progress above30 block and can make free attacks tie with END.
+        block_burden = m['block'] if mp.get('barricade', 0) > 0 else min(m['block'], 30)
+        value -= .6 * block_burden
     value += horizon * (2.3 * powers.get('strength', 0)
         + 1.8 * powers.get('dexterity', 0)
         + .8 * powers.get('metallicize', 0)
@@ -209,8 +390,34 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     value -= 2 * min(horizon, powers.get('vulnerable', 0))
     if powers.get('barricade', 0):
         value += .55 * min(150, p['block']) + 4 * horizon
+    if (not partial and raw.get('post_enemy_turn_boundary', False)
+            and any(name in ('Ice Cream', 'ICE_CREAM', 'IceCream')
+                    for name in (public_relics or ()))):
+        # Native boundaries retain energy only with Ice Cream. It can buy
+        # future actions, unlike ordinary unused end-turn energy. Cap the
+        # near-term spending credit so banking hundreds of energy never
+        # overwhelms real HP/damage or rewards pointless energy generation.
+        value += 1.5 * min(max(0, p['energy']), 6., 2 * horizon)
+    if status_opportunities:
+        # Human prior for real delayed triggers, fixed across all leaves. Its
+        # bounds prevent status engines from overwhelming known HP/terminals.
+        value += 2 * min(2, powers.get('evolve', 0)) * status_opportunities['evolve']
+        value += min(20., damage_weight * powers.get('firebreathing', 0)
+                     * status_opportunities['firebreathing'] * status_opportunities['targets'])
+    resources = p.get('boundary_resources')
+    if (not partial and raw.get('post_enemy_turn_boundary', False) and resources
+            and resources['pocketwatch'] and resources['cards_played'] <= 3):
+        # Eligibility was public before native cleanup. Credit only additional
+        # draw opportunities beyond normal and guaranteed Brutality draws,
+        # respecting Pyramid's retained hand and the public remaining cards.
+        # Native Brutality draws after Pocketwatch; count the marginal total
+        # cards, so an already full next hand does not earn Pocketwatch credit.
+        capacity = min(max(0, 10 - len(raw['hand'])), len(raw['draw']) + len(raw['discard']))
+        guaranteed_draw = resources['base_draw'] + max(0, powers.get('brutality', 0))
+        value += min(3, max(0, capacity - guaranteed_draw))
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
+    value += upgrade_potential(raw, upgrades)
     if partial:
         incoming = sum(max(0, m['adjusted_damage']) * max(0, m['hits']) for m in monsters)
         value -= 1.3 * max(0, incoming - p['block'])
@@ -218,14 +425,20 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     return value
 
 
-def leaf_value(raw, *, public_relics=None, horizon=None):
+def leaf_value(raw, *, public_relics=None, horizon=None, damage_weight=.26,
+               damage_premiums=None, artifact_potential=False, upgrades=None,
+               time_warp_penalties=None, status_opportunities=None):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
     the historical victory bonus. Keep it for ordering within a terminal class.
     """
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
-    value = state_value(raw, public_relics=public_relics, horizon=horizon)
+    value = state_value(raw, public_relics=public_relics, horizon=horizon,
+                        damage_weight=damage_weight, damage_premiums=damage_premiums,
+                        artifact_potential=artifact_potential, upgrades=upgrades,
+                        time_warp_penalties=time_warp_penalties,
+                        status_opportunities=status_opportunities)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -262,6 +475,10 @@ class NativeTurnPlanner:
     raw observations omit simulator state needed to prove transition equivalence.
     """
     def __init__(self, config: TurnPlannerConfig = TurnPlannerConfig()):
+        if not callable(getattr(sts.BattleContext, 'public_player_power_flags', None)):
+            raise RuntimeError('public-flags planner requires native public_player_power_flags schema 1')
+        if not callable(getattr(sts.BattleContext, 'public_boundary_resources', None)):
+            raise RuntimeError('resource planner requires native public_boundary_resources schema 1')
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
@@ -272,13 +489,18 @@ class NativeTurnPlanner:
         roots = complete_actions(battle)
         if not roots:
             raise ValueError('turn planner requires a live combat decision')
-        original = battle.to_dict()
+        original = public_planner_state(battle)
         if original['post_enemy_turn_boundary']:
             raise ValueError('turn planner requires a live decision, not a projected enemy boundary')
         final_player_turn = original['turn'] + self.config.lookahead_turns - 1
         # A shared public reference makes the payoff duration comparable across
         # damage, growth and enemy debuff branches, worlds, and partial leaves.
         horizon = power_horizon(original)
+        damage_premiums = scaling_damage_premiums(original, self.config.damage_weight)
+        artifact_potential = has_reusable_debuff_source(original)
+        upgrades = upgrade_reference(original, horizon, public_relics)
+        time_warp_penalties = deferred_time_warp_penalties(original, horizon)
+        status_opportunities = status_engine_opportunities(original, horizon)
         # Root draw selections refer to a public displayed index, which NOSL
         # shuffles. Remap the same native entity without executing it first:
         # pending exhaust/draw triggers may otherwise reveal the live future.
@@ -289,6 +511,7 @@ class NativeTurnPlanner:
         values = {bits: [] for bits in roots}
         unresolved = {bits: 0 for bits in roots}
         winning_steps = {bits: 0 for bits in roots}
+        completed_steps = {bits: 0 for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0,
@@ -300,10 +523,12 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn)
+                                           horizon, final_player_turn, damage_premiums, artifact_potential,
+                                           upgrades, time_warp_penalties, status_opportunities)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
+                completed_steps[bits] += counts['completed_steps']
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves',
                             'second_turn_entries', 'completed_horizon_leaves'):
                     stats[key] += counts[key]
@@ -314,22 +539,43 @@ class NativeTurnPlanner:
         # Only break an exact tie in death count, win count and mean utility.
         # Otherwise receding-horizon planning can forever postpone an equally
         # good proved win behind a harmless, self-replacing zero-cost card.
-        # Nonwinning roots have zero winning steps, preserving their old tie.
-        selected = max(roots, key=lambda bits: (priorities[bits], -winning_steps[bits], -bits))
+        # Retain the existing winning-length preference, then extend progress
+        # to equally valued surviving boundaries. A partial estimate cannot
+        # establish an equivalent completed plan; disable the new tie whenever
+        # any tied alternative is unresolved or includes a sampled death.
+        primary = {bits: (priorities[bits], -winning_steps[bits]) for bits in roots}
+        best = max(primary.values())
+        tied = [bits for bits in roots if primary[bits] == best]
+        complete_safe_tie = all(unresolved[bits] == 0 and priorities[bits][0] == 0
+                                for bits in tied)
+        selected = max(tied, key=lambda bits: (
+            -completed_steps[bits] if complete_safe_tie else 0, -bits))
         stats.update(root_values={str(k): v[2] for k, v in priorities.items()},
             root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
                                        unresolved=unresolved[k],
                                        boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
-                                       heuristic_mean=v[2], winning_steps_total=winning_steps[k],
+                                       heuristic_mean=v[2], completed_steps_total=completed_steps[k],
+                                       winning_steps_total=winning_steps[k],
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
+            root_artifact_potential={'enabled': artifact_potential, 'per_enemy_ceiling': 3.},
+            root_time_warp_penalties={f'{slot}:{enemy}': value
+                                      for (slot, enemy), value in time_warp_penalties.items()},
+            root_upgrade_potential={'plain_count': sum(upgrades[0].values()),
+                                    'per_card_payoff': upgrades[2]},
+            root_status_opportunities=status_opportunities,
+            root_damage_premiums={f'{slot}:{enemy}': value
+                                  for (slot, enemy), value in damage_premiums.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn):
+    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
+              damage_premiums=None, artifact_potential=False, upgrades=None,
+              time_warp_penalties=None, status_opportunities=None):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
-                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0)
+                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
+                     completed_steps=0)
         frontier = []
         serial = 0
         best = None
@@ -355,16 +601,28 @@ class NativeTurnPlanner:
                     raise ValueError('two-turn planning cannot resume an already armed search boundary')
                 if raw['outcome'] == 0 and raw['turn'] >= final_player_turn:
                     stats['second_turn_entries'] += 1
+            raw = public_planner_state(child, raw)
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
-                value = leaf_value(raw, public_relics=public_relics, horizon=horizon)
+                value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
+                                   damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
+                                   artifact_potential=artifact_potential, upgrades=upgrades,
+                                   time_warp_penalties=time_warp_penalties,
+                                   status_opportunities=status_opportunities)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
-                elif value == best and value[0] == 1:
-                    stats['winning_steps'] = min(stats['winning_steps'], depth)
+                    stats['completed_steps'] = depth if value[0] >= 0 else 0
+                elif value == best and value[0] >= 0:
+                    stats['completed_steps'] = min(stats['completed_steps'], depth)
+                    if value[0] == 1:
+                        stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
-            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
+            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon,
+                                  damage_weight=self.config.damage_weight, damage_premiums=damage_premiums,
+                                  artifact_potential=artifact_potential, upgrades=upgrades,
+                                  time_warp_penalties=time_warp_penalties,
+                                  status_opportunities=status_opportunities)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

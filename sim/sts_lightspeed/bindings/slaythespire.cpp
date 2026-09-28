@@ -79,6 +79,21 @@ py::list playerPowersToList(const sts::Player &p) {
     return out;
 }
 
+py::dict publicPlayerPowerFlags(const sts::BattleContext &bc) {
+    // Separate from legacy numeric powers and packed checkpoint inputs. These
+    // active effects are visible to the player, unlike arbitrary internal bits.
+    py::dict flags;
+    for (const auto status : {PS::CORRUPTION, PS::BARRICADE, PS::CONFUSED,
+                              PS::HEX, PS::PEN_NIB, PS::SURROUNDED}) {
+        flags[playerStatusEnumStrings[static_cast<int>(status)]] =
+            static_cast<bool>(bc.player.hasStatusRuntime(status));
+    }
+    py::dict result;
+    result["schema_version"] = 1;
+    result["flags"] = flags;
+    return result;
+}
+
 py::list monsterPowersToList(const sts::Monster &m) {
     py::list out;
     for (int s = 0; s < static_cast<int>(sts::MonsterStatus::INVALID); ++s) {
@@ -87,6 +102,16 @@ py::list monsterPowersToList(const sts::Monster &m) {
             out.append(py::make_tuple(sts::enemyStatusStrings[s], v));
         }
     }
+    return out;
+}
+
+py::dict publicBoundaryResources(const sts::BattleContext &bc) {
+    py::dict out;
+    out["schema_version"] = 1;
+    out["cards_played"] = bc.postEnemyTurnBoundary
+        ? bc.boundaryCardsPlayed : bc.player.cardsPlayedThisTurn;
+    out["base_draw"] = bc.player.cardDrawPerTurn;
+    out["pocketwatch"] = bc.player.hasRelicRuntime(sts::RelicId::POCKETWATCH);
     return out;
 }
 
@@ -627,6 +652,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     bc.turnHasEnded = false;
     bc.stopAfterEnemyTurn = false;
     bc.postEnemyTurnBoundary = false;
+    bc.boundaryCardsPlayed = 0;
     bc.monsterTurnIdx = bc.monsters.monsterCount;
 }
 
@@ -2847,6 +2873,12 @@ PYBIND11_MODULE(slaythespire, m) {
             return projected.curHp;
         }, "HP after applying combat-exit relic healing to a temporary GameContext")
         .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
+        .def("public_player_power_flags", &publicPlayerPowerFlags,
+             "read-only schema_version=1 public boolean flags: CORRUPTION, BARRICADE, "
+             "CONFUSED, HEX, PEN_NIB, SURROUNDED; leaves legacy observations unchanged")
+        .def("public_boundary_resources", &publicBoundaryResources,
+             "read-only schema_version=1 public played-card count and base draw; "
+             "retains pre-cleanup count at search boundaries without changing legacy observations")
         .def("compact_leaf_arrays", [](const BattleContext &bc) {
             // Diagnostic endpoint for packed-vs-legacy contract tests. The
             // search hot path uses next_batch_packed(), which does not expose

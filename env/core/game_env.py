@@ -666,12 +666,13 @@ class SimGameEnv:
         combat event like Mushrooms / Dead Adventurer), end a finished combat
         (exit_battle opens rewards), and detect an act transition to rebuild the
         map. Stops at the next real decision."""
-        # entered a battle by any path (map node or event) -> create the bc.
-        if self.bc is None and _tail(self.gc) == "BATTLE":
-            self._start_battle()
         if self.bc is not None and self.bc.is_battle_over:
             self.bc.exit_battle(self.gc)
             self.bc = None
+        # Exiting A20's first Act3 boss enters the second battle immediately.
+        # Settle that transition before exposing observations or legal actions.
+        if self.bc is None and not self.is_over and _tail(self.gc) == "BATTLE":
+            self._start_battle()
         # act bumped (cleared the boss) -> rebuild the map for the new act.
         if self.gc.act != self.rmap.act and not self.is_over:
             self._rebuild_map()
