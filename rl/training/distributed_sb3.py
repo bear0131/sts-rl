@@ -2151,7 +2151,7 @@ def main() -> None:
             flush=True,
         )
     if source_nosl_inner_only:
-        if args.nosl_is_az_train_shared_embeddings:
+        if args.nosl_is_az_train_shared_embeddings and recovery_state is None:
             embedding_count = model.reset_nosl_is_az_shared_embeddings(args.seed)
             print(
                 f"[rank {args.rank}] reset {embedding_count} shared semantic "
