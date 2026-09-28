@@ -6,6 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| GAME02 | 三组候选关卡已设计；待试玩筛选 | 在 6–8 场短前置遭遇中分别建立“立刻攻击”“先杀低血量”“集中攻击”先验，再用蓄势、连坐、回盾各一条简单规则构成可重试反例；数值路径与观测指标见 [候选设计](docs/2026-09-28/misleading-encounter-curriculum.md)。后续应验证前置先验确实形成、玩家能在重试中发现并利用规则。 |
+| GAME01 | 三场遭遇规则已定稿；试玩原型待实现 | 类肉鸽互馈增幅关卡：前两场连续攻击各损失 9，第三场连续攻击损失 4、首回合等待可损失 2；回合结算与隐藏下一次怪物意图的边界见 [设计稿](docs/2026-09-28/reciprocal-growth-encounter.md)。后续原型需逐回合复现路径并记录第三场首回合行动。 |
 | PHASE04 | 已完成 | `apps/phase_field/` 左上目标图案放大：桌面目标窗 9rem、移动端 6.4rem，节点和相位刻度随画布尺寸放大；浏览器桌面/390px 检查无溢出。见 `worklog/2026-09-28.md#phase04-larger-target-diagram`。 |
 | PHASE03 | 已完成 | `apps/phase_field/` 每房固定目标相位；一次全局演化保存独立阶段快照，前端按阶段回放并锁定输入；中央节点与目标窗使用相同六向彩色相位刻度。8 个引擎测试、浏览器回放与通关交互通过；见 `worklog/2026-09-28.md#phase03-fixed-targets-and-staged-evolution-replay`。 |
 | EVAL04 | 已完成 | 固定 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，NOSL 根节点单次重采样后沿分支保持同一 future；GPU 四机按 13/12/13/12 完成唯一 seeds 60000--60049，全部 complete、无 step_limit/other_truncation/非法动作。结果 6/50 胜，平均/中位楼层 32.28/33，Act2/Act3 到达率 78%/32%；同 seed 旧 T=1 基线为 0/50、平均楼层25.56，配对平均差+6.72层、楼层胜/负/平29/8/13。旧基线同时更换了 checkpoint 和搜索算法，不能视为单变量。合并结果位于 `runs/local/eval-value512-rootstable-step18137088-seeds60000-20260925-13121312/`；记录见 `worklog/2026-09-25.md#eval04-stable-512-node-value-beam-campaign`。 |
