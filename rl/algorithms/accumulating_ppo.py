@@ -1991,22 +1991,26 @@ class AccumulatingMaskablePPO(MaskablePPO):
         def transfer_array(array: np.ndarray, dtype=None) -> th.Tensor:
             source = th.from_numpy(array)
             if is_cuda:
-                # Keep pageable source storage alive until the update's D2H
-                # barrier, including packed observations and dtype casts.
-                host_transfer_sources.append(source)
-            return source.to(device=self.device, dtype=dtype, non_blocking=True)
+                # Stage compact storage in pinned memory. Pageable .to() can
+                # block behind the previous microbatch on the CUDA stream,
+                # even with non_blocking=True. Cast on the GPU after the copy
+                # so float16/uint replay fields do not expand on the host.
+                pinned = th.empty(source.shape, dtype=source.dtype, pin_memory=True)
+                pinned.copy_(source)
+                host_transfer_sources.append(pinned)
+                source = pinned
+            return source.to(device=self.device, non_blocking=True).to(dtype=dtype)
 
         def transfer_observations(observation: dict) -> dict:
             if not is_cuda:
-                return _leaf_observation_as_tensor(observation, self.device)
+                return _leaf_observation_as_tensor({
+                    key: np.asarray(value, dtype=self.observation_space[key].dtype)
+                    for key, value in observation.items()
+                }, self.device)
             groups = {}
             for key, value in observation.items():
                 array = np.ascontiguousarray(value)
                 groups.setdefault(array.dtype, []).append((key, array))
-            if any(dtype not in (np.dtype(np.int64), np.dtype(np.float32))
-                   for dtype in groups):
-                return {key: transfer_array(value)
-                        for key, value in observation.items()}
             result = {}
             for fields in groups.values():
                 flats = [array.reshape(-1) for _, array in fields]
@@ -2014,7 +2018,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 tensor = transfer_array(packed)
                 offset = 0
                 for key, array in fields:
-                    result[key] = tensor[offset:offset + array.size].reshape(array.shape)
+                    dtype = th.from_numpy(np.empty(0, dtype=self.observation_space[key].dtype)).dtype
+                    result[key] = tensor[offset:offset + array.size].reshape(array.shape).to(dtype=dtype)
                     offset += array.size
             return result
 
@@ -2035,7 +2040,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 # Materialize the sampled effective batch once.  Slicing this
                 # batch below keeps each micro-batch as a view and avoids a
                 # replay-buffer advanced-index copy for every forward pass.
-                sampled_batch = replay.get_batch(indices)
+                sampled_batch = replay.get_batch(
+                    indices, workers=4 if is_cuda and train_count >= 32768 else 1
+                )
             else:
                 assert fresh_samples is not None
                 sampled_batch = self._nosl_samples_to_batch(
@@ -2057,12 +2064,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     "value_targets": sampled_batch["value_targets"][start:end],
                     "sample_ids": sampled_batch["sample_ids"][start:end],
                 }
-                host_observations = {
-                    key: np.asarray(
-                        value, dtype=self.observation_space[key].dtype
-                    )
-                    for key, value in batch["observations"].items()
-                }
+                host_observations = batch["observations"]
                 observations = transfer_observations(host_observations)
                 actor_kwargs = {}
                 if "relics" in host_observations and hasattr(core, "combat_actor_critic"):

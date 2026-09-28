@@ -566,6 +566,29 @@ class NOSLISAZTest(unittest.TestCase):
         self.assertEqual(int(old.sum()), 5)
         self.assertEqual(set(batch["sample_ids"][~old].tolist()), {8, 9})
 
+    def test_parallel_replay_gather_preserves_order_duplicates_and_owned_storage(self):
+        observation_space = spaces.Dict({
+            "category": spaces.Box(0, 1000, shape=(2,), dtype=np.int64),
+            "scalar": spaces.Box(-1, 1, shape=(1,), dtype=np.float32),
+        })
+        replay = NOSLISAZReplayBuffer(capacity=3, observation_space=observation_space,
+            observation_keys=observation_space.spaces, action_dim=3)
+        replay.add_samples([self._replay_sample(i) for i in range(5)])
+        indices = np.asarray([2, 0, 2, 1])
+        serial = replay.get_batch(indices)
+        parallel = replay.get_batch(indices, workers=4)
+        np.testing.assert_array_equal(parallel["sample_ids"], [4, 2, 4, 3])
+        for key in serial:
+            if key == "observations":
+                for field in serial[key]:
+                    np.testing.assert_array_equal(parallel[key][field], serial[key][field], strict=True)
+            else:
+                np.testing.assert_array_equal(parallel[key], serial[key], strict=True)
+        parallel["observations"]["category"][0, 0] = 99
+        self.assertEqual(replay.observations["category"][2, 0], 4)
+        with self.assertRaises(IndexError):
+            replay.get_batch(np.asarray([3]), workers=4)
+
     def test_replay_freshness_protection_rejects_an_all_old_batch(self):
         observation_space = spaces.Dict({
             "category": spaces.Box(0, 1000, shape=(2,), dtype=np.int64),

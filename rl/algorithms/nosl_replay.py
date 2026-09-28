@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from math import prod
 
 import numpy as np
@@ -326,7 +327,14 @@ class NOSLISAZReplayBuffer:
         chooser.shuffle(selected)
         return selected
 
-    def get_batch(self, indices: np.ndarray) -> dict[str, object]:
+    def get_batch(self, indices: np.ndarray, *, workers: int = 1) -> dict[str, object]:
+        """Gather identical ordered rows; bounded threads copy independent fields.
+
+        The caller must not append to replay until this synchronous call returns.
+        Sampling and its RNG stay with the caller. Small/CPU batches use one worker.
+        """
+        if not 1 <= workers <= 4:
+            raise ValueError("replay gather workers must be in [1, 4]")
         if self.observations is None:
             raise ValueError("cannot read an unallocated replay buffer")
         assert self.action_masks is not None
@@ -335,16 +343,23 @@ class NOSLISAZReplayBuffer:
         assert self.value_targets is not None
         assert self.sample_ids is not None
         indices = np.asarray(indices, dtype=np.int64)
-        return {
-            "observations": {
-                key: values[indices] for key, values in self.observations.items()
-            },
-            "action_masks": self.action_masks[indices],
-            "policy_targets": self.policy_targets[indices],
-            "policy_weights": self.policy_weights[indices],
-            "value_targets": self.value_targets[indices],
-            "sample_ids": self.sample_ids[indices],
-        }
+        fields = list(self.observations.items()) + [
+            (name, getattr(self, name)) for name in (
+                "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids"
+            )
+        ]
+        def gather(field):
+            return field[1][indices]
+        if workers == 1:
+            values = list(map(gather, fields))
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                values = list(pool.map(gather, fields))
+        count = len(self.observations)
+        return dict(
+            observations=dict(zip((key for key, _ in fields[:count]), values[:count])),
+            **dict(zip((key for key, _ in fields[count:]), values[count:])),
+        )
 
     def estimated_capacity_bytes(self) -> int:
         obs_bytes = sum(
