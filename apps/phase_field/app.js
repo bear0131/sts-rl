@@ -256,6 +256,7 @@
     const centerY = height / 2;
     const positions = nodePositions(room, width, height);
     const radius = Math.min(width, height) * 0.28;
+    const nodeRadius = Math.min(width, height) * 0.052;
     context.save();
     context.strokeStyle = "rgba(190, 201, 255, .14)";
     context.lineWidth = 0.9;
@@ -284,18 +285,18 @@
     target.forEach((phase, index) => {
       const { x, y } = positions[index];
       context.beginPath();
-      context.arc(x, y, 5, 0, Math.PI * 2);
+      context.arc(x, y, nodeRadius, 0, Math.PI * 2);
       context.fillStyle = phaseColor(phase, 0.85, state.run.paletteOffset);
       context.shadowBlur = 10;
       context.shadowColor = context.fillStyle;
       context.fill();
       context.beginPath();
-      context.arc(x, y, 9, 0, Math.PI * 2);
+      context.arc(x, y, nodeRadius + 4, 0, Math.PI * 2);
       context.setLineDash([2, 3]);
       context.lineWidth = 1;
       context.strokeStyle = "rgba(225, 231, 255, .35)";
       context.stroke();
-      drawPhaseScale(context, x, y, phase, 9, state.run.paletteOffset, true);
+      drawPhaseScale(context, x, y, phase, nodeRadius + 4, state.run.paletteOffset, true);
     });
     context.restore();
   }

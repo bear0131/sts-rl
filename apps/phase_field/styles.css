@@ -264,6 +264,8 @@ button {
 
 .target-panel {
   left: 1.25rem;
+  width: 9rem;
+  height: 9rem;
 }
 
 .pulse-panel {
@@ -453,7 +455,11 @@ button {
     border-radius: 1rem;
   }
 
-  .target-panel { left: 0.75rem; }
+  .target-panel {
+    left: 0.75rem;
+    width: 6.4rem;
+    height: 6.4rem;
+  }
   .pulse-panel { right: 0.75rem; }
 
   .actions {

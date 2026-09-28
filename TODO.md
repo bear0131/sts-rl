@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| PHASE04 | 已完成 | `apps/phase_field/` 左上目标图案放大：桌面目标窗 9rem、移动端 6.4rem，节点和相位刻度随画布尺寸放大；浏览器桌面/390px 检查无溢出。见 `worklog/2026-09-28.md#phase04-larger-target-diagram`。 |
 | PHASE03 | 已完成 | `apps/phase_field/` 每房固定目标相位；一次全局演化保存独立阶段快照，前端按阶段回放并锁定输入；中央节点与目标窗使用相同六向彩色相位刻度。8 个引擎测试、浏览器回放与通关交互通过；见 `worklog/2026-09-28.md#phase03-fixed-targets-and-staged-evolution-replay`。 |
 | EVAL04 | 已完成 | 固定 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，NOSL 根节点单次重采样后沿分支保持同一 future；GPU 四机按 13/12/13/12 完成唯一 seeds 60000--60049，全部 complete、无 step_limit/other_truncation/非法动作。结果 6/50 胜，平均/中位楼层 32.28/33，Act2/Act3 到达率 78%/32%；同 seed 旧 T=1 基线为 0/50、平均楼层25.56，配对平均差+6.72层、楼层胜/负/平29/8/13。旧基线同时更换了 checkpoint 和搜索算法，不能视为单变量。合并结果位于 `runs/local/eval-value512-rootstable-step18137088-seeds60000-20260925-13121312/`；记录见 `worklog/2026-09-25.md#eval04-stable-512-node-value-beam-campaign`。 |
 | EVAL05 | 已完成 | 本机 Dashboard 自动评测固定 step7520256 checkpoint、`ironclad-overworld-v3` 上层与 `ironclad-turn-v8-awakened-phase` 下层（2 worlds、8192 nodes/world、beam8、depth16、lookahead1），8 workers 完成唯一 seeds200000--200099；100局全部自然终局，46 win / 54 death，胜率46.0%（Wilson 95% CI 36.56%--55.74%），平均/中位楼层41.95/50，Act2/Act3到达率94%/63%，端到端901.162秒。历史最强 R10 开发集为47/128=36.71875%，但其 seeds150000--150127 且上层为v1，不能把+9.28pp点估计差归因为v3。结果位于 `runs/local/eval-overworld-v3-planner8192-seeds200000-100-20260927/`；记录见 `worklog/2026-09-27.md#eval05-local-dashboard-overworld-v3-planner8192-campaign`。 |
