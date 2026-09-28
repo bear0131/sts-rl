@@ -5,13 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#090b16">
     <title>◇</title>
-    <link rel="stylesheet" href="styles.css?v=game01">
+    <link rel="stylesheet" href="styles.css?v=game02">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <button id="restart" class="icon-button" type="button" aria-label="重新开始整局">
+        <button id="restart" class="icon-button" type="button" aria-label="重试当前关卡">
           <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M11 24a13 13 0 1 1 4 10M11 24V12m0 12h12"/></svg>
+        </button>
+        <button id="levelPicker" class="icon-button level-picker" type="button" aria-label="选择关卡">
+          <span id="stageNumber" aria-hidden="true">1</span>
         </button>
         <div id="route" class="route" aria-label="关卡路线"></div>
         <div id="chapterMark" class="chapter-mark" aria-hidden="true"></div>
@@ -19,6 +22,7 @@
 
       <section class="arena" aria-label="战斗区域">
         <div class="arena-glow" aria-hidden="true"></div>
+        <div id="loss" class="loss" aria-label="本关累计掉血 0">0</div>
         <div id="history" class="history" aria-label="已经发生的敌方攻击"></div>
         <div class="combatants">
           <div id="player" class="player" aria-label="玩家"></div>
@@ -34,6 +38,7 @@
         <button id="attack" class="action attack" type="button" aria-label="攻击所选怪物">
           <span class="action-energy" aria-hidden="true"></span>
           <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M13 55 56 12M44 12h12v12M18 42l12 12M10 62l9-9"/></svg>
+          <span id="attackPower" class="action-value" aria-hidden="true">1</span>
         </button>
         <button id="charge" class="action charge" type="button" aria-label="蓄势">
           <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M36 10v14M36 48v14M10 36h14M48 36h14M20 20l10 10M42 42l10 10M52 20 42 30M30 42 20 52"/><circle cx="36" cy="36" r="7"/></svg>
@@ -49,8 +54,16 @@
           <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M16 36h38m-16-16 16 16-16 16"/></svg>
         </button>
       </div>
+      <div id="levelSelect" class="level-select" role="dialog" aria-modal="true" aria-label="选择关卡" hidden>
+        <div class="level-select-panel">
+          <button id="closeSelect" class="icon-button close-select" type="button" aria-label="关闭关卡选择">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 12 36 36M36 12 12 36"/></svg>
+          </button>
+          <div id="levelGrid" class="level-grid"></div>
+        </div>
+      </div>
     </main>
     <script src="engine.js"></script>
-    <script src="app.js?v=game01"></script>
+    <script src="app.js?v=game02"></script>
   </body>
 </html>

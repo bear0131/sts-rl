@@ -6,8 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| GAME02 | 三组候选已实现静态试玩；待真人筛选 | `apps/causal_rooms/` 实现蓄势、连坐、回盾各六场示例和一场可重试反例，核对惯性策略与替代策略损血；设计与观测指标见 [候选设计](docs/2026-09-28/misleading-encounter-curriculum.md)。仍需真人验证前置先验是否形成、反馈能否让玩家发现并利用规则。 |
-| GAME01 | 三场遭遇静态试玩已实现 | `apps/causal_rooms/` 逐回合复现前两场连续攻击各损失 9、第三场连续攻击损失 4、等待后损失 2；记录第三场首回合行动，隐藏敌人未来意图，以亮度、闪烁和图形呈现无文字界面，支持容错通关与本关重试。规则边界见 [设计稿](docs/2026-09-28/reciprocal-growth-encounter.md)。 |
+| GAME02 | 三组候选已实现静态试玩；待真人筛选 | `apps/causal_rooms/` 实现蓄势、连坐、回盾各六场示例和一场可重试反例；每关独立 20 生命，逐关解锁并可选择已解锁关卡，浏览器保存最好结果。数值路径与观测指标见 [候选设计](docs/2026-09-28/misleading-encounter-curriculum.md)。仍需真人验证先验和规则发现。 |
+| GAME01 | 三场遭遇静态试玩已实现 | `apps/causal_rooms/` 逐回合复现前两场连续攻击各损失 9、第三场连续攻击损失 4、等待后损失 2；局内显示蓝色玩家生命、暖橙怪物生命、金色当前攻击、红色实际掉血数字，敌人未来意图隐藏；支持非完美通关、本关重试和选择已解锁关卡。规则边界见 [设计稿](docs/2026-09-28/reciprocal-growth-encounter.md)。 |
 | PHASE04 | 已完成 | `apps/phase_field/` 左上目标图案放大：桌面目标窗 9rem、移动端 6.4rem，节点和相位刻度随画布尺寸放大；浏览器桌面/390px 检查无溢出。见 `worklog/2026-09-28.md#phase04-larger-target-diagram`。 |
 | PHASE03 | 已完成 | `apps/phase_field/` 每房固定目标相位；一次全局演化保存独立阶段快照，前端按阶段回放并锁定输入；中央节点与目标窗使用相同六向彩色相位刻度。8 个引擎测试、浏览器回放与通关交互通过；见 `worklog/2026-09-28.md#phase03-fixed-targets-and-staged-evolution-replay`。 |
 | EVAL04 | 已完成 | 固定 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，NOSL 根节点单次重采样后沿分支保持同一 future；GPU 四机按 13/12/13/12 完成唯一 seeds 60000--60049，全部 complete、无 step_limit/other_truncation/非法动作。结果 6/50 胜，平均/中位楼层 32.28/33，Act2/Act3 到达率 78%/32%；同 seed 旧 T=1 基线为 0/50、平均楼层25.56，配对平均差+6.72层、楼层胜/负/平29/8/13。旧基线同时更换了 checkpoint 和搜索算法，不能视为单变量。合并结果位于 `runs/local/eval-value512-rootstable-step18137088-seeds60000-20260925-13121312/`；记录见 `worklog/2026-09-25.md#eval04-stable-512-node-value-beam-campaign`。 |

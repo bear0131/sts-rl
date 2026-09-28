@@ -5,7 +5,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
 
-  const CHAPTER_HP = [32, 20, 42, 46];
+  const STAGE_HP = 20;
   const STAGES = [
     { kind: "odd", chapter: 0, enemyHps: [4], minLoss: 9 },
     { kind: "reactive", chapter: 0, enemyHps: [4], minLoss: 9 },
@@ -46,14 +46,25 @@
     };
   }
 
-  function createRun() {
+  function createRun(savedCompletions = []) {
+    const completed = [];
+    if (Array.isArray(savedCompletions)) {
+      for (const entry of savedCompletions.slice(0, STAGES.length)) {
+        if (!entry || typeof entry.perfect !== "boolean") break;
+        completed.push({ perfect: entry.perfect,
+          firstAction: ["attack", "charge", "wait"].includes(entry.firstAction)
+            ? entry.firstAction : null,
+          loss: Number.isFinite(entry.loss) && entry.loss >= 0 ? entry.loss : null });
+      }
+    }
+    const stageIndex = Math.min(completed.length, STAGES.length - 1);
     return {
-      stageIndex: 0,
-      hp: CHAPTER_HP[0],
-      maxHp: CHAPTER_HP[0],
+      stageIndex,
+      hp: STAGE_HP,
+      maxHp: STAGE_HP,
       status: "active",
-      completed: [],
-      battle: startBattle(STAGES[0], CHAPTER_HP[0]),
+      completed,
+      battle: startBattle(STAGES[stageIndex], STAGE_HP),
     };
   }
 
@@ -77,6 +88,10 @@
   function win(next) {
     next.status = "won";
     next.battle.perfect = !next.battle.retried && next.battle.loss === currentStage(next).minLoss;
+    const result = { perfect: next.battle.perfect, firstAction: next.battle.firstAction,
+      loss: next.battle.loss };
+    const previous = next.completed[next.stageIndex];
+    if (!previous || result.perfect || !previous.perfect) next.completed[next.stageIndex] = result;
     next.battle.events.push({ type: "win", perfect: next.battle.perfect });
     return next;
   }
@@ -135,9 +150,10 @@
       received += damage;
       battle.events.push({ type: "enemy-hit", target: enemy.id, amount: damage });
     });
-    next.hp = Math.max(0, next.hp - received);
-    battle.loss += received;
-    battle.history.push(received);
+    const lost = Math.min(next.hp, received);
+    next.hp -= lost;
+    battle.loss += lost;
+    battle.history.push(lost);
     if (next.hp === 0) {
       next.status = "dead";
       return { run: next, accepted: true };
@@ -157,19 +173,27 @@
   function continueRun(run) {
     if (run.status !== "won") return run;
     const next = copyRun(run);
-    next.completed.push({ perfect: next.battle.perfect, firstAction: next.battle.firstAction,
-      loss: next.battle.loss });
     next.stageIndex += 1;
     if (next.stageIndex >= STAGES.length) {
       next.status = "complete";
       return next;
     }
-    const stage = currentStage(next);
-    if (stage.chapter !== currentStage(run).chapter) {
-      next.maxHp = CHAPTER_HP[stage.chapter];
-      next.hp = next.maxHp;
-    }
-    next.battle = startBattle(stage, next.hp);
+    next.hp = STAGE_HP;
+    next.maxHp = STAGE_HP;
+    next.battle = startBattle(currentStage(next), STAGE_HP);
+    next.status = "active";
+    return next;
+  }
+
+  function selectStage(run, index) {
+    if (!Number.isInteger(index) || index < 0 || index >= STAGES.length ||
+      index > run.completed.length) return run;
+    const next = copyRun(run);
+    const retried = index === run.stageIndex && ["active", "dead"].includes(run.status);
+    next.stageIndex = index;
+    next.hp = STAGE_HP;
+    next.maxHp = STAGE_HP;
+    next.battle = startBattle(STAGES[index], STAGE_HP, retried);
     next.status = "active";
     return next;
   }
@@ -177,12 +201,13 @@
   function retry(run) {
     if (run.status !== "dead") return run;
     const next = copyRun(run);
-    next.hp = Math.min(next.maxHp, Math.max(next.battle.startHp, Math.ceil(next.maxHp * 0.6)));
-    next.battle = startBattle(currentStage(next), next.hp, true);
+    next.hp = STAGE_HP;
+    next.maxHp = STAGE_HP;
+    next.battle = startBattle(currentStage(next), STAGE_HP, true);
     next.status = "active";
     return next;
   }
 
-  return { STAGES, CHAPTER_HP, createRun, currentStage, attack, charge, endTurn,
-    continueRun, retry };
+  return { STAGES, STAGE_HP, createRun, currentStage, attack, charge, endTurn,
+    continueRun, retry, selectStage };
 });

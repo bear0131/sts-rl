@@ -2,14 +2,21 @@
   "use strict";
 
   const Game = window.CausalRoomsEngine;
-  const playerScale = Math.max(...Game.CHAPTER_HP);
+  const progressKey = "causal-rooms-progress-v2";
   const enemyScale = Math.max(...Game.STAGES.flatMap((stage) => stage.enemyHps));
   const route = document.getElementById("route");
   const chapterMark = document.getElementById("chapterMark");
+  const stageNumber = document.getElementById("stageNumber");
+  const levelSelect = document.getElementById("levelSelect");
+  const levelGrid = document.getElementById("levelGrid");
+  const levelPicker = document.getElementById("levelPicker");
+  const closeSelect = document.getElementById("closeSelect");
   const player = document.getElementById("player");
   const enemies = document.getElementById("enemies");
   const history = document.getElementById("history");
+  const loss = document.getElementById("loss");
   const attackButton = document.getElementById("attack");
+  const attackPower = document.getElementById("attackPower");
   const chargeButton = document.getElementById("charge");
   const endButton = document.getElementById("endTurn");
   const outcome = document.getElementById("outcome");
@@ -17,7 +24,17 @@
   const continueButton = document.getElementById("continue");
   const restartButton = document.getElementById("restart");
 
-  const state = { run: Game.createRun(), selected: 0 };
+  function loadProgress() {
+    try { return JSON.parse(localStorage.getItem(progressKey) || "[]"); }
+    catch { return []; }
+  }
+
+  function saveProgress() {
+    try { localStorage.setItem(progressKey, JSON.stringify(state.run.completed)); }
+    catch { /* The run remains playable if local storage is unavailable. */ }
+  }
+
+  const state = { run: Game.createRun(loadProgress()), selected: 0 };
   const buffIcon = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 27V5m-7 8 7-8 7 8M8 23h16"/></svg>';
   const shieldIcon = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 27 8v9c0 7-5 10-11 13C10 27 5 24 5 17V8Z"/></svg>';
   const perfectIcon = '<svg viewBox="0 0 120 120"><path d="M60 8 70 48 111 60 70 72 60 112 49 72 9 60 49 48Z"/><circle cx="60" cy="60" r="14"/></svg>';
@@ -37,20 +54,38 @@
   }
 
   function unit(hp, maxHp, hue, kind, sigils = "", struck = false) {
-    return `<div class="unit ${kind} ${struck ? "struck" : ""}" style="--hue:${hue};--light:${light(hp, maxHp)}">${sigils}</div>`;
+    const value = kind === "player-unit"
+      ? `<span class="unit-value player-value">${hp}<small>/${maxHp}</small></span>`
+      : `<span class="unit-value enemy-value">${hp}</span>`;
+    return `<div class="unit ${kind} ${struck ? "struck" : ""}" style="--hue:${hue};--light:${light(hp, maxHp)}">${value}${sigils}</div>`;
   }
 
   function renderRoute() {
     route.innerHTML = Game.STAGES.map((stage, index) => {
       const status = index < state.run.completed.length
-        ? state.run.completed[index].perfect ? "perfect" : "cleared"
-        : index === state.run.stageIndex ? "current" : "";
+        ? state.run.completed[index].perfect ? "perfect" : "cleared" : "";
+      const current = index === state.run.stageIndex ? "current" : "";
       const start = index > 0 && stage.chapter !== Game.STAGES[index - 1].chapter
         ? "chapter-start" : "";
-      return `<i class="route-dot ${status} ${start}" aria-hidden="true"></i>`;
+      return `<i class="route-dot ${status} ${current} ${start}" aria-hidden="true"></i>`;
     }).join("");
     const chapter = state.run.status === "complete" ? 3 : Game.currentStage(state.run).chapter;
     chapterMark.className = `chapter-mark c${chapter}`;
+    stageNumber.textContent = String(Math.min(state.run.stageIndex + 1, Game.STAGES.length));
+    levelPicker.className = `icon-button level-picker c${chapter}`;
+  }
+
+  function renderLevels() {
+    const unlocked = Math.min(state.run.completed.length, Game.STAGES.length - 1);
+    levelGrid.innerHTML = Game.STAGES.map((stage, index) => {
+      const result = state.run.completed[index];
+      const status = result ? result.perfect ? "perfect" : "cleared" : "";
+      const current = index === state.run.stageIndex ? "current" : "";
+      const locked = index > unlocked;
+      const label = `第 ${index + 1} 关，${locked ? "未解锁" : result
+        ? result.perfect ? "已完美通关" : "已通关" : "可挑战"}`;
+      return `<button type="button" class="level-tile c${stage.chapter} ${status} ${current}" data-stage="${index}" aria-label="${label}" ${locked ? "disabled" : ""}>${index + 1}</button>`;
+    }).join("");
   }
 
   function renderBattle() {
@@ -61,8 +96,8 @@
     const playerBuff = battle.playerBonus > 0 || battle.chargeReady
       ? `<span class="sigil" aria-hidden="true" style="--power-light:${powerLight(preview)};--power-speed:${pulse(preview)}">${buffIcon}</span>` : "";
     const playerStruck = battle.events.some((event) => event.type === "enemy-hit");
-    player.innerHTML = unit(run.hp, playerScale, 204, "player-unit", playerBuff, playerStruck);
-    player.setAttribute("aria-label", `玩家生命 ${run.hp}，当前攻击 ${preview}`);
+    player.innerHTML = unit(run.hp, Game.STAGE_HP, 204, "player-unit", playerBuff, playerStruck);
+    player.setAttribute("aria-label", `玩家生命 ${run.hp}/${run.maxHp}，本关掉血 ${battle.loss}，当前攻击 ${preview}`);
 
     if (state.selected >= battle.enemies.length || battle.enemies[state.selected].hp <= 0) {
       state.selected = battle.enemies.findIndex((enemy) => enemy.hp > 0);
@@ -81,13 +116,16 @@
     enemies.innerHTML = cards.join(stage.linked && cards.length === 2
       ? '<span class="bond-wire" aria-hidden="true"></span>' : "");
     history.innerHTML = battle.history.slice(-6).map((damage) =>
-      `<i class="history-bead" style="--light:${powerLight(damage)};--speed:${pulse(damage)}" aria-hidden="true"></i>`).join("");
+      `<span class="history-bead" aria-hidden="true">−${damage}</span>`).join("");
     history.setAttribute("aria-label", `已承受伤害：${battle.history.join("，")}`);
+    loss.textContent = battle.loss ? `−${battle.loss}` : "0";
+    loss.setAttribute("aria-label", `本关累计掉血 ${battle.loss}`);
 
     const available = run.status === "active" && !battle.usedAction;
     attackButton.disabled = !available || state.selected < 0;
     attackButton.style.setProperty("--power-light", powerLight(preview));
     attackButton.style.setProperty("--power-speed", pulse(preview));
+    attackPower.textContent = String(preview);
     chargeButton.hidden = stage.kind !== "charge";
     chargeButton.disabled = !available;
     endButton.disabled = run.status !== "active";
@@ -106,11 +144,12 @@
     resultSymbol.innerHTML = variant === "perfect" ? perfectIcon
       : variant === "dead" ? deadIcon : clearIcon;
     continueButton.setAttribute("aria-label", run.status === "dead" ? "重试本关"
-      : run.status === "complete" ? "重新开始整局" : "进入下一关");
+      : run.status === "complete" ? "选择关卡" : "进入下一关");
   }
 
   function render() {
     renderRoute();
+    renderLevels();
     renderBattle();
     renderOutcome();
   }
@@ -118,7 +157,19 @@
   function apply(result) {
     if (!result.accepted) return;
     state.run = result.run;
+    if (state.run.status === "won") saveProgress();
     render();
+  }
+
+  function openLevels() {
+    renderLevels();
+    levelSelect.hidden = false;
+    closeSelect.focus();
+  }
+
+  function closeLevels() {
+    levelSelect.hidden = true;
+    levelPicker.focus();
   }
 
   enemies.addEventListener("click", (event) => {
@@ -133,14 +184,31 @@
   continueButton.addEventListener("click", () => {
     if (state.run.status === "won") state.run = Game.continueRun(state.run);
     else if (state.run.status === "dead") state.run = Game.retry(state.run);
-    else state.run = Game.createRun();
+    else { openLevels(); return; }
     state.selected = 0;
     render();
   });
   restartButton.addEventListener("click", () => {
-    state.run = Game.createRun();
+    state.run = Game.selectStage(state.run,
+      Math.min(state.run.stageIndex, Game.STAGES.length - 1));
     state.selected = 0;
     render();
+  });
+  levelPicker.addEventListener("click", openLevels);
+  closeSelect.addEventListener("click", closeLevels);
+  levelSelect.addEventListener("click", (event) => {
+    if (event.target === levelSelect) closeLevels();
+  });
+  levelGrid.addEventListener("click", (event) => {
+    const target = event.target.closest(".level-tile");
+    if (!target || target.disabled) return;
+    state.run = Game.selectStage(state.run, Number(target.dataset.stage));
+    state.selected = 0;
+    closeLevels();
+    render();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !levelSelect.hidden) closeLevels();
   });
 
   render();
