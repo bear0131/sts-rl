@@ -85,6 +85,27 @@ class FakeBuffer:
         self.resets += 1
 
 
+def test_retired_occupancy_arguments_do_not_install_an_unreleased_hold(monkeypatch):
+    from rl.training import environments as runtime
+    monkeypatch.setattr(runtime, 'observation_flags', lambda model: dict.fromkeys((
+        'global_map_view', 'card_language', 'combat_language', 'deck_size_observation',
+        'neow_observation', 'event_option_observation', 'interactive_reasoning'), False))
+    monkeypatch.setattr(runtime.WholeRunTask, 'make_env_fn', lambda *_: CounterEnv)
+    args = SimpleNamespace(ascension=0, interactive_reasoning=False, startup_stagger_steps=0,
+        startup_occupancy_budget=160, startup_occupancy_max_age=12, seed=42, rank=0,
+        n_envs=2, vec='dummy')
+    env = runtime.make_env(SimpleNamespace(), args)
+    try:
+        env.reset()
+        for value in range(1, 5):
+            observation, rewards, dones, _ = env.step(np.zeros(2, dtype=int))
+            np.testing.assert_array_equal(observation[:, 0], [value, value])
+            np.testing.assert_array_equal(rewards, [1.0, 1.0])
+            assert not dones.any()
+    finally:
+        env.close()
+
+
 class FakeModel:
     def __init__(self, env):
         self.env = env

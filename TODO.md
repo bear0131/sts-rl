@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| REC02 | 已修 | 已退役occupancy CLI参数不再让make_env安装无法release的等待wrapper；保留历史恢复类。工厂逐步推进与真实PPO/NOSL两轮上报、保存恢复通过。见 `worklog/2026-09-29.md#retired-occupancy-factory-correction`。 |
 | PERF09 | 进行中 | 固定生产96×128、搜索/学习/replay预算，在25核/RTX5090四机上优化collection与learner；用户允许暂停实验。须有固定源同机A/B、语义等价和完整生产周期/恢复验收，保留原run/W&B。见 `worklog/2026-09-29.md#perf09-fixed-budget-production-throughput-optimization`。 |
 | EVAL04 | 已完成 | 固定 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，NOSL 根节点单次重采样后沿分支保持同一 future；GPU 四机按 13/12/13/12 完成唯一 seeds 60000--60049，全部 complete、无 step_limit/other_truncation/非法动作。结果 6/50 胜，平均/中位楼层 32.28/33，Act2/Act3 到达率 78%/32%；同 seed 旧 T=1 基线为 0/50、平均楼层25.56，配对平均差+6.72层、楼层胜/负/平29/8/13。旧基线同时更换了 checkpoint 和搜索算法，不能视为单变量。合并结果位于 `runs/local/eval-value512-rootstable-step18137088-seeds60000-20260925-13121312/`；记录见 `worklog/2026-09-25.md#eval04-stable-512-node-value-beam-campaign`。 |
 | EVAL05 | 已完成 | 本机 Dashboard 自动评测固定 step7520256 checkpoint、`ironclad-overworld-v3` 上层与 `ironclad-turn-v8-awakened-phase` 下层（2 worlds、8192 nodes/world、beam8、depth16、lookahead1），8 workers 完成唯一 seeds200000--200099；100局全部自然终局，46 win / 54 death，胜率46.0%（Wilson 95% CI 36.56%--55.74%），平均/中位楼层41.95/50，Act2/Act3到达率94%/63%，端到端901.162秒。历史最强 R10 开发集为47/128=36.71875%，但其 seeds150000--150127 且上层为v1，不能把+9.28pp点估计差归因为v3。结果位于 `runs/local/eval-overworld-v3-planner8192-seeds200000-100-20260927/`；记录见 `worklog/2026-09-27.md#eval05-local-dashboard-overworld-v3-planner8192-campaign`。 |

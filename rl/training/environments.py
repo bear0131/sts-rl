@@ -408,12 +408,8 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     expected_space = getattr(model, "observation_space", None)
 
     stagger_steps = int(getattr(args, "startup_stagger_steps", 0))
-    occupancy_budget = int(getattr(args, "startup_occupancy_budget", 0))
-    occupancy_max_age = int(getattr(
-        args, "startup_occupancy_max_age", _MAX_EPISODE_STEPS,
-    ))
-    if stagger_steps and occupancy_budget:
-        raise ValueError("startup stagger and occupancy sampling are mutually exclusive")
+    # Production no longer runs or releases occupancy warmup. Old argument files
+    # remain readable, but installing its hold wrapper would freeze actors.
     stagger_delays = startup_stagger_delays(
         seed=args.seed,
         rank=args.rank,
@@ -428,14 +424,6 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
                 env = CheckpointObservationCompat(env, expected_space)
             if stagger_steps:
                 env = StartupStaggerWrapper(env, hold_steps=hold_steps)
-            if occupancy_budget:
-                env = StartupOccupancyWrapper(
-                    env, max_episode_steps=occupancy_max_age,
-                    seed=int(np.random.SeedSequence((
-                        int(args.seed) & 0xFFFFFFFF, int(args.rank), env_index,
-                        0x4F434355,
-                    )).generate_state(1)[0]),
-                )
             return TrainingStateWrapper(env)
 
         return make

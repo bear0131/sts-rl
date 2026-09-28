@@ -10,7 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.training import distributed_sb3
-from rl.training.environments import StartupOccupancyWrapper, StartupStaggerWrapper
+from rl.training.environments import StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
@@ -32,9 +32,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                 )
                 return (
                     StartupStaggerWrapper(env, hold_steps=hold_steps)
-                    if staggered else
-                    StartupOccupancyWrapper(env, max_episode_steps=12, seed=hold_steps + 11)
-                    if occupancy else env
+                    if staggered else env
                 )
             return build
 
@@ -124,9 +122,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert payloads[0]['startup_stagger/span_steps'] == 16
         assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32
     if occupancy:
-        assert payloads[0]['startup_occupancy/max_age'] == 12
-        assert payloads[0]['startup_occupancy/discarded_transitions_local'] >= 32
-        assert payloads[0]['startup_occupancy/collection_blocks'] >= 1
+        # Retired CLI fields remain readable but no discarded warmup runs.
+        assert not any(key.startswith('startup_occupancy/') for p in payloads for key in p)
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
