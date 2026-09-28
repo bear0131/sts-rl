@@ -133,7 +133,7 @@ fork
 --startup-stagger-steps
 0
 --total-steps
-30000000
+50000000
 --vec
 subproc
 --vf-coef
