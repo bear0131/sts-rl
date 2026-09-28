@@ -193,10 +193,13 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
                 ep_success_buffer=copy.deepcopy(list(model.ep_success_buffer or ())),
                 episode_num=int(getattr(model, '_episode_num', 0)),
             )
-        torch.save(state, temporary / 'learner.pt')
+        # Protocol 5 writes NumPy buffers directly instead of the protocol-2
+        # bytes-to-Unicode round trip. Payload/schema and old-bundle loading
+        # stay unchanged; supported Python runtimes are all >= 3.11.
+        torch.save(state, temporary / 'learner.pt', pickle_protocol=5)
         files = ['model.zip', 'learner.pt']
         if environment is not None:
-            torch.save(environment, temporary / 'environment.pt')
+            torch.save(environment, temporary / 'environment.pt', pickle_protocol=5)
             files.append('environment.pt')
         manifest = dict(schema_version=schema_version, rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,

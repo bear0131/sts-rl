@@ -22,7 +22,8 @@ from tests.integration.test_training_smoke import train_once, assert_nested_equa
 pytestmark = [pytest.mark.native, pytest.mark.training]
 
 
-def test_replay_rng_and_next_update_match_after_recovery(tmp_path, short_combat_env_type):
+@pytest.mark.parametrize('legacy_protocol', [None, 2])
+def test_replay_rng_and_next_update_match_after_recovery(tmp_path, short_combat_env_type, legacy_protocol):
     model, env = train_once(True, env_type=short_combat_env_type,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
         nosl_is_az_simulations=4, nosl_is_az_replay_capacity=128,
@@ -38,6 +39,15 @@ def test_replay_rng_and_next_update_match_after_recovery(tmp_path, short_combat_
         (interrupted/'model.zip').write_bytes(b'incomplete previous write')
         path = save_bundle(model, tmp_path, rank=0, world_size=1,
             run_id='test', wandb_id='same', config={})
+        if legacy_protocol is not None:
+            # Retained pre-optimization bundles use pickle protocol 2. Both
+            # formats must restore the identical RNG/replay/next Adam update.
+            manifest = json.loads((path / 'manifest.json').read_text())
+            for name in ('learner.pt', 'environment.pt'):
+                payload = torch.load(path / name, map_location='cpu', weights_only=False)
+                torch.save(payload, path / name, pickle_protocol=legacy_protocol)
+                manifest['sha256'][name] = hashlib.sha256((path / name).read_bytes()).hexdigest()
+            (path / 'manifest.json').write_text(json.dumps(manifest))
         assert read_bundle(path, rank=0, world_size=1)['schema_version'] == 2
         assert (path / 'environment.pt').is_file()
         abandoned = list((tmp_path/'rank0').glob('.incomplete-*'))
