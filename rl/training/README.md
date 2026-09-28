@@ -21,14 +21,20 @@ CPU/RSS/cgroup/GPU 采样，0 关闭；定义与复现实验入口见 [资源基
 `NOSL_SAVE_EVERY_UPDATES=N` 将完整 recovery bundle 改为每 N 个 update 保存一次；
 stop-file 和正常结束仍强制发布最后一个 bundle。该选项只改变恢复窗口，不改变采样、搜索、loss、optimizer 或 replay。
 每个 rank 各存 `DIR/rankN/step-XXXXXXXXXXXX/{model.zip,learner.pt,manifest.json}`，
+支持环境恢复的 schema 2 另存 `environment.pt`。
 manifest 最后原子发布，包含配置、run/W&B ID 和文件 SHA256。恢复时四 rank 必须
 选同一个已完整保存的 global step，传入各自的 `--resume-state`；不得用 rank 0 的
 replay 代替其它 rank。模型/Adam、有效 replay slots、父进程 Python/NumPy/Torch/CUDA
 RNG 恢复，global step 连续。完整性或 rank/world 不匹配立即拒绝恢复。
 
-**原生环境暂不序列化**：恢复会重启游戏，按 global step 选择新的确定性 seed block，
-丢弃尚未结束战斗的 pending labels。已完成的 replay 不丢。只有同一下一训练 batch
-的 learner/Adam/RNG 有 bitwise 回归，不能称作原生游戏轨迹的逐位续跑。
+schema 2 恢复原生环境、wrapper 状态、当前观测、episode 窗口和未结束战斗的
+pending labels，并校验恢复观测摘要。schema 1 的旧 bundle 只恢复 learner，需重启
+环境。显式 `--fork-reset-environments` 也会重启环境并丢弃环境局部进度；改变环境
+数量的 fork 必须使用这一选项。恢复与 fork 不重新初始化已训练的 shared embeddings。
+learner/environment 使用 pickle protocol 5 保存 NumPy buffer，保持 bundle schema
+不变；历史 protocol 2 仍可读取。实际恢复须使用对应 rank 的完整 bundle。
+同一下一训练 batch 的 learner/Adam/RNG 有逐位回归；异步搜索调度及 CUDA 非确定性
+仍可能改变后续轨迹，不能将状态恢复等同于整场训练的逐位重演。
 每轮完整快照包含每 rank 的 replay，写盘成本需计入实际生产吞吐。
 `dist/iteration_wall_sec` 与吞吐分母包含指标聚合、恢复点写盘和跨 rank 发布等待，
 `dist/checkpoint_sec` 单独记录保存/发布等待；不包含随后 W&B 客户端排队的时间。
