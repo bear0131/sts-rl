@@ -8,6 +8,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from env.core import action_space as A
 from env.core.run_env import SlayTheSpireEnv
 from rl.training.reward import ShapedRewardWrapper
+from rl.training.environments import TrainingStateWrapper
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 
@@ -16,8 +17,9 @@ pytestmark = [pytest.mark.native, pytest.mark.training]
 
 def train_once(hierarchical, env_type=SlayTheSpireEnv, **algorithm_kwargs):
     # Force autoresets/truncation through the same wrapper ordering as WholeRun.
-    env = DummyVecEnv([lambda: TimeLimit(ShapedRewardWrapper(env_type()),
-                                       max_episode_steps=12)] * 2)
+    env = DummyVecEnv([lambda: TrainingStateWrapper(TimeLimit(
+        ShapedRewardWrapper(env_type()), max_episode_steps=12,
+    ))] * 2)
     model = AccumulatingMaskablePPO(
         SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
         gradient_accumulation_steps=2, hierarchical_combat_hp=hierarchical,

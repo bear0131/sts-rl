@@ -146,6 +146,20 @@ def _checkpoint_nosl_is_az_replay_enabled(path) -> bool:
     return enabled
 
 
+def _checkpoint_nosl_is_az_boss_transition_target(path) -> bool:
+    """Read the opt-in boss terminal objective from a checkpoint.
+
+    The field is additive, so checkpoints written before this option existed
+    deliberately default to the legacy objective.
+    """
+    from stable_baselines3.common.save_util import load_from_zip_file
+
+    data, _params, _pytorch_variables = load_from_zip_file(path, device="cpu")
+    enabled = bool(data.get("nosl_is_az_boss_transition_target", False))
+    del data, _params, _pytorch_variables
+    return enabled
+
+
 def _warm_start_policy(
     model,
     pretrained,
@@ -565,6 +579,13 @@ def main() -> None:
                 else True
             )
 
+    if hasattr(args, "nosl_is_az_boss_transition_target"):
+        if args.nosl_is_az_boss_transition_target is None:
+            args.nosl_is_az_boss_transition_target = (
+                _checkpoint_nosl_is_az_boss_transition_target(args.resume)
+                if args.resume else False
+            )
+
     if getattr(args, "nosl_is_az", False):
         if args.card_language:
             raise ValueError(
@@ -961,6 +982,9 @@ def main() -> None:
             hierarchical_combat_hp=getattr(
                 args, "hierarchical_combat_hp", False
             ),
+            nosl_is_az_boss_transition_target=getattr(
+                args, "nosl_is_az_boss_transition_target", False
+            ),
             combat_hp_gamma=getattr(args, "combat_hp_gamma", 1.0),
             combat_hp_gae_lambda=getattr(
                 args, "combat_hp_gae_lambda", 0.95
@@ -1120,6 +1144,9 @@ def main() -> None:
                 "performance_profile": args.profile_performance,
                 "hierarchical_combat_hp": getattr(
                     args, "hierarchical_combat_hp", False
+                ),
+                "nosl_is_az_boss_transition_target": getattr(
+                    args, "nosl_is_az_boss_transition_target", False
                 ),
                 "combat_hp_gamma": getattr(args, "combat_hp_gamma", 1.0),
                 "combat_hp_gae_lambda": getattr(

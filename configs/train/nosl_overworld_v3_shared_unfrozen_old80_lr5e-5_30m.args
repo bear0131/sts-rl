@@ -1,0 +1,13 @@
+@configs/train/nosl_ruleupper_latest.args
+--no-nosl-is-az-boss-transition-target
+--nosl-is-az-micro-batch-size
+12288
+--learning-rate
+0.00005
+--max-grad-norm
+0.5
+--nosl-is-az-replay-max-old-fraction
+0.80
+--nosl-is-az-train-shared-embeddings
+--total-steps
+30000000

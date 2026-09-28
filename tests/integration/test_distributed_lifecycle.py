@@ -10,22 +10,40 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.training import distributed_sb3
+from rl.training.environments import StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl', [False, True])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
+@pytest.mark.parametrize('nosl,upper,combat_arch', [
+    (False, 'model', 'transformer'), (True, 'model', 'transformer'),
+    (True, 'rules', 'transformer'), (True, 'rules', 'mlp')])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch):
+    staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
+    legacy_occupancy_args = nosl and upper == 'rules' and combat_arch == 'transformer'
+
     def make_env(*_):
-        return DummyVecEnv([lambda: TimeLimit(
-            ShapedRewardWrapper(short_combat_env_type()), max_episode_steps=12)] * 2)
+        def factory(hold_steps):
+            def build():
+                env = TimeLimit(
+                    ShapedRewardWrapper(short_combat_env_type()),
+                    max_episode_steps=12,
+                )
+                return (
+                    StartupStaggerWrapper(env, hold_steps=hold_steps)
+                    if staggered else env
+                )
+            return build
+
+        return DummyVecEnv([factory(0), factory(16)])
 
     env = make_env()
     model = AccumulatingMaskablePPO(
         SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
-        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4), device='cpu', seed=42,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch), device='cpu', seed=42,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
+        nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
@@ -41,7 +59,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             stop_file.touch()
     def init(**kwargs):
         identities.append(kwargs)
-        return SimpleNamespace(finish=lambda: finished.append(True))
+        return SimpleNamespace(
+            finish=lambda *, exit_code=0: finished.append(exit_code)
+        )
     # Replace only the external service; the production payload construction runs.
     monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
         init=init, config=SimpleNamespace(update=lambda *a, **kw: None),
@@ -63,7 +83,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             return result
         monkeypatch.setattr(distributed_sb3, 'average_scalar_dict', unequal_rank_counts)
     output = tmp_path / 'trained.zip'
-    monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0', '--world-size', '1',
+    argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
         '--n-envs', '2', '--n-steps', '16', '--batch-size', '8', '--n-epochs', '1',
         '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'dummy',
@@ -72,21 +92,42 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
         '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1',
         '--max-checkpoints', '3', '--stop-file', str(stop_file),
-        '--rollout-resource-interval', '0.1'])
+        '--rollout-resource-interval', '0.1']
+    if staggered:
+        argv += ['--startup-stagger-steps', '16']
+    if legacy_occupancy_args:
+        argv += [
+            '--startup-occupancy-max-age', '12',
+            '--startup-occupancy-budget', '160',
+        ]
+    monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
     assert [p['global_step'] for p in payloads] == [32, 64]
     assert [p['legacy_step'] for p in payloads] == [1, 2]
     assert all(p['dist/avg_grad_sec'] == 0 for p in payloads)
-    assert all('game/layer_5_win_rate' in p for p in payloads)
+    assert all('game/episodes_window' in p for p in payloads)
+    assert all(
+        ('game/layer_5_win_rate' in p) == (p['game/episodes_window'] > 0)
+        for p in payloads
+    )
     from rl.training.monitoring import HP_ORDER_PREFIX, hp_order_fraction
     assert all(p[HP_ORDER_PREFIX + '_fraction'] == pytest.approx(
         hp_order_fraction(p) or 0.0) for p in payloads)
     if nosl:
         assert all(p[HP_ORDER_PREFIX + '_fraction'] == .01 for p in payloads)
+        assert all('nosl_is_az/overworld_rule_decisions' in p and
+                   'nosl_is_az/overworld_fallback_decisions' in p for p in payloads)
+    if staggered:
+        assert payloads[0]['startup_stagger/span_steps'] == 16
+        assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32
+    assert all(not any(key.startswith('startup_occupancy/') for key in p)
+               for p in payloads)
     assert identities[0]['id'] == 'ci-existing-run'
-    assert finished == [True]
+    assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
+    assert restored.nosl_is_az_upper_strategy == upper
+    assert restored.policy_kwargs['combat_arch'] == combat_arch
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
@@ -95,7 +136,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
-    assert finished == [True, True]
+    assert finished == [0, 0]
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()
@@ -104,3 +145,29 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert all(r['rollout_resources']['sample_count']>=2 for r in records)
     assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
     assert all(r['rollout_resources']['gpu_devices'] is None for r in records)
+
+    if staggered:
+        stop_file.unlink()
+        fork_output = tmp_path / 'forked.zip'
+        fork_state = tmp_path / 'fork-state'
+        fork_stop = tmp_path / 'fork-stop'
+        fork_source = tmp_path/'state'/'rank0'/'step-000000000128'
+        monkeypatch.setattr(sys, 'argv', [
+            *argv,
+            '--run-id', 'ci-fork',
+            '--wandb-id', 'ci-fork-run',
+            '--wandb-name', 'ci-fork',
+            '--fork-state', str(fork_source),
+            '--updates', '1',
+            '--output', str(fork_output),
+            '--training-state-dir', str(fork_state),
+            '--stop-file', str(fork_stop),
+        ])
+        distributed_sb3.main()
+        assert payloads[-1]['global_step'] == 160
+        assert identities[-1]['id'] == 'ci-fork-run'
+        fork_bundle = fork_state/'rank0'/'step-000000000160'
+        manifest = json.loads((fork_bundle/'manifest.json').read_text())
+        assert manifest['run_id'] == 'ci-fork'
+        assert manifest['wandb_id'] == 'ci-fork-run'
+        assert manifest['config']['fork_source_global_step'] == 128

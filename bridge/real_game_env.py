@@ -259,6 +259,59 @@ def _screen_potions(ss: dict[str, Any]) -> list[tuple[str, int]]:
     return [(_potion_id(p), _price(p)) for p in potions]
 
 
+def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
+    """Pass through typed event-button metadata when a bridge supplies it.
+
+    Stock CommunicationMod currently exports localized ``text``/``label`` only.
+    Those strings are useful for display but are not stable entity identifiers,
+    so this adapter deliberately does not parse card/relic/potion names from
+    them.  A richer bridge can add ``kind`` plus typed fields to each option.
+    """
+    raw_options = ss.get("options") or []
+    if not isinstance(raw_options, list):
+        return []
+    choices = []
+    for raw in raw_options:
+        if not isinstance(raw, dict) or raw.get("disabled"):
+            continue
+        index = _int_or_none(raw.get("choice_index"))
+        if index is None:
+            return []
+        if not (0 <= index < min(legal_count, A.EVENT_OPT_W)):
+            continue
+        kind = raw.get("kind")
+        if not isinstance(kind, str) or not kind:
+            return []
+        detail: dict[str, Any] = {"index": index, "kind": kind}
+        try:
+            if kind in {"lose_card", "gain_card_then_remove"}:
+                card = raw.get("card")
+                if not isinstance(card, dict):
+                    return []
+                detail["card"] = _real_card_tuple(card)
+            elif kind == "lose_relic":
+                detail["relic"] = _relic_id(raw["relic"])
+            elif kind == "lose_potion":
+                detail["potion"] = _potion_id(raw["potion"])
+            elif kind == "lose_gold":
+                detail["gold"] = int(raw["gold"])
+            elif kind == "lose_hp":
+                detail["hp"] = int(raw["hp"])
+            elif kind in {"upgrade_card", "upgrade_random_cards", "remove_card",
+                          "transform_random_cards", "remove_card_upgrade_random"}:
+                detail["gold"] = int(raw["gold"])
+                if "count" in raw:
+                    detail["count"] = int(raw["count"])
+            elif kind != "leave":
+                return []
+        except (KeyError, TypeError, ValueError):
+            return []
+        choices.append(detail)
+    if {choice["index"] for choice in choices} != set(range(min(legal_count, A.EVENT_OPT_W))):
+        return []
+    return choices
+
+
 def _choice_index(labels: list[Any], aliases: set[str], occurrence: int = 0) -> int | None:
     seen = 0
     for idx, label in enumerate(labels):
@@ -604,6 +657,9 @@ class RealGameAdapter:
                 opts["neow"] = self._neow_options(ss)
             elif event != "NEOW":
                 opts["event_options"] = list(range(min(len(cl), A.EVENT_OPT_W)))
+                details = _structured_event_choices(ss, len(cl))
+                if details:
+                    opts["event_choices"] = details
         elif phase == "card_select":
             cards = _screen_cards(ss)
             opts["cards"] = cards

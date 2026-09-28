@@ -42,6 +42,7 @@ def compute_hierarchical_returns(
     combat_phase: int,
     overworld_gamma: float,
     overworld_gae_lambda: float,
+    combat_terminal_targets: np.ndarray | None = None,
     combat_gamma: float = 1.0,
     combat_gae_lambda: float = 0.95,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, HierarchicalReturnStats]:
@@ -65,6 +66,10 @@ def compute_hierarchical_returns(
     dones = _as_array("dones", dones, shape, bool)
     next_phases = _as_array("next_phases", next_phases, shape)
     next_hp = _as_array("next_hp", next_hp, shape, np.float32)
+    if combat_terminal_targets is not None:
+        combat_terminal_targets = _as_array(
+            "combat_terminal_targets", combat_terminal_targets, shape, np.float32
+        )
     interrupted = _as_array("interrupted", interrupted, shape, bool)
     last_values = _as_array("last_values", last_values, (shape[1],), np.float32)
 
@@ -101,7 +106,12 @@ def compute_hierarchical_returns(
             )
             reward = 0.0
             if local_terminal and not interrupted[step, env_idx]:
-                reward = max(0.0, float(next_hp[step, env_idx]))
+                reward_source = next_hp[step, env_idx]
+                if combat_terminal_targets is not None:
+                    override = combat_terminal_targets[step, env_idx]
+                    if np.isfinite(override):
+                        reward_source = override
+                reward = max(0.0, float(reward_source))
                 combat_finished_rewards.append(reward)
             effective_rewards[step, env_idx] = reward
 

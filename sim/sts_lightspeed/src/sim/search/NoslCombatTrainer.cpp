@@ -21,6 +21,42 @@ namespace {
 // learner's HP target (encode.HP_SCALE).
 constexpr double HP_VALUE_SCALE = 200.0;
 
+double bossTransitionTerminalValue(const BattleContext &bc, int mode) {
+    if (mode == 0 || bc.outcome == Outcome::UNDECIDED) {
+        return std::clamp(
+            static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
+    }
+    if (bc.outcome == Outcome::PLAYER_LOSS) {
+        return 0.0;
+    }
+
+    const int combatMaximum = std::max(0, bc.player.maxHp);
+    int hp = std::clamp(bc.player.curHp, 0, combatMaximum);
+    if (bc.player.hasRelic<RelicId::BURNING_BLOOD>()) {
+        hp = std::min(combatMaximum, hp + 6);
+    } else if (bc.player.hasRelic<RelicId::BLACK_BLOOD>()) {
+        hp = std::min(combatMaximum, hp + 12);
+    }
+    if (bc.player.hasRelic<RelicId::MEAT_ON_THE_BONE>() &&
+        hp <= combatMaximum / 2) {
+        hp = std::min(combatMaximum, hp + 12);
+    }
+
+    int maximum = combatMaximum;
+    if (bc.player.hasRelic<RelicId::FACE_OF_CLERIC>()) {
+        ++maximum;
+    }
+
+    if (mode == 1) {
+        hp = maximum;
+    } else if (mode == 2) {
+        const int missing = maximum - hp;
+        hp = std::min(maximum, hp + static_cast<int>(
+            std::round(static_cast<double>(missing) * 0.75)));
+    }
+    return std::clamp(static_cast<double>(hp) / HP_VALUE_SCALE, 0.0, 1.0);
+}
+
 inline void hashCombine(std::uint64_t &hash, std::uint64_t value) {
     hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
 }
@@ -30,8 +66,11 @@ inline void hashValue(std::uint64_t &hash, T value) {
     hashCombine(hash, static_cast<std::uint64_t>(value));
 }
 
+using CardSignature = std::tuple<int, int, int, int, int, int, int>;
+
 template <typename Pile>
-void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
+void hashCardComposition(std::uint64_t &hash, const Pile &pile,
+                         std::vector<CardSignature> &cards) {
     // Card id/upgrade count is not a complete card state.  Temporary cards
     // and cards such as Masterful Stab/Blood for Blood carry transition
     // relevant data in specialData, while Snecko/free-play/retain effects
@@ -39,13 +78,12 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile) {
     // unordered for NOSL, but retain every field that can affect a future
     // transition.  uniqueId is deliberately excluded: it is an opaque card
     // identity and is not public information.
-    using CardSignature = std::tuple<int, int, int, int, int, int, int>;
     // CardManager uses std::vector unless the optional fixed-list build flag
     // is enabled, so a legal pile is not necessarily bounded by
     // MAX_GROUP_SIZE.  In particular, long runs and generated cards can make
     // a pile exceed 64 entries.  Size this scratch space from the actual pile
     // to avoid writing past a fixed stack array while canonicalizing the key.
-    std::vector<CardSignature> cards;
+    cards.clear();
     cards.reserve(pile.size());
     for (const auto &card : pile) {
         cards.emplace_back(
@@ -110,7 +148,10 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
 // standalone raw fields but still change the next legal transition, so they
 // must be part of the information-set key.  Hidden RNG streams, pile order,
 // and hand slot order remain deliberately excluded for NOSL.
-std::uint64_t publicStateKey(const BattleContext &bc) {
+std::uint64_t publicStateKey(const BattleContext &bc,
+                            std::vector<CardSignature> *scratch = nullptr) {
+    std::vector<CardSignature> localScratch;
+    auto &cards = scratch != nullptr ? *scratch : localScratch;
     std::uint64_t hash = 0xcbf29ce484222325ULL;
     hashValue(hash, static_cast<int>(bc.inputState));
     hashValue(hash, static_cast<int>(bc.outcome));
@@ -194,11 +235,11 @@ std::uint64_t publicStateKey(const BattleContext &bc) {
     }
 
     hashHandComposition(hash, bc);
-    hashCardComposition(hash, bc.cards.drawPile);
-    hashCardComposition(hash, bc.cards.discardPile);
-    hashCardComposition(hash, bc.cards.exhaustPile);
-    hashCardComposition(hash, bc.cards.limbo);
-    hashCardComposition(hash, bc.cards.stasisCards);
+    hashCardComposition(hash, bc.cards.drawPile, cards);
+    hashCardComposition(hash, bc.cards.discardPile, cards);
+    hashCardComposition(hash, bc.cards.exhaustPile, cards);
+    hashCardComposition(hash, bc.cards.limbo, cards);
+    hashCardComposition(hash, bc.cards.stasisCards, cards);
     hashValue(hash, bc.cards.cardsInHand);
     hashValue(hash, bc.cards.handNormalityCount);
     hashValue(hash, bc.cards.handPainCount);
@@ -445,6 +486,10 @@ NoslCombatTrainer::NoslCombatTrainer(NoslCombatSearchConfig config)
     if (config_.maxDepth < 0) {
         config_.maxDepth = 0;
     }
+    if (config_.bossTransitionValueMode != 1 &&
+        config_.bossTransitionValueMode != 2) {
+        config_.bossTransitionValueMode = 0;
+    }
     // Zero is a valid ablation value: it removes the PUCT prior term while
     // retaining Q-based selection.  Only negative/non-finite values fall back
     // to the historical default.
@@ -537,6 +582,11 @@ int NoslCombatTrainer::selectPuct(const Node &node, const BattleContext &state) 
 }
 
 double NoslCombatTrainer::leafValue(const BattleContext &state) const {
+    if (state.outcome != Outcome::UNDECIDED &&
+        config_.bossTransitionValueMode != 0) {
+        return bossTransitionTerminalValue(
+            state, config_.bossTransitionValueMode);
+    }
     const auto it = values_.find(stateKey(state));
     if (it != values_.end() && std::isfinite(it->second)) {
         return std::clamp(it->second, 0.0, 1.0);
@@ -555,10 +605,22 @@ NoslCombatDecision NoslCombatTrainer::search(const BattleContext &rootState,
     NoslCombatSearchStats localStats;
     Node root;
     const auto rootKey = stateKey(rootState);
+    std::unique_ptr<BattleContext> fixedRootState;
+    if (config_.fixedWorldline) {
+        fixedRootState = std::make_unique<BattleContext>(rootState);
+        noslRedeterminize(*fixedRootState, noslMix(searchNonce));
+    }
 
     for (int simulation = 0; simulation < config_.simulations; ++simulation) {
-        BattleContext state(rootState);
-        noslRedeterminize(state, noslMix(searchNonce + static_cast<std::uint64_t>(simulation)));
+        BattleContext state(
+            config_.fixedWorldline ? *fixedRootState : rootState
+        );
+        if (!config_.fixedWorldline) {
+            noslRedeterminize(
+                state,
+                noslMix(searchNonce + static_cast<std::uint64_t>(simulation))
+            );
+        }
 
         Node *node = &root;
         std::vector<Node *> nodePath{node};
@@ -758,7 +820,8 @@ NoslCombatEpisodeStats NoslCombatTrainer::runEpisode(
     episode.finalHp = battle.player.curHp;
     episode.outcome = battle.outcome;
     if (train) {
-        const double target = hpValue(battle);
+        const double target = bossTransitionTerminalValue(
+            battle, config_.bossTransitionValueMode);
         for (const auto &decision : decisions) {
             updateFromDecision(decision, target);
         }
@@ -768,6 +831,11 @@ NoslCombatEpisodeStats NoslCombatTrainer::runEpisode(
 
 // ---------------------------------------------------------------------------
 // Neural-guided AlphaZero session
+
+NoslNeuralSearchSession::Edge::Edge(
+    Action a, double p, bool targeted, ActionLabel label)
+    : action(a), prior(p), logPrior(std::log(std::max(p, 1.0e-12))),
+      targeted(targeted), label(std::move(label)) {}
 
 NoslNeuralSearchSession::NoslNeuralSearchSession(
     const BattleContext &rootState,
@@ -784,11 +852,18 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         [](const CardInstance &lhs, const CardInstance &rhs) {
             return lhs.getUniqueId() < rhs.getUniqueId();
         });
+    if (config_.fixedWorldline) {
+        noslRedeterminizeCanonical(rootState_, noslMix(searchNonce_));
+    }
     if (config_.simulations < 1) {
         config_.simulations = 1;
     }
     if (config_.maxDepth < 0) {
         config_.maxDepth = 0;
+    }
+    if (config_.bossTransitionValueMode != 1 &&
+        config_.bossTransitionValueMode != 2) {
+        config_.bossTransitionValueMode = 0;
     }
     if (config_.cPuct < 0.0 || !std::isfinite(config_.cPuct)) {
         config_.cPuct = 1.5;
@@ -851,9 +926,10 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         config_.gumbelInteriorMaxMixVisits = 64.0;
         config_.dirichletAlpha = 0.0;
         config_.dirichletEpsilon = 0.0;
-        config_.priorTemperature = 1.0;
     }
-    root_.networkValue = std::isfinite(rootValue)
+    root_.modelValueValid = std::isfinite(rootValue);
+    root_.modelValue = root_.modelValueValid ? rootValue : 0.0;
+    root_.networkValue = root_.modelValueValid
         ? std::clamp(rootValue, 0.0, 1.0)
         : hpValue(rootState_);
     root_.networkValueValid = true;
@@ -1041,7 +1117,7 @@ int NoslNeuralSearchSession::selectRootEdge() {
             root_.visits + root_.virtualVisits - 1, 0,
             static_cast<int>(gumbelVisitSchedule_.size()) - 1);
         const int consideredVisit = gumbelVisitSchedule_[simulationIndex];
-        const std::vector<double> scores = rootCompletedScores(true);
+        const auto &scores = rootCompletedScores(true);
         int best = -1;
         double bestScore = -std::numeric_limits<double>::infinity();
         for (const int index : gumbelActiveEdges_) {
@@ -1135,6 +1211,7 @@ void NoslNeuralSearchSession::applyRootDirichletNoise() {
     for (std::size_t i = 0; i < root_.edges.size(); ++i) {
         root_.edges[i].prior = (1.0 - epsilon) * root_.edges[i].prior +
                                epsilon * samples[i] / total;
+        root_.edges[i].logPrior = std::log(std::max(root_.edges[i].prior, 1.0e-12));
     }
 }
 
@@ -1191,10 +1268,40 @@ bool NoslNeuralSearchSession::actionTargetsEnemy(
     }
 }
 
-std::string NoslNeuralSearchSession::actionLabel(
+NoslNeuralSearchSession::ActionLabel NoslNeuralSearchSession::actionLabel(
     const BattleContext &state, const Action &action) {
+    ActionLabel label;
+    const auto type = action.getActionType();
+    if ((type == ActionType::CARD || type == ActionType::END_TURN) &&
+        action.isValidAction(state)) {
+        label.deferred = true;
+        if (type == ActionType::CARD) {
+            label.card = state.cards.hand[action.getSourceIdx()];
+            if (label.card.requiresTarget()) {
+                label.targetName = state.monsters.arr[action.getTargetIdx()].getName();
+            }
+        }
+        return label;
+    }
     std::ostringstream output;
     action.printDesc(output, state);
+    label.eager = output.str();
+    return label;
+}
+
+std::string NoslNeuralSearchSession::formatActionLabel(const Edge &edge) {
+    if (!edge.label.deferred) {
+        return edge.label.eager;
+    }
+    if (edge.action.getActionType() == ActionType::END_TURN) {
+        return "{ end turn }";
+    }
+    std::ostringstream output;
+    output << "{ use card (" << edge.action.getSourceIdx() << ") " << edge.label.card;
+    if (edge.label.targetName != nullptr) {
+        output << " -> (" << edge.action.getTargetIdx() << ") " << edge.label.targetName;
+    }
+    output << " }";
     return output.str();
 }
 
@@ -1484,13 +1591,23 @@ int NoslNeuralSearchSession::selectPuct(const Node &node) const {
 
 NoslNeuralSearchSession::QTransformDetails
 NoslNeuralSearchSession::completedQDetails(const Node &node) const {
-    const std::size_t count = node.edges.size();
     QTransformDetails details;
-    details.raw.assign(count, node.networkValue);
-    details.normalized.assign(count, 0.0);
-    details.scaled.assign(count, 0.0);
+    fillCompletedQ(node, details.scaled, &details.raw, &details.normalized);
+    return details;
+}
+
+void NoslNeuralSearchSession::fillCompletedQ(
+    const Node &node, std::vector<double> &scaled,
+    std::vector<double> *rawOutput, std::vector<double> *normalizedOutput) const {
+    const std::size_t count = node.edges.size();
+    auto &raw = rawOutput != nullptr ? *rawOutput : rawQScratch_;
+    raw.assign(count, node.networkValue);
+    scaled.assign(count, 0.0);
+    if (normalizedOutput != nullptr) {
+        normalizedOutput->assign(count, 0.0);
+    }
     if (count == 0) {
-        return details;
+        return;
     }
 
     // Use the structurally propagated action values.  An action with several
@@ -1542,19 +1659,12 @@ NoslNeuralSearchSession::completedQDetails(const Node &node) const {
         if (!std::isfinite(value)) {
             value = mixedValue;
         }
-        details.raw[i] = value;
+        raw[i] = value;
         minValue = std::min(minValue, value);
         maxValue = std::max(maxValue, value);
     }
 
     const double denominator = std::max(maxValue - minValue, 1.0e-8);
-    for (std::size_t i = 0; i < count; ++i) {
-        // Keep the normalized view even when rescale_values is disabled.  It
-        // makes diagnostics comparable across ablations; `scaled` below is
-        // the exact quantity used by action selection.
-        details.normalized[i] = (details.raw[i] - minValue) / denominator;
-    }
-
     int maxVisit = 0;
     for (const auto &edge : node.edges) {
         maxVisit = std::max(maxVisit, edge.visits);
@@ -1563,35 +1673,38 @@ NoslNeuralSearchSession::completedQDetails(const Node &node) const {
                           static_cast<double>(maxVisit)) *
         config_.gumbelValueScale;
     for (std::size_t i = 0; i < count; ++i) {
+        const double normalized = (raw[i] - minValue) / denominator;
+        if (normalizedOutput != nullptr) {
+            (*normalizedOutput)[i] = normalized;
+        }
         const double base = config_.gumbelRescaleQ
-            ? details.normalized[i] : details.raw[i];
-        details.scaled[i] = base * scale;
+            ? normalized : raw[i];
+        scaled[i] = base * scale;
     }
-    return details;
 }
 
-std::vector<double> NoslNeuralSearchSession::completedQTransform(
+const std::vector<double> &NoslNeuralSearchSession::completedQTransform(
     const Node &node) const {
-    return completedQDetails(node).scaled;
+    fillCompletedQ(node, scaledQScratch_);
+    return scaledQScratch_;
 }
 
-std::vector<double> NoslNeuralSearchSession::rootCompletedScores(
+const std::vector<double> &NoslNeuralSearchSession::rootCompletedScores(
     bool includeNoise) const {
-    const std::vector<double> q = completedQTransform(root_);
-    std::vector<double> scores(root_.edges.size(),
-                               -std::numeric_limits<double>::infinity());
+    const auto &q = completedQTransform(root_);
+    auto &scores = rootScoreScratch_;
+    scores.assign(root_.edges.size(), -std::numeric_limits<double>::infinity());
     for (std::size_t i = 0; i < root_.edges.size(); ++i) {
-        const double prior = std::max(root_.edges[i].prior, 1.0e-12);
         const double noise = includeNoise && i < gumbelNoise_.size()
             ? gumbelNoise_[i]
             : 0.0;
-        scores[i] = std::log(prior) + noise + q[i];
+        scores[i] = root_.edges[i].logPrior + noise + q[i];
     }
     return scores;
 }
 
 std::vector<double> NoslNeuralSearchSession::rootPolicyTarget() const {
-    const std::vector<double> scores = rootCompletedScores(false);
+    const auto &scores = rootCompletedScores(false);
     std::vector<double> target(scores.size(), 0.0);
     if (scores.empty()) {
         return target;
@@ -1682,11 +1795,12 @@ int NoslNeuralSearchSession::selectFullGumbelInterior(
             return bestUnvisited;
         }
     }
-    const std::vector<double> q = completedQTransform(node);
-    std::vector<double> logits(node.edges.size(), 0.0);
+    const auto &q = completedQTransform(node);
+    auto &logits = interiorLogitScratch_;
+    logits.assign(node.edges.size(), 0.0);
     double maxLogit = -std::numeric_limits<double>::infinity();
     for (std::size_t i = 0; i < node.edges.size(); ++i) {
-        logits[i] = std::log(std::max(node.edges[i].prior, 1.0e-12)) + q[i];
+        logits[i] = node.edges[i].logPrior + q[i];
         maxLogit = std::max(maxLogit, logits[i]);
     }
     double probabilityTotal = 0.0;
@@ -1739,6 +1853,12 @@ int NoslNeuralSearchSession::selectFullGumbelInterior(
 }
 
 void NoslNeuralSearchSession::backupStats(Pending &pending, double value) {
+    if (pending.directSuccessorValueLeaf && !pending.edges.empty() &&
+        std::isfinite(value)) {
+        auto *edge = pending.edges.back();
+        edge->successorModelValueSum += value;
+        ++edge->successorModelValueCount;
+    }
     if (!std::isfinite(value)) {
         value = 0.0;
     }
@@ -1779,11 +1899,11 @@ void NoslNeuralSearchSession::recomputePathValues(
     // now respect the two kinds of backward edge:
     //   action -> children: chance average over NOSL world lines;
     //   decision node -> actions: configured mean/max/progressive aggregate.
+    if (!pending.edges.empty() && pending.edges.size() < pending.nodes.size()) {
+        recomputeNodeValue(*pending.nodes[pending.edges.size()]);
+    }
     for (int i = static_cast<int>(pending.edges.size()) - 1; i >= 0; --i) {
         const std::size_t edgeIndex = static_cast<std::size_t>(i);
-        if (edgeIndex + 1 < pending.nodes.size()) {
-            recomputeNodeValue(*pending.nodes[edgeIndex + 1]);
-        }
         recomputeEdgeValue(*pending.edges[edgeIndex]);
         if (edgeIndex < pending.nodes.size()) {
             recomputeNodeValue(*pending.nodes[edgeIndex]);
@@ -1824,13 +1944,16 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
     }
     while (simulationsStarted_ < config_.simulations &&
            static_cast<int>(requests.size()) < maxLeaves) {
-        BattleContext state(rootState_);
-        noslRedeterminizeCanonical(
-            state, noslMix(searchNonce_ + static_cast<std::uint64_t>(
-                                   simulationsStarted_)));
+        Pending pending;
+        pending.state = std::make_unique<BattleContext>(rootState_);
+        auto &state = *pending.state;
+        if (!config_.fixedWorldline) {
+            noslRedeterminizeCanonical(
+                state, noslMix(searchNonce_ + static_cast<std::uint64_t>(
+                                       simulationsStarted_)));
+        }
         ++simulationsStarted_;
 
-        Pending pending;
         pending.id = nextRequestId_++;
         const std::size_t pathReserve = config_.maxDepth > 0
             ? static_cast<std::size_t>(config_.maxDepth) + 1 : 16;
@@ -1848,15 +1971,13 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             // this state and do not request policy logits because no child
             // expansion should be installed at a truncated leaf.
             if (config_.maxDepth > 0 && depth >= config_.maxDepth) {
-                pending.state = state;
-                pending.leaf = nullptr;
+                pending.leaf = node;
                 pending.legalActions.clear();
                 pending.needsPolicy = false;
                 haveLeaf = true;
                 break;
             }
             if (node->edges.empty()) {
-                pending.state = state;
                 pending.leaf = node;
                 pending.legalActions = legalActions(state);
                 pending.needsPolicy = true;
@@ -1937,15 +2058,15 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 // Do not expand the hidden/random continuation of End Turn.
                 // The resulting state is evaluated by the caller's value
                 // network and backed up as a value-only leaf.
-                pending.state = state;
                 pending.leaf = nullptr;
                 pending.legalActions.clear();
                 pending.needsPolicy = false;
+                pending.directSuccessorValueLeaf = true;
                 haveLeaf = true;
                 break;
             }
 
-            const auto childKey = publicStateKey(state);
+            const auto childKey = publicStateKey(state, &stateKeyScratch_);
             auto childIt = edge->children.find(childKey);
             if (childIt == edge->children.end()) {
                 childIt = edge->children.emplace(
@@ -1966,12 +2087,14 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 --simulationsStarted_;
                 break;
             }
-            finishTerminal(pending, hpValue(state));
+            finishTerminal(pending, bossTransitionTerminalValue(
+                state, config_.bossTransitionValueMode));
             continue;
         }
         if (state.outcome != Outcome::UNDECIDED ||
             (pending.needsPolicy && pending.legalActions.empty())) {
-            finishTerminal(pending, hpValue(state));
+            finishTerminal(pending, bossTransitionTerminalValue(
+                state, config_.bossTransitionValueMode));
             continue;
         }
 
@@ -1980,7 +2103,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         const auto &stored = pending_.at(requestId);
         LeafRequest request;
         request.requestId = stored.id;
-        request.state = &stored.state;
+        request.state = stored.state.get();
         request.legalActions = stored.legalActions;
         request.needsPolicy = stored.needsPolicy;
         requests.push_back(std::move(request));
@@ -1997,14 +2120,20 @@ void NoslNeuralSearchSession::backprop(
     }
     Pending pending = std::move(it->second);
     pending_.erase(it);
-    if (pending.leaf != nullptr && pending.needsPolicy &&
-        pending.leaf->edges.empty()) {
-        pending.leaf->networkValue = std::isfinite(value)
-            ? std::clamp(value, 0.0, 1.0)
-            : 0.0;
-        pending.leaf->networkValueValid = true;
-        expandWithLogits(
-            *pending.leaf, pending.state, pending.legalActions, policyLogits);
+    if (pending.leaf != nullptr) {
+        if (!pending.leaf->networkValueValid) {
+            pending.leaf->modelValueValid = std::isfinite(value);
+            pending.leaf->modelValue = pending.leaf->modelValueValid
+                ? value : 0.0;
+            pending.leaf->networkValue = std::isfinite(value)
+                ? std::clamp(value, 0.0, 1.0)
+                : 0.0;
+            pending.leaf->networkValueValid = true;
+        }
+        if (pending.needsPolicy && pending.leaf->edges.empty()) {
+            expandWithLogits(
+                *pending.leaf, *pending.state, pending.legalActions, policyLogits);
+        }
     }
     backup(pending, value);
 }
@@ -2026,15 +2155,21 @@ void NoslNeuralSearchSession::backpropBatch(
         }
         Pending pending = std::move(it->second);
         pending_.erase(it);
-        if (pending.leaf != nullptr && pending.needsPolicy &&
-            pending.leaf->edges.empty()) {
-            pending.leaf->networkValue = std::isfinite(values[i])
-                ? std::clamp(values[i], 0.0, 1.0)
-                : 0.0;
-            pending.leaf->networkValueValid = true;
-            expandWithLogits(
-                *pending.leaf, pending.state, pending.legalActions,
-                policyLogits[i]);
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[i]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[i] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[i])
+                    ? std::clamp(values[i], 0.0, 1.0)
+                    : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    policyLogits[i]);
+            }
         }
         backupStats(pending, values[i]);
         batch.emplace_back(std::move(pending));
@@ -2054,6 +2189,31 @@ void NoslNeuralSearchSession::backpropBatchArray(
                       (policyWidth > 0 && policyLogits == nullptr))) {
         throw std::invalid_argument("null NOSL backprop array storage");
     }
+    if (count == 1) {
+        auto it = pending_.find(requestIds[0]);
+        if (it == pending_.end()) {
+            throw std::invalid_argument("unknown NOSL neural leaf request id");
+        }
+        auto &pending = it->second;
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[0]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[0] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[0])
+                    ? std::clamp(values[0], 0.0, 1.0) : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    policyWidth > 0 ? policyLogits : nullptr, policyWidth);
+            }
+        }
+        backup(pending, values[0]);
+        pending_.erase(it);
+        return;
+    }
     std::vector<Pending> batch;
     batch.reserve(count);
     for (std::size_t i = 0; i < count; ++i) {
@@ -2063,17 +2223,23 @@ void NoslNeuralSearchSession::backpropBatchArray(
         }
         Pending pending = std::move(it->second);
         pending_.erase(it);
-        if (pending.leaf != nullptr && pending.needsPolicy &&
-            pending.leaf->edges.empty()) {
-            pending.leaf->networkValue = std::isfinite(values[i])
-                ? std::clamp(values[i], 0.0, 1.0)
-                : 0.0;
-            pending.leaf->networkValueValid = true;
-            const double *row = policyWidth > 0
-                ? policyLogits + i * policyWidth : nullptr;
-            expandWithLogits(
-                *pending.leaf, pending.state, pending.legalActions,
-                row, policyWidth);
+        if (pending.leaf != nullptr) {
+            if (!pending.leaf->networkValueValid) {
+                pending.leaf->modelValueValid = std::isfinite(values[i]);
+                pending.leaf->modelValue = pending.leaf->modelValueValid
+                    ? values[i] : 0.0;
+                pending.leaf->networkValue = std::isfinite(values[i])
+                    ? std::clamp(values[i], 0.0, 1.0)
+                    : 0.0;
+                pending.leaf->networkValueValid = true;
+            }
+            if (pending.needsPolicy && pending.leaf->edges.empty()) {
+                const double *row = policyWidth > 0
+                    ? policyLogits + i * policyWidth : nullptr;
+                expandWithLogits(
+                    *pending.leaf, *pending.state, pending.legalActions,
+                    row, policyWidth);
+            }
         }
         backupStats(pending, values[i]);
         batch.emplace_back(std::move(pending));
@@ -2100,7 +2266,7 @@ NoslCombatDecision NoslNeuralSearchSession::result() const {
             maxVisit = std::max(maxVisit,
                                 root_.edges[static_cast<std::size_t>(index)].visits);
         }
-        const std::vector<double> scores = rootCompletedScores(true);
+        const auto &scores = rootCompletedScores(true);
         best = gumbelActiveEdges_.front();
         for (const int index : gumbelActiveEdges_) {
             const auto &candidate = root_.edges[static_cast<std::size_t>(index)];
@@ -2183,6 +2349,8 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
     snapshot.sampleValue = node->valueVisits > 0
         ? node->valueSum / static_cast<double>(node->valueVisits)
         : nodeValueForSelection(*node);
+    snapshot.networkValueValid = node->modelValueValid;
+    snapshot.networkValue = node->modelValue;
     const QTransformDetails qDetails = completedQDetails(*node);
 
     std::vector<int> order;
@@ -2224,6 +2392,12 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
         info.sampleQ = edge.valueVisits > 0
             ? edge.valueSum / static_cast<double>(edge.valueVisits)
             : info.value;
+        if (edge.successorModelValueCount > 0) {
+            info.successorModelValueValid = true;
+            info.successorModelValueCount = edge.successorModelValueCount;
+            info.successorModelValue = edge.successorModelValueSum /
+                static_cast<double>(edge.successorModelValueCount);
+        }
         if (static_cast<std::size_t>(edgeIndex) < qDetails.raw.size()) {
             info.rawQ = qDetails.raw[static_cast<std::size_t>(edgeIndex)];
             info.normalizedQ = qDetails.normalized[
@@ -2258,7 +2432,7 @@ NoslNeuralSearchSession::treeSnapshot(const std::vector<int> &path,
             });
         info.targeted = edge.targeted;
         info.randomSplit = edge.children.size() > 1;
-        info.label = edge.label;
+        info.label = formatActionLabel(edge);
         snapshot.children.push_back(info);
     }
     return snapshot;

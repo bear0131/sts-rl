@@ -34,12 +34,60 @@ def test_unvisited_edge_q_uses_parent_value_minus_fpu_reduction():
     )
 
     root = session.tree_snapshot([], 64)
+    assert root["network_value_valid"] is True
+    assert root["network_value"] == pytest.approx(0.37)
+    assert root["value"] == pytest.approx(0.81)
     visited = [edge for edge in root["children"] if edge["visits"] == 1]
     unvisited = [edge for edge in root["children"] if edge["visits"] == 0]
     assert len(visited) == 1
     assert unvisited
     assert visited[0]["value"] == pytest.approx(0.81)
     assert all(edge["value"] == pytest.approx(0.36) for edge in unvisited)
+
+    child = session.tree_snapshot([visited[0]["edge_index"]], 64)
+    assert child["network_value_valid"] is True
+    assert child["network_value"] == pytest.approx(0.81)
+
+    # Inspector values retain the exact model output; search still clamps its
+    # own backup value to the configured [0, 1] outcome range.
+    raw_session = battle.nosl_neural_search_begin(
+        root_logits, simulations=1, depth=1, nonce=124, root_value=1.37
+    )
+    raw_request = raw_session.next_batch(1)[0]
+    raw_session.backprop(
+        raw_request["request_id"], -0.19, np.zeros(200, dtype=np.float64)
+    )
+    raw_root = raw_session.tree_snapshot([], 64)
+    raw_visited = next(edge for edge in raw_root["children"] if edge["visits"])
+    raw_child = raw_session.tree_snapshot([raw_visited["edge_index"]], 64)
+    assert raw_root["network_value"] == pytest.approx(1.37)
+    assert raw_child["network_value"] == pytest.approx(-0.19)
+    assert raw_child["value"] == pytest.approx(0.0)
+
+
+@pytest.mark.native
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [(1, 80 / 200), (2, 67 / 200)],
+)
+def test_native_boss_transition_terminal_modes(mode, expected):
+    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 5)
+    battle = sts.create_battle(game, "Jaw Worm")
+    battle.apply_custom_state({"player": {"hp": 20}})
+    battle.set_player_strength(999)
+    logits = np.full(200, -100.0, dtype=np.float64)
+    logits[1:6] = 100.0
+    session = battle.nosl_neural_search_begin(
+        logits,
+        simulations=1,
+        depth=0,
+        nonce=5,
+        boss_transition_value_mode=mode,
+    )
+
+    assert session.next_batch(1) == []
+    assert session.done()
+    assert session.result()["root_value"] == pytest.approx(expected)
 
 
 def test_armaments_tree_uses_hypothetical_hand_labels():
@@ -147,6 +195,34 @@ def test_action_edge_marks_multiple_nosl_world_lines_as_chance_average():
     assert end_turn["random_split"] is True
 
 
+def test_fixed_worldline_keeps_one_child_per_action_path():
+    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
+    battle = sts.create_battle(game, "Jaw Worm")
+    root_logits = np.zeros(200, dtype=np.float64)
+    root_logits[0] = 10.0
+    session = battle.nosl_neural_search_begin(
+        root_logits,
+        simulations=32,
+        depth=2,
+        c_puct=100.0,
+        nonce=123,
+        root_value=0.2,
+        gumbel_interior_value_mode=1,
+        fixed_worldline=True,
+    )
+    while not session.done():
+        for request in session.next_batch(8):
+            value = float(request["state"]["player"]["hp"]) / 200.0
+            session.backprop(
+                request["request_id"], value, np.zeros(200, dtype=np.float64)
+            )
+
+    root = session.tree_snapshot([], 64)
+    end_turn = next(edge for edge in root["children"] if edge["action_bits"] >> 29 == 4)
+    assert end_turn["child_states"] == 1
+    assert end_turn["random_split"] is False
+
+
 def test_end_turn_value_boundary_is_fully_settled_and_non_random():
     game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
     battle = sts.create_battle(game, "Jaw Worm")
@@ -181,9 +257,9 @@ def test_end_turn_value_boundary_is_fully_settled_and_non_random():
     assert len(live_state["hand"]) > 0
 
 
-def test_search_end_turn_leaf_uses_stable_boundary_state():
-    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
-    battle = sts.create_battle(game, "Jaw Worm")
+def test_search_end_turn_leaf_uses_stable_boundary_state(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=8)
+    battle = env.thick.bc
     root_hp = battle.to_dict()["player"]["hp"]
     logits = np.full(200, -100.0, dtype=np.float64)
     logits[0] = 100.0
@@ -205,6 +281,25 @@ def test_search_end_turn_leaf_uses_stable_boundary_state():
     assert state["player"]["hp"] < root_hp
     assert state["player"]["block"] == 0
     assert state["player"]["combat_counters"]["cards_played"] == 0
+    session.backprop(
+        leaf["request_id"], 0.731, np.zeros(200, dtype=np.float64)
+    )
+    root = session.tree_snapshot([], 64)
+    end_turn = next(
+        edge for edge in root["children"] if edge["action_bits"] >> 29 == 4
+    )
+    assert end_turn["successor_model_value_valid"] is True
+    assert end_turn["successor_model_value"] == pytest.approx(0.731)
+    assert end_turn["successor_model_value_count"] == 1
+
+    env._nosl_cpp_last_session = session
+    adapted = env.nosl_is_az_cpp_tree_snapshot([], 64)
+    adapted_end_turn = next(
+        edge for edge in adapted["children"] if edge["action_bits"] >> 29 == 4
+    )
+    assert adapted_end_turn["successor_model_value_valid"] is True
+    assert adapted_end_turn["successor_model_value"] == pytest.approx(0.731)
+    assert adapted_end_turn["successor_model_value_count"] == 1
 
 
 def test_boundary_observation_changes_only_enemy_hp_for_hp_only_input_change():

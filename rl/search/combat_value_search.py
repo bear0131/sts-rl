@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from env.core import encode
+from env.core.boss_value import context_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 from rl.policies.model import observation_for_policy
 
@@ -38,6 +39,7 @@ class CombatValueSearchConfig:
     node_budget: int = 512
     min_value_gain: float = 0.01
     terminal_hp: bool | None = None
+    boss_transition_target: bool | None = None
     nosl: bool = True
     master_nonce: int = 0x4E4F534C_7631
 
@@ -188,6 +190,11 @@ class CombatValueSearch:
             if self.config.terminal_hp is None
             else self.config.terminal_hp
         )
+        self._boss_transition_target = (
+            bool(getattr(model, "nosl_is_az_boss_transition_target", False))
+            if self.config.boss_transition_target is None
+            else bool(self.config.boss_transition_target)
+        )
         self._nosl_sampler = (
             NOSLSampler(self.config.master_nonce) if self.config.nosl else None
         )
@@ -296,7 +303,17 @@ class CombatValueSearch:
         self._populate(live, need_policy=True)
         if self._terminal_hp:
             for node in terminal:
-                node.value = self._terminal_hp_value(node)
+                # Bind the per-search objective without mutating branch state.
+                target = context_terminal_target(
+                    enabled=self._boss_transition_target,
+                    gc=node.env.thick.gc,
+                    bc=node.env.thick.bc,
+                )
+                node.value = (
+                    float(target)
+                    if target is not None
+                    else self._terminal_hp_value(node)
+                )
         else:
             self._populate(terminal, need_policy=False)
 
@@ -360,40 +377,38 @@ class CombatValueSearch:
         )
         return ranked if limit == 0 else ranked[:limit]
 
+    def _redeterminized_root(self, env):
+        branch = env.fork_combat()
+        thick = getattr(branch, "thick", None)
+        battle_context = getattr(thick, "bc", None)
+        if battle_context is None or not hasattr(
+            battle_context, "nosl_redeterminize"
+        ):
+            raise RuntimeError(
+                "NOSL combat search requires a BattleContext with "
+                "nosl_redeterminize()"
+            )
+        branch.thick.bc = self._nosl_sampler.clone_and_redeterminize(
+            battle_context,
+            state_nonce=self._search_state_nonce,
+            simulation_index=0,
+        )
+        invalidate = getattr(branch, "_invalidate_backend_cache", None)
+        if invalidate is not None:
+            invalidate()
+        return branch
+
     def _apply(self, node: _Node, action: int) -> tuple[_Node, bool]:
         branch = node.env.fork_combat()
-        if self._nosl_sampler is not None:
-            thick = getattr(branch, "thick", None)
-            battle_context = getattr(thick, "bc", None)
-            if battle_context is None or not hasattr(
-                battle_context, "nosl_redeterminize"
-            ):
-                raise RuntimeError(
-                    "NOSL combat search requires a BattleContext with "
-                    "nosl_redeterminize()"
-                )
-            # Redeterminize after cloning the visible state and before applying
-            # the next action.  The branch's past is fixed by its state, while
-            # every future receives a fresh RNG stream independent of the live
-            # world line and of sibling branches.
-            branch.thick.bc = self._nosl_sampler.clone_and_redeterminize(
-                battle_context,
-                state_nonce=self._search_state_nonce,
-                simulation_index=self.expanded_nodes,
-            )
-            invalidate = getattr(branch, "_invalidate_backend_cache", None)
-            if invalidate is not None:
-                invalidate()
         advances = bool(branch.combat_action_advances(action))
-        obs, _reward, terminated, truncated, info = branch.step(action)
-        if truncated:
-            raise RuntimeError("combat search branch unexpectedly truncated")
         probability = float(node.probabilities[action])
-        mask = np.asarray(
-            info.get("action_mask", np.zeros_like(node.mask)), dtype=bool
+        terminated, next_mask = branch.search_step(action, validate=False)
+        obs = branch._obs()
+        mask = (
+            np.zeros_like(node.mask)
+            if terminated
+            else np.asarray(next_mask, dtype=bool)
         )
-        if not terminated and not mask.any():
-            mask = np.asarray(branch.action_masks(), dtype=bool)
         first_action = node.first_action if node.first_action is not None else action
         child = _Node(
             env=branch,
@@ -469,10 +484,19 @@ class CombatValueSearch:
         env = self._base_env(env)
         if self._phase(env) != "combat":
             raise ValueError("combat value search cannot run outside combat")
-        obs = env._obs() if obs is None else obs
-        action_mask = (
-            env.action_masks() if action_mask is None else action_mask
-        )
+        if self._nosl_sampler is not None:
+            # Match the stable training search contract: sample hidden future
+            # once at the root, then preserve that sampled world while the beam
+            # clones and advances it.  Re-sampling between thin argument steps
+            # can invalidate action ids and erases known future state.
+            env = self._redeterminized_root(env)
+            obs = env._obs()
+            action_mask = env.action_masks()
+        else:
+            obs = env._obs() if obs is None else obs
+            action_mask = (
+                env.action_masks() if action_mask is None else action_mask
+            )
         root = _Node(
             env=env,
             obs=obs,

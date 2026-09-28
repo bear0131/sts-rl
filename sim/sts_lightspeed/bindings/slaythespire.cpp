@@ -260,12 +260,7 @@ struct Row {
     std::array<float, kFloatSize> scalars{};
 };
 
-inline int intentCategory(const sts::Monster &monster, int baseDamage) {
-    if (baseDamage > 0) return 1; // attack
-    const auto move = monster.moveHistory[0];
-    const int moveId = static_cast<int>(move);
-    if (moveId <= 0 || moveId >= kNativeMoves) return 0;
-    const std::string name(sts::monsterMoveStrings[moveId]);
+inline int intentCategoryFromName(const std::string &name) {
     auto has = [&name](const char *token) {
         return name.find(token) != std::string::npos;
     };
@@ -291,6 +286,20 @@ inline int intentCategory(const sts::Monster &monster, int baseDamage) {
         has("DROOL") || has("FLY") || has("CAW") || has("IMPLANT") ||
         has("ECHO")) return 3;
     return 0;
+}
+
+inline int intentCategory(const sts::Monster &monster, int baseDamage) {
+    if (baseDamage > 0) return 1;
+    const int moveId = static_cast<int>(monster.moveHistory[0]);
+    if (moveId <= 0 || moveId >= kNativeMoves) return 0;
+    static const auto categories = [] {
+        std::array<int, kNativeMoves> result{};
+        for (int id = 1; id < kNativeMoves; ++id) {
+            result[id] = intentCategoryFromName(sts::monsterMoveStrings[id]);
+        }
+        return result;
+    }();
+    return categories[moveId];
 }
 
 inline int monsterStatusValue(const sts::Monster &monster, int status) {
@@ -349,6 +358,8 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
 
 inline Row pack(const sts::BattleContext &bc) {
     Row row;
+    std::array<int, kMaxMonsters> baseDamages{};
+    std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
     for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
         row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
@@ -371,8 +382,10 @@ inline Row pack(const sts::BattleContext &bc) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
         const auto damage = monster.getMoveBaseDamage(bc);
+        baseDamages[monsterCount] = std::max(0, damage.damage);
+        attackCounts[monsterCount] = damage.attackCount;
         row.categorical[c + monsterCount] = intentCategory(
-            monster, std::max(0, damage.damage));
+            monster, baseDamages[monsterCount]);
         ++monsterCount;
     }
     c += kMaxMonsters;
@@ -433,8 +446,7 @@ inline Row pack(const sts::BattleContext &bc) {
          ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
-        const auto damage = monster.getMoveBaseDamage(bc);
-        const int baseDamage = std::max(0, damage.damage);
+        const int baseDamage = baseDamages[monsterCount];
         const int adjusted = baseDamage > 0
             ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
         row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
@@ -442,7 +454,7 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f++] = static_cast<float>(monster.maxHp);
         row.scalars[f++] = static_cast<float>(monster.block);
         row.scalars[f++] = static_cast<float>(adjusted);
-        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? damage.attackCount : 0);
+        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[monsterCount] : 0);
         ++monsterCount;
     }
     f += 6 * (kMaxMonsters - monsterCount);
@@ -1069,6 +1081,120 @@ py::list legalEventOptions(const sts::GameContext &gc) {
     return out;
 }
 
+// Public, action-aligned details shown on event buttons whose exact sacrifice
+// or service is selected when the event is created.  These values are already
+// displayed by ConsoleSimulator; exporting them here keeps Python policies
+// from having to guess an entity from the option index.  Other events return
+// an empty list because their stable event id + option index is sufficient.
+py::list eventOptionDetails(const sts::GameContext &gc) {
+    py::list out;
+    if (gc.screenState != sts::ScreenState::EVENT_SCREEN) {
+        return out;
+    }
+
+    const auto cardTuple = [](const sts::Card &card) {
+        return py::make_tuple(
+            sts::cardEnumStrings[static_cast<int>(card.getId())],
+            card.getUpgraded()
+        );
+    };
+    const bool unfavorable = gc.ascension >= 15;
+    for (const auto &action : sts::search::GameAction::getAllActionsInState(gc)) {
+        const int idx = action.getIdx1();
+        py::dict detail;
+        detail["index"] = idx;
+        switch (gc.curEvent) {
+            case sts::Event::FALLING: {
+                const int deckIdx = idx == 0 ? gc.info.skillCardDeckIdx
+                                  : idx == 1 ? gc.info.powerCardDeckIdx
+                                  : idx == 2 ? gc.info.attackCardDeckIdx : -1;
+                if (idx == 3) {
+                    detail["kind"] = "leave";
+                } else if (deckIdx >= 0 && deckIdx < gc.deck.size()) {
+                    detail["kind"] = "lose_card";
+                    detail["card"] = cardTuple(gc.deck.cards[deckIdx]);
+                } else {
+                    throw std::runtime_error("Falling option has no displayed card");
+                }
+                break;
+            }
+            case sts::Event::NLOTH: {
+                const int relicIdx = idx == 0 ? gc.info.relicIdx0
+                                   : idx == 1 ? gc.info.relicIdx1 : -1;
+                if (idx == 2) {
+                    detail["kind"] = "leave";
+                } else if (relicIdx >= 0 && relicIdx < gc.relics.size()) {
+                    detail["kind"] = "lose_relic";
+                    detail["relic"] = std::string(sts::relicIds[
+                        static_cast<int>(gc.relics.relics[relicIdx].id)]);
+                } else {
+                    throw std::runtime_error("N'loth option has no displayed relic");
+                }
+                break;
+            }
+            case sts::Event::WE_MEET_AGAIN:
+                if (idx == 0 && gc.info.potionIdx >= 0 &&
+                        gc.info.potionIdx < gc.potionCapacity) {
+                    detail["kind"] = "lose_potion";
+                    detail["potion"] = std::string(
+                        sts::getPotionName(gc.potions[gc.info.potionIdx]));
+                } else if (idx == 1 && gc.info.gold >= 0) {
+                    detail["kind"] = "lose_gold";
+                    detail["gold"] = gc.info.gold;
+                } else if (idx == 2 && gc.info.cardIdx >= 0 &&
+                        gc.info.cardIdx < gc.deck.size()) {
+                    detail["kind"] = "lose_card";
+                    detail["card"] = cardTuple(gc.deck.cards[gc.info.cardIdx]);
+                } else if (idx == 3) {
+                    detail["kind"] = "leave";
+                } else {
+                    throw std::runtime_error("We Meet Again option is missing displayed details");
+                }
+                break;
+            case sts::Event::NOTE_FOR_YOURSELF:
+                if (idx == 0) {
+                    detail["kind"] = "gain_card_then_remove";
+                    detail["card"] = cardTuple(gc.noteForYourselfCard);
+                } else if (idx == 1) {
+                    detail["kind"] = "leave";
+                } else {
+                    throw std::runtime_error("Note For Yourself has an invalid option");
+                }
+                break;
+            case sts::Event::DESIGNER_IN_SPIRE:
+                if (idx == 0) {
+                    detail["kind"] = "upgrade_card";
+                    detail["gold"] = unfavorable ? 50 : 40;
+                } else if (idx == 1) {
+                    detail["kind"] = "upgrade_random_cards";
+                    detail["gold"] = unfavorable ? 50 : 40;
+                    detail["count"] = 2;
+                } else if (idx == 2) {
+                    detail["kind"] = "remove_card";
+                    detail["gold"] = unfavorable ? 75 : 60;
+                } else if (idx == 3) {
+                    detail["kind"] = "transform_random_cards";
+                    detail["gold"] = unfavorable ? 75 : 60;
+                    detail["count"] = 2;
+                } else if (idx == 4) {
+                    detail["kind"] = "remove_card_upgrade_random";
+                    detail["gold"] = unfavorable ? 110 : 90;
+                    detail["count"] = 1;
+                } else if (idx == 5) {
+                    detail["kind"] = "lose_hp";
+                    detail["hp"] = unfavorable ? 5 : 3;
+                } else {
+                    throw std::runtime_error("Designer has an invalid option");
+                }
+                break;
+            default:
+                continue;
+        }
+        out.append(detail);
+    }
+    return out;
+}
+
 // valid campfire-option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,
 // 6=skip) for the current REST_ROOM, gated by relics/keys exactly as the sim's
 // own chooseCampfireOption expects.
@@ -1228,7 +1354,58 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
         pickMax = bc.cards.cardsInHand;
     }
     d["pick_max"] = pickMax;
+    // Public choices on generated-card screens, in the action's source order.
+    // Never read this array off-screen: it can contain uninitialized ids.
+    py::list generated;
+    if (bc.inputState == sts::InputState::CARD_SELECT &&
+        (task == sts::CardSelectTask::CODEX || task == sts::CardSelectTask::DISCOVERY)) {
+        for (auto id : csi.cards) {
+            generated.append(py::make_tuple(sts::cardEnumStrings[static_cast<int>(id)], 0));
+        }
+    }
+    d["generated_cards"] = generated;
     return d;
+}
+
+std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
+                                const sts::BattleContext &source,
+                                std::uint32_t actionBits) {
+    using namespace sts;
+    using namespace sts::search;
+    const search::Action original(actionBits);
+    const auto task = source.cardSelectInfo.cardSelectTask;
+    if (source.outcome != Outcome::UNDECIDED || sampled.outcome != Outcome::UNDECIDED ||
+        source.inputState != InputState::CARD_SELECT ||
+        sampled.inputState != InputState::CARD_SELECT ||
+        sampled.cardSelectInfo.cardSelectTask != task ||
+        (task != CardSelectTask::SECRET_TECHNIQUE &&
+         task != CardSelectTask::SECRET_WEAPON && task != CardSelectTask::SEEK) ||
+        original.getActionType() != ActionType::SINGLE_CARD_SELECT ||
+        !original.isValidAction(source)) {
+        throw std::invalid_argument("draw-selection remap requires matching live draw-select screens and a legal source action");
+    }
+    const auto &card = source.cards.drawPile[original.getSelectIdx()];
+    const auto uid = card.getUniqueId();
+    const auto sameIdentity = [uid](const CardInstance &other) {
+        return other.getUniqueId() == uid;
+    };
+    if (uid < 0 || std::count_if(source.cards.drawPile.begin(), source.cards.drawPile.end(), sameIdentity) != 1 ||
+        std::count_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity) != 1) {
+        throw std::invalid_argument("draw-selection remap requires one matching card entity in each pile");
+    }
+    const auto found = std::find_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity);
+    if (card.id != found->id || card.specialData != found->specialData ||
+        card.upgraded != found->upgraded || card.cost != found->cost ||
+        card.costForTurn != found->costForTurn || card.freeToPlayOnce != found->freeToPlayOnce ||
+        card.retain != found->retain) {
+        throw std::invalid_argument("draw-selection entity changed after sampling");
+    }
+    const search::Action mapped(ActionType::SINGLE_CARD_SELECT,
+                        static_cast<int>(found - sampled.cards.drawPile.begin()));
+    if (!mapped.isValidAction(sampled)) {
+        throw std::invalid_argument("remapped draw selection is not legal in sampled state");
+    }
+    return mapped.bits;
 }
 
 } // namespace
@@ -1362,6 +1539,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("choose_campfire_option", [](GameContext &gc, int i) { gc.chooseCampfireOption(i); })
         .def("legal_event_options", &legalEventOptions,
              "valid option indices for the current event (sim-authoritative, phase/relic aware)")
+        .def("event_option_details", &eventOptionDetails,
+             "public action-aligned details for event buttons with dynamic displayed candidates")
         .def("legal_campfire_options", &legalCampfireOptions,
              "valid campfire option indices (0=rest,1=smith,2=recall,3=lift,4=toke,5=dig,6=skip)")
         .def("choose_select_card_option", [](GameContext &gc, int i) { gc.chooseSelectCardScreenOption(i); })
@@ -1438,6 +1617,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 }
             }, "the player's character class as a stable enum-name string")
         .def_readwrite("ascension", &GameContext::ascension)
+        .def_readwrite("skip_battles", &GameContext::skipBattles)
         .def("boss_relic_ids", [](const GameContext &gc) {
             pybind11::list out;
             for (int i = 0; i < 3; ++i)
@@ -1461,6 +1641,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def_readwrite("cur_room", &GameContext::curRoom)
 //        .def_readwrite("cur_event", &GameContext::curEvent) // todo standardize event names
         .def_readwrite("boss", &GameContext::boss)
+        .def_readwrite("second_boss", &GameContext::secondBoss)
 
         .def_readwrite("cur_hp", &GameContext::curHp)
         .def_readwrite("max_hp", &GameContext::maxHp)
@@ -2405,6 +2586,8 @@ PYBIND11_MODULE(slaythespire, m) {
             result["value_visits"] = snapshot.valueVisits;
             result["value"] = snapshot.value;
             result["sample_value"] = snapshot.sampleValue;
+            result["network_value_valid"] = snapshot.networkValueValid;
+            result["network_value"] = snapshot.networkValue;
             pybind11::list children;
             for (const auto &edge : snapshot.children) {
                 pybind11::dict item;
@@ -2423,6 +2606,11 @@ PYBIND11_MODULE(slaythespire, m) {
                 item["gumbel"] = edge.gumbel;
                 item["gumbel_score"] = edge.gumbelScore;
                 item["completed_score"] = edge.completedScore;
+                item["successor_model_value_valid"] =
+                    edge.successorModelValueValid;
+                item["successor_model_value"] = edge.successorModelValue;
+                item["successor_model_value_count"] =
+                    edge.successorModelValueCount;
                 item["candidate"] = edge.candidate;
                 item["active_candidate"] = edge.activeCandidate;
                 item["random_split"] = edge.randomSplit;
@@ -2445,6 +2633,38 @@ PYBIND11_MODULE(slaythespire, m) {
 #endif
             return copy;
         }, "return an independent deep copy of the complete combat state")
+        .def("remap_draw_selection_from", &remapDrawSelection,
+             pybind11::arg("source"), pybind11::arg("action_bits"),
+             "map a public draw selection to this sampled clone by stable card identity; returns legal complete action bits without executing")
+        .def("execute_to_enemy_boundary", [](BattleContext &bc,
+                                             std::uint32_t actionBits) {
+            const search::Action action(actionBits);
+            if (bc.outcome != Outcome::UNDECIDED || bc.postEnemyTurnBoundary ||
+                !action.isValidAction(bc)) {
+                throw std::invalid_argument("boundary execution requires a legal live action before the enemy boundary");
+            }
+            bc.stopAfterEnemyTurn = true;
+            action.execute(bc);
+            return rawCombatState(bc);
+        }, pybind11::arg("action_bits"),
+           "mutate one legal action and pump until input, terminal, or the post-enemy boundary; preserve the boundary stop across pending selections")
+        .def("preview_end_turn_result", [](const BattleContext &bc,
+                                           std::uint32_t actionBits) {
+            const search::Action action(actionBits);
+            if (bc.outcome != Outcome::UNDECIDED ||
+                action.getActionType() != search::ActionType::END_TURN ||
+                !action.isValidAction(bc)) {
+                throw std::invalid_argument("end-turn preview requires a legal live END_TURN action");
+            }
+            BattleContext boundary(bc);
+#ifdef STS_ENABLE_RULE_TRACE
+            boundary.atomicStepObserver = {};
+#endif
+            boundary.stopAfterEnemyTurn = true;
+            action.execute(boundary);
+            return rawCombatState(boundary);
+        }, pybind11::arg("action_bits"),
+           "execute END once on a clone and return pending-choice, post-enemy-boundary, or terminal raw state; never mutates the source")
         .def("preview_end_turn_boundary", [](const BattleContext &bc,
                                                std::uint32_t actionBits) {
             const search::Action action(actionBits);
@@ -2487,15 +2707,17 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("nonce"),
              "replace future RNG streams and resample hidden draw-pile order")
         .def("nosl_native_search", [](const BattleContext &bc,
-                                       int simulations,
-                                       int depth,
-                                       double c_puct,
-                                       std::uint64_t nonce) {
+                                      int simulations,
+                                      int depth,
+                                      double c_puct,
+                                      std::uint64_t nonce,
+                                      int boss_transition_value_mode) {
             sts::search::NoslCombatSearchConfig config;
             config.simulations = simulations;
             config.maxDepth = depth;
             config.cPuct = c_puct;
             config.seed = nonce;
+            config.bossTransitionValueMode = boss_transition_value_mode;
             sts::search::NoslCombatTrainer trainer(config);
             sts::search::NoslCombatSearchStats stats;
             const auto decision = trainer.search(bc, nonce, &stats);
@@ -2516,6 +2738,7 @@ PYBIND11_MODULE(slaythespire, m) {
            pybind11::arg("depth") = 3,
            pybind11::arg("c_puct") = 1.5,
            pybind11::arg("nonce") = 1,
+           pybind11::arg("boss_transition_value_mode") = 0,
            "run a native NOSL combat search from this public state; each "
            "simulation clones and independently redeterminizes the root")
         .def("nosl_neural_search_begin",
@@ -2544,38 +2767,42 @@ PYBIND11_MODULE(slaythespire, m) {
                 double gumbel_interior_coverage_fraction,
                 int gumbel_interior_value_mode,
                 double gumbel_interior_max_mix_visits,
-                bool paper_full_gumbel) {
-                 std::vector<double> logits;
-                 auto view = root_policy_logits.unchecked<1>();
-                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
-                 for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
-                     logits.push_back(view(i));
-                 }
-                 sts::search::NoslCombatSearchConfig config;
-                 config.simulations = simulations;
-                 config.maxDepth = depth;
-                 config.cPuct = c_puct;
-                 config.priorTemperature = prior_temperature;
-                 config.endTurnAsLeaf = end_turn_as_leaf;
-                 config.dirichletAlpha = dirichlet_alpha;
-                 config.dirichletEpsilon = dirichlet_epsilon;
-                 config.rootSearchMode = root_search_mode;
-                 config.gumbelCandidates = gumbel_candidates;
-                 config.gumbelScale = gumbel_scale;
-                 config.gumbelValueScale = gumbel_value_scale;
-                 config.gumbelMaxVisitInit = gumbel_max_visit_init;
-                 config.gumbelRescaleQ = gumbel_rescale_q;
-                 config.gumbelUseMixedValue = gumbel_use_mixed_value;
-                 config.gumbelInteriorUniformity = gumbel_interior_uniformity;
-                 config.gumbelInteriorMinVisits = gumbel_interior_min_visits;
-                 config.gumbelInteriorCoverageFraction =
-                     gumbel_interior_coverage_fraction;
-                 config.gumbelInteriorValueMode = gumbel_interior_value_mode;
-                 config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
-                 config.paperFullGumbel = paper_full_gumbel;
-                 config.seed = nonce;
-                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
-                     bc, logits, config, nonce, root_value);
+                bool paper_full_gumbel,
+                bool fixed_worldline,
+                int boss_transition_value_mode) {
+                std::vector<double> logits;
+                auto view = root_policy_logits.unchecked<1>();
+                logits.reserve(static_cast<std::size_t>(view.shape(0)));
+                for (pybind11::ssize_t i = 0; i < view.shape(0); ++i) {
+                    logits.push_back(view(i));
+                }
+                sts::search::NoslCombatSearchConfig config;
+                config.simulations = simulations;
+                config.maxDepth = depth;
+                config.cPuct = c_puct;
+                config.priorTemperature = prior_temperature;
+                config.endTurnAsLeaf = end_turn_as_leaf;
+                config.dirichletAlpha = dirichlet_alpha;
+                config.dirichletEpsilon = dirichlet_epsilon;
+                config.rootSearchMode = root_search_mode;
+                config.gumbelCandidates = gumbel_candidates;
+                config.gumbelScale = gumbel_scale;
+                config.gumbelValueScale = gumbel_value_scale;
+                config.gumbelMaxVisitInit = gumbel_max_visit_init;
+                config.gumbelRescaleQ = gumbel_rescale_q;
+                config.gumbelUseMixedValue = gumbel_use_mixed_value;
+                config.gumbelInteriorUniformity = gumbel_interior_uniformity;
+                config.gumbelInteriorMinVisits = gumbel_interior_min_visits;
+                config.gumbelInteriorCoverageFraction =
+                    gumbel_interior_coverage_fraction;
+                config.gumbelInteriorValueMode = gumbel_interior_value_mode;
+                config.gumbelInteriorMaxMixVisits = gumbel_interior_max_mix_visits;
+                config.paperFullGumbel = paper_full_gumbel;
+                config.fixedWorldline = fixed_worldline;
+                config.bossTransitionValueMode = boss_transition_value_mode;
+                config.seed = nonce;
+                return std::make_shared<sts::search::NoslNeuralSearchSession>(
+                    bc, logits, config, nonce, root_value);
              },
              pybind11::arg("root_policy_logits"),
              pybind11::arg("simulations") = 128,
@@ -2600,6 +2827,8 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("gumbel_interior_value_mode") = 2,
              pybind11::arg("gumbel_interior_max_mix_visits") = 64.0,
              pybind11::arg("paper_full_gumbel") = false,
+             pybind11::arg("fixed_worldline") = false,
+             pybind11::arg("boss_transition_value_mode") = 0,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;

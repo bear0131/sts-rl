@@ -67,6 +67,32 @@ def test_step_limits_are_not_deaths():
     rows = list(evaluate(FutureStrategy(), scenario(envs), EvaluationConfig(episodes=1, max_steps=1)))
     assert rows[0]['result'] == 'step_limit'
     assert summarize(rows)['death_floors'] == {}
+    assert summarize(rows)['win_rate'] == 0.0
+    assert summarize(rows)['act1_rate'] == 1.0
+
+
+def test_complete_native_decisions_do_not_use_thin_masks():
+    class NativeGame(Game):
+        def action_masks(self):
+            raise AssertionError('complete actions must not query a thin mask')
+
+        def step_native_combat(self, bits):
+            assert bits==1073741835  # single select, native index11
+            return {'seed':np.array([self.seed])},0,True,False,{'combat_action_contract':'native-v1'}
+
+    class NativeFuture(FutureStrategy):
+        def decide(self,requests,*,check):
+            return [Decision(None,self.name,native_action=1073741835) for _ in requests]
+
+    rows=list(evaluate(NativeFuture(),Scenario('native',NativeGame,
+        lambda *args:dict(result='finished',floor=1,act=1)),EvaluationConfig(episodes=1)))
+    assert rows[0]['combat_action_contract']=='native-v1'
+
+
+@pytest.mark.parametrize('action,native',[(None,None),(1,1)])
+def test_decision_action_contract_is_unambiguous(action,native):
+    with pytest.raises(ValueError,match='exactly one'):
+        Decision(action,'custom',native_action=native)
 
 
 @pytest.mark.parametrize('reason', ['cancel', 'strategy', 'invalid-action'])

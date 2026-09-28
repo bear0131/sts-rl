@@ -81,6 +81,12 @@ class _ToyCombatEnv:
         info = {"action_mask": self.action_masks()}
         return obs, 0.0, terminal, False, info
 
+    def search_step(self, action, *, validate=True):
+        if validate and not self.action_masks()[int(action)]:
+            raise ValueError(action)
+        self.state, terminal = self._TRANSITIONS[(self.state, int(action))]
+        return terminal, None if terminal else self.action_masks()
+
 
 class _ToyBattleContext:
     redeterminized = []
@@ -119,7 +125,7 @@ class CombatValueSearchTest(unittest.TestCase):
 
         search.search(_ToyNoslCombatEnv())
 
-        self.assertGreaterEqual(len(_ToyBattleContext.redeterminized), 1)
+        self.assertEqual(len(_ToyBattleContext.redeterminized), 1)
 
     def test_value_lookahead_can_override_policy_argmax(self):
         search = CombatValueSearch(

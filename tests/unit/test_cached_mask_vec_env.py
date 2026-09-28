@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
+import pickle
+
 import gymnasium as gym
 import numpy as np
-import pickle
+import pytest
 from gymnasium import spaces
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import VecMonitor
@@ -42,6 +45,17 @@ class _MaskInfoEnv(gym.Env):
     def nosl_is_az_cpp_begin(self, value):
         return {'done':False,'leaf_meta':[{'request_id':value}],
                 'observation_batch':{'x':np.array([[value]],dtype=np.int64)}}
+
+    def export_training_state(self):
+        return {"position": self.position}
+
+    def restore_training_state(self, state):
+        self.position = int(state["position"])
+        mask = np.array([self.position % 2 == 0, self.position % 2 == 1])
+        return np.array([self.position]), {"action_mask": mask}
+
+    def hard_exit(self):
+        os._exit(23)
 
 
 def _make_mask_info_env():
@@ -144,6 +158,27 @@ def test_grouped_cached_masks_preserve_logical_order():
         env.close()
 
 
+def test_grouped_environment_restore_preserves_order_and_refreshes_masks():
+    base = GroupedCachedMaskSubprocVecEnv(
+        [_make_mask_info_env, _make_mask_info_env, _make_mask_info_env],
+        envs_per_worker=2,
+        start_method="spawn",
+    )
+    try:
+        base.reset()
+        observations = base.restore_training_states([
+            {"position": 2}, {"position": 5}, {"position": 8},
+        ])
+        np.testing.assert_array_equal(observations[:, 0], [2, 5, 8])
+        np.testing.assert_array_equal(
+            get_action_masks(base),
+            [[True, False], [False, True], [True, False]],
+        )
+        assert base.env_method("get_wrapper_attr", "position") == [2, 5, 8]
+    finally:
+        base.close()
+
+
 def test_grouped_method_stream_reuses_groups_without_changing_env_order():
     base = GroupedCachedMaskSubprocVecEnv(
         [_make_mask_info_env, _make_mask_info_env, _make_mask_info_env],
@@ -176,6 +211,24 @@ def test_grouped_method_stream_reuses_groups_without_changing_env_order():
             for packet in stream.receive():
                 repeated.update(packet.responses)
         assert repeated == {0: 1, 1: 1, 2: 1}
+    finally:
+        base.close()
+
+
+def test_grouped_worker_hard_exit_fails_fast_and_is_reaped():
+    base = GroupedCachedMaskSubprocVecEnv(
+        [_make_mask_info_env, _make_mask_info_env],
+        envs_per_worker=2,
+        start_method="spawn",
+    )
+    try:
+        base.reset()
+        with pytest.raises(
+            RuntimeError,
+            match=r"group=0 logical_envs=\[0, 1\].*exitcode=23",
+        ):
+            base.env_method("hard_exit", indices=[0])
+        assert not base.processes[0].is_alive()
     finally:
         base.close()
 

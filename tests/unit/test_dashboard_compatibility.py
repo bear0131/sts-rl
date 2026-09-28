@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,6 +15,47 @@ from rl.policies.checkpoint import custom_objects
 from rl.search.native import NativeSearchConfig, search, decode_leaves, forward_leaves
 from stable_baselines3.common.save_util import data_to_json
 from zipfile import ZipFile
+
+
+def test_tree_snapshot_keeps_direct_model_value_distinct_from_backed_up_value():
+    session = object.__new__(dashboard.WatchSession)
+    session.env = SimpleNamespace(
+        unwrapped=SimpleNamespace(_native_action_to_thin=lambda _bits: None),
+        describe_action=lambda _action: "unused",
+    )
+    formatted = session._format_native_tree_snapshot({
+        "valid": True,
+        "path": [],
+        "visits": 9,
+        "value_visits": 8,
+        "value": 0.83,
+        "sample_value": 0.62,
+        "network_value_valid": True,
+        "network_value": 0.41,
+        "children": [{
+            "edge_index": 0,
+            "action_bits": 4 << 29,
+            "successor_model_value_valid": True,
+            "successor_model_value": 0.37,
+            "successor_model_value_count": 3,
+        }],
+    })
+
+    assert formatted["network_value_valid"] is True
+    assert formatted["network_value"] == pytest.approx(0.41)
+    assert formatted["value"] == pytest.approx(0.83)
+    assert formatted["sample_value"] == pytest.approx(0.62)
+    assert formatted["children"][0]["successor_model_value"] == pytest.approx(0.37)
+    assert formatted["children"][0]["successor_model_value_count"] == 3
+
+
+def test_search_tree_ui_labels_direct_model_value_without_fallback_to_backup():
+    source = (dashboard.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    assert "模型直出 V" in source
+    assert "network_value_valid" in source
+    assert "后继模型直出 V" in source
+    assert "snapshot?.network_value ?? snapshot?.value" not in source
 
 
 @pytest.mark.parametrize('extension', ['', '.zip'])
@@ -107,6 +149,7 @@ def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
         "gumbel_interior_value_mode": 2,
         "paper_full_gumbel": False,
         "end_turn_as_leaf": False,
+        "fixed_worldline": False,
         "stochastic": False,
         "dirichlet_alpha": 0.0,
         "dirichlet_epsilon": 0.0,
@@ -257,8 +300,110 @@ def test_dashboard_assets_expose_and_send_strict_paper_mode():
 
     assert 'id="watchPaperFullGumbel"' in html
     assert 'id="evalPaperFullGumbel"' in html
+    assert 'id="watchFixedWorldline"' in html
+    assert 'id="evalFixedWorldline"' in html
     assert "paper_full_gumbel: $(`${prefix}PaperFullGumbel`).checked" in javascript
+    assert "fixed_worldline: $(`${prefix}FixedWorldline`).checked" in javascript
     assert '"Strict paper Full Gumbel"' in javascript
+
+
+def test_dashboard_assets_expose_route_only_boss_fast_forward():
+    static = Path(dashboard.__file__).with_name("dashboard_static")
+    html = (static / "index.html").read_text(encoding="utf-8")
+    javascript = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="watchBossAct"' in html
+    assert 'id="watchBossButton"' in html
+    assert 'id="watchUpperStrategy"' in html
+    assert 'data-upper-strategy="rules" class="active"' in html
+    assert 'id="watchCombatStrategy"' in html
+    assert 'data-combat-strategy="model" class="active"' in html
+    assert 'data-combat-strategy="planner"' in html
+    assert 'ironclad-turn-v8-awakened-phase' in html
+    assert 'id="decisionHeading"' in html
+    assert "target_boss_act: targetAct" in javascript
+    assert "upper_strategy: watchUpperStrategyValue()" in javascript
+    assert "combat_strategy: watchCombatStrategyValue()" in javascript
+    assert "忽略 HP/药水" in javascript
+
+
+def test_dashboard_assets_expose_independent_evaluation_strategies():
+    static = Path(dashboard.__file__).with_name("dashboard_static")
+    html = (static / "index.html").read_text(encoding="utf-8")
+    javascript = (static / "app.js").read_text(encoding="utf-8")
+
+    assert 'id="evalUpperStrategy"' in html
+    assert 'data-eval-upper-strategy="model" class="active"' in html
+    assert 'id="evalCombatStrategy"' in html
+    assert 'data-eval-combat-strategy="model" class="active"' in html
+    assert 'data-eval-combat-strategy="planner"' in html
+    assert "upper_strategy: evalUpperStrategyValue()" in javascript
+    assert "combat_strategy: evalCombatStrategyValue()" in javascript
+    assert "function drawDistribution()" in javascript
+    assert '$("distributionCanvas").addEventListener("mousemove"' in javascript
+
+
+def test_dashboard_composes_evaluation_upper_and_combat_strategies():
+    model = object()
+    lock = threading.Lock()
+    strategy = dashboard._evaluation_strategy(
+        model,
+        lock,
+        {"method": "direct_policy"},
+        upper_strategy="rules",
+        combat_strategy="planner",
+    )
+
+    assert isinstance(strategy, dashboard.PhaseStrategy)
+    assert isinstance(strategy.default, dashboard.OverworldRuleStrategy)
+    assert isinstance(strategy.default.fallback, dashboard.PolicyStrategy)
+    combat = strategy.routes["combat"]
+    assert isinstance(combat, dashboard.TurnPlannerStrategy)
+    assert combat.config == dashboard._TURN_PLANNER_CONFIG
+
+    strategy = dashboard._evaluation_strategy(
+        model,
+        lock,
+        {
+            "method": "nosl_is_az_cpp",
+            "simulations": 1,
+            "paper_full_gumbel": False,
+            "root_search_mode": 0,
+        },
+        upper_strategy="model",
+        combat_strategy="model",
+    )
+    assert isinstance(strategy, dashboard.PhaseStrategy)
+    assert isinstance(strategy.default, dashboard.PolicyStrategy)
+    combat = strategy.routes["combat"]
+    assert isinstance(combat, dashboard.PhaseStrategy)
+    assert isinstance(combat.default, dashboard.PolicyStrategy)
+    assert isinstance(combat.routes["combat"], dashboard.NativeStrategy)
+
+
+def test_dashboard_evaluation_status_records_selected_strategies(monkeypatch):
+    state = dashboard.DashboardState()
+    state.model = object()
+    monkeypatch.setattr(threading.Thread, "start", lambda _thread: None)
+
+    state.start_evaluation(
+        episodes=1,
+        seed=0,
+        upper_strategy="rules",
+        combat_strategy="planner",
+    )
+
+    assert state.eval_status["upper_strategy"] == "rules"
+    assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v3"
+    assert state.eval_status["upper_fallback"] == "masked_argmax"
+    assert state.eval_status["combat_strategy"] == "planner"
+    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+    assert state.eval_status["search_method"] == "turn_planner"
+
+    with pytest.raises(ValueError, match="upper strategy"):
+        state.start_evaluation(1, 0, upper_strategy="unknown")
+    with pytest.raises(ValueError, match="combat strategy"):
+        state.start_evaluation(1, 0, combat_strategy="unknown")
 
 
 def test_paper_full_gumbel_dashboard_can_select_direct_policy():
@@ -308,7 +453,7 @@ def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
             self.unwrapped = BaseEnv()
 
     config = dashboard._evaluation_search_config(
-        Model(), simulations=32, depth=0
+        Model(), simulations=32, depth=0, fixed_worldline=True
     )
     env = Env()
 
@@ -325,6 +470,7 @@ def test_fullrun_search_calls_cpp_neural_nosl_without_root_noise(monkeypatch):
     assert call["dirichlet_epsilon"] == 0.0
     assert call["root_value"] == pytest.approx(0.37)
     assert call["prior_temperature"] == pytest.approx(1.0)
+    assert call["fixed_worldline"] is True
     assert result["action"] == 17
     assert result["leaf_evaluations"] == 0
 

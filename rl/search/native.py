@@ -58,6 +58,8 @@ class NativeSearchConfig:
     gumbel_interior_value_mode: int = 2
     gumbel_interior_max_mix_visits: float = 64.0
     paper_full_gumbel: bool = True
+    fixed_worldline: bool = False
+    boss_transition_target: bool = False
 
     def __post_init__(self):
         if self.simulations < 1 or self.depth < 0 or self.leaf_batch_size < 1:
@@ -306,8 +308,15 @@ def forward_root(model, observations, *, lock=None):
     return logits.float().cpu().numpy(), values.float().reshape(-1).cpu().numpy()
 
 
-def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nullcontext):
-    backend = getattr(model, '_native_leaf_inference', None)
+# Existing training/benchmark callers inherit the model-owned runtime backend.
+# Evaluation strategies can explicitly supply None (eager) or their own cache.
+MODEL_LEAF_BACKEND = object()
+
+
+def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nullcontext,
+                   leaf_backend=MODEL_LEAF_BACKEND):
+    backend = (getattr(model, '_native_leaf_inference', None)
+               if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
     if backend is not None and compact:
         active = np.flatnonzero(np.any(observations['relics'] != 0, axis=0))
         width = int(active[-1]) + 1 if active.size else 1
@@ -379,7 +388,8 @@ def decode_leaves(responses):
 
 def complete_searches(model, call_workers, responses, *, leaf_batch_size,
                       compact=True, lock=None, autocast=nullcontext,
-                      prior_mode='model', check=lambda: None):
+                      prior_mode='model', check=lambda: None,
+                      leaf_backend=MODEL_LEAF_BACKEND):
     """Finish already-started trees with one forward across all active workers.
 
     Returns results and counters. The caller must abort owned sessions when an
@@ -415,7 +425,8 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
         for index, _ in records:
             by_worker[index]['leaf_evaluations'] += 1
         started = time.perf_counter()
-        logits, values = forward_leaves(model, observations, compact=compact, lock=lock, autocast=autocast)
+        logits, values = forward_leaves(model, observations, compact=compact, lock=lock,
+                                       autocast=autocast, leaf_backend=leaf_backend)
         stats['cpp_leaf_model_seconds'] += time.perf_counter() - started
         updates = {}
         for position, (index, leaf) in enumerate(records):
@@ -534,6 +545,11 @@ def complete_searches_streaming(
     ready = deque()
     ready_leaf_count = 0
 
+    def batch_target(active_capacity):
+        if controller is not None:
+            return controller.target(active_capacity)
+        return max(1, min(schedule.target_batch_size, int(active_capacity)))
+
     def receive(timeout, *, ready_empty=False):
         started = time.perf_counter()
         packets = stream.receive(timeout=timeout)
@@ -574,11 +590,7 @@ def complete_searches_streaming(
         if ready:
             batch_cycle_started = time.perf_counter()
             active_capacity = len(expected) - len(results)
-            target = (
-                controller.target(active_capacity)
-                if controller is not None
-                else schedule.target_batch_size
-            )
+            target = batch_target(active_capacity)
             flush_reason = None
             while ready_leaf_count < target and stream.pending:
                 oldest_at = ready[0][0]
@@ -597,11 +609,7 @@ def complete_searches_streaming(
                     break
                 ingest(packets)
                 active_capacity = len(expected) - len(results)
-                target = (
-                    controller.target(active_capacity)
-                    if controller is not None
-                    else schedule.target_batch_size
-                )
+                target = batch_target(active_capacity)
 
             # Drain packets already waiting in the OS pipe. This does not wait,
             # but exposes producer backlog to the controller before selection.
@@ -612,7 +620,7 @@ def complete_searches_streaming(
                         break
                     ingest(packets)
                     active_capacity = len(expected) - len(results)
-                    target = controller.target(active_capacity)
+                    target = batch_target(active_capacity)
 
             if ready_leaf_count >= target:
                 flush_reason = 'full'

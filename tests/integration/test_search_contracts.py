@@ -8,6 +8,49 @@ from env.search.nosl_sampler import NOSLSampler
 from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 
+def test_native_combat_fork_victory_does_not_settle_parent(combat_factory):
+    import json
+    env = combat_factory(['STRIKE_RED']*5, encounter='Cultist', relics=('Burning Blood',))
+    env.thick.gc.cur_hp = 30
+    env.thick.bc.apply_custom_state({'player': {'hp': 30}})
+    env.thick.bc.set_player_strength(999)
+    env._invalidate_backend_cache()
+    before = json.dumps(env.thick.bc.to_dict(), sort_keys=True)
+    stats = dict(env.thick.run_stats())
+    branch = env.fork_combat()
+    # Native CARD source0 target0 is bit pattern 0, not the thin End Turn id.
+    _, _, terminated, info = branch._backend_step_native_combat(0)
+    assert terminated and branch.thick.bc is not None
+    assert branch.thick.bc.to_dict()['player']['hp'] == 30
+    assert info['nosl_value_terminal_observation']['player_scalars'][0] == pytest.approx(30/200)
+    assert env.thick.run_stats() == stats
+    assert json.dumps(env.thick.bc.to_dict(), sort_keys=True) == before
+
+
+def test_boss_victory_metadata_carries_transition_target(
+    combat_factory, monkeypatch
+):
+    env = combat_factory(
+        ["STRIKE_RED"] * 5,
+        encounter="The Guardian",
+        relics=("Burning Blood",),
+    )
+    env.thick._nosl_is_az_boss_transition_target = True
+    env.thick.gc.cur_room = type(env.thick.gc.cur_room).BOSS
+    env.thick.gc.boss = env.thick.gc.encounter
+    env.thick.bc.set_player_strength(999)
+    # The combat_factory starts a standalone battle without the boss-room
+    # regain-control callback. The target is captured before settlement, so
+    # suppress that unrelated callback only for this metadata-path fixture.
+    monkeypatch.setattr(env.thick, "_settle", lambda: None)
+
+    _obs, _reward, _terminated, info = env._backend_step_native_combat(0)
+
+    assert info["nosl_value_terminal_target"] == pytest.approx(
+        env.thick.bc.to_dict()["player"]["max_hp"] / 200.0
+    )
+
+
 @pytest.mark.parametrize("branch_type", [_Branch, _DeepBranch])
 def test_python_unbounded_depth_advances_beyond_root(branch_type):
     env = branch_type()
@@ -287,6 +330,36 @@ def test_native_batch_backprop_matches_scalar_order(combat_factory):
     assert batch_tree["visits"] == scalar_tree["visits"]
     assert batch_tree["value_visits"] == scalar_tree["value_visits"]
     assert batch_tree["children"] == scalar_tree["children"]
+
+
+@pytest.mark.native
+def test_strict_prior_temperature_reaches_native_tree(combat_factory):
+    def root_priors(temperature):
+        env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=42)
+        response = env.nosl_is_az_cpp_begin(
+            np.linspace(-2.0, 2.0, 181),
+            state_nonce=123,
+            simulations=1,
+            depth=0,
+            prior_temperature=temperature,
+            root_search_mode=2,
+            paper_full_gumbel=True,
+            leaf_batch_size=1,
+            compact_observation=False,
+        )
+        while not response["done"]:
+            response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
+                [(leaf["request_id"], 0.4, np.zeros(181))
+                 for leaf in response["leaves"]],
+                max_leaves=1,
+            )
+        return [child["prior"] for child in
+                env.nosl_is_az_cpp_tree_snapshot((), 64)["children"]]
+
+    low = root_priors(1.0)
+    high = root_priors(5.0)
+    assert len(low) == len(high) > 0
+    assert not np.allclose(low, high, rtol=0.0, atol=1e-10)
 
 
 @pytest.mark.native

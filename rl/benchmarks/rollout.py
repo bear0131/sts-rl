@@ -47,6 +47,8 @@ def run(args):
         _, callback = model._setup_learn(args.n_steps * args.n_envs * args.updates,
             callback=lambda *_: True, reset_num_timesteps=True)
         callback.on_training_start({}, {})
+        if args.device == 'cuda':
+            torch.cuda.synchronize()
         setup = time.perf_counter() - started
         if args.device == 'cuda':
             torch.cuda.reset_peak_memory_stats()
@@ -55,6 +57,8 @@ def run(args):
             for _ in range(args.updates):
                 if not model.collect_rollouts(env, callback, model.rollout_buffer, args.n_steps):
                     raise RuntimeError('rollout stopped before budget')
+            if args.device == 'cuda':
+                torch.cuda.synchronize()
             elapsed = time.perf_counter() - started
         digest = hashlib.sha256()
         def hash_value(value):

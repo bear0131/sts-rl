@@ -32,6 +32,7 @@ from schemas.combat_state import (
 )
 
 from . import actions
+from .boss_value import context_terminal_target
 from . import combat_env
 from . import encode
 from . import factories
@@ -100,11 +101,15 @@ class SimGameEnv:
     """
 
     def __init__(self, character=None, ascension=0, global_map_view=False,
-                 interactive_reasoning=False):
+                 interactive_reasoning=False,
+                 nosl_is_az_boss_transition_target=False):
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
         self._interactive_reasoning = bool(interactive_reasoning)
+        self._nosl_is_az_boss_transition_target = bool(
+            nosl_is_az_boss_transition_target
+        )
         if self._interactive_reasoning and not hasattr(
             sts.BattleContext, "execute_with_trace"
         ):
@@ -368,6 +373,7 @@ class SimGameEnv:
         if not executed:
             self._apply(action)
         terminal_combat_state = self._winning_combat_value_state()
+        terminal_combat_target = self._nosl_value_terminal_target()
         self._settle()  # pump through any auto-resolving screens to next decision
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
@@ -391,6 +397,8 @@ class SimGameEnv:
         info = self._info()
         if terminal_combat_state is not None:
             info["nosl_value_terminal_state"] = terminal_combat_state
+        if terminal_combat_target is not None:
+            info["nosl_value_terminal_target"] = terminal_combat_target
         if self._last_reasoning_trace is not None:
             info["reasoning_trace"] = self._last_reasoning_trace
         return self._canonical(), reward, terminated, info
@@ -409,6 +417,7 @@ class SimGameEnv:
         self._last_reasoning_trace = None
         self.bc.execute(sts.Action(int(action_bits)))
         terminal_combat_state = self._winning_combat_value_state()
+        terminal_combat_target = self._nosl_value_terminal_target()
         self._settle()
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp
@@ -420,6 +429,8 @@ class SimGameEnv:
         info = self._info()
         if terminal_combat_state is not None:
             info["nosl_value_terminal_state"] = terminal_combat_state
+        if terminal_combat_target is not None:
+            info["nosl_value_terminal_target"] = terminal_combat_target
         return self._canonical(), reward, terminated, info
 
     def preview_native_end_turn_boundary(self, action_bits: int):
@@ -444,6 +455,16 @@ class SimGameEnv:
         if state.get("outcome") != combat_env._OUTCOME_VICTORY:
             return None
         return state
+
+    def _nosl_value_terminal_target(self):
+        """Return the opt-in boss terminal target before combat settlement."""
+        if (
+            not self._nosl_is_az_boss_transition_target
+            or self.bc is None
+            or not self.bc.is_battle_over
+        ):
+            return None
+        return context_terminal_target(enabled=True, gc=self.gc, bc=self.bc)
 
     @staticmethod
     def _semantic_action_card(action, before):
@@ -691,6 +712,22 @@ class _CombatBranchGameEnv(SimGameEnv):
         self._apply(action)
         terminated = self.bc.is_battle_over
         return self._canonical(), 0.0, terminated, self._info()
+
+    def step_native_combat(self, action_bits: int):
+        """Finish native actions inside this branch without settling the run.
+
+        The branch shares read-only run metadata with its parent. Calling the
+        whole-run implementation would exit_battle into that parent's gc and
+        clear bc, violating both isolation and pre-settlement HP semantics.
+        """
+        if self.is_over:
+            raise RuntimeError("combat branch is terminal")
+        self.bc.execute(sts.Action(int(action_bits)))
+        info = self._info()
+        terminal = self._winning_combat_value_state()
+        if terminal is not None:
+            info['nosl_value_terminal_state'] = terminal
+        return self._canonical(), 0.0, self.bc.is_battle_over, info
 
     def step_fast(self, action):
         """Apply a combat semantic action without rebuilding observations.

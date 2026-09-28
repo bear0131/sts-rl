@@ -25,9 +25,16 @@ from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
 from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
 from rl.evaluation.runner import is_win
-from rl.evaluation.strategies import PolicyStrategy, NativeStrategy, PhaseStrategy
+from rl.evaluation.strategies import (
+    DecisionRequest,
+    NativeStrategy,
+    PhaseStrategy,
+    PolicyStrategy,
+)
+from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
+from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
 from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
-from dataclasses import fields
+from dataclasses import asdict, fields
 from rl.search.native import (
     STRICT_SEARCH_DEFAULTS,
     NativeSearchConfig,
@@ -41,6 +48,8 @@ from rl.rules.visualize_card_vectors import (
 )
 from apps.watch import _action_dist
 from env.search.nosl_sampler import NOSLSampler
+from env.search.overworld_rules import OVERWORLD_RULE_VERSION
+from env.search.turn_planner import PLANNER_VERSION, TurnPlannerConfig
 from env.core.cards_vocab import CARD_INDEX
 from env.core.card_language import (
     TOKEN_DOC as CARD_LANGUAGE_DOC,
@@ -285,6 +294,7 @@ def _evaluation_search_config(
     gumbel_interior_value_mode: int | None = None,
     paper_full_gumbel: bool | None = None,
     end_turn_as_leaf: bool | None = None,
+    fixed_worldline: bool | None = None,
 ) -> dict[str, Any]:
     supported = _supports_neural_nosl(model)
     default_simulations = _clamp_int(
@@ -412,6 +422,9 @@ def _evaluation_search_config(
     selected_end_turn_as_leaf = _model_search_bool(
         model, "nosl_is_az_end_turn_as_leaf", False
     ) if end_turn_as_leaf is None else bool(end_turn_as_leaf)
+    selected_fixed_worldline = _model_search_bool(
+        model, "nosl_is_az_fixed_worldline", False
+    ) if fixed_worldline is None else bool(fixed_worldline)
     explicit_search_override = any(
         value is not None
         for value in (
@@ -524,6 +537,7 @@ def _evaluation_search_config(
         "gumbel_interior_coverage_fraction": selected_coverage_fraction,
         "gumbel_interior_value_mode": selected_value_mode,
         "end_turn_as_leaf": selected_end_turn_as_leaf,
+        "fixed_worldline": selected_fixed_worldline,
         # Evaluation selects the root visit argmax and never injects training noise.
         "stochastic": False,
         "dirichlet_alpha": 0.0,
@@ -531,6 +545,67 @@ def _evaluation_search_config(
     }
 
 
+
+
+_ROUTE_STEP_NORMAL = "normal"
+_ROUTE_STEP_SKIP_COMBAT = "skip_combat"
+_ROUTE_STEP_ENTER_BOSS = "enter_boss"
+_UPPER_STRATEGY_MODEL = "model"
+_UPPER_STRATEGY_RULES = "rules"
+_UPPER_STRATEGIES = {_UPPER_STRATEGY_MODEL, _UPPER_STRATEGY_RULES}
+_COMBAT_STRATEGY_MODEL = "model"
+_COMBAT_STRATEGY_PLANNER = "planner"
+_COMBAT_STRATEGIES = {_COMBAT_STRATEGY_MODEL, _COMBAT_STRATEGY_PLANNER}
+_TURN_PLANNER_CONFIG = TurnPlannerConfig(
+    worlds=2,
+    node_budget=8192,
+    beam_width=8,
+    max_depth=16,
+    lookahead_turns=1,
+    master_nonce=20260918,
+)
+
+
+def _evaluation_strategy(
+    model,
+    model_lock,
+    search_config,
+    *,
+    upper_strategy: str,
+    combat_strategy: str,
+):
+    """Compose independent upper/combat choices on the shared eval contract."""
+    policy = PolicyStrategy(model, lock=model_lock)
+    upper = (
+        OverworldRuleStrategy(policy)
+        if upper_strategy == _UPPER_STRATEGY_RULES
+        else policy
+    )
+    if combat_strategy == _COMBAT_STRATEGY_PLANNER:
+        combat = TurnPlannerStrategy(_TURN_PLANNER_CONFIG)
+    elif search_config.get("method") == "nosl_is_az_cpp":
+        combat = PhaseStrategy(
+            policy,
+            {
+                "combat": NativeStrategy(
+                    model,
+                    NativeSearchConfig.from_mapping(search_config),
+                    master_nonce=search_config.get("master_nonce", 0),
+                    lock=model_lock,
+                )
+            },
+            predicates={
+                "combat": lambda request: getattr(
+                    request.env.unwrapped, "_pending", None
+                )
+                is None
+            },
+        )
+    else:
+        combat = policy
+    if upper is policy and combat is policy:
+        return policy
+    return PhaseStrategy(upper, {"combat": combat})
 
 
 class WatchSession:
@@ -550,6 +625,7 @@ class WatchSession:
             and hasattr(core, "combat_observation_keys")
         )
         self.env = SlayTheSpireEnv(
+            combat_action_contract="native-v1",
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
@@ -558,8 +634,9 @@ class WatchSession:
             event_option_observation=_model.uses_event_option_observation(model),
         )
         self.seed = seed
-        self.history: list[int] = []
+        self.history: list[int | None] = []
         self.native_history: list[int | None] = []
+        self.native_direct_history: list[bool] = []
         self.position = 0
         self.timeline: list[dict] = []
         self.timeline_exhausted = False
@@ -586,6 +663,7 @@ class WatchSession:
         self.mcts_end_turn_as_leaf = _model_search_bool(
             model, "nosl_is_az_end_turn_as_leaf", True
         )
+        self.mcts_fixed_worldline = False
         self.mcts_prior_temperature = _clamp_float(
             self._model_search_param(
                 "nosl_is_az_prior_temperature",
@@ -647,7 +725,14 @@ class WatchSession:
         )
         self._apply_paper_full_gumbel_defaults()
         self.stochastic = False
+        self.upper_strategy = _UPPER_STRATEGY_RULES
+        self.combat_strategy = _COMBAT_STRATEGY_MODEL
+        self._turn_planner = TurnPlannerStrategy(_TURN_PLANNER_CONFIG)
         self.precompute_enabled = False
+        self.route_step_modes: list[str] = []
+        self.route_preprocess_target_act: int | None = None
+        self.route_preprocess_hp: int | None = None
+        self.route_preprocess_boss_step: int | None = None
         self._mcts_sampler = NOSLSampler(MCTS_MASTER_NONCE)
         self.reset(seed)
 
@@ -657,6 +742,17 @@ class WatchSession:
 
     def _model_search_float(self, name: str, default: float) -> float:
         return _model_search_float(self.model, name, default)
+
+    def _set_combat_strategy(self, strategy: str | None) -> None:
+        if strategy is None:
+            return
+        candidate = str(strategy).strip().lower()
+        if candidate not in _COMBAT_STRATEGIES:
+            raise ValueError(
+                "combat strategy must be one of "
+                f"{sorted(_COMBAT_STRATEGIES)}, got {strategy!r}"
+            )
+        self.combat_strategy = candidate
 
     def _apply_paper_full_gumbel_defaults(self, *, preserve_overrides: bool = False):
         """Keep Watch's displayed/native settings on the mctx paper path."""
@@ -729,7 +825,11 @@ class WatchSession:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         stochastic: bool | None = None,
+        upper_strategy: str | None = None,
+        combat_strategy: str | None = None,
+        target_boss_act: int | None = None,
     ):
         requested_simulations = (
             self.mcts_simulations if simulations is None else int(simulations)
@@ -812,18 +912,47 @@ class WatchSession:
             self.mcts_gumbel_interior_value_mode = max(0, min(2, int(gumbel_interior_value_mode)))
         if end_turn_as_leaf is not None:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
+        if fixed_worldline is not None:
+            self.mcts_fixed_worldline = bool(fixed_worldline)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        if upper_strategy is not None:
+            candidate = str(upper_strategy).strip().lower()
+            if candidate not in _UPPER_STRATEGIES:
+                raise ValueError(
+                    "upper strategy must be one of "
+                    f"{sorted(_UPPER_STRATEGIES)}, got {upper_strategy!r}"
+                )
+            self.upper_strategy = candidate
+        self._set_combat_strategy(combat_strategy)
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
+        if target_boss_act is not None:
+            target_boss_act = int(target_boss_act)
+            if target_boss_act < 1 or target_boss_act > 3:
+                raise ValueError(
+                    f"target boss act must be between 1 and 3, got {target_boss_act}"
+                )
+            if precompute:
+                raise ValueError(
+                    "whole-run precompute and route-only boss fast-forward are exclusive"
+                )
         self.precompute_enabled = bool(precompute)
         self.history = []
         self.native_history = []
+        self.native_direct_history = []
+        self.route_step_modes = []
         self.position = 0
         self.timeline = []
         self.timeline_exhausted = False
+        self.route_preprocess_target_act = target_boss_act
+        self.route_preprocess_hp = None
+        self.route_preprocess_boss_step = None
         self.obs, self.info = self.env.reset(seed=self.seed)
+        if target_boss_act is not None:
+            self.route_preprocess_hp = int(self.env.unwrapped.thick.gc.max_hp)
+            self._apply_route_step_mode(self._route_mode_for_current_state())
         self.terminated = self.truncated = False
         self.total_reward = 0.0
         self.last_action = None
@@ -833,6 +962,8 @@ class WatchSession:
         self.card_reward_choices = []
         self._search_generation = 0
         self._prepare_decision()
+        if target_boss_act is not None:
+            return self.fast_forward_to_boss(target_boss_act)
         if precompute:
             return self.precompute_run()
         return self.snapshot()
@@ -851,6 +982,8 @@ class WatchSession:
         if thick is None:
             self.reset(self.seed)
             thick = self.env.unwrapped.thick
+        if hasattr(thick.gc, "skip_battles"):
+            thick.gc.skip_battles = False
         encounter = str(spec.get("encounter") or "Cultist")
         names = set(sts.encounter_names())
         if encounter not in names:
@@ -889,9 +1022,14 @@ class WatchSession:
         self.env._invalidate_backend_cache()
         self.history = []
         self.native_history = []
+        self.native_direct_history = []
+        self.route_step_modes = []
         self.position = 0
         self.timeline = []
         self.timeline_exhausted = False
+        self.route_preprocess_target_act = None
+        self.route_preprocess_hp = None
+        self.route_preprocess_boss_step = None
         self.terminated = False
         self.truncated = False
         self.total_reward = 0.0
@@ -923,7 +1061,9 @@ class WatchSession:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         stochastic: bool | None = None,
+        combat_strategy: str | None = None,
     ):
         """Apply search settings without resetting the current run."""
         requested_simulations = (
@@ -1012,8 +1152,11 @@ class WatchSession:
             )
         if end_turn_as_leaf is not None:
             self.mcts_end_turn_as_leaf = bool(end_turn_as_leaf)
+        if fixed_worldline is not None:
+            self.mcts_fixed_worldline = bool(fixed_worldline)
         if stochastic is not None:
             self.stochastic = bool(stochastic)
+        self._set_combat_strategy(combat_strategy)
         self._apply_paper_full_gumbel_defaults(
             preserve_overrides=paper_full_gumbel is not True
         )
@@ -1023,6 +1166,114 @@ class WatchSession:
         # leak into the next direct-policy/search step.
         self.env.unwrapped._nosl_cpp_pending = None
         self._prepare_decision()
+        return self.snapshot()
+
+    def _at_route_target_boss(self) -> bool:
+        target_act = self.route_preprocess_target_act
+        thick = self.env.unwrapped.thick
+        if target_act is None or thick is None or thick.bc is None:
+            return False
+        room = str(thick.gc.cur_room).split(".")[-1]
+        return (
+            self.info is not None
+            and self.info.get("phase") == "combat"
+            and int(thick.gc.act) == int(target_act)
+            and room == "BOSS"
+        )
+
+    def _route_mode_for_current_state(self) -> str:
+        target_act = self.route_preprocess_target_act
+        if target_act is None:
+            return _ROUTE_STEP_NORMAL
+        if (
+            self.route_preprocess_boss_step is not None
+            and self.position >= self.route_preprocess_boss_step
+        ):
+            return _ROUTE_STEP_NORMAL
+        phase = self.info.get("phase") if self.info else None
+        if phase == "combat":
+            return _ROUTE_STEP_NORMAL
+        gc = self.env.unwrapped.thick.gc
+        if (
+            phase == "map"
+            and int(gc.act) == int(target_act)
+            and int(gc.cur_map_node_y) >= 14
+        ):
+            return _ROUTE_STEP_ENTER_BOSS
+        return _ROUTE_STEP_SKIP_COMBAT
+
+    def _apply_route_step_mode(self, mode: str) -> None:
+        if mode not in {
+            _ROUTE_STEP_NORMAL,
+            _ROUTE_STEP_SKIP_COMBAT,
+            _ROUTE_STEP_ENTER_BOSS,
+        }:
+            raise ValueError(f"unknown route preprocessing mode: {mode!r}")
+        thick = self.env.unwrapped.thick
+        gc = thick.gc
+        if mode == _ROUTE_STEP_NORMAL:
+            if hasattr(gc, "skip_battles"):
+                gc.skip_battles = False
+            return
+        if thick.bc is not None:
+            raise RuntimeError("route preprocessing cannot mutate a live combat")
+        if not hasattr(gc, "skip_battles"):
+            raise RuntimeError(
+                "Boss fast-forward requires a simulator build with "
+                "GameContext.skip_battles"
+            )
+        gc.skip_battles = mode == _ROUTE_STEP_SKIP_COMBAT
+        hp = self.route_preprocess_hp
+        if hp is None:
+            raise RuntimeError("route preprocessing HP baseline is missing")
+        gc.max_hp = max(1, int(hp))
+        gc.cur_hp = max(1, int(hp))
+        thick._prev_hp = int(gc.cur_hp)
+        for slot in range(len(gc.overworld_potions)):
+            gc.discard_potion(slot)
+        self.env._invalidate_backend_cache()
+        self.obs, self.info = self.env._obs(), self.env._info()
+
+    def fast_forward_to_boss(self, target_act: int):
+        target_act = int(target_act)
+        if target_act < 1 or target_act > 3:
+            raise ValueError(
+                f"target boss act must be between 1 and 3, got {target_act}"
+            )
+        if self.route_preprocess_target_act != target_act:
+            raise RuntimeError("Boss fast-forward must start from reset")
+
+        steps = 0
+        while not self._at_route_target_boss():
+            if self.terminated or self.truncated:
+                stats = self.info.get("run_stats", {}) if self.info else {}
+                raise RuntimeError(
+                    "route preprocessing ended before the requested boss "
+                    f"(target Act {target_act}, reached Act {stats.get('act', '?')} "
+                    f"floor {stats.get('floor', '?')})"
+                )
+            if self.decision is None:
+                phase = self.info.get("phase") if self.info else "unknown"
+                raise RuntimeError(
+                    "route preprocessing reached a screen with no model action "
+                    f"(phase={phase})"
+                )
+            mode = self._route_mode_for_current_state()
+            if mode == _ROUTE_STEP_NORMAL:
+                raise RuntimeError(
+                    "route preprocessing reached combat before the requested boss"
+                )
+            previous_position = self.position
+            self._advance_one(route_mode=mode)
+            steps += 1
+            if self.position == previous_position:
+                raise RuntimeError("route preprocessing made no progress")
+            if mode == _ROUTE_STEP_ENTER_BOSS and not self._at_route_target_boss():
+                raise RuntimeError(
+                    f"Act {target_act} boss entrance did not create a live combat"
+                )
+            if steps >= 5000:
+                raise RuntimeError("route preprocessing exceeded 5000 actions")
         return self.snapshot()
 
     def precompute_run(self):
@@ -1131,6 +1382,73 @@ class WatchSession:
     def _abort_native_search(self):
         self.env.unwrapped.nosl_is_az_cpp_abort()
 
+    def _select_upper_action(self, model_action: int, legal, phase: str):
+        if phase == "combat" or self.upper_strategy == _UPPER_STRATEGY_MODEL:
+            return int(model_action), _UPPER_STRATEGY_MODEL
+        rule_action = self.env.overworld_rule_decision()
+        if rule_action is None:
+            return int(model_action), "model_fallback"
+        rule_action = int(rule_action)
+        if not np.any(np.asarray(legal, dtype=np.int64) == rule_action):
+            raise RuntimeError(f"illegal overworld rule action: {rule_action}")
+        return rule_action, "overworld_rules"
+
+    def _select_combat_planner_action(self, legal):
+        request = DecisionRequest(
+            self.env,
+            self.obs,
+            self.info,
+            self.seed,
+            self.position,
+        )
+        decision = self._turn_planner.decide([request])[0]
+        if decision.native_action is not None:
+            native = int(decision.native_action)
+            if native not in self.env.native_combat_actions():
+                raise RuntimeError(f"illegal turn-planner native action: {native}")
+            action = self.env.unwrapped._native_action_to_thin(native)
+            return action, native, dict(decision.diagnostics), decision.source
+        action = int(decision.action)
+        if not np.any(np.asarray(legal, dtype=np.int64) == action):
+            raise RuntimeError(f"illegal turn-planner fallback action: {action}")
+        return action, None, dict(decision.diagnostics), decision.source
+
+    def _describe_native_action(self, action_bits: int, thin_action: int | None):
+        action = sts.Action(int(action_bits))
+        if thin_action is not None:
+            label = self.env.describe_action(int(thin_action))
+        elif action.action_type == sts.ActionType.SINGLE_CARD_SELECT:
+            candidate = next(
+                (
+                    item
+                    for item in self.env.combat_selection_candidates()
+                    if item.action_bits == int(action_bits)
+                ),
+                None,
+            )
+            label = (
+                f"select {candidate.card[0]}"
+                if candidate is not None and candidate.card is not None
+                else "skip card selection"
+                if candidate is not None
+                else f"select card #{action.source_idx + 1}"
+            )
+        elif action.action_type == sts.ActionType.MULTI_CARD_SELECT:
+            selected = [
+                str(index + 1)
+                for index in range(16)
+                if int(action.source_idx) & (1 << index)
+            ]
+            label = "confirm cards " + (", ".join(selected) if selected else "none")
+        elif action.action_type == sts.ActionType.END_TURN:
+            label = "end turn"
+        else:
+            label = f"native action 0x{int(action_bits):08x}"
+        if action.action_type in (sts.ActionType.CARD, sts.ActionType.POTION):
+            if self.env.unwrapped.thick.bc.is_targeted_action(int(action_bits)):
+                label = f"{label} -> target monster #{int(action.target_idx) + 1}"
+        return label
+
     def _prepare_decision(self):
         if self.terminated or self.truncated:
             self.decision = None
@@ -1149,22 +1467,50 @@ class WatchSession:
         base = self.env.unwrapped
         probs, value, root_logits = self._policy_outputs(self.obs, mask)
         legal = np.flatnonzero(mask)
-        if legal.size == 0:
+        is_combat = self.info.get("phase") == "combat"
+        planner_active = (
+            is_combat and self.combat_strategy == _COMBAT_STRATEGY_PLANNER
+        )
+        if legal.size == 0 and not planner_active:
             self.decision = None
             return
-        if probs is None:
+        if legal.size == 0:
+            model_action = None
+            ranked = []
+        elif probs is None:
             model_action = int(legal[0])
             ranked = [(model_action, None)]
         else:
             model_action = int(max(legal, key=lambda i: probs[i]))
             ranked = sorted(legal, key=lambda i: probs[i], reverse=True)[:6]
             ranked = [(int(i), float(probs[i])) for i in ranked]
-        chosen = model_action
+        chosen = None
+        decision_source = self._turn_planner.name if planner_active else None
+        if not planner_active:
+            chosen, decision_source = self._select_upper_action(
+                model_action,
+                legal,
+                self.info.get("phase") if self.info else "unknown",
+            )
         search = None
-        is_combat = self.info.get("phase") == "combat"
+        combat_planner = None
+        native_action_bits = None
+        native_direct = False
+        if planner_active:
+            chosen, native_action_bits, combat_planner, decision_source = (
+                self._select_combat_planner_action(legal)
+            )
+            native_direct = native_action_bits is not None
+            if chosen is not None and all(
+                action != chosen for action, _probability in ranked
+            ):
+                ranked.append(
+                    (chosen, None if probs is None else float(probs[chosen]))
+                )
         native_root = getattr(self.env.unwrapped, "_pending", None) is None
         if (
             is_combat
+            and self.combat_strategy == _COMBAT_STRATEGY_MODEL
             and native_root
             and self.mcts_search_mode != "direct"
             and self.mcts_simulations > 0
@@ -1194,6 +1540,7 @@ class WatchSession:
                 }
             if result is not None:
                 chosen = int(result["action"])
+                decision_source = "combat_search"
                 selected_target = int(result.get("selected_target", -1))
                 selected_targeted = bool(result.get("selected_action_targeted", False))
                 native_action_bits = int(result.get("native_action_bits", 0xFFFFFFFF))
@@ -1259,6 +1606,7 @@ class WatchSession:
                         )
                     ),
                     "paper_full_gumbel": self.mcts_paper_full_gumbel,
+                    "fixed_worldline": self.mcts_fixed_worldline,
                     "simulations": int(result.get("simulations", self.mcts_simulations)),
                     "depth": self.mcts_depth,
                     "prior_temperature": self.mcts_prior_temperature,
@@ -1296,7 +1644,17 @@ class WatchSession:
                 search["tree"] = self._format_native_tree_snapshot(
                     tree, native_action_bits
                 )
-        elif probs is not None and self.stochastic:
+        elif (
+            probs is not None
+            and self.stochastic
+            and (
+                (is_combat and self.combat_strategy == _COMBAT_STRATEGY_MODEL)
+                or (
+                    not is_combat
+                    and self.upper_strategy == _UPPER_STRATEGY_MODEL
+                )
+            )
+        ):
             weights = np.asarray([max(float(probs[i]), 0.0) for i in legal], dtype=np.float64)
             total = float(weights.sum())
             if not np.isfinite(total) or total <= 0.0:
@@ -1308,16 +1666,27 @@ class WatchSession:
                     simulation_index=self.position * 1_000_000 + 777_777,
                 )
             ).choice(legal, p=weights / total))
+            decision_source = "model_sample"
         selected_target = (
             int(search.get("selected_target"))
             if search and search.get("selected_target") is not None
             else -1
         )
         selected_targeted = bool(search and search.get("selected_action_targeted"))
-        label = self.env.describe_action(chosen)
+        label = (
+            self._describe_native_action(native_action_bits, chosen)
+            if native_direct
+            else self.env.describe_action(chosen)
+        )
         if selected_targeted and selected_target >= 0:
             label = f"{label} -> target monster #{selected_target + 1}"
-        animation = self._action_animation(chosen)
+        animation = self._action_animation(chosen) if chosen is not None else None
+        if native_direct:
+            native_action = sts.Action(int(native_action_bits))
+            if native_action.action_type in (sts.ActionType.CARD, sts.ActionType.POTION):
+                if base.thick.bc.is_targeted_action(int(native_action_bits)):
+                    selected_target = int(native_action.target_idx)
+                    selected_targeted = True
         if selected_targeted and selected_target >= 0 and animation is not None:
             animation["target_slot"] = selected_target
         self.decision = {
@@ -1325,6 +1694,10 @@ class WatchSession:
             "label": label,
             "value": value,
             "model_action": model_action,
+            "source": decision_source,
+            "combat_planner": combat_planner,
+            "native_action_bits": native_action_bits,
+            "native_direct": native_direct,
             "search": search,
             "animation": animation,
             "top_actions": [
@@ -1336,7 +1709,15 @@ class WatchSession:
     def _format_native_tree_snapshot(self, snapshot, selected_native_bits=None):
         """Add stable UI labels to the compact C++ lazy-tree response."""
         if not snapshot:
-            return {"valid": False, "path": [], "visits": 0, "value": 0.0, "children": []}
+            return {
+                "valid": False,
+                "path": [],
+                "visits": 0,
+                "value": 0.0,
+                "network_value_valid": False,
+                "network_value": None,
+                "children": [],
+            }
         root_level = not snapshot.get("path")
         children = []
         for item in snapshot.get("children", ()):
@@ -1368,6 +1749,17 @@ class WatchSession:
                 **item,
                 "label": label,
                 "thin_action": thin,
+                "successor_model_value_valid": bool(item.get(
+                    "successor_model_value_valid", False
+                )),
+                "successor_model_value": (
+                    float(item["successor_model_value"])
+                    if bool(item.get("successor_model_value_valid", False))
+                    else None
+                ),
+                "successor_model_value_count": int(item.get(
+                    "successor_model_value_count", 0
+                )),
                 "selected": (
                     root_level
                     and
@@ -1384,6 +1776,14 @@ class WatchSession:
             "sample_value": float(snapshot.get(
                 "sample_value", snapshot.get("value", 0.0)
             )),
+            "network_value_valid": bool(snapshot.get(
+                "network_value_valid", False
+            )),
+            "network_value": (
+                float(snapshot["network_value"])
+                if bool(snapshot.get("network_value_valid", False))
+                else None
+            ),
             "children": children,
         }
 
@@ -1420,17 +1820,27 @@ class WatchSession:
         self._advance_one()
         return self.snapshot()
 
-    def _advance_one(self):
+    def _advance_one(self, *, route_mode: str | None = None):
         if self.decision is None:
             return
         decision_before = self.decision
-        displayed_action = int(decision_before["action"])
+        displayed_action = decision_before.get("action")
+        displayed_action = (
+            int(displayed_action) if displayed_action is not None else None
+        )
+        direct_native = bool(decision_before.get("native_direct"))
+        decision_native = (
+            int(decision_before["native_action_bits"])
+            if direct_native
+            else None
+        )
         pending = self.env.unwrapped._nosl_cpp_pending
         pending_native = (
             int(pending[1])
             if pending is not None and int(pending[0]) == displayed_action
             else None
         )
+        displayed_native = decision_native if direct_native else pending_native
 
         # ``seek``/``undo`` rebuild the current decision but historically left
         # the future action history intact.  Replaying that suffix blindly can
@@ -1441,39 +1851,105 @@ class WatchSession:
         # branch from the current state and discard the stale suffix.
         replaying = self.position < len(self.history)
         historical_action = (
-            int(self.history[self.position]) if replaying else None
+            self.history[self.position] if replaying else None
         )
+        if historical_action is not None:
+            historical_action = int(historical_action)
         historical_native = (
             int(self.native_history[self.position])
             if replaying and self.position < len(self.native_history)
             and self.native_history[self.position] is not None
             else None
         )
+        historical_direct = bool(
+            replaying
+            and self.position < len(self.native_direct_history)
+            and self.native_direct_history[self.position]
+        )
+        requested_route_mode = (
+            self._route_mode_for_current_state()
+            if route_mode is None
+            else str(route_mode)
+        )
+        historical_route_mode = (
+            self.route_step_modes[self.position]
+            if replaying and self.position < len(self.route_step_modes)
+            else _ROUTE_STEP_NORMAL
+        )
         same_action = replaying and historical_action == displayed_action
-        same_native = historical_native == pending_native
-        if replaying and same_action and same_native:
+        same_native = historical_native == displayed_native
+        same_native_mode = historical_direct == direct_native
+        same_route_mode = historical_route_mode == requested_route_mode
+        if (
+            replaying
+            and same_action
+            and same_native
+            and same_native_mode
+            and same_route_mode
+        ):
             action = historical_action
-            if historical_native is not None:
+            native = historical_native
+            execute_native = historical_direct
+            active_route_mode = historical_route_mode
+            if native is not None and not execute_native:
                 self.env.unwrapped._nosl_cpp_pending = (
-                    int(action), int(historical_native)
+                    int(action), int(native)
                 )
         else:
             if replaying:
                 del self.history[self.position:]
                 del self.native_history[self.position:]
+                del self.native_direct_history[self.position:]
+                del self.route_step_modes[self.position:]
+                if (
+                    self.route_preprocess_boss_step is not None
+                    and self.position < self.route_preprocess_boss_step
+                ):
+                    self.route_preprocess_boss_step = None
             action = displayed_action
+            native = displayed_native
+            execute_native = direct_native
+            active_route_mode = requested_route_mode
             self.history.append(action)
-            self.native_history.append(pending_native)
+            self.native_history.append(native)
+            self.native_direct_history.append(execute_native)
+            self.route_step_modes.append(active_route_mode)
+        self._apply_route_step_mode(active_route_mode)
         label = (
             decision_before.get("label")
-            if int(decision_before.get("action", -1)) == int(action)
+            if displayed_action == action
+            and displayed_native == native
+            and direct_native == execute_native
+            else self._describe_native_action(native, action)
+            if execute_native
             else self.env.describe_action(action)
         )
-        animation = self._action_animation(action)
+        animation = (
+            decision_before.get("animation")
+            if displayed_action == action
+            and displayed_native == native
+            and direct_native == execute_native
+            else self._action_animation(action) if action is not None else None
+        )
         canon_before = self.env.unwrapped.thick.obs_canonical()
-        self._record_card_reward_choice(action, canon_before)
-        self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+        if action is not None:
+            self._record_card_reward_choice(action, canon_before)
+        if execute_native:
+            self.obs, reward, self.terminated, self.truncated, self.info = (
+                self.env.step_native_combat(native)
+            )
+        else:
+            self.obs, reward, self.terminated, self.truncated, self.info = (
+                self.env.step(action)
+            )
         self.position += 1
+        if active_route_mode == _ROUTE_STEP_SKIP_COMBAT:
+            self._apply_route_step_mode(active_route_mode)
+        elif (
+            active_route_mode == _ROUTE_STEP_ENTER_BOSS
+            and self._at_route_target_boss()
+        ):
+            self.route_preprocess_boss_step = self.position
         if self.terminated or self.truncated:
             self.timeline_exhausted = True
         self.last_action = {
@@ -1508,29 +1984,60 @@ class WatchSession:
         self.map_state = None
         self.card_reward_choices = []
         for index, action in enumerate(self.history[:target_step]):
+            route_mode = (
+                self.route_step_modes[index]
+                if index < len(self.route_step_modes)
+                else _ROUTE_STEP_NORMAL
+            )
+            self._apply_route_step_mode(route_mode)
+            direct_native = bool(
+                index < len(self.native_direct_history)
+                and self.native_direct_history[index]
+            )
+            native = None
             if index < len(self.native_history):
                 native = self.native_history[index]
-                if native is not None:
+                if native is not None and not direct_native:
                     self.env.unwrapped._nosl_cpp_pending = (int(action), int(native))
-            label = self.env.describe_action(action)
-            canon_before = self.env.unwrapped.thick.obs_canonical()
-            self._record_card_reward_choice(
-                action, canon_before, include_current_prob=False
+            label = (
+                self._describe_native_action(native, action)
+                if direct_native
+                else self.env.describe_action(action)
             )
-            self.obs, reward, self.terminated, self.truncated, self.info = self.env.step(action)
+            canon_before = self.env.unwrapped.thick.obs_canonical()
+            if action is not None:
+                self._record_card_reward_choice(
+                    action, canon_before, include_current_prob=False
+                )
+            if direct_native:
+                self.obs, reward, self.terminated, self.truncated, self.info = (
+                    self.env.step_native_combat(native)
+                )
+            else:
+                self.obs, reward, self.terminated, self.truncated, self.info = (
+                    self.env.step(action)
+                )
             self.position += 1
+            if route_mode == _ROUTE_STEP_SKIP_COMBAT:
+                self._apply_route_step_mode(route_mode)
             self.total_reward += float(reward)
             self.last_reward = float(reward)
             self.last_action = {
                 "action": action,
                 "label": label,
-                "animation": self._action_animation(action),
+                "animation": self._action_animation(action) if action is not None else None,
             }
             canon = self.env.unwrapped.thick.obs_canonical()
             map_snapshot = self._update_map(canon)
             self._record_timeline(map_snapshot, canon)
             if self.terminated or self.truncated:
                 break
+        next_route_mode = (
+            self.route_step_modes[self.position]
+            if self.position < len(self.route_step_modes)
+            else self._route_mode_for_current_state()
+        )
+        self._apply_route_step_mode(next_route_mode)
         self._prepare_decision()
         return self.snapshot()
 
@@ -1680,9 +2187,47 @@ class WatchSession:
             "max_step": len(self.history),
             "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
             "precompute_enabled": self.precompute_enabled,
+            "upper_strategy": self.upper_strategy,
+            "upper_strategy_version": (
+                OVERWORLD_RULE_VERSION
+                if self.upper_strategy == _UPPER_STRATEGY_RULES
+                else "checkpoint-model"
+            ),
+            "upper_fallback": (
+                "masked_argmax"
+                if self.upper_strategy == _UPPER_STRATEGY_RULES
+                else None
+            ),
+            "combat_strategy": self.combat_strategy,
+            "combat_strategy_version": (
+                PLANNER_VERSION
+                if self.combat_strategy == _COMBAT_STRATEGY_PLANNER
+                else "checkpoint-model+configured-search"
+            ),
+            "combat_strategy_config": (
+                asdict(_TURN_PLANNER_CONFIG)
+                if self.combat_strategy == _COMBAT_STRATEGY_PLANNER
+                else None
+            ),
+            "route_preprocess": {
+                "enabled": self.route_preprocess_target_act is not None,
+                "target_act": self.route_preprocess_target_act,
+                "reached": (
+                    self.route_preprocess_boss_step is not None
+                    and self.position >= self.route_preprocess_boss_step
+                ),
+                "boss_step": self.route_preprocess_boss_step,
+                "baseline_hp": self.route_preprocess_hp,
+                "ignored_resources": ["hp", "max_hp", "potions"],
+                "route_steps": sum(
+                    mode != _ROUTE_STEP_NORMAL
+                    for mode in self.route_step_modes[:self.position]
+                ),
+            },
             "mcts_simulations": self.mcts_simulations,
             "mcts_depth": self.mcts_depth,
             "mcts_end_turn_as_leaf": self.mcts_end_turn_as_leaf,
+            "mcts_fixed_worldline": self.mcts_fixed_worldline,
             "mcts_c_puct": self.mcts_c_puct,
             "mcts_prior_temperature": self.mcts_prior_temperature,
             "mcts_leaf_batch_size": self.mcts_leaf_batch_size,
@@ -1962,9 +2507,24 @@ class DashboardState:
         gumbel_interior_value_mode: int | None = None,
         paper_full_gumbel: bool | None = None,
         end_turn_as_leaf: bool | None = None,
+        fixed_worldline: bool | None = None,
         workers: int | None = None,
+        upper_strategy: str = _UPPER_STRATEGY_MODEL,
+        combat_strategy: str = _COMBAT_STRATEGY_MODEL,
     ):
         episodes = max(1, min(int(episodes), 10_000))
+        upper_strategy = str(upper_strategy).strip().lower()
+        combat_strategy = str(combat_strategy).strip().lower()
+        if upper_strategy not in _UPPER_STRATEGIES:
+            raise ValueError(
+                "upper strategy must be one of "
+                f"{sorted(_UPPER_STRATEGIES)}, got {upper_strategy!r}"
+            )
+        if combat_strategy not in _COMBAT_STRATEGIES:
+            raise ValueError(
+                "combat strategy must be one of "
+                f"{sorted(_COMBAT_STRATEGIES)}, got {combat_strategy!r}"
+            )
         worker_count = _clamp_int(
             workers,
             min(DEFAULT_EVAL_WORKERS, episodes),
@@ -1976,25 +2536,35 @@ class DashboardState:
             if self.model is None:
                 raise RuntimeError("no checkpoint loaded")
             model = self.model
-            search_config = _evaluation_search_config(
-                model,
-                simulations=simulations,
-                depth=depth,
-                leaf_batch_size=leaf_batch_size,
-                prior_temperature=prior_temperature,
-                search_mode=search_mode,
-                gumbel_candidates=gumbel_candidates,
-                gumbel_scale=gumbel_scale,
-                gumbel_value_scale=gumbel_value_scale,
-                gumbel_max_visit_init=gumbel_max_visit_init,
-                gumbel_rescale_q=gumbel_rescale_q,
-                gumbel_use_mixed_value=gumbel_use_mixed_value,
-                gumbel_interior_uniformity=gumbel_interior_uniformity,
-                gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
-                gumbel_interior_value_mode=gumbel_interior_value_mode,
-                paper_full_gumbel=paper_full_gumbel,
-                end_turn_as_leaf=end_turn_as_leaf,
-            )
+            if combat_strategy == _COMBAT_STRATEGY_PLANNER:
+                search_config = _evaluation_search_config(
+                    model,
+                    simulations=0,
+                    search_mode="direct",
+                    paper_full_gumbel=False,
+                    fixed_worldline=False,
+                )
+            else:
+                search_config = _evaluation_search_config(
+                    model,
+                    simulations=simulations,
+                    depth=depth,
+                    leaf_batch_size=leaf_batch_size,
+                    prior_temperature=prior_temperature,
+                    search_mode=search_mode,
+                    gumbel_candidates=gumbel_candidates,
+                    gumbel_scale=gumbel_scale,
+                    gumbel_value_scale=gumbel_value_scale,
+                    gumbel_max_visit_init=gumbel_max_visit_init,
+                    gumbel_rescale_q=gumbel_rescale_q,
+                    gumbel_use_mixed_value=gumbel_use_mixed_value,
+                    gumbel_interior_uniformity=gumbel_interior_uniformity,
+                    gumbel_interior_coverage_fraction=gumbel_interior_coverage_fraction,
+                    gumbel_interior_value_mode=gumbel_interior_value_mode,
+                    paper_full_gumbel=paper_full_gumbel,
+                    end_turn_as_leaf=end_turn_as_leaf,
+                    fixed_worldline=fixed_worldline,
+                )
             self.eval_token = token
             self.eval_status = {
                 "state": "running", "episodes": episodes, "completed": 0,
@@ -2002,7 +2572,34 @@ class DashboardState:
                 "death_seeds": {}, "win_seeds": [], "current_episode": 1,
                 "current_steps": 0, "current_floor": 0,
                 "current_phase": None, "current_action": None,
-                "search_method": search_config["method"],
+                "upper_strategy": upper_strategy,
+                "upper_strategy_version": (
+                    OVERWORLD_RULE_VERSION
+                    if upper_strategy == _UPPER_STRATEGY_RULES
+                    else "checkpoint-model"
+                ),
+                "upper_fallback": (
+                    "masked_argmax"
+                    if upper_strategy == _UPPER_STRATEGY_RULES
+                    else None
+                ),
+                "combat_strategy": combat_strategy,
+                "combat_strategy_version": (
+                    PLANNER_VERSION
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else "checkpoint-model+configured-search"
+                ),
+                "combat_strategy_config": (
+                    asdict(_TURN_PLANNER_CONFIG)
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else None
+                ),
+                "search_method": (
+                    "turn_planner"
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else search_config["method"]
+                ),
+                "configured_search_method": search_config["method"],
                 "search_supported": search_config["supported"],
                 "search_mode": search_config["search_mode"],
                 "search_mode_label": search_config["search_mode_label"],
@@ -2029,6 +2626,7 @@ class DashboardState:
                     "gumbel_interior_value_mode"
                 ],
                 "end_turn_as_leaf": search_config["end_turn_as_leaf"],
+                "fixed_worldline": search_config["fixed_worldline"],
                 "stochastic": False,
                 "root_noise": False,
                 "search_decisions": 0,
@@ -2040,12 +2638,31 @@ class DashboardState:
             }
         threading.Thread(
             target=self._evaluate,
-            args=(token, model, episodes, int(seed), search_config, worker_count),
+            args=(
+                token,
+                model,
+                episodes,
+                int(seed),
+                search_config,
+                worker_count,
+                upper_strategy,
+                combat_strategy,
+            ),
             daemon=True,
             name="dashboard-eval",
         ).start()
 
-    def _evaluate(self, token, model, episodes, seed, search_config, worker_count):
+    def _evaluate(
+        self,
+        token,
+        model,
+        episodes,
+        seed,
+        search_config,
+        worker_count,
+        upper_strategy,
+        combat_strategy,
+    ):
         rows = []
 
         def cancelled():
@@ -2057,13 +2674,20 @@ class DashboardState:
                     self.eval_status.update(event, last_progress_at=time.time())
 
         try:
-            strategy = PolicyStrategy(model, lock=self.model_lock)
-            if search_config.get("method") == "nosl_is_az_cpp":
-                strategy = PhaseStrategy(strategy, {"combat": NativeStrategy(
-                    model, NativeSearchConfig.from_mapping(search_config),
-                    master_nonce=search_config.get("master_nonce", 0), lock=self.model_lock)},
-                    predicates={"combat": lambda request: getattr(request.env.unwrapped, "_pending", None) is None})
+            strategy = _evaluation_strategy(
+                model,
+                self.model_lock,
+                search_config,
+                upper_strategy=upper_strategy,
+                combat_strategy=combat_strategy,
+            )
+            progress({"strategy": strategy.name})
             scenario = Scenario("wholerun", lambda: SlayTheSpireEnv(
+                combat_action_contract=(
+                    "native-v1"
+                    if combat_strategy == _COMBAT_STRATEGY_PLANNER
+                    else "legacy"
+                ),
                 global_map_view=_model.uses_global_map_observation(model),
                 card_language=_model.uses_card_language(model),
                 combat_language=_model.uses_combat_language(model),
@@ -2171,7 +2795,11 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                        fixed_worldline=body.get("fixed_worldline"),
                         stochastic=body.get("stochastic"),
+                        upper_strategy=body.get("upper_strategy"),
+                        combat_strategy=body.get("combat_strategy"),
+                        target_boss_act=body.get("target_boss_act"),
                     )
                 self._send_json(result)
             elif path == "/api/watch/apply":
@@ -2196,7 +2824,9 @@ class Handler(BaseHTTPRequestHandler):
                         gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                         paper_full_gumbel=body.get("paper_full_gumbel"),
                         end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                        fixed_worldline=body.get("fixed_worldline"),
                         stochastic=body.get("stochastic"),
+                        combat_strategy=body.get("combat_strategy"),
                     )
                 self._send_json(result)
             elif path == "/api/custom-combat/apply":
@@ -2270,7 +2900,14 @@ class Handler(BaseHTTPRequestHandler):
                     gumbel_interior_value_mode=body.get("gumbel_interior_value_mode"),
                     paper_full_gumbel=body.get("paper_full_gumbel"),
                     end_turn_as_leaf=body.get("end_turn_as_leaf"),
+                    fixed_worldline=body.get("fixed_worldline"),
                     workers=body.get("workers"),
+                    upper_strategy=body.get(
+                        "upper_strategy", _UPPER_STRATEGY_MODEL
+                    ),
+                    combat_strategy=body.get(
+                        "combat_strategy", _COMBAT_STRATEGY_MODEL
+                    ),
                 )
                 self._send_json(APP.public_state()["evaluation"])
             else:

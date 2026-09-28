@@ -1,0 +1,7 @@
+--n-envs
+384
+--envs-per-worker
+16
+--n-steps
+32
+--fork-reset-environments

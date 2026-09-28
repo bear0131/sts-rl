@@ -109,6 +109,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         performance_profile: bool = False,
         amp_mode: str = "off",
         hierarchical_combat_hp: bool = False,
+        nosl_is_az_boss_transition_target: bool = False,
         combat_hp_gamma: float = 1.0,
         combat_hp_gae_lambda: float = 0.95,
         reasoning_coef: float = 0.0,
@@ -117,6 +118,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         reasoning_gradient_accumulation_steps: int = 1,
         nosl_is_az: bool = False,
         nosl_is_az_inner_only: bool = False,
+        nosl_is_az_upper_strategy: str = "model",
         nosl_is_az_cpp: bool = False,
         nosl_is_az_simulations: int = 8,
         nosl_is_az_depth: int = 3,
@@ -243,6 +245,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("NOSL-IS-AZ loss coefficients must be non-negative")
         if nosl_is_az_inner_only and not nosl_is_az:
             raise ValueError("NOSL-IS-AZ inner-only mode requires nosl_is_az")
+        if nosl_is_az_upper_strategy not in ("model", "rules"):
+            raise ValueError("NOSL-IS-AZ upper strategy must be model or rules")
+        if nosl_is_az_upper_strategy == "rules" and not (
+            nosl_is_az and nosl_is_az_inner_only
+        ):
+            raise ValueError("NOSL upper rules require inner-only NOSL training")
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
@@ -250,7 +258,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # overworld/combat return split enabled automatically so combat PPO can
         # be removed without changing the strategic return calculation.
         self.nosl_is_az = bool(nosl_is_az)
+        # Optional boss terminal objective.  This is an additive, serialized
+        # setting; legacy checkpoints and fresh runs keep the old HP target.
+        self.nosl_is_az_boss_transition_target = bool(
+            nosl_is_az_boss_transition_target
+        )
         self.nosl_is_az_inner_only = bool(nosl_is_az_inner_only)
+        self.nosl_is_az_upper_strategy = str(nosl_is_az_upper_strategy)
         self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
         self.hierarchical_combat_hp = bool(
             hierarchical_combat_hp or self.nosl_is_az
@@ -377,6 +391,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_replay",
             "_nosl_is_az_replay_prepare_stats",
             "_nosl_is_az_rollout_hp_order",
+            "_nosl_is_az_rollout_upper_counts",
             "_nosl_is_az_metric_sums",
             "_nosl_is_az_metric_sumsq",
             "_nosl_is_az_metric_counts",
@@ -487,12 +502,43 @@ class AccumulatingMaskablePPO(MaskablePPO):
             return th.autocast(device_type="cuda", dtype=th.bfloat16)
         return nullcontext()
 
-    def configure_nosl_is_az_inner_only(self) -> tuple[int, int]:
-        """Freeze everything except the combat specialist.
+    def reset_nosl_is_az_shared_embeddings(self, seed: int) -> int:
+        """Reset shared semantic embedding tables with a reproducible seed."""
+        if not self.nosl_is_az or not self.nosl_is_az_inner_only:
+            raise ValueError("shared embedding reset requires NOSL inner-only mode")
+        core = getattr(self.policy, "core", None)
+        shared = getattr(core, "shared", None)
+        if shared is None:
+            raise ValueError("NOSL inner-only mode requires shared semantic tokenizers")
+        embeddings = [
+            module for module in shared.modules()
+            if isinstance(module, th.nn.Embedding)
+        ]
+        if not embeddings:
+            raise ValueError("shared semantic tokenizer has no embedding tables")
+        cuda_devices = []
+        parameter = next(shared.parameters(), None)
+        if parameter is not None and parameter.is_cuda:
+            device_index = parameter.device.index
+            if device_index is not None:
+                cuda_devices = [device_index]
+        with th.random.fork_rng(devices=cuda_devices):
+            th.manual_seed(int(seed))
+            if cuda_devices:
+                th.cuda.manual_seed_all(int(seed))
+            for module in embeddings:
+                module.reset_parameters()
+        # A frozen card-rule encoder may have a materialized lookup cache.  It
+        # must not survive a reset of the underlying embedding parameters.
+        if hasattr(shared, "card_vector_cache"):
+            shared.card_vector_cache = None
+            shared.card_vector_cache_enabled = False
+        return len(embeddings)
 
-        Shared tokenizers must stay frozen as well: changing them through the
-        combat loss would also change the supposedly fixed overworld policy.
-        """
+    def configure_nosl_is_az_inner_only(
+        self, *, train_shared_embeddings: bool = False
+    ) -> tuple[int, int]:
+        """Freeze everything except combat and optionally shared embeddings."""
         if not self.nosl_is_az or not self.nosl_is_az_inner_only:
             raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
         core = getattr(self.policy, "core", None)
@@ -505,6 +551,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
             parameter.requires_grad_(False)
         for parameter in combat.parameters():
             parameter.requires_grad_(True)
+        if train_shared_embeddings:
+            shared = getattr(core, "shared", None)
+            if shared is None:
+                raise ValueError(
+                    "shared embedding training requires a split specialist policy"
+                )
+            for module in shared.modules():
+                if isinstance(module, th.nn.Embedding):
+                    for parameter in module.parameters():
+                        parameter.requires_grad_(True)
         frozen = sum(
             parameter.numel()
             for parameter in self.policy.parameters()
@@ -621,6 +677,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         next_phases = np.stack([item[2] for item in captured])
         next_hp = np.stack([item[3] for item in captured])
         interrupted = np.stack([item[4] for item in captured])
+        combat_terminal_targets = (
+            np.stack([item[5] for item in captured])
+            if len(captured[0]) > 5
+            else None
+        )
         rewards, returns, advantages, stats = compute_hierarchical_returns(
             phases=phases,
             values=rollout_buffer.values,
@@ -628,6 +689,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             dones=dones,
             next_phases=next_phases,
             next_hp=next_hp,
+            combat_terminal_targets=combat_terminal_targets,
             interrupted=interrupted,
             last_values=last_values,
             combat_phase=V.PHASE_VOCAB_INDEX["combat"],
@@ -668,12 +730,21 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 phases, hp, interrupted = self._next_phase_hp(
                     new_obs, dones, infos
                 )
+                terminal_targets = np.full(
+                    len(infos), np.nan, dtype=np.float32
+                )
+                for index, info in enumerate(infos):
+                    if "nosl_value_terminal_target" in info:
+                        value = info["nosl_value_terminal_target"]
+                        if value is not None:
+                            terminal_targets[index] = float(value)
                 captured.append((
                     np.asarray(rewards, dtype=np.float32).copy(),
                     np.asarray(dones, dtype=bool).copy(),
                     phases,
                     hp,
                     interrupted,
+                    terminal_targets,
                 ))
                 return new_obs, rewards, dones, infos
 
@@ -772,8 +843,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         This is intentionally close to sb3-contrib's MaskablePPO collector.
         The only extra work is (1) obtaining public policy logits, (2) asking
         each combat worker for a NOSL search decision, and (3) retaining the
-        search target for the AZ update.  Overworld actions remain ordinary PPO
-        samples.
+        search target for the AZ update. Upper rules are supported only with
+        the frozen outer policy in inner-only mode.
         """
         from stable_baselines3.common.vec_env import VecEnv
 
@@ -851,7 +922,33 @@ class AccumulatingMaskablePPO(MaskablePPO):
         }
         n_steps = 0
         action_masks = None
+        startup_paused: set[int] = set()
+        if getattr(self, "_startup_occupancy_sampling", False):
+            startup_paused = {
+                index for index, state in enumerate(
+                    env.env_method("startup_occupancy_state")
+                )
+                if state["accepted"] and not state["released"]
+            }
         started = time.perf_counter()
+
+        upper_rules = getattr(self, "nosl_is_az_upper_strategy", "model") == "rules"
+        if upper_rules and not self.nosl_is_az_inner_only:
+            raise ValueError("NOSL upper rules require inner-only NOSL training")
+        overworld_rule_decisions = overworld_fallback_decisions = 0
+
+        def call_workers(method_name, calls):
+            if not calls:
+                return {}
+            batch_call = getattr(env, "env_method_batch", None)
+            if batch_call is not None:
+                return batch_call(method_name, calls)
+            return {
+                index: env.env_method(
+                    method_name, *args, indices=index, **kwargs,
+                )[0]
+                for index, (args, kwargs) in calls.items()
+            }
 
         while n_steps < n_rollout_steps:
             policy_started = time.perf_counter()
@@ -882,7 +979,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 )
                 if action_masks is not None:
                     distribution.apply_masking(action_masks)
-                actions = distribution.get_actions(deterministic=False)
+                actions = distribution.get_actions(deterministic=upper_rules)
                 values = values.float()
             nosl_timings["root_policy_seconds"] += (
                 time.perf_counter() - policy_started
@@ -914,27 +1011,34 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # sends distinct logits/nonces to all combat workers concurrently.
             combat_indices = [
                 index for index in range(env.num_envs)
-                if int(phase[index]) == combat_phase
+                if int(phase[index]) == combat_phase and index not in startup_paused
             ]
+            if upper_rules:
+                upper_results = call_workers("overworld_rule_decision", {
+                    index: ((), {}) for index in range(env.num_envs)
+                    if int(phase[index]) != combat_phase and index not in startup_paused
+                })
+                for index, action in upper_results.items():
+                    if action is None:
+                        overworld_fallback_decisions += 1
+                        continue
+                    action = int(action)
+                    if not 0 <= action < action_masks.shape[1] or not action_masks[index, action]:
+                        raise ValueError(f"illegal overworld rule action: env={index} action={action}")
+                    actions_np[index] = action
+                    overworld_rule_decisions += 1
             result_by_index = {}
             if combat_indices:
-                def call_workers(method_name, calls):
-                    batch_call = getattr(env, "env_method_batch", None)
-                    if batch_call is not None:
-                        return batch_call(method_name, calls)
-                    return {
-                        index: env.env_method(
-                            method_name,
-                            *args,
-                            indices=index,
-                            **kwargs,
-                        )[0]
-                        for index, (args, kwargs) in calls.items()
-                    }
-
                 begin_calls = {}
                 for env_index in combat_indices:
+                    startup_nonce_rng = getattr(
+                        self, "_startup_occupancy_nonce_rng", None
+                    )
                     state_nonce = (
+                        int(startup_nonce_rng.integers(
+                            0, 1 << 64, dtype=np.uint64
+                        ))
+                        if startup_nonce_rng is not None else
                         int(self.nosl_is_az_master_nonce)
                         ^ (int(self.num_timesteps) * 0x9E3779B97F4A7C15)
                         ^ (int(n_steps) * 0xD1B54A32D192ED03)
@@ -972,6 +1076,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_interior_value_mode": self.nosl_is_az_gumbel_interior_value_mode,
                                 "gumbel_interior_max_mix_visits": self.nosl_is_az_gumbel_interior_max_mix_visits,
                                 "compact_observation": compact_cpp_observations,
+                                "boss_transition_target": (
+                                    self.nosl_is_az_boss_transition_target
+                                ),
                             },
                         )
                     else:
@@ -987,6 +1094,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "temperature": self.nosl_is_az_temperature,
                                 "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,
                                 "dirichlet_epsilon": self.nosl_is_az_dirichlet_epsilon,
+                                "boss_transition_target": (
+                                    self.nosl_is_az_boss_transition_target
+                                ),
                             },
                         )
 
@@ -1153,7 +1263,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 result_by_index[index] = response["result"]
 
             for env_index in range(env.num_envs):
-                if int(phase[env_index]) != combat_phase:
+                if (
+                    int(phase[env_index]) != combat_phase
+                    or env_index in startup_paused
+                ):
                     continue
                 result = result_by_index[env_index]
                 actions_np[env_index] = int(result["action"])
@@ -1193,12 +1306,28 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     }
                 )
             actions = th.as_tensor(actions_np, dtype=th.long, device=self.device)
-            # Search may replace sampled combat actions.  Recompute their old
+            # Search/rules may replace model actions. Recompute their old
             # log-probability so the rollout remains internally consistent even
             # though combat samples are excluded from the PPO objective below.
             log_probs = distribution.log_prob(actions).float()
             env_started = time.perf_counter()
             new_obs, rewards, dones, infos = env.step(actions_np)
+            if getattr(self, "_startup_occupancy_sampling", False):
+                startup_paused.update(
+                    index for index, info in enumerate(infos)
+                    if info.get("startup_occupancy_accepted")
+                )
+                reset_indices = np.flatnonzero(dones).tolist()
+                if reset_indices:
+                    startup_paused.update(
+                        index for index, state in zip(
+                            reset_indices,
+                            env.env_method(
+                                "startup_occupancy_state", indices=reset_indices,
+                            ),
+                        )
+                        if state["accepted"] and not state["released"]
+                    )
             nosl_timings["env_step_seconds"] += (
                 time.perf_counter() - env_started
             )
@@ -1208,7 +1337,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 new_obs, dones, infos
             )
             for env_index in range(env.num_envs):
-                if int(phase[env_index]) != combat_phase:
+                if (
+                    int(phase[env_index]) != combat_phase
+                    or env_index in startup_paused
+                ):
                     continue
                 # Only the boundary on the action actually taken belongs to
                 # this trajectory.  It receives the fight's eventual HP label
@@ -1226,6 +1358,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     collected_value_boundaries += 1
                 terminal_observation = infos[env_index].pop(
                     "nosl_value_terminal_observation", None
+                )
+                terminal_target = infos[env_index].pop(
+                    "nosl_value_terminal_target", np.nan
                 )
                 if _append_nosl_value_only_sample(
                     active_combat_samples[env_index],
@@ -1258,9 +1393,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         rollout_hp_order_count += 1
                         if estimated_value > current_hp and current_hp >= future_hp:
                             rollout_hp_order_matches += 1
-                completed = _fill_nosl_combat_value_targets(
-                    pending, next_hp[env_index]
-                )
+                target = next_hp[env_index]
+                if np.isfinite(terminal_target):
+                    target = terminal_target
+                completed = _fill_nosl_combat_value_targets(pending, target)
                 self._nosl_is_az_samples.extend(pending)
                 completed_combat_roots += completed
                 completed_combats += 1
@@ -1338,6 +1474,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # only on ``name_to_value`` makes these diagnostics disappear from
         # distributed/W&B records.
         self._nosl_is_az_rollout_timings = dict(nosl_timings)
+        self._nosl_is_az_rollout_upper_counts = {
+            "overworld_rule_decisions": float(overworld_rule_decisions),
+            "overworld_fallback_decisions": float(overworld_fallback_decisions),
+        }
+        for name, count in self._nosl_is_az_rollout_upper_counts.items():
+            self.logger.record("nosl_is_az/" + name, count)
         rollout_hp_order_fraction = (
             float(rollout_hp_order_matches / rollout_hp_order_count)
             if rollout_hp_order_count

@@ -29,19 +29,31 @@ param(
     [string]$OverridesFile = "",
     [string]$Checkpoint = "migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip",
     [long]$ResumeStep = 0,
+    [string]$ResumeRoot = "",
+    [switch]$ForkResume,
+    [switch]$PreserveForkEnvironments,
+    [ValidatePattern("^[A-Za-z0-9_-]+$")]
+    [string]$ResumeSourceRunId = "",
+    [ValidatePattern("^[A-Za-z0-9_-]+$")]
+    [string]$ResumeSourceWandbId = "",
     [long]$TargetStep = 0,
     [switch]$WaitForTarget,
     [int]$TimeoutSeconds = 1200,
     [int]$PollSeconds = 15,
     [int]$RingPort = 29789,
     [ValidateRange(2, 100)]
-    [int]$MaxCheckpoints = 3,
+    [int]$MaxCheckpoints = 2,
+    [ValidateRange(1, 1000000)]
+    [int]$SaveEveryUpdates = 1,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),
+    # The accepted native build lives under the repository's runs directory.
+    # Keep this explicit so a fresh launch cannot silently select a mutable
+    # or unvalidated build-gumbel-* directory.
     [string[]]$BuildDirs = @(
-        "build-gumbel-current",
-        "build-gumbel-current",
-        "build-gumbel-u5",
-        "build-gumbel-current"
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules",
+        "../../runs/local/search-perf04-20260919/accepted-build-latest-rules"
     ),
     [string]$SshKey = "$env:USERPROFILE\.ssh\sts_dist_shared_ed25519"
 )
@@ -58,6 +70,15 @@ if ($BuildDirs.Count -ne $WorldSize) {
 }
 if ($ResumeStep -lt 0 -or $TargetStep -lt 0) {
     throw "ResumeStep and TargetStep must be non-negative."
+}
+if ($ForkResume -and ($ResumeStep -le 0 -or -not $ResumeRoot -or -not $ResumeSourceRunId -or -not $ResumeSourceWandbId)) {
+    throw "ForkResume requires ResumeStep, ResumeRoot, ResumeSourceRunId, and ResumeSourceWandbId."
+}
+if (-not $ForkResume -and $ResumeRoot) {
+    throw "ResumeRoot is only supported with ForkResume."
+}
+if ($PreserveForkEnvironments -and -not $ForkResume) {
+    throw "PreserveForkEnvironments requires ForkResume."
 }
 if ($TimeoutSeconds -le 0 -or $PollSeconds -le 0) {
     throw "TimeoutSeconds and PollSeconds must be positive."
@@ -98,7 +119,11 @@ function Invoke-Remote {
         [Parameter(Mandatory = $true)][string]$Command,
         [int]$Attempts = 3
     )
-    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
+    # PowerShell here-strings inherit this file's CRLF.  Normalize at the
+    # transport boundary so Bash does not treat trailing CR as part of a
+    # command (for example, `set +e` becomes an invalid `set +` option).
+    $normalizedCommand = $Command -replace "`r`n", "`n" -replace "`r", "`n"
+    $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($normalizedCommand))
     $remoteCommand = "printf '%s' '$payload' | base64 -d | bash"
     $sshArgs = @(
         "-i", $SshKey,
@@ -140,10 +165,17 @@ fi
 "@
     if ($ResumeStep -gt 0) {
         $generation = "step-{0:D12}" -f $ResumeStep
-        $recoveryPath = ConvertTo-BashQuote "$RemoteRepo/runs/$RunId/recovery/rank$($Peer.Rank)/$generation"
+        $sourceRunId = if ($ForkResume) { $ResumeSourceRunId } else { $RunId }
+        $sourceWandbId = if ($ForkResume) { $ResumeSourceWandbId } else { $WandbId }
+        $rawRecoveryPath = if ($ForkResume) {
+            "$(Resolve-RemotePath $ResumeRoot)/rank$($Peer.Rank)/$generation"
+        } else {
+            "$RemoteRepo/runs/$RunId/recovery/rank$($Peer.Rank)/$generation"
+        }
+        $recoveryPath = ConvertTo-BashQuote $rawRecoveryPath
         $recoveryBlock = @"
 generation=$recoveryPath
-PYTHONPATH="`$repo" "`$python" - "`$generation" $($Peer.Rank) $WorldSize $(ConvertTo-BashQuote $RunId) $(ConvertTo-BashQuote $WandbId) $ResumeStep <<'PY'
+PYTHONPATH="`$repo" "`$python" - "`$generation" $($Peer.Rank) $WorldSize $(ConvertTo-BashQuote $sourceRunId) $(ConvertTo-BashQuote $sourceWandbId) $ResumeStep <<'PY'
 import sys
 from rl.training.checkpoints import read_bundle
 
@@ -185,6 +217,21 @@ sha256sum "`$build"/slaythespire*.so | head -1
 "@
 }
 
+function Get-PrepareTransportCommand($Peer) {
+    $remoteRoot = ConvertTo-BashQuote "$RemoteRepo/.tmp-dist-sb3-$RunId"
+    return @"
+set -euo pipefail
+remote_root=$remoteRoot
+if pgrep -f '[r]l.training.distributed_sb3' >/dev/null 2>&1; then
+  echo 'a distributed trainer started during preflight; refusing transport cleanup' >&2
+  exit 3
+fi
+rm -rf -- "`$remote_root"
+mkdir -p "`$remote_root"
+echo "transport_root_prepared=`$remote_root"
+"@
+}
+
 function Get-LaunchCommand($Peer) {
     $repo = ConvertTo-BashQuote $RemoteRepo
     $args = ConvertTo-BashQuote (Resolve-RemotePath $ArgsFile)
@@ -194,6 +241,16 @@ function Get-LaunchCommand($Peer) {
     $resumeLine = "unset NOSL_RESUME_STEP"
     if ($ResumeStep -gt 0) {
         $resumeLine = "export NOSL_RESUME_STEP=$ResumeStep"
+    }
+    $resumeRootLine = "unset NOSL_RESUME_ROOT"
+    $forkResumeLine = "unset NOSL_FORK_RESUME"
+    $preserveForkEnvironmentsLine = "unset NOSL_FORK_PRESERVE_ENVIRONMENTS"
+    if ($ForkResume) {
+        $resumeRootLine = "export NOSL_RESUME_ROOT=$(ConvertTo-BashQuote (Resolve-RemotePath $ResumeRoot))"
+        $forkResumeLine = "export NOSL_FORK_RESUME=1"
+        if ($PreserveForkEnvironments) {
+            $preserveForkEnvironmentsLine = "export NOSL_FORK_PRESERVE_ENVIRONMENTS=1"
+        }
     }
     $overridesLine = "unset NOSL_OVERRIDES_FILE"
     if ($OverridesFile) {
@@ -213,8 +270,15 @@ export NOSL_CHECKPOINT=$checkpoint
 export NOSL_PEER_PORTS=$ports
 export NOSL_RING_PORT=$RingPort
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
+export NOSL_SAVE_EVERY_UPDATES=$SaveEveryUpdates
+# The manager cleans the shared transport root once for all ranks before
+# launching. Per-rank cleanup would delete peer ready markers.
+export NOSL_SKIP_TRANSPORT_CLEANUP=1
 export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
+$resumeRootLine
+$forkResumeLine
+$preserveForkEnvironmentsLine
 $overridesLine
 bash experiments/launchers/launch_nosl_replay.sh $($Peer.Rank)
 "@
@@ -298,7 +362,7 @@ echo "running=`$running latest=`${latest:-none}"
 }
 
 if ($Action -eq "plan") {
-    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints"
+    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume preserve_fork_environments=$PreserveForkEnvironments resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints save_every_updates=$SaveEveryUpdates"
     foreach ($peer in $Peers) {
         Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
     }
@@ -321,6 +385,11 @@ foreach ($peer in $Peers) {
 }
 if ($Action -eq "preflight") {
     exit 0
+}
+
+foreach ($peer in $Peers) {
+    Write-Host "===== rank $($peer.Rank) transport cleanup ====="
+    Write-Host (Invoke-Remote $peer (Get-PrepareTransportCommand $peer))
 }
 
 foreach ($peer in $Peers) {

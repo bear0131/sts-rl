@@ -38,6 +38,7 @@ let rl/train.py bridge it to sb3-contrib via ActionMasker.
 """
 
 import copy
+import hashlib
 
 import numpy as np
 import gymnasium as gym
@@ -76,6 +77,7 @@ from . import actions
 from . import combat_env
 from . import encode
 from . import game_actions as ga
+from .boss_value import context_value_mode
 from .game_env import SimGameEnv
 
 
@@ -231,14 +233,24 @@ class SlayTheSpireEnv(gym.Env):
                  card_language=False, combat_language=False,
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
-                 interactive_reasoning=False):
+                 interactive_reasoning=False, combat_action_contract='legacy',
+                 nosl_is_az_boss_transition_target=False):
         super().__init__()
+        if combat_action_contract not in ('legacy', 'native-v1'):
+            raise ValueError('combat_action_contract must be legacy or native-v1')
+        self.combat_action_contract = combat_action_contract
+        self._nosl_is_az_boss_transition_target = bool(
+            nosl_is_az_boss_transition_target
+        )
         self._backend_factory = backend_factory or (
             lambda: SimGameEnv(
                 character=character,
                 ascension=ascension,
                 global_map_view=global_map_view,
                 interactive_reasoning=interactive_reasoning,
+                nosl_is_az_boss_transition_target=(
+                    self._nosl_is_az_boss_transition_target
+                ),
             )
         )
         self._global_map_view = global_map_view
@@ -278,6 +290,8 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_state_nonce = 0
         self._nosl_cpp_decision_index = 0
         self._nosl_value_capture_pending = False
+        self._episode_backend_seed = None
+        self._episode_action_journal = []
 
         self.observation_space = encode.obs_space(
             global_map_view=global_map_view,
@@ -294,9 +308,13 @@ class SlayTheSpireEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
+        if self._nosl_is_az_boss_transition_target:
+            setattr(self.thick, "_nosl_is_az_boss_transition_target", True)
         # A new backend must continue Gym's seeded episode stream on autoreset.
         backend_seed = seed if seed is not None else int(self.np_random.integers(0, 2**63))
         self.thick.reset(seed=backend_seed)
+        self._episode_backend_seed = int(backend_seed)
+        self._episode_action_journal = []
         self._pending = None
         self._multi = None
         self._nosl_is_az_session = None
@@ -312,6 +330,109 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_value_capture_pending = False
         self._invalidate_backend_cache()
         return self._obs(), self._info()
+
+    @staticmethod
+    def _array_mapping_digest(values):
+        digest = hashlib.sha256()
+        for key in sorted(values):
+            value = np.ascontiguousarray(values[key])
+            digest.update(key.encode("utf-8"))
+            digest.update(value.dtype.str.encode("ascii"))
+            digest.update(repr(value.shape).encode("ascii"))
+            digest.update(value.tobytes())
+        return digest.hexdigest()
+
+    def export_training_state(self):
+        """Return a replayable snapshot of the current live episode.
+
+        The native simulator contains callback objects that are not safely
+        serializable.  A backend seed plus the exact committed action stream
+        reconstructs those callbacks through the normal transition path.
+        """
+        if self.thick is None or self._episode_backend_seed is None:
+            raise RuntimeError("cannot checkpoint an environment before reset")
+        if self._nosl_is_az_session is not None or self._nosl_cpp_az_session is not None:
+            raise RuntimeError("cannot checkpoint an active search session")
+        observation = self._obs()
+        action_mask = self.action_masks()
+        pending_native = self._nosl_cpp_pending
+        if pending_native is not None:
+            pending_native = (int(pending_native[0]), int(pending_native[1]))
+        return {
+            "schema_version": 1,
+            "combat_action_contract": self.combat_action_contract,
+            "backend_seed": int(self._episode_backend_seed),
+            "actions": copy.deepcopy(self._episode_action_journal),
+            "np_random_state": copy.deepcopy(self.np_random.bit_generator.state),
+            "pending": copy.deepcopy(self._pending),
+            "multi": None if self._multi is None else sorted(self._multi),
+            "nosl_cpp_pending": pending_native,
+            "nosl_cpp_state_nonce": int(self._nosl_cpp_state_nonce),
+            "nosl_cpp_decision_index": int(self._nosl_cpp_decision_index),
+            "nosl_cpp_stochastic": bool(self._nosl_cpp_stochastic),
+            "nosl_value_capture_pending": bool(self._nosl_value_capture_pending),
+            "observation_sha256": self._array_mapping_digest(observation),
+            "action_mask_sha256": self._array_mapping_digest({"mask": action_mask}),
+        }
+
+    def restore_training_state(self, state):
+        """Rebuild one live episode and reject any replay divergence."""
+        if state.get("schema_version") != 1:
+            raise ValueError("unsupported environment state schema")
+        if state.get("combat_action_contract") != self.combat_action_contract:
+            raise ValueError("environment combat action contract mismatch")
+
+        # Bypass subclass reset hooks: production state is defined by this
+        # environment's backend seed and journal, not fixture/setup actions.
+        SlayTheSpireEnv.reset(self, seed=int(state["backend_seed"]))
+        for position, record in enumerate(state["actions"]):
+            kind = record.get("kind")
+            if kind == "thin":
+                pending = record.get("native_pending")
+                self._nosl_cpp_pending = (
+                    None if pending is None
+                    else (int(pending[0]), int(pending[1]))
+                )
+                result = self._step_impl(int(record["action"]))
+            elif kind == "native":
+                result = self._step_native_combat_impl(int(record["action_bits"]))
+            else:
+                raise ValueError(f"invalid environment journal record at {position}")
+            if result[2] or result[3]:
+                raise ValueError(
+                    f"environment journal terminated before live state at {position}"
+                )
+
+        self.np_random.bit_generator.state = copy.deepcopy(state["np_random_state"])
+        pending_native = state.get("nosl_cpp_pending")
+        if pending_native is None:
+            self._nosl_cpp_pending = None
+        else:
+            if len(pending_native) != 2:
+                raise ValueError("invalid pending native action state")
+            self._nosl_cpp_pending = (
+                int(pending_native[0]), int(pending_native[1])
+            )
+        self._nosl_cpp_state_nonce = int(state["nosl_cpp_state_nonce"])
+        self._nosl_cpp_decision_index = int(state["nosl_cpp_decision_index"])
+        self._nosl_cpp_stochastic = bool(state["nosl_cpp_stochastic"])
+        self._nosl_value_capture_pending = bool(
+            state["nosl_value_capture_pending"]
+        )
+        self._episode_action_journal = copy.deepcopy(state["actions"])
+
+        expected_pending = state.get("pending")
+        expected_multi = state.get("multi")
+        actual_multi = None if self._multi is None else sorted(self._multi)
+        if self._pending != expected_pending or actual_multi != expected_multi:
+            raise ValueError("environment thin action state diverged during replay")
+        observation = self._obs()
+        action_mask = self.action_masks()
+        if self._array_mapping_digest(observation) != state["observation_sha256"]:
+            raise ValueError("environment observation diverged during replay")
+        if self._array_mapping_digest({"mask": action_mask}) != state["action_mask_sha256"]:
+            raise ValueError("environment action mask diverged during replay")
+        return observation, self._info()
 
     def fork_combat(self):
         """Return an isolated thin-env branch for combat-only lookahead."""
@@ -331,6 +452,9 @@ class SlayTheSpireEnv(gym.Env):
         branch._nosl_cpp_stochastic = False
         branch._nosl_cpp_state_nonce = 0
         branch._nosl_cpp_decision_index = 0
+        branch._episode_action_journal = copy.deepcopy(
+            self._episode_action_journal
+        )
         branch._invalidate_backend_cache()
         return branch
 
@@ -511,16 +635,28 @@ class SlayTheSpireEnv(gym.Env):
     ):
         canon, reward, terminated, transition_info = result
         has_terminal_state = "nosl_value_terminal_state" in transition_info
-        if boundary_observation is None and not has_terminal_state:
+        has_terminal_target = "nosl_value_terminal_target" in transition_info
+        if (
+            boundary_observation is None
+            and not has_terminal_state
+            and not has_terminal_target
+        ):
             return result
         transition_info = dict(transition_info)
         terminal_state = transition_info.pop("nosl_value_terminal_state", None)
+        terminal_target = transition_info.pop(
+            "nosl_value_terminal_target", None
+        )
         if boundary_observation is not None:
             transition_info["nosl_value_boundary_observation"] = boundary_observation
         if include_terminal and terminal_state is not None:
             transition_info["nosl_value_terminal_observation"] = (
                 self._native_leaf_observation(terminal_state, combat_only=True)
             )
+        if terminal_target is not None:
+            # Keep zero-valued loss labels: truthiness checks would silently
+            # discard the only target that distinguishes a failed boss fight.
+            transition_info["nosl_value_terminal_target"] = float(terminal_target)
         return canon, reward, terminated, transition_info
 
     def _backend_step_fast(self, semantic):
@@ -563,7 +699,53 @@ class SlayTheSpireEnv(gym.Env):
         also has no legal action, but that is a `terminated`, not a dead screen."""
         if self._multi_desc() is not None:
             return False
+        if (self.combat_action_contract == 'native-v1'
+                and self._phase() == 'combat' and self._pending is None):
+            return not self.native_combat_actions()
         return not self.action_masks().any()
+
+    def native_combat_actions(self):
+        """Complete legal bits for the current live root; no legacy slot mapping."""
+        if (self.thick is None or self._phase() != 'combat'
+                or self.thick.is_over or self._pending is not None):
+            return ()
+        from .native_actions import complete_actions
+        return complete_actions(self.thick.bc)
+
+    def combat_selection_candidates(self):
+        """Versioned public entity map for the currently open single-pick screen."""
+        if self.thick is None or self._phase() != 'combat' or self.thick.is_over:
+            return ()
+        from .native_actions import selection_candidates
+        return selection_candidates(self.thick.bc)
+
+    def _step_native_combat_impl(self, action_bits):
+        """Execute native-v1 bits atomically through the existing reward/settle path.
+
+        Explicit opt-in preserves legacy checkpoint masks, observations and dead
+        screen behavior. A pending thin target/multi pick cannot be bypassed.
+        """
+        if self.combat_action_contract != 'native-v1':
+            raise RuntimeError('complete actions require combat_action_contract=native-v1')
+        if self._pending is not None or self._multi:
+            raise ValueError('cannot replace an unfinished thin action with native bits')
+        bits = int(action_bits)
+        if bits != action_bits or bits not in self.native_combat_actions():
+            raise ValueError(f'illegal native combat action {action_bits}')
+        self._nosl_cpp_pending = None
+        self._multi = None
+        _canon, reward, terminated, tinfo = self._backend_step_native_combat(bits)
+        result = self._post_step(reward, terminated, tinfo)
+        result[4]['native_action'] = bits
+        return result
+
+    def step_native_combat(self, action_bits):
+        result = self._step_native_combat_impl(action_bits)
+        self._episode_action_journal.append({
+            "kind": "native",
+            "action_bits": int(action_bits),
+        })
+        return result
 
     def _truncate_dead(self):
         """The clean 5-tuple for truncating on a dead screen: a valid (current)
@@ -611,9 +793,13 @@ class SlayTheSpireEnv(gym.Env):
         )
         if terminal_observation is not None:
             info["nosl_value_terminal_observation"] = terminal_observation
+        if "nosl_value_terminal_target" in (transition_info or {}):
+            info["nosl_value_terminal_target"] = float(
+                transition_info["nosl_value_terminal_target"]
+            )
         return self._obs(), reward, terminated, False, info
 
-    def step(self, action_id):
+    def _step_impl(self, action_id):
         aid = int(action_id)
 
         # Dead-screen guard at the TOP of step (defense in depth): if we are parked
@@ -689,6 +875,19 @@ class SlayTheSpireEnv(gym.Env):
         _canon, reward, terminated, tinfo = self._backend_step(semantic)
         return self._post_step(reward, terminated, tinfo, action_id=aid)
 
+    def step(self, action_id):
+        pending_native = self._nosl_cpp_pending
+        result = self._step_impl(action_id)
+        self._episode_action_journal.append({
+            "kind": "thin",
+            "action": int(action_id),
+            "native_pending": (
+                None if pending_native is None
+                else (int(pending_native[0]), int(pending_native[1]))
+            ),
+        })
+        return result
+
     def search_step(self, action_id, *, validate=True):
         """Advance one legal combat action for model-free search.
 
@@ -742,6 +941,18 @@ class SlayTheSpireEnv(gym.Env):
             return True, None
         return False, self.action_masks()
 
+    def overworld_rule_decision(self):
+        """Choose a legal public-state upper action, or request model fallback."""
+        if self.thick is None or self._phase() == "combat":
+            raise RuntimeError("overworld rules require a live non-combat state")
+        from env.search.overworld_rules import rank_overworld
+
+        ranked = rank_overworld(
+            self.thick.obs_canonical(), np.flatnonzero(self.action_masks()),
+            rmap=self.thick.rmap, current_y=self.thick.gc.cur_map_node_y,
+        )
+        return None if ranked is None else int(ranked[0]["action"])
+
     def nosl_is_az_decide(
         self,
         prior_logits,
@@ -756,6 +967,7 @@ class SlayTheSpireEnv(gym.Env):
         temperature: float = 1.0,
         dirichlet_alpha: float = 0.0,
         dirichlet_epsilon: float = 0.0,
+        boss_transition_target: bool = False,
     ):
         """Run one NOSL-IS-AZ root search inside the live VecEnv worker.
 
@@ -777,6 +989,7 @@ class SlayTheSpireEnv(gym.Env):
             temperature=float(temperature),
             dirichlet_alpha=float(dirichlet_alpha),
             dirichlet_epsilon=float(dirichlet_epsilon),
+            boss_transition_target=bool(boss_transition_target),
         )
         result = NOSLISAZSearch(config).choose(
             self,
@@ -798,6 +1011,7 @@ class SlayTheSpireEnv(gym.Env):
         depth: int = 3,
         c_puct: float = 1.5,
         master_nonce: int = 0,
+        boss_transition_target: bool = False,
     ):
         """Run native C++ NOSL and adapt complete actions to thin root ids.
 
@@ -832,10 +1046,29 @@ class SlayTheSpireEnv(gym.Env):
                 "native": False,
             }
 
-        result = self.thick.bc.nosl_native_search(
-            int(simulations), int(depth), float(c_puct),
-            int(state_nonce) & ((1 << 64) - 1),
+        terminal_mode = context_value_mode(
+            enabled=bool(boss_transition_target),
+            gc=self.thick.gc,
+            bc=self.thick.bc,
         )
+        try:
+            result = self.thick.bc.nosl_native_search(
+                int(simulations), int(depth), float(c_puct),
+                int(state_nonce) & ((1 << 64) - 1), int(terminal_mode),
+            )
+        except TypeError as error:
+            if "incompatible function arguments" not in str(error):
+                raise
+            if bool(boss_transition_target):
+                raise RuntimeError(
+                    "loaded simulator extension does not support the requested "
+                    "boss-transition terminal target; rebuild or set "
+                    "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                ) from error
+            result = self.thick.bc.nosl_native_search(
+                int(simulations), int(depth), float(c_puct),
+                int(state_nonce) & ((1 << 64) - 1),
+            )
 
         def native_to_thin(bits: int) -> int | None:
             kind = (int(bits) >> 29) & 0xF
@@ -1233,6 +1466,8 @@ class SlayTheSpireEnv(gym.Env):
         gumbel_interior_value_mode: int = 2,
         gumbel_interior_max_mix_visits: float = 64.0,
         paper_full_gumbel: bool = False,
+        fixed_worldline: bool = False,
+        boss_transition_target: bool = False,
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
@@ -1243,6 +1478,11 @@ class SlayTheSpireEnv(gym.Env):
         session_factory = getattr(self.thick.bc, "nosl_neural_search_begin", None)
         if session_factory is None:
             raise RuntimeError("simulator build lacks neural NOSL search")
+        terminal_mode = context_value_mode(
+            enabled=bool(boss_transition_target),
+            gc=self.thick.gc,
+            bc=self.thick.bc,
+        )
         # Keep the adapter usable while Python and the native module are
         # updated independently. Current builds take root value and prior
         # temperature after the optional root-noise arguments; older builds
@@ -1265,35 +1505,23 @@ class SlayTheSpireEnv(gym.Env):
                 int(gumbel_interior_value_mode),
                 float(gumbel_interior_max_mix_visits),
                 bool(paper_full_gumbel),
+                bool(fixed_worldline),
+                int(terminal_mode),
             )
         except TypeError as error:
             if "incompatible function arguments" not in str(error):
                 raise
-            # A legacy extension can still serve ordinary PUCT searches, but
-            # it cannot honor Full-Gumbel arguments.  Do not silently run the
-            # old algorithm while the dashboard/trainer reports the requested
-            # newer mode; that makes the tree diagnostics and actual action
-            # selection semantically false.
-            if (
-                int(root_search_mode) != 0
-                or int(gumbel_candidates) != 0
-                or float(gumbel_scale) != 1.0
-                or float(gumbel_value_scale) != 0.1
-                or float(gumbel_max_visit_init) != 50.0
-                or bool(end_turn_as_leaf)
-                or not bool(gumbel_rescale_q)
-                or not bool(gumbel_use_mixed_value)
-                or float(gumbel_interior_uniformity) != 0.0
-                or int(gumbel_interior_min_visits) != 1
-                or float(gumbel_interior_coverage_fraction) != 0.0
-                or int(gumbel_interior_value_mode) != 2
-                or float(gumbel_interior_max_mix_visits) != 64.0
-                or bool(paper_full_gumbel)
-            ):
+            if bool(boss_transition_target):
                 raise RuntimeError(
                     "loaded simulator extension does not support the requested "
-                    "Full-Gumbel/NOSL search parameters; rebuild or set "
+                    "boss-transition terminal target; rebuild or set "
                     "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                ) from error
+            if bool(fixed_worldline):
+                raise RuntimeError(
+                    "loaded simulator extension does not support fixed-worldline "
+                    "NOSL search; rebuild or set STS_LIGHTSPEED_BUILD_DIR to the "
+                    "current extension"
                 ) from error
             try:
                 self._nosl_cpp_az_session = session_factory(
@@ -1302,21 +1530,66 @@ class SlayTheSpireEnv(gym.Env):
                     int(state_nonce) & ((1 << 64) - 1),
                     float(dirichlet_alpha), float(dirichlet_epsilon),
                     float(root_value), float(prior_temperature),
+                    bool(end_turn_as_leaf),
+                    int(root_search_mode), int(gumbel_candidates),
+                    float(gumbel_scale), float(gumbel_value_scale),
+                    float(gumbel_max_visit_init), bool(gumbel_rescale_q),
+                    bool(gumbel_use_mixed_value),
+                    float(gumbel_interior_uniformity),
+                    int(gumbel_interior_min_visits),
+                    float(gumbel_interior_coverage_fraction),
+                    int(gumbel_interior_value_mode),
+                    float(gumbel_interior_max_mix_visits),
+                    bool(paper_full_gumbel),
                 )
-            except TypeError as legacy_error:
+            except TypeError as current_error:
+                if "incompatible function arguments" not in str(current_error):
+                    raise
+                # A legacy extension can still serve ordinary PUCT searches,
+                # but cannot honor the newer Full-Gumbel arguments.
                 if (
-                    dirichlet_alpha != 0.0
-                    or dirichlet_epsilon != 0.0
+                    int(root_search_mode) != 0
+                    or int(gumbel_candidates) != 0
+                    or float(gumbel_scale) != 1.0
+                    or float(gumbel_value_scale) != 0.1
+                    or float(gumbel_max_visit_init) != 50.0
                     or bool(end_turn_as_leaf)
+                    or not bool(gumbel_rescale_q)
+                    or not bool(gumbel_use_mixed_value)
+                    or float(gumbel_interior_uniformity) != 0.0
+                    or int(gumbel_interior_min_visits) != 1
+                    or float(gumbel_interior_coverage_fraction) != 0.0
+                    or int(gumbel_interior_value_mode) != 2
+                    or float(gumbel_interior_max_mix_visits) != 64.0
+                    or bool(paper_full_gumbel)
                 ):
-                    raise
-                if "incompatible function arguments" not in str(legacy_error):
-                    raise
-                self._nosl_cpp_az_session = session_factory(
-                    np.asarray(prior_logits, dtype=np.float64),
-                    int(simulations), int(depth), float(c_puct),
-                    int(state_nonce) & ((1 << 64) - 1),
-                )
+                    raise RuntimeError(
+                        "loaded simulator extension does not support the requested "
+                        "Full-Gumbel/NOSL search parameters; rebuild or set "
+                        "STS_LIGHTSPEED_BUILD_DIR to the current extension"
+                    ) from current_error
+                try:
+                    self._nosl_cpp_az_session = session_factory(
+                        np.asarray(prior_logits, dtype=np.float64),
+                        int(simulations), int(depth), float(c_puct),
+                        int(state_nonce) & ((1 << 64) - 1),
+                        float(dirichlet_alpha), float(dirichlet_epsilon),
+                        float(root_value), float(prior_temperature),
+                    )
+                except TypeError as legacy_error:
+                    if (
+                        dirichlet_alpha != 0.0
+                        or dirichlet_epsilon != 0.0
+                        or bool(end_turn_as_leaf)
+                    ):
+                        raise
+                    if "incompatible function arguments" not in str(legacy_error):
+                        raise
+                    self._nosl_cpp_az_session = session_factory(
+                        np.asarray(prior_logits, dtype=np.float64),
+                        int(simulations), int(depth), float(c_puct),
+                        int(state_nonce) & ((1 << 64) - 1),
+                    )
         self._nosl_cpp_stochastic = bool(stochastic)
         self._nosl_cpp_state_nonce = int(state_nonce)
         self._nosl_cpp_decision_index = int(decision_index)
@@ -1615,6 +1888,8 @@ class SlayTheSpireEnv(gym.Env):
                 "path": indexes,
                 "visits": 0,
                 "value": 0.0,
+                "network_value_valid": False,
+                "network_value": None,
                 "children": [],
             }
         raw = session.tree_snapshot(indexes, int(max_children))
@@ -1639,6 +1914,17 @@ class SlayTheSpireEnv(gym.Env):
                 "gumbel": float(item.get("gumbel", 0.0)),
                 "gumbel_score": float(item.get("gumbel_score", 0.0)),
                 "completed_score": float(item.get("completed_score", 0.0)),
+                "successor_model_value_valid": bool(item.get(
+                    "successor_model_value_valid", False
+                )),
+                "successor_model_value": (
+                    float(item["successor_model_value"])
+                    if bool(item.get("successor_model_value_valid", False))
+                    else None
+                ),
+                "successor_model_value_count": int(item.get(
+                    "successor_model_value_count", 0
+                )),
                 "candidate": bool(item.get("candidate", False)),
                 "active_candidate": bool(item.get("active_candidate", False)),
                 "expandable": bool(item.get("expandable", False)),
@@ -1649,7 +1935,15 @@ class SlayTheSpireEnv(gym.Env):
             "valid": bool(raw.get("valid", False)),
             "path": indexes,
             "visits": int(raw.get("visits", 0)),
+            "value_visits": int(raw.get("value_visits", 0)),
             "value": float(raw.get("value", 0.0)),
+            "sample_value": float(raw.get("sample_value", raw.get("value", 0.0))),
+            "network_value_valid": bool(raw.get("network_value_valid", False)),
+            "network_value": (
+                float(raw["network_value"])
+                if bool(raw.get("network_value_valid", False))
+                else None
+            ),
             "children": children,
         }
 
@@ -1772,6 +2066,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _info(self):
         info = {
+            "combat_action_contract": self.combat_action_contract,
             "action_mask": self.action_masks(),
             "phase": self._phase(),
             "arg_step": self._arg_step(),

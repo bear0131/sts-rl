@@ -40,7 +40,8 @@ def test_dashboard_marks_strategy_initialization_failure():
     state.eval_status = {'state': 'running'}
     # Invalid native parameters fail before the first environment is created.
     state._evaluate('active', object(), 1, 0,
-                    {'method': 'nosl_is_az_cpp', 'simulations': -1}, 1)
+                    {'method': 'nosl_is_az_cpp', 'simulations': -1}, 1,
+                    'model', 'model')
     assert state.eval_status['state'] == 'error'
     assert 'simulations' in state.eval_status['error']
     assert state.eval_status['active_workers'] == 0

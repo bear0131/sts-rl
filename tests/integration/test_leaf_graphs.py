@@ -29,10 +29,11 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
-def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple):
+@pytest.mark.parametrize('combat_arch', ['transformer', 'mlp'])
+def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch):
     env = combat_factory(['STRIKE_RED'] * 5)
     model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=7,
-        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch))
     model.amp_mode = amp
     model.policy.set_training_mode(False)
     cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2,
@@ -63,12 +64,19 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
     obs['player_scalars'] = obs['player_scalars'].copy() + 0.01
     compare(2)
     with torch.no_grad():
-        model.policy.core.combat.fixed_head.bias.add_(0.125)
-        # Catch stale BF16 weight casts as well as stale inputs.
-        model.policy.core.combat.encoder.global_projection.weight.mul_(1.1)
+        if combat_arch == 'mlp':
+            model.policy.core.combat.policy_head.bias.add_(0.125)
+            model.policy.core.combat.trunk[0].weight.mul_(1.1)
+        else:
+            model.policy.core.combat.fixed_head.bias.add_(0.125)
+            # Catch stale BF16 weight casts as well as stale inputs.
+            model.policy.core.combat.encoder.global_projection.weight.mul_(1.1)
     compare(2)
     for size in (3, 4, 9, 5, 2):
         compare(size)
+    torch._C._cuda_clearCublasWorkspaces()
+    torch.cuda.empty_cache()
+    compare(2)
     assert len(cache.entries) == 2
     assert cache.hits >= 2
     checkpoint = tmp_path / 'graph-runtime.zip'

@@ -29,6 +29,7 @@
         <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="watchLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
         <label title="Node expansion depth; 0 means expand until terminal or a new leaf">Depth <input id="watchDepth" type="number" min="0" max="256" step="1" value="0"></label>
         <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="watchEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
+        <label class="gumbel-check" title="每次决策只采样一条随机未来，整棵搜索树共享该世界线"><input id="watchFixedWorldline" type="checkbox"> 固定未来</label>
         <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="watchPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
         <label title="Combat search algorithm">Search
           <select id="watchSearchMode">
@@ -53,7 +54,25 @@
           <button type="button" data-stochastic="false" class="active">确定性</button>
           <button type="button" data-stochastic="true">非确定性</button>
         </div>
+        <div id="watchUpperStrategy" class="segmented watch-upper-mode" role="group" aria-label="上层决策模式">
+          <button type="button" data-upper-strategy="rules" class="active" title="ironclad-overworld-v3；未覆盖画面回退模型 argmax">规则上层</button>
+          <button type="button" data-upper-strategy="model">模型上层</button>
+        </div>
+        <div id="watchCombatStrategy" class="segmented watch-combat-mode" role="group" aria-label="下层决策模式">
+          <button type="button" data-combat-strategy="model" class="active">模型/搜索下层</button>
+          <button type="button" data-combat-strategy="planner" title="ironclad-turn-v8-awakened-phase 回合规划器">回合规划下层</button>
+        </div>
         <label class="watch-toggle"><input id="watchPrecompute" type="checkbox"> 预处理整局路线</label>
+        <div class="watch-boss-control">
+          <label>Boss
+            <select id="watchBossAct">
+              <option value="1" selected>Act 1</option>
+              <option value="2">Act 2</option>
+              <option value="3">Act 3</option>
+            </select>
+          </label>
+          <button id="watchBossButton" type="button" title="仅推进外层决策，忽略 HP、最大 HP 和药水，并停在指定 Boss 战">快进 Boss</button>
+        </div>
         <button id="resetButton">重开</button>
         <button id="undoButton" class="icon-command" title="撤销上一步"><span>↶</span>撤销</button>
         <button id="stepButton" class="primary">单步</button>
@@ -101,7 +120,7 @@
         </section>
 
         <aside class="decision-panel">
-          <div class="panel-heading"><span>模型决策</span><b id="valueEstimate">V(s) —</b></div>
+          <div class="panel-heading"><span id="decisionHeading">模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="searchStatus" class="search-status"></div>
           <div id="actionList" class="action-list"></div>
@@ -199,16 +218,25 @@
 
     <section id="evaluationView" class="view">
       <div class="section-heading eval-heading">
-        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，战斗使用 NOSL AlphaZero 搜索，外层使用冻结策略</p></div>
+        <div><h1>完整爬塔评测</h1><p>从第 1 层开始，独立选择上层路线与下层战斗策略</p></div>
         <div class="eval-controls">
           <label>局数 <input id="evalEpisodes" type="number" min="1" max="10000" value="50"></label>
           <label>Seed <input id="evalSeed" type="number" value="0"></label>
           <label title="Parallel evaluation episodes">Workers <input id="evalWorkers" type="number" min="1" max="64" step="1" value="4"></label>
+          <div id="evalUpperStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测上层决策模式">
+            <button type="button" data-eval-upper-strategy="model" class="active">模型上层</button>
+            <button type="button" data-eval-upper-strategy="rules" title="ironclad-overworld-v3；未覆盖画面回退模型 argmax">规则上层</button>
+          </div>
+          <div id="evalCombatStrategy" class="segmented eval-strategy-mode" role="group" aria-label="评测下层决策模式">
+            <button type="button" data-eval-combat-strategy="model" class="active">模型/搜索下层</button>
+            <button type="button" data-eval-combat-strategy="planner" title="ironclad-turn-v8-awakened-phase 回合规划器">回合规划下层</button>
+          </div>
           <label title="每个战斗决策的 neural NOSL 模拟次数；0 为 direct policy">Simulations <input id="evalSimulations" type="number" min="0" max="4096" step="1" value="512"></label>
           <label title="搜索深度；0 为 AlphaZero 式自动展开">Depth <input id="evalDepth" type="number" min="0" max="256" step="1" value="0"></label>
           <label title="每批送入网络并行评估的叶节点数；过大可能改变 virtual visits 的搜索行为">Leaf batch <input id="evalLeafBatchSize" type="number" min="1" max="256" step="1" value="16"></label>
           <label title="Temperature applied to policy logits before the NOSL prior softmax">Prior T <input id="evalPriorTemperature" type="number" min="0.05" max="20" step="0.05" value="1"></label>
           <label class="gumbel-check" title="Stop after enemy turn damage and evaluate immediately"><input id="evalEndTurnAsLeaf" type="checkbox"> End Turn leaf</label>
+          <label class="gumbel-check" title="每次决策只采样一条随机未来，整棵搜索树共享该世界线"><input id="evalFixedWorldline" type="checkbox"> 固定未来</label>
           <label title="Combat search algorithm">Search
             <select id="evalSearchMode">
               <option value="direct">Direct policy</option>

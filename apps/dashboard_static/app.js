@@ -19,6 +19,8 @@ let watchSearchModeDirty = false;
 let watchGumbelParamsDirty = false;
 let watchPaperModeDirty = false;
 let watchPolicyModeDirty = false;
+let watchUpperStrategyDirty = false;
+let watchCombatStrategyDirty = false;
 let watchPrecomputeDirty = false;
 let evalSimulationsDirty = false;
 let evalDepthDirty = false;
@@ -27,6 +29,8 @@ let evalPriorTemperatureDirty = false;
 let evalSearchModeDirty = false;
 let evalGumbelParamsDirty = false;
 let evalPaperModeDirty = false;
+let evalUpperStrategyDirty = false;
+let evalCombatStrategyDirty = false;
 let seeking = false;
 let selectedMapAct = null;
 let mapPreviewing = false;
@@ -131,9 +135,12 @@ function treeEdgeHtml(edge, path) {
     ? ""
     : ` · CQ ${Number(edge.completed_q || 0).toFixed(3)} · score ${Number(edge.completed_score || 0).toFixed(3)}`;
   const visits = Number(edge.visits || 0);
-  const valueLabel = visits > 0 ? "Q(up)" : "FPU";
+  const valueLabel = visits > 0 ? "回传 Q" : "FPU";
   const transitionLabel = randomSplit ? " · random-world average" : "";
-  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${gumbelMetrics}${childSummary}${transitionLabel}`;
+  const successorModelValue = edge.successor_model_value_valid
+    ? ` · 后继模型直出 V ${Number(edge.successor_model_value).toFixed(4)}`
+    : "";
+  const metrics = `N ${visits} · ${valueLabel} ${Number(edge.value || 0).toFixed(3)} · P ${(Number(edge.prior || 0) * 100).toFixed(1)}%${successorModelValue}${gumbelMetrics}${childSummary}${transitionLabel}`;
   const branch = open
     ? `<div class="search-tree-branch${searchTreeLoading.has(key) ? " loading" : ""}">${cached ? treeNodeHtml(cached, childPath) : "loading..."}</div>`
     : "";
@@ -149,8 +156,11 @@ function treeEdgeHtml(edge, path) {
 function treeNodeHtml(snapshot, path) {
   const label = path.length ? `node ${path.join("/")}` : "root";
   const children = snapshot?.children || [];
+  const directModelValue = snapshot?.network_value_valid
+    ? Number(snapshot.network_value).toFixed(4)
+    : "未评估";
   return `<div class="search-tree-node">
-    <div class="search-tree-node-heading">${label} · visits ${Number(snapshot?.visits || 0)} · V(up) ${Number(snapshot?.value || 0).toFixed(3)} · V(sample) ${Number(snapshot?.sample_value ?? snapshot?.value ?? 0).toFixed(3)}</div>
+    <div class="search-tree-node-heading"><span class="search-tree-model-value" title="当前节点观测经 checkpoint 模型单次前向直接输出；不含搜索回传、Q 变换或 Gumbel 修正">模型直出 V ${directModelValue}</span> · ${label} · N ${Number(snapshot?.visits || 0)} · 回传 V ${Number(snapshot?.value || 0).toFixed(3)} · 样本均值 V ${Number(snapshot?.sample_value ?? snapshot?.value ?? 0).toFixed(3)}</div>
     <div class="search-tree-children">${children.length ? children.map(edge => treeEdgeHtml(edge, path)).join("") : `<div class="search-tree-empty">no expanded children</div>`}</div>
   </div>`;
 }
@@ -174,7 +184,7 @@ function renderSearchTree(search) {
     searchTreeCache.set("", search.tree);
   }
   const root = searchTreeCache.get("") || search.tree;
-  $("searchTreeSummary").textContent = `root visits ${Number(root.visits || 0)} · ${root.children?.length || 0} immediate edges · click an expandable edge to inspect descendants`;
+  $("searchTreeSummary").textContent = `“模型直出 V”是节点自身的一次模型前向值；回传 V/Q、样本均值与 score 都经过搜索处理。root N ${Number(root.visits || 0)} · ${root.children?.length || 0} 条边`;
   $("searchTreeRoot").innerHTML = searchTreeCollapsed ? "" : treeNodeHtml(root, []);
   $("searchTreeRoot").style.display = searchTreeCollapsed ? "none" : "grid";
   const toggle = $("searchTreeToggle");
@@ -360,6 +370,7 @@ function gumbelSearchParams(prefix) {
     gumbel_interior_coverage_fraction: Number($(`${prefix}GumbelInteriorCoverageFraction`).value),
     gumbel_interior_value_mode: Number($(`${prefix}GumbelInteriorValueMode`)?.value ?? 2),
     end_turn_as_leaf: $(`${prefix}EndTurnAsLeaf`).checked,
+    fixed_worldline: $(`${prefix}FixedWorldline`).checked,
   };
 }
 
@@ -439,6 +450,8 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty, paperMode
     if (mixed != null) $(`${prefix}GumbelMixedValue`).checked = Boolean(mixed);
     const endTurnLeaf = source?.[`${fieldPrefix}end_turn_as_leaf`];
     if (endTurnLeaf != null) $(`${prefix}EndTurnAsLeaf`).checked = Boolean(endTurnLeaf);
+    const fixedWorldline = source?.[`${fieldPrefix}fixed_worldline`];
+    if (fixedWorldline != null) $(`${prefix}FixedWorldline`).checked = Boolean(fixedWorldline);
   }
   if (!paperModeDirty) {
     const paper = source?.[`${fieldPrefix}paper_full_gumbel`];
@@ -464,6 +477,8 @@ $("resetButton").addEventListener("click", async () => {
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
       precompute,
     }), headers:{"Content-Type":"application/json"}});
     watchSeedDirty = false;
@@ -475,6 +490,8 @@ $("resetButton").addEventListener("click", async () => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
     watchPrecomputeDirty = false;
     selectedMapAct = null;
     previewedMapKeys.clear();
@@ -512,7 +529,54 @@ for (const id of ["watchGumbelRescaleQ", "watchGumbelMixedValue"]) {
 $("watchEndTurnAsLeaf").addEventListener("change", () => {
   watchGumbelParamsDirty = true;
 });
+$("watchFixedWorldline").addEventListener("change", () => {
+  watchGumbelParamsDirty = true;
+});
 $("watchPrecompute").addEventListener("change", () => { watchPrecomputeDirty = true; });
+$("watchBossButton").addEventListener("click", async () => {
+  if (!appState?.watch) return;
+  pause();
+  const button = $("watchBossButton");
+  const targetAct = Number($("watchBossAct").value);
+  button.disabled = true;
+  button.textContent = "快进中...";
+  $("watchMeta").textContent = `正在推进到 Act ${targetAct} Boss...`;
+  try {
+    appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({
+      seed: Number($("watchSeed").value),
+      simulations: Number($("watchSimulations").value),
+      depth: Number($("watchDepth").value),
+      leaf_batch_size: Number($("watchLeafBatchSize").value),
+      prior_temperature: Number($("watchPriorTemperature").value),
+      ...gumbelSearchParams("watch"),
+      stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
+      precompute: false,
+      target_boss_act: targetAct,
+    }), headers:{"Content-Type":"application/json"}});
+    watchSeedDirty = false;
+    watchSimulationsDirty = false;
+    watchDepthDirty = false;
+    watchLeafBatchSizeDirty = false;
+    watchPriorTemperatureDirty = false;
+    watchSearchModeDirty = false;
+    watchGumbelParamsDirty = false;
+    watchPaperModeDirty = false;
+    watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
+    watchPrecomputeDirty = false;
+    selectedMapAct = targetAct;
+    previewedMapKeys.clear();
+    renderWatch();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "快进 Boss";
+  }
+});
 function watchStochasticValue() {
   return $("watchPolicyMode").querySelector("button.active")?.dataset.stochastic !== "false";
 }
@@ -525,6 +589,32 @@ function setWatchPolicyMode(stochastic, dirty = true) {
 }
 $("watchPolicyMode").querySelectorAll("button").forEach(button => {
   button.addEventListener("click", () => setWatchPolicyMode(button.dataset.stochastic === "true"));
+});
+function watchUpperStrategyValue() {
+  return $("watchUpperStrategy").querySelector("button.active")?.dataset.upperStrategy || "rules";
+}
+function setWatchUpperStrategy(strategy, dirty = true) {
+  const value = strategy === "model" ? "model" : "rules";
+  $("watchUpperStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.upperStrategy === value);
+  });
+  if (dirty) watchUpperStrategyDirty = true;
+}
+$("watchUpperStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setWatchUpperStrategy(button.dataset.upperStrategy));
+});
+function watchCombatStrategyValue() {
+  return $("watchCombatStrategy").querySelector("button.active")?.dataset.combatStrategy || "model";
+}
+function setWatchCombatStrategy(strategy, dirty = true) {
+  const value = strategy === "planner" ? "planner" : "model";
+  $("watchCombatStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.combatStrategy === value);
+  });
+  if (dirty) watchCombatStrategyDirty = true;
+}
+$("watchCombatStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setWatchCombatStrategy(button.dataset.combatStrategy));
 });
 $("watchSeed").addEventListener("keydown", event => {
   if (event.key === "Enter") $("resetButton").click();
@@ -549,6 +639,7 @@ $("watchSearchApply").addEventListener("click", async () => {
         prior_temperature: Number($("watchPriorTemperature").value),
         ...gumbelSearchParams("watch"),
         stochastic: watchStochasticValue(),
+        combat_strategy: watchCombatStrategyValue(),
       }),
       headers: {"Content-Type": "application/json"},
     });
@@ -560,8 +651,9 @@ $("watchSearchApply").addEventListener("click", async () => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchCombatStrategyDirty = false;
     renderWatch();
-    toast("Neural NOSL search settings applied");
+    toast(appState.watch.combat_strategy === "planner" ? "回合规划下层已应用" : "Neural NOSL search settings applied");
   } catch (e) {
     toast(e.message);
   } finally {
@@ -661,6 +753,46 @@ async function autoplay() {
   setTimeout(autoplay, Number($("speedSelect").value));
 }
 
+function evalUpperStrategyValue() {
+  return $("evalUpperStrategy").querySelector("button.active")?.dataset.evalUpperStrategy || "model";
+}
+function setEvalUpperStrategy(strategy, dirty = true) {
+  const value = strategy === "rules" ? "rules" : "model";
+  $("evalUpperStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.evalUpperStrategy === value);
+  });
+  if (dirty) evalUpperStrategyDirty = true;
+}
+function evalCombatStrategyValue() {
+  return $("evalCombatStrategy").querySelector("button.active")?.dataset.evalCombatStrategy || "model";
+}
+const evalSearchControlIds = [
+  "evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature",
+  "evalEndTurnAsLeaf", "evalFixedWorldline", "evalSearchMode", "evalPaperFullGumbel",
+  "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale",
+  "evalGumbelMaxVisitInit", "evalGumbelRescaleQ", "evalGumbelMixedValue",
+  "evalGumbelInteriorUniformity", "evalGumbelInteriorCoverageFraction",
+  "evalGumbelInteriorValueMode",
+];
+function syncEvalSearchControls() {
+  const disabled = evalCombatStrategyValue() === "planner";
+  evalSearchControlIds.forEach(id => { $(id).disabled = disabled; });
+}
+function setEvalCombatStrategy(strategy, dirty = true) {
+  const value = strategy === "planner" ? "planner" : "model";
+  $("evalCombatStrategy").querySelectorAll("button").forEach(button => {
+    button.classList.toggle("active", button.dataset.evalCombatStrategy === value);
+  });
+  if (dirty) evalCombatStrategyDirty = true;
+  syncEvalSearchControls();
+}
+$("evalUpperStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setEvalUpperStrategy(button.dataset.evalUpperStrategy));
+});
+$("evalCombatStrategy").querySelectorAll("button").forEach(button => {
+  button.addEventListener("click", () => setEvalCombatStrategy(button.dataset.evalCombatStrategy));
+});
+
 $("evalButton").addEventListener("click", async () => {
   try {
     appState.evaluation = await api("/api/eval/start", {method:"POST", body:JSON.stringify({
@@ -671,6 +803,8 @@ $("evalButton").addEventListener("click", async () => {
       depth: Number($("evalDepth").value),
       leaf_batch_size: Number($("evalLeafBatchSize").value),
       prior_temperature: Number($("evalPriorTemperature").value),
+      upper_strategy: evalUpperStrategyValue(),
+      combat_strategy: evalCombatStrategyValue(),
       ...gumbelSearchParams("eval"),
     }), headers:{"Content-Type":"application/json"}});
     evalSimulationsDirty = false;
@@ -680,6 +814,8 @@ $("evalButton").addEventListener("click", async () => {
     evalSearchModeDirty = false;
     evalGumbelParamsDirty = false;
     evalPaperModeDirty = false;
+    evalUpperStrategyDirty = false;
+    evalCombatStrategyDirty = false;
     renderEvaluation();
   } catch (e) { toast(e.message); }
 });
@@ -711,6 +847,9 @@ for (const id of ["evalGumbelRescaleQ", "evalGumbelMixedValue"]) {
 $("evalEndTurnAsLeaf").addEventListener("change", () => {
   evalGumbelParamsDirty = true;
 });
+$("evalFixedWorldline").addEventListener("change", () => {
+  evalGumbelParamsDirty = true;
+});
 for (const id of ["evalSimulations", "evalDepth", "evalLeafBatchSize", "evalPriorTemperature", "evalGumbelCandidates", "evalGumbelScale", "evalGumbelValueScale", "evalGumbelMaxVisitInit"]) {
   $(id).addEventListener("keydown", event => {
     if (event.key === "Enter") $("evalButton").click();
@@ -731,6 +870,8 @@ $("winSeedList").addEventListener("click", async event => {
       prior_temperature: Number($("watchPriorTemperature").value),
       ...gumbelSearchParams("watch"),
       stochastic: watchStochasticValue(),
+      upper_strategy: watchUpperStrategyValue(),
+      combat_strategy: watchCombatStrategyValue(),
       precompute: $("watchPrecompute").checked,
     }), headers:{"Content-Type":"application/json"}});
     watchSimulationsDirty = false;
@@ -741,6 +882,8 @@ $("winSeedList").addEventListener("click", async event => {
     watchGumbelParamsDirty = false;
     watchPaperModeDirty = false;
     watchPolicyModeDirty = false;
+    watchUpperStrategyDirty = false;
+    watchCombatStrategyDirty = false;
     watchPrecomputeDirty = false;
     renderWatch();
   } catch (e) { toast(e.message); }
@@ -1118,11 +1261,18 @@ function renderWatch() {
     "watch", w, watchSearchModeDirty, watchGumbelParamsDirty, watchPaperModeDirty
   );
   if (!watchPolicyModeDirty) setWatchPolicyMode(w.stochastic !== false, false);
+  if (!watchUpperStrategyDirty) setWatchUpperStrategy(w.upper_strategy, false);
+  if (!watchCombatStrategyDirty) setWatchCombatStrategy(w.combat_strategy, false);
   if (!watchPrecomputeDirty && document.activeElement !== $("watchPrecompute")) {
     $("watchPrecompute").checked = Boolean(w.precompute_enabled);
   }
   const stepProgress = w.precomputed_steps ? `${w.step} / ${w.precomputed_steps}` : `${w.step}`;
-  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)}`;
+  const route = w.route_preprocess || {};
+  const routeStatus = route.enabled
+    ? ` · Act ${route.target_act} Boss${route.reached ? "就绪" : ""} · 忽略 HP/药水`
+    : "";
+  const upperStatus = w.upper_strategy === "rules" ? "规则" : "模型";
+  $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)} · 上层 ${upperStatus}${routeStatus}`;
   $("undoButton").disabled = !w.can_undo;
   $("stepButton").disabled = w.done;
   const stats = w.stats || {}, canon = w.canon || {}, global = canon.global || {};
@@ -1173,6 +1323,8 @@ function renderWatch() {
     }
   }
   const d = w.decision;
+  const turnPlannerActive = w.phase === "combat" && w.combat_strategy === "planner";
+  $("decisionHeading").textContent = turnPlannerActive ? "回合规划决策" : "模型决策";
   $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
   const search = d?.search;
@@ -1190,9 +1342,12 @@ function renderWatch() {
       : "";
     return `<div class="action-row${selected ? " selected" : ""}"><b>${probability}</b><span>${escapeHtml(actionDisplayText(a, w.event))}${detail ? `<small>${detail}</small>` : ""}</span><div class="prob-track"><i style="width:${actingProb == null ? 0 : actingProb*100}%"></i></div></div>`;
   }).join("");
-  $("searchStatus").textContent = search
+  const planner = d?.combat_planner;
+  $("searchStatus").textContent = turnPlannerActive
+    ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
+    : search
     ? (search.method === "nosl_is_az_cpp"
-      ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
+      ? `${search.paper_full_gumbel ? "Strict paper Full Gumbel" : search.search_mode_label || "Neural PUCT"} · ${search.simulations} simulations · depth ${search.depth === 0 ? "auto" : search.depth} · prior T ${Number(search.prior_temperature ?? 1).toFixed(2)}${search.search_mode === "gumbel" || search.search_mode === "full_gumbel" ? ` · candidates ${Number(search.gumbel_candidates || 0) || "all"} · G ${Number(search.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(search.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${search.fixed_worldline ? " · 固定未来" : ""} · ${search.stochastic ? "stochastic" : "deterministic"} · NOSL${search.root_value == null ? "" : ` · root V ${Number(search.root_value).toFixed(3)}`}`
       : `Direct policy fallback: ${search.error || "neural NOSL unavailable"}`)
     : `${w.stochastic ? "stochastic" : "deterministic"} direct policy${w.mcts_simulations > 0 && w.phase !== "combat" ? " (search is combat-only)" : ""}`;
   renderSearchTree(search);
@@ -1279,6 +1434,8 @@ $("tokenCanvas").addEventListener("mouseleave",()=>$("tokenTooltip").style.displ
 
 function renderEvaluation() {
   const e=appState?.evaluation || {}, done=e.completed||0, total=e.episodes||0, results=e.results||{};
+  if (!evalUpperStrategyDirty && e.upper_strategy) setEvalUpperStrategy(e.upper_strategy, false);
+  if (!evalCombatStrategyDirty && e.combat_strategy) setEvalCombatStrategy(e.combat_strategy, false);
   if ($("evalWorkers") && e.workers != null && document.activeElement !== $("evalWorkers")) $("evalWorkers").value = e.workers;
   if (!evalSimulationsDirty && e.simulations != null) $("evalSimulations").value = e.simulations;
   if (!evalDepthDirty && e.depth != null) $("evalDepth").value = e.depth;
@@ -1291,10 +1448,16 @@ function renderEvaluation() {
   $("winRate").textContent=done?`${((results.win||0)/done*100).toFixed(1)}%`:"—"; $("meanSteps").textContent=e.steps_mean==null?"—":Number(e.steps_mean).toFixed(0);
   $("evalEta").textContent=e.eta_seconds==null?"—":`${Math.ceil(e.eta_seconds/60)} 分钟`; $("evalProgressBar").style.width=total?`${done/total*100}%`:"0%";
   const stateLabel=e.state==="running"?"运行中":e.state==="complete"?"已完成":e.state==="error"?`错误：${e.error}`:"等待参数";
-  const searchLabel=e.search_method==="nosl_is_az_cpp"
-    ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""} · ${e.search_decisions||0} decisions`
+  const searchLabel=e.search_method==="turn_planner"
+    ? `回合规划下层 · ${e.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}`
+    : e.search_method==="nosl_is_az_cpp"
+    ? `${e.paper_full_gumbel ? "Strict paper Full Gumbel" : e.search_mode_label || "NOSL MCTS"} · ${e.simulations} sims · leaf batch ${e.leaf_batch_size ?? 16} · depth ${Number(e.depth)===0?"auto":e.depth} · prior T ${Number(e.prior_temperature ?? 1).toFixed(2)}${e.search_mode === "gumbel" || e.search_mode === "full_gumbel" ? ` · candidates ${Number(e.gumbel_candidates || 0) || "all"} · G ${Number(e.gumbel_scale ?? 1).toFixed(2)} · Q scale ${Number(e.gumbel_value_scale ?? 0.1).toFixed(2)}` : ""}${e.fixed_worldline ? " · 固定未来" : ""} · ${e.search_decisions||0} decisions`
     : e.search_method==="direct_policy"?"Direct policy":"";
-  $("evalStatus").textContent=searchLabel?`${stateLabel} · ${searchLabel}`:stateLabel;
+  const upperLabel=e.upper_strategy==="rules"
+    ? `规则上层 · ${e.upper_strategy_version || "ironclad-overworld-v3"}`
+    : e.upper_strategy==="model"?"模型上层":"";
+  const labels=[stateLabel, upperLabel, searchLabel].filter(Boolean);
+  $("evalStatus").textContent=labels.join(" · ");
   const winSeeds = evaluationWinSeeds(e);
   $("winSeedCount").textContent = String(winSeeds.length);
   $("winSeedList").innerHTML = winSeeds.length
@@ -1302,6 +1465,82 @@ function renderEvaluation() {
     : "—";
   drawDistribution();
 }
+
+function drawDistribution() {
+  const canvas = $("distributionCanvas");
+  if (!canvas.offsetParent) return;
+  const {ctx, w, h} = canvasSetup(canvas);
+  ctx.clearRect(0, 0, w, h);
+  distributionBars = [];
+
+  const rows = Object.entries(appState?.evaluation?.death_floors || {})
+    .map(([floor, count]) => ({floor: Number(floor), count: Number(count)}))
+    .filter(row => Number.isFinite(row.floor) && Number.isFinite(row.count) && row.count > 0)
+    .sort((a, b) => a.floor - b.floor);
+  if (!rows.length) {
+    ctx.fillStyle = "#8f9993";
+    ctx.font = '13px "Microsoft YaHei", sans-serif';
+    ctx.fillText("等待死亡楼层样本", 30, 45);
+    $("distributionTooltip").style.display = "none";
+    return;
+  }
+
+  const maxCount = Math.max(...rows.map(row => row.count));
+  const left = 42, bottom = 35, top = 20;
+  const barWidth = (w - left - 20) / rows.length;
+  ctx.strokeStyle = "#46514b";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(left, top);
+  ctx.lineTo(left, h - bottom);
+  ctx.lineTo(w - 15, h - bottom);
+  ctx.stroke();
+  ctx.textAlign = "center";
+  ctx.font = '11px "Segoe UI", sans-serif';
+
+  rows.forEach((row, index) => {
+    const barHeight = (h - bottom - top) * row.count / maxCount;
+    const x = left + index * barWidth + 2;
+    const width = Math.max(3, barWidth - 4);
+    const y = h - bottom - barHeight;
+    distributionBars.push({
+      floor: row.floor, count: row.count, x, y, w: width, h: barHeight,
+    });
+    ctx.fillStyle = row.floor === 16 ? "#d0a94f" : "#be4c43";
+    ctx.fillRect(x, y, width, barHeight);
+    ctx.fillStyle = "#aeb5b0";
+    if (rows.length < 25 || index % 2 === 0) {
+      ctx.fillText(row.floor, x + width / 2, h - 16);
+    }
+    if (barWidth > 24) ctx.fillText(row.count, x + width / 2, y - 5);
+  });
+}
+
+$("distributionCanvas").addEventListener("mousemove", event => {
+  const canvas = event.currentTarget;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const bar = distributionBars.find(item =>
+    x >= item.x && x <= item.x + item.w && y >= item.y && y <= item.y + item.h
+  );
+  const tooltip = $("distributionTooltip");
+  if (!bar) {
+    tooltip.style.display = "none";
+    return;
+  }
+  const seeds = appState?.evaluation?.death_seeds?.[bar.floor] || [];
+  const shown = seeds.slice(0, 12);
+  const remaining = Math.max(0, seeds.length - shown.length);
+  tooltip.innerHTML = `<strong>第 ${bar.floor} 层 · ${bar.count} 次死亡</strong><br>Seeds：${shown.map(escapeHtml).join("、")}${remaining ? `<br>另有 ${remaining} 个 seed` : ""}`;
+  tooltip.style.display = "block";
+  tooltip.style.left = `${Math.min(canvas.offsetLeft + x + 14, canvas.parentElement.clientWidth - 260)}px`;
+  tooltip.style.top = `${Math.max(48, canvas.offsetTop + y - 58)}px`;
+});
+$("distributionCanvas").addEventListener("mouseleave", () => {
+  $("distributionTooltip").style.display = "none";
+});
+
 function setDefaultInput(id, value) {
   const node = $(id);
   if (node && !node.value && value != null) node.value = value;

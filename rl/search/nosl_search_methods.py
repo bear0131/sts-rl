@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from env.core.boss_value import HP_SCALE, context_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -39,7 +40,16 @@ def _redet_branch(env, sampler: NOSLSampler, state_nonce: int, index: int):
     return branch
 
 
-def _terminal_hp(branch) -> float:
+def _terminal_hp(branch, *, boss_transition_target: bool = False) -> float:
+    target = context_terminal_target(
+        enabled=boss_transition_target,
+        gc=branch.thick.gc,
+        bc=branch.thick.bc,
+    )
+    if target is not None:
+        # These legacy beam/MCTS heuristics rank raw HP, unlike the neural
+        # value paths which operate on [0, 1]. Preserve their established unit.
+        return float(target) * HP_SCALE
     return float(max(0, branch.thick.bc.projected_exit_hp(branch.thick.gc)))
 
 
@@ -75,6 +85,7 @@ def random_rollout(
     state_nonce: int,
     index: int,
     max_steps: int,
+    boss_transition_target: bool = False,
 ) -> tuple[float, bool]:
     """Return terminal HP and whether the rollout timed out."""
     branch = _redet_branch(env, sampler, state_nonce, index)
@@ -99,7 +110,7 @@ def random_rollout(
         )
     if not terminated:
         return -1.0e6, True
-    return _terminal_hp(branch), False
+    return _terminal_hp(branch, boss_transition_target=boss_transition_target), False
 
 
 @dataclass(frozen=True)
@@ -108,6 +119,7 @@ class BeamConfig:
     width: int = 4
     rollout_steps: int = 128
     max_branching: int = 12
+    boss_transition_target: bool = False
 
 
 @dataclass
@@ -209,7 +221,10 @@ class NOSLBeamSearch:
     ) -> list[_BeamNode]:
         for offset, node in enumerate(nodes):
             if node.terminal:
-                node.score = _terminal_hp(node.env)
+                node.score = _terminal_hp(
+                    node.env,
+                    boss_transition_target=self.config.boss_transition_target,
+                )
             else:
                 node.score, _timeout = random_rollout(
                     node.env,
@@ -217,6 +232,7 @@ class NOSLBeamSearch:
                     state_nonce=state_nonce,
                     index=decision_index * 1000000 + serial_start + offset,
                     max_steps=self.config.rollout_steps,
+                    boss_transition_target=self.config.boss_transition_target,
                 )
         return sorted(nodes, key=lambda node: (node.score, -node.first_action), reverse=True)[
             : self.config.width
@@ -231,6 +247,7 @@ class MCTSConfig:
     exploration: float = 1.41421356237
     max_branching: int = 12
     temperature: float = 0.0
+    boss_transition_target: bool = False
 
 
 @dataclass
@@ -316,7 +333,10 @@ class NOSLMCTS:
                 if terminal:
                     break
             if branch.thick.bc.is_battle_over:
-                value, _timeout = _terminal_hp(branch), False
+                value, _timeout = _terminal_hp(
+                    branch,
+                    boss_transition_target=self.config.boss_transition_target,
+                ), False
             else:
                 value, _timeout = random_rollout(
                     branch,
@@ -324,6 +344,7 @@ class NOSLMCTS:
                     state_nonce=state_nonce,
                     index=decision_index * 1000000 + simulation,
                     max_steps=self.config.rollout_steps,
+                    boss_transition_target=self.config.boss_transition_target,
                 )
             for length in range(1, len(path) + 1):
                 node = stats.setdefault(tuple(path[:length]), _MCTSStat())

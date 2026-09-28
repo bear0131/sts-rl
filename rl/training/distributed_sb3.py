@@ -21,6 +21,7 @@ from rl.search.native import apply_strict_training_settings
 import argparse
 import hashlib
 import json
+import random
 import shlex
 import subprocess
 import time
@@ -51,6 +52,253 @@ from rl.policies import semantic_reasoning_policy as _semantic_reasoning_policy 
 class NoopCallback(BaseCallback):
     def _on_step(self) -> bool:
         return True
+
+
+class StartupStaggerMetricsCallback(NoopCallback):
+    def __init__(self) -> None:
+        super().__init__()
+        self.completed_floors: list[int] = []
+        self.completed_wins: list[int] = []
+        self.synthetic_releases = 0
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", ()):
+            if info.get("startup_stagger_hold"):
+                self.synthetic_releases += int(info.get("startup_stagger_remaining") == 0)
+                continue
+            if "episode" not in info or "run_stats" not in info:
+                continue
+            stats = info["run_stats"]
+            self.completed_floors.append(int(stats["floor"]))
+            self.completed_wins.append(int(
+                stats["act"] > 3 or stats.get("outcome") == "PLAYER_VICTORY"
+            ))
+        return True
+
+
+def run_startup_stagger(model, *, span_steps: int, rollout_steps: int) -> dict:
+    """Advance staggered environments while discarding every warmup sample."""
+    if span_steps == 0:
+        return {}
+    if span_steps < 0 or span_steps % rollout_steps:
+        raise ValueError("startup stagger span must be a multiple of n_steps")
+    callback = StartupStaggerMetricsCallback()
+    callback.init_callback(model)
+    callback.on_training_start({}, {})
+    start_timesteps = int(model.num_timesteps)
+    started = time.perf_counter()
+    try:
+        for _ in range(span_steps // rollout_steps):
+            if not model.collect_rollouts(
+                model.env,
+                callback,
+                model.rollout_buffer,
+                n_rollout_steps=rollout_steps,
+            ):
+                raise RuntimeError("startup stagger collection returned False")
+    finally:
+        callback.on_training_end()
+    discarded_transitions = int(model.num_timesteps) - start_timesteps
+    expected_transitions = int(model.env.num_envs) * span_steps
+    if discarded_transitions != expected_transitions:
+        raise RuntimeError(
+            "startup stagger transition mismatch: "
+            f"expected {expected_transitions}, got {discarded_transitions}"
+        )
+    states = model.env.env_method("startup_stagger_state")
+    if any(int(state["remaining_hold_steps"]) for state in states):
+        raise RuntimeError("startup stagger ended before every environment was released")
+
+    # Keep the warmed environment/RNG state, but make the training boundary
+    # indistinguishable from a fresh collector to replay, Adam and counters.
+    model.num_timesteps = start_timesteps
+    model.rollout_buffer.reset()
+    model._wait_for_reasoning_samples()
+    model._reasoning_rollout_samples = []
+    model._nosl_is_az_samples = []
+    model._nosl_is_az_pending_fights = [[] for _ in range(model.env.num_envs)]
+    for name in ("ep_info_buffer", "ep_success_buffer"):
+        buffer = getattr(model, name, None)
+        if buffer is not None:
+            buffer.clear()
+    logger = getattr(model, "logger", None)
+    for name in ("name_to_value", "name_to_count", "name_to_excluded"):
+        values = getattr(logger, name, None)
+        if values is not None:
+            values.clear()
+
+    delays = [int(state["initial_hold_steps"]) for state in states]
+    ages = [int(state["steps_since_reset"]) for state in states]
+    floors = [state.get("floor") for state in states]
+    active_floors = [int(value) for value in floors if value is not None]
+    recent_completed = callback.completed_floors[-100:]
+    return {
+        "span_steps": int(span_steps),
+        "rollout_blocks": int(span_steps // rollout_steps),
+        "discarded_transitions_local": discarded_transitions,
+        "delay_min": min(delays),
+        "delay_mean": float(np.mean(delays)),
+        "delay_max": max(delays),
+        "age_min": min(ages),
+        "age_mean": float(np.mean(ages)),
+        "age_max": max(ages),
+        "active_floor_min": min(active_floors) if active_floors else None,
+        "active_floor_mean": float(np.mean(active_floors)) if active_floors else None,
+        "active_floor_max": max(active_floors) if active_floors else None,
+        "completed_episode_count": len(callback.completed_floors),
+        "completed_floor_mean_last_100": (
+            float(np.mean(recent_completed)) if recent_completed else None
+        ),
+        "completed_win_rate_last_100": (
+            float(np.mean(callback.completed_wins[-100:]))
+            if recent_completed else None
+        ),
+        "synthetic_release_count": callback.synthetic_releases,
+        "wall_sec": time.perf_counter() - started,
+    }
+
+
+def run_startup_occupancy(
+    model, *, budget_steps: int, rollout_steps: int, seed: int
+) -> dict:
+    """Start from independent live occupancy samples without a warmup update."""
+    if budget_steps == 0:
+        return {}
+    if budget_steps < 0 or budget_steps % rollout_steps:
+        raise ValueError("occupancy budget must be a positive multiple of n_steps")
+    if not getattr(model, "nosl_is_az", False):
+        raise ValueError("occupancy startup currently requires NOSL-IS-AZ collection")
+    callback = NoopCallback()
+    callback.init_callback(model)
+    callback.on_training_start({}, {})
+    start_timesteps = int(model.num_timesteps)
+    started = time.perf_counter()
+    replay = getattr(model, "_nosl_is_az_replay", None)
+    replay_cursor_before = None if replay is None else (
+        int(replay.position), int(replay.size), int(replay.total_added)
+    )
+    numpy_state = np.random.get_state()
+    python_state = random.getstate()
+    torch_state = th.get_rng_state()
+    cuda_state = (
+        th.cuda.get_rng_state_all() if model.device.type == "cuda" else None
+    )
+    warmup_seed = int(seed) & 0xFFFFFFFF
+    np.random.seed(warmup_seed)
+    random.seed(warmup_seed)
+    th.manual_seed(warmup_seed)
+    if model.device.type == "cuda":
+        th.cuda.manual_seed_all(warmup_seed)
+    old_nonce_rng = getattr(model, "_startup_occupancy_nonce_rng", None)
+    model._startup_occupancy_nonce_rng = np.random.default_rng(
+        np.random.SeedSequence((warmup_seed, 0x4E4F4E43))
+    )
+    model._startup_occupancy_sampling = True
+    try:
+        total_blocks = budget_steps // rollout_steps
+        # Occupancy startup intentionally does not emit normal training
+        # metrics. Keep a low-frequency heartbeat so a long startup is
+        # distinguishable from a stalled worker without changing sampling.
+        progress_interval = max(1, min(8, total_blocks))
+        for block in range(total_blocks):
+            states = model.env.env_method("startup_occupancy_state")
+            if all(state["accepted"] for state in states):
+                break
+            if not model.collect_rollouts(
+                model.env, callback, model.rollout_buffer,
+                n_rollout_steps=rollout_steps,
+            ):
+                raise RuntimeError("occupancy collection returned False")
+            completed_blocks = block + 1
+            if (
+                completed_blocks % progress_interval == 0
+                or completed_blocks == total_blocks
+            ):
+                states = model.env.env_method("startup_occupancy_state")
+                accepted = sum(bool(state["accepted"]) for state in states)
+                ages = [int(state["age"]) for state in states]
+                print(
+                    "STARTUP_OCCUPANCY_PROGRESS " + json.dumps({
+                        "blocks": completed_blocks,
+                        "blocks_total": total_blocks,
+                        "accepted_envs": accepted,
+                        "total_envs": len(states),
+                        "active_age_mean": float(np.mean(ages)) if ages else 0.0,
+                        "active_age_max": max(ages) if ages else 0,
+                        "real_transitions_local": int(sum(
+                            state["real_steps"] for state in states
+                        )),
+                        "elapsed_sec": time.perf_counter() - started,
+                    }, sort_keys=True),
+                    flush=True,
+                )
+    finally:
+        callback.on_training_end()
+        model._startup_occupancy_sampling = False
+        model._startup_occupancy_nonce_rng = old_nonce_rng
+        np.random.set_state(numpy_state)
+        random.setstate(python_state)
+        th.set_rng_state(torch_state)
+        if cuda_state is not None:
+            th.cuda.set_rng_state_all(cuda_state)
+    states = model.env.env_method("startup_occupancy_state")
+    if not all(state["accepted"] for state in states):
+        raise RuntimeError(
+            "occupancy startup exhausted its budget without all environments "
+            "accepted; no formal collection or optimizer update was started"
+        )
+    model.env.env_method("startup_occupancy_release")
+    if hasattr(model.env, "episode_lengths"):
+        model.env.episode_lengths[:] = [state["age"] for state in states]
+    if hasattr(model.env, "episode_returns"):
+        model.env.episode_returns[:] = [
+            state["episode_return"] for state in states
+        ]
+    model._last_episode_starts = np.asarray(
+        [state["age"] == 0 for state in states], dtype=bool
+    )
+    discarded = int(model.num_timesteps) - start_timesteps
+    if discarded % (model.env.num_envs * rollout_steps):
+        raise RuntimeError("occupancy startup transition count is misaligned")
+    model.num_timesteps = start_timesteps
+    model.rollout_buffer.reset()
+    model._wait_for_reasoning_samples()
+    model._reasoning_rollout_samples = []
+    discarded_completed_roots = len(model._nosl_is_az_samples)
+    discarded_pending_roots = sum(
+        len(roots) for roots in model._nosl_is_az_pending_fights
+    )
+    model._nosl_is_az_samples = []
+    # Formal sampling begins at the accepted state. Warmup roots before that
+    # boundary must not later enter replay when the current fight terminates.
+    model._nosl_is_az_pending_fights = [[] for _ in range(model.env.num_envs)]
+    replay_cursor_after = None if replay is None else (
+        int(replay.position), int(replay.size), int(replay.total_added)
+    )
+    if replay_cursor_after != replay_cursor_before:
+        raise RuntimeError("occupancy startup mutated replay before formal training")
+    for name in ("ep_info_buffer", "ep_success_buffer"):
+        buffer = getattr(model, name, None)
+        if buffer is not None:
+            buffer.clear()
+    logger = getattr(model, "logger", None)
+    for name in ("name_to_value", "name_to_count", "name_to_excluded"):
+        values = getattr(logger, name, None)
+        if values is not None:
+            values.clear()
+    return {
+        "discarded_transitions_local": discarded,
+        "collection_blocks": discarded // (model.env.num_envs * rollout_steps),
+        "rejected_episodes": sum(state["rejected_episodes"] for state in states),
+        "real_transitions_local": sum(state["real_steps"] for state in states),
+        "discarded_completed_combat_roots": discarded_completed_roots,
+        "discarded_pending_combat_roots": discarded_pending_roots,
+        "replay_size": 0 if replay is None else int(replay.size),
+        "max_age": int(states[0]["max_age"]),
+        "active_age_mean": float(np.mean([state["age"] for state in states])),
+        "active_age_max": max(state["age"] for state in states),
+        "wall_sec": time.perf_counter() - started,
+    }
 
 
 @dataclass(frozen=True)
@@ -108,10 +356,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--n-envs", type=int, default=32)
     parser.add_argument("--n-steps", type=int, default=256)
+    parser.add_argument(
+        "--startup-stagger-steps",
+        type=int,
+        default=0,
+        help="Before the first update, hold each environment for an independent "
+        "stratified-random delay in [0, N], run N policy steps, then discard "
+        "all warmup samples. N must be a multiple of --n-steps.",
+    )
+    parser.add_argument(
+        "--startup-occupancy-budget", type=int, default=0,
+        help="Maximum pre-training real environment steps per env, in n_steps "
+        "blocks. Rejection-sample episode ages from the live frozen-policy "
+        "occupancy distribution. Fail closed if any env remains unaccepted.",
+    )
+    parser.add_argument(
+        "--startup-occupancy-max-age", type=int, default=6000,
+        help="Exclusive upper bound for sampled startup ages. Values below "
+        "the environment episode cap sample the occupancy distribution "
+        "truncated to this many decisions without truncating formal episodes.",
+    )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=None,
+        help="Override the checkpoint gradient norm limit. Use 'inf' to "
+        "disable gradient-norm scaling while retaining norm diagnostics.",
+    )
     parser.add_argument("--gamma", type=float, default=0.999)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument(
@@ -120,6 +395,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Use fight-local terminal-HP returns for combat and macro combat "
              "transitions for overworld. Omission preserves checkpoint mode.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-boss-transition-target",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Opt in to post-transition act-boss terminal HP targets; "
+             "omission preserves the checkpoint setting.",
     )
     parser.add_argument("--combat-hp-gamma", type=float, default=None)
     parser.add_argument("--combat-hp-gae-lambda", type=float, default=None)
@@ -168,6 +450,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--training-state-dir", type=Path, help="Per-rank policy/Adam/replay/RNG recovery generations")
     parser.add_argument("--resume-state", type=Path, help="Explicit complete per-rank recovery generation")
+    parser.add_argument(
+        "--fork-state",
+        type=Path,
+        help="Restore a complete recovery generation while requiring new run "
+        "and W&B identities; the source bundle remains unchanged.",
+    )
+    parser.add_argument(
+        "--fork-reset-environments",
+        action="store_true",
+        help="With --fork-state, keep learner/replay/RNG state but reset the "
+        "freshly constructed VecEnv. Required when changing n_envs.",
+    )
     parser.add_argument("--stop-file", type=Path, help="Request a coordinated save and stop at the next update boundary")
     parser.add_argument("--checkpoint-prefix", default="maskable_ppo")
     parser.add_argument("--max-checkpoints", type=int, default=20)
@@ -197,6 +491,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--reasoning-batch-size", type=int, default=128)
     parser.add_argument("--reasoning-updates", type=int, default=4)
+    parser.add_argument(
+        "--nosl-is-az-upper-strategy", choices=("model", "rules"), default=None,
+        help="Frozen upper decision strategy in inner-only NOSL: sampled model "
+             "or overworld-v1 rules with deterministic model fallback.",
+    )
     parser.add_argument(
         "--nosl-is-az-simulations",
         type=int,
@@ -287,7 +586,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--nosl-is-az-batch-size",
         type=int,
         default=None,
-        help="Override the number of replay roots sampled per AlphaZero update.",
+        help="Requested effective AlphaZero root batch; replay mode samples up "
+             "to this many local roots, while no-replay mode consumes all "
+             "available fresh roots and uses this as the recorded global cap.",
     )
     parser.add_argument(
         "--nosl-is-az-updates",
@@ -302,6 +603,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable the labelled-combat replay buffer. Omission preserves "
              "the checkpoint setting; legacy checkpoints default to enabled.",
+    )
+    parser.add_argument(
+        "--nosl-is-az-train-shared-embeddings",
+        action="store_true",
+        help="Reset shared card/relic/potion embeddings with the run seed and "
+             "train them alongside the combat specialist in inner-only NOSL.",
     )
     parser.add_argument(
         "--nosl-is-az-micro-batch-size",
@@ -1365,10 +1672,66 @@ _DISTRIBUTED_GAME_METRIC_KEYS = (
     *(f"game/floor_won/{floor:02d}" for floor in range(5, 55, 5)),
 )
 
+_DISTRIBUTED_GAME_COUNT_KEYS = (
+    "game/episodes_window",
+    "game/episodes_total",
+    "game/startup_episodes_excluded_total",
+)
+
+
+def _prepare_distributed_game_scalars(
+    callback_scalars: dict[str, float],
+) -> dict[str, float]:
+    """Weight rolling game means by the number of represented episodes."""
+    game_window = float(callback_scalars.get("game/episodes_window", 0.0))
+    values = {
+        key: float(callback_scalars.get(key, 0.0)) * game_window
+        for key in _DISTRIBUTED_GAME_METRIC_KEYS
+    }
+    values.update({
+        key: float(callback_scalars.get(key, 0.0))
+        for key in _DISTRIBUTED_GAME_COUNT_KEYS
+    })
+    return values
+
+
+def _finalize_distributed_game_scalars(
+    aggregate_scalars: dict[str, float], *, world_size: int,
+) -> None:
+    """Convert rank-mean weighted sums and counts into global statistics."""
+    game_window_mean = aggregate_scalars["game/episodes_window"]
+    for key in _DISTRIBUTED_GAME_METRIC_KEYS:
+        aggregate_scalars[key] = (
+            aggregate_scalars[key] / game_window_mean
+            if game_window_mean > 0.0 else 0.0
+        )
+    for key in _DISTRIBUTED_GAME_COUNT_KEYS:
+        aggregate_scalars[key] *= world_size
+
+
+def _add_game_metrics_to_wandb_payload(
+    payload: dict[str, object], record: dict[str, object],
+) -> None:
+    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_COUNT_KEYS})
+    if float(record["game/episodes_window"]) <= 0.0:
+        return
+    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_METRIC_KEYS})
+    for floor in range(5, 55, 5):
+        payload[f"game/layer_{floor}_win_rate"] = record[
+            f"game/floor_won/{floor:02d}"
+        ]
+    for layer in (1, 2, 3):
+        value = payload.get(f"game/act_{layer}_won_mean")
+        if value is not None:
+            payload[f"game/layer_{layer}_win_rate"] = value
+
+
 # NOSL metrics are emitted by the local collector/trainer.  Keep a fixed key
 # set so every rank participates in the same scalar all-reduce even when a
 # rank has no completed combat in a particular rollout.
 _DISTRIBUTED_NOSL_METRIC_KEYS = (
+    "nosl_is_az/overworld_rule_decisions",
+    "nosl_is_az/overworld_fallback_decisions",
     "nosl_is_az/combat_roots",
     "nosl_is_az/combat_policy_roots",
     "nosl_is_az/value_only_samples",
@@ -1465,14 +1828,31 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.resume_state is not None and args.fork_state is not None:
+        raise ValueError("--resume-state and --fork-state are mutually exclusive")
+    if args.fork_reset_environments and args.fork_state is None:
+        raise ValueError("--fork-reset-environments requires --fork-state")
+    recovery_state = args.resume_state or args.fork_state
+    if recovery_state is not None:
+        manifest = read_bundle(recovery_state, rank=args.rank, world_size=args.world_size)
     if args.resume_state is not None:
-        manifest = read_bundle(args.resume_state, rank=args.rank, world_size=args.world_size)
         if args.run_id is not None and args.run_id != manifest['run_id']:
             raise ValueError('resume run ID differs from recovery manifest')
         if args.wandb_id is not None and args.wandb_id != manifest['wandb_id']:
             raise ValueError('resume W&B ID differs from recovery manifest')
         args.run_id, args.wandb_id = manifest['run_id'], manifest['wandb_id']
         args.checkpoint = args.resume_state / 'model.zip'
+    elif args.fork_state is not None:
+        if not args.run_id or args.run_id == manifest['run_id']:
+            raise ValueError("--fork-state requires a new explicit --run-id")
+        if args.wandb and (
+            not args.wandb_id or args.wandb_id == manifest['wandb_id']
+        ):
+            raise ValueError("--fork-state with W&B requires a new --wandb-id")
+        args.fork_source_run_id = manifest['run_id']
+        args.fork_source_wandb_id = manifest['wandb_id']
+        args.fork_source_global_step = manifest['global_step']
+        args.checkpoint = args.fork_state / 'model.zip'
     if args.stop_file is not None and args.stop_file.exists():
         raise ValueError('remove the previous stop request before resuming')
     if args.training_state_dir is not None and (args.save_every_updates < 1 or args.max_checkpoints < 2):
@@ -1497,8 +1877,26 @@ def main() -> None:
         raise ValueError(
             "--reasoning-gradient-accumulation-steps must be at least 1"
         )
+    if (
+        args.max_grad_norm is not None
+        and (
+            np.isnan(args.max_grad_norm)
+            or args.max_grad_norm < 0.0
+        )
+    ):
+        raise ValueError("--max-grad-norm must be non-negative or inf")
     if args.envs_per_worker < 1:
         raise ValueError("--envs-per-worker must be at least 1")
+    if args.startup_stagger_steps < 0:
+        raise ValueError("--startup-stagger-steps must be non-negative")
+    if args.startup_stagger_steps % args.n_steps:
+        raise ValueError("--startup-stagger-steps must be a multiple of --n-steps")
+    if args.startup_occupancy_budget < 0 or args.startup_occupancy_budget % args.n_steps:
+        raise ValueError("--startup-occupancy-budget must be a non-negative multiple of --n-steps")
+    if args.startup_occupancy_max_age < 1:
+        raise ValueError("--startup-occupancy-max-age must be positive")
+    if args.startup_occupancy_budget and args.startup_stagger_steps:
+        raise ValueError("occupancy sampling and startup stagger are mutually exclusive")
     if args.nosl_is_az_simulations is not None and args.nosl_is_az_simulations < 1:
         raise ValueError("--nosl-is-az-simulations must be positive")
     if args.nosl_is_az_depth is not None and args.nosl_is_az_depth < 0:
@@ -1670,6 +2068,10 @@ def main() -> None:
         args.combat_hp_gae_lambda = source_combat_gae_lambda
     if args.nosl_is_az_replay_enabled is None:
         args.nosl_is_az_replay_enabled = source_nosl_is_az_replay_enabled
+    if args.nosl_is_az_boss_transition_target is None:
+        args.nosl_is_az_boss_transition_target = bool(
+            getattr(probe_model, "nosl_is_az_boss_transition_target", False)
+        )
     if not 0.0 <= args.combat_hp_gamma <= 1.0:
         raise ValueError("--combat-hp-gamma must be in [0, 1]")
     if not 0.0 <= args.combat_hp_gae_lambda <= 1.0:
@@ -1691,35 +2093,48 @@ def main() -> None:
         )
     env = make_env(probe_model, args)
     del probe_model
+    custom_objects = {
+        "n_steps": args.n_steps,
+        "batch_size": args.batch_size,
+        "policy_kwargs": policy_kwargs,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "n_epochs": args.n_epochs,
+        "learning_rate": args.learning_rate,
+        "ent_coef": args.ent_coef,
+        "vf_coef": args.vf_coef,
+        "gamma": args.gamma,
+        "gae_lambda": args.gae_lambda,
+        "clip_range": args.clip_range,
+        "hierarchical_combat_hp": args.hierarchical_combat_hp,
+        "nosl_is_az_boss_transition_target": (
+            args.nosl_is_az_boss_transition_target
+        ),
+        "combat_hp_gamma": args.combat_hp_gamma,
+        "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
+        "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,
+        "reasoning_coef": args.reasoning_coef,
+        "reasoning_batch_size": args.reasoning_batch_size,
+        "reasoning_updates": args.reasoning_updates,
+        "reasoning_gradient_accumulation_steps": (
+            args.reasoning_gradient_accumulation_steps
+        ),
+    }
+    if args.max_grad_norm is not None:
+        custom_objects["max_grad_norm"] = args.max_grad_norm
     model = AccumulatingMaskablePPO.load(
         args.checkpoint,
         env=env,
         device=args.device,
         amp_mode=args.amp_mode,
-        custom_objects={
-            "n_steps": args.n_steps,
-            "batch_size": args.batch_size,
-            "policy_kwargs": policy_kwargs,
-            "gradient_accumulation_steps": args.gradient_accumulation_steps,
-            "n_epochs": args.n_epochs,
-            "learning_rate": args.learning_rate,
-            "ent_coef": args.ent_coef,
-            "vf_coef": args.vf_coef,
-            "gamma": args.gamma,
-            "gae_lambda": args.gae_lambda,
-            "clip_range": args.clip_range,
-            "hierarchical_combat_hp": args.hierarchical_combat_hp,
-            "combat_hp_gamma": args.combat_hp_gamma,
-            "combat_hp_gae_lambda": args.combat_hp_gae_lambda,
-            "nosl_is_az_replay_enabled": args.nosl_is_az_replay_enabled,
-            "reasoning_coef": args.reasoning_coef,
-            "reasoning_batch_size": args.reasoning_batch_size,
-            "reasoning_updates": args.reasoning_updates,
-            "reasoning_gradient_accumulation_steps": (
-                args.reasoning_gradient_accumulation_steps
-            ),
-        },
+        custom_objects=custom_objects,
     )
+    if args.max_grad_norm is not None:
+        print(
+            f"[rank {args.rank}] max gradient norm override: "
+            f"{model.max_grad_norm} "
+            f"({'disabled' if np.isinf(model.max_grad_norm) else 'enabled'})",
+            flush=True,
+        )
     reset_count = model.configure_hierarchical_combat_hp(
         enabled=args.hierarchical_combat_hp,
         combat_gamma=args.combat_hp_gamma,
@@ -1736,12 +2151,38 @@ def main() -> None:
             flush=True,
         )
     if source_nosl_inner_only:
-        frozen, trainable = model.configure_nosl_is_az_inner_only()
+        if args.nosl_is_az_train_shared_embeddings:
+            embedding_count = model.reset_nosl_is_az_shared_embeddings(args.seed)
+            print(
+                f"[rank {args.rank}] reset {embedding_count} shared semantic "
+                "embedding tables with the run seed",
+                flush=True,
+            )
+        frozen, trainable = model.configure_nosl_is_az_inner_only(
+            train_shared_embeddings=args.nosl_is_az_train_shared_embeddings
+        )
         print(
             f"[rank {args.rank}] NOSL-IS-AZ inner-only: froze "
-            f"{frozen:,} parameters; {trainable:,} combat parameters trainable",
+            f"{frozen:,} parameters; {trainable:,} parameters trainable",
             flush=True,
         )
+    upper_strategy = args.nosl_is_az_upper_strategy or getattr(
+        model, "nosl_is_az_upper_strategy", "model"
+    )
+    if upper_strategy not in ("model", "rules"):
+        raise ValueError("NOSL-IS-AZ upper strategy must be model or rules")
+    if upper_strategy == "rules" and not (
+        model.nosl_is_az and model.nosl_is_az_inner_only
+    ):
+        raise ValueError("--nosl-is-az-upper-strategy rules requires inner-only NOSL")
+    model.nosl_is_az_upper_strategy = args.nosl_is_az_upper_strategy = upper_strategy
+    from env.search.overworld_rules import OVERWORLD_RULE_VERSION
+    args.nosl_is_az_upper_strategy_version = (
+        OVERWORLD_RULE_VERSION if upper_strategy == "rules" else "checkpoint-model"
+    )
+    print(f"[rank {args.rank}] NOSL upper strategy: {upper_strategy} "
+          f"version={args.nosl_is_az_upper_strategy_version} "
+          f"fallback={'masked-argmax' if upper_strategy == 'rules' else 'sampled'}", flush=True)
     if args.nosl_is_az_updates is not None:
         if not bool(getattr(model, "nosl_is_az", False)):
             raise ValueError(
@@ -1995,7 +2436,7 @@ def main() -> None:
     # Restarted environments cannot restore native in-flight games. Choose a
     # new deterministic seed block rather than replaying the run's first games.
     model.set_random_seed(args.seed + args.rank * 1_000_003 +
-                          (int(model.num_timesteps) if args.resume_state is not None else 0))
+                          (int(model.num_timesteps) if recovery_state is not None else 0))
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
@@ -2099,11 +2540,58 @@ def main() -> None:
         tb_log_name=f"dist_sb3_rank{args.rank}",
         progress_bar=False,
     )
+    if recovery_state is not None:
+        recovery_manifest = restore_learner(
+            model,
+            recovery_state,
+            rank=args.rank,
+            world_size=args.world_size,
+            restore_environment=not bool(args.fork_reset_environments),
+        )
+        if args.fork_reset_environments:
+            print(
+                "ENVIRONMENT_RESET_ON_FORK " + json.dumps({
+                    "source_global_step": int(recovery_manifest["global_step"]),
+                    "environments": int(model.env.num_envs),
+                }, sort_keys=True),
+                flush=True,
+            )
+    else:
+        recovery_manifest = None
+    environment_restored = bool(
+        recovery_manifest is not None
+        and getattr(model, "_recovery_environment_restored", False)
+    )
+    if environment_restored:
+        print(
+            "ENVIRONMENT_RESTORED " + json.dumps({
+                "global_step": int(model.num_timesteps),
+                "schema_version": int(recovery_manifest["schema_version"]),
+                "environments": int(model.env.num_envs),
+            }, sort_keys=True),
+            flush=True,
+        )
+    startup_stagger = {} if environment_restored else run_startup_stagger(
+        model,
+        span_steps=args.startup_stagger_steps,
+        rollout_steps=args.n_steps,
+    )
+    if startup_stagger:
+        startup_stagger["discarded_transitions_global"] = (
+            startup_stagger["discarded_transitions_local"] * args.world_size
+        )
+        print(
+            "STARTUP_STAGGER " + json.dumps(startup_stagger, sort_keys=True),
+            flush=True,
+        )
+    # Startup occupancy warmup was removed from the production lifecycle.  Keep
+    # the CLI fields readable for old argument files, but never spend training
+    # time on discarded rollouts or mutate the formal sampling boundary.
+    startup_occupancy = {}
     callback.on_training_start(locals(), globals())
-    if args.resume_state is not None:
-        restore_learner(model, args.resume_state, rank=args.rank, world_size=args.world_size)
 
     records = []
+    training_failed = False
     try:
         for update in range(args.updates):
             if model.device.type == "cuda":
@@ -2457,6 +2945,10 @@ def main() -> None:
                     + reasoning_step_seconds
                 ),
             }
+            if update == 0 and startup_stagger:
+                record["startup_stagger"] = dict(startup_stagger)
+            if update == 0 and startup_occupancy:
+                record["startup_occupancy"] = dict(startup_occupancy)
             record["reasoning_time_fraction"] = (
                 record["reasoning_total_sec"]
                 / max(record["total_sec_rank"], 1e-9)
@@ -2480,6 +2972,12 @@ def main() -> None:
             # to W&B, so the dashboard represents the global rollout rather
             # than rank 0's local subset.
             callback_scalars = logger_scalars(model)
+            upper_counts = getattr(model, "_nosl_is_az_rollout_upper_counts", {})
+            record["nosl_is_az_upper_strategy"] = model.nosl_is_az_upper_strategy
+            record["nosl_is_az_upper_strategy_version"] = args.nosl_is_az_upper_strategy_version
+            for name, value in upper_counts.items():
+                record[name + "_local"] = float(value)
+                callback_scalars["nosl_is_az/" + name] = float(value)
             if nosl_update is not None:
                 callback_scalars.update({
                     f"nosl_is_az/{key}": float(value)
@@ -2514,10 +3012,9 @@ def main() -> None:
                     "reasoning_time_fraction",
                 )
             }
-            aggregate_scalars.update({
-                key: float(callback_scalars.get(key, 0.0))
-                for key in _DISTRIBUTED_GAME_METRIC_KEYS
-            })
+            aggregate_scalars.update(
+                _prepare_distributed_game_scalars(callback_scalars)
+            )
             aggregate_scalars.update({
                 key: float(callback_scalars.get(key, 0.0))
                 for key in _DISTRIBUTED_NOSL_METRIC_KEYS
@@ -2533,6 +3030,9 @@ def main() -> None:
                 })
             aggregate_scalars = average_scalar_dict(
                 aggregate_scalars, ring_transport
+            )
+            _finalize_distributed_game_scalars(
+                aggregate_scalars, world_size=args.world_size,
             )
             # Both counters underwent the same mean reduction, so their ratio
             # is sum(matches)/sum(count), even with unequal rank populations.
@@ -2677,6 +3177,17 @@ def main() -> None:
                             "reasoning_time_fraction"
                         ],
                     }
+                if update == 0 and startup_stagger:
+                    wandb_payload.update({
+                        f"startup_stagger/{key}": value
+                        for key, value in startup_stagger.items()
+                        if value is not None
+                    })
+                if update == 0 and startup_occupancy:
+                    wandb_payload.update({
+                        f"startup_occupancy/{key}": value
+                        for key, value in startup_occupancy.items()
+                    })
                 if args.hierarchical_combat_hp:
                     wandb_payload.update({
                         "train/combat_value_loss": record[
@@ -2686,22 +3197,11 @@ def main() -> None:
                             "overworld_value_loss_mean"
                         ],
                     })
-                wandb_payload.update({
-                    key: record[key]
-                    for key in _DISTRIBUTED_GAME_METRIC_KEYS
-                })
+                _add_game_metrics_to_wandb_payload(wandb_payload, record)
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS
                 })
-                for floor in range(5, 55, 5):
-                    wandb_payload[f"game/layer_{floor}_win_rate"] = record[
-                        f"game/floor_won/{floor:02d}"
-                    ]
-                for layer in (1, 2, 3):
-                    value = wandb_payload.get(f"game/act_{layer}_won_mean")
-                    if value is not None:
-                        wandb_payload[f"game/layer_{layer}_win_rate"] = value
                 legacy_step = wandb_step_for_timesteps(
                     global_timesteps=global_timesteps,
                     global_rollout_size=global_rollout_size,
@@ -2778,13 +3278,16 @@ def main() -> None:
                 args.checkpoint_prefix,
                 args.max_checkpoints,
             )
+    except BaseException:
+        training_failed = True
+        raise
     finally:
         callback.on_training_end()
         if ring_transport is not None:
             ring_transport.close()
         env.close()
         if wandb_run is not None:
-            wandb_run.finish()
+            wandb_run.finish(exit_code=1 if training_failed else 0)
 
     summary = {
         "rank": args.rank,

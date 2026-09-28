@@ -88,6 +88,21 @@ class _ToySplitPolicy(torch.nn.Module):
         self.outside_core = torch.nn.Parameter(torch.ones(1))
 
 
+class _ToyEmbeddingSplitPolicy(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.core = torch.nn.Module()
+        self.core.shared = torch.nn.ModuleDict({
+            "card": torch.nn.Embedding(8, 3),
+            "relic": torch.nn.Embedding(6, 2),
+            "potion": torch.nn.Embedding(5, 2),
+            "card_projection": torch.nn.Linear(3, 4),
+        })
+        self.core.combat = torch.nn.Linear(4, 2)
+        self.core.overworld = torch.nn.Linear(4, 2)
+        self.outside_core = torch.nn.Parameter(torch.ones(1))
+
+
 class _ReplayCore(torch.nn.Module):
     combat_observation_keys = frozenset({"state"})
 
@@ -1025,6 +1040,26 @@ class NOSLISAZTest(unittest.TestCase):
             for name, parameter in model.policy.named_parameters()
             if not name.startswith("core.combat.")
         ))
+
+    def test_inner_only_shared_flag_trains_only_semantic_embedding_tables(self):
+        model = object.__new__(AccumulatingMaskablePPO)
+        model.nosl_is_az = True
+        model.nosl_is_az_inner_only = True
+        model.policy = _ToyEmbeddingSplitPolicy()
+
+        model.configure_nosl_is_az_inner_only(train_shared_embeddings=True)
+
+        trainable = {
+            name for name, parameter in model.policy.named_parameters()
+            if parameter.requires_grad
+        }
+        self.assertEqual(trainable, {
+            "core.shared.card.weight",
+            "core.shared.relic.weight",
+            "core.shared.potion.weight",
+            "core.combat.weight",
+            "core.combat.bias",
+        })
 
 
 if __name__ == "__main__":

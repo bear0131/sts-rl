@@ -52,6 +52,7 @@ class StSMetricsCallback(BaseCallback):
         self._act = deque(maxlen=window)
         self._deck = deque(maxlen=window)
         self._n_episodes = 0
+        self._excluded_startup_episodes = 0
         self._t0 = None
         self._last_speed_t = None
         self._last_speed_steps = 0
@@ -68,6 +69,9 @@ class StSMetricsCallback(BaseCallback):
             ep = info.get("episode")
             if ep is None:
                 continue  # not an episode boundary for this sub-env
+            if info.get("startup_occupancy_incumbent_episode"):
+                self._excluded_startup_episodes += 1
+                continue
             self._n_episodes += 1
             self._rew.append(ep["r"])
             self._len.append(ep["l"])
@@ -107,6 +111,11 @@ class StSMetricsCallback(BaseCallback):
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
+        self.logger.record("game/episodes_window", len(self._win))
+        self.logger.record(
+            "game/startup_episodes_excluded_total",
+            self._excluded_startup_episodes,
+        )
         # Per-5-floor pass-rate detail (fraction that got past floor x, final
         # floor > x). Kept under its own game/floor_won/ sub-section so the ten
         # curves cluster at the end instead of interleaving the headline metrics.
@@ -224,6 +233,13 @@ class WholeRunTask(Task):
                  "is remaining HP on the fixed observation scale. Overworld "
                  "returns skip combat and connect directly to the post-combat "
                  "state. On resume, omission preserves the checkpoint mode.",
+        )
+        parser.add_argument(
+            "--nosl-is-az-boss-transition-target",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Opt in to post-transition act-boss terminal HP targets; "
+                 "omission preserves the checkpoint setting on resume.",
         )
         parser.add_argument(
             "--combat-hp-gamma",
@@ -460,6 +476,9 @@ class WholeRunTask(Task):
                 neow_observation=args.neow_observation,
                 event_option_observation=args.event_option_observation,
                 interactive_reasoning=interactive_reasoning,
+                nosl_is_az_boss_transition_target=bool(
+                    getattr(args, "nosl_is_az_boss_transition_target", False)
+                ),
             )
             env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its

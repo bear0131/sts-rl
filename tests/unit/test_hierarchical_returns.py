@@ -18,7 +18,7 @@ OVERWORLD = 2
 
 
 def calculate(phases, rewards, dones, next_phases, next_hp, interrupted=None,
-              values=None, last_values=None):
+              values=None, last_values=None, combat_terminal_targets=None):
     shape = np.asarray(phases).shape
     return compute_hierarchical_returns(
         phases=np.asarray(phases),
@@ -27,6 +27,11 @@ def calculate(phases, rewards, dones, next_phases, next_hp, interrupted=None,
         dones=np.asarray(dones, bool),
         next_phases=np.asarray(next_phases),
         next_hp=np.asarray(next_hp, np.float32),
+        combat_terminal_targets=(
+            None
+            if combat_terminal_targets is None
+            else np.asarray(combat_terminal_targets, np.float32)
+        ),
         interrupted=(
             np.zeros(shape, bool) if interrupted is None else interrupted
         ),
@@ -84,6 +89,34 @@ class HierarchicalReturnsTest(unittest.TestCase):
 
         np.testing.assert_allclose(returns[:, 0], [0.0, 0.0, 0.0])
         self.assertEqual(stats.combats_finished, 1)
+
+    def test_explicit_zero_terminal_target_overrides_surviving_hp(self):
+        rewards, returns, _advantages, stats = calculate(
+            phases=[[COMBAT]],
+            rewards=[[0.0]],
+            dones=[[True]],
+            next_phases=[[COMBAT]],
+            next_hp=[[0.7]],
+            combat_terminal_targets=[[0.0]],
+        )
+
+        self.assertEqual(rewards[0, 0], 0.0)
+        self.assertEqual(returns[0, 0], 0.0)
+        self.assertEqual(stats.combats_finished, 1)
+
+    def test_nan_terminal_target_preserves_legacy_hp_label(self):
+        rewards, returns, _advantages, stats = calculate(
+            phases=[[COMBAT]],
+            rewards=[[0.0]],
+            dones=[[False]],
+            next_phases=[[OVERWORLD]],
+            next_hp=[[0.7]],
+            combat_terminal_targets=[[np.nan]],
+        )
+
+        self.assertEqual(rewards[0, 0], 0.7)
+        self.assertEqual(returns[0, 0], 0.7)
+        self.assertAlmostEqual(stats.combat_end_hp_mean, 0.7)
 
     def test_interruption_does_not_pay_surviving_hp(self):
         rewards, returns, _advantages, stats = calculate(

@@ -1,7 +1,37 @@
 # 评估后端
 
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
+
+要保留可对照的局外历史（不记录战斗逐动作），加上
+`--trajectory-output runs/local/<run-dir>`。入口会写出 `report.json`、
+`episodes.jsonl`、`episodes.md`、`summary.md`；历史包含地图路线、问号事件的
+每一步选项和资源差分、商店购买/删牌、战斗前后 HP 与牌/遗物/药水差分、奖励
+候选及领取、宝箱和 Boss 遗物候选/选择。事件的 typed 候选缺失时保留事件名与
+选项编号，不从本地化文本推测实体。
+
+最新规则上层 + 回合规划搜索的固定示例：
+
+```text
+python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
+  --solver turn-planner --planner-worlds 2 --planner-nodes 8192 \
+  --planner-beam 8 --planner-depth 16 --planner-turns 1 \
+  --episodes 100 --seed 200000 --num-envs 8 \
+  --trajectory-output runs/local/eval-trajectories
+```
+
+训练模型直推或搜索仍使用同一入口：省略 `--upper-strategy rules`（默认
+`model`），并按需选择 `--solver policy`、`native`、`value` 或
+`turn-planner`。因此评测算法和轨迹格式不会随 checkpoint 复制一份。
 `--solver policy` 为直接策略；`value` 为原有 value-guided lookahead；`leftmost` 为最小合法动作。`--task combat` 保留 gauntlet 的 combats_cleared 指标。native 当前只接 whole-run 场景；旧 Python NOSL fullrun/parallel、独立 eval_combat 入口已删除。
+
+`--solver rules` 只替换 combat 为规则策略，其余阶段使用位置参数的上层 checkpoint。
+`--upper-strategy rules` 另外替换抓牌、路线、商店、营火等上层决策；未覆盖的事件显式回退到
+位置参数的模型，并记录回退次数。两个开关独立，可比较固定上层和联合规则；
+`--route min-elite-max-rest` 最后覆盖地图决策。默认 `--upper-strategy model` 保持原有行为。
+`--combat-checkpoint LOWER.zip` 可为 policy/native/value 单独指定下层；`--compare-combats N`
+沿参考轨迹取前 N 场开局，在相同完整初态上配对规则/policy/native；`--trace FILE.jsonl`
+保存可见状态、选择与规则分项。信息边界、支持范围与开发/留出协议见
+[战斗规则基线](baselines/README.md)。
 
 - `runner.py`：环境常驻/重置、预算、取消、合法性、结果与统计，CLI/dashboard 共用。max_steps 截断记为 step_limit，不能当死亡。timeout 在 step/leaf batch 之间检查；native 卡死须由外层进程硬超时处理。
 - `strategies.py`：DecisionRequest → 批量 Decision。新增策略实现 DecisionStrategy，传给 runner 即可；只在需要 CLI 时注册到 STRATEGIES。PhaseStrategy 按阶段及显式谓词组合策略，runner 不识别具体模型或搜索算法。
@@ -11,7 +41,20 @@
 
 固定战斗工具在 `nosl/scenarios.py`，卡对/填充牌参数在 configs/eval/nosl_scenarios.py；strict Bash/Clash 消融统一用 `nosl.eval_full_gumbel_bash_clash` 的 mode/预算参数，旧 matrix/repeated/trials/sequence 已删除。`nosl.eval_nosl_order_sensitivity` 保留多卡对与 depth 敏感性诊断，其场景实现同样调用共享库。地图路线目标在 `baselines/routes.py`，用于 baseline 和组合策略。
 
-一次评估只加载一份模型，多环境的直接策略和 native 叶子批量前推。num_envs 表示常驻环境数；改变 batch size 可能改变浮点舍入，随机策略的 RNG 消费顺序也可能变化。参数预设在 configs/eval，结果在 runs/local。生成器调用方提前停止消费时应显式 close，以释放环境。
+一次评估复用常驻模型，指定独立 combat checkpoint 时加载上下层各一份；多环境的直接策略和 native 叶子批量前推。num_envs 表示常驻环境数；改变 batch size 可能改变浮点舍入，随机策略的 RNG 消费顺序也可能变化。参数预设在 configs/eval，结果在 runs/local。生成器调用方提前停止消费时应显式 close，以释放环境。
+
+Native whole-run 评估可显式加 `--leaf-inference cuda-graph`，复用已有
+`CombatLeafGraphs`；默认 `eager` 保持原路径。图后端只支持 CUDA、eval 模式、FP32
+的 compact combat 模型，其他组合明确报错。缓存归各个搜索策略独立所有；同一模型上的
+eager/graph 策略和 paired-combat 候选不会重配置彼此。独立 `--combat-checkpoint` 时
+缓存只引用下层，上层仍走原策略。缓存容量为32，使用实际 batch/遗物宽度，不补齐 batch、不启用
+AMP，不改变搜索 simulations/depth/leaf concurrency 或模型参数。最终
+`effective_strategy` 记录后端配置、capture/hit/eviction 与时间统计。固定叶批的热态
+收益不能替代整局计时或生产长度 collection 的 CUDA 资源生命周期验收。
+
+Native 搜索可用 `--fixed-worldline` / `--no-fixed-worldline` 显式控制整棵搜索树是否
+共享一次根部重确定的随机未来；未指定时继承 checkpoint 的配置。做消融时两边都应显式传参，
+并固定 checkpoint、episode seed、搜索预算和并行度。
 
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
 
@@ -37,3 +80,6 @@ JSON suite schema=2 包含 checkpoint/corpus SHA-256、每条完整曲线、局�
 该协议没有结算回血，pre/post HP 相同；输出每状态预测/误差及 MAE（HP单位）。
 当前仅支持单敌人、能被该固定攻击直接击杀的场景；条件不成立时明确报错。
 native search 对终局本来就直接返回精确 HP，所以网络的 terminal 误差反映监督/校准情况，不能单独当作搜索返回值错误。
+# 评测轨迹显示约定
+
+轨迹 Markdown 使用中文时间线排版：地图、问号事件、战斗摘要、战斗奖励、商店、宝箱和首领遗物按发生顺序混排；战斗不展开逐动作，只记录战斗前后生命与资源变化。生命和金币使用颜色标记，牌名、遗物和药水使用不同颜色。显示名称在报告层维护，特别保证 `Combust` 显示为“自燃”，`Inflame` 显示为“燃烧”。

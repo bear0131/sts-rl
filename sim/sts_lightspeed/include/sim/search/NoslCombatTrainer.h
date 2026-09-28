@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -62,6 +63,14 @@ struct NoslCombatSearchConfig {
     // before this setting is applied.
     int gumbelInteriorValueMode = 2;
     double gumbelInteriorMaxMixVisits = 64.0;
+    // Sample hidden randomness once per decision and reuse that future for
+    // every simulation.  False preserves the usual independent world lines.
+    bool fixedWorldline = false;
+    // Optional boss-transition terminal objective.  Zero preserves the
+    // historical combat-exit HP label.  Mode 1 labels a victory with full
+    // post-transition max HP; mode 2 applies the A5+ Act 1/2 restoration of
+    // 75% of missing HP.  Both modes label a combat loss as zero.
+    int bossTransitionValueMode = 0;
 };
 
 struct NoslCombatSearchStats {
@@ -124,6 +133,14 @@ public:
         double gumbel = 0.0;
         double gumbelScore = 0.0;
         double completedScore = 0.0;
+        // Exact model output for an action whose immediate successor is a
+        // value-only leaf (currently End Turn with endTurnAsLeaf enabled).
+        // Keep this separate from propagated Q so inspectors do not mistake
+        // the parent state's value or a search backup for the successor's
+        // direct network evaluation.
+        bool successorModelValueValid = false;
+        double successorModelValue = 0.0;
+        int successorModelValueCount = 0;
         bool candidate = false;
         bool activeCandidate = false;
         // True when this action has split into multiple NOSL public states.
@@ -142,6 +159,11 @@ public:
         int valueVisits = 0;
         double value = 0.0;
         double sampleValue = 0.0;
+        // The exact finite value emitted when this public state was first
+        // sent through the model. Unlike `value` and `sampleValue`, this is
+        // neither clamped nor changed by search backup/action aggregation.
+        bool networkValueValid = false;
+        double networkValue = 0.0;
         std::vector<TreeEdgeInfo> children;
     };
 
@@ -186,6 +208,12 @@ public:
 
 private:
     struct Node;
+    struct ActionLabel {
+        CardInstance card;
+        const char *targetName = nullptr;
+        std::string eager;
+        bool deferred = false;
+    };
     struct Edge {
         Action action;
         // NOSL samples can reach the same action prefix with different public
@@ -197,13 +225,15 @@ private:
         int virtualVisits = 0;
         double valueSum = 0.0;
         double prior = 0.0;
+        double logPrior = 0.0;
         double propagatedValue = 0.0;
+        double successorModelValueSum = 0.0;
+        int successorModelValueCount = 0;
         bool propagatedValid = false;
         std::uint64_t semanticKey = 0;
         bool targeted = false;
-        std::string label;
-        Edge(Action a, double p, bool targeted, std::string label)
-            : action(a), prior(p), targeted(targeted), label(std::move(label)) {}
+        ActionLabel label;
+        Edge(Action a, double p, bool targeted, ActionLabel label);
         Edge(Edge &&) noexcept = default;
         Edge &operator=(Edge &&) noexcept = default;
         Edge(const Edge &) = delete;
@@ -215,9 +245,11 @@ private:
         int valueVisits = 0;
         int virtualVisits = 0;
         double valueSum = 0.0;
+        double modelValue = 0.0;
         double networkValue = 0.0;
         double propagatedValue = 0.0;
         bool propagatedValid = false;
+        bool modelValueValid = false;
         bool networkValueValid = false;
         bool expansionPending = false;
         std::vector<Edge> edges;
@@ -225,12 +257,16 @@ private:
 
     struct Pending {
         std::uint64_t id = 0;
-        BattleContext state;
+        std::unique_ptr<BattleContext> state;
         std::vector<Node *> nodes;
         std::vector<Edge *> edges;
         std::vector<Action> legalActions;
         Node *leaf = nullptr;
         bool needsPolicy = true;
+        // The final traversed edge directly produced the value-only state
+        // sent to the model.  This is distinct from an ordinary expanded
+        // child node and is used to retain End Turn boundary evaluations.
+        bool directSuccessorValueLeaf = false;
         // Coverage-protection simulations are retained in N for scheduling,
         // but excluded from value statistics so forced exploratory probes do
         // not bias Q/V downward.
@@ -245,6 +281,12 @@ private:
     int simulationsCompleted_ = 0;
     std::uint64_t nextRequestId_ = 1;
     std::unordered_map<std::uint64_t, Pending> pending_;
+    std::vector<std::tuple<int, int, int, int, int, int, int>> stateKeyScratch_;
+    // Sessions are sequential; these buffers never outlive the owning tree.
+    mutable std::vector<double> rawQScratch_;
+    mutable std::vector<double> scaledQScratch_;
+    mutable std::vector<double> rootScoreScratch_;
+    mutable std::vector<double> interiorLogitScratch_;
     std::vector<int> gumbelActiveEdges_;
     // Initial Gumbel-Top-k set.  `gumbelActiveEdges_` is narrowed after each
     // Sequential-Halving round, so retaining both sets is useful for audit/UI.
@@ -277,8 +319,9 @@ private:
                               const std::vector<Action> &actions);
     static bool actionTargetsEnemy(const BattleContext &state,
                                    const Action &action);
-    static std::string actionLabel(const BattleContext &state,
+    static ActionLabel actionLabel(const BattleContext &state,
                                    const Action &action);
+    static std::string formatActionLabel(const Edge &edge);
     int selectPuct(const Node &node) const;
     int selectFullGumbelInterior(const Node &node,
                                  bool *usedCoverage = nullptr) const;
@@ -290,8 +333,11 @@ private:
         std::vector<double> scaled;
     };
     QTransformDetails completedQDetails(const Node &node) const;
-    std::vector<double> completedQTransform(const Node &node) const;
-    std::vector<double> rootCompletedScores(bool includeNoise) const;
+    void fillCompletedQ(const Node &node, std::vector<double> &scaled,
+                        std::vector<double> *raw = nullptr,
+                        std::vector<double> *normalized = nullptr) const;
+    const std::vector<double> &completedQTransform(const Node &node) const;
+    const std::vector<double> &rootCompletedScores(bool includeNoise) const;
     std::vector<double> rootPolicyTarget() const;
     // Recompute the structural value after a leaf backup.  An Edge is a
     // chance/world-line aggregation over its public-state children; a Node

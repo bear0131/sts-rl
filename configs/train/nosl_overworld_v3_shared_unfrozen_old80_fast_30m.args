@@ -1,0 +1,14 @@
+@configs/train/nosl_paper_replay_fresh10_u40_4x_20260915.args
+@configs/train/nosl_overworld_v3_shared_unfrozen_old80_lr5e-5_30m.args
+--n-envs
+96
+--envs-per-worker
+16
+--n-steps
+128
+--batch-size
+1536
+--gradient-accumulation-steps
+1
+--n-epochs
+1
