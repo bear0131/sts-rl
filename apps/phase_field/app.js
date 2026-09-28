@@ -96,6 +96,9 @@
     const from = positions[edge.from];
     const to = positions[edge.to];
     const active = edge.gate === room.globalPhase;
+    const target = Engine.targetPhases(room);
+    const aligned = room.nodes[edge.from].phase === target[edge.from]
+      && room.nodes[edge.to].phase === target[edge.to];
     const selected = selectedNode === edge.from || selectedNode === edge.to;
     context.save();
     context.beginPath();
@@ -108,10 +111,12 @@
     context.setLineDash(active ? [] : [2, 8]);
     context.strokeStyle = active
       ? phaseColor(room.globalPhase, 0.7, 25)
+      : aligned
+        ? "rgba(124, 246, 211, .58)"
       : selected
         ? "rgba(202, 213, 255, .42)"
         : "rgba(163, 174, 229, .13)";
-    context.shadowBlur = active ? 13 : 0;
+    context.shadowBlur = active || aligned ? 13 : 0;
     context.shadowColor = context.strokeStyle;
     context.stroke();
     context.restore();
@@ -123,6 +128,8 @@
     const pulse = 1 + Math.sin(time * 0.002 + nodeIndex) * 0.04;
     const radius = (active ? 29 : 24) * pulse;
     const color = phaseColor(node.phase, 0.9, state.run.paletteOffset);
+    const target = Engine.targetPhases(room);
+    const aligned = node.phase === target[nodeIndex];
 
     context.save();
     context.translate(position.x, position.y);
@@ -144,6 +151,17 @@
     context.shadowColor = color;
     context.fill();
     context.stroke();
+
+    if (aligned) {
+      context.beginPath();
+      context.arc(0, 0, radius + 7, 0, Math.PI * 2);
+      context.setLineDash([2, 4]);
+      context.lineWidth = 1;
+      context.strokeStyle = "rgba(124, 246, 211, .7)";
+      context.shadowBlur = 12;
+      context.shadowColor = "rgba(124, 246, 211, .8)";
+      context.stroke();
+    }
 
     context.rotate(-((node.phase * Math.PI) / 3 + (node.spin < 0 ? 0.35 : 0)));
     context.beginPath();
@@ -194,23 +212,47 @@
     const target = Engine.targetPhases(room);
     const centerX = width / 2;
     const centerY = height / 2;
+    const positions = nodePositions(room, width, height);
     const radius = Math.min(width, height) * 0.28;
     context.save();
-    context.strokeStyle = "rgba(190, 201, 255, .1)";
-    context.lineWidth = 1;
+    context.strokeStyle = "rgba(190, 201, 255, .14)";
+    context.lineWidth = 0.9;
     context.beginPath();
     context.arc(centerX, centerY, radius * 1.8, 0, Math.PI * 2);
     context.stroke();
-    target.forEach((phase, index) => {
-      const angle = -Math.PI / 2 + (index * Math.PI * 2) / target.length;
-      const x = centerX + Math.cos(angle) * radius;
-      const y = centerY + Math.sin(angle) * radius;
+
+    room.edges.forEach((edge) => {
+      const from = positions[edge.from];
+      const to = positions[edge.to];
+      const bend = (edge.id % 2 ? 1 : -1) * Math.min(12, Math.abs(to.x - from.x) * 0.18 + 6);
       context.beginPath();
-      context.arc(x, y, 4, 0, Math.PI * 2);
+      context.moveTo(from.x, from.y);
+      context.quadraticCurveTo(
+        (from.x + to.x) / 2 + bend,
+        (from.y + to.y) / 2 - bend,
+        to.x,
+        to.y,
+      );
+      context.setLineDash([2, 3]);
+      context.lineWidth = 1.1;
+      context.strokeStyle = phaseColor(edge.gate, 0.34, 25);
+      context.stroke();
+    });
+
+    target.forEach((phase, index) => {
+      const { x, y } = positions[index];
+      context.beginPath();
+      context.arc(x, y, 5, 0, Math.PI * 2);
       context.fillStyle = phaseColor(phase, 0.85, state.run.paletteOffset);
       context.shadowBlur = 10;
       context.shadowColor = context.fillStyle;
       context.fill();
+      context.beginPath();
+      context.arc(x, y, 9, 0, Math.PI * 2);
+      context.setLineDash([2, 3]);
+      context.lineWidth = 1;
+      context.strokeStyle = "rgba(225, 231, 255, .35)";
+      context.stroke();
     });
     context.restore();
   }
