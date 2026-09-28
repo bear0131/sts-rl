@@ -31,6 +31,7 @@ param(
     [long]$ResumeStep = 0,
     [string]$ResumeRoot = "",
     [switch]$ForkResume,
+    [switch]$PreserveForkEnvironments,
     [ValidatePattern("^[A-Za-z0-9_-]+$")]
     [string]$ResumeSourceRunId = "",
     [ValidatePattern("^[A-Za-z0-9_-]+$")]
@@ -75,6 +76,9 @@ if ($ForkResume -and ($ResumeStep -le 0 -or -not $ResumeRoot -or -not $ResumeSou
 }
 if (-not $ForkResume -and $ResumeRoot) {
     throw "ResumeRoot is only supported with ForkResume."
+}
+if ($PreserveForkEnvironments -and -not $ForkResume) {
+    throw "PreserveForkEnvironments requires ForkResume."
 }
 if ($TimeoutSeconds -le 0 -or $PollSeconds -le 0) {
     throw "TimeoutSeconds and PollSeconds must be positive."
@@ -240,9 +244,13 @@ function Get-LaunchCommand($Peer) {
     }
     $resumeRootLine = "unset NOSL_RESUME_ROOT"
     $forkResumeLine = "unset NOSL_FORK_RESUME"
+    $preserveForkEnvironmentsLine = "unset NOSL_FORK_PRESERVE_ENVIRONMENTS"
     if ($ForkResume) {
         $resumeRootLine = "export NOSL_RESUME_ROOT=$(ConvertTo-BashQuote (Resolve-RemotePath $ResumeRoot))"
         $forkResumeLine = "export NOSL_FORK_RESUME=1"
+        if ($PreserveForkEnvironments) {
+            $preserveForkEnvironmentsLine = "export NOSL_FORK_PRESERVE_ENVIRONMENTS=1"
+        }
     }
     $overridesLine = "unset NOSL_OVERRIDES_FILE"
     if ($OverridesFile) {
@@ -270,6 +278,7 @@ export STS_LIGHTSPEED_BUILD_DIR=$build
 $resumeLine
 $resumeRootLine
 $forkResumeLine
+$preserveForkEnvironmentsLine
 $overridesLine
 bash experiments/launchers/launch_nosl_replay.sh $($Peer.Rank)
 "@
@@ -353,7 +362,7 @@ echo "running=`$running latest=`${latest:-none}"
 }
 
 if ($Action -eq "plan") {
-    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints save_every_updates=$SaveEveryUpdates"
+    Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume preserve_fork_environments=$PreserveForkEnvironments resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints save_every_updates=$SaveEveryUpdates"
     foreach ($peer in $Peers) {
         Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
     }

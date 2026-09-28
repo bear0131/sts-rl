@@ -77,10 +77,13 @@ if [ -n "${NOSL_RESUME_STEP:-}" ]; then
     resume_state="$run_dir/recovery/rank$rank/$generation"
   fi
   if [ "${NOSL_FORK_RESUME:-0}" = 1 ]; then
-    # A geometry-changing fork must explicitly discard source VecEnv state.
-    # Keep this in the launcher so the safety contract does not depend on an
-    # overrides file carrying the flag by accident.
-    extra+=(--fork-state "$resume_state" --fork-reset-environments)
+    extra+=(--fork-state "$resume_state")
+    if [ "${NOSL_FORK_PRESERVE_ENVIRONMENTS:-0}" != 1 ]; then
+      # Geometry-changing forks discard source VecEnv state by default.  An
+      # explicit opt-in may preserve it when n_envs is unchanged; the runtime
+      # validates the restored state count before training starts.
+      extra+=(--fork-reset-environments)
+    fi
   else
     extra+=(--resume-state "$resume_state")
   fi

@@ -1,0 +1,5 @@
+@configs/train/nosl_overworld_v3_shared_unfrozen_old90_runtime.args
+--envs-per-worker
+8
+--total-steps
+20545536

@@ -17,7 +17,9 @@ def test_fork_resume_explicitly_resets_environment_geometry():
         flags=re.DOTALL,
     )
     assert fork_branch is not None
-    assert '--fork-state "$resume_state" --fork-reset-environments' in fork_branch.group("body")
+    assert 'extra+=(--fork-state "$resume_state")' in fork_branch.group("body")
+    assert 'NOSL_FORK_PRESERVE_ENVIRONMENTS:-0' in fork_branch.group("body")
+    assert 'extra+=(--fork-reset-environments)' in fork_branch.group("body")
     assert 'resume_state="$NOSL_RESUME_ROOT/rank$rank/$generation"' in launcher
     assert 'extra+=(--resume-state "$resume_state")' in launcher
 
@@ -25,6 +27,13 @@ def test_fork_resume_explicitly_resets_environment_geometry():
 def test_fourway_manager_resolves_fork_generation_path():
     manager = (ROOT / "experiments/launchers/manage_nosl_replay_4way.ps1").read_text()
     assert '$(Resolve-RemotePath $ResumeRoot)/rank$($Peer.Rank)/$generation' in manager
+
+
+def test_fourway_manager_requires_explicit_environment_preservation_opt_in():
+    manager = (ROOT / "experiments/launchers/manage_nosl_replay_4way.ps1").read_text()
+    assert '[switch]$PreserveForkEnvironments' in manager
+    assert 'PreserveForkEnvironments requires ForkResume.' in manager
+    assert 'export NOSL_FORK_PRESERVE_ENVIRONMENTS=1' in manager
 
 
 def test_launcher_exposes_checkpoint_cadence_override():

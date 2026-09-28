@@ -167,6 +167,35 @@ def test_old90_resume_preset_preserves_u40_geometry_and_old80_deltas():
     } == {"nosl_is_az_replay_max_old_fraction": (0.80, 0.90)}
 
 
+@pytest.mark.parametrize(("name", "envs_per_worker"), [
+    ("nosl_overworld_v3_shared_unfrozen_old90_epw8_probe.args", 8),
+    ("nosl_overworld_v3_shared_unfrozen_old90_epw16_probe.args", 16),
+])
+def test_old90_worker_grouping_probes_only_change_grouping_and_duration(
+    name, envs_per_worker,
+):
+    parser = build_parser()
+    base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip"]
+    production = vars(parser.parse_args([
+        *base,
+        f"@{ROOT / 'configs/train/nosl_overworld_v3_shared_unfrozen_old90_runtime.args'}",
+    ]))
+    probe = vars(parser.parse_args([*base, f"@{ROOT / 'configs/train' / name}"]))
+
+    assert probe["n_envs"] == 96
+    assert probe["n_steps"] == 128
+    assert probe["envs_per_worker"] == envs_per_worker
+    assert probe["total_steps"] == 20_545_536
+    assert {
+        key: (production[key], probe[key])
+        for key in production
+        if production[key] != probe[key]
+    } == {
+        "envs_per_worker": (4, envs_per_worker),
+        "total_steps": (30_000_000, 20_545_536),
+    }
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
