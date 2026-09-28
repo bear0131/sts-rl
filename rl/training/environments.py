@@ -312,6 +312,19 @@ class TrainingStateWrapper(gym.Wrapper):
         saved_wrappers = state.get("wrappers", [])
         kinds = [self._kind(wrapper) for wrapper in wrappers]
         saved_kinds = [item.get("kind") for item in saved_wrappers]
+        if saved_kinds == ["startup_occupancy", *kinds]:
+            # The factory no longer installs this retired warmup wrapper, but
+            # released historical snapshots still own its episode bookkeeping.
+            values = saved_wrappers[0]["state"]
+            if not values["released"]:
+                raise ValueError(
+                    "unreleased retired occupancy state requires an environment-reset fork"
+                )
+            self.env = StartupOccupancyWrapper(
+                self.env, max_episode_steps=values["max_episode_steps"], seed=0,
+            )
+            wrappers, base = self._chain()
+            kinds = [self._kind(wrapper) for wrapper in wrappers]
         if kinds != saved_kinds:
             raise ValueError(
                 f"training wrapper mismatch: expected {saved_kinds}, got {kinds}"

@@ -99,11 +99,14 @@ def _training_env():
     return TrainingStateWrapper(occupancy), occupancy, time_limit, wrapped
 
 
-def test_training_wrapper_restores_occupancy_reward_and_time_limit_state():
+@pytest.mark.parametrize('factory_omits_occupancy', [False, True])
+def test_training_wrapper_restores_occupancy_reward_and_time_limit_state(factory_omits_occupancy):
     env, occupancy, time_limit, reward = _training_env()
     restored, restored_occupancy, restored_time_limit, restored_reward = (
         _training_env()
     )
+    if factory_omits_occupancy:
+        restored.env = restored_occupancy.env
     try:
         env.reset(seed=321)
         occupancy._target_age = 2
@@ -117,12 +120,33 @@ def test_training_wrapper_restores_occupancy_reward_and_time_limit_state():
         state = env.export_training_state()
         expected_observation = env.unwrapped._obs()
         actual_observation, _info = restored.restore_training_state(state)
+        restored_occupancy = restored.env
         _assert_observation_equal(expected_observation, actual_observation)
         assert restored_occupancy.startup_occupancy_state() == (
             occupancy.startup_occupancy_state()
         )
         assert restored_time_limit._elapsed_steps == time_limit._elapsed_steps
         assert restored_reward._prev == reward._prev
+        for _ in range(8):
+            action = _first_action(env)
+            expected = env.step(action)
+            actual = restored.step(action)
+            _assert_observation_equal(expected[0], actual[0])
+            assert expected[1:4] == actual[1:4]
+    finally:
+        env.close()
+        restored.close()
+
+
+def test_retired_unreleased_occupancy_cannot_silently_freeze_restored_factory():
+    env, occupancy, *_ = _training_env()
+    restored, old_wrapper, *_ = _training_env()
+    restored.env = old_wrapper.env
+    try:
+        env.reset(seed=321)
+        with pytest.raises(ValueError, match='environment-reset fork'):
+            restored.restore_training_state(env.export_training_state())
+        assert not isinstance(restored.env, StartupOccupancyWrapper)
     finally:
         env.close()
         restored.close()

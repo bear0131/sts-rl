@@ -31,6 +31,9 @@ schema 2 恢复原生环境、wrapper 状态、当前观测、episode 窗口和�
 pending labels，并校验恢复观测摘要。schema 1 的旧 bundle 只恢复 learner，需重启
 环境。显式 `--fork-reset-environments` 也会重启环境并丢弃环境局部进度；改变环境
 数量的 fork 必须使用这一选项。恢复与 fork 不重新初始化已训练的 shared embeddings。
+新环境不安装已退役的 occupancy 预热 wrapper；旧 schema 2 快照若记录已 release
+的 wrapper，恢复时重建其 episode bookkeeping。尚未 release 的旧快照明确拒绝，
+需用 `--fork-reset-environments` 重启环境，避免恢复后永久等待。
 learner/environment 使用 pickle protocol 5 保存 NumPy buffer，保持 bundle schema
 不变；历史 protocol 2 仍可读取。实际恢复须使用对应 rank 的完整 bundle。
 同一下一训练 batch 的 learner/Adam/RNG 有逐位回归；异步搜索调度及 CUDA 非确定性
