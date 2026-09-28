@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#090b16">
+    <title>◇</title>
+    <link rel="stylesheet" href="styles.css?v=game01">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <button id="restart" class="icon-button" type="button" aria-label="重新开始整局">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M11 24a13 13 0 1 1 4 10M11 24V12m0 12h12"/></svg>
+        </button>
+        <div id="route" class="route" aria-label="关卡路线"></div>
+        <div id="chapterMark" class="chapter-mark" aria-hidden="true"></div>
+      </header>
+
+      <section class="arena" aria-label="战斗区域">
+        <div class="arena-glow" aria-hidden="true"></div>
+        <div id="history" class="history" aria-label="已经发生的敌方攻击"></div>
+        <div class="combatants">
+          <div id="player" class="player" aria-label="玩家"></div>
+          <div class="space" aria-hidden="true"></div>
+          <div id="enemies" class="enemies" aria-label="怪物"></div>
+        </div>
+        <div class="scale" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        </div>
+      </section>
+
+      <section id="controls" class="controls" aria-label="操作">
+        <button id="attack" class="action attack" type="button" aria-label="攻击所选怪物">
+          <span class="action-energy" aria-hidden="true"></span>
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M13 55 56 12M44 12h12v12M18 42l12 12M10 62l9-9"/></svg>
+        </button>
+        <button id="charge" class="action charge" type="button" aria-label="蓄势">
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M36 10v14M36 48v14M10 36h14M48 36h14M20 20l10 10M42 42l10 10M52 20 42 30M30 42 20 52"/><circle cx="36" cy="36" r="7"/></svg>
+        </button>
+        <button id="endTurn" class="action end" type="button" aria-label="结束回合">
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M16 36a20 20 0 1 1 8 16M16 36V18m0 18h18"/><path d="m35 26 12 10-12 10"/></svg>
+        </button>
+      </section>
+
+      <div id="outcome" class="outcome" hidden>
+        <div id="resultSymbol" class="result-symbol" aria-hidden="true"></div>
+        <button id="continue" class="continue" type="button" aria-label="继续">
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M16 36h38m-16-16 16 16-16 16"/></svg>
+        </button>
+      </div>
+    </main>
+    <script src="engine.js"></script>
+    <script src="app.js?v=game01"></script>
+  </body>
+</html>

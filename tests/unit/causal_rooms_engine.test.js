@@ -1,0 +1,106 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const test = require("node:test");
+const Game = require("../../apps/causal_rooms/engine.js");
+
+function turn(run, action, target = 0) {
+  if (action === "attack") run = Game.attack(run, target).run;
+  if (action === "charge") run = Game.charge(run).run;
+  return run.status === "active" ? Game.endTurn(run).run : run;
+}
+
+function finish(run, actions) {
+  for (const [action, target] of actions) run = turn(run, action, target);
+  assert.equal(run.status, "won");
+  return run;
+}
+
+test("the three original encounters preserve the intended contrast", () => {
+  let run = Game.createRun();
+  for (const expected of [9, 9]) {
+    run = finish(run, Array.from({ length: 4 }, () => ["attack", 0]));
+    assert.equal(run.battle.loss, expected);
+    assert.equal(run.battle.perfect, true);
+    run = Game.continueRun(run);
+  }
+  const conventional = finish(run, [["attack", 0], ["attack", 0], ["attack", 0]]);
+  assert.equal(conventional.battle.loss, 4);
+  assert.equal(conventional.battle.perfect, false);
+  assert.equal(conventional.hp, 10);
+  const continued = Game.continueRun(conventional);
+  assert.equal(continued.stageIndex, 3);
+  assert.equal(continued.hp, Game.CHAPTER_HP[1]);
+  assert.equal(continued.completed[2].perfect, false);
+  const patient = finish(run, [["wait"], ["wait"], ["attack", 0]]);
+  assert.equal(patient.battle.loss, 2);
+  assert.equal(patient.battle.perfect, true);
+  assert.deepEqual(patient.battle.history, [1, 1]);
+});
+
+test("a lethal experiment can retry locally without erasing earlier rooms", () => {
+  let run = Game.createRun();
+  for (const _ of [0, 1]) {
+    run = finish(run, Array.from({ length: 4 }, () => ["attack", 0]));
+    run = Game.continueRun(run);
+  }
+  for (let index = 0; index < 20 && run.status === "active"; index += 1) {
+    run = turn(run, "wait");
+  }
+  assert.equal(run.status, "dead");
+  const retried = Game.retry(run);
+  assert.equal(retried.status, "active");
+  assert.equal(retried.stageIndex, 2);
+  assert.equal(retried.completed.length, 2);
+  assert.ok(retried.hp > 0);
+  assert.equal(retried.battle.retried, true);
+});
+
+test("a full low-loss route can finish without requiring zero damage", () => {
+  let run = Game.createRun();
+  while (run.status !== "complete") {
+    const stage = Game.currentStage(run);
+    if (stage.kind === "odd" || stage.kind === "reactive") {
+      run = finish(run, Array.from({ length: 4 }, () => ["attack", 0]));
+    } else if (stage.kind === "mirror") {
+      run = finish(run, [["wait"], ["wait"], ["attack", 0]]);
+    } else if (stage.kind === "charge") {
+      run = finish(run, stage.lesson ? [["attack", 0]] : [["charge"], ["attack", 0]]);
+    } else if (stage.kind === "bond") {
+      const first = stage.linked ? stage.enemyHps.indexOf(3) :
+        stage.enemyHps.indexOf(Math.min(...stage.enemyHps));
+      const second = 1 - first;
+      run = finish(run, [
+        ...Array.from({ length: stage.enemyHps[first] }, () => ["attack", first]),
+        ...Array.from({ length: stage.enemyHps[second] }, () => ["attack", second]),
+      ]);
+    } else {
+      run = finish(run, stage.guarded
+        ? [["attack", 0], ["attack", 1], ["attack", 0], ["attack", 1]]
+        : [["attack", 0], ["attack", 0], ["attack", 1], ["attack", 1]]);
+    }
+    assert.equal(run.battle.perfect, true, `stage ${run.stageIndex}`);
+    run = Game.continueRun(run);
+  }
+  assert.equal(run.completed.length, Game.STAGES.length);
+  assert.equal(run.completed.every((entry) => entry.perfect), true);
+});
+
+test("counterexamples penalize the rehearsed action but allow recovery", () => {
+  const go = (index, actions) => {
+    let run = Game.createRun();
+    run.stageIndex = index;
+    run.hp = run.maxHp = 46;
+    run.battle = {
+      ...run.battle,
+      startHp: 46,
+      enemies: Game.STAGES[index].enemyHps.map((hp, id) => ({ id, hp, maxHp: hp,
+        bonus: 0, pendingBonus: 0, shield: 0, pendingShield: 0 })),
+    };
+    return finish(run, actions);
+  };
+  assert.equal(go(9, [["attack", 0], ["attack", 0], ["attack", 0]]).battle.loss, 4);
+  assert.equal(go(16, [["attack", 0], ["attack", 1], ["attack", 1], ["attack", 1]]).battle.loss, 9);
+  assert.equal(go(23, [["attack", 0], ["attack", 0], ["attack", 0],
+    ["attack", 1], ["attack", 1], ["attack", 1]]).battle.loss, 7);
+});
