@@ -51,6 +51,7 @@ def test_random_stream_record_is_reproducible():
     config = StateVectorConfig()
     left = build_record(7, config, random.Random(17))
     right = build_record(7, config, random.Random(17))
+    assert left["metadata"]["teacher"] == "approximate-ironclad-v2-card-identity"
     assert json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
 
 
@@ -143,7 +144,7 @@ def test_multihit_damage_recomputes_each_independent_repeat_invocation():
                 "base_damage": 0, "adjusted_damage": 0, "hits": 0,
                 "gone": False, "powers": {"Vulnerable": 2},
             } for slot in range(3)],
-            "hand": [], "draw": [], "discard": [], "exhaust": [],
+            "hand": [{"id": "Sword Boomerang", "up": 0}], "draw": [], "discard": [], "exhaust": [],
         },
         "global": {"relics": [], "relic_counters": []},
     }
@@ -188,7 +189,7 @@ def test_whirlwind_uses_exact_pre_payment_energy_for_hits():
                 }
                 for slot in range(2)
             ],
-            "hand": [], "draw": [], "discard": [], "exhaust": [],
+            "hand": [{"id": "Whirlwind", "up": 0}], "draw": [], "discard": [], "exhaust": [],
         },
         "global": {"relics": [], "relic_counters": []},
     }

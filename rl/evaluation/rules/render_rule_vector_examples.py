@@ -199,6 +199,7 @@ def _fly_kick() -> SerializedVectorEvents:
         enemy_hp=50, enemy_block=0, draw=5, discard=1,
         enemy_powers={"Vulnerable": 2},
     )
+    state["combat"]["hand"] = [{"id": "Dropkick", "up": 0}]
     return _serialize_generated(state, {"id": "Dropkick", "up": 0}, StateVectorConfig(), 0)
 
 
@@ -208,6 +209,7 @@ def _pommel_with_sundial() -> SerializedVectorEvents:
         enemy_hp=60, enemy_block=0, draw=0, discard=3,
         relics=("Sundial",), relic_counters=(2,),
     )
+    state["combat"]["hand"] = [{"id": "Pommel Strike", "up": 0}]
     return _serialize_generated(
         state, {"id": "Pommel Strike", "up": 0}, StateVectorConfig(), 0
     )

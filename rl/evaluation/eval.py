@@ -119,6 +119,8 @@ def main():
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:
         raise ValueError('paired combat auditing requires deterministic policy decisions')
+    if args.solver == 'turn-planner' and args.compare_combats:
+        raise ValueError('paired CombatAuditStrategy currently requires the legacy action contract')
     if args.upper_strategy != 'model' and args.task != 'wholerun':
         raise ValueError('--upper-strategy requires wholerun')
     if args.combat_search_depth > 0:

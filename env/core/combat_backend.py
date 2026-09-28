@@ -85,9 +85,9 @@ class SimCombatBackend(SimGameEnv):
         if self.bc is None or not self.bc.is_battle_over or self._lost():
             return
         self.combats_won += 1
-        # gc.cur_hp is stale mid-run; the bc owns the player's HP. Carry the live
-        # post-fight HP onto the gc so create_battle starts the next fight there.
-        self.gc.cur_hp = self.bc.to_dict()["player"]["hp"]
+        # Commit the same persistent state as whole-run battle exit, but retain
+        # the gauntlet contract: no victory healing or reward-screen callback.
+        self.bc.commit_battle_state(self.gc, heal_on_victory=False)
         self.bc = sts.create_battle(self.gc, self._next_encounter(self.gc))
         self._prev_hp = self.gc.cur_hp
 

@@ -1394,6 +1394,8 @@ std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
         throw std::invalid_argument("draw-selection remap requires one matching card entity in each pile");
     }
     const auto found = std::find_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity);
+    // Re-determinization may reorder this entity, never substitute an equal-name
+    // card or change persistent state such as Ritual Dagger's specialData.
     if (card.id != found->id || card.specialData != found->specialData ||
         card.upgraded != found->upgraded || card.cost != found->cost ||
         card.costForTurn != found->costForTurn || card.freeToPlayOnce != found->freeToPlayOnce ||
@@ -2643,6 +2645,10 @@ PYBIND11_MODULE(slaythespire, m) {
                 !action.isValidAction(bc)) {
                 throw std::invalid_argument("boundary execution requires a legal live action before the enemy boundary");
             }
+            // This is a persistent control flag, not a boundary marker. A legal
+            // action may stop at ordinary player input or at a pending choice
+            // (e.g. Nilry's Codex) before enemy execution has finished. Keeping
+            // it armed also catches card-triggered early END, e.g. Time Warp.
             bc.stopAfterEnemyTurn = true;
             action.execute(bc);
             return rawCombatState(bc);
@@ -2662,6 +2668,9 @@ PYBIND11_MODULE(slaythespire, m) {
 #endif
             boundary.stopAfterEnemyTurn = true;
             action.execute(boundary);
+            // END can legitimately pause for a choice before the enemy phase,
+            // notably Nilry's Codex. The raw result preserves that distinction;
+            // callers needing to continue it must use a clone and the mutator.
             return rawCombatState(boundary);
         }, pybind11::arg("action_bits"),
            "execute END once on a clone and return pending-choice, post-enemy-boundary, or terminal raw state; never mutates the source")
@@ -2961,6 +2970,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def_property_readonly("outcome", [](const BattleContext &bc) { return static_cast<int>(bc.outcome); })
         .def_property_readonly("input_state", [](const BattleContext &bc) { return static_cast<int>(bc.inputState); })
         .def_property_readonly("is_battle_over", [](const BattleContext &bc) { return bc.outcome != Outcome::UNDECIDED; })
+        .def("commit_battle_state", &BattleContext::commitBattleState,
+             pybind11::arg("gc"), pybind11::arg("heal_on_victory") = true,
+             "commit persistent combat state without invoking run screen callbacks")
         .def("exit_battle", [](const BattleContext &bc, GameContext &gc) { bc.exitBattle(gc); },
              "write combat results back into the GameContext (hp/gold/deck/rng) and open the reward screen on victory")
         .def("drink_potion", [](BattleContext &bc, int idx, int target) { bc.drinkPotion(idx, target); },
@@ -2983,4 +2995,3 @@ PYBIND11_MODULE(slaythespire, m) {
 }
 
 // os.add_dll_directory("C:\\Program Files\\mingw-w64\\x86_64-8.1.0-posix-seh-rt_v6-rev0\\mingw64\\bin")
-

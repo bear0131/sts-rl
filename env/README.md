@@ -14,17 +14,37 @@
 纯 encode/vocab/action 模块不加载 simulator；原生环境与工厂加载 simulator。env 不依赖 rl/apps/tools/tests，依赖方向由 tests/unit/test_repository_layout.py 检查。
 共享状态规范化在 bridge/schemas；模型额外观测裁剪在 rl/policies/model.py。不要因当前模型不使用某字段就改变环境实际状态或动作语义。
 
-测试在 ../tests。已知实体槽位、pending 来源、候选区域、gauntlet 持久状态问题仍见根 TODO F01/F02/F03/F07；目录整理没有修复这些语义缺陷。
+测试在 ../tests。已知实体槽位、pending 来源、候选区域问题仍见根 TODO F01/F02/F03；gauntlet 通过 native commit_battle_state 保存持久状态，同时禁用胜利回血与奖励界面回调；目录整理没有修复这些语义缺陷。
 
 ## 完整战斗动作契约 native-v1
 
-新策略可显式创建 `SlayTheSpireEnv(combat_action_contract="native-v1")`。默认 `legacy`
-不变，旧 checkpoint 的动作、mask 和观测均不重映射。`native_combat_actions()` 返回当前
-完整原生动作；`step_native_combat(bits)` 验证后复用 wrapper 的奖励和终局路径；
-`combat_selection_candidates()` 保留 draw/discard/exhaust/generated 的真实候选身份。
-共享 evaluation runner 通过 `Decision(..., native_action=bits)` 执行这一契约。
+新策略可显式创建 `SlayTheSpireEnv(combat_action_contract='native-v1')`。
+默认 `legacy` 不变；71-id combat codec、181-id whole-run mask、神经观测和旧
+checkpoint 的动作含义均未重映射。该模式不为旧神经策略补齐选牌 logits，也
+不修复旧 NOSL 的候选表示；不能把它当作旧训练动作空间的透明升级。
 
-该模式不会给旧策略补齐 logits，也不是旧动作空间的透明升级。长选牌候选和 MULTI 子集
-可以在 thin mask 之外继续执行；draw-select 的 NOSL 副本必须用原生实体身份重映射，不能
-把 sampled 索引直接提交给真实环境。回归入口为
-`tests/integration/test_native_action_contract.py` 与 `tests/unit/test_native_action_codec.py`。
+- `native_combat_actions()` 返回完整原生 uint32 动作的 tuple，保留 source/target
+  索引，包含卡牌、单选、原生 `rule_actions` 支持的全部 MULTI 子集、结束回合和
+  可饮用药水。弃药不在此版本契约内。依赖显式 native 构建提供 `rule_actions`。
+- `step_native_combat(bits)` 先验证当前完整动作集合，再复用原生执行、结算、奖励
+  和终局路径；非法动作或未完成的薄层 target/multi 选择抛错，不推进状态。
+- `combat_selection_candidates()` 返回 `SelectionCandidate`，包括版本、context、
+  zone、native_index、action_bits 和卡牌 `(native_id, upgrades)`；CODEX skip
+  的 card 是 None。只暴露当前单选界面的合法候选，draw/discard/exhaust 使用真实
+  区域，绝不按手牌十槽截断或悄悄压缩索引。MULTI 通过完整 bitset 动作表达。
+- `Decision(None, source, native_action=bits)` 由共用 evaluation runner 执行，
+  与 thin action 互斥。完整动作不经过 thin mask；wrapper 必须显式提供该执行
+  方法并承担自己的 transition 处理，runner 不绕过 wrapper。info/result row 的
+  `combat_action_contract` 及 strategy 同名属性的 manifest 记录所用契约。
+
+native-v1 仅在完整合法集合也为空时将战斗判作 dead_screen。因此当前 thin mask
+可以全 False，而完整候选仍可执行；旧模型必须继续使用 legacy 默认。分支复制保持
+候选身份。**现有 NOSL redeterminize 会重排 draw**：
+已打开的 draw-select 不允许将原环境索引带入重排后的副本；新 planner 应先采样，
+再用 `remap_draw_selection_from` 按原生实体身份映射选择。不能先执行选择，否则排队的
+Dark Embrace 等效果可能读到真实未来。native_index 是执行句柄，不能用来
+推断后续抽牌顺序。此阶段没有修改旧 NOSL/训练语义。
+
+回归入口：`tests/integration/test_native_action_contract.py`。legacy 的 F03 strict
+xfail 保留以记录兼容边界；新增契约的长候选、分支隔离和 71/181 checkpoint 接入
+测试均为正常断言，不能用旧 xfail 掩盖新模式失败。

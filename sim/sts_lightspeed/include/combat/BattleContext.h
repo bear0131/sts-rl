@@ -119,7 +119,8 @@ namespace sts {
         void initRelics(const GameContext &gc);
 
         void exitBattle(GameContext &g) const;
-        void updateRelicsOnExit(GameContext &g) const;
+        void commitBattleState(GameContext &g, bool healOnVictory = true) const;
+        void updateRelicsOnExit(GameContext &g, bool healOnVictory = true) const;
         void updateCardsOnExit(Deck &d) const; // for cards like ritual dagger, and eventually lesson learned results
 
 // ****************************************

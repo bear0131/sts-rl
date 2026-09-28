@@ -459,7 +459,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     //RelicCables -> OnStartOfTurn again for orb 0
 }
 
-void BattleContext::exitBattle(GameContext &g) const {
+void BattleContext::commitBattleState(GameContext &g, bool healOnVictory) const {
     // do this first so that darkstone periapt is overridden by curHp and maxHp are set afterwards
     const auto &m = monsters.arr[0];
     if (m.id == MonsterId::WRITHING_MASS && m.miscInfo) {
@@ -490,7 +490,7 @@ void BattleContext::exitBattle(GameContext &g) const {
     // todo lesson learned bitset
 
     // relic counters
-    updateRelicsOnExit(g);
+    updateRelicsOnExit(g, healOnVictory);
 
     // cards
     updateCardsOnExit(g.deck);
@@ -510,6 +510,10 @@ void BattleContext::exitBattle(GameContext &g) const {
         }
     }
 
+}
+
+void BattleContext::exitBattle(GameContext &g) const {
+    commitBattleState(g);
     if (outcome == Outcome::PLAYER_LOSS) {
         g.outcome = GameOutcome::PLAYER_LOSS;
     } else {
@@ -521,7 +525,7 @@ void BattleContext::exitBattle(GameContext &g) const {
             + g.ascension + g.floorNum + potionRng.counter + cardRandomRng.counter;
 }
 
-void BattleContext::updateRelicsOnExit(GameContext &g) const {
+void BattleContext::updateRelicsOnExit(GameContext &g, bool healOnVictory) const {
     for (auto &r : g.relics.relics) {
         switch (r.id) {
             case RelicId::HAPPY_FLOWER:
@@ -570,19 +574,19 @@ void BattleContext::updateRelicsOnExit(GameContext &g) const {
                 break;
 
             case RelicId::BURNING_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
+                if (healOnVictory && outcome == Outcome::PLAYER_VICTORY) {
                     g.playerHeal(6);
                 }
                 break;
 
             case RelicId::BLACK_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
+                if (healOnVictory && outcome == Outcome::PLAYER_VICTORY) {
                     g.playerHeal(12);
                 }
                 break;
 
             case RelicId::MEAT_ON_THE_BONE:
-                if (outcome == Outcome::PLAYER_VICTORY && g.curHp <= g.maxHp / 2) {
+                if (healOnVictory && outcome == Outcome::PLAYER_VICTORY && g.curHp <= g.maxHp / 2) {
                     g.playerHeal(12);
                 }
                 break;
