@@ -76,3 +76,41 @@ test("an echo is history-bound and fires only through global evolution", () => {
     Engine.modulo(phaseBefore + once.nodes[0].spin + 2),
   );
 });
+
+test("room targets stay fixed across actions and match the winning field", () => {
+  for (let index = 0; index < Engine.ROOM_DEFINITIONS.length; index += 1) {
+    const room = Engine.createRoom(index);
+    const target = Engine.targetPhases(room);
+    assert.deepEqual(target, Engine.ROOM_DEFINITIONS[index].target);
+    target[0] = 99;
+    assert.deepEqual(Engine.targetPhases(room), Engine.ROOM_DEFINITIONS[index].target);
+    const evolved = Engine.advanceWorld(room).room;
+    assert.deepEqual(Engine.targetPhases(evolved), Engine.ROOM_DEFINITIONS[index].target);
+    if (evolved.outcome === "success") {
+      assert.deepEqual(evolved.nodes.map((node) => node.phase), evolved.target);
+    }
+  }
+});
+
+test("global evolution records independent stages with exact event identities", () => {
+  const seeded = Engine.applyLocalAction(Engine.createRoom(2), "echo", 0).room;
+  const once = Engine.advanceWorld(seeded).room;
+  const twice = Engine.advanceWorld(once).room;
+  assert.deepEqual(twice.trace.map((frame) => frame.type),
+    ["start", "drift", "propagate", "echo", "reposition"]);
+  assert.equal(twice.trace[0].pulse, 1);
+  assert.equal(twice.trace[1].pulse, 2);
+  assert.equal(twice.trace[0].globalPhase, 1);
+  assert.equal(twice.trace[1].globalPhase, 2);
+  assert.deepEqual(twice.trace[2].activeEdgeIds,
+    twice.edges.filter((edge) => edge.gate === 2).map((edge) => edge.id));
+  assert.deepEqual(twice.trace[3].echoNodeIds, [0]);
+  assert.equal(twice.trace[0].echoes.length, 1);
+  assert.equal(twice.trace[3].echoes.length, 0);
+  assert.equal(twice.trace[4].layoutOffset, twice.layoutOffset);
+  assert.notDeepEqual(twice.trace[0].nodes, twice.trace[4].nodes);
+  const original = twice.trace[1].nodes[0].phase;
+  twice.trace[0].nodes[0].phase = 99;
+  assert.equal(twice.trace[1].nodes[0].phase, original);
+  assert.notEqual(twice.nodes[0].phase, 99);
+});

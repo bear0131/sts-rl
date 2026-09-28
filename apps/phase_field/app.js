@@ -18,7 +18,15 @@
     particles: [],
     lastFrame: performance.now(),
     flash: 0,
+    replay: null,
   };
+  const REPLAY_STEP_MS = 420;
+
+  function visibleRoom() {
+    const room = state.run.room;
+    if (!state.replay) return room;
+    return { ...room, ...state.replay.frames[state.replay.index] };
+  }
 
   const actionPaths = [
     '<path d="M19 31 31 19 43 31 31 43Z"/><path d="M31 13v12M31 37v12M13 31h12M37 31h12"/>',
@@ -64,6 +72,26 @@
     return `hsla(${hue}, 88%, 73%, ${alpha})`;
   }
 
+  function drawPhaseScale(context, x, y, phase, radius, paletteOffset, compact = false) {
+    context.save();
+    context.translate(x, y);
+    context.setLineDash([]);
+    for (let index = 0; index < Engine.PHASE_COUNT; index += 1) {
+      const angle = -Math.PI / 2 + index * Math.PI / 3;
+      const inner = radius + (compact ? 2 : 5);
+      const outer = inner + (compact ? 3 : 7);
+      context.beginPath();
+      context.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+      context.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+      context.lineWidth = index === phase ? (compact ? 2 : 3) : 1;
+      context.strokeStyle = phaseColor(index, index === phase ? 1 : 0.35, paletteOffset);
+      context.shadowBlur = index === phase ? (compact ? 5 : 10) : 0;
+      context.shadowColor = context.strokeStyle;
+      context.stroke();
+    }
+    context.restore();
+  }
+
   function drawBackground(context, width, height, time) {
     const glow = context.createRadialGradient(
       width / 2,
@@ -95,7 +123,9 @@
   function drawEdge(context, edge, positions, room, selectedNode) {
     const from = positions[edge.from];
     const to = positions[edge.to];
-    const active = edge.gate === room.globalPhase;
+    const active = room.activeEdgeIds
+      ? room.activeEdgeIds.includes(edge.id)
+      : edge.gate === room.globalPhase;
     const target = Engine.targetPhases(room);
     const aligned = room.nodes[edge.from].phase === target[edge.from]
       && room.nodes[edge.to].phase === target[edge.to];
@@ -169,11 +199,23 @@
     context.fillStyle = phaseColor(node.phase + (room.globalPhase % 2), 0.7, state.run.paletteOffset + 30);
     context.fill();
     context.restore();
+    drawPhaseScale(context, position.x, position.y, node.phase, radius + (aligned ? 7 : 0), state.run.paletteOffset);
+    if (room.echoNodeIds?.includes(nodeIndex)) {
+      context.save();
+      context.beginPath();
+      context.arc(position.x, position.y, radius + 18, 0, Math.PI * 2);
+      context.strokeStyle = "rgba(255, 180, 236, .9)";
+      context.lineWidth = 3;
+      context.shadowBlur = 18;
+      context.shadowColor = context.strokeStyle;
+      context.stroke();
+      context.restore();
+    }
   }
 
   function drawField(time) {
     const { context, width, height } = resizeCanvas(fieldCanvas);
-    const room = state.run.room;
+    const room = visibleRoom();
     context.clearRect(0, 0, width, height);
     drawBackground(context, width, height, time);
     const positions = nodePositions(room, width, height);
@@ -207,7 +249,7 @@
 
   function drawTarget() {
     const { context, width, height } = resizeCanvas(targetCanvas);
-    const room = state.run.room;
+    const room = visibleRoom();
     context.clearRect(0, 0, width, height);
     const target = Engine.targetPhases(room);
     const centerX = width / 2;
@@ -253,13 +295,14 @@
       context.lineWidth = 1;
       context.strokeStyle = "rgba(225, 231, 255, .35)";
       context.stroke();
+      drawPhaseScale(context, x, y, phase, 9, state.run.paletteOffset, true);
     });
     context.restore();
   }
 
   function drawPulse() {
     const { context, width, height } = resizeCanvas(pulseCanvas);
-    const room = state.run.room;
+    const room = visibleRoom();
     context.clearRect(0, 0, width, height);
     const centerX = width / 2;
     const centerY = height / 2;
@@ -316,6 +359,9 @@
         return;
       }
       state.run = { ...state.run, room: result.room };
+      state.replay = action === "flow"
+        ? { frames: result.room.trace, index: 0, started: performance.now() }
+        : null;
       state.selectedNode = null;
       state.flash = 1;
       update();
@@ -328,14 +374,14 @@
     state.run.glyphOrder.forEach((action) => createActionButton(action));
     Array.from(actionsElement.children).forEach((button) => {
       const action = button.dataset.action;
-      button.disabled = !Engine.isActionAvailable(state.run.room, action);
+      button.disabled = Boolean(state.replay) || !Engine.isActionAvailable(state.run.room, action);
     });
   }
 
   function updateOutcome() {
     const outcome = state.run.room.outcome;
     const finished = outcome !== "active";
-    outcomeElement.hidden = !finished;
+    outcomeElement.hidden = !finished || Boolean(state.replay);
     outcomeElement.classList.toggle("success", outcome === "success");
     outcomeElement.classList.toggle("fracture", outcome === "fracture");
   }
@@ -362,7 +408,7 @@
         closest = index;
       }
     });
-    if (distance < 46 && state.run.room.outcome === "active") {
+    if (distance < 46 && !state.replay && state.run.room.outcome === "active") {
       state.selectedNode = closest;
       state.flash = 1;
       update();
@@ -384,11 +430,13 @@
   fieldCanvas.addEventListener("pointermove", hoverNodeAt);
   fieldCanvas.addEventListener("pointerleave", () => { state.hoverNode = null; });
   resetRun.addEventListener("click", () => {
+    state.replay = null;
     state.run = Engine.restartRoom(state.run);
     state.selectedNode = null;
     update();
   });
   outcomeAction.addEventListener("click", () => {
+    state.replay = null;
     if (state.run.room.outcome === "success") {
       state.run = state.run.roomIndex === Engine.ROOM_DEFINITIONS.length - 1
         ? Engine.createRun(readSeed())
@@ -405,6 +453,16 @@
     const elapsed = time - state.lastFrame;
     state.lastFrame = time;
     state.flash = Math.max(0, state.flash - elapsed / 600);
+    if (state.replay) {
+      const index = Math.floor((time - state.replay.started) / REPLAY_STEP_MS);
+      if (index >= state.replay.frames.length) {
+        state.replay = null;
+        update();
+      } else if (index !== state.replay.index) {
+        state.replay.index = index;
+        update();
+      }
+    }
     drawField(time);
     requestAnimationFrame(frame);
   }

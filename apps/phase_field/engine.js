@@ -24,6 +24,7 @@
         [3, 0, 0, 1],
       ],
       objective: "opposition",
+      target: [0, 3, 0, 3],
       stableRequired: 1,
       minimumPulse: 1,
       maxPulses: 6,
@@ -41,6 +42,7 @@
         [4, 0, 2, -1],
       ],
       objective: "wave",
+      target: [0, 1, 2, 3, 4],
       stableRequired: 1,
       minimumPulse: 1,
       maxPulses: 7,
@@ -57,6 +59,7 @@
         [3, 2, 2, 1],
       ],
       objective: "mirror-lock",
+      target: [3, 0, 1, 0, 3],
       stableRequired: 1,
       minimumPulse: 1,
       maxPulses: 7,
@@ -76,6 +79,7 @@
         [5, 0, 1, 1],
       ],
       objective: "boss-orbit",
+      target: [5, 0, 1, 2, 3, 4],
       stableRequired: 1,
       minimumPulse: 1,
       maxPulses: 9,
@@ -118,8 +122,16 @@
       nodes: room.nodes.map((node) => ({ ...node })),
       edges: room.edges.map((edge) => ({ ...edge })),
       echoes: room.echoes.map((echo) => ({ ...echo })),
+      target: room.target.slice(),
       lockedActions: room.lockedActions.slice(),
       lastEvents: room.lastEvents.map((event) => ({ ...event })),
+      trace: room.trace.map((frame) => ({
+        ...frame,
+        nodes: frame.nodes.map((node) => ({ ...node })),
+        echoes: frame.echoes.map((echo) => ({ ...echo })),
+        activeEdgeIds: frame.activeEdgeIds.slice(),
+        echoNodeIds: frame.echoNodeIds.slice(),
+      })),
     };
   }
 
@@ -139,6 +151,7 @@
       minimumPulse: definition.minimumPulse,
       stableRequired: definition.stableRequired,
       objective: definition.objective,
+      target: definition.target.slice(),
       layoutShift: definition.layoutShift,
       stableCount: 0,
       outcome: "active",
@@ -157,6 +170,7 @@
       echoes: [],
       lockedActions: [],
       lastEvents: [],
+      trace: [],
     };
   }
 
@@ -230,21 +244,20 @@
     if (room.pulse < room.minimumPulse) {
       return false;
     }
-    const phases = room.nodes.map((node) => node.phase);
-    if (room.objective === "opposition") {
-      return phases[0] === phases[2]
-        && phases[1] === phases[3]
-        && modulo(phases[1] - phases[0]) === 3;
-    }
-    if (room.objective === "wave" || room.objective === "boss-orbit") {
-      return phases.every((phase, index) => phase === modulo(phases[0] + index));
-    }
-    if (room.objective === "mirror-lock") {
-      return phases[0] === phases[4]
-        && phases[1] === phases[3]
-        && phases[2] === room.globalPhase;
-    }
-    return false;
+    return room.nodes.every((node, index) => node.phase === room.target[index]);
+  }
+
+  function traceFrame(room, type, activeEdgeIds = [], echoNodeIds = []) {
+    return {
+      type,
+      pulse: room.pulse,
+      globalPhase: room.globalPhase,
+      layoutOffset: room.layoutOffset,
+      nodes: room.nodes.map((node) => ({ phase: node.phase, spin: node.spin })),
+      echoes: room.echoes.map((echo) => ({ ...echo })),
+      activeEdgeIds: activeEdgeIds.slice(),
+      echoNodeIds: echoNodeIds.slice(),
+    };
   }
 
   function advanceWorld(room) {
@@ -253,17 +266,21 @@
     if (!isActionAvailable(next, "flow")) {
       return { room: next, accepted: false, reason: "unavailable" };
     }
+    next.trace = [traceFrame(next, "start")];
 
     next.pulse += 1;
     next.globalPhase = modulo(next.globalPhase + 1);
     next.nodes.forEach((node) => {
       node.phase = modulo(node.phase + node.spin);
     });
+    next.trace.push(traceFrame(next, "drift"));
 
     const propagation = new Array(next.nodes.length).fill(0);
     const grammarSign = next.boss && next.pulse % 2 === 1 ? -1 : 1;
+    const activeEdgeIds = [];
     next.edges.forEach((edge) => {
       if (edge.gate === next.globalPhase) {
+        activeEdgeIds.push(edge.id);
         const delta = edge.twist * grammarSign;
         propagation[edge.to] += delta;
         next.lastEvents.push({
@@ -279,6 +296,7 @@
         next.nodes[nodeIndex].phase = modulo(next.nodes[nodeIndex].phase + delta);
       }
     });
+    next.trace.push(traceFrame(next, "propagate", activeEdgeIds));
 
     const pendingEchoes = [];
     next.echoes.forEach((echo) => {
@@ -290,11 +308,14 @@
       }
     });
     next.echoes = pendingEchoes;
+    next.trace.push(traceFrame(next, "echo", [],
+      next.lastEvents.filter((event) => event.type === "echo-fired").map((event) => event.node)));
     next.layoutOffset = modulo(
       next.layoutOffset + next.layoutShift,
       next.nodes.length,
     );
     next.lockedActions = [];
+    next.trace.push(traceFrame(next, "reposition"));
 
     next.stableCount = objectiveSatisfied(next) ? next.stableCount + 1 : 0;
     if (next.stableCount >= next.stableRequired) {
@@ -341,28 +362,7 @@
   }
 
   function targetPhases(room) {
-    const count = room.nodes.length;
-    if (room.objective === "opposition") {
-      return [
-        room.nodes[0].phase,
-        modulo(room.nodes[0].phase + 3),
-        room.nodes[0].phase,
-        modulo(room.nodes[0].phase + 3),
-      ];
-    }
-    if (room.objective === "mirror-lock") {
-      return [
-        room.nodes[0].phase,
-        room.nodes[1].phase,
-        room.globalPhase,
-        room.nodes[1].phase,
-        room.nodes[0].phase,
-      ];
-    }
-    return Array.from(
-      { length: count },
-      (_, index) => modulo(room.nodes[0].phase + index),
-    );
+    return room.target.slice();
   }
 
   return {
