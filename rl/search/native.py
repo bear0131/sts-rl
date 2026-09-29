@@ -612,10 +612,12 @@ def complete_searches_streaming(
                 active_capacity = len(expected) - len(results)
                 target = batch_target(active_capacity)
 
-            # Drain packets already waiting in the OS pipe. This does not wait,
-            # but exposes producer backlog to the controller before selection.
-            if controller is not None and ready_leaf_count >= target:
-                while stream.pending:
+            # Collect already-ready packets before a fixed-wait flush, including
+            # wait=0. A faster GPU must not strand completed workers in the pipe
+            # merely because they became ready while an earlier packet decoded.
+            # Adaptive mode also drains beyond its target to observe backlog.
+            if controller is None or ready_leaf_count >= target:
+                while stream.pending and (controller is not None or ready_leaf_count < target):
                     packets = receive(0.0)
                     if not packets:
                         break

@@ -4,6 +4,7 @@ from collections import defaultdict, deque
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from rl.search import native
 
@@ -146,7 +147,8 @@ def test_streamed_search_rejects_multiple_pending_leaves_per_tree():
         raise AssertionError("streaming accepted multiple leaves per tree")
 
 
-def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch):
+@pytest.mark.parametrize('wait_seconds', [0.0, 0.001])
+def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch, wait_seconds):
     batch_sizes = []
 
     def fake_forward(_model, observations, **_kwargs):
@@ -156,6 +158,12 @@ def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch):
 
     monkeypatch.setattr(native, "forward_leaves", fake_forward)
     stream = _FakeGroupedSearchStream()
+    timeouts = []
+    receive = stream.receive
+    def tracked_receive(timeout=None):
+        timeouts.append(timeout)
+        return receive(timeout)
+    stream.receive = tracked_receive
     results, stats = native.complete_searches_streaming(
         object(),
         stream,
@@ -163,7 +171,7 @@ def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch):
         leaf_batch_size=1,
         schedule=native.LeafInferenceSchedule(
             target_batch_size=128,
-            max_wait_seconds=0.001,
+            max_wait_seconds=wait_seconds,
             mode="fixed_wait",
         ),
     )
@@ -173,6 +181,11 @@ def test_fixed_schedule_clamps_target_to_active_tree_capacity(monkeypatch):
     assert stats["inference_batch_size_max"] == 6
     assert stats["inference_watchdog_flushes"] == 0
     assert stats["inference_target_batch_sum"] == 12
+    if wait_seconds == 0:
+        assert 0.0 in timeouts
+        assert all(value is None or value == 0.0 for value in timeouts)
+    for index in range(6):
+        assert [item[0] for item in stream.updates[index]] == [0, 1]
 
 
 def test_adaptive_controller_moves_between_fixed_buckets_with_hysteresis():
