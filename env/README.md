@@ -40,3 +40,21 @@ OBS_VERSION=17、ACTION_VERSION=7、native compact layout v2 必须配套使用�
 可超过128个完整动作。普通与批量叶观测使用同一候选信息。
 pending_card_slot/pending_potion_slot 常驻观测，0为无来源，槽位+1为来源。
 旧模型可以加载并预测，但不会因此获得新增候选/来源的表达能力；重新训练须迁移新架构。
+
+## 联合战斗策略 joint-v2
+
+`SlayTheSpireEnv(combat_action_contract="joint-v2")` 使用无损策略ID：181个原有整局控制，
+随后是 End Turn、10×6牌/目标、5×6药水/目标、96单选和1024个子集地址，共1392。
+第6目标为NONE，怪物槽0仍为真实目标。`combat_legal` 携带后1211个地址的合法性，
+模型不把执行句柄或该mask嵌入棋盘特征。native扩展必须声明joint_policy_size=1392。
+
+网络以来源分数和来源条件目标分布组成联合分布；多选共享自回归“递增手牌下标/STOP”
+解码器，每个集合恰有一条路径。1024是搜索和传输的最大地址域，不是1024个独立学习类别。
+初始残差为0时按合法后续集合数分配概率，因此对合法集合均匀，避免偏向短序列。
+根和叶的原生先验都读取完整动作分数；Full Gumbel未访问动作的概率也保留。
+replay按行稀疏存储合法ID和float32概率（含合法但零概率动作），采样时恢复batch，
+保存时使用数值CSR数组并校验policy/value contract。value-only样本不需要策略mask。
+
+当前运行时支持Split Transformer、标准PPO和C++ NOSL；不支持旧交互推理步骤、
+历史Boss战后回血价值目标。旧thin模型保留旧几何；迁移必须重新收集replay。
+CLI热启动、真实bridge适配与完整collection验收仍在实施，勿将原实验当作exact续训切换。

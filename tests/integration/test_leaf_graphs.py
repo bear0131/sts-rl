@@ -11,6 +11,37 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
+@pytest.mark.parametrize('amp', ['off', 'bf16'])
+def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp):
+    import slaythespire as sts
+    env = combat_factory(['PURITY'] * 5, combat_action_contract='joint-v2')
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=42,
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+    model.amp_mode = amp
+    model.policy.set_training_mode(False)
+    cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2)
+    ordinary = env._obs()
+    env.thick.bc.apply_custom_state({'hand':['PURITY'] + ['STRIKE_RED'] * 9})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+    multi = env._obs()
+    for choices in ((ordinary, multi, ordinary), (multi,), (multi, ordinary, multi, ordinary)):
+        batch = {k:np.stack([obs[k] for obs in choices]) for k in ordinary
+                 if k in model.policy.core.combat_observation_keys}
+        model._native_leaf_inference = None
+        expected = forward_leaves(model, batch, autocast=model.autocast_context)
+        model._native_leaf_inference = cache
+        actual = forward_leaves(model, batch, autocast=model.autocast_context)
+        for a,b in zip(actual, expected):
+            np.testing.assert_allclose(a,b,rtol=.03 if amp=='bf16' else 1e-5,
+                                       atol=3e-4 if amp=='bf16' else 2e-7)
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+    assert cache.subset_eager_rows == 4
+    assert cache.hits >= 1
+
+
 def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
     env = combat_factory(['STRIKE_RED'] * 5)
     model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cpu',
@@ -29,9 +60,9 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
-@pytest.mark.parametrize('combat_arch', ['transformer', 'mlp'])
-def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch):
-    env = combat_factory(['STRIKE_RED'] * 5)
+@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2')])
+def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract):
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract=contract)
     model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=7,
         n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch))
     model.amp_mode = amp

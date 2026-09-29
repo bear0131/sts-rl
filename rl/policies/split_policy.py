@@ -45,6 +45,7 @@ def _active_prefix_width(ids: torch.Tensor) -> int:
 # Runtime routing is deliberately stricter than the unified Gym Dict space.
 # A specialist cannot accidentally consume fields owned by the other phase.
 COMBAT_OBSERVATION_KEYS = frozenset({
+    "combat_legal",
     "arg_step",
     "ascension",
     "can_pick_any",
@@ -378,6 +379,9 @@ class CombatEncoder(_SpecialistEncoder):
         self.observation_space = observation_space
         self.global_categories = nn.ModuleDict()
         global_category_keys = ("arg_step", "character", "select_context")
+        if "combat_legal" in observation_space.spaces:
+            # A board representation shared by root and pending target views.
+            global_category_keys = ("character", "select_context")
         self.public_choices = "select_native_indices" in observation_space.spaces
         if self.public_choices:
             global_category_keys += ("select_zone",)
@@ -903,6 +907,10 @@ class _SpecialistActorCritic(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.kind = kind
+        self.joint_actions = "combat_legal" in encoder.observation_space.spaces
+        if self.joint_actions and kind == "combat":
+            from .complete_combat import CompleteCombatHead
+            self.complete_head = CompleteCombatHead(d_model)
         self.ptr_k = nn.Linear(d_model, d_model)
         self.ptr_q = nn.Linear(d_model, d_model, bias=False)
         self.ptr_v = nn.Linear(d_model, 1)
@@ -960,7 +968,7 @@ class _SpecialistActorCritic(nn.Module):
         logits[:, base:base + A.N_COLS] = map_scores
 
     def forward(
-        self, obs, shared, phase_id=None, *, active_relic_width=None
+        self, obs, shared, phase_id=None, *, active_relic_width=None, evaluate_subsets=True
     ):
         if self.kind == "combat":
             global_token, blocks = self.encoder(
@@ -997,6 +1005,23 @@ class _SpecialistActorCritic(nn.Module):
             self._map_logits(logits, obs, blocks)
         value_features = self.encoder.readout(global_token)
         values = self.value_head(self.value_mlp(value_features))
+        if self.joint_actions:
+            from env.core import native_actions as C
+            if self.kind == "combat":
+                sources = torch.cat((blocks['hand'], blocks['potion']), dim=1)
+                targets = self.complete_head.targets(global_token, sources, blocks['monster'])
+                logits = self.complete_head(logits, global_token, sources, blocks['monster'],
+                                            obs['combat_legal'], evaluate_subsets=evaluate_subsets,
+                                            target_logits=targets)
+                # Legacy bridge pending views use exactly the root's target
+                # factor. Pending slots never change the shared board encoder.
+                pending_card = obs['pending_card_slot'].long().flatten() - 1
+                pending_potion = obs['pending_potion_slot'].long().flatten() - 1
+                selected = torch.where(pending_card >= 0, pending_card, 10 + pending_potion).clamp(0, 14)
+                rows = torch.arange(logits.shape[0], device=logits.device)
+                logits[:, A._TARGET:A._TARGET + 5] = targets[rows, selected, :5].float()
+            else:
+                logits = torch.nn.functional.pad(logits, (0, C.JOINT_WIDTH), value=-1e9)
         return logits, values
 
 
@@ -1059,6 +1084,9 @@ class SplitStSPolicyCore(nn.Module):
             card_dim=card_dim,
             card_embedding=card_embedding,
         )
+        self.joint_actions = "combat_legal" in observation_space.spaces
+        if self.joint_actions and combat_arch != "transformer":
+            raise ValueError("joint-v2 currently requires the Split Transformer combat policy")
         if combat_arch not in {"transformer", "mlp"}:
             raise ValueError("combat_arch must be transformer or mlp")
         if combat_arch == "transformer":
@@ -1117,12 +1145,14 @@ class SplitStSPolicyCore(nn.Module):
     def _keys_only(obs, allowed_keys):
         return {key: obs[key] for key in allowed_keys if key in obs}
 
-    def combat_actor_critic(self, obs, *, active_relic_width=None):
+    def combat_actor_critic(self, obs, *, active_relic_width=None, evaluate_subsets=True):
         """Evaluate a known all-combat batch without phase routing copies."""
+        extra = {'evaluate_subsets': evaluate_subsets} if self.joint_actions else {}
         return self.combat(
             self._keys_only(obs, COMBAT_OBSERVATION_KEYS),
             self.shared,
             active_relic_width=active_relic_width,
+            **extra,
         )
 
     def actor_critic(self, obs, *, combat_relic_width=None):

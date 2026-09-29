@@ -16,10 +16,11 @@ from rl.training.reward import ShapedRewardWrapper
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl,upper,combat_arch', [
-    (False, 'model', 'transformer'), (True, 'model', 'transformer'),
-    (True, 'rules', 'transformer'), (True, 'rules', 'mlp')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch):
+@pytest.mark.parametrize('nosl,upper,combat_arch,contract', [
+    (False, 'model', 'transformer', 'legacy'), (True, 'model', 'transformer', 'legacy'),
+    (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
+    (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2')])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
 
@@ -27,7 +28,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         def factory(hold_steps):
             def build():
                 env = TimeLimit(
-                    ShapedRewardWrapper(short_combat_env_type()),
+                    ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract)),
                     max_episode_steps=12,
                 )
                 return (

@@ -9,6 +9,7 @@ from math import prod
 import numpy as np
 from gymnasium import spaces
 from env.core.combat_value import VALUE_CONTRACT
+from env.core import native_actions as C
 
 
 def _compact_integer_dtype(space: spaces.Box) -> np.dtype:
@@ -70,6 +71,8 @@ class NOSLISAZReplayBuffer:
 
         self.capacity = int(capacity)
         self.action_dim = int(action_dim)
+        self.policy_contract = C.JOINT_CONTRACT if action_dim == C.JOINT_SIZE else 'legacy-thin'
+        self.joint_rows: list | None = None
         self.value_contract = str(value_contract)
         self.observation_keys = keys
         self._observation_spaces = {
@@ -99,12 +102,21 @@ class NOSLISAZReplayBuffer:
             )
             if array is not None
         )
-        return sum(array.nbytes for array in arrays)
+        sparse_bytes = sum(ids.nbytes + probs.nbytes for row in (self.joint_rows or [])
+                           if row is not None for ids, probs in [row])
+        return sum(array.nbytes for array in arrays) + sparse_bytes
 
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
         names = ('action_masks', 'policy_targets', 'policy_weights', 'value_targets', 'sample_ids')
-        return dict(version=2, value_contract=self.value_contract,
+        joint = None
+        if self.joint_rows is not None:
+            rows = self.joint_rows[:self.size]
+            joint = dict(offsets=np.cumsum([0] + [len(row[0]) for row in rows], dtype=np.int64),
+                         ids=np.concatenate([row[0] for row in rows]) if rows else np.empty(0, np.uint16),
+                         probabilities=np.concatenate([row[1] for row in rows]) if rows else np.empty(0, np.float32))
+        return dict(version=2, value_contract=self.value_contract, policy_contract=self.policy_contract,
+            joint=joint,
             capacity=self.capacity, action_dim=self.action_dim,
             observation_keys=self.observation_keys, position=self.position, size=self.size,
             total_added=self.total_added,
@@ -113,6 +125,8 @@ class NOSLISAZReplayBuffer:
             arrays={k:None if getattr(self,k) is None else getattr(self,k)[:self.size].copy() for k in names})
 
     def load_state_dict(self, state):
+        if state.get('policy_contract', 'legacy-thin') != self.policy_contract:
+            raise ValueError('replay policy contract mismatch; collect fresh complete-action targets')
         if state.get('value_contract') != self.value_contract:
             raise ValueError(
                 'replay value contract mismatch; migrate weights and collect '
@@ -137,9 +151,31 @@ class NOSLISAZReplayBuffer:
                 target[:size] = source
             for key, source in state['arrays'].items():
                 target = getattr(self, key)
+                if target is None and source is None:
+                    continue
+                if target is None or source is None:
+                    raise ValueError('replay target schema mismatch: ' + key)
                 if source.shape != target[:size].shape or source.dtype != target.dtype:
                     raise ValueError('replay target schema mismatch: ' + key)
                 target[:size] = source
+            if self.joint_rows is not None:
+                joint = state.get('joint')
+                if joint is None:
+                    raise ValueError('joint replay has no complete-action targets')
+                offsets, ids, probs = (joint[k] for k in ('offsets', 'ids', 'probabilities'))
+                if (offsets.dtype != np.int64 or offsets.shape != (size + 1,)
+                        or offsets[0] != 0 or np.any(np.diff(offsets) < 0)
+                        or ids.ndim != 1 or ids.dtype != np.uint16
+                        or probs.shape != ids.shape or probs.dtype != np.float32
+                        or offsets[-1] != len(ids) or np.any(ids >= self.action_dim)
+                        or not np.all(np.isfinite(probs) & (probs >= 0))):
+                    raise ValueError('invalid sparse joint replay schema')
+                for row in range(size):
+                    lo, hi = offsets[row:row+2]
+                    row_ids = ids[lo:hi]
+                    if len(np.unique(row_ids)) != len(row_ids):
+                        raise ValueError('duplicate complete-action id in replay')
+                    self.joint_rows[row] = (row_ids.copy(), probs[lo:hi].copy())
         elif size:
             raise ValueError('nonempty replay checkpoint has no observations')
         self.size, self.position, self.total_added = size, position, int(state['total_added'])
@@ -152,28 +188,31 @@ class NOSLISAZReplayBuffer:
                 (self.capacity, *space.shape), dtype=_storage_dtype(space, key=key)
             )
             for key, space in self._observation_spaces.items()
+            if not (self.policy_contract == C.JOINT_CONTRACT and key == 'combat_legal')
         }
-        self.action_masks = np.empty(
-            (self.capacity, self.action_dim), dtype=bool
-        )
-        self.policy_targets = np.empty(
-            (self.capacity, self.action_dim), dtype=np.float16
-        )
+        if self.policy_contract == C.JOINT_CONTRACT:
+            self.joint_rows = [None] * self.capacity
+        else:
+            self.action_masks = np.empty((self.capacity, self.action_dim), dtype=bool)
+            self.policy_targets = np.empty((self.capacity, self.action_dim), dtype=np.float16)
         self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
         self.sample_ids = np.empty(self.capacity, dtype=np.uint64)
 
     def _write(self, destination: slice, source: slice, batch: Mapping) -> None:
         assert self.observations is not None
-        assert self.action_masks is not None
-        assert self.policy_targets is not None
         assert self.policy_weights is not None
         assert self.value_targets is not None
         assert self.sample_ids is not None
-        for key in self.observation_keys:
+        for key in self.observations:
             self.observations[key][destination] = batch["observations"][key][source]
-        self.action_masks[destination] = batch["action_masks"][source]
-        self.policy_targets[destination] = batch["policy_targets"][source]
+        if self.joint_rows is not None:
+            for dest, src in zip(range(destination.start, destination.stop), range(source.start, source.stop)):
+                ids = np.flatnonzero(batch['action_masks'][src]).astype(np.uint16)
+                self.joint_rows[dest] = (ids, batch['policy_targets'][src, ids].astype(np.float32))
+        else:
+            self.action_masks[destination] = batch["action_masks"][source]
+            self.policy_targets[destination] = batch["policy_targets"][source]
         self.policy_weights[destination] = batch["policy_weights"][source]
         self.value_targets[destination] = batch["value_targets"][source]
         self.sample_ids[destination] = batch["sample_ids"][source]
@@ -216,6 +255,15 @@ class NOSLISAZReplayBuffer:
                 f"invalid replay policy shape {policy_targets.shape}; "
                 f"expected {(count, self.action_dim)}"
             )
+        if self.policy_contract == C.JOINT_CONTRACT:
+            if not np.all(np.isfinite(policy_targets) & (policy_targets >= 0)):
+                raise ValueError('joint policy probabilities must be finite and non-negative')
+            if np.any(policy_targets[~action_masks.astype(bool)] != 0):
+                raise ValueError('joint policy has probability on an illegal action')
+            if 'combat_legal' in observations and not np.array_equal(
+                    observations['combat_legal'][policy_weights > 0],
+                    action_masks[policy_weights > 0, C.JOINT_END:]):
+                raise ValueError('joint replay observation and action masks disagree')
         if policy_weights.shape != (count,) or not np.all(
             np.isfinite(policy_weights) & (policy_weights >= 0.0)
         ):
@@ -345,8 +393,6 @@ class NOSLISAZReplayBuffer:
             raise ValueError("replay gather workers must be in [1, 4]")
         if self.observations is None:
             raise ValueError("cannot read an unallocated replay buffer")
-        assert self.action_masks is not None
-        assert self.policy_targets is not None
         assert self.policy_weights is not None
         assert self.value_targets is not None
         assert self.sample_ids is not None
@@ -354,7 +400,7 @@ class NOSLISAZReplayBuffer:
         fields = list(self.observations.items()) + [
             (name, getattr(self, name)) for name in (
                 "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids"
-            )
+            ) if getattr(self, name) is not None
         ]
         def gather(field):
             return field[1][indices]
@@ -364,20 +410,33 @@ class NOSLISAZReplayBuffer:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 values = list(pool.map(gather, fields))
         count = len(self.observations)
-        return dict(
+        batch = dict(
             observations=dict(zip((key for key, _ in fields[:count]), values[:count])),
             **dict(zip((key for key, _ in fields[count:]), values[count:])),
         )
+        if self.joint_rows is not None:
+            masks = np.zeros((len(indices), self.action_dim), dtype=bool)
+            probs = np.zeros((len(indices), self.action_dim), dtype=np.float32)
+            for dest, src in enumerate(indices):
+                ids, values = self.joint_rows[src]
+                masks[dest, ids] = True
+                probs[dest, ids] = values
+            batch.update(action_masks=masks, policy_targets=probs)
+            if 'combat_legal' in self.observation_keys:
+                batch['observations']['combat_legal'] = masks[:, C.JOINT_END:]
+        return batch
 
     def estimated_capacity_bytes(self) -> int:
         obs_bytes = sum(
             np.dtype(_storage_dtype(space, key=key)).itemsize * prod(space.shape)
             for key, space in self._observation_spaces.items()
+            if not (self.policy_contract == C.JOINT_CONTRACT and key == 'combat_legal')
         )
+        # Joint storage is ragged; report a conservative all-actions bound.
+        policy_bytes = self.action_dim * (6 if self.policy_contract == C.JOINT_CONTRACT else 3)
         per_sample = (
             obs_bytes
-            + self.action_dim * np.dtype(bool).itemsize
-            + self.action_dim * np.dtype(np.float16).itemsize
+            + policy_bytes
             + np.dtype(np.float16).itemsize
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize

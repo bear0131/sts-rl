@@ -63,6 +63,7 @@ def unpack_nosl_observation_buffer(response):
         ).reshape(tuple(int(v) for v in shape))
     return out
 
+from . import native_actions as C
 from . import _BUILD  # noqa: F401  (sys.path bootstrap for slaythespire/schemas)
 from schemas.combat_state import (
     combat_select_options,
@@ -238,9 +239,16 @@ class SlayTheSpireEnv(gym.Env):
                  interactive_reasoning=False, combat_action_contract='legacy',
                  nosl_is_az_boss_transition_target=False):
         super().__init__()
-        if combat_action_contract not in ('legacy', 'native-v1'):
-            raise ValueError('combat_action_contract must be legacy or native-v1')
+        if combat_action_contract not in ('legacy', 'native-v1', C.JOINT_CONTRACT):
+            raise ValueError('combat_action_contract must be legacy, native-v1 or joint-v2')
         self.combat_action_contract = combat_action_contract
+        self._joint_actions = combat_action_contract == C.JOINT_CONTRACT
+        if self._joint_actions and nosl_is_az_boss_transition_target:
+            raise ValueError('joint-v2 requires combat-end-hp-v1')
+        if self._joint_actions and _nosl_compact_layout().get('joint_policy_size') != C.JOINT_SIZE:
+            raise RuntimeError('joint-v2 requires a native build with complete-policy support')
+        if self._joint_actions and interactive_reasoning:
+            raise ValueError('joint-v2 does not support legacy interactive reasoning steps')
         self._nosl_is_az_boss_transition_target = bool(
             nosl_is_az_boss_transition_target
         )
@@ -304,12 +312,17 @@ class SlayTheSpireEnv(gym.Env):
             event_option_observation=event_option_observation,
             interactive_reasoning=interactive_reasoning,
         )
-        self.action_space = spaces.Discrete(A.N_ACTIONS)
+        self.action_space = spaces.Discrete(C.JOINT_SIZE if self._joint_actions else A.N_ACTIONS)
+        if self._joint_actions:
+            self.observation_space.spaces['combat_legal'] = spaces.Box(
+                low=0, high=1, shape=(C.JOINT_WIDTH,), dtype=bool)
 
     # ---------------------------------------------------------------- gym API
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
+        if self._joint_actions and not hasattr(self.thick, 'bc'):
+            raise ValueError('joint-v2 requires the native combat backend')
         if self._nosl_is_az_boss_transition_target:
             setattr(self.thick, "_nosl_is_az_boss_transition_target", True)
         # A new backend must continue Gym's seeded episode stream on autoreset.
@@ -463,6 +476,10 @@ class SlayTheSpireEnv(gym.Env):
     def combat_action_advances(self, action_id):
         """Whether a legal thin action completes one simulator decision."""
         aid = int(action_id)
+        if self._joint_actions:
+            if not 0 <= aid < self.action_space.n or not self.action_masks()[aid]:
+                raise ValueError(f'illegal joint combat action: {aid}')
+            return True
         desc = self._multi_desc()
         if desc is not None:
             if aid not in set(A.multi_legal_ids(desc, self._multi)):
@@ -520,7 +537,7 @@ class SlayTheSpireEnv(gym.Env):
         then ``legal_ids`` walks that list again.  This preserves the same
         autoregressive root/target semantics without those intermediate lists.
         """
-        mask = np.zeros(A.N_ACTIONS, dtype=bool)
+        mask = np.zeros(self.action_space.n, dtype=bool)
         if int(self.thick.bc.input_state) == 2:
             desc = self.thick.select_descriptor()
             if not desc["multi"]:
@@ -686,6 +703,8 @@ class SlayTheSpireEnv(gym.Env):
         """The live combat MULTI card-select descriptor, or None. Also the single
         place that RECONCILES the accumulator with the screen: a MULTI screen ->
         ensure _multi is a set; anything else -> clear it (we left the screen)."""
+        if self._joint_actions:
+            return None
         if self._cached_multi_desc is _UNCACHED:
             self._cached_multi_desc = self.thick.select_descriptor()
         desc = self._cached_multi_desc
@@ -723,6 +742,8 @@ class SlayTheSpireEnv(gym.Env):
         if (self.thick is None or self._phase() != 'combat'
                 or self.thick.is_over or self._pending is not None):
             return ()
+        if self._joint_actions:
+            return tuple(bits for _, bits in self.thick.bc.joint_policy_actions())
         from .native_actions import complete_actions
         return complete_actions(self.thick.bc)
 
@@ -739,7 +760,7 @@ class SlayTheSpireEnv(gym.Env):
         Explicit opt-in preserves legacy checkpoint masks, observations and dead
         screen behavior. A pending thin target/multi pick cannot be bypassed.
         """
-        if self.combat_action_contract != 'native-v1':
+        if self.combat_action_contract not in ('native-v1', C.JOINT_CONTRACT):
             raise RuntimeError('complete actions require combat_action_contract=native-v1')
         if self._pending is not None or self._multi:
             raise ValueError('cannot replace an unfinished thin action with native bits')
@@ -814,6 +835,12 @@ class SlayTheSpireEnv(gym.Env):
         return self._obs(), reward, terminated, False, info
 
     def _step_impl(self, action_id):
+        if self._joint_actions and self._phase() == 'combat':
+            mapping = dict(self.thick.bc.joint_policy_actions())
+            aid = int(action_id)
+            if aid not in mapping:
+                raise ValueError(f'illegal joint combat action: {aid}')
+            return self._step_native_combat_impl(mapping[aid])
         aid = int(action_id)
 
         # Dead-screen guard at the TOP of step (defense in depth): if we are parked
@@ -1044,7 +1071,7 @@ class SlayTheSpireEnv(gym.Env):
         if self._pending is not None:
             legal = np.flatnonzero(self.action_masks())
             action = int(legal[0]) if legal.size else int(A.END_TURN)
-            visit_policy = np.zeros(A.N_ACTIONS, dtype=np.float32)
+            visit_policy = np.zeros(self.action_space.n, dtype=np.float32)
             if legal.size:
                 visit_policy[action] = 1.0
             self._nosl_cpp_pending = None
@@ -1053,7 +1080,7 @@ class SlayTheSpireEnv(gym.Env):
                 "action": action,
                 "visit_policy": visit_policy,
                 "root_value": 0.0,
-                "root_visits": np.zeros(A.N_ACTIONS, dtype=np.int32),
+                "root_visits": np.zeros(self.action_space.n, dtype=np.int32),
                 "simulations": 0,
                 "transitions": 0,
                 "expanded_nodes": 0,
@@ -1086,8 +1113,8 @@ class SlayTheSpireEnv(gym.Env):
 
         native_to_thin = self._native_action_to_thin
 
-        visit_policy = np.zeros(A.N_ACTIONS, dtype=np.float32)
-        root_visit_counts = np.zeros(A.N_ACTIONS, dtype=np.int32)
+        visit_policy = np.zeros(self.action_space.n, dtype=np.float32)
+        root_visit_counts = np.zeros(self.action_space.n, dtype=np.int32)
         for raw_bits, raw_visits in result.get("root_visits", ()):
             thin = native_to_thin(int(raw_bits))
             if thin is not None and int(raw_visits) > 0:
@@ -1107,7 +1134,7 @@ class SlayTheSpireEnv(gym.Env):
         selected_native = int(result.get("action_bits", 0xFFFFFFFF))
         action = native_to_thin(selected_native)
         native_valid = bool(result.get("action_valid", False))
-        if action is None or not (0 <= action < A.N_ACTIONS) or not live_mask[action]:
+        if action is None or not (0 <= action < self.action_space.n) or not live_mask[action]:
             legal = np.flatnonzero(live_mask)
             action = int(legal[0]) if legal.size else int(A.END_TURN)
             native_valid = False
@@ -1128,6 +1155,13 @@ class SlayTheSpireEnv(gym.Env):
 
     def _native_action_to_thin(self, bits: int) -> int | None:
         """Map a complete simulator action to the whole-run root slot."""
+        if self._joint_actions:
+            desc = self.thick.select_descriptor() or {}
+            try:
+                return C.joint_action_id(bits, targeted=self._native_action_targeted(bits),
+                    candidate_indices=[c['native_index'] for c in desc.get('candidates', ())])
+            except ValueError:
+                return None
         kind = (int(bits) >> 29) & 0xF
         source = int(bits) & 0xFFFF
         if kind == 0:  # CARD
@@ -1167,12 +1201,13 @@ class SlayTheSpireEnv(gym.Env):
             global_state["potions"] = list(raw_state["potions"])
         canon["global"] = global_state
         if combat_only:
-            return encode.encode_combat(
+            obs = encode.encode_combat(
                 canon,
                 card_language=self._card_language,
                 combat_language=self._combat_language,
             )
-        return encode.encode(
+            return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
+        obs = encode.encode(
             canon,
             global_map_view=self._global_map_view,
             card_language=self._card_language,
@@ -1182,6 +1217,22 @@ class SlayTheSpireEnv(gym.Env):
             event_option_observation=self._event_option_observation,
             interactive_reasoning=self._interactive_reasoning,
         )
+
+        return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
+
+    def _with_joint_legal(self, obs, policy_ids):
+        if self._joint_actions:
+            obs['combat_legal'] = C.joint_mask(policy_ids)[C.JOINT_END:]
+        return obs
+
+    def _leaf_policy_mask(self, policy_ids):
+        if self._joint_actions:
+            return C.joint_mask(policy_ids)
+        mask = np.zeros(self.action_space.n, dtype=bool)
+        for policy_id in policy_ids:
+            if int(policy_id) >= 0:
+                mask[C.legacy_action_id(int(policy_id))] = True
+        return mask
 
     def _native_packed_observation_batch(self, response):
         """Decode the fixed-width native leaf transport into model tensors.
@@ -1328,6 +1379,11 @@ class SlayTheSpireEnv(gym.Env):
         # C++ stores the multi-select marker; it is represented by the hand
         # mask only when the thin layer has a pending selection, so no extra
         # model field is needed here.
+        if self._joint_actions:
+            ids = np.asarray(response['legal_policy_ids'], dtype=np.int64)
+            out['combat_legal'] = np.zeros((n, C.JOINT_WIDTH), dtype=bool)
+            rows, columns = np.nonzero(ids >= C.JOINT_END)
+            out['combat_legal'][rows, ids[rows, columns] - C.JOINT_END] = True
         return out
 
     def _adapt_native_neural_result(
@@ -1342,8 +1398,8 @@ class SlayTheSpireEnv(gym.Env):
         # Keep raw visit frequencies separate from Full Gumbel's improved
         # policy.  The latter is the AlphaZero training target; visits remain
         # useful for UI/diagnostics and for the optional stochastic actor.
-        root_visit_policy = np.zeros(A.N_ACTIONS, dtype=np.float32)
-        root_visit_counts = np.zeros(A.N_ACTIONS, dtype=np.int32)
+        root_visit_policy = np.zeros(self.action_space.n, dtype=np.float32)
+        root_visit_counts = np.zeros(self.action_space.n, dtype=np.int32)
         raw_visits = []
         for raw_bits, visits in result.get("root_visits", ()):
             thin = self._native_action_to_thin(int(raw_bits))
@@ -1356,7 +1412,7 @@ class SlayTheSpireEnv(gym.Env):
         # softmax(prior_logits + completed_Q), which may assign non-zero mass
         # to an action that received no simulation visit.  Legacy sessions do
         # not populate this field and continue to use visit frequencies.
-        improved_policy = np.zeros(A.N_ACTIONS, dtype=np.float32)
+        improved_policy = np.zeros(self.action_space.n, dtype=np.float32)
         root_policy_entries = result.get("root_policy", ())
         if root_policy_entries:
             for raw_bits, probability in root_policy_entries:
@@ -1409,7 +1465,7 @@ class SlayTheSpireEnv(gym.Env):
                 )
         action = self._native_action_to_thin(native_bits)
         native_valid = action is not None
-        if action is None or not (0 <= action < A.N_ACTIONS) or not live_mask[action]:
+        if action is None or not (0 <= action < self.action_space.n) or not live_mask[action]:
             legal = np.flatnonzero(live_mask)
             action = int(legal[0]) if legal.size else int(A.END_TURN)
             native_valid = False
@@ -1663,36 +1719,10 @@ class SlayTheSpireEnv(gym.Env):
                 # one Python list allocation per leaf.
                 # Older extensions still return nested lists and are handled
                 # by the fallback branch below.
-                legal_bits = packed_response.get("legal_action_bits", ())
-                legal_counts = packed_response.get("legal_action_counts")
-                legal_matrix = None
-                try:
-                    candidate = np.asarray(legal_bits)
-                    if candidate.ndim == 2:
-                        legal_matrix = candidate
-                except (TypeError, ValueError):
-                    legal_matrix = None
+                ids = np.asarray(packed_response['legal_policy_ids'])
                 needs_policy = packed_response.get("needs_policy", ())
                 for i, request_id in enumerate(request_ids):
-                    mask = np.zeros(A.N_ACTIONS, dtype=bool)
-                    if legal_matrix is not None and i < legal_matrix.shape[0]:
-                        if legal_counts is None:
-                            count = legal_matrix.shape[1]
-                        else:
-                            count = min(
-                                legal_matrix.shape[1],
-                                max(0, int(legal_counts[i]))
-                                if i < len(legal_counts) else 0,
-                            )
-                        row_bits = legal_matrix[i, :count]
-                    else:
-                        row_bits = (
-                            legal_bits[i] if i < len(legal_bits) else ()
-                        )
-                    for bits in row_bits:
-                        thin = self._native_action_to_thin(int(bits))
-                        if thin is not None and 0 <= thin < A.N_ACTIONS:
-                            mask[thin] = True
+                    mask = self._leaf_policy_mask(ids[i][ids[i] >= 0])
                     leaf_meta.append({
                         "request_id": int(request_id),
                         "action_mask": mask,
@@ -1712,11 +1742,7 @@ class SlayTheSpireEnv(gym.Env):
         encoded_fields = {}
         for request in requests:
             raw = request["state"]
-            mask = np.zeros(A.N_ACTIONS, dtype=bool)
-            for bits in request.get("legal_action_bits", ()):
-                thin = self._native_action_to_thin(int(bits))
-                if thin is not None and 0 <= thin < A.N_ACTIONS:
-                    mask[thin] = True
+            mask = self._leaf_policy_mask(raw['joint_action_ids'])
             observation = self._native_leaf_observation(
                 raw,
                 combat_only=self._nosl_cpp_compact_observation,
@@ -2010,6 +2036,8 @@ class SlayTheSpireEnv(gym.Env):
 
     # ---------------------------------------------------------------- obs/mask
     def _arg_step(self):
+        if self._joint_actions and self._phase() == 'combat':
+            return A.ROOT
         # On a combat MULTI screen the sub-step is pick_hand regardless of the
         # autoregressive play machine (they never overlap — different screens).
         if self._multi is not None:
@@ -2041,7 +2069,7 @@ class SlayTheSpireEnv(gym.Env):
             cap = int(sel.get("pick_max", 0))
             sel["pick_remaining"] = max(0, cap - len(self._multi))
             canon["options"]["select"] = sel
-        return encode.encode(
+        obs = encode.encode(
             canon,
             global_map_view=self._global_map_view,
             card_language=self._card_language,
@@ -2052,12 +2080,20 @@ class SlayTheSpireEnv(gym.Env):
             interactive_reasoning=self._interactive_reasoning,
         )
 
+        if self._joint_actions:
+            obs['combat_legal'] = self.action_masks()[C.JOINT_END:]
+        return obs
+
     def action_masks(self):
         """Bool[N_ACTIONS] legal mask for the CURRENT (phase, arg_step). Name
         matches sb3-contrib's ActionMasker convention."""
         if self._cached_action_mask is not None:
             return self._cached_action_mask.copy()
-        mask = np.zeros(A.N_ACTIONS, dtype=bool)
+        mask = np.zeros(self.action_space.n, dtype=bool)
+        if self._joint_actions and self._phase() == 'combat':
+            ids = [aid for aid, _ in self.thick.bc.joint_policy_actions()]
+            self._cached_action_mask = C.joint_mask(ids)
+            return self._cached_action_mask.copy()
         desc = self._multi_desc()
         if desc is not None:
             for i in A.multi_legal_ids(desc, self._multi):

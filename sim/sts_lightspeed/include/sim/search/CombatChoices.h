@@ -80,4 +80,43 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
         throw std::runtime_error("combat candidate capacity 96 exceeded");
     return result;
 }
+
+constexpr int kJointEnd = 181;
+constexpr int kJointPlay = 182;
+constexpr int kJointPotion = 242;
+constexpr int kJointPick = 272;
+constexpr int kJointMulti = 368;
+constexpr int kJointSize = 1392;
+
+inline int jointActionId(const Action &action, const BattleContext &bc) {
+    const int source = action.getSourceIdx();
+    const int target = action.getTargetIdx();
+    switch (action.getActionType()) {
+        case ActionType::END_TURN: return kJointEnd;
+        case ActionType::CARD:
+            if (source < 0 || source >= bc.cards.cardsInHand || target >= 5) return -1;
+            return kJointPlay + source * 6 + (bc.cards.hand[source].requiresTarget() ? target : 5);
+        case ActionType::POTION:
+            if (source < 0 || source >= bc.potionCapacity || target >= 5) return -1;
+            return kJointPotion + source * 6 + (potionRequiresTarget(bc.potions[source]) ? target : 5);
+        case ActionType::SINGLE_CARD_SELECT: {
+            const auto choices = combatChoices(bc);
+            for (std::size_t i = 0; i < choices.cards.size(); ++i)
+                if (choices.cards[i].nativeIndex == action.getSelectIdx()) return kJointPick + static_cast<int>(i);
+            return -1;
+        }
+        case ActionType::MULTI_CARD_SELECT:
+            return source < 1024 ? kJointMulti + source : -1;
+        default: return -1;
+    }
+}
+
+inline std::vector<int> jointActionIds(const BattleContext &bc) {
+    std::vector<int> result;
+    for (const auto &action : Action::enumerateCombatActions(bc)) {
+        const int id = jointActionId(action, bc);
+        if (id >= 0) result.push_back(id);
+    }
+    return result;
+}
 } // namespace sts::search

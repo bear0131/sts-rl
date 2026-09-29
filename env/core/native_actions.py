@@ -74,6 +74,21 @@ def joint_mask(policy_ids):
     return mask
 
 
+def legacy_action_id(joint_id):
+    """Project a leaf's own public ID to an old source-only policy slot."""
+    if joint_id == JOINT_END:
+        return A.END_TURN
+    if JOINT_PLAY <= joint_id < JOINT_POTION:
+        return A._PLAY + (joint_id - JOINT_PLAY) // 6
+    if JOINT_POTION <= joint_id < JOINT_PICK:
+        return A._POTION + (joint_id - JOINT_POTION) // 6
+    if JOINT_PICK <= joint_id < JOINT_MULTI:
+        return A._PICK + joint_id - JOINT_PICK
+    if JOINT_MULTI <= joint_id < JOINT_SIZE:
+        return A._CONFIRM
+    raise ValueError('invalid joint policy ID')
+
+
 def action_bits(action):
     """Lossless native Action packing, including MULTI's low-bit selection set."""
     return int(action.action_type) << 29 | int(action.target_idx) << 16 | int(action.source_idx)

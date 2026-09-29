@@ -32,6 +32,7 @@ class CombatLeafGraphs:
         self.capture_seconds = self.copy_seconds = self.output_seconds = 0.0
         self.h2d_ms = self.replay_ms = self.d2h_ms = 0.0
         self.batch_counts = {}
+        self.subset_eager_rows = 0
         self.batch_multiple = int(batch_multiple)
         if self.batch_multiple < 0:
             raise ValueError('batch multiple must be nonnegative')
@@ -41,13 +42,36 @@ class CombatLeafGraphs:
             cached_graphs=len(self.entries), capture_seconds=self.capture_seconds,
             copy_seconds=self.copy_seconds, output_seconds=self.output_seconds,
             profile_samples=self.profile_samples, h2d_ms=self.h2d_ms,
-            replay_ms=self.replay_ms, d2h_ms=self.d2h_ms, batch_counts=dict(self.batch_counts))
+            replay_ms=self.replay_ms, d2h_ms=self.d2h_ms, batch_counts=dict(self.batch_counts),
+            subset_eager_rows=self.subset_eager_rows)
 
     def clear(self):
         self.entries.clear()
 
     def __call__(self, observations, width):
         try:
+            if self.core.training:
+                raise RuntimeError('leaf graphs require eval mode')
+            if getattr(self.core, 'joint_actions', False):
+                from env.core import native_actions as C
+                multi = np.asarray(observations['combat_legal'])[:, C.JOINT_MULTI-C.JOINT_END:].any(axis=1)
+                if multi.any():
+                    indices = np.flatnonzero(multi)
+                    tensors = {key: torch.as_tensor(value[indices], device=self.device)
+                               for key, value in observations.items()}
+                    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+                            enabled=self.amp == 'bf16', cache_enabled=False):
+                        logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width)
+                    result_logits = np.empty((len(multi), logits.shape[1]), dtype=np.float32)
+                    result_values = np.empty(len(multi), dtype=np.float32)
+                    result_logits[indices] = logits.float().cpu().numpy()
+                    result_values[indices] = values.float().reshape(-1).cpu().numpy()
+                    self.subset_eager_rows += len(indices)
+                    normal = np.flatnonzero(~multi)
+                    if len(normal):
+                        normal_result = self._forward({key: value[normal] for key, value in observations.items()}, width)
+                        result_logits[normal], result_values[normal] = normal_result
+                    return result_logits, result_values
             return self._forward(observations, width)
         except RuntimeError:
             # CUDA errors can poison the context: save only CPU inputs here.
@@ -143,7 +167,8 @@ class CombatLeafGraphs:
         def forward():
             with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
                     enabled=self.amp == 'bf16', cache_enabled=False):
-                logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width)
+                extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
+                logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
                 return logits.float(), values.float().reshape(-1)
         with torch.cuda.stream(stream):
             for _ in range(3):

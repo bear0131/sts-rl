@@ -1345,6 +1345,32 @@ void NoslNeuralSearchSession::expandWithLogits(
         return;
     }
 
+    if (config_.jointPolicy) {
+        if (logitsSize != kJointSize)
+            throw std::invalid_argument("joint-v2 requires complete policy logits at every expansion");
+        node.edges.clear();
+        double maximum = -std::numeric_limits<double>::infinity();
+        for (const auto &action : actions) {
+            const int id = jointActionId(action, state);
+            if (id >= 0 && std::isfinite(logits[id]))
+                maximum = std::max(maximum, logits[id] / config_.priorTemperature);
+        }
+        if (!std::isfinite(maximum))
+            throw std::invalid_argument("joint-v2 legal action logits must be finite");
+        double total = 0;
+        for (const auto &action : actions) {
+            const int id = jointActionId(action, state);
+            if (id < 0) continue; // potion discard is outside the drink contract
+            const double weight = std::isfinite(logits[id]) ?
+                std::exp(std::clamp(logits[id] / config_.priorTemperature - maximum, -80.0, 0.0)) : 0.0;
+            node.edges.emplace_back(action, weight, actionTargetsEnemy(state, action), actionLabel(state, action));
+            node.edges.back().semanticKey = publicActionKey(state, action);
+            total += weight;
+        }
+        for (auto &edge : node.edges) edge.prior /= total;
+        return;
+    }
+
     // The thin action codec currently has 181 ids. A fixed table avoids a
     // hash allocation for every expanded leaf; invalid/unmapped actions keep
     // the old count=1 behavior.

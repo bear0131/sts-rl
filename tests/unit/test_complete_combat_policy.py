@@ -3,7 +3,7 @@ import pytest
 import torch
 
 from env.core import action_space as A, native_actions as C
-from rl.policies.complete_combat import complete_logits
+from rl.policies.complete_combat import complete_logits, AutoregressiveSubsetHead
 
 
 def test_complete_codec_is_injective_and_round_trips_all_supported_actions():
@@ -68,3 +68,45 @@ def test_multisets_and_forced_targets_have_correct_probabilities():
     assert torch.count_nonzero(probs) == 1024
     logp[0,5].backward()
     assert torch.count_nonzero(target.grad) == 0
+
+
+@pytest.mark.parametrize('limit', [0, 3, 10])
+def test_autoregressive_subsets_have_one_path_and_uniform_legal_initialization(limit):
+    torch.manual_seed(42)
+    head = AutoregressiveSubsetHead(32)
+    legal = torch.tensor([[s.bit_count() <= limit for s in range(1024)]])
+    scores = head(torch.randn(1,32), torch.randn(1,10,32), legal)
+    probs = scores[legal].exp()
+    torch.testing.assert_close(probs.sum(), torch.tensor(1.), atol=2e-6, rtol=0)
+    torch.testing.assert_close(probs, torch.full_like(probs, 1/probs.numel()), atol=2e-7, rtol=1e-6)
+    assert sum(p.numel() for p in head.parameters()) < 5000
+    # A canonical path chooses each selected index once, then STOP unless the
+    # final index is nine, where STOP is forced and contributes log(1).
+    for subset in range(1024):
+        expected = subset.bit_count() + int(subset < 512)
+        assert head.path_active[subset].sum() == expected
+
+
+def test_autoregressive_teacher_loss_keeps_joint_set_weights_and_gradients():
+    torch.manual_seed(42)
+    head = AutoregressiveSubsetHead(16)
+    torch.nn.init.normal_(head.choice_key.weight, std=.1)
+    global_token = torch.randn(1,16)
+    hand = torch.randn(1,10,16)
+    legal = torch.zeros(1,1024,dtype=torch.bool)
+    legal[:, [0,1,2,3,5,7,512,513]] = True
+    teacher = torch.zeros(1,1024)
+    teacher[legal] = torch.tensor([.1,.1,.1,.2,.1,.15,.1,.15])
+    scores = head(global_token,hand,legal)
+    loss = -(scores * teacher).sum()
+    prefix_logp = head.prefix_log_probs(global_token,hand,legal)
+    mass = torch.zeros_like(prefix_logp).flatten(1)
+    path_mass = (teacher.unsqueeze(-1) * head.path_active).reshape(1,-1)
+    mass.scatter_add_(1, head.path_edges.unsqueeze(0), path_mass)
+    decomposed = -(mass * prefix_logp.flatten(1)).sum()
+    torch.testing.assert_close(loss,decomposed,atol=1e-6,rtol=1e-6)
+    params = tuple(head.parameters())
+    grads = torch.autograd.grad(loss, params, retain_graph=True)
+    reference = torch.autograd.grad(decomposed, params)
+    for actual, expected in zip(grads,reference):
+        torch.testing.assert_close(actual,expected,atol=1e-6,rtol=1e-5)

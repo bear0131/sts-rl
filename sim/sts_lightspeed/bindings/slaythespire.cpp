@@ -191,6 +191,7 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     }
     d["potions"] = potions;
     d["select"] = combatSelectInfo(bc);
+    d["joint_action_ids"] = sts::search::jointActionIds(bc);
     return d;
 }
 
@@ -1453,6 +1454,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["card_count"] = compact_leaf::kCardIds;
         out["version"] = 2;
         out["candidate_capacity"] = 96;
+        out["joint_policy_size"] = sts::search::kJointSize;
         out["categorical_width"] = compact_leaf::kCatSize;
         out["scalar_width"] = compact_leaf::kFloatSize;
         return out;
@@ -2472,6 +2474,10 @@ PYBIND11_MODULE(slaythespire, m) {
                     legal_actions.mutable_data() + legal_actions.size(),
                     std::uint32_t{0});
             }
+            pybind11::array_t<std::int32_t> legal_policy_ids(
+                std::vector<pybind11::ssize_t>{count, legalWidth});
+            std::fill(legal_policy_ids.mutable_data(), legal_policy_ids.mutable_data() + legal_policy_ids.size(), -1);
+            auto policy_ids = legal_policy_ids.mutable_unchecked<2>();
             auto legal = legal_actions.mutable_unchecked<2>();
             auto legal_count = legal_action_counts.mutable_unchecked<1>();
             pybind11::list needs_policy;
@@ -2490,6 +2496,8 @@ PYBIND11_MODULE(slaythespire, m) {
                 for (std::size_t col = 0; col < nLegal; ++col) {
                     legal(row, static_cast<pybind11::ssize_t>(col)) =
                         request.legalActions[col].bits;
+                    policy_ids(row, static_cast<pybind11::ssize_t>(col)) =
+                        sts::search::jointActionId(request.legalActions[col], *request.state);
                 }
                 needs_policy.append(request.needsPolicy);
             }
@@ -2499,6 +2507,7 @@ PYBIND11_MODULE(slaythespire, m) {
             out["scalars"] = scalars;
             out["legal_action_bits"] = legal_actions;
             out["legal_action_counts"] = legal_action_counts;
+            out["legal_policy_ids"] = legal_policy_ids;
             out["needs_policy"] = needs_policy;
             out["done"] = requests.empty() && session.done();
             return out;
@@ -2786,6 +2795,9 @@ PYBIND11_MODULE(slaythespire, m) {
                 config.maxDepth = depth;
                 config.cPuct = c_puct;
                 config.priorTemperature = prior_temperature;
+                config.jointPolicy = logits.size() == sts::search::kJointSize;
+                if (config.jointPolicy && boss_transition_value_mode != 0)
+                    throw std::invalid_argument("joint-v2 requires combat-end-hp-v1");
                 config.endTurnAsLeaf = end_turn_as_leaf;
                 config.dirichletAlpha = dirichlet_alpha;
                 config.dirichletEpsilon = dirichlet_epsilon;
@@ -2865,6 +2877,14 @@ PYBIND11_MODULE(slaythespire, m) {
             out["scalars"] = scalars;
             return out;
         }, "export the current state in the native compact leaf layout")
+        .def("joint_policy_actions", [](const BattleContext &bc) {
+            pybind11::list out;
+            for (const auto &action : sts::search::Action::enumerateCombatActions(bc)) {
+                const int id = sts::search::jointActionId(action, bc);
+                if (id >= 0) out.append(pybind11::make_tuple(id, action.bits));
+            }
+            return out;
+        }, "complete joint-v2 policy IDs paired with current native action bits")
         .def("apply_custom_state", &applyCustomCombatState,
              pybind11::arg("state"),
              "apply a data-only custom combat state without advancing RNG or simulation")

@@ -22,6 +22,7 @@ struct NoslCombatSearchConfig {
     double cPuct = 1.5;
     double fpuReduction = 0.01;
     double priorTemperature = 1.0;
+    bool jointPolicy = false;
     // Treat the state immediately after executing End Turn as a value-only
     // leaf.  This avoids searching through hidden enemy/random transitions.
     bool endTurnAsLeaf = false;
