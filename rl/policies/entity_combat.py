@@ -117,12 +117,18 @@ class EntityCombatNetwork(nn.Module):
     def _pool(self, entities, counts, context, *, logits=None):
         if logits is None:
             query = context[:, None] + self.pool_queries[None]
-            logits = torch.einsum('bkd,bnd->bkn', query, entities) * self.config.width**-.5
+            if entities.ndim == 2:
+                logits = torch.einsum('bkd,nd->bkn', query, entities) * self.config.width**-.5
+            else:
+                logits = torch.einsum('bkd,bnd->bkn', query, entities) * self.config.width**-.5
         weights = counts.float().clamp_min(0)
         scores = logits.float() + weights.clamp_min(1e-30).log()[:, None]
         probability = scores.masked_fill(weights[:, None] == 0, -1e9).softmax(-1)
         probability = probability * (weights[:, None] > 0)
-        pooled = torch.einsum('bkn,bnd->bkd', probability.to(entities.dtype), entities)
+        if entities.ndim == 2:
+            pooled = torch.einsum('bkn,nd->bkd', probability.to(entities.dtype), entities)
+        else:
+            pooled = torch.einsum('bkn,bnd->bkd', probability.to(entities.dtype), entities)
         return pooled + self.pool_count(weights.sum(-1, keepdim=True).log1p())[:, None]
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
@@ -161,9 +167,9 @@ class EntityCombatNetwork(nn.Module):
         pile_tokens = []
         all_ids = self.card_ids.reshape(1,-1)
         all_versions = self.card_versions.reshape(1,-1).float()/encode.UPGRADE_SCALE
-        pile_entities = self._card_tokens(table, all_ids, all_versions).expand(batch,-1,-1)
+        pile_entities = self._card_tokens(table, all_ids, all_versions)[0]
         pile_query = global_token[:, None] + self.pool_queries[None]
-        pile_logits = torch.einsum('bkd,bnd->bkn', pile_query, pile_entities) * self.config.width**-.5
+        pile_logits = torch.einsum('bkd,nd->bkn', pile_query, pile_entities) * self.config.width**-.5
         for pile_index, pile in enumerate(('draw', 'discard', 'exhaust')):
             counts = obs[pile+'_counts'].float()
             upgraded = torch.zeros_like(counts)

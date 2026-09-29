@@ -58,7 +58,8 @@ def test_shared_pile_attention_matches_independent_pools_and_gradients(combat_fa
         with monkeypatch.context() as patch:
             if independent:
                 patch.setattr(network,'_pool',lambda entities,counts,context,**kwargs:
-                    original_pool(entities,counts,context))
+                    original_pool(entities[None].expand(len(counts),-1,-1)
+                                  if entities.ndim==2 else entities,counts,context))
             state,blocks=network.encode(obs)
             loss=state.square().sum()+blocks['pile'].square().sum()
             loss.backward()
