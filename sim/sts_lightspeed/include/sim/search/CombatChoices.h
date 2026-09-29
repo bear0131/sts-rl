@@ -104,7 +104,8 @@ inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int se
         if (selected != 0) throw std::invalid_argument("selection prefix outside multi screen");
         auto actions = Action::enumerateCombatActions(bc);
         actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
-            return action.getActionType() == ActionType::POTION && action.getTargetIdx() == -1;
+            // Packed -1 is the unsigned 13-bit sentinel 8191.
+            return action.getActionType() == ActionType::POTION && action.getTargetIdx() > 5;
         }), actions.end());
         return actions;
     }

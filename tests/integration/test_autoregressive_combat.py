@@ -120,18 +120,19 @@ def test_non_drinkable_potion_never_leaks_into_search_leaves(combat_factory, com
     assert not env.action_masks()[C.AUTOREGRESSIVE_POTION:C.AUTOREGRESSIVE_PICK].any()
     logits = np.zeros(198)
     response = env.nosl_is_az_cpp_begin(logits, state_nonce=42, simulations=16,
-        depth=1, leaf_batch_size=4, compact_observation=compact)
-    leaves = 0
+        depth=0, leaf_batch_size=4, compact_observation=compact)
+    leaves = policy_leaves = 0
     for _ in range(32):
         if response['done']:
             break
         leaves += len(response['leaf_meta'])
         obs = response['observation_batch']
+        policy_leaves += int(obs['combat_legal'].any(axis=1).sum())
         assert obs['combat_legal'].shape[-1] == 198
         assert not obs['combat_legal'][:, C.AUTOREGRESSIVE_POTION:C.AUTOREGRESSIVE_PICK].any()
         response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
             [(leaf['request_id'], .3, logits) for leaf in response['leaf_meta']], max_leaves=4)
-    assert leaves > 0 and response['done']
+    assert leaves > 0 and policy_leaves > 0 and response['done']
 
 
 def test_sequential_model_predicts_updates_and_reloads(combat_factory, tmp_path):
