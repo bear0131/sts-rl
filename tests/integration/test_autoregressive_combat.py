@@ -59,6 +59,7 @@ def test_prefix_steps_do_not_execute_until_stop(combat_factory, card):
     before = bc.to_dict()
     oracle = bc.clone()
     assert env.action_space.n == 379
+    assert 'hand #1' in env.describe_action(C.JOINT_MULTI + 1)
     for slot in (1, 4):
         obs, reward, terminated, truncated, info = env.step(C.JOINT_MULTI + slot)
         assert reward == 0 and not terminated and not truncated
@@ -68,6 +69,7 @@ def test_prefix_steps_do_not_execute_until_stop(combat_factory, card):
         assert obs['combat_legal'].shape == (198,)
         assert not env.action_masks()[C.JOINT_MULTI:C.JOINT_MULTI + slot + 1].any()
     oracle.execute(sts.Action(sts.ActionType.MULTI_CARD_SELECT, (1 << 1) | (1 << 4)))
+    assert env.describe_action(C.AUTOREGRESSIVE_STOP) == 'confirm multi-select [1, 4]'
     result = env.step(C.AUTOREGRESSIVE_STOP)
     assert result[4]['simulator_transition']
     assert bc.to_dict() == oracle.to_dict()

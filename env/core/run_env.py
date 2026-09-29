@@ -2182,6 +2182,11 @@ class SlayTheSpireEnv(gym.Env):
         phase = self._phase()
 
         if self._joint_actions and phase == "combat":
+            if self._autoregressive_actions and C.JOINT_MULTI <= aid <= C.AUTOREGRESSIVE_STOP:
+                if aid == C.AUTOREGRESSIVE_STOP:
+                    return f"confirm multi-select {sorted(self._multi or ())}"
+                slot = aid - C.JOINT_MULTI
+                return f"select next {_card_label(self._combat_canon(), slot)} (hand #{slot})"
             return self.thick.describe_action(C.joint_semantic_action(aid))
 
         # combat MULTI screen: CONFIRM commits; PICK_CARD adds an unselected card.
