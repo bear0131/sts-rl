@@ -8,7 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| PERF11 | 进行中 | entity-combat的card-language叶绕过grouped数组运输，父进程解包约106秒/轮（旧路径约12秒）。保持256/4/8、96×128与搜索128/U40，统一数值叶运输；验收真实叶字段/请求/动作语义及同硬件完整collection A/B。见 `worklog/2026-09-29.md#perf11-language-leaf-transport-intent`。 |
+| PERF11 | 已验证并待正式训练观测 | canonical/card-language叶接入grouped数组运输，保留全字段/候选语义；256/4/8、96×128、128simulation完整同硬件采样206.009→150.595秒，decode92.046→14.189秒。采用graph pad16/wait0；0.5ms合批反而166.670秒，不采用。CPU56通过/GPU75通过，完整GPU collection通过；相对旧模型历史约120秒仍慢25%，不宣称全部恢复或跨异步BF16轨迹bitwise。见 `worklog/2026-09-29.md#perf11-remote-production-length-acceptance`。 |
 | TRAIN25 | U4十轮观察准备中 | 用户最新要求先试U4，10个全局collection（491520环境动作）后若持续失稳可切U40。entity-combat随机step0/空Adam与replay、256/4/8、96×128、目标50M、规则上层、旧样本上限0.9、Full Gumbel128关闭Q归一化且value_scale1；须验收共同recovery、每轮4步Adam和跨rank一致，再结合loss/梯度/战斗表现判断。见 `worklog/2026-09-29.md#train25-user-requests-ten-collection-u4-trial`。 |
 | ARCH01 | 实现验收完成；学习收益待实验 | `configs/train/entity_combat.args` / `rl/policies/entity_combat.py`：实体交互、牌堆集合、条件动作/自回归多选、胜负与条件HP分位点、实际动作后果辅助监督；无整局网络/历史记忆。F05期望utility不变，replay v3显式终局标签；CPU62/GPU33测试、真实PPO/NOSL两轮上报保存恢复、96×128 GPU collection及新模型两次GPU更新通过。未替换生产实验，未验证长期Boss胜率/HP反转收益；exhaust升级统计与真实逃跑仍为明确支持边界。接口见 `rl/README.md#entity-combat-实验架构`，证据见 `worklog/2026-09-29.md#entity-combat-training-and-lifecycle-acceptance`。 |
 | EVAL07 | 已完成；训练已恢复验收 | 固定step36175872/strict Full-Gumbel128，对照最强v3规则上层+planner8192×2，seeds200000--200099/A0：模型20/100、规则46/100；平均楼层35.18/41.95，Act2/3到达89%/37% vs 94%/63%。规则100局结果与战斗记录复现存档；差距主要在二幕（Boss前死亡22 vs 7，Boss胜率37/67 vs 63/87），甜圈八体/冠军/铜人及扎人的书突出，三哨卫全胜但模型净损血翻倍。原TRAIN24从36372480恢复，36421632四rank模型/Adam一致且+40更新、target50M。详见 `worklog/2026-09-29.md#eval07-final-comparison-and-training-restoration`；轨迹/图/CSV在 `runs/local/eval-current-vs-rulebase-20260929/`。 |

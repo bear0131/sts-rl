@@ -18,7 +18,7 @@ high
 --leaf-inference
 cuda-graph
 --leaf-graph-batch-multiple
-32
+16
 --leaf-graph-profile-interval
 512
 --rollout-resource-interval
