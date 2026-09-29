@@ -1027,6 +1027,20 @@ class SlayTheSpireEnv(gym.Env):
         )
         return None if ranked is None else int(ranked[0]["action"])
 
+    def overworld_rule_diagnostics(self):
+        """Expose only the visible screen and legal actions after a rule miss."""
+        state = self.thick.obs_canonical()
+        from env.core import action_space as A
+
+        return {
+            "phase": state["phase"],
+            "options": state.get("options", {}),
+            "resources": {key: state["global"].get(key)
+                          for key in ("act", "floor", "hp", "max_hp", "gold")},
+            "legal": [(int(action), A.segment_of(int(action)))
+                      for action in np.flatnonzero(self.action_masks())],
+        }
+
     def nosl_is_az_decide(
         self,
         prior_logits,

@@ -146,6 +146,10 @@ def test_worker_uses_same_core_and_explicit_unknown_event_fallback():
     mask[A._EVENT + 1] = True
     env.action_masks = lambda: mask
     assert env.overworld_rule_decision() is None
+    diagnostics = env.overworld_rule_diagnostics()
+    assert diagnostics['phase'] == 'event'
+    assert diagnostics['options']['event'] == 'NEW_UNDOCUMENTED_EVENT'
+    assert diagnostics['legal'] == [(A._EVENT + 1, A.segment_of(A._EVENT + 1))]
     s['phase'] = 'combat'
     with pytest.raises(RuntimeError, match='non-combat'):
         env.overworld_rule_decision()

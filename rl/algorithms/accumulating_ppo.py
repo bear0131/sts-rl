@@ -1117,10 +1117,18 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     index: ((), {}) for index in range(env.num_envs)
                     if int(phase[index]) != combat_phase and index not in startup_paused
                 })
+                unsupported = [index for index, action in upper_results.items()
+                               if action is None and getattr(self, '_combat_distribution', False)]
+                if unsupported:
+                    diagnostics = call_workers("overworld_rule_diagnostics", {
+                        index: ((), {}) for index in unsupported
+                    })
+                    raise ValueError(
+                        "entity-combat has no overworld model fallback; "
+                        f"unsupported rule screens: {diagnostics!r}"
+                    )
                 for index, action in upper_results.items():
                     if action is None:
-                        if getattr(self,'_combat_distribution',False):
-                            raise ValueError('entity-combat has no overworld model fallback; unsupported rule screen')
                         overworld_fallback_decisions += 1
                         continue
                     action = int(action)
