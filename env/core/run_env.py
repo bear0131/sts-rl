@@ -832,6 +832,8 @@ class SlayTheSpireEnv(gym.Env):
             info["nosl_value_terminal_target"] = float(
                 transition_info["nosl_value_terminal_target"]
             )
+        if 'nosl_value_terminal_outcome' in (transition_info or {}):
+            info['nosl_value_terminal_outcome'] = transition_info['nosl_value_terminal_outcome']
         return self._obs(), reward, terminated, False, info
 
     def _step_impl(self, action_id):
@@ -2095,7 +2097,8 @@ class SlayTheSpireEnv(gym.Env):
             return self._cached_action_mask.copy()
         mask = np.zeros(self.action_space.n, dtype=bool)
         if self._joint_actions and self._phase() == 'combat':
-            ids = [aid for aid, _ in self.thick.bc.joint_policy_actions()]
+            # Settlement clears bc on death while the room still says combat.
+            ids = [] if self.thick.bc is None else [aid for aid, _ in self.thick.bc.joint_policy_actions()]
             self._cached_action_mask = C.joint_mask(ids)
             return self._cached_action_mask.copy()
         desc = self._multi_desc()

@@ -23,11 +23,16 @@ def explicit_fp32_precision():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
-def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp):
+@pytest.mark.parametrize('entity', [False, True])
+def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity):
     import slaythespire as sts
-    env = combat_factory(['PURITY'] * 5, combat_action_contract='joint-v2')
-    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=42,
-        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4))
+    from rl.policies.entity_combat import EntityCombatPolicy
+    env = combat_factory(['PURITY'] * 5, combat_action_contract='joint-v2',card_language=entity)
+    kwargs = dict(entity_config=dict(width=32,layers=1,heads=4)) if entity else dict(d_model=32,n_layers=2,n_heads=4)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy if entity else SplitStSPointerPolicy, env, device='cuda', seed=42,
+        n_steps=8, batch_size=4, policy_kwargs=kwargs,
+        nosl_is_az=entity,nosl_is_az_cpp=entity,nosl_is_az_inner_only=entity,
+        nosl_is_az_upper_strategy='rules' if entity else 'model')
     model.amp_mode = amp
     model.policy.set_training_mode(False)
     cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2)
@@ -44,8 +49,11 @@ def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp):
         model._native_leaf_inference = cache
         actual = forward_leaves(model, batch, autocast=model.autocast_context)
         for a,b in zip(actual, expected):
+            # Splitting subset rows changes BF16 GEMM batch shapes. The entity
+            # encoder adds several such projections; allow 0.003 absolute
+            # logits drift near zero, while same-shape graph tests stay exact.
             np.testing.assert_allclose(a,b,rtol=.03 if amp=='bf16' else 1e-5,
-                                       atol=3e-4 if amp=='bf16' else 2e-7)
+                                       atol=(.003 if entity else 3e-4) if amp=='bf16' else 2e-7)
         torch._C._cuda_clearCublasWorkspaces()
         torch.cuda.empty_cache()
     assert cache.subset_eager_rows == 4
@@ -70,11 +78,16 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
-@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2')])
+@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2')])
 def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract):
-    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract=contract)
-    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=7,
-        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch))
+    from rl.policies.entity_combat import EntityCombatPolicy
+    entity=combat_arch=='entity'
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract=contract,card_language=entity)
+    kwargs = dict(entity_config=dict(width=32,layers=1,heads=4)) if entity else dict(d_model=32,n_layers=2,n_heads=4,combat_arch=combat_arch)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy if entity else SplitStSPointerPolicy, env, device='cuda', seed=7,
+        n_steps=8, batch_size=4, policy_kwargs=kwargs,
+        nosl_is_az=entity,nosl_is_az_cpp=entity,nosl_is_az_inner_only=entity,
+        nosl_is_az_upper_strategy='rules' if entity else 'model')
     model.amp_mode = amp
     model.policy.set_training_mode(False)
     cache = CombatLeafGraphs(model.policy.core, model.device, amp=amp, capacity=2,
@@ -105,7 +118,10 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
     obs['player_scalars'] = obs['player_scalars'].copy() + 0.01
     compare(2)
     with torch.no_grad():
-        if combat_arch == 'mlp':
+        if entity:
+            model.policy.core.combat.end.bias.add_(0.125)
+            model.policy.core.combat.player_projection.weight.mul_(1.1)
+        elif combat_arch == 'mlp':
             model.policy.core.combat.policy_head.bias.add_(0.125)
             model.policy.core.combat.trunk[0].weight.mul_(1.1)
         else:

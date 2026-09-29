@@ -199,6 +199,9 @@ class RealPolicyAgent:
             return RealDecision(command, reason)
 
         pending: tuple | None = None
+        if (getattr(getattr(getattr(self.model,'policy',None),'core',None),'combat_only',False)
+                and self.adapter.phase() != "combat"):
+            return RealDecision("STATE", "combat_only_requires_manual_overworld")
         trace: list[tuple[int, tuple | None, str]] = []
         for inner in range(self.max_inner_decisions):
             obs = self.adapter.observation(pending=pending)

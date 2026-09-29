@@ -1387,10 +1387,15 @@ class WatchSession:
         self.env.unwrapped.nosl_is_az_cpp_abort()
 
     def _select_upper_action(self, model_action: int, legal, phase: str):
+        combat_only = getattr(getattr(getattr(self.model,'policy',None),'core',None),'combat_only',False)
+        if phase != "combat" and combat_only and self.upper_strategy == _UPPER_STRATEGY_MODEL:
+            raise ValueError("该模型只包含战斗网络，请选择规则上层")
         if phase == "combat" or self.upper_strategy == _UPPER_STRATEGY_MODEL:
             return int(model_action), _UPPER_STRATEGY_MODEL
         rule_action = self.env.overworld_rule_decision()
         if rule_action is None:
+            if combat_only:
+                raise ValueError("规则尚不支持当前上层决策，战斗模型无法代替上层")
             return int(model_action), "model_fallback"
         rule_action = int(rule_action)
         if not np.any(np.asarray(legal, dtype=np.int64) == rule_action):

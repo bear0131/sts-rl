@@ -6,11 +6,11 @@ from env.core import native_actions as C
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 
 
-def make_buffer(capacity=3):
+def make_buffer(capacity=3, supervision_contract='scalar-hp-v1'):
     space = spaces.Dict(combat_legal=spaces.Box(0, 1, (C.JOINT_WIDTH,), bool),
                         player_scalars=spaces.Box(-np.inf, np.inf, (2,), np.float32))
     return NOSLISAZReplayBuffer(capacity=capacity, observation_space=space,
-        observation_keys=space.spaces, action_dim=C.JOINT_SIZE)
+        observation_keys=space.spaces, action_dim=C.JOINT_SIZE,supervision_contract=supervision_contract)
 
 
 def sample(index):
@@ -58,3 +58,29 @@ def test_joint_replay_rejects_illegal_probability_and_accepts_value_only():
     batch = replay.get_batch(np.array([0]))
     assert batch['policy_weights'][0] == 0
     assert batch['value_targets'][0] == pytest.approx(.3)
+
+
+def test_distribution_replay_wrap_restore_and_reject_scalar_labels():
+    from rl.algorithms.combat_distribution import CONTRACT, outcome_targets
+    replay=make_buffer(supervision_contract=CONTRACT)
+    samples=[sample(i) for i in range(5)]
+    for i,row in enumerate(samples):
+        row['value_target']=.3 if i % 2 else 0.
+        row['executed_action']=C.JOINT_PLAY+i
+        row['transition_target']=np.full(6,i/10,np.float32)
+        outcome_targets([row],'win' if i % 2 else 'loss')
+    replay.add_samples(samples[:2]);replay.add_samples(samples[2:])
+    state=replay.state_dict()
+    restored=make_buffer(supervision_contract=CONTRACT)
+    restored.load_state_dict(state)
+    assert state['version']==3
+    batch=restored.get_batch(np.array([0,1,2,0]),workers=2)
+    for index, expected in enumerate((3,4,2,3)):
+        np.testing.assert_array_equal(batch['combat_targets'][index],samples[expected]['combat_targets'])
+    with pytest.raises(ValueError,match='supervision contract'):
+        make_buffer().load_state_dict(state)
+    with pytest.raises(ValueError,match='supervision contract'):
+        restored.load_state_dict(make_buffer().state_dict())
+    state['arrays']['combat_targets'][0,0]=0
+    with pytest.raises(ValueError,match='zero utility'):
+        restored.load_state_dict(state)

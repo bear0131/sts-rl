@@ -33,7 +33,7 @@ from schemas.combat_state import (
 
 from . import actions
 from .boss_value import context_terminal_target
-from .combat_value import combat_terminal_target
+from .combat_value import combat_terminal_target, combat_terminal_outcome
 from . import combat_env
 from . import encode
 from . import factories
@@ -379,6 +379,7 @@ class SimGameEnv:
             self._apply(action)
         terminal_combat_state = self._winning_combat_value_state()
         terminal_combat_target = self._nosl_value_terminal_target()
+        terminal_combat_outcome = self._nosl_value_terminal_outcome()
         self._settle()  # pump through any auto-resolving screens to next decision
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
@@ -404,6 +405,7 @@ class SimGameEnv:
             info["nosl_value_terminal_state"] = terminal_combat_state
         if terminal_combat_target is not None:
             info["nosl_value_terminal_target"] = terminal_combat_target
+            info["nosl_value_terminal_outcome"] = terminal_combat_outcome
         if self._last_reasoning_trace is not None:
             info["reasoning_trace"] = self._last_reasoning_trace
         return self._canonical(), reward, terminated, info
@@ -423,6 +425,7 @@ class SimGameEnv:
         self.bc.execute(sts.Action(int(action_bits)))
         terminal_combat_state = self._winning_combat_value_state()
         terminal_combat_target = self._nosl_value_terminal_target()
+        terminal_combat_outcome = self._nosl_value_terminal_outcome()
         self._settle()
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp
@@ -436,6 +439,7 @@ class SimGameEnv:
             info["nosl_value_terminal_state"] = terminal_combat_state
         if terminal_combat_target is not None:
             info["nosl_value_terminal_target"] = terminal_combat_target
+            info["nosl_value_terminal_outcome"] = terminal_combat_outcome
         return self._canonical(), reward, terminated, info
 
     def preview_native_end_turn_boundary(self, action_bits: int):
@@ -472,6 +476,11 @@ class SimGameEnv:
         if self._nosl_is_az_boss_transition_target:
             return context_terminal_target(enabled=True, gc=self.gc, bc=self.bc)
         return combat_terminal_target(self.bc)
+
+    def _nosl_value_terminal_outcome(self):
+        if self.bc is None or not self.bc.is_battle_over:
+            return None
+        return combat_terminal_outcome(self.bc)
 
     @staticmethod
     def _semantic_action_card(action, before):
@@ -730,6 +739,7 @@ class _CombatBranchGameEnv(SimGameEnv):
         target = self._nosl_value_terminal_target()
         if target is not None:
             info["nosl_value_terminal_target"] = target
+            info["nosl_value_terminal_outcome"] = self._nosl_value_terminal_outcome()
         return self._canonical(), 0.0, terminated, info
 
     def step_native_combat(self, action_bits: int):
@@ -749,6 +759,7 @@ class _CombatBranchGameEnv(SimGameEnv):
         target = self._nosl_value_terminal_target()
         if target is not None:
             info["nosl_value_terminal_target"] = target
+            info["nosl_value_terminal_outcome"] = self._nosl_value_terminal_outcome()
         return self._canonical(), 0.0, self.bc.is_battle_over, info
 
     def step_fast(self, action):

@@ -62,6 +62,7 @@ class EntityCombatNetwork(nn.Module):
         # Additional HP deficit, log turn, and soft threshold features.
         self.player_projection = nn.Linear(sum(prod(space[k].shape) for k in self.scalar_keys)+6, width)
         self.turn_bucket = nn.Embedding(32, width)
+        self.register_buffer('hp_thresholds', torch.tensor([.25,.5,.75,1.]), persistent=False)
         self.pool_queries = nn.Parameter(torch.randn(config.pile_queries, width)*.02)
         self.pile_role = nn.Embedding(3, width)
         self.pool_count = nn.Linear(1, width)
@@ -97,7 +98,7 @@ class EntityCombatNetwork(nn.Module):
         hp = obs['player_scalars'].float()
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2]-hp[:, :1], turn.clamp_min(0).log1p()/4,
-                           torch.sigmoid((hp[:, 5:6]-hp.new_tensor([.25,.5,.75,1.]))*12)), -1)
+                           torch.sigmoid((hp[:, 5:6]-self.hp_thresholds)*12)), -1)
         global_token = self.player_projection(torch.cat(
             [obs[k].float().reshape(batch,-1) for k in self.scalar_keys]+[extra],-1))
         global_token = global_token + self.turn_bucket(turn.long().flatten().clamp(0,31))

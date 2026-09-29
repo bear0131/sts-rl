@@ -36,6 +36,7 @@ def test_real_settlement_heals_but_training_target_does_not(
         assert env.thick.bc is None
         assert env.thick.gc.cur_hp == expected_exit
         assert info["nosl_value_terminal_target"] == pytest.approx(hp / 200)
+        assert info["nosl_value_terminal_outcome"] == "win"
         samples = [{"value_target": None}, {"value_target": None}]
         _fill_nosl_combat_value_targets(samples, info["nosl_value_terminal_target"])
         assert all(s["value_target"] == pytest.approx(hp / 200) for s in samples)

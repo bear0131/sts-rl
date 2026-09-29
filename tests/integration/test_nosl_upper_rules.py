@@ -94,7 +94,8 @@ def test_upper_rules_fallback_and_native_search(tmp_path, monkeypatch, short_com
             assert counts["overworld_fallback_decisions"] == 4
         else:
             assert set(calls) == {"combat"}
-            assert counts == {"overworld_rule_decisions": 0, "overworld_fallback_decisions": 0}
+            assert counts == {"overworld_rule_decisions": 0, "overworld_fallback_decisions": 0,
+                              "forced_end_turn_roots": 0, "root_value_predictions_skipped": 0}
         # Fight-local labels may remain pending under this fixed action budget.
         assert (model._nosl_is_az_replay.size +
                 sum(len(fight) for fight in model._nosl_is_az_pending_fights)) > 0

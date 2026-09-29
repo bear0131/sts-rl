@@ -1347,6 +1347,9 @@ def distributed_nosl_is_az_update(
             "value_mae", "value_bias", "finite_fraction",
             "replay_old_fraction", "replay_current_fraction",
         }
+        if getattr(model, '_combat_distribution', False):
+            from rl.algorithms.combat_distribution import METRICS
+            metric_keys.update(METRICS)
         additive_keys = {
             "roots", "global_roots", "gradient_batches", "updates", "metric_count",
             "replay_sampled_roots", "backward_sec", "sync_sec",
@@ -1467,6 +1470,9 @@ def distributed_nosl_is_az_update(
         "value_bias",
         "finite_fraction",
     )
+    if getattr(model, '_combat_distribution', False):
+        from rl.algorithms.combat_distribution import METRICS
+        diagnostic_names += METRICS
     local_metric_sums = getattr(model, "_nosl_is_az_metric_sums", {})
     local_metric_sumsq = getattr(model, "_nosl_is_az_metric_sumsq", {})
     legacy_metric_count = float(getattr(
@@ -1506,6 +1512,7 @@ def distributed_nosl_is_az_update(
         return float(np.sqrt(max(0.0, second - mean * mean)))
 
     diagnostic_values = {
+        **{name:diagnostic_mean(name) for name in diagnostic_names[14:]},
         "metric_count": diagnostic_count("value_target"),
         "target_entropy": diagnostic_mean("target_entropy"),
         "policy_entropy": diagnostic_mean("policy_entropy"),
@@ -1825,6 +1832,13 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/rollout_value_gt_current_hp_ge_future_hp_matches",
     "nosl_is_az/gradient_norm_preclip",
     "nosl_is_az/learning_rate",
+    "nosl_is_az/win_bce",
+    "nosl_is_az/hp_pinball",
+    "nosl_is_az/utility_mse",
+    "nosl_is_az/transition_loss",
+    "nosl_is_az/win_probability",
+    "nosl_is_az/win_target",
+    "nosl_is_az/hp_given_win",
 )
 
 
@@ -2041,6 +2055,10 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    args.policy_architecture = type(probe_model.policy).__name__
+    args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
+    if getattr(getattr(probe_model.policy,'core',None),'combat_only',False):
+        args.entity_config = dict(probe_model.policy.entity_config)
     source_nosl_is_az = bool(getattr(probe_model, "nosl_is_az", False))
     source_nosl_is_az_replay_enabled = bool(
         getattr(probe_model, "nosl_is_az_replay_enabled", True)
@@ -2173,6 +2191,8 @@ def main() -> None:
     )
     if upper_strategy not in ("model", "rules"):
         raise ValueError("NOSL-IS-AZ upper strategy must be model or rules")
+    if getattr(getattr(model.policy,'core',None),'combat_only',False) and upper_strategy != 'rules':
+        raise ValueError('combat-only model requires rules upper strategy')
     if upper_strategy == "rules" and not (
         model.nosl_is_az and model.nosl_is_az_inner_only
     ):
@@ -2182,9 +2202,11 @@ def main() -> None:
     args.nosl_is_az_upper_strategy_version = (
         OVERWORLD_RULE_VERSION if upper_strategy == "rules" else "checkpoint-model"
     )
+    fallback_label = ('disabled' if getattr(getattr(model.policy,'core',None),'combat_only',False)
+                      else 'masked-argmax' if upper_strategy == 'rules' else 'sampled')
     print(f"[rank {args.rank}] NOSL upper strategy: {upper_strategy} "
           f"version={args.nosl_is_az_upper_strategy_version} "
-          f"fallback={'masked-argmax' if upper_strategy == 'rules' else 'sampled'}", flush=True)
+          f"fallback={fallback_label}", flush=True)
     if args.nosl_is_az_updates is not None:
         if not bool(getattr(model, "nosl_is_az", False)):
             raise ValueError(

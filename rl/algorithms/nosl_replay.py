@@ -60,6 +60,7 @@ class NOSLISAZReplayBuffer:
         observation_keys: Iterable[str],
         action_dim: int,
         value_contract: str = VALUE_CONTRACT,
+        supervision_contract: str = 'scalar-hp-v1',
     ) -> None:
         if capacity < 1:
             raise ValueError("replay capacity must be positive")
@@ -74,6 +75,11 @@ class NOSLISAZReplayBuffer:
         self.policy_contract = C.JOINT_CONTRACT if action_dim == C.JOINT_SIZE else 'legacy-thin'
         self.joint_rows: list | None = None
         self.value_contract = str(value_contract)
+        from rl.algorithms.combat_distribution import CONTRACT
+        if supervision_contract not in ('scalar-hp-v1', CONTRACT):
+            raise ValueError('unsupported replay supervision contract')
+        self.supervision_contract = supervision_contract
+        self.combat_targets = None
         self.observation_keys = keys
         self._observation_spaces = {
             key: observation_space[key] for key in self.observation_keys
@@ -91,6 +97,8 @@ class NOSLISAZReplayBuffer:
     @property
     def allocated_bytes(self) -> int:
         arrays = [] if self.observations is None else list(self.observations.values())
+        if self.combat_targets is not None:
+            arrays.append(self.combat_targets)
         arrays.extend(
             array
             for array in (
@@ -109,13 +117,17 @@ class NOSLISAZReplayBuffer:
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
         names = ('action_masks', 'policy_targets', 'policy_weights', 'value_targets', 'sample_ids')
+        if self.supervision_contract != 'scalar-hp-v1':
+            names += ('combat_targets',)
         joint = None
         if self.joint_rows is not None:
             rows = self.joint_rows[:self.size]
             joint = dict(offsets=np.cumsum([0] + [len(row[0]) for row in rows], dtype=np.int64),
                          ids=np.concatenate([row[0] for row in rows]) if rows else np.empty(0, np.uint16),
                          probabilities=np.concatenate([row[1] for row in rows]) if rows else np.empty(0, np.float32))
-        return dict(version=2, value_contract=self.value_contract, policy_contract=self.policy_contract,
+        return dict(version=2 if self.supervision_contract == 'scalar-hp-v1' else 3,
+            supervision_contract=self.supervision_contract,
+            value_contract=self.value_contract, policy_contract=self.policy_contract,
             joint=joint,
             capacity=self.capacity, action_dim=self.action_dim,
             observation_keys=self.observation_keys, position=self.position, size=self.size,
@@ -125,13 +137,15 @@ class NOSLISAZReplayBuffer:
             arrays={k:None if getattr(self,k) is None else getattr(self,k)[:self.size].copy() for k in names})
 
     def load_state_dict(self, state):
+        if state.get('supervision_contract','scalar-hp-v1') != self.supervision_contract:
+            raise ValueError('replay supervision contract mismatch; collect fresh outcome labels')
         if state.get('policy_contract', 'legacy-thin') != self.policy_contract:
             raise ValueError('replay policy contract mismatch; collect fresh complete-action targets')
         if state.get('value_contract') != self.value_contract:
             raise ValueError(
                 'replay value contract mismatch; migrate weights and collect '
                 'new replay instead of mixing pre/post-combat HP targets')
-        if (state['version'] != 2 or state['capacity'] != self.capacity
+        if (state['version'] != (2 if self.supervision_contract == 'scalar-hp-v1' else 3) or state['capacity'] != self.capacity
                 or state['action_dim'] != self.action_dim
                 or tuple(state['observation_keys']) != self.observation_keys):
             raise ValueError('replay checkpoint geometry does not match runtime')
@@ -141,6 +155,11 @@ class NOSLISAZReplayBuffer:
         if size < self.capacity and position != size:
             raise ValueError('invalid partially filled replay cursor')
         if state['observations'] is not None:
+            if self.supervision_contract != 'scalar-hp-v1':
+                from rl.algorithms.combat_distribution import validate_targets
+                if state['arrays'].get('combat_targets') is None:
+                    raise ValueError('missing combat distribution targets')
+                validate_targets(state['arrays']['combat_targets'],state['arrays']['value_targets'])
             self._allocate()
             for key, target in self.observations.items():
                 source = state['observations'][key]
@@ -197,6 +216,9 @@ class NOSLISAZReplayBuffer:
             self.policy_targets = np.empty((self.capacity, self.action_dim), dtype=np.float16)
         self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
+        if self.supervision_contract != 'scalar-hp-v1':
+            from rl.algorithms.combat_distribution import TARGET_WIDTH
+            self.combat_targets = np.empty((self.capacity,TARGET_WIDTH),dtype=np.float32)
         self.sample_ids = np.empty(self.capacity, dtype=np.uint64)
 
     def _write(self, destination: slice, source: slice, batch: Mapping) -> None:
@@ -215,6 +237,8 @@ class NOSLISAZReplayBuffer:
             self.policy_targets[destination] = batch["policy_targets"][source]
         self.policy_weights[destination] = batch["policy_weights"][source]
         self.value_targets[destination] = batch["value_targets"][source]
+        if self.combat_targets is not None:
+            self.combat_targets[destination] = batch['combat_targets'][source]
         self.sample_ids[destination] = batch["sample_ids"][source]
 
     def add_samples(self, samples: Sequence[Mapping]) -> int:
@@ -244,6 +268,11 @@ class NOSLISAZReplayBuffer:
         value_targets = np.asarray(
             [sample["value_target"] for sample in labelled], dtype=np.float32
         )
+        combat_targets = None
+        if self.supervision_contract != 'scalar-hp-v1':
+            from rl.algorithms.combat_distribution import validate_targets
+            combat_targets = np.stack([sample['combat_targets'] for sample in labelled]).astype(np.float32)
+            validate_targets(combat_targets,value_targets)
         count = len(labelled)
         if action_masks.shape != (count, self.action_dim):
             raise ValueError(
@@ -288,6 +317,8 @@ class NOSLISAZReplayBuffer:
             policy_targets = policy_targets[offset:]
             policy_weights = policy_weights[offset:]
             value_targets = value_targets[offset:]
+            if combat_targets is not None:
+                combat_targets = combat_targets[offset:]
             sample_ids = sample_ids[offset:]
             count = self.capacity
 
@@ -300,6 +331,8 @@ class NOSLISAZReplayBuffer:
             "value_targets": value_targets,
             "sample_ids": sample_ids,
         }
+        if combat_targets is not None:
+            batch['combat_targets'] = combat_targets
         first = min(count, self.capacity - self.position)
         self._write(slice(self.position, self.position + first), slice(0, first), batch)
         remaining = count - first
@@ -399,7 +432,7 @@ class NOSLISAZReplayBuffer:
         indices = np.asarray(indices, dtype=np.int64)
         fields = list(self.observations.items()) + [
             (name, getattr(self, name)) for name in (
-                "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids"
+                "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids", "combat_targets"
             ) if getattr(self, name) is not None
         ]
         def gather(field):
@@ -441,4 +474,7 @@ class NOSLISAZReplayBuffer:
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize
         )
+        if self.supervision_contract != 'scalar-hp-v1':
+            from rl.algorithms.combat_distribution import TARGET_WIDTH
+            per_sample += 4*TARGET_WIDTH
         return self.capacity * per_sample

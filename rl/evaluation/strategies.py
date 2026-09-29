@@ -106,6 +106,9 @@ class PolicyStrategy:
     def decide(self, requests, *, check=lambda: None):
         if not requests:
             return []
+        if getattr(getattr(getattr(self.model, 'policy', None), 'core', None), 'combat_only', False):
+            if any(r.info.get('phase') != 'combat' for r in requests):
+                raise ValueError('combat-only model requires a separate overworld strategy')
         forced = _forced_end_batch(self, requests, check)
         if forced is not None:
             return forced
@@ -356,9 +359,10 @@ def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
         strategy.routes['combat'].trace = trace
     if combat_model is not None:
         strategy = PhaseStrategy(policy_strategy(upper_model, args), {'combat': strategy})
-    if getattr(args, 'upper_strategy', 'model') == 'rules':
+    combat_only_upper = getattr(getattr(getattr(upper_model,'policy',None),'core',None),'combat_only',False)
+    if getattr(args, 'upper_strategy', 'model') == 'rules' or combat_only_upper:
         from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
-        upper = OverworldRuleStrategy(fallback=policy_strategy(upper_model, args), trace=trace)
+        upper = OverworldRuleStrategy(fallback=None if combat_only_upper else policy_strategy(upper_model, args), trace=trace)
         strategy = PhaseStrategy(upper, {'combat': strategy})
     if getattr(args, 'route', 'model') != 'model':
         strategy = PhaseStrategy(strategy, {'map': MapRouteStrategy()})

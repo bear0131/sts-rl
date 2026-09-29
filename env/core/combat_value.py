@@ -6,6 +6,14 @@ from .encode import HP_SCALE
 VALUE_CONTRACT = "combat-end-hp-v1"
 
 
+def combat_terminal_outcome(battle):
+    """Explicit outcome; an unknown/escaped/censored terminal is never a loss."""
+    state = battle if isinstance(battle, dict) else battle.to_dict()
+    if state.get('escaped', False):
+        return 'escape'
+    return {1:'win', 2:'loss'}.get(int(state['outcome']), 'unknown')
+
+
 def combat_end_hp(battle) -> float:
     """Unscaled terminal HP; neither relic healing nor act transitions apply."""
     state = battle if isinstance(battle, dict) else battle.to_dict()

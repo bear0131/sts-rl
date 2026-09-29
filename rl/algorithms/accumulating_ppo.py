@@ -380,6 +380,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def _setup_model(self) -> None:
         super()._setup_model()
+        self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
+        self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
+        if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
+                and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == 'rules'):
+            raise ValueError('entity-combat training requires C++ inner-only NOSL and rules upper strategy')
         self.combat_action_contract = (
             "joint-v2" if "combat_legal" in self.observation_space.spaces else "legacy")
         if self.combat_action_contract == "joint-v2":
@@ -387,6 +392,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 raise ValueError("joint-v2 requires combat-end-hp-v1")
             if self.nosl_is_az and not self.nosl_is_az_cpp:
                 raise ValueError("joint-v2 NOSL requires the C++ search backend")
+
+    def dump_logs(self, iteration=0):
+        # SB3's narrow console columns otherwise collapse distinct long NOSL
+        # metric names into the same key and raise before the learner update.
+        from stable_baselines3.common.logger import HumanOutputFormat
+        width = max((len(key)+3 for key in self.logger.name_to_value), default=36)
+        for output in self.logger.output_formats:
+            if isinstance(output, HumanOutputFormat):
+                output.max_length = max(output.max_length, width)
+        return super().dump_logs(iteration)
 
     def _excluded_save_params(self) -> list[str]:
         """Exclude transient reasoning transcripts from SB3 checkpoints.
@@ -442,6 +457,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             else VALUE_CONTRACT
         )
         if replay is not None:
+            if replay.supervision_contract != getattr(self,'nosl_supervision_contract','scalar-hp-v1'):
+                raise ValueError("NOSL replay supervision changed; collect new replay")
             if getattr(replay, "value_contract", None) != value_contract:
                 raise ValueError("NOSL replay value contract changed; collect new replay")
             if replay.capacity != capacity:
@@ -461,6 +478,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             observation_keys=observation_keys,
             action_dim=action_dim,
             value_contract=value_contract,
+            supervision_contract=getattr(self,'nosl_supervision_contract','scalar-hp-v1'),
         )
         self._nosl_is_az_replay = replay
         return replay
@@ -510,7 +528,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError(
                 "fresh NOSL policy weights must be finite and non-negative"
             )
+        extra = {}
+        if getattr(self,'_combat_distribution',False):
+            from rl.algorithms.combat_distribution import validate_targets
+            extra['combat_targets'] = np.stack([sample['combat_targets'] for sample in samples]).astype(np.float32)
+            validate_targets(extra['combat_targets'],value_targets)
         return {
+            **extra,
             "observations": observations,
             "action_masks": action_masks,
             "policy_targets": policy_targets,
@@ -567,6 +591,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
         core = getattr(self.policy, "core", None)
         combat = getattr(core, "combat", None)
+        if getattr(core,'combat_only',False):
+            for parameter in self.policy.parameters():
+                parameter.requires_grad_(True)
+            return 0, sum(p.numel() for p in self.policy.parameters())
         if combat is None or getattr(core, "overworld", None) is None:
             raise ValueError(
                 "NOSL-IS-AZ inner-only mode requires a split specialist policy"
@@ -1068,6 +1096,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 })
                 for index, action in upper_results.items():
                     if action is None:
+                        if getattr(self,'_combat_distribution',False):
+                            raise ValueError('entity-combat has no overworld model fallback; unsupported rule screen')
                         overworld_fallback_decisions += 1
                         continue
                     action = int(action)
@@ -1413,6 +1443,18 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 terminal_target = infos[env_index].pop(
                     "nosl_value_terminal_target", np.nan
                 )
+                if getattr(self,'_combat_distribution',False):
+                    from rl.algorithms.combat_distribution import transition_features
+                    after = terminal_observation
+                    if after is None and not dones[env_index] and next_phases[env_index] == combat_phase:
+                        after = {key:value[env_index] for key,value in new_obs.items()}
+                    if after is not None:
+                        roots = active_combat_samples[env_index]
+                        for root in reversed(roots):
+                            if root.get('sample_kind') == 'combat_root':
+                                root['executed_action'] = int(actions_np[env_index])
+                                root['transition_target'] = transition_features(after)-transition_features(root['observation'])
+                                break
                 if _append_nosl_value_only_sample(
                     active_combat_samples[env_index],
                     terminal_observation,
@@ -1432,6 +1474,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if interrupted[env_index]:
                     incomplete_combat_roots += len(pending)
                     continue
+                if getattr(self,'_combat_distribution',False):
+                    from rl.algorithms.combat_distribution import outcome_targets
+                    outcome = infos[env_index].get('nosl_value_terminal_outcome')
+                    if outcome not in ('win','loss') or not np.isfinite(terminal_target):
+                        incomplete_combat_roots += len(pending)
+                        continue
+                    outcome_targets(pending,outcome)
                 target = next_hp[env_index]
                 if np.isfinite(terminal_target):
                     target = terminal_target
@@ -2021,6 +2070,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "value_bias",
             "finite_fraction",
         )
+        if getattr(self,'_combat_distribution',False):
+            from rl.algorithms.combat_distribution import METRICS
+            monitor_names += METRICS
         monitor_sum = {name: 0.0 for name in monitor_names}
         monitor_sumsq = {name: 0.0 for name in monitor_names}
         monitor_min = {name: float("inf") for name in monitor_names}
@@ -2117,6 +2169,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     "value_targets": sampled_batch["value_targets"][start:end],
                     "sample_ids": sampled_batch["sample_ids"][start:end],
                 }
+                if getattr(self,'_combat_distribution',False):
+                    batch['combat_targets'] = sampled_batch['combat_targets'][start:end]
                 host_observations = batch["observations"]
                 observations = transfer_observations(host_observations)
                 actor_kwargs = {}
@@ -2144,7 +2198,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     dtype=th.float32,
                 ).clamp_min(0.0)
                 with self.autocast_context():
-                    logits, values = actor_critic(observations, **actor_kwargs)
+                    distribution_metrics = {}
+                    if getattr(self,'_combat_distribution',False):
+                        combat_targets = transfer_array(batch['combat_targets'],dtype=th.float32)
+                        logits, values, distribution_outputs = core.combat_training_outputs(
+                            observations,combat_targets[:,1],**actor_kwargs)
+                    else:
+                        logits, values = actor_critic(observations, **actor_kwargs)
                     masked_logits = th.where(
                         masks, logits, th.full_like(logits, -1.0e8)
                     )
@@ -2192,6 +2252,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         values.float().flatten(), value_targets,
                         reduction="none",
                     )
+                    if getattr(self,'_combat_distribution',False):
+                        from rl.algorithms.combat_distribution import distribution_loss
+                        value_loss_per_sample, distribution_metrics = distribution_loss(
+                            distribution_outputs,combat_targets,value_targets,
+                            mean_coef=core.config.mean_loss_coef,
+                            auxiliary_coef=core.config.auxiliary_loss_coef)
                     loss_per_sample = (
                         self.nosl_is_az_policy_coef
                         * policy_cross_entropy_per_sample * policy_weights
@@ -2242,6 +2308,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         th.isfinite(logits).all(dim=-1)
                         & th.isfinite(pred_values)
                     ).float(),
+                    **distribution_metrics,
                 }
                 # Preserve the original reductions and detached metric values,
                 # but avoid a host synchronization after each microbatch.
@@ -2328,6 +2395,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 policy_loss_sum / max(1.0, sampled_policy_weight)
             ),
             "value_loss": float(value_loss_sum / sampled_roots),
+            **{name:metric_mean(name) for name in monitor_names[14:]},
             "updates": float(optimizer_steps),
             "gradient_batches": float(gradient_batches),
             "replay_sampled_roots": float(sampled_roots if replay_enabled else 0.0),

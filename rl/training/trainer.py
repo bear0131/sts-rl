@@ -95,8 +95,11 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     from rl.policies.pointer_policy import StSPointerPolicy
     from rl.policies.semantic_reasoning_policy import SemanticReasoningPolicy
     from rl.policies.split_policy import CombatStSPointerPolicy, SplitStSPointerPolicy
+    from rl.policies.entity_combat import EntityCombatPolicy
 
     policy = model.policy
+    if isinstance(policy, EntityCombatPolicy):
+        return "entity-combat"
     if isinstance(policy, SemanticReasoningPolicy):
         return "semantic-reasoning"
     if isinstance(policy, CombatStSPointerPolicy):
@@ -575,6 +578,29 @@ def main() -> None:
 
     args = build_parser(task).parse_args()
     th.set_float32_matmul_precision(args.float32_matmul_precision)
+    if hasattr(args, "nosl_is_az_upper_strategy"):
+        resume_settings = {}
+        if args.resume:
+            from stable_baselines3.common.save_util import load_from_zip_file
+            resume_settings, _, _ = load_from_zip_file(args.resume, device="cpu")
+            from rl.policies.entity_combat import EntityCombatPolicy
+            if resume_settings.get("policy_class") is EntityCombatPolicy and args.arch == "auto":
+                args.arch = "entity-combat"
+                args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
+                args.nosl_is_az_cpp = resume_settings["nosl_is_az_cpp"]
+        if args.nosl_is_az_upper_strategy is None:
+            args.nosl_is_az_upper_strategy = resume_settings.get("nosl_is_az_upper_strategy", "model")
+        if args.arch == "entity-combat":
+            args.card_language = True
+            if args.combat_action_contract is None:
+                args.combat_action_contract = "joint-v2"
+            if args.combat_action_contract != "joint-v2" or not (
+                    (args.nosl_is_az or resume_settings.get("nosl_is_az"))
+                    and args.nosl_is_az_inner_only and args.nosl_is_az_cpp
+                    and args.nosl_is_az_upper_strategy == "rules"):
+                raise ValueError("entity-combat requires joint-v2, C++ inner-only NOSL and rules upper strategy")
+            if args.interactive_reasoning or args.card_vector_checkpoint:
+                raise ValueError("entity-combat has its own card encoder and no history/reasoning decoder")
 
     source_hierarchical = False
     source_combat_gamma = 1.0
@@ -624,7 +650,7 @@ def main() -> None:
             )
 
     if getattr(args, "nosl_is_az", False):
-        if args.card_language:
+        if args.card_language and args.arch != "entity-combat":
             raise ValueError(
                 "--nosl-is-az requires card_language=false so ordered hidden "
                 "draw-pile information is not present in the policy observation"
@@ -733,7 +759,7 @@ def main() -> None:
     if getattr(args, "nosl_is_az_inner_only", False):
         if not getattr(args, "nosl_is_az", False):
             raise ValueError("--nosl-is-az-inner-only requires --nosl-is-az")
-        if not (args.init_from or args.resume):
+        if not (args.init_from or args.resume) and args.arch != "entity-combat":
             raise ValueError(
                 "--nosl-is-az-inner-only requires --init-from or --resume "
                 "to provide the frozen outer policy"
@@ -858,12 +884,6 @@ def main() -> None:
             print(f"[trainer] enabled --combat-language from {args.resume}")
         del resume_data, _params, _pytorch_variables
 
-    if getattr(args, "nosl_is_az", False) and args.card_language:
-        raise ValueError(
-            "--nosl-is-az requires card_language=false so ordered hidden "
-            "draw-pile information is not present in the policy observation"
-        )
-
     if hasattr(args, "arch") and args.arch == "auto":
         if pretrained is None:
             args.arch = "split-pointer"
@@ -881,6 +901,11 @@ def main() -> None:
             print(
                 f"[trainer] inferred --arch {args.arch} from {args.init_from}"
             )
+    if getattr(args, "nosl_is_az", False) and args.card_language and args.arch != "entity-combat":
+        raise ValueError(
+            "--nosl-is-az requires card_language=false except for the "
+            "order-invariant entity-combat encoder"
+        )
 
     if getattr(args, "nosl_is_az", False) and args.arch == "semantic-reasoning":
         raise ValueError(
@@ -901,8 +926,8 @@ def main() -> None:
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
         if args.combat_action_contract == "joint-v2":
-            if args.arch != "split-pointer" or getattr(args, "combat_arch", "transformer") != "transformer":
-                raise ValueError("joint-v2 requires split-pointer with Transformer combat")
+            if args.arch not in ("split-pointer", "entity-combat") or getattr(args, "combat_arch", "transformer") != "transformer":
+                raise ValueError("joint-v2 requires split-pointer Transformer or entity-combat")
             if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
                 raise ValueError("joint-v2 NOSL requires --nosl-is-az-cpp")
 
@@ -1059,6 +1084,7 @@ def main() -> None:
                 args, "nosl_is_az_inner_only", False
             ),
             nosl_is_az_cpp=getattr(args, "nosl_is_az_cpp", False),
+            nosl_is_az_upper_strategy=getattr(args, "nosl_is_az_upper_strategy", "model"),
             nosl_is_az_simulations=getattr(args, "nosl_is_az_simulations", 8),
             nosl_is_az_depth=getattr(args, "nosl_is_az_depth", 3),
             nosl_is_az_end_turn_as_leaf=getattr(
@@ -1224,6 +1250,7 @@ def main() -> None:
                     args, "nosl_is_az_inner_only", False
                 ),
                 "nosl_is_az_cpp": getattr(args, "nosl_is_az_cpp", False),
+                "nosl_is_az_upper_strategy": getattr(args, "nosl_is_az_upper_strategy", "model"),
                 "nosl_is_az_simulations": getattr(
                     args, "nosl_is_az_simulations", 8
                 ),

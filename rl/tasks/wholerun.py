@@ -194,7 +194,7 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer", "semantic-reasoning"],
+            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
@@ -271,6 +271,10 @@ class WholeRunTask(Task):
             help="Freeze the shared and overworld policy and skip overworld "
                  "PPO updates; train only the combat specialist from search targets.",
         )
+        parser.add_argument("--nosl-is-az-upper-strategy", choices=("model", "rules"), default=None,
+                            help="Whole-run decisions outside combat; entity-combat requires rules.")
+        parser.add_argument("--hp-quantiles", type=int, default=32,
+                            help="Conditional HP utility quantiles for entity-combat.")
         parser.add_argument(
             "--nosl-is-az-cpp",
             action="store_true",
@@ -516,6 +520,11 @@ class WholeRunTask(Task):
                 map_dag=args.map_dag,
                 card_vector_checkpoint=args.card_vector_checkpoint,
             )
+        if args.arch == "entity-combat":
+            from rl.policies.entity_combat import EntityCombatPolicy
+            return EntityCombatPolicy, dict(entity_config=dict(
+                width=args.d_model, layers=args.n_layers, heads=args.n_heads,
+                quantiles=args.hp_quantiles))
         if args.arch == "semantic-reasoning":
             if args.interactive_reasoning is False:
                 raise ValueError(
@@ -553,7 +562,7 @@ class WholeRunTask(Task):
         if getattr(args, "nosl_is_az_reset_combat", False):
             az_tag += "-reset-combat"
         reasoning_tag = (
-            "-semantic-reasoning" if args.arch == "semantic-reasoning" else ""
+            "-" + args.arch if args.arch in ("semantic-reasoning", "entity-combat") else ""
         )
         card_vector_tag = (
             "-cardvec" if getattr(args, "card_vector_checkpoint", None) else ""

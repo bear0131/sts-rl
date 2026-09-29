@@ -19,7 +19,8 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 @pytest.mark.parametrize('nosl,upper,combat_arch,contract', [
     (False, 'model', 'transformer', 'legacy'), (True, 'model', 'transformer', 'legacy'),
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
-    (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2')])
+    (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
+    (True, 'rules', 'entity', 'joint-v2')])
 def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -28,7 +29,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         def factory(hold_steps):
             def build():
                 env = TimeLimit(
-                    ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract)),
+                    ShapedRewardWrapper(short_combat_env_type(combat_action_contract=contract,card_language=combat_arch=='entity')),
                     max_episode_steps=12,
                 )
                 return (
@@ -40,9 +41,13 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         return DummyVecEnv([factory(0), factory(16)])
 
     env = make_env()
+    from rl.policies.entity_combat import EntityCombatPolicy
+    policy = EntityCombatPolicy if combat_arch == 'entity' else SplitStSPointerPolicy
+    kwargs = (dict(entity_config=dict(width=32,layers=1,heads=4,quantiles=8))
+              if combat_arch == 'entity' else dict(d_model=32,n_layers=2,n_heads=4,combat_arch=combat_arch))
     model = AccumulatingMaskablePPO(
-        SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
-        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch), device='cpu', seed=42,
+        policy, env, n_steps=16, batch_size=8, n_epochs=1,
+        policy_kwargs=kwargs, device='cpu', seed=42,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
@@ -129,11 +134,21 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     assert restored.nosl_is_az_upper_strategy == upper
-    assert restored.policy_kwargs['combat_arch'] == combat_arch
+    if combat_arch == 'entity':
+        assert restored.policy.core.config.quantiles == 8
+        for payload in payloads:
+            assert 0 < payload['nosl_is_az/win_probability'] < 1
+            assert payload['nosl_is_az/win_bce'] > 0
+    else:
+        assert restored.policy_kwargs['combat_arch'] == combat_arch
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
     assert (bundle/'learner.pt').is_file()
+    if combat_arch == 'entity':
+        manifest=json.loads((bundle/'manifest.json').read_text())
+        assert manifest['config']['entity_config']['quantiles']==8
+        assert manifest['config']['combat_supervision_contract']=='combat-outcome-quantiles-v1'
     monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]

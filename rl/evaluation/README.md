@@ -1,5 +1,9 @@
 # 评估后端
 
+`entity-combat` checkpoint自动组合规则上层与所选战斗策略，不存在神经上层
+回退。可显式传 `--upper-strategy rules` 记录实验意图。真实bridge遇到非战斗
+决策时等待手动操作；尚不支持通过该战斗模型自动完成整局。
+
 统一 episode 入口：`python -m rl.evaluation.eval CHECKPOINT --task wholerun --solver native --search-mode strict --num-envs 4 --episodes 10 --timeout 1800 --output runs/local/eval.json`。
 
 要保留可对照的局外历史（不记录战斗逐动作），加上

@@ -51,3 +51,19 @@ def test_upper_rules_composition_has_explicit_fallback_and_no_combat_calls(monke
     assert not upper.phases
     assert S.strategy_manifest(strategy)['default'] == {
         'name': 'upper-rules', 'version': 'test-v1', 'fallback': {'name': 'upper-model'}}
+
+
+def test_combat_only_model_automatically_uses_rules_without_neural_fallback(monkeypatch):
+    lower=Sentinel('combat-only')
+    lower.policy=SimpleNamespace(core=SimpleNamespace(combat_only=True))
+    class UpperRules(Sentinel):
+        def __init__(self,*,fallback,trace):
+            super().__init__('upper-rules')
+            self.fallback=fallback
+    monkeypatch.setitem(S.STRATEGIES,'fixture',lambda model,args:model)
+    monkeypatch.setitem(sys.modules,'rl.evaluation.baselines.overworld_rules',
+                        SimpleNamespace(OverworldRuleStrategy=UpperRules))
+    strategy=S.compose_strategy(lower,Namespace(solver='fixture',upper_strategy='model',route='model'))
+    assert strategy.default.fallback is None
+    assert [r.source for r in strategy.decide(requests())]==['upper-rules','combat-only','upper-rules','combat-only']
+    assert lower.phases==['combat','combat']

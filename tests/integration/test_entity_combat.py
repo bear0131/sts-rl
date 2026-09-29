@@ -73,3 +73,58 @@ def test_entity_pile_encoding_cannot_observe_hidden_card_order(combat_factory):
         b,w=model.policy.core.combat_actor_critic(shuffled)
     torch.testing.assert_close(a,b,atol=1e-6,rtol=1e-5)
     torch.testing.assert_close(v,w,atol=1e-6,rtol=1e-5)
+
+
+def test_real_loss_has_explicit_outcome(short_combat_env_type):
+    env=short_combat_env_type(combat_action_contract=C.JOINT_CONTRACT,card_language=True)
+    try:
+        env.reset(seed=42)
+        env.thick.bc.apply_custom_state({'player':{'hp':1,'block':0}})
+        env._invalidate_backend_cache()
+        for _ in range(6):
+            _,_,terminated,truncated,info=env.step(C.JOINT_END)
+            if terminated or truncated:
+                break
+        assert terminated and not truncated
+        assert info['nosl_value_terminal_outcome']=='loss'
+        assert info['nosl_value_terminal_target']==0
+    finally:
+        env.close()
+
+
+def test_truncation_does_not_create_outcome_labels(short_combat_env_type):
+    from gymnasium.wrappers import TimeLimit
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    env=TimeLimit(short_combat_env_type(combat_action_contract=C.JOINT_CONTRACT,card_language=True),1)
+    model=AccumulatingMaskablePPO(EntityCombatPolicy,env,device='cpu',seed=42,
+        n_steps=2,batch_size=2,nosl_is_az=True,nosl_is_az_cpp=True,nosl_is_az_inner_only=True,
+        nosl_is_az_upper_strategy='rules',nosl_is_az_simulations=1,nosl_is_az_depth=1,
+        policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4)),
+        nosl_is_az_replay_capacity=32,nosl_is_az_batch_size=2)
+    try:
+        model.learn(2)
+        replay=getattr(model,'_nosl_is_az_replay',None)
+        assert replay is None or replay.size==0
+        assert not any(model._nosl_is_az_pending_fights)
+    finally:
+        env.close()
+
+
+def test_fresh_only_distribution_training_updates_heads(short_combat_env_type):
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from gymnasium.wrappers import TimeLimit
+    env=TimeLimit(short_combat_env_type(combat_action_contract=C.JOINT_CONTRACT,card_language=True),12)
+    model=AccumulatingMaskablePPO(EntityCombatPolicy,env,device='cpu',seed=42,verbose=1,
+        n_steps=16,batch_size=4,nosl_is_az=True,nosl_is_az_cpp=True,nosl_is_az_inner_only=True,
+        nosl_is_az_upper_strategy='rules',nosl_is_az_simulations=2,nosl_is_az_depth=1,
+        nosl_is_az_replay_enabled=False,nosl_is_az_batch_size=16,nosl_is_az_micro_batch_size=4,
+        policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4)))
+    distribution=model.policy.core.combat.distribution
+    before={k:v.clone() for k,v in distribution.named_parameters()}
+    try:
+        model.learn(32)
+        assert model.policy.optimizer.state
+        assert any(not torch.equal(before[k],v) for k,v in distribution.named_parameters())
+        assert getattr(model,'_nosl_is_az_replay',None) is None
+    finally:
+        env.close()
