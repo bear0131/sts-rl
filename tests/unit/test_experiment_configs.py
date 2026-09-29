@@ -9,6 +9,40 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_entity_fresh_initialization_and_distributed_search_share_requested_contract(monkeypatch):
+    from rl.tasks import TASKS
+    from rl.training.trainer import build_parser as initial_parser
+    from rl.search.native import NativeSearchConfig, apply_strict_training_settings
+
+    monkeypatch.chdir(ROOT)
+    initial = initial_parser(TASKS['wholerun']).parse_args([
+        '--task', 'wholerun', '@configs/train/entity_combat.args', '--steps', '0',
+    ])
+    runtime = build_parser().parse_args([
+        '--rank', '0', '--world-size', '4', '--checkpoint', 'fresh-step0.zip',
+        '@configs/train/entity_combat_runtime.args',
+    ])
+    assert initial.arch == 'entity-combat'
+    assert initial.init_from is None and initial.resume is None
+    assert runtime.resume_state is None and runtime.fork_state is None
+    assert not runtime.nosl_is_az_train_shared_embeddings
+    assert runtime.total_steps == 50_000_000
+    for args in (initial, runtime):
+        apply_strict_training_settings(args)
+        config = NativeSearchConfig.from_model(args)
+        assert config.paper_full_gumbel and config.root_search_mode == 2
+        assert config.gumbel_rescale_q is False
+        assert config.gumbel_value_scale == 1
+        assert config.gumbel_interior_min_visits == 0
+        assert config.gumbel_interior_value_mode == 0
+        assert config.leaf_batch_size == 1 and config.simulations == 128
+        assert args.n_envs == 96 and args.n_steps == 128
+        assert args.nosl_is_az_replay_max_old_fraction == .9
+        assert args.nosl_is_az_updates == 4
+        assert args.nosl_is_az_batch_size == 16384
+        assert args.nosl_is_az_replay_capacity == 131072
+
+
 def test_boss_transition_target_cli_is_explicit_and_defaults_to_inherit():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "1", "--checkpoint", "unused.zip"]

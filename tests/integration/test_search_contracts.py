@@ -367,8 +367,9 @@ def test_strict_prior_temperature_reaches_native_tree(combat_factory):
 
 
 @pytest.mark.native
+@pytest.mark.parametrize(("rescale_q", "value_scale"), [(True, 0.1), (False, 1.0)])
 def test_strict_gumbel_matches_reference_schedule_transform_and_target(
-    combat_factory,
+    combat_factory, rescale_q, value_scale,
 ):
     env = combat_factory(["STRIKE_RED"] * 5, "Gremlin Leader")
     response = env.nosl_is_az_cpp_begin(
@@ -381,6 +382,8 @@ def test_strict_gumbel_matches_reference_schedule_transform_and_target(
         paper_full_gumbel=True,
         leaf_batch_size=1,
         compact_observation=True,
+        gumbel_rescale_q=rescale_q,
+        gumbel_value_scale=value_scale,
     )
     leaf_index = 0
     while not response["done"]:
@@ -404,7 +407,7 @@ def test_strict_gumbel_matches_reference_schedule_transform_and_target(
     expected_normalized = (raw_q - raw_q.min()) / max(
         raw_q.max() - raw_q.min(), 1e-8
     )
-    expected_completed = expected_normalized * (50 + 4) * 0.1
+    expected_completed = (expected_normalized if rescale_q else raw_q) * (50 + 4) * value_scale
     np.testing.assert_allclose(
         [child["normalized_q"] for child in children],
         expected_normalized,

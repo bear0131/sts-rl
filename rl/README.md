@@ -52,5 +52,13 @@ python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args 
 ```
 
 配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样4次更新、
-回放131072。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
+回放131072，旧样本采样上限0.9，LR5e-5。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
+初始化与分布式运行共用 `configs/train/entity_combat_learning.args`；
+`entity_combat_runtime.args` 用于既有四机launcher，目标50M，BF16。
+该实验使用Full Gumbel128，关闭Q归一化、value scale=1。
+`paper_full_gumbel` 保留论文路径的sequential halving、visit-weighted backup
+和mixed-value完成法；从本版本起Q归一化和scale尊重显式配置，默认仍为true/0.1。
+旧checkpoint中保存的canonical true/0.1不变；曾携带非默认Q字段但被旧strict
+实现忽略的checkpoint会开始采用该字段，复现旧行为时须显式设true/0.1。
+Python、原生扩展、dashboard必须同步升级，防止旧扩展静默覆盖新Q设置。
 新监督不保证消除HP反转；训练后仍须固定局面/未来随机流评测。

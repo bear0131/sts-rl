@@ -915,10 +915,9 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         // project's legacy `0 = all legal actions` convention.
         config_.gumbelCandidates = 16;
         config_.gumbelScale = 1.0;
-        // mctx.qtransform_completed_by_mix_value defaults to value_scale=0.1.
-        config_.gumbelValueScale = 0.1;
+        // Keep explicit Q-transform parameters. Their defaults remain 0.1
+        // and normalized, independently of paper halving/backup semantics.
         config_.gumbelMaxVisitInit = 50.0;
-        config_.gumbelRescaleQ = true;
         config_.gumbelUseMixedValue = true;
         config_.gumbelInteriorUniformity = 0.0;
         config_.gumbelInteriorMinVisits = 0;

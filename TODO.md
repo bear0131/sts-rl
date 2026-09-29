@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| TRAIN25 | 部署中 | 新entity-combat四机从随机step0开始，96×128、目标50M、规则上层、replay旧样本上限0.9；Full Gumbel128关闭Q归一化并设value_scale=1。停旧TRAIN24并固定快照，验收首个共同完整recovery、分布监督更新和模型/Adam同步；不恢复旧权重、优化器、replay。见 `worklog/2026-09-29.md#train25-fresh-entity-combat-deployment-intent`。 |
 | ARCH01 | 实现验收完成；学习收益待实验 | `configs/train/entity_combat.args` / `rl/policies/entity_combat.py`：实体交互、牌堆集合、条件动作/自回归多选、胜负与条件HP分位点、实际动作后果辅助监督；无整局网络/历史记忆。F05期望utility不变，replay v3显式终局标签；CPU62/GPU33测试、真实PPO/NOSL两轮上报保存恢复、96×128 GPU collection及新模型两次GPU更新通过。未替换生产实验，未验证长期Boss胜率/HP反转收益；exhaust升级统计与真实逃跑仍为明确支持边界。接口见 `rl/README.md#entity-combat-实验架构`，证据见 `worklog/2026-09-29.md#entity-combat-training-and-lifecycle-acceptance`。 |
 | EVAL07 | 已完成；训练已恢复验收 | 固定step36175872/strict Full-Gumbel128，对照最强v3规则上层+planner8192×2，seeds200000--200099/A0：模型20/100、规则46/100；平均楼层35.18/41.95，Act2/3到达89%/37% vs 94%/63%。规则100局结果与战斗记录复现存档；差距主要在二幕（Boss前死亡22 vs 7，Boss胜率37/67 vs 63/87），甜圈八体/冠军/铜人及扎人的书突出，三哨卫全胜但模型净损血翻倍。原TRAIN24从36372480恢复，36421632四rank模型/Adam一致且+40更新、target50M。详见 `worklog/2026-09-29.md#eval07-final-comparison-and-training-restoration`；轨迹/图/CSV在 `runs/local/eval-current-vs-rulebase-20260929/`。 |
 | EVAL08 | 诊断完成；缺陷转 F03/VAL02 后续修复 | 固定 step36175872 与三个真实 Act2 Boss 开局，每个32个配对未来：模型/规则铜人26/29、冠军6/13、收藏家12/27胜。定位无攻击窗口资源浪费、成长牌消耗、生成候选缺观测；收藏家30组有序药水候选对应同一模型输入，4个漏选恶魔形态的失败案例仅改该选择全部获胜。预定义三类48场局部干预及明确追加4场、主192场全部自然结束，干预前缀一致；简单拦截并非通用改进，生产训练未动。结果 `runs/local/eval-act2-boss-rng-20260929/report.md`；协议与结果见 `worklog/2026-09-29.md#eval08-fixed-state-results-and-generated-choice-observation-gap`。 |

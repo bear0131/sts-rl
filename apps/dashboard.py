@@ -164,13 +164,9 @@ def _strict_paper_search_settings_match(
         and int(gumbel_candidates) == STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
         and np.isclose(float(gumbel_scale), STRICT_SEARCH_DEFAULTS["gumbel_scale"])
         and np.isclose(
-            float(gumbel_value_scale), STRICT_SEARCH_DEFAULTS["gumbel_value_scale"]
-        )
-        and np.isclose(
             float(gumbel_max_visit_init),
             STRICT_SEARCH_DEFAULTS["gumbel_max_visit_init"],
         )
-        and bool(gumbel_rescale_q) is STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
         and bool(gumbel_use_mixed_value)
         is STRICT_SEARCH_DEFAULTS["gumbel_use_mixed_value"]
         and np.isclose(
@@ -480,13 +476,9 @@ def _evaluation_search_config(
         selected_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
         selected_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
         selected_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
-        selected_gumbel_value_scale = STRICT_SEARCH_DEFAULTS[
-            "gumbel_value_scale"
-        ]
         selected_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
             "gumbel_max_visit_init"
         ]
-        selected_rescale_q = STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
         selected_mixed_value = STRICT_SEARCH_DEFAULTS["gumbel_use_mixed_value"]
         selected_interior_uniformity = STRICT_SEARCH_DEFAULTS[
             "gumbel_interior_uniformity"
@@ -509,7 +501,9 @@ def _evaluation_search_config(
         "supported": supported,
         "search_mode": selected_mode,
         "search_mode_label": (
-            STRICT_PAPER_SEARCH_LABEL
+            (STRICT_PAPER_SEARCH_LABEL
+             if selected_rescale_q and np.isclose(selected_gumbel_value_scale, 0.1)
+             else "Paper Full Gumbel (custom Q)")
             if selected_paper_full_gumbel
             else SEARCH_MODE_LABELS[selected_mode]
         ),
@@ -787,11 +781,9 @@ class WatchSession:
         self.mcts_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
         self.mcts_gumbel_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
         self.mcts_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
-        self.mcts_gumbel_value_scale = STRICT_SEARCH_DEFAULTS["gumbel_value_scale"]
         self.mcts_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
             "gumbel_max_visit_init"
         ]
-        self.mcts_gumbel_rescale_q = STRICT_SEARCH_DEFAULTS["gumbel_rescale_q"]
         self.mcts_gumbel_use_mixed_value = STRICT_SEARCH_DEFAULTS[
             "gumbel_use_mixed_value"
         ]

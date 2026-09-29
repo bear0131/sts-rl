@@ -158,7 +158,7 @@ def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
     assert overridden["depth"] == 3
 
 
-def test_paper_full_gumbel_config_uses_mctx_defaults():
+def test_paper_full_gumbel_config_preserves_explicit_q_scale():
     class Core:
         actor_critic = object()
 
@@ -180,12 +180,12 @@ def test_paper_full_gumbel_config_uses_mctx_defaults():
     config = dashboard._evaluation_search_config(Model())
 
     assert config["search_mode"] == "full_gumbel"
-    assert config["search_mode_label"] == "Strict paper Full Gumbel"
+    assert config["search_mode_label"] == "Paper Full Gumbel (custom Q)"
     assert config["paper_full_gumbel"] is True
     assert config["leaf_batch_size"] == 1
     assert config["gumbel_candidates"] == 16
     assert config["gumbel_scale"] == 1.0
-    assert config["gumbel_value_scale"] == 0.1
+    assert config["gumbel_value_scale"] == 3.0
     assert config["gumbel_max_visit_init"] == 50.0
     assert config["gumbel_rescale_q"] is True
     assert config["gumbel_use_mixed_value"] is True

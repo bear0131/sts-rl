@@ -37,7 +37,8 @@ struct NoslCombatSearchConfig {
     // Select the canonical paper Gumbel AlphaZero path while retaining the
     // existing Full-Gumbel implementation as the default for old runs.  The
     // strict path disables project-specific coverage/value heuristics and
-    // uses explicit completed-score sequential halving.
+    // uses explicit completed-score sequential halving. Q normalization and
+    // value scale remain configurable (defaults true and 0.1).
     bool paperFullGumbel = false;
     int gumbelCandidates = 0; // 0 means all legal root actions
     // Full-Gumbel q-transform parameters.  They are ignored by modes 0/1.
