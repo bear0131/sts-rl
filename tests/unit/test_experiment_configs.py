@@ -23,9 +23,11 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         '@configs/train/entity_combat_runtime.args',
     ])
     assert initial.arch == 'entity-combat'
+    assert (initial.d_model, initial.n_layers, initial.n_heads) == (256, 4, 8)
     assert initial.init_from is None and initial.resume is None
     assert runtime.resume_state is None and runtime.fork_state is None
     assert not runtime.nosl_is_az_train_shared_embeddings
+    assert runtime.card_language
     assert runtime.total_steps == 50_000_000
     for args in (initial, runtime):
         apply_strict_training_settings(args)

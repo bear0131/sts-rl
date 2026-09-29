@@ -1,11 +1,11 @@
 --arch
 entity-combat
 --d-model
-192
+256
 --n-layers
 4
 --n-heads
-6
+8
 --hp-quantiles
 32
 --combat-action-contract

@@ -7,6 +7,7 @@ bf16
 0
 --device
 cuda
+--card-language
 --hierarchical-combat-hp
 --combat-hp-gamma
 1.0

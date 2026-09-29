@@ -19,7 +19,7 @@
 ## Entity combat 实验架构
 
 `--arch entity-combat` 使用 `policies/entity_combat.py`：卡牌ID与效果程序、
-实体Transformer（默认192宽/4层/6头）、带计数的牌堆query汇总、
+实体Transformer（默认256宽/4层/8头）、带计数的牌堆query汇总、
 来源条件目标pointer及自回归多选。没有整局神经网络或历史记忆；
 全局规则负责战斗外决策，遇到未覆盖页面报错，不用随机上层预测回退。
 卡牌语言字段在新网络内按ID/升级统计聚合，不能利用隐藏抽牌顺序。

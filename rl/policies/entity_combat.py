@@ -15,9 +15,9 @@ from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS, SplitStSPointerPol
 
 @dataclass(frozen=True)
 class EntityCombatConfig:
-    width: int = 192
+    width: int = 256
     layers: int = 4
-    heads: int = 6
+    heads: int = 8
     pile_queries: int = 3
     quantiles: int = 32
     mean_loss_coef: float = .25
