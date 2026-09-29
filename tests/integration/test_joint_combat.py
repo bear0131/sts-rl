@@ -33,8 +33,8 @@ def test_joint_model_predicts_atomic_targeted_actions(combat_factory):
     assert env.thick.bc.to_dict() == before.to_dict()
 
 
-@pytest.mark.parametrize('multi',[False,True])
-def test_native_complete_policy_survives_search_and_execution(combat_factory,multi):
+@pytest.mark.parametrize('multi,full',[(False,False),(True,False),(True,True)])
+def test_native_complete_policy_survives_search_and_execution(combat_factory,multi,full):
     env = combat_factory(['PURITY' if multi else 'STRIKE_RED']*5, 'Two Louse',
                          combat_action_contract=C.JOINT_CONTRACT)
     if multi:
@@ -48,7 +48,8 @@ def test_native_complete_policy_survives_search_and_execution(combat_factory,mul
     favored = legal[-1] if multi else C.JOINT_PLAY+1
     logits[favored] = 12
     response = env.nosl_is_az_cpp_begin(logits,state_nonce=42,simulations=4,depth=1,
-        leaf_batch_size=4,compact_observation=True)
+        leaf_batch_size=4,compact_observation=True,root_search_mode=2 if full else 0,
+        gumbel_scale=0.)
     for _ in range(8):
         if response['done']:
             break
@@ -63,9 +64,37 @@ def test_native_complete_policy_survives_search_and_execution(combat_factory,mul
     assert result['visit_policy'].shape == (C.JOINT_SIZE,)
     assert result['visit_policy'].sum() == pytest.approx(1)
     assert result['action'] == favored
+    if full:
+        assert np.count_nonzero(result['visit_policy']) == 130
+        assert np.count_nonzero(result['root_visit_policy']) <= 4
     assert env.thick.bc.to_dict() == before
     env.step(result['action'])
     assert env.thick.bc.to_dict() != before
+
+
+def test_complete_target_prior_reaches_internal_search_nodes(combat_factory):
+    env = combat_factory(['DEFEND_RED']*5, 'Two Louse', combat_action_contract=C.JOINT_CONTRACT)
+    env.thick.bc.apply_custom_state({'hand':['DEFEND_RED','STRIKE_RED','STRIKE_RED']})
+    env._invalidate_backend_cache()
+    root_logits = np.zeros(C.JOINT_SIZE)
+    root_logits[C.JOINT_PLAY+5] = 14  # First play the untargeted Defend.
+    for target in (0,1):
+        response = env.nosl_is_az_cpp_begin(root_logits,state_nonce=42,simulations=4,depth=2,
+            leaf_batch_size=1,compact_observation=True,fixed_worldline=True)
+        for _ in range(20):
+            if response['done']:
+                break
+            logits = np.zeros(C.JOINT_SIZE)
+            logits[C.JOINT_PLAY+target] = 14
+            response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
+                [(leaf['request_id'],.3,logits) for leaf in response['leaf_meta']],max_leaves=1)
+        assert response['done']
+        root = env.nosl_is_az_cpp_tree_snapshot()
+        first = next(e for e in root['children'] if e['action_type']==0 and e['source_idx']==0)
+        child = env.nosl_is_az_cpp_tree_snapshot([first['edge_index']])
+        best = max(child['children'], key=lambda e:e['prior'])
+        assert best['action_type']==0 and best['source_idx']==0 and best['target_idx']==target
+        assert best['prior'] > .99
 
 
 def test_cpp_and_python_complete_codec_match_public_entities(combat_factory):
@@ -109,3 +138,44 @@ def test_pending_target_views_share_the_source_conditional_distribution(combat_f
         torch.testing.assert_close(values[0],values[row])
     assert not torch.allclose(logits[1,A._TARGET:A._TARGET+2].softmax(-1),
                               logits[2,A._TARGET:A._TARGET+2].softmax(-1),atol=1e-6,rtol=1e-6)
+
+
+@pytest.mark.parametrize('mixed', [False, True])
+def test_forced_end_roots_skip_forward_and_search_but_keep_value_samples(short_combat_env_type, monkeypatch, mixed):
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from stable_baselines3.common.vec_env import DummyVecEnv
+    class OnlyEnd(short_combat_env_type):
+        def reset(self, **kwargs):
+            super().reset(**kwargs)
+            self.thick.bc.apply_custom_state({'hand':['WOUND']*5, 'draw':['WOUND']*20, 'discard':[]})
+            self._invalidate_backend_cache()
+            return self._obs(), self._info()
+    env = OnlyEnd(combat_action_contract=C.JOINT_CONTRACT)
+    vector = DummyVecEnv([lambda:env] + ([lambda:short_combat_env_type(combat_action_contract=C.JOINT_CONTRACT)] if mixed else []))
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, vector, n_steps=4, batch_size=4,
+        policy_kwargs=dict(d_model=32,n_layers=2,n_heads=4), seed=42, device='cpu',
+        nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
+        nosl_is_az_simulations=4, nosl_is_az_updates=1, hierarchical_combat_hp=True)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("forced End Turn must not create a search")
+    monkeypatch.setattr(env, "nosl_is_az_cpp_begin", forbidden)
+    calls = []
+    original = model.policy.core.actor_critic
+    def count(obs, *args, **kwargs):
+        calls.append(len(obs['phase']))
+        return original(obs, *args, **kwargs)
+    monkeypatch.setattr(model.policy.core, "actor_critic", count)
+    model.learn(total_timesteps=4 * vector.num_envs)
+    assert model.num_timesteps == 4 * vector.num_envs
+    assert model._nosl_is_az_rollout_upper_counts['forced_end_turn_roots'] == 4
+    # Ordinary and hierarchical return bootstraps remain; forced roots do not forward.
+    if not mixed:
+        assert calls == [1, 1]
+    else:
+        assert calls[:4] == [1] * 4 and calls[-2:] == [2, 2]
+    roots = [s for s in model._nosl_is_az_pending_fights[0] if s['sample_kind']=='combat_root']
+    assert len(roots) == 4
+    assert all(s['policy_weight']==1 and s['policy_target'][C.JOINT_END]==1 for s in roots)
+    assert all(np.isnan(s['estimated_value']) for s in roots)
+    boundaries = [s for s in model._nosl_is_az_pending_fights[0] if s['sample_kind']=='end_turn_boundary']
+    assert len(boundaries) == 4

@@ -57,4 +57,10 @@ replay按行稀疏存储合法ID和float32概率（含合法但零概率动作�
 
 当前运行时支持Split Transformer、标准PPO和C++ NOSL；不支持旧交互推理步骤、
 历史Boss战后回血价值目标。旧thin模型保留旧几何；迁移必须重新收集replay。
-CLI热启动、真实bridge适配与完整collection验收仍在实施，勿将原实验当作exact续训切换。
+训练CLI用 `--combat-action-contract joint-v2 --init-from CHECKPOINT` 热启动；
+`--resume` 禁止跨合同。迁移按命名特征映射全局投影列，初始化新增因子，优化器和replay重建。
+distributed/evaluation按checkpoint空间恢复环境合同。bridge直接展开牌/药水的完整目标，
+多选集合转为降序UI选择，逐帧核对确认和候选变化，不为每张牌重新调用模型。
+NOSL inner-only在唯一合法End Turn根旁路前推和搜索，保留同权重根价值样本、边界样本与
+采样计数；缺失的预测不进入HP-order诊断，单列forced_end_turn_roots/root_value_predictions_skipped。
+标准PPO及非inner-only NOSL仍计算GAE需要的V；搜索内部叶也保留V。完整collection验收待完成。

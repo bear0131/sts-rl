@@ -1732,6 +1732,8 @@ def _add_game_metrics_to_wandb_payload(
 _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/overworld_rule_decisions",
     "nosl_is_az/overworld_fallback_decisions",
+    "nosl_is_az/forced_end_turn_roots",
+    "nosl_is_az/root_value_predictions_skipped",
     "nosl_is_az/combat_roots",
     "nosl_is_az/combat_policy_roots",
     "nosl_is_az/value_only_samples",

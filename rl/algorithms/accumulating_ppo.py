@@ -17,6 +17,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_suppo
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
+from env.core import native_actions as C
 from env.core.combat_value import VALUE_CONTRACT
 from rl.search.native import (
     LeafInferenceSchedule,
@@ -376,6 +377,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
         super().__init__(*args, **kwargs)
         if self.amp_mode != "off" and self.device.type != "cuda":
             raise ValueError("bf16 AMP requires a CUDA device")
+
+    def _setup_model(self) -> None:
+        super()._setup_model()
+        self.combat_action_contract = (
+            "joint-v2" if "combat_legal" in self.observation_space.spaces else "legacy")
+        if self.combat_action_contract == "joint-v2":
+            if getattr(self, "nosl_is_az_boss_transition_target", False):
+                raise ValueError("joint-v2 requires combat-end-hp-v1")
+            if self.nosl_is_az and not self.nosl_is_az_cpp:
+                raise ValueError("joint-v2 NOSL requires the C++ search backend")
 
     def _excluded_save_params(self) -> list[str]:
         """Exclude transient reasoning transcripts from SB3 checkpoints.
@@ -949,6 +960,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if upper_rules and not self.nosl_is_az_inner_only:
             raise ValueError("NOSL upper rules require inner-only NOSL training")
         overworld_rule_decisions = overworld_fallback_decisions = 0
+        forced_end_turn_roots = 0
 
         def call_workers(method_name, calls):
             if not calls:
@@ -965,13 +977,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
         while n_steps < n_rollout_steps:
             policy_started = time.perf_counter()
+            forced = np.zeros(env.num_envs, dtype=bool)
             with th.inference_mode():
                 # Root, leaf, and learner batches use the same compact
                 # dtype-packed transport.  The router still selects only the
                 # fields needed by each phase after this value-preserving move.
-                obs_tensor = _leaf_observation_as_tensor(
-                    self._last_obs, self.device
-                )
                 if use_masking:
                     action_masks = get_action_masks(env)
                 # Whole-run policies expose this core API.  Keeping a strict
@@ -986,7 +996,29 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     and hasattr(core, "combat_actor_critic")
                     and hasattr(core, "combat_observation_keys")
                 )
-                logits, values = core.actor_critic(obs_tensor)
+                if (self.nosl_is_az_inner_only and getattr(core, "joint_actions", False)
+                        and action_masks is not None):
+                    phase_now = np.asarray(self._last_obs["phase"]).reshape(env.num_envs, -1)[:, 0]
+                    forced = ((phase_now == combat_phase) & action_masks[:, C.JOINT_END]
+                              & (action_masks.sum(axis=1) == 1))
+                    if startup_paused:
+                        forced[list(startup_paused)] = False
+                active = np.flatnonzero(~forced)
+                if forced.any():
+                    # These buffer values are unused by inner-only training.
+                    # Diagnostics below explicitly mark the missing predictions.
+                    logits = th.zeros((env.num_envs, self.action_space.n), device=self.device)
+                    values = th.zeros((env.num_envs, 1), device=self.device)
+                    if len(active):
+                        obs_tensor = _leaf_observation_as_tensor(
+                            {k:v[active] for k,v in self._last_obs.items()}, self.device)
+                        active_logits, active_values = core.actor_critic(obs_tensor)
+                        logits[active] = active_logits.float()
+                        values[active] = active_values.float()
+                    forced_end_turn_roots += int(forced.sum())
+                else:
+                    obs_tensor = _leaf_observation_as_tensor(self._last_obs, self.device)
+                    logits, values = core.actor_critic(obs_tensor)
                 distribution = self.policy.action_dist.proba_distribution(
                     action_logits=logits
                 )
@@ -1003,6 +1035,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # several PyTorch versions; IPC always receives public FP32 logits.
             logits_np = logits.detach().float().cpu().numpy()
             values_np = values.detach().float().cpu().numpy().reshape(-1)
+            values_np = values_np.copy()
+            values_np[forced] = np.nan
             phase = np.asarray(self._last_obs["phase"]).reshape(
                 env.num_envs, -1
             )[:, 0]
@@ -1025,6 +1059,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             combat_indices = [
                 index for index in range(env.num_envs)
                 if int(phase[index]) == combat_phase and index not in startup_paused
+                and not forced[index]
             ]
             if upper_rules:
                 upper_results = call_workers("overworld_rule_decision", {
@@ -1275,6 +1310,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             if response.get("done", False):
                                 result_by_index[index] = response["result"]
 
+            for index in np.flatnonzero(forced):
+                result_by_index[int(index)] = dict(action=C.JOINT_END,
+                    visit_policy=action_masks[index].astype(np.float32), root_value=np.nan)
             for env_index in range(env.num_envs):
                 if (
                     int(phase[env_index]) != combat_phase
@@ -1490,6 +1528,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._nosl_is_az_rollout_upper_counts = {
             "overworld_rule_decisions": float(overworld_rule_decisions),
             "overworld_fallback_decisions": float(overworld_fallback_decisions),
+            "forced_end_turn_roots": float(forced_end_turn_roots),
+            "root_value_predictions_skipped": float(forced_end_turn_roots),
         }
         for name, count in self._nosl_is_az_rollout_upper_counts.items():
             self.logger.record("nosl_is_az/" + name, count)

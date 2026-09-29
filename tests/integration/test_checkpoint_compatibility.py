@@ -85,3 +85,31 @@ def test_adapter_rejects_missing_required_field(legacy_checkpoint):
     del obs["phase"]
     with pytest.raises(ValueError, match="phase"):
         observation_for_policy(model, obs)
+
+
+def test_legacy_weights_migrate_to_joint_with_named_feature_columns(legacy_checkpoint, combat_factory, tmp_path):
+    import torch
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.training.trainer import _warm_start_policy
+    from env.core import native_actions as C
+    source = MaskablePPO.load(legacy_checkpoint, device="cpu")
+    env = combat_factory(["STRIKE_RED"] * 5, combat_action_contract="joint-v2")
+    target = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, n_steps=2, batch_size=2,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4), seed=43, device="cpu")
+    assert _warm_start_policy(target, source, allow_combat_contract_migration=True) > 0
+    assert target.policy.optimizer.state == {}
+    assert target._nosl_is_az_replay is None
+    for key, value in source.policy.state_dict().items():
+        if not key.startswith("core.combat.encoder.global_"):
+            torch.testing.assert_close(target.policy.state_dict()[key], value, rtol=0, atol=0)
+    encoder = target.policy.core.combat.encoder
+    offset = sum(np.prod(encoder.observation_space[k].shape) for k in
+                 encoder.global_scalar_keys[:encoder.global_scalar_keys.index("post_enemy_turn_boundary")])
+    assert torch.count_nonzero(encoder.global_projection.weight[:, int(offset)]) == 0
+    path = tmp_path / "joint-migration.zip"
+    target.save(path)
+    loaded = AccumulatingMaskablePPO.load(path, env=env, device="cpu")
+    mask = env.action_masks()
+    action = int(loaded.predict(env._obs(), action_masks=mask, deterministic=True)[0])
+    assert mask[action] and action >= C.JOINT_END
+    assert loaded.combat_action_contract == "joint-v2"

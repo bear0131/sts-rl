@@ -25,6 +25,7 @@ from env.core import actions
 from env.core import encode
 from env.core import game_actions as ga
 from env.core import vocab as V
+from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 
 LOG = logging.getLogger(__name__)
@@ -391,7 +392,12 @@ class RealGameAdapter:
         deck_size_observation: bool = False,
         neow_observation: bool = False,
         event_option_observation: bool = False,
+        combat_action_contract: str = "legacy",
     ) -> None:
+        if combat_action_contract not in ("legacy", C.JOINT_CONTRACT):
+            raise ValueError("unsupported bridge combat action contract")
+        self.combat_action_contract = combat_action_contract
+        self._joint_multi_plan = None
         self.character = character
         self.ascension = int(ascension)
         self.global_map_view = bool(global_map_view)
@@ -480,6 +486,10 @@ class RealGameAdapter:
             return self._refresh_command(), "not_ready"
         if self.gs.get("combat_state") and not self._combat_ready_for_policy():
             return self._refresh_command(), "combat_not_waiting"
+        if self._joint_multi_plan is not None:
+            command = self._continue_joint_multi()
+            if command is not None:
+                return command, "complete_multi_continuation"
 
         st = self.screen_type()
         ss = _screen_state(self.gs)
@@ -499,7 +509,7 @@ class RealGameAdapter:
 
     # ---------------------------------------------------------------- obs/mask
     def observation(self, pending: tuple | None = None) -> dict[str, np.ndarray]:
-        return encode.encode(
+        obs = encode.encode(
             self.obs_canonical(pending=pending),
             global_map_view=self.global_map_view,
             card_language=self.card_language,
@@ -508,6 +518,9 @@ class RealGameAdapter:
             neow_observation=self.neow_observation,
             event_option_observation=self.event_option_observation,
         )
+        if self.combat_action_contract == C.JOINT_CONTRACT:
+            obs["combat_legal"] = self.action_mask()[C.JOINT_END:]
+        return obs
 
     def obs_canonical(self, pending: tuple | None = None) -> dict[str, Any]:
         canon = self._base_canonical()
@@ -528,6 +541,8 @@ class RealGameAdapter:
         return canon
 
     def action_mask(self, pending: tuple | None = None) -> np.ndarray:
+        if self.combat_action_contract == C.JOINT_CONTRACT and self.phase() == "combat":
+            return C.joint_mask(list(self.joint_semantic_actions()))
         mask = np.zeros(A.N_ACTIONS, dtype=bool)
         desc = self.select_descriptor()
         if A.is_multi_select(desc):
@@ -537,7 +552,76 @@ class RealGameAdapter:
         for action_id in ids:
             if 0 <= action_id < A.N_ACTIONS:
                 mask[action_id] = True
-        return mask
+        return (np.pad(mask, (0, C.JOINT_WIDTH)) if self.combat_action_contract == C.JOINT_CONTRACT else mask)
+
+    def joint_semantic_actions(self):
+        """Complete actions share policy IDs with the simulator; UI indices stay handles."""
+        desc = self.select_descriptor()
+        if A.is_multi_select(desc):
+            count = int(desc["cards_in_hand"])
+            if count > A.HAND_SLOTS:
+                raise ValueError("multi selection exceeds ten hand slots")
+            maximum = min(count, int(desc["pick_max"]))
+            return {C.JOINT_MULTI + bits: (ga.MULTI_SELECT, tuple(i for i in range(count) if bits >> i & 1))
+                    for bits in range(1 << count) if bits.bit_count() <= maximum}
+        result = {}
+        for semantic in self.legal_semantic_actions():
+            if semantic[0] == ga.COMBAT:
+                kind = actions.decode(semantic[1])
+                aid = C.JOINT_END if kind[0] == actions.KIND_END else (
+                    C.JOINT_PLAY + kind[1] * 6 + (5 if kind[2] is None else kind[2]))
+            elif semantic[0] == ga.USE_POTION:
+                aid = C.JOINT_POTION + semantic[1] * 6 + (5 if semantic[2] is None else semantic[2])
+            elif semantic[0] == ga.SELECT:
+                aid = C.JOINT_PICK + semantic[1]
+            else:
+                raise ValueError("unsupported joint combat semantic: " + str(semantic))
+            result[aid] = semantic
+        return result
+
+    def command_for_joint_action(self, action_id):
+        semantic = self.joint_semantic_actions().get(int(action_id))
+        if semantic is None:
+            raise ValueError("complete combat action is no longer legal")
+        if semantic[0] != ga.MULTI_SELECT:
+            return self.command_for_semantic(semantic)
+        indices = sorted(semantic[1], reverse=True)
+        self._joint_multi_plan = dict(signature=self._joint_screen_identity(),
+                                      remaining=indices, previous=None, sent=None, selected=0)
+        return self._continue_joint_multi()
+
+    def _joint_screen_identity(self):
+        desc = self.select_descriptor() or {}
+        return (self.screen_type(), self.gs.get("floor"),
+                (self.gs.get("combat_state") or {}).get("turn"), desc.get("context"))
+
+    def _continue_joint_multi(self):
+        """Expand one subset into acknowledged UI choices without another model call."""
+        plan = self._joint_multi_plan
+        if plan["signature"] != self._joint_screen_identity():
+            self._joint_multi_plan = None
+            return None
+        hand = tuple(self._combat_hand_cards())
+        count = int(_screen_state(self.gs).get("have_selected", 0))
+        if plan["sent"] is not None:
+            previous, index = plan["previous"], plan["sent"]
+            removed = previous[:index] + previous[index + 1:]
+            if hand == previous and count == plan["selected"]:
+                return self._refresh_command()  # Await acknowledgement; never select twice.
+            if not (hand == removed or (hand == previous and count == plan["selected"] + 1)):
+                self._joint_multi_plan = None
+                raise ValueError("multi-selection frame changed unexpectedly; discard the pending subset")
+        if not plan["remaining"]:
+            if "CONFIRM" not in self.commands():
+                return self._refresh_command()
+            self._joint_multi_plan = None
+            return "CONFIRM"
+        index = plan["remaining"].pop(0)
+        if index >= len(hand) or "CHOOSE" not in self.commands():
+            self._joint_multi_plan = None
+            raise ValueError("multi-selection candidate is no longer available")
+        plan.update(previous=hand, selected=count, sent=index)
+        return f"CHOOSE {index}"
 
     # ---------------------------------------------------------- canonical state
     def _base_canonical(self) -> dict[str, Any]:
@@ -854,6 +938,10 @@ class RealGameAdapter:
             candidates.append({"native_index": i, "card": card})
         if not overworld and context == "CODEX" and "SKIP" in self.commands():
             candidates.append({"native_index": len(cards), "card": None})
+        if not overworld and context in {"SECRET_WEAPON", "SECRET_TECHNIQUE", "SEEK"}:
+            # Static vocabulary preserves native CardId order without importing the sim.
+            candidates.sort(key=lambda c: (encode.CARD_INDEX.get(c["card"]["id"], 0),
+                                            c["card"]["up"], c["card"].get("cost", 0)))
         return {
             "context": context,
             "pick_remaining": max(0, pick_count - have_selected),
@@ -1143,7 +1231,8 @@ class RealGameAdapter:
             desc = self.select_descriptor()
             if desc and desc["candidates"][int(action[1])]["card"] is None:
                 return "SKIP"
-            return f"CHOOSE {action[1]}"
+            index = desc["candidates"][int(action[1])]["native_index"] if desc else action[1]
+            return f"CHOOSE {index}"
         if verb == ga.MULTI_SELECT:
             return "CONFIRM"
         if verb == ga.CAMPFIRE:
@@ -1258,6 +1347,8 @@ class RealGameAdapter:
 
     # --------------------------------------------------------------- debugging
     def describe_action_id(self, action_id: int, pending: tuple | None = None) -> str:
+        if self.combat_action_contract == C.JOINT_CONTRACT and self.phase() == "combat":
+            return str(self.joint_semantic_actions().get(int(action_id), ("invalid", action_id)))
         desc = self.select_descriptor()
         if A.is_multi_select(desc):
             if int(action_id) == A._CONFIRM:

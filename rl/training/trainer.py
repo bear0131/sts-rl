@@ -172,6 +172,7 @@ def _warm_start_policy(
     allow_neow_extension=True,
     allow_event_option_extension=True,
     skip_combat_mismatch=False,
+    allow_combat_contract_migration=False,
 ):
     """Copy pretrained weights, optionally initializing new semantic params.
 
@@ -183,7 +184,7 @@ def _warm_start_policy(
     if not any((allow_global_map_extension, allow_card_language_extension,
                 allow_combat_language_extension, allow_map_dag_extension,
                 allow_deck_size_extension, allow_neow_extension,
-                allow_event_option_extension, skip_combat_mismatch)):
+                allow_event_option_extension, skip_combat_mismatch, allow_combat_contract_migration)):
         model.policy.load_state_dict(source)
         return 0
 
@@ -192,6 +193,31 @@ def _warm_start_policy(
     initialized = []
     source_core = getattr(getattr(pretrained, "policy", None), "core", None)
     target_core = getattr(getattr(model, "policy", None), "core", None)
+
+    def copy_joint_global(key, value):
+        if not allow_combat_contract_migration or key != "core.combat.encoder.global_projection.weight":
+            return False
+        old = source_core.combat.encoder
+        new = target_core.combat.encoder
+        def segments(encoder):
+            widths = [(name, int(np.prod(encoder.observation_space[name].shape)))
+                      for name in encoder.global_scalar_keys]
+            widths += [(name, encoder.global_categories[name].embedding_dim)
+                       for name in encoder.global_category_keys]
+            offset, result = 0, {}
+            for name, width in widths:
+                result[name] = slice(offset, offset + width)
+                offset += width
+            return result
+        before, after = segments(old), segments(new)
+        mapped = target[key].detach().clone().zero_()
+        for name in before.keys() & after.keys():
+            if value[:, before[name]].shape != mapped[:, after[name]].shape:
+                raise ValueError("incompatible combat feature migration: " + name)
+            mapped[:, after[name]] = value[:, before[name]]
+        target[key] = mapped
+        initialized.append(key + " (named feature migration)")
+        return True
 
     def _copy_inserted_combat_boundary(key, value):
         """Transfer an old combat global projection with no boundary column.
@@ -253,7 +279,12 @@ def _warm_start_policy(
         return True
 
     for key, value in source.items():
+        if copy_joint_global(key, value):
+            continue
         if key not in target:
+            if allow_combat_contract_migration and key == "core.combat.encoder.global_categories.arg_step.weight":
+                initialized.append("retired pending-step board feature")
+                continue
             is_old_map = any(marker in key for marker in (
                 ".tok.map_full.", ".pos.map_full", ".map_dag.", ".map_dag"
             ))
@@ -333,7 +364,13 @@ def _warm_start_policy(
             ".tok.event_option.",
             ".pos.event_option",
         ))
+        is_joint = allow_combat_contract_migration and (
+            key.startswith("core.combat.complete_head.")
+            or key.startswith("core.combat.encoder.choice_")
+            or key == "core.combat.encoder.global_categories.select_zone.weight")
         if (
+            is_joint
+        ) or (
             allow_global_map_extension and is_global_map
         ) or (
             allow_map_dag_extension and is_map_dag
@@ -851,6 +888,24 @@ def main() -> None:
             "semantic-reasoning policy exposes ordered card-language fields"
         )
 
+    if hasattr(args, "combat_action_contract"):
+        source_space = pretrained.observation_space if pretrained is not None else None
+        if args.resume:
+            from stable_baselines3.common.save_util import load_from_zip_file
+            data, params, variables = load_from_zip_file(args.resume, device="cpu")
+            source_space = data["observation_space"]
+            del data, params, variables
+        source_contract = ("joint-v2" if source_space is not None and
+                           "combat_legal" in source_space.spaces else "legacy")
+        args.combat_action_contract = args.combat_action_contract or source_contract
+        if args.resume and args.combat_action_contract != source_contract:
+            raise ValueError("combat action migration requires --init-from, not --resume")
+        if args.combat_action_contract == "joint-v2":
+            if args.arch != "split-pointer" or getattr(args, "combat_arch", "transformer") != "transformer":
+                raise ValueError("joint-v2 requires split-pointer with Transformer combat")
+            if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
+                raise ValueError("joint-v2 NOSL requires --nosl-is-az-cpp")
+
     if pretrained is not None and hasattr(args, "arch"):
         source_arch = _checkpoint_policy_arch(pretrained)
         combat_into_split = (
@@ -1323,6 +1378,9 @@ def main() -> None:
                 skip_combat_mismatch=bool(
                     getattr(args, "nosl_is_az_inner_only", False)
                 ),
+                allow_combat_contract_migration=(
+                    getattr(args, "combat_action_contract", None) == "joint-v2"
+                    and "combat_legal" not in pretrained.observation_space.spaces),
             )
         del pretrained
         print(f"[trainer] warm-started policy weights from {args.init_from}")

@@ -11,6 +11,7 @@ import time
 
 import numpy as np
 import torch
+from env.core import native_actions as C
 
 from rl.policies.model import observation_for_policy
 from rl.search.native import MODEL_LEAF_BACKEND, NativeSearchConfig, complete_searches, forward_root, supports_compact
@@ -42,6 +43,25 @@ class DecisionStrategy(Protocol):
     name: str
 
     def decide(self, requests: list[DecisionRequest], *, check: Callable[[], None]) -> list[Decision]: ...
+
+
+def _forced_end_batch(strategy, requests, check):
+    """Resolve forced execution roots; internal search leaves still evaluate V."""
+    if strategy.combat_action_contract != C.JOINT_CONTRACT:
+        return None
+    forced = {}
+    for index, request in enumerate(requests):
+        mask = request.env.action_masks()
+        if request.info.get('phase') == 'combat' and mask[C.JOINT_END] and np.count_nonzero(mask) == 1:
+            forced[index] = Decision(C.JOINT_END, 'forced_end_turn',
+                                    {'root_forward_skipped':1, 'search_simulations':0})
+    if not forced:
+        return None
+    check()
+    remaining = [i for i in range(len(requests)) if i not in forced]
+    normal = strategy.decide([requests[i] for i in remaining], check=check) if remaining else []
+    forced.update(zip(remaining, normal))
+    return [forced[i] for i in range(len(requests))]
 
 
 def strategy_manifest(strategy):
@@ -78,13 +98,22 @@ class PolicyStrategy:
 
     def __init__(self, model, *, deterministic=True, lock=None):
         self.model, self.deterministic, self.lock = model, deterministic, lock
+        self.combat_action_contract = (
+            'joint-v2' if 'combat_legal' in getattr(getattr(model, 'observation_space', None), 'spaces', {}) else 'legacy')
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
             return []
+        forced = _forced_end_batch(self, requests, check)
+        if forced is not None:
+            return forced
         check()
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
         masks = np.stack([r.env.action_masks() for r in requests])
+        if self.combat_action_contract == 'legacy' and masks.shape[1] > self.model.action_space.n:
+            if any(r.info.get('phase') == 'combat' for r in requests):
+                raise ValueError('legacy policy cannot consume a joint-v2 combat environment')
+            masks = masks[:, :self.model.action_space.n]
         with self.lock or nullcontext():
             actions, _ = self.model.predict(observation_for_policy(self.model, observations),
                                             action_masks=masks, deterministic=self.deterministic)
@@ -99,10 +128,15 @@ class NativeStrategy:
         self.model, self.config, self.lock = model, config, lock
         self.master_nonce = int(master_nonce)
         self.leaf_backend = leaf_backend
+        self.combat_action_contract = (
+            'joint-v2' if 'combat_legal' in getattr(getattr(model, 'observation_space', None), 'spaces', {}) else 'legacy')
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
             return []
+        forced = _forced_end_batch(self, requests, check)
+        if forced is not None:
+            return forced
         started = time.monotonic()
         compact = supports_compact(self.model)
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
@@ -150,9 +184,13 @@ class PhaseStrategy:
             getattr(strategy, 'combat_action_contract', 'legacy')
             for strategy in possible
         }
-        unknown = contracts - {'legacy', 'native-v1'}
+        unknown = contracts - {'legacy', 'native-v1', 'joint-v2'}
         if unknown:
             raise ValueError(f'unsupported combat action contracts: {unknown}')
+        if 'joint-v2' in contracts:
+            if len(contracts) != 1:
+                raise ValueError('conditional combat strategies must share the joint-v2 contract')
+            return 'joint-v2'
         return 'native-v1' if 'native-v1' in contracts else 'legacy'
 
     def decide(self, requests, *, check=lambda: None):

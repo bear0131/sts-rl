@@ -32,3 +32,57 @@ def test_real_pending_sources_are_always_encoded(monkeypatch):
     assert first["pending_potion_slot"].tolist() == [0]
     assert second["pending_potion_slot"].tolist() == [2]
     assert not np.array_equal(first["pending_card_slot"], second["pending_card_slot"])
+
+
+def joint_frame(hand, *, selected=0, multi=False):
+    hand = [dict(upgrades=0, **card) for card in hand]
+    return {"in_game":True, "available_commands":["choose","confirm","state"] if multi else ["play","end","potion"],
+        "game_state":{"room_phase":"COMBAT", "screen_type":"HAND_SELECT" if multi else "NONE",
+            "floor":1, "screen_state":{"context":"EXHAUST_MANY", "multi":multi, "pick_max":3,
+                                      "have_selected":selected},
+            "combat_state":{"turn":1,"hand":hand,"monsters":[
+                {"current_hp":0,"is_gone":True}, {"current_hp":10,"is_gone":False}]}}}
+
+
+def test_joint_bridge_keeps_target_slot_and_executes_complete_play():
+    from env.core import native_actions as C
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update(joint_frame([{"id":"Strike_R","has_target":True,"is_playable":True}]))
+    mask = adapter.action_mask()
+    assert mask[C.JOINT_PLAY + 1] and not mask[C.JOINT_PLAY]
+    assert adapter.command_for_joint_action(C.JOINT_PLAY+1) == "PLAY 1 1"
+    assert adapter.describe_action_id(C.JOINT_PLAY+1)
+
+
+def test_joint_bridge_expands_subset_without_extra_policy_and_checks_ack():
+    from env.core import native_actions as C
+    hand = [{"id":cid} for cid in ("Strike_R", "Bash", "Defend_R")]
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update(joint_frame(hand, multi=True))
+    assert adapter.action_mask()[C.JOINT_MULTI+5]
+    assert adapter.command_for_joint_action(C.JOINT_MULTI+5) == "CHOOSE 2"
+    assert adapter.auto_command()[0] == "STATE"  # Same frame is not acknowledgement.
+    adapter.update(joint_frame(hand[:2], selected=1, multi=True))
+    assert adapter.auto_command()[0] == "CHOOSE 0"
+    adapter.update(joint_frame(hand[1:2], selected=2, multi=True))
+    assert adapter.auto_command()[0] == "CONFIRM"
+    assert adapter._joint_multi_plan is None
+    adapter.update(joint_frame(hand, multi=True))
+    assert adapter.command_for_joint_action(C.JOINT_MULTI) == "CONFIRM"
+
+
+def test_joint_bridge_handles_stable_hand_and_discards_plan_on_screen_change():
+    from env.core import native_actions as C
+    hand = [{"id":cid} for cid in ("Strike_R", "Bash", "Defend_R")]
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update(joint_frame(hand, multi=True))
+    assert adapter.command_for_joint_action(C.JOINT_MULTI+5) == "CHOOSE 2"
+    adapter.update(joint_frame(hand, selected=1, multi=True))
+    assert adapter.auto_command()[0] == "CHOOSE 0"
+    adapter.update(joint_frame(hand, selected=2, multi=True))
+    assert adapter.auto_command()[0] == "CONFIRM"
+    adapter.update(joint_frame(hand, multi=True))
+    adapter.command_for_joint_action(C.JOINT_MULTI+5)
+    adapter.update(joint_frame(hand))
+    assert adapter.auto_command() is None
+    assert adapter._joint_multi_plan is None

@@ -158,6 +158,8 @@ class WholeRunTask(Task):
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--combat-action-contract", choices=("legacy", "joint-v2"),
+                            default=None, help="Complete combat policy; migrate old weights with --init-from.")
         parser.add_argument(
             "--global-map-view",
             action="store_true",
@@ -476,6 +478,7 @@ class WholeRunTask(Task):
                 neow_observation=args.neow_observation,
                 event_option_observation=args.event_option_observation,
                 interactive_reasoning=interactive_reasoning,
+                combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(
                     getattr(args, "nosl_is_az_boss_transition_target", False)
                 ),
