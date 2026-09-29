@@ -51,8 +51,16 @@ Replay版本3及 `combat-outcome-quantiles-v1` 拒绝旧标量回放混入。
 python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args --steps 24576 --seed 0 --device cuda --amp-mode bf16 --out runs/local/entity-combat
 ```
 
-配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样4次更新（先观察10轮，再评估是否改40）、
+配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样4次联合policy/value更新，
 回放131072，旧样本采样上限0.9，LR5e-5。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
+`--nosl-is-az-update-schedule value-warmup` 在前5轮额外增加36次value/辅助头更新，
+第6–20轮按余弦减到0；第10/15/20轮总更新数为31/13/4，之后固定4。
+额外更新先于联合更新，训练共享表示、胜负/HP分布和动作后果；策略专用头的参数及Adam状态
+在这些更新中保持不动，但共享表示变化仍会影响策略输出。目标来自真实自博弈终局，
+并非另行采集的均匀随机策略数据。该曲线是实验设计，尚未证明优于固定U4/U40。
+调度按累计global steps除以四机整轮动作量计算（生产每轮49152），保存恢复不重启warmup。
+日志区分scheduled_updates、value_only_updates、joint_updates；零有效标签时实际更新可以为0。
+旧checkpoint和未指定该选项的入口默认constant；value-warmup仅支持entity-combat的C++ inner-only NOSL。
 初始化与分布式运行共用 `configs/train/entity_combat_learning.args`；
 `entity_combat_runtime.args` 用于既有四机launcher，目标50M，BF16。
 该实验使用Full Gumbel128，关闭Q归一化、value scale=1。

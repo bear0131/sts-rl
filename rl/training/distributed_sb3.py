@@ -594,8 +594,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--nosl-is-az-updates",
         type=int,
         default=None,
-        help="Number of independent replay/optimizer updates per collection.",
+        help="Joint policy/value updates per collection (warmup adds value updates).",
     )
+    parser.add_argument("--nosl-is-az-update-schedule",
+                        choices=("constant", "value-warmup"), default=None)
     parser.add_argument(
         "--nosl-is-az-replay",
         dest="nosl_is_az_replay_enabled",
@@ -1276,6 +1278,9 @@ def distributed_nosl_is_az_update(
     barrier_timeout: float,
     prepare_replay: bool = True,
     consume_fresh_samples: bool = True,
+    update_count: int | None = None,
+    value_only_updates: int = 0,
+    inner_update: int = 0,
 ) -> dict[str, object]:
     """Run synchronized inner-only NOSL updates.
 
@@ -1290,9 +1295,11 @@ def distributed_nosl_is_az_update(
     """
     if not model.nosl_is_az or not model.nosl_is_az_inner_only:
         raise ValueError("distributed NOSL update requires inner-only mode")
-    configured_updates = int(model.nosl_is_az_updates)
+    configured_updates = int(model.nosl_is_az_updates if update_count is None else update_count)
     if configured_updates < 1:
         raise ValueError("distributed NOSL updates must be positive")
+    if not 0 <= value_only_updates <= configured_updates:
+        raise ValueError("invalid value-only update budget")
 
     # The one-step implementation below deliberately keeps its collective
     # ordering small and explicit.  Re-enter it once per requested inner
@@ -1300,30 +1307,28 @@ def distributed_nosl_is_az_update(
     # prepared only on the first pass; this is important for the legacy
     # non-replay mode where fresh roots are one-shot samples.
     if configured_updates > 1:
-        original_updates = model.nosl_is_az_updates
-        model.nosl_is_az_updates = 1
-        try:
-            results = [
-                distributed_nosl_is_az_update(
-                    model,
-                    rank=rank,
-                    world_size=world_size,
-                    peers=peers,
-                    key=key,
-                    control_dir=control_dir,
-                    local_root=local_root,
-                    remote_root=remote_root,
-                    run_id=run_id,
-                    update=update * configured_updates + inner_update,
-                    ring_transport=ring_transport,
-                    barrier_timeout=barrier_timeout,
-                    prepare_replay=prepare_replay if inner_update == 0 else False,
-                    consume_fresh_samples=False,
-                )
-                for inner_update in range(configured_updates)
-            ]
-        finally:
-            model.nosl_is_az_updates = original_updates
+        results = [
+            distributed_nosl_is_az_update(
+                model,
+                rank=rank,
+                world_size=world_size,
+                peers=peers,
+                key=key,
+                control_dir=control_dir,
+                local_root=local_root,
+                remote_root=remote_root,
+                run_id=run_id,
+                update=update,
+                ring_transport=ring_transport,
+                barrier_timeout=barrier_timeout,
+                prepare_replay=prepare_replay if inner_update == 0 else False,
+                consume_fresh_samples=False,
+                update_count=1,
+                value_only_updates=int(inner_update < value_only_updates),
+                inner_update=inner_update,
+            )
+            for inner_update in range(configured_updates)
+        ]
 
         if (
             consume_fresh_samples
@@ -1354,6 +1359,7 @@ def distributed_nosl_is_az_update(
             "roots", "global_roots", "gradient_batches", "updates", "metric_count",
             "replay_sampled_roots", "backward_sec", "sync_sec",
             "optimizer_step_sec",
+            "value_only_updates", "joint_updates",
         }
         weights = [max(0.0, float(row.get("metric_count", 0.0))) for row in results]
         weight_total = sum(weights)
@@ -1445,6 +1451,8 @@ def distributed_nosl_is_az_update(
         gradient_scale=gradient_scale,
         prepare_replay=False,
         consume_fresh_samples=consume_fresh_samples,
+        update_count=1,
+        value_only_updates=value_only_updates,
     )
     if model.device.type == "cuda":
         th.cuda.synchronize(model.device)
@@ -1550,7 +1558,7 @@ def distributed_nosl_is_az_update(
             local_root=local_root,
             remote_root=remote_root,
             run_id=run_id,
-            tag=f"u{update:06d}_nosl",
+            tag=f"u{update:06d}_nosl_i{inner_update:04d}",
             ring_transport=ring_transport,
             barrier_timeout=barrier_timeout,
         )
@@ -1560,7 +1568,7 @@ def distributed_nosl_is_az_update(
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         step_started = time.perf_counter()
-        gradient_norm_preclip = float(optimizer_step(model))
+        gradient_norm_preclip = float(optimizer_step(model, value_only=bool(value_only_updates)))
         if model.device.type == "cuda":
             th.cuda.synchronize(model.device)
         optimizer_step_seconds = time.perf_counter() - step_started
@@ -1578,6 +1586,8 @@ def distributed_nosl_is_az_update(
         "policy_loss": float(az_stats["policy_loss"]),
         "value_loss": float(az_stats["value_loss"]),
         "updates": 1.0 if global_count > 0.0 else 0.0,
+        "value_only_updates": float(global_count > 0.0 and value_only_updates > 0),
+        "joint_updates": float(global_count > 0.0 and value_only_updates == 0),
         "gradient_batches": float(az_stats.get("gradient_batches", 0.0)),
         "global_roots": global_count,
         "backward_sec": backward_seconds,
@@ -1737,6 +1747,11 @@ def _add_game_metrics_to_wandb_payload(
 # set so every rank participates in the same scalar all-reduce even when a
 # rank has no completed combat in a particular rollout.
 _DISTRIBUTED_NOSL_METRIC_KEYS = (
+    "nosl_is_az/schedule_round",
+    "nosl_is_az/scheduled_updates",
+    "nosl_is_az/scheduled_value_only_updates",
+    "nosl_is_az/value_only_updates",
+    "nosl_is_az/joint_updates",
     "nosl_is_az/overworld_rule_decisions",
     "nosl_is_az/overworld_fallback_decisions",
     "nosl_is_az/forced_end_turn_roots",
@@ -2221,6 +2236,11 @@ def main() -> None:
     elif bool(getattr(model, "nosl_is_az", False)):
         # Make the effective checkpoint value visible in W&B and diagnostics.
         args.nosl_is_az_updates = int(getattr(model, "nosl_is_az_updates", 1))
+    from rl.algorithms.update_schedule import CombatUpdateSchedule
+    update_schedule = CombatUpdateSchedule.from_config(
+        args.nosl_is_az_update_schedule or getattr(model, 'nosl_is_az_update_schedule', None))
+    update_schedule.validate_model(model)
+    args.nosl_is_az_update_schedule = model.nosl_is_az_update_schedule = update_schedule.config()
     model.nosl_is_az_replay_enabled = bool(args.nosl_is_az_replay_enabled)
     print(
         f"[rank {args.rank}] NOSL-IS-AZ replay enabled: "
@@ -2666,6 +2686,9 @@ def main() -> None:
             )
             nosl_update = None
             if distributed_nosl:
+                completed_rollouts = start_timesteps // global_rollout_size + update
+                scheduled_updates, scheduled_value_only = update_schedule.plan(
+                    completed_rollouts, int(model.nosl_is_az_updates))
                 nosl_update = distributed_nosl_is_az_update(
                     model,
                     rank=args.rank,
@@ -2679,7 +2702,12 @@ def main() -> None:
                     update=update,
                     ring_transport=ring_transport,
                     barrier_timeout=args.barrier_timeout,
+                    update_count=scheduled_updates,
+                    value_only_updates=scheduled_value_only,
                 )
+                nosl_update.update(schedule_round=float(completed_rollouts + 1),
+                    scheduled_updates=float(scheduled_updates),
+                    scheduled_value_only_updates=float(scheduled_value_only))
 
             for epoch in range(0 if distributed_nosl else args.n_epochs):
                 accumulated = 0

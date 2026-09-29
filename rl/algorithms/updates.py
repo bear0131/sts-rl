@@ -32,10 +32,15 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     return components, loss
 
 
-def optimizer_step(model, micro_batches=1):
+def optimizer_step(model, micro_batches=1, *, value_only=False):
     """Average accumulation once, clip once, then Adam and clear gradients."""
     if micro_batches < 1:
         return 0.0
+    if value_only:
+        # Ring unpack materializes zero gradients for unused heads. Adam's
+        # existing momentum would still move them unless the gradient is None.
+        for parameter in model.policy.core.policy_only_parameters():
+            parameter.grad = None
     if micro_batches != 1:
         for parameter in model.policy.parameters():
             if parameter.grad is not None:

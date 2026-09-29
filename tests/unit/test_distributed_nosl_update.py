@@ -41,9 +41,13 @@ class _NoReplayDistributedModel:
         gradient_scale,
         prepare_replay,
         consume_fresh_samples,
+        update_count,
+        value_only_updates,
     ):
         assert not step_optimizer
         assert not prepare_replay
+        assert update_count == 1
+        assert value_only_updates == 0
         self.train_consume_flags.append(consume_fresh_samples)
         update_index = len(self.train_consume_flags) - 1
         mean = (0.2, 0.5, 0.8)[update_index]
@@ -132,3 +136,18 @@ def test_distributed_no_replay_reuses_fresh_batch_for_every_update(monkeypatch):
     assert result["value_target_std"] == pytest.approx(np.sqrt(0.07))
     assert result["value_target_min"] == pytest.approx(0.1)
     assert result["value_target_max"] == pytest.approx(0.9)
+
+
+def test_decreasing_update_budget_does_not_reuse_transport_tags(monkeypatch):
+    tags = []
+    def synchronize(*_args, **kwargs):
+        tags.append(kwargs['tag'])
+        return dict(sync_sec=0., sync_mbps=0., grad_bytes=4)
+    monkeypatch.setattr(distributed, 'synchronize_gradient_step', synchronize)
+    for rollout, budget in ((3, 3), (4, 2)):
+        model = _NoReplayDistributedModel()
+        distributed.distributed_nosl_is_az_update(model, rank=0, world_size=1, peers=[],
+            key=Path('unused'),control_dir=Path('unused'),local_root=Path('unused'),
+            remote_root='unused',run_id='test',update=rollout,update_count=budget,
+            ring_transport=None,barrier_timeout=1)
+    assert len(tags) == len(set(tags)) == 5

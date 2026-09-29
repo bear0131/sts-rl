@@ -199,6 +199,12 @@ class EntityCombatCore(nn.Module):
         self.config = config
         self.combat = EntityCombatNetwork(space, config)
 
+    def policy_only_parameters(self):
+        """Heads exclusive to action logits; the encoder remains shared."""
+        for module in (self.combat.pointer_query, self.combat.pointer_key,
+                       self.combat.end, self.combat.complete_head):
+            yield from module.parameters()
+
     def combat_actor_critic(self, obs, **kwargs):
         logits, values, _ = self.combat(obs, **kwargs)
         return logits, values

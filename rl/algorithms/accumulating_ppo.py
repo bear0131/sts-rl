@@ -155,6 +155,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_inference_max_wait_ms: float = 0.5,
         nosl_is_az_inference_schedule: str = "fixed_wait",
         nosl_is_az_updates: int = 1,
+        nosl_is_az_update_schedule: str | dict | None = None,
         nosl_is_az_policy_coef: float = 1.0,
         nosl_is_az_value_coef: float = 0.5,
         **kwargs,
@@ -359,6 +360,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if self.nosl_is_az_paper_full_gumbel:
             apply_strict_training_settings(self)
         self.nosl_is_az_updates = int(nosl_is_az_updates)
+        from rl.algorithms.update_schedule import CombatUpdateSchedule
+        self.nosl_is_az_update_schedule = CombatUpdateSchedule.from_config(nosl_is_az_update_schedule).config()
         self.nosl_is_az_policy_coef = float(nosl_is_az_policy_coef)
         self.nosl_is_az_value_coef = float(nosl_is_az_value_coef)
         self._nosl_is_az_samples = []
@@ -382,6 +385,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         super()._setup_model()
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
+        from rl.algorithms.update_schedule import CombatUpdateSchedule
+        CombatUpdateSchedule.from_config(self.nosl_is_az_update_schedule).validate_model(self)
         if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
                 and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == 'rules'):
             raise ValueError('entity-combat training requires C++ inner-only NOSL and rules upper strategy')
@@ -1959,6 +1964,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         gradient_scale: float = 1.0,
         prepare_replay: bool = True,
         update_count: int | None = None,
+        value_only_updates: int = 0,
         consume_fresh_samples: bool = True,
     ) -> dict[str, object]:
         """Train the combat specialist from a recent self-play replay window.
@@ -1974,11 +1980,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
         otherwise a no-replay batch would disappear after the first step.
         """
         if update_count is None:
-            update_count = int(self.nosl_is_az_updates)
+            from rl.algorithms.update_schedule import CombatUpdateSchedule
+            completed = max(0, (int(self.num_timesteps) - 1) // (self.n_steps * self.n_envs))
+            update_count, value_only_updates = CombatUpdateSchedule.from_config(
+                self.nosl_is_az_update_schedule).plan(completed, int(self.nosl_is_az_updates))
         else:
             update_count = int(update_count)
         if update_count < 1:
             raise ValueError("NOSL-IS-AZ update_count must be positive")
+        if not 0 <= value_only_updates <= update_count or (value_only_updates and not self._combat_distribution):
+            raise ValueError("value-only updates require a valid entity-combat budget")
         if prepare_replay:
             prepare_stats = self._prepare_nosl_is_az_replay()
         else:
@@ -2010,6 +2021,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "policy_loss": 0.0,
                 "value_loss": 0.0,
                 "updates": 0.0,
+                "value_only_updates": 0.0,
+                "joint_updates": 0.0,
                 "gradient_batches": 0.0,
                 "replay_sampled_roots": 0.0,
                 "replay_old_fraction": 0.0,
@@ -2258,12 +2271,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             distribution_outputs,combat_targets,value_targets,
                             mean_coef=core.config.mean_loss_coef,
                             auxiliary_coef=core.config.auxiliary_loss_coef)
-                    loss_per_sample = (
-                        self.nosl_is_az_policy_coef
-                        * policy_cross_entropy_per_sample * policy_weights
-                        + self.nosl_is_az_value_coef
-                        * value_loss_per_sample
-                    )
+                    loss_per_sample = self.nosl_is_az_value_coef * value_loss_per_sample
+                    if _update >= value_only_updates:
+                        loss_per_sample = (loss_per_sample + self.nosl_is_az_policy_coef
+                            * policy_cross_entropy_per_sample * policy_weights)
 
                 # Every sample contributes its exact fraction of the effective
                 # batch.  A boundary's zero policy weight removes only its
@@ -2351,7 +2362,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     accumulate_monitor(name, array)
                 diagnostics_offset = diagnostics_end
             if step_optimizer:
-                gradient_norms.append(self._optimizer_step(1))
+                from rl.algorithms.updates import optimizer_step
+                gradient_norms.append(float(optimizer_step(self, value_only=_update < value_only_updates)))
                 optimizer_steps += 1
 
         if not replay_enabled and consume_fresh_samples:
@@ -2397,6 +2409,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "value_loss": float(value_loss_sum / sampled_roots),
             **{name:metric_mean(name) for name in monitor_names[14:]},
             "updates": float(optimizer_steps),
+            "value_only_updates": float(value_only_updates if step_optimizer else 0),
+            "joint_updates": float(optimizer_steps - value_only_updates if step_optimizer else 0),
             "gradient_batches": float(gradient_batches),
             "replay_sampled_roots": float(sampled_roots if replay_enabled else 0.0),
             "replay_old_fraction": float(sampled_old / sampled_roots),

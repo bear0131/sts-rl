@@ -51,6 +51,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
+        nosl_is_az_update_schedule=(dict(mode='value-warmup', peak_updates=3,
+            hold_rollouts=1, decay_rollouts=2) if combat_arch == 'entity' else None),
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
         hierarchical_combat_hp=nosl)
@@ -153,6 +155,16 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
+    if combat_arch == 'entity':
+        assert [p['nosl_is_az/schedule_round'] for p in payloads] == [1, 2, 3, 4]
+        assert [p['nosl_is_az/scheduled_updates'] for p in payloads] == [3, 2, 1, 1]
+        assert [p['nosl_is_az/value_only_updates'] for p in payloads] == [2, 1, 0, 0]
+        assert [p['nosl_is_az/joint_updates'] for p in payloads] == [1, 1, 1, 1]
+        final = AccumulatingMaskablePPO.load(output, device='cpu')
+        optimizer = final.policy.optimizer
+        for parameter in final.policy.core.policy_only_parameters():
+            assert optimizer.state[parameter]['step'].item() == 4
+        assert optimizer.state[final.policy.core.combat.distribution.win.weight]['step'].item() == 7
     assert finished == [0, 0]
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)

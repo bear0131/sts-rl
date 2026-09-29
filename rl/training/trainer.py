@@ -1171,6 +1171,7 @@ def main() -> None:
                 args, "nosl_is_az_inference_schedule", "fixed_wait"
             ),
             nosl_is_az_updates=getattr(args, "nosl_is_az_updates", 1),
+            nosl_is_az_update_schedule=getattr(args, "nosl_is_az_update_schedule", None),
             nosl_is_az_policy_coef=getattr(
                 args, "nosl_is_az_policy_coef", 1.0
             ),
@@ -1341,6 +1342,7 @@ def main() -> None:
                     args, "nosl_is_az_inference_schedule", "fixed_wait"
                 ),
                 "nosl_is_az_updates": getattr(args, "nosl_is_az_updates", 1),
+                "nosl_is_az_update_schedule": model.nosl_is_az_update_schedule,
                 "nosl_is_az_policy_coef": getattr(
                     args, "nosl_is_az_policy_coef", 1.0
                 ),

@@ -17,6 +17,8 @@ full_gumbel
 256
 --nosl-is-az-updates
 4
+--nosl-is-az-update-schedule
+value-warmup
 --nosl-is-az-replay
 --nosl-is-az-replay-capacity
 131072

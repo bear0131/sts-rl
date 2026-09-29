@@ -459,6 +459,8 @@ class WholeRunTask(Task):
                  "tree capacity and measured backpressure.",
         )
         parser.add_argument("--nosl-is-az-updates", type=int, default=1)
+        parser.add_argument("--nosl-is-az-update-schedule",
+                            choices=("constant", "value-warmup"), default="constant")
         parser.add_argument("--nosl-is-az-policy-coef", type=float, default=1.0)
         parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
