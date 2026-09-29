@@ -84,9 +84,7 @@ def test_synchronous_unbounded_search_expands_one_new_edge_per_simulation():
 
 
 @pytest.mark.native
-@pytest.mark.xfail(reason="F05: native terminal value is pre-exit, learner post-exit HP",
-                   strict=True, raises=AssertionError)
-def test_native_terminal_matches_post_exit_training_value(combat_factory):
+def test_native_terminal_excludes_post_combat_healing(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, relics=("Burning Blood",))
     env.thick.gc.cur_hp = 50
     import slaythespire as sts
@@ -97,7 +95,13 @@ def test_native_terminal_matches_post_exit_training_value(combat_factory):
     session = battle.nosl_neural_search_begin(logits, simulations=1, depth=0, nonce=5)
     assert session.next_batch(1) == []
     assert session.done()
-    assert session.result()["root_value"] == pytest.approx(56 / 200)
+    assert session.result()["root_value"] == pytest.approx(50 / 200)
+    from env.search.nosl_is_az import _terminal_value
+    from types import SimpleNamespace
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    branch = SimpleNamespace(thick=SimpleNamespace(bc=battle, gc=env.thick.gc))
+    assert battle.projected_exit_hp(env.thick.gc) == 56
+    assert _terminal_value(branch) == pytest.approx(50 / 200)
 
 
 @pytest.mark.native

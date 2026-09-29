@@ -3,6 +3,7 @@ import pytest
 from gymnasium import spaces
 
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
+from env.core.combat_value import VALUE_CONTRACT
 
 
 @pytest.mark.parametrize('count', [0, 2, 6])
@@ -72,7 +73,8 @@ def test_old_float16_player_scalars_restore_into_float32_storage():
         observation_space=space,
     )
     state = dict(
-        version=1,
+        version=2,
+        value_contract=VALUE_CONTRACT,
         capacity=2,
         action_dim=2,
         observation_keys=('player_scalars',),

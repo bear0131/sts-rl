@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from env.core.boss_value import HP_SCALE, context_terminal_target
+from env.core.combat_value import combat_end_hp
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -50,7 +51,9 @@ def _terminal_hp(branch, *, boss_transition_target: bool = False) -> float:
         # These legacy beam/MCTS heuristics rank raw HP, unlike the neural
         # value paths which operate on [0, 1]. Preserve their established unit.
         return float(target) * HP_SCALE
-    return float(max(0, branch.thick.bc.projected_exit_hp(branch.thick.gc)))
+    if boss_transition_target:
+        return float(max(0, branch.thick.bc.projected_exit_hp(branch.thick.gc)))
+    return combat_end_hp(branch.thick.bc)
 
 
 def _apply(env, action: int, sampler: NOSLSampler, state_nonce: int, index: int):

@@ -8,6 +8,7 @@ from math import prod
 
 import numpy as np
 from gymnasium import spaces
+from env.core.combat_value import VALUE_CONTRACT
 
 
 def _compact_integer_dtype(space: spaces.Box) -> np.dtype:
@@ -57,6 +58,7 @@ class NOSLISAZReplayBuffer:
         observation_space: spaces.Dict,
         observation_keys: Iterable[str],
         action_dim: int,
+        value_contract: str = VALUE_CONTRACT,
     ) -> None:
         if capacity < 1:
             raise ValueError("replay capacity must be positive")
@@ -68,6 +70,7 @@ class NOSLISAZReplayBuffer:
 
         self.capacity = int(capacity)
         self.action_dim = int(action_dim)
+        self.value_contract = str(value_contract)
         self.observation_keys = keys
         self._observation_spaces = {
             key: observation_space[key] for key in self.observation_keys
@@ -101,7 +104,8 @@ class NOSLISAZReplayBuffer:
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
         names = ('action_masks', 'policy_targets', 'policy_weights', 'value_targets', 'sample_ids')
-        return dict(version=1, capacity=self.capacity, action_dim=self.action_dim,
+        return dict(version=2, value_contract=self.value_contract,
+            capacity=self.capacity, action_dim=self.action_dim,
             observation_keys=self.observation_keys, position=self.position, size=self.size,
             total_added=self.total_added,
             observations=None if self.observations is None else
@@ -109,7 +113,11 @@ class NOSLISAZReplayBuffer:
             arrays={k:None if getattr(self,k) is None else getattr(self,k)[:self.size].copy() for k in names})
 
     def load_state_dict(self, state):
-        if (state['version'] != 1 or state['capacity'] != self.capacity
+        if state.get('value_contract') != self.value_contract:
+            raise ValueError(
+                'replay value contract mismatch; migrate weights and collect '
+                'new replay instead of mixing pre/post-combat HP targets')
+        if (state['version'] != 2 or state['capacity'] != self.capacity
                 or state['action_dim'] != self.action_dim
                 or tuple(state['observation_keys']) != self.observation_keys):
             raise ValueError('replay checkpoint geometry does not match runtime')

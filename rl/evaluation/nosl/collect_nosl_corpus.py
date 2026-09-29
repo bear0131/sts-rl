@@ -36,6 +36,7 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 
 from env.core.run_env import SlayTheSpireEnv
+from env.core.combat_value import combat_end_hp
 from rl.policies import model as model_helpers
 from env.search.nosl_sampler import NOSLSampler
 
@@ -123,9 +124,7 @@ def _clone_redeterminized(env, sampler: NOSLSampler, state_nonce: int, index: in
 
 
 def _terminal_hp(branch) -> float:
-    bc = branch.thick.bc
-    hp = bc.projected_exit_hp(branch.thick.gc)
-    return float(max(0, hp))
+    return combat_end_hp(branch.thick.bc)
 
 
 @dataclass(frozen=True)

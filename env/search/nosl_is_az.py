@@ -18,6 +18,7 @@ import numpy as np
 
 from env.core import encode
 from env.core.boss_value import context_terminal_target
+from env.core.combat_value import combat_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -110,8 +111,10 @@ def _terminal_value(branch, *, boss_transition_target: bool = False) -> float:
     )
     if target is not None:
         return float(target)
-    hp = branch.thick.bc.projected_exit_hp(branch.thick.gc)
-    return min(1.0, float(max(0.0, hp)) / encode.HP_SCALE)
+    if boss_transition_target:  # explicitly retained historical objective
+        hp = branch.thick.bc.projected_exit_hp(branch.thick.gc)
+        return min(1.0, float(max(0.0, hp)) / encode.HP_SCALE)
+    return combat_terminal_target(branch.thick.bc)
 
 
 def _masked_prior(logits, legal: list[int], action_count: int) -> np.ndarray:

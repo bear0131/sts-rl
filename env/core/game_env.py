@@ -33,6 +33,7 @@ from schemas.combat_state import (
 
 from . import actions
 from .boss_value import context_terminal_target
+from .combat_value import combat_terminal_target
 from . import combat_env
 from . import encode
 from . import factories
@@ -457,14 +458,16 @@ class SimGameEnv:
         return state
 
     def _nosl_value_terminal_target(self):
-        """Return the opt-in boss terminal target before combat settlement."""
-        if (
-            not self._nosl_is_az_boss_transition_target
-            or self.bc is None
-            or not self.bc.is_battle_over
-        ):
+        """Capture fight-local HP before any post-combat settlement.
+
+        The historical boss objective remains explicit for old experiments.
+        New standard targets exclude all post-combat healing.
+        """
+        if self.bc is None or not self.bc.is_battle_over:
             return None
-        return context_terminal_target(enabled=True, gc=self.gc, bc=self.bc)
+        if self._nosl_is_az_boss_transition_target:
+            return context_terminal_target(enabled=True, gc=self.gc, bc=self.bc)
+        return combat_terminal_target(self.bc)
 
     @staticmethod
     def _semantic_action_card(action, before):
@@ -711,7 +714,11 @@ class _CombatBranchGameEnv(SimGameEnv):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         terminated = self.bc.is_battle_over
-        return self._canonical(), 0.0, terminated, self._info()
+        info = self._info()
+        target = self._nosl_value_terminal_target()
+        if target is not None:
+            info["nosl_value_terminal_target"] = target
+        return self._canonical(), 0.0, terminated, info
 
     def step_native_combat(self, action_bits: int):
         """Finish native actions inside this branch without settling the run.
@@ -727,6 +734,9 @@ class _CombatBranchGameEnv(SimGameEnv):
         terminal = self._winning_combat_value_state()
         if terminal is not None:
             info['nosl_value_terminal_state'] = terminal
+        target = self._nosl_value_terminal_target()
+        if target is not None:
+            info["nosl_value_terminal_target"] = target
         return self._canonical(), 0.0, self.bc.is_battle_over, info
 
     def step_fast(self, action):

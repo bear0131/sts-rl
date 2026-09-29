@@ -17,6 +17,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_suppo
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
+from env.core.combat_value import VALUE_CONTRACT
 from rl.search.native import (
     LeafInferenceSchedule,
     complete_searches,
@@ -263,6 +264,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_boss_transition_target = bool(
             nosl_is_az_boss_transition_target
         )
+        self.nosl_value_contract = (
+            "legacy-boss-transition" if self.nosl_is_az_boss_transition_target
+            else VALUE_CONTRACT
+        )
         self.nosl_is_az_inner_only = bool(nosl_is_az_inner_only)
         self.nosl_is_az_upper_strategy = str(nosl_is_az_upper_strategy)
         self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
@@ -420,7 +425,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
             getattr(self, "nosl_is_az_micro_batch_size", 2048)
         )
         replay = getattr(self, "_nosl_is_az_replay", None)
+        value_contract = (
+            "legacy-boss-transition"
+            if getattr(self, "nosl_is_az_boss_transition_target", False)
+            else VALUE_CONTRACT
+        )
         if replay is not None:
+            if getattr(replay, "value_contract", None) != value_contract:
+                raise ValueError("NOSL replay value contract changed; collect new replay")
             if replay.capacity != capacity:
                 raise RuntimeError(
                     "cannot resize a populated NOSL replay buffer at runtime"
@@ -437,6 +449,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             observation_space=self.observation_space,
             observation_keys=observation_keys,
             action_dim=action_dim,
+            value_contract=value_contract,
         )
         self._nosl_is_az_replay = replay
         return replay
@@ -1381,7 +1394,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if interrupted[env_index]:
                     incomplete_combat_roots += len(pending)
                     continue
-                future_hp = float(next_hp[env_index])
+                target = next_hp[env_index]
+                if np.isfinite(terminal_target):
+                    target = terminal_target
+                future_hp = float(target)
                 if np.isfinite(future_hp):
                     for sample in pending:
                         if sample.get("sample_kind") != "combat_root":
@@ -1393,9 +1409,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         rollout_hp_order_count += 1
                         if estimated_value > current_hp and current_hp >= future_hp:
                             rollout_hp_order_matches += 1
-                target = next_hp[env_index]
-                if np.isfinite(terminal_target):
-                    target = terminal_target
                 completed = _fill_nosl_combat_value_targets(pending, target)
                 self._nosl_is_az_samples.extend(pending)
                 completed_combat_roots += completed

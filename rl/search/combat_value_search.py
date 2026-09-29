@@ -23,6 +23,7 @@ import torch
 
 from env.core import encode
 from env.core.boss_value import context_terminal_target
+from env.core.combat_value import combat_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 from rl.policies.model import observation_for_policy
 
@@ -290,12 +291,7 @@ class CombatValueSearch:
 
     @staticmethod
     def _terminal_hp_value(node: _Node) -> float:
-        backend = node.env.thick
-        hp = max(
-            0.0,
-            float(backend.bc.projected_exit_hp(backend.gc)),
-        )
-        return min(hp, encode.HP_SCALE) / encode.HP_SCALE
+        return combat_terminal_target(node.env.thick.bc)
 
     def _score_nodes(self, nodes: list[_Node]) -> None:
         terminal = [node for node in nodes if node.terminal]

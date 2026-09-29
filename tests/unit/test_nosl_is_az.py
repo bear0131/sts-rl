@@ -40,6 +40,10 @@ class _Battle:
     def projected_exit_hp(self, _gc):
         return 100.0 - self.steps
 
+    def to_dict(self):
+        return {"outcome": 1 if self.is_battle_over else 0,
+                "player": {"hp": 100.0 - self.steps}}
+
 
 class _Branch:
     def __init__(self):
