@@ -19,6 +19,7 @@ import os
 import sys
 import time
 
+from env.core import native_actions as C
 import numpy as np
 
 from env.core.run_env import SlayTheSpireEnv
@@ -209,7 +210,7 @@ def main() -> None:
         else None
     )
     env = SlayTheSpireEnv(
-        combat_action_contract="joint-v2" if "combat_legal" in model.observation_space.spaces else "legacy",
+        combat_action_contract=C.policy_contract(model.observation_space),
         ascension=args.ascension,
         global_map_view=_model.uses_global_map_observation(model),
         card_language=_model.uses_card_language(model),

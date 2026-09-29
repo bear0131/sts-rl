@@ -166,3 +166,52 @@ def test_initial_conditional_prior_is_uniform_over_valid_sets(combat_factory):
     walk(0, 1.)
     assert len(probabilities) == 26
     np.testing.assert_allclose(probabilities, np.full(26, 1/26), rtol=1e-6)
+
+
+def test_prefix_checkpoint_and_real_transition_replay(replayable_selection_env):
+    import copy
+    from stable_baselines3.common.logger import configure
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.combat_distribution import outcome_targets, transition_features
+    env = replayable_selection_env
+    env.step(C.JOINT_PLAY + 5)  # Purity, no target.
+    samples = []
+    for action in (C.JOINT_MULTI, C.AUTOREGRESSIVE_STOP, C.JOINT_PLAY):
+        obs, mask = env._obs(), env.action_masks()
+        assert mask[action]
+        target = np.zeros(379, np.float32); target[action] = 1
+        sample = dict(observation=obs, action_mask=mask, policy_target=target,
+                      value_target=.4, policy_weight=1.)
+        after, _, _, _, info = env.step(action)
+        if info['simulator_transition']:
+            sample.update(executed_action=action,
+                          transition_target=transition_features(after)-transition_features(obs))
+        else:
+            state = env.export_training_state()
+            before = env.thick.bc.to_dict()
+            env.restore_training_state(state)
+            assert env.thick.bc.to_dict() == before and env._multi == {0}
+            assert env.export_training_state()['observation_sha256'] == state['observation_sha256']
+        samples.append(sample)
+    assert env.thick.bc is None or env.thick.bc.is_battle_over
+    outcome_targets(samples, 'win')
+    assert [s['combat_targets'][2] for s in samples] == [0, 1, 1]
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, seed=42, device='cpu',
+        n_steps=4, batch_size=4, nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules',
+        nosl_is_az_updates=2, nosl_is_az_batch_size=3, nosl_is_az_micro_batch_size=2,
+        nosl_is_az_replay_capacity=8,
+        policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4)))
+    model.set_logger(configure(format_strings=[]))
+    model._nosl_is_az_samples = samples
+    stats = model._train_nosl_is_az()
+    assert stats['updates'] == 2 and stats['finite_fraction'] == 1
+    replay = model._nosl_is_az_replay
+    saved = replay.state_dict()
+    assert saved['policy_contract'] == C.AUTOREGRESSIVE_CONTRACT
+    replay.load_state_dict(saved)
+    incompatible = copy.deepcopy(saved); incompatible['policy_contract'] = C.JOINT_CONTRACT
+    with pytest.raises(ValueError, match='contract'):
+        replay.load_state_dict(incompatible)
+    head = model.policy.core.combat.complete_head.subset
+    assert head.choice_key.weight.abs().sum() > 0

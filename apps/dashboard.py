@@ -620,7 +620,7 @@ class WatchSession:
             and hasattr(core, "combat_observation_keys")
         )
         self.env = SlayTheSpireEnv(
-            combat_action_contract=("joint-v2" if "combat_legal" in model.observation_space.spaces else "native-v1"),
+            combat_action_contract=(C.policy_contract(model.observation_space) if "combat_legal" in model.observation_space.spaces else "native-v1"),
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
@@ -748,7 +748,7 @@ class WatchSession:
                 f"{sorted(_COMBAT_STRATEGIES)}, got {strategy!r}"
             )
         if (candidate == _COMBAT_STRATEGY_PLANNER
-                and self.env.unwrapped.combat_action_contract == C.JOINT_CONTRACT):
+                and self.env.unwrapped.combat_action_contract in C.NEURAL_CONTRACTS):
             raise ValueError("joint-v2 观看会话暂不支持切换回合规划器；请使用独立评测。")
         self.combat_strategy = candidate
 

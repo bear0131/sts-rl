@@ -20,6 +20,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from env.core import native_actions as C
 import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
@@ -151,7 +152,7 @@ def _adapter_for_model(model: MaskablePPO, args: argparse.Namespace) -> RealGame
         deck_size_observation=_model.uses_deck_size_observation(model),
         neow_observation=_model.uses_neow_observation(model),
         event_option_observation=_model.uses_event_option_observation(model),
-        combat_action_contract=("joint-v2" if "combat_legal" in model.observation_space.spaces else "legacy"),
+        combat_action_contract=(C.policy_contract(model.observation_space)),
     )
 
 
@@ -203,7 +204,7 @@ class RealPolicyAgent:
                 and self.adapter.phase() != "combat"):
             return RealDecision("STATE", "combat_only_requires_manual_overworld")
         trace: list[tuple[int, tuple | None, str]] = []
-        for inner in range(self.max_inner_decisions):
+        for inner in range(max(self.max_inner_decisions, 11 if self.adapter.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT else 1)):
             obs = self.adapter.observation(pending=pending)
             mask = self.adapter.action_mask(pending=pending)
             legal_ids = tuple(int(i) for i in np.flatnonzero(mask))
@@ -218,13 +219,15 @@ class RealPolicyAgent:
                 )
                 return RealDecision(fallback, "fallback_no_legal")
 
-            from env.core import native_actions as C
-            if (self.adapter.combat_action_contract == C.JOINT_CONTRACT
+            if (self.adapter.combat_action_contract in C.NEURAL_CONTRACTS
                     and legal_ids == (C.JOINT_END,)):
                 return RealDecision("END", "forced_end_turn", action_id=C.JOINT_END, legal_ids=legal_ids)
             action_id, top = self._predict(obs, mask, pending=pending)
-            if self.adapter.combat_action_contract == "joint-v2" and self.adapter.phase() == "combat":
-                return RealDecision(self.adapter.command_for_joint_action(action_id), "policy_joint",
+            if self.adapter.combat_action_contract in C.NEURAL_CONTRACTS and self.adapter.phase() == "combat":
+                command = self.adapter.command_for_joint_action(action_id)
+                if command is None:
+                    continue
+                return RealDecision(command, "policy_joint",
                                     action_id=action_id, legal_ids=legal_ids, top=top)
             desc = self.adapter.select_descriptor()
             if A.is_multi_select(desc):

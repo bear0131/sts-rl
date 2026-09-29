@@ -1,6 +1,7 @@
 """Checkpoint-aware environment construction shared by training and benchmarks."""
 from __future__ import annotations
 import argparse
+from env.core import native_actions as C
 import copy
 import hashlib
 import gymnasium as gym
@@ -396,9 +397,7 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
         pass
 
     env_args = EnvArgs()
-    env_args.combat_action_contract = (
-        "joint-v2" if "combat_legal" in model.observation_space.spaces else "legacy"
-    )
+    env_args.combat_action_contract = C.policy_contract(model.observation_space)
     env_args.ascension = args.ascension
     env_args.global_map_view = flags["global_map_view"]
     env_args.card_language = flags["card_language"]

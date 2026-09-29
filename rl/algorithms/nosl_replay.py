@@ -72,7 +72,9 @@ class NOSLISAZReplayBuffer:
 
         self.capacity = int(capacity)
         self.action_dim = int(action_dim)
-        self.policy_contract = C.JOINT_CONTRACT if action_dim == C.JOINT_SIZE else 'legacy-thin'
+        self.policy_contract = ({C.JOINT_SIZE: C.JOINT_CONTRACT, C.AUTOREGRESSIVE_SIZE: C.AUTOREGRESSIVE_CONTRACT}.get(action_dim, 'legacy-thin'))
+        if self.policy_contract in C.NEURAL_CONTRACTS and C.policy_contract(observation_space) != self.policy_contract:
+            raise ValueError('replay action/observation contracts differ')
         self.joint_rows: list | None = None
         self.value_contract = str(value_contract)
         from rl.algorithms.combat_distribution import CONTRACT
@@ -159,7 +161,7 @@ class NOSLISAZReplayBuffer:
                 from rl.algorithms.combat_distribution import validate_targets
                 if state['arrays'].get('combat_targets') is None:
                     raise ValueError('missing combat distribution targets')
-                validate_targets(state['arrays']['combat_targets'],state['arrays']['value_targets'])
+                validate_targets(state['arrays']['combat_targets'],state['arrays']['value_targets'], action_dim=self.action_dim)
             self._allocate()
             for key, target in self.observations.items():
                 source = state['observations'][key]
@@ -207,9 +209,9 @@ class NOSLISAZReplayBuffer:
                 (self.capacity, *space.shape), dtype=_storage_dtype(space, key=key)
             )
             for key, space in self._observation_spaces.items()
-            if not (self.policy_contract == C.JOINT_CONTRACT and key == 'combat_legal')
+            if not (self.policy_contract in C.NEURAL_CONTRACTS and key == 'combat_legal')
         }
-        if self.policy_contract == C.JOINT_CONTRACT:
+        if self.policy_contract in C.NEURAL_CONTRACTS:
             self.joint_rows = [None] * self.capacity
         else:
             self.action_masks = np.empty((self.capacity, self.action_dim), dtype=bool)
@@ -272,7 +274,7 @@ class NOSLISAZReplayBuffer:
         if self.supervision_contract != 'scalar-hp-v1':
             from rl.algorithms.combat_distribution import validate_targets
             combat_targets = np.stack([sample['combat_targets'] for sample in labelled]).astype(np.float32)
-            validate_targets(combat_targets,value_targets)
+            validate_targets(combat_targets,value_targets, action_dim=self.action_dim)
         count = len(labelled)
         if action_masks.shape != (count, self.action_dim):
             raise ValueError(
@@ -284,7 +286,7 @@ class NOSLISAZReplayBuffer:
                 f"invalid replay policy shape {policy_targets.shape}; "
                 f"expected {(count, self.action_dim)}"
             )
-        if self.policy_contract == C.JOINT_CONTRACT:
+        if self.policy_contract in C.NEURAL_CONTRACTS:
             if not np.all(np.isfinite(policy_targets) & (policy_targets >= 0)):
                 raise ValueError('joint policy probabilities must be finite and non-negative')
             if np.any(policy_targets[~action_masks.astype(bool)] != 0):
@@ -463,10 +465,10 @@ class NOSLISAZReplayBuffer:
         obs_bytes = sum(
             np.dtype(_storage_dtype(space, key=key)).itemsize * prod(space.shape)
             for key, space in self._observation_spaces.items()
-            if not (self.policy_contract == C.JOINT_CONTRACT and key == 'combat_legal')
+            if not (self.policy_contract in C.NEURAL_CONTRACTS and key == 'combat_legal')
         )
         # Joint storage is ragged; report a conservative all-actions bound.
-        policy_bytes = self.action_dim * (6 if self.policy_contract == C.JOINT_CONTRACT else 3)
+        policy_bytes = self.action_dim * (6 if self.policy_contract in C.NEURAL_CONTRACTS else 3)
         per_sample = (
             obs_bytes
             + policy_bytes

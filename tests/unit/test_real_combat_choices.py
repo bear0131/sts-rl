@@ -86,3 +86,23 @@ def test_joint_bridge_handles_stable_hand_and_discards_plan_on_screen_change():
     adapter.update(joint_frame(hand))
     assert adapter.auto_command() is None
     assert adapter._joint_multi_plan is None
+
+
+def test_autoregressive_bridge_keeps_prefix_internal_until_stop():
+    from env.core import native_actions as C
+    hand = [{"id": cid} for cid in ("Strike_R", "Bash", "Defend_R")]
+    adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    frame = joint_frame(hand, multi=True)
+    adapter.update(frame)
+    assert adapter.action_mask().shape == (379,)
+    assert adapter.command_for_joint_action(C.JOINT_MULTI) is None
+    assert adapter.command_for_joint_action(C.JOINT_MULTI + 2) is None
+    assert adapter.frame == frame
+    assert adapter.obs_canonical()['options']['select']['hand_selected'] == [0, 2]
+    assert np.flatnonzero(adapter.action_mask()).tolist() == [C.AUTOREGRESSIVE_STOP]
+    assert adapter.command_for_joint_action(C.AUTOREGRESSIVE_STOP) == 'CHOOSE 2'
+    assert adapter.auto_command()[0] == 'STATE'
+    adapter.update(joint_frame(hand[:2], selected=1, multi=True))
+    assert adapter.auto_command()[0] == 'CHOOSE 0'
+    adapter.update(joint_frame(hand[1:2], selected=2, multi=True))
+    assert adapter.auto_command()[0] == 'CONFIRM'

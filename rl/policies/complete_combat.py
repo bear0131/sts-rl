@@ -65,10 +65,8 @@ class CompleteCombatHead(nn.Module):
 class AutoregressiveSubsetHead(nn.Module):
     """Select increasing hand indices or STOP, with exactly one path per set.
 
-    Parameters are shared across all prefixes and hand slots. Enumeration is
-    used only to evaluate the small legal search domain (at most ten cards),
-    not as a separate learned class for every subset. Prefixes containing card
-    nine have a forced STOP and need no decoder evaluation.
+    Sequential mode evaluates only the current prefix's ten cards and STOP.
+    The enumerating decoder remains solely for historical joint-v2 checkpoints.
     """
     def __init__(self, width, decoder_width=32, *, sequential=False):
         super().__init__()

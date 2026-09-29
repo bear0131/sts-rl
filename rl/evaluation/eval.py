@@ -72,7 +72,7 @@ def build_parser():
 def make_scenario(model, args, combat_model=None, combat_action_contract='legacy'):
     if args.task == 'combat':
         from rl.tasks.combat import CombatTask
-        if combat_action_contract == 'joint-v2':
+        if combat_action_contract in ('joint-v2', 'autoregressive-v1'):
             raise ValueError('joint-v2 currently requires the wholerun environment')
         if args.solver in ('native', 'rules', 'turn-planner'):
             raise ValueError('native/rules/turn-planner currently require the wholerun environment')

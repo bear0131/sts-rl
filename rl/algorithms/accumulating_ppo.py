@@ -390,9 +390,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
                 and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == 'rules'):
             raise ValueError('entity-combat training requires C++ inner-only NOSL and rules upper strategy')
-        self.combat_action_contract = (
-            "joint-v2" if "combat_legal" in self.observation_space.spaces else "legacy")
-        if self.combat_action_contract == "joint-v2":
+        self.combat_action_contract = C.policy_contract(self.observation_space)
+        if self.combat_action_contract in C.NEURAL_CONTRACTS:
             if getattr(self, "nosl_is_az_boss_transition_target", False):
                 raise ValueError("joint-v2 requires combat-end-hp-v1")
             if self.nosl_is_az and not self.nosl_is_az_cpp:
@@ -537,7 +536,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if getattr(self,'_combat_distribution',False):
             from rl.algorithms.combat_distribution import validate_targets
             extra['combat_targets'] = np.stack([sample['combat_targets'] for sample in samples]).astype(np.float32)
-            validate_targets(extra['combat_targets'],value_targets)
+            validate_targets(extra['combat_targets'],value_targets, action_dim=action_dim)
         return {
             **extra,
             "observations": observations,
@@ -951,6 +950,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "cpp_stream_wait_seconds": 0.0,
             "cpp_ready_empty_wait_seconds": 0.0,
             "env_step_seconds": 0.0,
+            "selection_prefix_decisions": 0,
+            "simulator_transitions": 0,
         }
         inference_batch_size_sum = 0.0
         inference_batch_count = 0
@@ -1398,6 +1399,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             log_probs = distribution.log_prob(actions).float()
             env_started = time.perf_counter()
             new_obs, rewards, dones, infos = env.step(actions_np)
+            prefix_steps = sum(info.get('simulator_transition') is False for info in infos)
+            nosl_timings['selection_prefix_decisions'] += prefix_steps
+            nosl_timings['simulator_transitions'] += env.num_envs - prefix_steps
             if getattr(self, "_startup_occupancy_sampling", False):
                 startup_paused.update(
                     index for index, info in enumerate(infos)
@@ -1453,7 +1457,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     after = terminal_observation
                     if after is None and not dones[env_index] and next_phases[env_index] == combat_phase:
                         after = {key:value[env_index] for key,value in new_obs.items()}
-                    if after is not None:
+                    if after is not None and infos[env_index].get('simulator_transition', True):
                         roots = active_combat_samples[env_index]
                         for root in reversed(roots):
                             if root.get('sample_kind') == 'combat_root':

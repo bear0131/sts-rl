@@ -158,7 +158,7 @@ class WholeRunTask(Task):
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--combat-action-contract", choices=("legacy", "joint-v2"),
+        parser.add_argument("--combat-action-contract", choices=("legacy", "joint-v2", "autoregressive-v1"),
                             default=None, help="Complete combat policy; migrate old weights with --init-from.")
         parser.add_argument(
             "--global-map-view",

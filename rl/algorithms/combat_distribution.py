@@ -38,7 +38,7 @@ def outcome_targets(samples, outcome):
         sample['combat_targets'] = target
 
 
-def validate_targets(targets, values):
+def validate_targets(targets, values, *, action_dim=1392):
     targets = np.asarray(targets)
     if targets.shape != (len(values), TARGET_WIDTH) or not np.isfinite(targets).all():
         raise ValueError('invalid combat distribution targets')
@@ -47,9 +47,9 @@ def validate_targets(targets, values):
         raise ValueError('combat outcome and auxiliary masks must be explicit binary labels')
     if np.any((win == 0) & (np.asarray(values) != 0)):
         raise ValueError('a combat loss must have zero utility')
-    from env.core.native_actions import JOINT_END, JOINT_SIZE
+    from env.core.native_actions import JOINT_END
     active = action[auxiliary > 0]
-    if np.any((active < JOINT_END) | (active >= JOINT_SIZE) | (active != np.floor(active))):
+    if np.any((active < JOINT_END) | (active >= action_dim) | (active != np.floor(active))):
         raise ValueError('auxiliary action is not a complete combat action')
 
 

@@ -20,6 +20,7 @@ Run from repo root (needs the sim built):
 import argparse
 import time
 
+from env.core import native_actions as C
 import numpy as np
 
 from env.core import factories
@@ -77,8 +78,7 @@ def main(argv=None):
         )
 
     env = SlayTheSpireEnv(
-        combat_action_contract=("joint-v2" if model is not None and
-                                "combat_legal" in model.observation_space.spaces else "legacy"),
+        combat_action_contract=(C.policy_contract(model.observation_space) if model is not None else "legacy"),
         backend_factory=lambda: SimCombatBackend(_builder, ascension=args.ascension),
         card_language=(
             _model.uses_card_language(model) if model is not None else False

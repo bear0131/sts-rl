@@ -58,3 +58,25 @@ def short_combat_env_type():
             self._invalidate_backend_cache()
             return self._obs(), self._info()
     return ShortCombatEnv
+
+
+@pytest.fixture
+def replayable_selection_env():
+    from env.core.game_env import SimGameEnv
+    from env.core import native_actions as C
+    class SelectionBackend(SimGameEnv):
+        def reset(self, *, seed=None):
+            super().reset(seed=seed)
+            for _ in range(64):
+                if self.bc is not None:
+                    break
+                self.step(self.legal_semantic_actions()[0])
+            assert self.bc is not None
+            self.bc.apply_custom_state({'hand': ['PURITY'] + ['STRIKE_RED'] * 5})
+            self.bc.set_player_strength(999)
+            return self._canonical(), self._info()
+    env = SlayTheSpireEnv(backend_factory=SelectionBackend,
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT, card_language=True)
+    env.reset(seed=42)
+    yield env
+    env.close()

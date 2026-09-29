@@ -1609,6 +1609,8 @@ def distributed_nosl_is_az_update(
         "cpp_backprop_rpc_seconds",
         "cpp_stream_wait_seconds",
         "env_step_seconds",
+        "selection_prefix_decisions",
+        "simulator_transitions",
     ):
         result[name] = float(rollout_timings.get(name, 0.0))
     result.update(diagnostic_values)
@@ -1791,6 +1793,8 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/inference_controller_rollbacks",
     "nosl_is_az/inference_watchdog_ms",
     "nosl_is_az/env_step_seconds",
+    "nosl_is_az/selection_prefix_decisions",
+    "nosl_is_az/simulator_transitions",
     "nosl_is_az/collection_seconds",
     "nosl_is_az/leaf_graph_captures",
     "nosl_is_az/leaf_graph_hits",

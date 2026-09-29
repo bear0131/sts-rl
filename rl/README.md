@@ -31,11 +31,19 @@ CUDA graph重放前也检查刷新；图中不再重复执行卡牌程序卷积�
 该缓存不进入checkpoint。自定义权重修改须保留PyTorch版本计数，勿通过`.data`绕过；
 替换参数、迁移设备或改变dtype后须清除既有leaf graph（图持有参数地址）。
 
-joint-v2输出宽1392，包含181个legacy槽位、结束回合1、卡牌×目标60、
-药水×目标30、单选96及多选集合1024。自回归多选共享逐张/STOP的参数，
-但当前搜索仍评估完整集合，故输出保留2^10个集合槽位；普通战斗行跳过多选decoder。
+新训练使用`autoregressive-v1`，输出宽379：181兼容槽位、结束回合1、
+卡牌×目标60、药水×目标30、单选96，以及逐张选牌10+STOP 1。
+按手牌槽位升序选择，当前前缀通过select_hand_mask/pick_remaining可见，
+每个集合仅一条路径。原生搜索和网络每次最多展开11个选择，不枚举完整集合；
+前缀只改选择状态，STOP才执行模拟器集合操作，搜索depth只计真实transition。
+新多选支持CUDA graph；旧`joint-v2`保留1392维枚举路径，仅用于旧checkpoint兼容。
+两种动作协议和replay不能混用，环境快照也核对协议；新协议须从零训练。
+UI适配器内部完成前缀后，按降序向真实游戏发送选牌并等待逐条确认。
+当前原生多选支持GAMBLE/EXHAUST_MANY的至多N（允许空集），不宣称支持未实现的必须N任务。
+固定n_envs×n_steps计策略决策，含选牌子步；日志selection_prefix_decisions与
+simulator_transitions分列，比较旧吞吐时需区分两者。前缀没有实际动作后果aux监督。
 
-支持组合：whole-run环境、joint-v2动作、C++ NOSL、inner-only、rules上层，
+支持组合：whole-run环境、autoregressive-v1或历史joint-v2动作、C++ NOSL、inner-only、rules上层，
 CPU或CUDA/BF16，普通推理或既有CUDA graph叶缓存。PPO标量critic、
 旧动作及旧split checkpoint仍走原实现；新结构须从头训练，旧权重不能直接迁移。
 恢复同架构checkpoint可用统一trainer的resume；含replay/环境的连续恢复

@@ -20,7 +20,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (False, 'model', 'transformer', 'legacy'), (True, 'model', 'transformer', 'legacy'),
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
-    (True, 'rules', 'entity', 'joint-v2')])
+    (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v1')])
 def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
@@ -124,6 +124,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         hp_order_fraction(p) or 0.0) for p in payloads)
     if nosl:
         assert all(p[HP_ORDER_PREFIX + '_fraction'] == .01 for p in payloads)
+        assert all(p['nosl_is_az/selection_prefix_decisions'] +
+                   p['nosl_is_az/simulator_transitions'] == 32 for p in payloads)
         assert all('nosl_is_az/overworld_rule_decisions' in p and
                    'nosl_is_az/overworld_fallback_decisions' in p for p in payloads)
     if staggered:

@@ -394,7 +394,7 @@ class RealGameAdapter:
         event_option_observation: bool = False,
         combat_action_contract: str = "legacy",
     ) -> None:
-        if combat_action_contract not in ("legacy", C.JOINT_CONTRACT):
+        if combat_action_contract not in ("legacy", *C.NEURAL_CONTRACTS):
             raise ValueError("unsupported bridge combat action contract")
         self.combat_action_contract = combat_action_contract
         self._joint_multi_plan = None
@@ -518,7 +518,7 @@ class RealGameAdapter:
             neow_observation=self.neow_observation,
             event_option_observation=self.event_option_observation,
         )
-        if self.combat_action_contract == C.JOINT_CONTRACT:
+        if self.combat_action_contract in C.NEURAL_CONTRACTS:
             obs["combat_legal"] = self.action_mask()[C.JOINT_END:]
         return obs
 
@@ -541,8 +541,8 @@ class RealGameAdapter:
         return canon
 
     def action_mask(self, pending: tuple | None = None) -> np.ndarray:
-        if self.combat_action_contract == C.JOINT_CONTRACT and self.phase() == "combat":
-            return C.joint_mask(list(self.joint_semantic_actions()))
+        if self.combat_action_contract in C.NEURAL_CONTRACTS and self.phase() == "combat":
+            return C.joint_mask(list(self.joint_semantic_actions()), contract=self.combat_action_contract)
         mask = np.zeros(A.N_ACTIONS, dtype=bool)
         desc = self.select_descriptor()
         if A.is_multi_select(desc):
@@ -552,7 +552,7 @@ class RealGameAdapter:
         for action_id in ids:
             if 0 <= action_id < A.N_ACTIONS:
                 mask[action_id] = True
-        return (np.pad(mask, (0, C.JOINT_WIDTH)) if self.combat_action_contract == C.JOINT_CONTRACT else mask)
+        return (np.pad(mask, (0, C.policy_size(self.combat_action_contract) - C.JOINT_END)) if self.combat_action_contract in C.NEURAL_CONTRACTS else mask)
 
     def joint_semantic_actions(self):
         """Complete actions share policy IDs with the simulator; UI indices stay handles."""
@@ -562,6 +562,15 @@ class RealGameAdapter:
             if count > A.HAND_SLOTS:
                 raise ValueError("multi selection exceeds ten hand slots")
             maximum = min(count, int(desc["pick_max"]))
+            if self.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT:
+                result = {}
+                if len(self.multi_selected) < maximum:
+                    first = max(self.multi_selected, default=-1) + 1
+                    result.update({C.JOINT_MULTI + i: ("select_next", i)
+                                   for i in range(first, count)})
+                if len(self.multi_selected) >= int(desc.get("pick_min", 0)):
+                    result[C.AUTOREGRESSIVE_STOP] = (ga.MULTI_SELECT, tuple(sorted(self.multi_selected)))
+                return result
             return {C.JOINT_MULTI + bits: (ga.MULTI_SELECT, tuple(i for i in range(count) if bits >> i & 1))
                     for bits in range(1 << count) if bits.bit_count() <= maximum}
         result = {}
@@ -583,6 +592,9 @@ class RealGameAdapter:
         semantic = self.joint_semantic_actions().get(int(action_id))
         if semantic is None:
             raise ValueError("complete combat action is no longer legal")
+        if semantic[0] == "select_next":
+            self.multi_selected.add(semantic[1])
+            return None  # Internal prefix decision; no UI command until STOP.
         if semantic[0] != ga.MULTI_SELECT:
             return self.command_for_semantic(semantic)
         indices = sorted(semantic[1], reverse=True)
@@ -1347,7 +1359,7 @@ class RealGameAdapter:
 
     # --------------------------------------------------------------- debugging
     def describe_action_id(self, action_id: int, pending: tuple | None = None) -> str:
-        if self.combat_action_contract == C.JOINT_CONTRACT and self.phase() == "combat":
+        if self.combat_action_contract in C.NEURAL_CONTRACTS and self.phase() == "combat":
             return str(self.joint_semantic_actions().get(int(action_id), ("invalid", action_id)))
         desc = self.select_descriptor()
         if A.is_multi_select(desc):

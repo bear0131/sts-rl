@@ -47,12 +47,12 @@ class DecisionStrategy(Protocol):
 
 def _forced_end_batch(strategy, requests, check):
     """Resolve forced execution roots; internal search leaves still evaluate V."""
-    if strategy.combat_action_contract != C.JOINT_CONTRACT:
+    if strategy.combat_action_contract not in C.NEURAL_CONTRACTS:
         return None
     forced = {}
     for index, request in enumerate(requests):
         mask = request.env.action_masks()
-        if request.info.get('phase') == 'combat' and len(mask) != C.JOINT_SIZE:
+        if request.info.get('phase') == 'combat' and len(mask) != C.policy_size(strategy.combat_action_contract):
             raise ValueError('joint-v2 combat policy requires a joint-v2 environment')
         if request.info.get('phase') == 'combat' and mask[C.JOINT_END] and np.count_nonzero(mask) == 1:
             forced[index] = Decision(C.JOINT_END, 'forced_end_turn',
@@ -100,8 +100,7 @@ class PolicyStrategy:
 
     def __init__(self, model, *, deterministic=True, lock=None):
         self.model, self.deterministic, self.lock = model, deterministic, lock
-        self.combat_action_contract = (
-            'joint-v2' if 'combat_legal' in getattr(getattr(model, 'observation_space', None), 'spaces', {}) else 'legacy')
+        self.combat_action_contract = C.policy_contract(getattr(model, 'observation_space', None))
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
@@ -115,13 +114,13 @@ class PolicyStrategy:
         check()
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
         masks = np.stack([r.env.action_masks() for r in requests])
-        if self.combat_action_contract == C.JOINT_CONTRACT and 'combat_legal' not in observations:
+        if self.combat_action_contract in C.NEURAL_CONTRACTS and 'combat_legal' not in observations:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('joint-v2 combat policy requires combat_legal observations')
             # A legacy combat solver may share the unchanged overworld policy.
-            observations['combat_legal'] = np.zeros((len(requests), C.JOINT_WIDTH), dtype=bool)
-        if self.combat_action_contract == C.JOINT_CONTRACT and masks.shape[1] == C.JOINT_END:
-            masks = np.pad(masks, ((0, 0), (0, C.JOINT_WIDTH)))
+            observations['combat_legal'] = np.zeros((len(requests), (C.policy_size(self.combat_action_contract)-C.JOINT_END)), dtype=bool)
+        if self.combat_action_contract in C.NEURAL_CONTRACTS and masks.shape[1] == C.JOINT_END:
+            masks = np.pad(masks, ((0, 0), (0, (C.policy_size(self.combat_action_contract)-C.JOINT_END))))
         if self.combat_action_contract == 'legacy' and masks.shape[1] > self.model.action_space.n:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('legacy policy cannot consume a joint-v2 combat environment')
@@ -140,8 +139,7 @@ class NativeStrategy:
         self.model, self.config, self.lock = model, config, lock
         self.master_nonce = int(master_nonce)
         self.leaf_backend = leaf_backend
-        self.combat_action_contract = (
-            'joint-v2' if 'combat_legal' in getattr(getattr(model, 'observation_space', None), 'spaces', {}) else 'legacy')
+        self.combat_action_contract = C.policy_contract(getattr(model, 'observation_space', None))
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
@@ -196,13 +194,13 @@ class PhaseStrategy:
             getattr(strategy, 'combat_action_contract', 'legacy')
             for strategy in possible
         }
-        unknown = contracts - {'legacy', 'native-v1', 'joint-v2'}
+        unknown = contracts - {'legacy', 'native-v1', *C.NEURAL_CONTRACTS}
         if unknown:
             raise ValueError(f'unsupported combat action contracts: {unknown}')
-        if 'joint-v2' in contracts:
+        if contracts & set(C.NEURAL_CONTRACTS):
             if len(contracts) != 1:
                 raise ValueError('conditional combat strategies must share the joint-v2 contract')
-            return 'joint-v2'
+            return next(iter(contracts))
         return 'native-v1' if 'native-v1' in contracts else 'legacy'
 
     def decide(self, requests, *, check=lambda: None):

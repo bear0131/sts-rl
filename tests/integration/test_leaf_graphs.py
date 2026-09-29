@@ -23,11 +23,11 @@ def explicit_fp32_precision():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
-@pytest.mark.parametrize('entity', [False, True])
+@pytest.mark.parametrize('entity', [False, True, 'autoregressive'])
 def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity):
     import slaythespire as sts
     from rl.policies.entity_combat import EntityCombatPolicy
-    env = combat_factory(['PURITY'] * 5, combat_action_contract='joint-v2',card_language=entity)
+    env = combat_factory(['PURITY'] * 5, combat_action_contract='autoregressive-v1' if entity == 'autoregressive' else 'joint-v2',card_language=entity)
     kwargs = dict(entity_config=dict(width=32,layers=1,heads=4)) if entity else dict(d_model=32,n_layers=2,n_heads=4)
     model = AccumulatingMaskablePPO(EntityCombatPolicy if entity else SplitStSPointerPolicy, env, device='cuda', seed=42,
         n_steps=8, batch_size=4, policy_kwargs=kwargs,
@@ -56,7 +56,18 @@ def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity)
                                        atol=(.003 if entity else 3e-4) if amp=='bf16' else 2e-7)
         torch._C._cuda_clearCublasWorkspaces()
         torch.cuda.empty_cache()
-    assert cache.subset_eager_rows == 4
+    assert cache.subset_eager_rows == (0 if entity == 'autoregressive' else 4)
+    if entity == 'autoregressive':
+        from env.core import native_actions as C
+        env.step(C.JOINT_MULTI + 1)
+        selected = env._obs()
+        batch = {k: np.stack([selected[k]] * 4) for k in batch}
+        model._native_leaf_inference = None
+        expected = forward_leaves(model, batch, autocast=model.autocast_context)
+        model._native_leaf_inference = cache
+        actual = forward_leaves(model, batch, autocast=model.autocast_context)
+        for a, b in zip(actual, expected):
+            np.testing.assert_array_equal(a, b)
     assert cache.hits >= 1
 
 
@@ -78,7 +89,7 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
-@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2')])
+@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2'), ('entity','autoregressive-v1')])
 def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract, monkeypatch):
     from rl.policies.entity_combat import EntityCombatPolicy
     entity=combat_arch=='entity'

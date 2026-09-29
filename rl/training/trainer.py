@@ -16,6 +16,7 @@ Run from repo root:
 from __future__ import annotations
 
 import argparse
+from env.core import native_actions as C
 from datetime import datetime
 from pathlib import Path
 
@@ -592,9 +593,9 @@ def main() -> None:
             args.nosl_is_az_upper_strategy = resume_settings.get("nosl_is_az_upper_strategy", "model")
         if args.arch == "entity-combat":
             args.card_language = True
-            if args.combat_action_contract is None:
-                args.combat_action_contract = "joint-v2"
-            if args.combat_action_contract != "joint-v2" or not (
+            if args.combat_action_contract is None and not args.resume:
+                args.combat_action_contract = C.AUTOREGRESSIVE_CONTRACT
+            if args.combat_action_contract not in (*C.NEURAL_CONTRACTS, None) or not (
                     (args.nosl_is_az or resume_settings.get("nosl_is_az"))
                     and args.nosl_is_az_inner_only and args.nosl_is_az_cpp
                     and args.nosl_is_az_upper_strategy == "rules"):
@@ -920,12 +921,13 @@ def main() -> None:
             data, params, variables = load_from_zip_file(args.resume, device="cpu")
             source_space = data["observation_space"]
             del data, params, variables
-        source_contract = ("joint-v2" if source_space is not None and
-                           "combat_legal" in source_space.spaces else "legacy")
+        source_contract = C.policy_contract(source_space)
         args.combat_action_contract = args.combat_action_contract or source_contract
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
-        if args.combat_action_contract == "joint-v2":
+        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch != 'entity-combat':
+            raise ValueError('autoregressive-v1 requires entity-combat')
+        if args.combat_action_contract in C.NEURAL_CONTRACTS:
             if args.arch not in ("split-pointer", "entity-combat") or getattr(args, "combat_arch", "transformer") != "transformer":
                 raise ValueError("joint-v2 requires split-pointer Transformer or entity-combat")
             if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
@@ -1408,7 +1410,7 @@ def main() -> None:
                     getattr(args, "nosl_is_az_inner_only", False)
                 ),
                 allow_combat_contract_migration=(
-                    getattr(args, "combat_action_contract", None) == "joint-v2"
+                    getattr(args, "combat_action_contract", None) in C.NEURAL_CONTRACTS
                     and "combat_legal" not in pretrained.observation_space.spaces),
             )
         del pretrained

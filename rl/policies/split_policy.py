@@ -1085,6 +1085,9 @@ class SplitStSPolicyCore(nn.Module):
             card_embedding=card_embedding,
         )
         self.joint_actions = "combat_legal" in observation_space.spaces
+        from env.core import native_actions as C
+        if self.joint_actions and observation_space['combat_legal'].shape[-1] != C.JOINT_WIDTH:
+            raise ValueError('autoregressive-v1 requires EntityCombatPolicy')
         if self.joint_actions and combat_arch != "transformer":
             raise ValueError("joint-v2 currently requires the Split Transformer combat policy")
         if combat_arch not in {"transformer", "mlp"}:
