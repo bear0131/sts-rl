@@ -1,5 +1,5 @@
 """Combat-only entity policy; public state, no overworld network or memory."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from math import prod
 
 import torch
@@ -21,7 +21,7 @@ class EntityCombatConfig:
     pile_queries: int = 3
     quantiles: int = 32
     mean_loss_coef: float = .25
-    auxiliary_loss_coef: float = .1
+    auxiliary_loss_coef: float = 0.0
 
     def __post_init__(self):
         if min(self.width, self.layers, self.heads, self.pile_queries) < 1 or self.width % self.heads:
@@ -78,6 +78,8 @@ class EntityCombatNetwork(nn.Module):
         self.complete_head = CompleteCombatHead(width, autoregressive=self.autoregressive_actions)
         self.distribution = CombatDistributionHead(width, config.quantiles)
         self.transition = nn.Sequential(nn.Linear(3*width, width), nn.GELU(), nn.Linear(width, 6))
+        if not config.auxiliary_loss_coef:
+            self.transition.requires_grad_(False)
         # Runtime only: each precision owns stable storage referenced by CUDA
         # graphs. Weight refreshes copy into it instead of replacing its address.
         self._card_inference_tables = {}
@@ -212,7 +214,7 @@ class EntityCombatNetwork(nn.Module):
             blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets,
             selected=obs['select_hand_mask'], remaining=(obs['pick_remaining']*encode.PICK_SCALE).round())
         values, outputs = self.distribution(state)
-        if auxiliary_actions is not None:
+        if auxiliary_actions is not None and self.config.auxiliary_loss_coef:
             actions = auxiliary_actions.long() + (C.JOINT_END if self.autoregressive_actions else 0)
             row = torch.arange(len(actions),device=actions.device)
             card = (actions >= C.JOINT_PLAY) & (actions < C.JOINT_POTION)
@@ -259,6 +261,11 @@ class EntityCombatCore(nn.Module):
     def prepare_inference_cache(self):
         self.combat.inference_card_table()
 
+    def disable_transition_auxiliary(self):
+        self.config = replace(self.config, auxiliary_loss_coef=0.0)
+        self.combat.config = self.config
+        self.combat.transition.requires_grad_(False)
+
     def policy_only_parameters(self):
         """Heads exclusive to action logits; the encoder remains shared."""
         for module in (self.combat.pointer_query, self.combat.pointer_key,
@@ -280,7 +287,8 @@ class EntityCombatCore(nn.Module):
         return logits, values
 
     def combat_training_outputs(self, obs, actions, **kwargs):
-        return self.combat(obs, auxiliary_actions=actions, **kwargs)
+        return self.combat(obs, auxiliary_actions=actions if self.config.auxiliary_loss_coef else None,
+                           **kwargs)
 
     def actor_critic(self, obs, **kwargs):
         # The collector may batch noncombat rows before applying its rules.
@@ -315,5 +323,18 @@ class EntityCombatPolicy(SplitStSPointerPolicy):
         self.core = EntityCombatCore(self.observation_space,EntityCombatConfig(**self.entity_config))
         self.optimizer = self.optimizer_class(self.parameters(),lr=lr_schedule(1),**self.optimizer_kwargs)
 
+    def disable_transition_auxiliary(self):
+        self.entity_config['auxiliary_loss_coef'] = 0.0
+        self.core.disable_transition_auxiliary()
+
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(),entity_config=self.entity_config)
+
+
+def disable_entity_transition_auxiliary(model):
+    """Change a loaded model's objective while keeping SB3 save kwargs aligned."""
+    if not isinstance(model.policy, EntityCombatPolicy):
+        raise TypeError('transition auxiliary requires EntityCombatPolicy')
+    model.policy.disable_transition_auxiliary()
+    model.policy_kwargs = dict(model.policy_kwargs,
+                               entity_config=dict(model.policy.entity_config))

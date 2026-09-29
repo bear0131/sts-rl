@@ -59,3 +59,7 @@ failure independently of a long game rollout. This uses the CUDA runtime's
 `torch._C._cuda_clearCublasWorkspaces` binding (validated on Torch 2.12.0+cu132).
 Production recovery directories receive CPU leaf NPZ/JSON evidence on a graph
 runtime error; a poisoned CUDA context is never silently reused.
+The distributed entity trainer clears captured leaf graphs after each collection
+and before learner backward, then recaptures them on the next collection. The
+compiled callable remains; this releases graph private pools when the full
+learner microbatch needs GPU memory.

@@ -236,6 +236,12 @@ def test_graph_owns_workspace_after_blas_cache_is_released(combat_factory):
     actual = forward_leaves(model, batch, autocast=model.autocast_context)
     for a,b in zip(actual,expected):
         np.testing.assert_array_equal(a,b)
+    model._native_leaf_inference.clear()
+    torch.cuda.empty_cache()
+    assert not model._native_leaf_inference.entries
+    recaptured = forward_leaves(model, batch, autocast=model.autocast_context)
+    for a,b in zip(recaptured,expected):
+        np.testing.assert_array_equal(a,b)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='requires production CUDA geometry')

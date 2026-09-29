@@ -1,4 +1,5 @@
 @configs/train/entity_combat_learning.args
+--disable-entity-transition-auxiliary
 --max-grad-norm
 0.5
 --amp-mode

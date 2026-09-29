@@ -4,7 +4,7 @@ import torch
 from sb3_contrib import MaskablePPO
 
 from env.core import native_actions as C
-from rl.policies.entity_combat import EntityCombatPolicy
+from rl.policies.entity_combat import EntityCombatPolicy, disable_entity_transition_auxiliary
 from rl.search.native import NativeSearchConfig, search
 
 pytestmark = [pytest.mark.native,pytest.mark.timeout(90)]
@@ -153,6 +153,39 @@ def test_entity_model_predicts_searches_and_reloads_without_overworld(combat_fac
     assert 0 <= result['root_value'] <= 1
 
 
+def test_disable_action_effect_head_keeps_value_and_checkpoint_compatible(combat_factory, tmp_path):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Two Louse',
+                         combat_action_contract=C.JOINT_CONTRACT, card_language=True)
+    legacy = MaskablePPO(EntityCombatPolicy, env, seed=42, n_steps=4, batch_size=4,
+                        device='cpu', policy_kwargs=dict(entity_config=dict(
+                            width=32, layers=1, heads=4, quantiles=8,
+                            auxiliary_loss_coef=.1)))
+    path = tmp_path / 'with-action-effect.zip'
+    legacy.save(path)
+    loaded = MaskablePPO.load(path, device='cpu')
+    obs = {key: torch.as_tensor(value[None]) for key, value in env._obs().items()}
+    loaded.policy.set_training_mode(False)
+    with torch.no_grad():
+        before_logits, before_value, before_output = loaded.policy.core.combat_training_outputs(
+            obs, torch.tensor([0]))
+    assert 'transition' in before_output
+    disable_entity_transition_auxiliary(loaded)
+    loaded.policy.set_training_mode(False)
+    with torch.no_grad():
+        after_logits, after_value, after_output = loaded.policy.core.combat_training_outputs(
+            obs, torch.tensor([0]))
+    torch.testing.assert_close(after_logits, before_logits)
+    torch.testing.assert_close(after_value, before_value)
+    assert 'transition' not in after_output
+    assert not any(p.requires_grad for p in loaded.policy.core.combat.transition.parameters())
+    switched = tmp_path / 'without-action-effect.zip'
+    loaded.save(switched)
+    restored = MaskablePPO.load(switched, device='cpu')
+    assert restored.policy.entity_config['auxiliary_loss_coef'] == 0
+    assert 'transition' not in restored.policy.core.combat_training_outputs(
+        obs, torch.tensor([0]))[2]
+
+
 def test_entity_value_and_source_logits_respect_entity_permutations(combat_factory):
     env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],'Two Louse',
         combat_action_contract=C.JOINT_CONTRACT,card_language=True)
@@ -243,10 +276,14 @@ def test_fresh_only_distribution_training_updates_heads(short_combat_env_type):
         policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4)))
     distribution=model.policy.core.combat.distribution
     before={k:v.clone() for k,v in distribution.named_parameters()}
+    transition = model.policy.core.combat.transition
+    unused = {k: v.clone() for k, v in transition.named_parameters()}
     try:
         model.learn(32)
         assert model.policy.optimizer.state
         assert any(not torch.equal(before[k],v) for k,v in distribution.named_parameters())
+        assert all(torch.equal(unused[k], v) for k, v in transition.named_parameters())
+        assert all(v not in model.policy.optimizer.state for v in transition.parameters())
         assert getattr(model,'_nosl_is_az_replay',None) is None
     finally:
         env.close()

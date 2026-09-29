@@ -151,7 +151,7 @@ def test_sequential_model_predicts_updates_and_reloads(combat_factory, tmp_path)
     obs = {k: torch.as_tensor(v[None]) for k, v in env._obs().items()}
     model.policy.set_training_mode(True)
     logits, value, outputs = network(obs, auxiliary_actions=torch.tensor([C.AUTOREGRESSIVE_STOP]))
-    assert logits.shape == (1, 198) and outputs['transition'].shape == (1, 6)
+    assert logits.shape == (1, 198) and 'transition' not in outputs
     legal = torch.as_tensor(env.action_masks()[None])
     loss = -logits.masked_fill(~legal, -1e9).log_softmax(-1)[0, C.AUTOREGRESSIVE_STOP] + value.sum()
     model.policy.optimizer.zero_grad()
@@ -234,9 +234,10 @@ def test_prefix_checkpoint_and_real_transition_replay(replayable_selection_env):
                           for name, parameter in model.policy.named_parameters()}
     assert model.reset_nosl_is_az_shared_embeddings(42) == 0
     frozen, trainable = model.configure_nosl_is_az_inner_only(train_shared_embeddings=True)
-    assert frozen == 0 and trainable > 0
+    assert frozen == sum(p.numel() for p in model.policy.core.combat.transition.parameters())
+    assert trainable > 0
     for name, parameter in model.policy.named_parameters():
-        assert parameter.requires_grad
+        assert parameter.requires_grad == (not name.startswith('core.combat.transition.'))
         assert torch.equal(parameter, initial_parameters[name])
     model._nosl_is_az_samples = samples
     stats = model._train_nosl_is_az()

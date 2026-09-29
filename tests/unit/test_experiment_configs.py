@@ -256,6 +256,16 @@ def test_old90_worker_grouping_probes_only_change_grouping_and_duration(
     }
 
 
+def test_entity_runtime_explicitly_disables_action_effect_auxiliary():
+    parser = build_parser()
+    args = parser.parse_args(["--rank", "0", "--world-size", "4",
+                              "--checkpoint", "unused.zip",
+                              f"@{ROOT / 'configs/train/entity_combat_runtime.args'}"])
+    assert args.disable_entity_transition_auxiliary
+    assert args.n_envs == 96 and args.n_steps == 128
+    assert args.nosl_is_az_updates == 40
+
+
 def test_ruleupper_override_only_changes_upper_strategy_and_keeps_40_updates():
     parser = build_parser()
     base = ["--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

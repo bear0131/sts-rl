@@ -58,10 +58,11 @@ CPU或CUDA/BF16，普通推理或既有CUDA graph叶缓存。PPO标量critic、
 树内继续备份这一标量，不增加风险惩罚或胜率优先级。
 分位点是被截断后的效用，不能先求原始血量均值再截断。
 
-训练使用原搜索策略软标签，加BCE胜负、胜利样本pinball、
-0.25期望效用MSE、0.1实际动作后果SmoothL1。
-后果为下一决策边界的HP/格挡/能量/敌方总HP/力量/手牌数变化；
-只监督实际执行路径。所有项按完整逻辑batch平均，微批/多rank不重新
+训练使用原搜索策略软标签，加BCE胜负、胜利样本pinball与
+0.25期望效用MSE。当前entity默认及四机runtime关闭动作后果辅助头：
+不计算后果标签、前推或反传；已保存的旧头参数留在checkpoint中以便恢复，
+旧replay中可能存在的后果标签被忽略。显式启用旧系数0.1的checkpoint仍可加载。
+各项按完整逻辑batch平均，微批/多rank不重新
 按各自胜利数归一化。明确胜负来自simulator outcome；
 截断、未知或逃跑标签不进入该监督，失败没有伪造的“获胜血量”标签。
 Replay版本3及 `combat-outcome-quantiles-v1` 拒绝旧标量回放混入。
@@ -74,9 +75,9 @@ python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args 
 
 配置保持96 env、128步；按TRAIN24基准使用逻辑训练batch98304、微批12288、每次采样40次联合policy/value更新，
 回放524288，旧样本采样上限0.9，LR5e-5，CUDA graph batch对齐32。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
-默认`constant`；可选实验`--nosl-is-az-updates 4 --nosl-is-az-update-schedule value-warmup` 在前5轮额外增加36次value/辅助头更新，
+默认`constant`；可选实验`--nosl-is-az-updates 4 --nosl-is-az-update-schedule value-warmup` 在前5轮额外增加36次value更新，
 第6–20轮按余弦减到0；第10/15/20轮总更新数为31/13/4，之后固定4。
-额外更新先于联合更新，训练共享表示、胜负/HP分布和动作后果；策略专用头的参数及Adam状态
+额外更新先于联合更新，训练共享表示与胜负/HP分布；策略专用头的参数及Adam状态
 在这些更新中保持不动，但共享表示变化仍会影响策略输出。目标来自真实自博弈终局，
 并非另行采集的均匀随机策略数据。该曲线是实验设计，尚未证明优于固定U4/U40。
 调度按累计global steps除以四机整轮动作量计算（生产每轮49152），保存恢复不重启warmup。

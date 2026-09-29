@@ -71,8 +71,11 @@ def distribution_loss(outputs, targets, values, *, mean_coef=.25, auxiliary_coef
     bce = F.binary_cross_entropy_with_logits(logits, win, reduction='none')
     expectation = torch.sigmoid(logits) * quantiles.mean(-1)
     mean = (expectation - values.flatten().float()).square()
-    aux = F.smooth_l1_loss(outputs['transition'].float(), targets[:, 3:].float(),
-                          reduction='none').mean(-1) * targets[:, 2]
+    if auxiliary_coef:
+        aux = F.smooth_l1_loss(outputs['transition'].float(), targets[:, 3:].float(),
+                              reduction='none').mean(-1) * targets[:, 2]
+    else:
+        aux = torch.zeros_like(win)
     total = bce + pinball + mean_coef * mean + auxiliary_coef * aux
     return total, dict(win_bce=bce, hp_pinball=pinball, utility_mse=mean,
                        transition_loss=aux, win_probability=torch.sigmoid(logits),

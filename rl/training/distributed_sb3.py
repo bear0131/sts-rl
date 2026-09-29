@@ -518,6 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--nosl-is-az-fixed-worldline", action=argparse.BooleanOptionalAction,
                         default=None, help="Override fixed future RNG within each search tree.")
+    parser.add_argument("--disable-entity-transition-auxiliary", action="store_true",
+                        help="Stop collecting and training the entity combat action-effect head.")
     parser.add_argument(
         "--nosl-is-az-prior-temperature",
         type=float,
@@ -2080,6 +2082,10 @@ def main() -> None:
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
     if getattr(getattr(probe_model.policy,'core',None),'combat_only',False):
         args.entity_config = dict(probe_model.policy.entity_config)
+        if args.disable_entity_transition_auxiliary:
+            args.entity_config['auxiliary_loss_coef'] = 0.0
+    elif args.disable_entity_transition_auxiliary:
+        raise ValueError('--disable-entity-transition-auxiliary requires EntityCombatPolicy')
     source_nosl_is_az = bool(getattr(probe_model, "nosl_is_az", False))
     source_nosl_is_az_replay_enabled = bool(
         getattr(probe_model, "nosl_is_az_replay_enabled", True)
@@ -2191,6 +2197,10 @@ def main() -> None:
             f"{reset_count} value parameter tensors",
             flush=True,
         )
+    if args.disable_entity_transition_auxiliary:
+        from rl.policies.entity_combat import disable_entity_transition_auxiliary
+        disable_entity_transition_auxiliary(model)
+        print(f"[rank {args.rank}] entity action-effect auxiliary disabled", flush=True)
     if source_nosl_inner_only:
         if args.nosl_is_az_train_shared_embeddings and recovery_state is None:
             embedding_count = model.reset_nosl_is_az_shared_embeddings(args.seed)
@@ -2671,6 +2681,30 @@ def main() -> None:
             if not ok:
                 raise RuntimeError("collect_rollouts returned False")
 
+            # The inference graphs are unused during learner backpropagation.
+            # Release their private pools before the full training microbatch;
+            # the compiled callable remains and graphs are captured again on
+            # the next collection. This prevents persistent graph allocations
+            # from consuming the learner's remaining VRAM.
+            graph_release_sec = 0.0
+            graph_release_memory = None
+            if (args.leaf_inference == 'cuda-graph'
+                    and getattr(model.policy.core, 'combat_only', False)):
+                release_started = time.perf_counter()
+                allocated_before = th.cuda.memory_allocated(model.device)
+                reserved_before = th.cuda.memory_reserved(model.device)
+                model._native_leaf_inference.clear()
+                import gc
+                gc.collect()
+                th.cuda.empty_cache()
+                graph_release_memory = {
+                    'allocated_before': allocated_before,
+                    'allocated_after': th.cuda.memory_allocated(model.device),
+                    'reserved_before': reserved_before,
+                    'reserved_after': th.cuda.memory_reserved(model.device),
+                }
+                graph_release_sec = time.perf_counter() - release_started
+
             model.policy.set_training_mode(True)
             model._update_learning_rate(model.policy.optimizer)
             clip_range = model.clip_range(model._current_progress_remaining)
@@ -2926,6 +2960,8 @@ def main() -> None:
                 "transitions_local": rollout_size,
                 "transitions_global": rollout_size * args.world_size,
                 "rollout_sec": rollout_sec,
+                "leaf_graph_release_sec": graph_release_sec,
+                "leaf_graph_release_memory": graph_release_memory,
                 "rollout_steps_per_sec_local": rollout_size / rollout_sec,
                 "loss_mean": float(np.mean(losses)) if losses else 0.0,
                 "optimizer_steps": optimizer_steps,
@@ -2998,6 +3034,7 @@ def main() -> None:
                 ),
                 "total_sec_rank": (
                     rollout_sec
+                    + graph_release_sec
                     + backward_seconds
                     + gradient_pack_seconds
                     + sync_seconds
@@ -3141,6 +3178,7 @@ def main() -> None:
                         "dist/iteration_wall_sec": record["iteration_wall_sec"],
                         "dist/checkpoint_sec": record["checkpoint_sec"],
                         "dist/rollout_sec": record["rollout_sec"],
+                        "dist/leaf_graph_release_sec": record["leaf_graph_release_sec"],
                         "dist/backward_sec": record["backward_sec"],
                         "dist/sync_sec": record["sync_sec"],
                         "dist/gradient_pack_sec": record["gradient_pack_sec"],

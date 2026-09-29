@@ -27,6 +27,21 @@ def test_loss_does_not_teach_dead_fights_a_zero_survivor_distribution():
     assert metrics['hp_pinball'][1] == 0
 
 
+def test_disabled_action_effect_loss_ignores_existing_replay_labels():
+    logits = torch.zeros(2, 1, requires_grad=True)
+    quantiles = torch.full((2, 4), .5, requires_grad=True)
+    targets = torch.zeros(2, 9)
+    targets[0, 0] = 1
+    targets[:, 2] = 1  # Rows collected before disabling may retain these labels.
+    targets[:, 3:] = 7
+    outputs = dict(win_logits=logits, hp_quantiles=quantiles)
+    losses, metrics = distribution_loss(outputs, targets, torch.tensor([.8, 0.]),
+                                        auxiliary_coef=0)
+    losses.sum().backward()
+    assert torch.count_nonzero(metrics['transition_loss']) == 0
+    assert logits.grad is not None and quantiles.grad is not None
+
+
 def test_microbatching_preserves_distribution_gradients_with_unequal_win_counts():
     torch.manual_seed(42)
     head = CombatDistributionHead(8, 4)

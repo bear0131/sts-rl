@@ -606,7 +606,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         if getattr(core,'combat_only',False):
             for parameter in self.policy.parameters():
                 parameter.requires_grad_(True)
-            return 0, sum(p.numel() for p in self.policy.parameters())
+            if not core.config.auxiliary_loss_coef:
+                core.disable_transition_auxiliary()
+            frozen = sum(p.numel() for p in self.policy.parameters() if not p.requires_grad)
+            trainable = sum(p.numel() for p in self.policy.parameters() if p.requires_grad)
+            return frozen, trainable
         if combat is None or getattr(core, "overworld", None) is None:
             raise ValueError(
                 "NOSL-IS-AZ inner-only mode requires a split specialist policy"
@@ -1466,7 +1470,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 terminal_target = infos[env_index].pop(
                     "nosl_value_terminal_target", np.nan
                 )
-                if getattr(self,'_combat_distribution',False):
+                if (getattr(self,'_combat_distribution',False)
+                        and self.policy.core.config.auxiliary_loss_coef):
                     from rl.algorithms.combat_distribution import transition_features
                     after = terminal_observation
                     if after is None and not dones[env_index] and next_phases[env_index] == combat_phase:
