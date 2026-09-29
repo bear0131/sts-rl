@@ -25,8 +25,8 @@ def combat_factory():
     created = []
 
     def make(deck, encounter="Jaw Worm", *, seed=42, relics=(),
-             combat_action_contract="legacy"):
-        env = SlayTheSpireEnv(combat_action_contract=combat_action_contract)
+             combat_action_contract="legacy", card_language=False):
+        env = SlayTheSpireEnv(combat_action_contract=combat_action_contract,card_language=card_language)
         env.reset(seed=seed)
         # This fixture's seed is the native game seed, not the wrapper RNG seed.
         env.thick.gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, 0)

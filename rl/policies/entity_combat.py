@@ -1,0 +1,233 @@
+"""Combat-only entity policy; public state, no overworld network or memory."""
+from dataclasses import asdict, dataclass
+from math import prod
+
+import torch
+from torch import nn
+from torch.nn import functional as F
+
+from env.core import action_space as A, encode, native_actions as C, vocab as V
+from rl.policies.model import CardLanguageEmbedding
+from rl.policies.complete_combat import CompleteCombatHead
+from rl.policies.combat_distribution import CombatDistributionHead
+from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS, SplitStSPointerPolicy
+
+
+@dataclass(frozen=True)
+class EntityCombatConfig:
+    width: int = 192
+    layers: int = 4
+    heads: int = 6
+    pile_queries: int = 3
+    quantiles: int = 32
+    mean_loss_coef: float = .25
+    auxiliary_loss_coef: float = .1
+
+    def __post_init__(self):
+        if min(self.width, self.layers, self.heads, self.pile_queries) < 1 or self.width % self.heads:
+            raise ValueError('invalid entity transformer geometry')
+        if self.quantiles < 2 or min(self.mean_loss_coef, self.auxiliary_loss_coef) < 0:
+            raise ValueError('invalid distribution objective configuration')
+
+
+def _vocabulary(space, key):
+    return int(space[key].high.max()) + 1
+
+
+class EntityCombatNetwork(nn.Module):
+    def __init__(self, space, config):
+        super().__init__()
+        self.config = config
+        width = config.width
+        self.n_cards = _vocabulary(space, 'hand_ids')
+        self.card = CardLanguageEmbedding(self.n_cards, 64)
+        self.card_projection = nn.Linear(65, width)
+        self.register_buffer('card_ids', torch.arange(self.n_cards).repeat_interleave(2), persistent=False)
+        self.register_buffer('card_versions', torch.arange(2).repeat(self.n_cards), persistent=False)
+        self.hand_context = nn.Linear(4, width)
+        self.choice_context = nn.Linear(2, width)
+        self.choice_zone = nn.Embedding(_vocabulary(space, 'select_zone'), width)
+        self.choice_reason = nn.Embedding(_vocabulary(space, 'select_context'), width)
+        self.monster_id = nn.Embedding(_vocabulary(space, 'monster_id'), 32, padding_idx=0)
+        self.monster_move = nn.Embedding(_vocabulary(space, 'monster_move'), 32, padding_idx=0)
+        self.monster_intent = nn.Embedding(_vocabulary(space, 'monster_intent_cat'), 16, padding_idx=0)
+        self.monster_projection = nn.Linear(80 + space['monster_scalars'].shape[-1]
+                                            + space['monster_buffs'].shape[-1], width)
+        self.relic = nn.Embedding(_vocabulary(space, 'relics'), 48, padding_idx=0)
+        self.relic_projection = nn.Linear(49, width)
+        self.potion = nn.Embedding(_vocabulary(space, 'potions'), width, padding_idx=0)
+        self.scalar_keys = ('player_scalars','player_buffs','combat_counters',
+                            'post_enemy_turn_boundary','ascension','gold','pick_remaining',
+                            'can_pick_zero','can_pick_any')
+        # Additional HP deficit, log turn, and soft threshold features.
+        self.player_projection = nn.Linear(sum(prod(space[k].shape) for k in self.scalar_keys)+6, width)
+        self.turn_bucket = nn.Embedding(32, width)
+        self.pool_queries = nn.Parameter(torch.randn(config.pile_queries, width)*.02)
+        self.pile_role = nn.Embedding(3, width)
+        self.pool_count = nn.Linear(1, width)
+        self.role = nn.Embedding(8, width)
+        layer = nn.TransformerEncoderLayer(width, config.heads, 4*width,
+            dropout=0., activation='gelu', batch_first=True, norm_first=True)
+        self.transformer = nn.TransformerEncoder(layer, config.layers, enable_nested_tensor=False)
+        self.norm = nn.LayerNorm(width)
+        self.pointer_query = nn.Linear(width, width)
+        self.pointer_key = nn.Linear(width, width)
+        self.end = nn.Linear(width, 1)
+        self.complete_head = CompleteCombatHead(width)
+        self.distribution = CombatDistributionHead(width, config.quantiles)
+        self.transition = nn.Sequential(nn.Linear(3*width, width), nn.GELU(), nn.Linear(width, 6))
+
+    def _card_tokens(self, table, ids, upgrades):
+        vectors = table[ids.long(), upgrades.gt(0).long()]
+        return self.card_projection(torch.cat((vectors, upgrades.float().unsqueeze(-1)), -1))
+
+    def _pool(self, entities, counts, context):
+        query = context[:, None] + self.pool_queries[None]
+        logits = torch.einsum('bkd,bnd->bkn', query, entities) * self.config.width**-.5
+        weights = counts.float().clamp_min(0)
+        scores = logits.float() + weights.clamp_min(1e-30).log()[:, None]
+        probability = scores.masked_fill(weights[:, None] == 0, -1e9).softmax(-1)
+        probability = probability * (weights[:, None] > 0)
+        pooled = torch.einsum('bkn,bnd->bkd', probability.to(entities.dtype), entities)
+        return pooled + self.pool_count(weights.sum(-1, keepdim=True).log1p())[:, None]
+
+    def encode(self, obs, active_relic_width=None):
+        batch = obs['player_scalars'].shape[0]
+        table = self.card.versioned_forward(self.card_ids, self.card_versions).reshape(self.n_cards, 2, 64)
+        hp = obs['player_scalars'].float()
+        turn = hp[:, 4:5] * encode.TURN_SCALE
+        extra = torch.cat((hp[:, 1:2]-hp[:, :1], turn.clamp_min(0).log1p()/4,
+                           torch.sigmoid((hp[:, 5:6]-hp.new_tensor([.25,.5,.75,1.]))*12)), -1)
+        global_token = self.player_projection(torch.cat(
+            [obs[k].float().reshape(batch,-1) for k in self.scalar_keys]+[extra],-1))
+        global_token = global_token + self.turn_bucket(turn.long().flatten().clamp(0,31))
+        global_token = global_token + self.choice_reason(obs['select_context'].long().flatten())
+        hand = self._card_tokens(table, obs['hand_ids'], obs['hand_upgrades'])
+        hand = hand + self.hand_context(torch.stack([obs[k] for k in
+            ('hand_costs','hand_damage','hand_block','select_hand_mask')], -1).float())
+        monster = self.monster_projection(torch.cat((
+            self.monster_id(obs['monster_id'].long()), self.monster_move(obs['monster_move'].long()),
+            self.monster_intent(obs['monster_intent_cat'].long()),
+            obs['monster_scalars'].float(), obs['monster_buffs'].float()), -1))
+        width = obs['relics'].shape[1] if active_relic_width is None else max(1,active_relic_width)
+        relic_ids = obs['relics'][:, :width].long()
+        relic = self.relic_projection(torch.cat((self.relic(relic_ids),
+            obs['relic_counters'][:, :width, None].float()), -1))
+        potion = self.potion(obs['potions'].long())
+        choices = self._card_tokens(table, obs['select_card_ids'], obs['select_card_upgrades'])
+        # Only handle presence is public neural input; the numeric handle is execution metadata.
+        valid_choices = obs['select_native_indices'] > 0
+        choices = choices + self.choice_context(torch.stack((obs['select_card_costs'].float(),
+            (valid_choices & (obs['select_card_ids'] == 0)).float()), -1))
+        choices = choices + self.choice_zone(obs['select_zone'].long().flatten())[:, None]
+        choice_pool = self._pool(choices, valid_choices, global_token)
+        pile_tokens = []
+        all_ids = self.card_ids.reshape(1,-1)
+        all_versions = self.card_versions.reshape(1,-1).float()/encode.UPGRADE_SCALE
+        pile_entities = self._card_tokens(table, all_ids, all_versions).expand(batch,-1,-1)
+        for pile_index, pile in enumerate(('draw', 'discard', 'exhaust')):
+            counts = obs[pile+'_counts'].float()
+            upgraded = torch.zeros_like(counts)
+            if pile+'_card_upgraded_counts' in obs:
+                upgraded = upgraded.scatter_add(1, obs[pile+'_card_ids'].long(),
+                                                 obs[pile+'_card_upgraded_counts'].float())
+            versions = torch.stack(((counts-upgraded).clamp_min(0),upgraded),-1).flatten(1)
+            pile_tokens.append(self._pool(pile_entities, versions, global_token)+self.pile_role.weight[pile_index])
+        piles = torch.cat(pile_tokens, 1)
+        blocks = [('global',global_token[:,None],torch.zeros(batch,1,dtype=torch.bool,device=hp.device)),
+                  ('hand',hand,obs['hand_ids']==0), ('monster',monster,obs['monster_id']==0),
+                  ('potion',potion,obs['potions']==0), ('relic',relic,relic_ids==0),
+                  ('pile',piles,torch.zeros(piles.shape[:2],dtype=torch.bool,device=hp.device)),
+                  ('choice',choice_pool,torch.zeros(choice_pool.shape[:2],dtype=torch.bool,device=hp.device))]
+        tokens, masks, spans, offset = [], [], {}, 0
+        for role, (name, block, mask) in enumerate(blocks):
+            tokens.append(block + self.role.weight[role]); masks.append(mask)
+            spans[name] = (offset, offset+block.shape[1]); offset += block.shape[1]
+        encoded = self.norm(self.transformer(torch.cat(tokens,1),src_key_padding_mask=torch.cat(masks,1)))
+        result = {name:encoded[:,lo:hi] for name,(lo,hi) in spans.items()}
+        result['select'] = choices
+        return result['global'][:,0], result
+
+    def _pointer(self, state, entities):
+        return torch.einsum('bd,bnd->bn',self.pointer_query(state),self.pointer_key(entities))*self.config.width**-.5
+
+    def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None):
+        state, blocks = self.encode(obs, active_relic_width)
+        source = state.new_zeros((state.shape[0], C.JOINT_END))
+        source[:, A.END_TURN] = self.end(state).flatten()
+        for start, role in ((A._PLAY,'hand'),(A._POTION,'potion'),(A._PICK,'select')):
+            source[:,start:start+blocks[role].shape[1]] = self._pointer(state,blocks[role])
+        logits = self.complete_head(source,state,torch.cat((blocks['hand'],blocks['potion']),1),
+            blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets)
+        values, outputs = self.distribution(state)
+        if auxiliary_actions is not None:
+            actions = auxiliary_actions.long()
+            row = torch.arange(len(actions),device=actions.device)
+            card = (actions >= C.JOINT_PLAY) & (actions < C.JOINT_POTION)
+            potion = (actions >= C.JOINT_POTION) & (actions < C.JOINT_PICK)
+            pick = (actions >= C.JOINT_PICK) & (actions < C.JOINT_MULTI)
+            multi = actions >= C.JOINT_MULTI
+            origin = torch.where(potion,C.JOINT_POTION,C.JOINT_PLAY)
+            slot = ((actions-origin)//6).clamp(0,9)
+            target = ((actions-origin)%6).clamp(0,4)
+            entity = blocks['hand'][row,slot]*card[:,None]
+            entity = entity + blocks['potion'][row,slot.clamp_max(4)]*potion[:,None]
+            entity = entity + blocks['select'][row,(actions-C.JOINT_PICK).clamp(0,95)]*pick[:,None]
+            bits = (actions-C.JOINT_MULTI).clamp_min(0)
+            selected = ((bits[:,None] >> torch.arange(10,device=actions.device)) & 1).to(state.dtype)
+            entity = entity + torch.einsum('bh,bhd->bd',selected,blocks['hand'])*multi[:,None]
+            targeted = (card|potion) & ((actions-origin)%6 != 5)
+            destination = blocks['monster'][row,target]*targeted[:,None]
+            outputs['transition'] = self.transition(torch.cat((state,entity,destination),-1))
+        return logits, values, outputs
+
+
+class EntityCombatCore(nn.Module):
+    combat_observation_keys = COMBAT_OBSERVATION_KEYS
+    training_objective = 'combat-outcome-quantiles-v1'
+    combat_only = True
+    joint_actions = True
+    map_dag_enabled = False
+
+    def __init__(self, space, config):
+        super().__init__()
+        if 'combat_legal' not in space.spaces:
+            raise ValueError('entity-combat requires joint-v2 actions')
+        if 'draw_card_upgraded_counts' not in space.spaces:
+            raise ValueError('entity-combat requires card-language observations for upgraded piles')
+        self.config = config
+        self.combat = EntityCombatNetwork(space, config)
+
+    def combat_actor_critic(self, obs, **kwargs):
+        logits, values, _ = self.combat(obs, **kwargs)
+        return logits, values
+
+    def combat_training_outputs(self, obs, actions, **kwargs):
+        return self.combat(obs, auxiliary_actions=actions, **kwargs)
+
+    def actor_critic(self, obs, **kwargs):
+        # The collector may batch noncombat rows before applying its rules.
+        # Those rows have neutral outputs and no learned overworld parameters.
+        logits, values = self.combat_actor_critic(obs,
+            active_relic_width=kwargs.get('combat_relic_width'))
+        combat = obs['phase'].flatten() == V.PHASE_VOCAB_INDEX['combat']
+        return torch.where(combat[:,None],logits,torch.zeros_like(logits)), values*combat[:,None]
+
+    def action_logits(self, obs):
+        return self.actor_critic(obs)[0]
+
+    def value(self, obs):
+        return self.actor_critic(obs)[1]
+
+
+class EntityCombatPolicy(SplitStSPointerPolicy):
+    def __init__(self,*args,entity_config=None,**kwargs):
+        self.entity_config = asdict(EntityCombatConfig(**(entity_config or {})))
+        super().__init__(*args,**kwargs)
+
+    def _build(self,lr_schedule):
+        self.core = EntityCombatCore(self.observation_space,EntityCombatConfig(**self.entity_config))
+        self.optimizer = self.optimizer_class(self.parameters(),lr=lr_schedule(1),**self.optimizer_kwargs)
+
+    def _get_constructor_parameters(self):
+        return dict(super()._get_constructor_parameters(),entity_config=self.entity_config)

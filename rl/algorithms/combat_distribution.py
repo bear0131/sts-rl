@@ -11,6 +11,8 @@ CONTRACT = 'combat-outcome-quantiles-v1'
 AUX_WIDTH = 6
 # win, executed complete action, auxiliary weight, six observed transition deltas
 TARGET_WIDTH = 3 + AUX_WIDTH
+METRICS = ('win_bce','hp_pinball','utility_mse','transition_loss',
+           'win_probability','win_target','hp_given_win')
 
 
 def transition_features(obs):
@@ -19,7 +21,7 @@ def transition_features(obs):
     strength = V.PLAYER_BUFF_VOCAB_INDEX['Strength']
     player = np.asarray(obs['player_scalars'], dtype=np.float32)
     return np.asarray([player[0], player[2], player[3],
-        np.asarray(obs['monster_scalars'])[:, 0].sum(),
+        np.asarray(obs['monster_scalars'])[:, 1].sum(),
         obs['player_buffs'][strength], np.count_nonzero(obs['hand_ids']) / 10], dtype=np.float32)
 
 
