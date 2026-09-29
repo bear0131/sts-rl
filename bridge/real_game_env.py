@@ -511,6 +511,8 @@ class RealGameAdapter:
 
     def obs_canonical(self, pending: tuple | None = None) -> dict[str, Any]:
         canon = self._base_canonical()
+        canon["pending_card_slot"] = int(pending[1]) + 1 if pending and pending[0] == "play" else 0
+        canon["pending_potion_slot"] = int(pending[1]) + 1 if pending and pending[0] == "potion" else 0
         desc = self.select_descriptor()
         legal = self.legal_semantic_actions()
         if A.is_multi_select(desc):
@@ -843,6 +845,15 @@ class RealGameAdapter:
         pick_max = _int_or_none(ss.get("pick_max")) or _int_or_none(ss.get("max_cards"))
         if pick_max is None:
             pick_max = len(cards) if multi and can_pick_any else pick_count
+        raw_cards = ss.get("cards") or (self.gs.get("combat_state") or {}).get("hand") or []
+        candidates = []
+        for i, (cid, up) in enumerate(cards):
+            card = {"id": cid, "up": up}
+            if i < len(raw_cards) and isinstance(raw_cards[i], dict) and "cost" in raw_cards[i]:
+                card["cost"] = raw_cards[i]["cost"]
+            candidates.append({"native_index": i, "card": card})
+        if not overworld and context == "CODEX" and "SKIP" in self.commands():
+            candidates.append({"native_index": len(cards), "card": None})
         return {
             "context": context,
             "pick_remaining": max(0, pick_count - have_selected),
@@ -852,6 +863,13 @@ class RealGameAdapter:
             "multi": multi,
             "pick_max": int(pick_max),
             "cards_in_hand": len(cards) if not overworld else 0,
+            "zone": "grid" if overworld else (
+                "hand" if self.screen_type() == "HAND_SELECT" else
+                {"HEADBUTT": "discard", "HOLOGRAM": "discard",
+                 "LIQUID_MEMORIES_POTION": "discard", "EXHUME": "exhaust",
+                 "SECRET_WEAPON": "draw", "SECRET_TECHNIQUE": "draw",
+                 "SEEK": "draw", "CODEX": "generated", "DISCOVERY": "generated"}.get(context, "grid")),
+            "candidates": candidates,
         }
 
     def _select_context(self, ss: dict[str, Any], cards: list[tuple[str, int]]) -> str:
@@ -942,15 +960,17 @@ class RealGameAdapter:
         if self._combat_card_choice_screen():
             ss = _screen_state(self.gs)
             n = len(_screen_cards(ss)) or len(self.choices())
-            return [
-                ga.combat(actions.encode_select(i))
-                for i in range(min(n, actions.SELECT_SLOTS))
-            ]
+            desc = self.select_descriptor()
+            if desc and desc["candidates"]:
+                n = len(desc["candidates"])
+            if n > A.G_MAX:
+                raise ValueError("combat candidate capacity 96 exceeded")
+            return [ga.select(i) for i in range(n)]
         if self.screen_type() == "HAND_SELECT":
             if A.is_multi_select(self.select_descriptor()):
                 return []
             n = len(self._combat_hand_cards())
-            return [ga.combat(actions.encode_select(i)) for i in range(min(n, actions.SELECT_SLOTS))]
+            return [ga.select(i) for i in range(n)]
 
         acts: list[tuple] = []
         cs = self.gs.get("combat_state") or {}
@@ -1120,6 +1140,9 @@ class RealGameAdapter:
                 self._skipped_combat_card_reward = True
             return "SKIP"
         if verb == ga.SELECT:
+            desc = self.select_descriptor()
+            if desc and desc["candidates"][int(action[1])]["card"] is None:
+                return "SKIP"
             return f"CHOOSE {action[1]}"
         if verb == ga.MULTI_SELECT:
             return "CONFIRM"

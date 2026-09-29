@@ -234,6 +234,10 @@ def _powers_sim(pairs):
 
 
 def _norm_sim_monster(m):
+    if m["id"] == _SIM_MONSTER_INVALID:
+        return dict(id="PAD", hp=0, max_hp=0, block=0, gone=True,
+                    base_damage=0, adjusted_damage=0, hits=0, powers={},
+                    move="INVALID", move_id=0)
     base, hits = _attack(m["base_damage"], m["hits"])
     adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
     hp = m["hp"]
@@ -278,12 +282,8 @@ def normalize_sim(raw):
             "powers": _powers_sim(p["powers"]),
         },
         "monsters": [
-            # Skip empty placeholder slots: the sim's monsterCount can include
-            # not-yet-activated slots (e.g. Slime Boss reserves a slot for its
-            # split halves) which surface as id "INVALID = 0", gone=true. The
-            # real game never reports these.
+            # Preserve native target slots, including reserved empty positions.
             _norm_sim_monster(m) for m in raw["monsters"]
-            if m["id"] != _SIM_MONSTER_INVALID
         ],
         "hand": [_card(_sim_card_id(n), u, cost) for n, u, cost in raw["hand"]],
         "draw": [_card(_sim_card_id(n), u) for n, u in raw["draw"]],
@@ -459,13 +459,22 @@ def combat_select_options(select_info):
     Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any
     from pick_max being the whole hand (Gamble) vs a fixed cap (Exhaust Many)."""
     multi = bool(select_info.get("multi"))
-    return _select_options(
+    result = _select_options(
         select_info["context"], select_info["pick_count"], 0, [],
         can_pick_zero=select_info["can_pick_zero"] or multi,
         can_pick_any=select_info["can_pick_any"],
         multi=multi,
         pick_max=select_info.get("pick_max", 0),
         cards_in_hand=select_info.get("cards_in_hand", 0))
+    result["zone"] = select_info.get("zone", "hand" if multi else "none")
+    result["candidates"] = [
+        {"native_index": int(item["native_index"]),
+         "card": None if item.get("skip") else _card(
+             _sim_card_id(item["card"][0]), item["card"][1],
+             item["card"][2])}
+        for item in select_info.get("candidates", ())
+    ]
+    return result
 
 
 def _card_reward_entry(card):

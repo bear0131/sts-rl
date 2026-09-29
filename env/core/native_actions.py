@@ -45,6 +45,12 @@ def selection_candidates(battle):
     desc = battle.select_info()
     if desc['multi']:
         return ()
+    if 'candidates' in desc:
+        return tuple(SelectionCandidate(
+            CONTRACT, desc['context'], desc['zone'], int(item['native_index']),
+            2 << 29 | int(item['native_index']),
+            None if item['skip'] else tuple(item['card'][:2]),
+        ) for item in desc['candidates'])
     context = desc['context']
     zones = {'SECRET_TECHNIQUE': 'draw', 'SECRET_WEAPON': 'draw',
              'HEADBUTT': 'discard', 'LIQUID_MEMORIES_POTION': 'discard',

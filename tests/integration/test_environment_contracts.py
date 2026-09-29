@@ -27,8 +27,6 @@ def test_auto_reset_reproduces_episode_seed_stream():
     assert streams[0] == streams[1]
 
 
-@pytest.mark.xfail(reason="F01: canonical monster compaction changes target slots",
-                   strict=True, raises=AssertionError)
 def test_gremlin_leader_observation_matches_native_target_slot(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, "Gremlin Leader")
     raw = env.thick.bc.to_dict()
@@ -37,8 +35,6 @@ def test_gremlin_leader_observation_matches_native_target_slot(combat_factory):
     assert env._obs()["monster_id"][leader_slot] == V.MONSTER_VOCAB_INDEX["GremlinLeader"]
 
 
-@pytest.mark.xfail(reason="F02: ordinary target observations omit pending card",
-                   strict=True, raises=AssertionError)
 def test_target_observation_distinguishes_selected_card(combat_factory):
     env = combat_factory(["BASH", "STRIKE_RED", "STRIKE_RED", "DEFEND_RED", "DEFEND_RED"],
                          "Two Louse")
@@ -52,8 +48,6 @@ def test_target_observation_distinguishes_selected_card(combat_factory):
                for key in observations[0])
 
 
-@pytest.mark.xfail(reason="F03: Headbutt discard candidates absent from observation",
-                   strict=True, raises=AssertionError)
 def test_headbutt_candidates_are_discard_cards(combat_factory):
     env = combat_factory(["HEADBUTT", "STRIKE_RED", "DEFEND_RED", "DEFEND_RED", "BASH"])
     battle = env.thick.bc
@@ -70,12 +64,7 @@ def test_headbutt_candidates_are_discard_cards(combat_factory):
     ("SECRET_TECHNIQUE", "STRIKE_RED", ["DEFEND_RED", "SHRUG_IT_OFF"]),
     ("SECRET_WEAPON", "DEFEND_RED", ["STRIKE_RED", "BASH"]),
 ])
-@pytest.mark.parametrize("padding", [
-    0,
-    pytest.param(10, marks=pytest.mark.xfail(
-        reason="F03: legal draw-pile choices at native indices >=10 vanish from the thin mask",
-        strict=True, raises=pytest.fail.Exception)),
-])
+@pytest.mark.parametrize("padding", [0, 10])
 def test_draw_selection_remains_actionable_beyond_hand_slots(combat_factory, card, filler, choices, padding):
     env = combat_factory([card] * 5)
     battle = env.thick.bc
@@ -92,7 +81,9 @@ def test_draw_selection_remains_actionable_beyond_hand_slots(combat_factory, car
     mask = env.action_masks()
     if np.count_nonzero(mask) != 2:
         pytest.fail("Native draw choices must remain selectable through the thin API")
-    _, _, terminated, truncated, _ = env.step(int(np.flatnonzero(mask)[0]))
+    candidate = next(i for i, c in enumerate(env.thick.select_descriptor()["candidates"])
+                     if c["native_index"] == padding)
+    _, _, terminated, truncated, _ = env.step(A._PICK + candidate)
     assert not terminated and not truncated
     assert env.thick.select_descriptor() is None
     assert battle.to_dict()["hand"][0][0] == choices[0]

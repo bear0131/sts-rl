@@ -18,7 +18,14 @@ class CombatMLPActorCritic(nn.Module):
 
     def __init__(self, observation_space, observation_keys):
         super().__init__()
-        keys = sorted(key for key in observation_keys if key in observation_space.spaces)
+        self.public_choices = "select_native_indices" in observation_space.spaces
+        keys = sorted(key for key in observation_keys if key in observation_space.spaces
+                      and key not in {"select_native_indices", "select_card_ids",
+                                      "select_card_costs", "select_card_upgrades"})
+        if "select_native_indices" not in observation_space.spaces:
+            keys = [key for key in keys if key not in {
+                "select_card_ids", "select_card_upgrades", "pending_card_slot",
+            }]
         self.scalar_keys = tuple(
             key for key in keys if observation_space[key].dtype.kind == "f"
         )
@@ -43,6 +50,13 @@ class CombatMLPActorCritic(nn.Module):
             else:
                 rows = prod(observation_space[key].shape[:-1])
                 width += rows * dim * (2 if key in {"draw_card_ids", "discard_card_ids"} else 1)
+        if self.public_choices:
+            self.choice_embedding = nn.Embedding(
+                int(observation_space["select_card_ids"].high.max()) + 1, 16, padding_idx=0)
+            self.choice_key = nn.Linear(18, 64)
+            self.choice_query = nn.Linear(256, 64, bias=False)
+            self.choice_score = nn.Linear(64, 1)
+            width += 18
         self.input_width = width
         self.trunk = nn.Sequential(nn.Linear(width, 256), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
         self.policy_mlp = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
@@ -73,5 +87,14 @@ class CombatMLPActorCritic(nn.Module):
                 parts.append(self._pool(vectors, weights * obs[f"{pile}_card_upgraded_counts"].float()))
             else:
                 parts.append(self._pool(vectors, weights).reshape(batch, -1))
+        if self.public_choices:
+            choices = torch.cat((self.choice_embedding(obs["select_card_ids"].long()),
+                obs["select_card_upgrades"].float().unsqueeze(-1),
+                obs["select_card_costs"].float().unsqueeze(-1)), dim=-1)
+            parts.append(self._pool(choices, obs["select_native_indices"].ne(0).float()))
         features = self.trunk(torch.cat(parts, dim=-1))
-        return self.policy_head(self.policy_mlp(features)), self.value_head(self.value_mlp(features))
+        logits = self.policy_head(self.policy_mlp(features))
+        if self.public_choices:
+            logits[:, A._PICK:A._PICK + A.G_MAX] = self.choice_score(torch.tanh(
+                self.choice_key(choices) + self.choice_query(features).unsqueeze(1))).squeeze(-1)
+        return logits, self.value_head(self.value_mlp(features))

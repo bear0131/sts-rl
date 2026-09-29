@@ -27,6 +27,7 @@
 #include <memory>
 #include "combat/BattleContext.h"
 #include "sim/search/Action.h"
+#include "sim/search/CombatChoices.h"
 #include "sim/search/GameAction.h"
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
@@ -60,6 +61,8 @@ py::list cardPileToList(const Pile &pile) {
     }
     return out;
 }
+
+py::dict combatSelectInfo(const sts::BattleContext &bc);
 
 py::list playerPowersToList(const sts::Player &p) {
     py::list out;
@@ -187,25 +190,7 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
         potions.append(std::string(sts::getPotionName(bc.potions[i])));
     }
     d["potions"] = potions;
-    py::dict select;
-    const auto task = bc.cardSelectInfo.cardSelectTask;
-    const bool multi = task == sts::CardSelectTask::EXHAUST_MANY ||
-                       task == sts::CardSelectTask::GAMBLE;
-    select["context"] = std::string(
-        sts::cardSelectTaskStrings[static_cast<int>(task)]);
-    select["pick_count"] = bc.cardSelectInfo.pickCount;
-    select["can_pick_zero"] = bc.cardSelectInfo.canPickZero;
-    select["can_pick_any"] = bc.cardSelectInfo.canPickAnyNumber;
-    select["multi"] = multi;
-    select["cards_in_hand"] = bc.cards.cardsInHand;
-    int pickMax = 0;
-    if (task == sts::CardSelectTask::EXHAUST_MANY) {
-        pickMax = bc.cardSelectInfo.pickCount;
-    } else if (task == sts::CardSelectTask::GAMBLE) {
-        pickMax = bc.cards.cardsInHand;
-    }
-    select["pick_max"] = pickMax;
-    d["select"] = select;
+    d["select"] = combatSelectInfo(bc);
     return d;
 }
 
@@ -243,17 +228,17 @@ constexpr int kNativeMoves =
 constexpr int kNativePotions =
     static_cast<int>(sizeof(sts::potionNames) /
                      sizeof(sts::potionNames[0]));
-// Categorical layout: hand cards, compacted monster ids/moves/intent classes,
+// Categorical layout: hand cards, fixed monster slots/moves/intent classes,
 // potion slots, and the card-select task.
 constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
-                         kMaxMonsters + kPotionSlots + 1;
+                         kMaxMonsters + kPotionSlots + 1 + 96 * 2 + 1;
 
 // Float layout: player scalars, player statuses, counters, boundary bit,
 // monster scalars/statuses, hand upgrade/cost, three native pile histograms,
 // and card-select metadata.
 constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
                            kMaxMonsters * 6 + kMaxMonsters * kMonsterStatus +
-                           kHandSlots * 2 + kCardIds * 3 + 4;
+                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2;
 
 struct Row {
     std::array<std::int32_t, kCatSize> categorical{};
@@ -365,35 +350,38 @@ inline Row pack(const sts::BattleContext &bc) {
         row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
     }
     c += kHandSlots;
-    int monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
          ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
-        row.categorical[c + monsterCount] = static_cast<int>(monster.id);
-        row.categorical[c + kMaxMonsters + monsterCount] =
+        row.categorical[c + i] = static_cast<int>(monster.id);
+        row.categorical[c + kMaxMonsters + i] =
             static_cast<int>(monster.moveHistory[0]);
-        ++monsterCount;
     }
     c += 2 * kMaxMonsters;
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
          ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
         const auto damage = monster.getMoveBaseDamage(bc);
-        baseDamages[monsterCount] = std::max(0, damage.damage);
-        attackCounts[monsterCount] = damage.attackCount;
-        row.categorical[c + monsterCount] = intentCategory(
-            monster, baseDamages[monsterCount]);
-        ++monsterCount;
+        baseDamages[i] = std::max(0, damage.damage);
+        attackCounts[i] = damage.attackCount;
+        row.categorical[c + i] = intentCategory(
+            monster, baseDamages[i]);
     }
     c += kMaxMonsters;
     for (int i = 0; i < bc.potionCapacity && i < kPotionSlots; ++i) {
         row.categorical[c + i] = static_cast<int>(bc.potions[i]);
     }
     c += kPotionSlots;
-    row.categorical[c] = static_cast<int>(bc.cardSelectInfo.cardSelectTask);
+    const bool selecting = bc.inputState == InputState::CARD_SELECT;
+    row.categorical[c++] = selecting ? static_cast<int>(bc.cardSelectInfo.cardSelectTask) : 0;
+    const auto choices = sts::search::combatChoices(bc);
+    for (std::size_t i = 0; i < choices.cards.size(); ++i) {
+        row.categorical[c + i] = static_cast<int>(choices.cards[i].id);
+        row.categorical[c + 96 + i] = choices.cards[i].nativeIndex + 1;
+    }
+    row.categorical[c + 192] = choices.zone;
 
     int f = 0;
     row.scalars[f++] = static_cast<float>(bc.player.curHp);
@@ -441,12 +429,11 @@ inline Row pack(const sts::BattleContext &bc) {
     // status vectors.  The Python decoder relies on these two rectangular
     // blocks when reshaping a batch; interleaving status fields per monster
     // silently corrupts multi-monster leaves.
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
          ++i) {
         const auto &monster = bc.monsters.arr[i];
-        if (monster.id == sts::MonsterId::INVALID) continue;
-        const int baseDamage = baseDamages[monsterCount];
+        if (monster.id == sts::MonsterId::INVALID) { f += 6; continue; }
+        const int baseDamage = baseDamages[i];
         const int adjusted = baseDamage > 0
             ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
         row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
@@ -454,21 +441,18 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f++] = static_cast<float>(monster.maxHp);
         row.scalars[f++] = static_cast<float>(monster.block);
         row.scalars[f++] = static_cast<float>(adjusted);
-        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[monsterCount] : 0);
-        ++monsterCount;
+        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[i] : 0);
     }
-    f += 6 * (kMaxMonsters - monsterCount);
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
+    f += 6 * (kMaxMonsters - std::min(kMaxMonsters, bc.monsters.monsterCount));
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
          ++i) {
         const auto &monster = bc.monsters.arr[i];
-        if (monster.id == sts::MonsterId::INVALID) continue;
+        if (monster.id == sts::MonsterId::INVALID) { f += kMonsterStatus; continue; }
         for (int status = 0; status < kMonsterStatus; ++status) {
             row.scalars[f++] = static_cast<float>(monsterStatusValue(monster, status));
         }
-        ++monsterCount;
     }
-    f += kMonsterStatus * (kMaxMonsters - monsterCount);
+    f += kMonsterStatus * (kMaxMonsters - std::min(kMaxMonsters, bc.monsters.monsterCount));
     for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
         const auto &card = bc.cards.hand[i];
         row.scalars[f++] = static_cast<float>(card.getUpgradeCount());
@@ -486,12 +470,18 @@ inline Row pack(const sts::BattleContext &bc) {
     countPile(bc.cards.drawPile);
     countPile(bc.cards.discardPile);
     countPile(bc.cards.exhaustPile);
-    row.scalars[f++] = static_cast<float>(bc.cardSelectInfo.pickCount);
-    row.scalars[f++] = bc.cardSelectInfo.canPickZero ? 1.0f : 0.0f;
-    row.scalars[f++] = bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
+    row.scalars[f++] = selecting ? static_cast<float>(bc.cardSelectInfo.pickCount) : 0.0f;
+    row.scalars[f++] = selecting && (bc.cardSelectInfo.canPickZero ||
+        bc.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY ||
+        bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
+    row.scalars[f++] = selecting && bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
     const auto task = bc.cardSelectInfo.cardSelectTask;
-    row.scalars[f++] = (task == CardSelectTask::EXHAUST_MANY ||
+    row.scalars[f++] = selecting && (task == CardSelectTask::EXHAUST_MANY ||
                         task == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
+    for (std::size_t i = 0; i < choices.cards.size(); ++i) {
+        row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
+        row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
+    }
     return row;
 }
 } // namespace compact_leaf
@@ -1364,6 +1354,19 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
         }
     }
     d["generated_cards"] = generated;
+    const auto choices = sts::search::combatChoices(bc);
+    const char *zones[] = {"none", "hand", "draw", "discard", "exhaust", "generated", "grid"};
+    d["zone"] = zones[choices.zone];
+    py::list candidates;
+    for (const auto &choice : choices.cards) {
+        py::dict item;
+        item["native_index"] = choice.nativeIndex;
+        item["skip"] = choice.skip;
+        item["card"] = py::make_tuple(sts::cardEnumStrings[static_cast<int>(choice.id)],
+                                     choice.upgrades, choice.cost);
+        candidates.append(item);
+    }
+    d["candidates"] = candidates;
     return d;
 }
 
@@ -1448,6 +1451,8 @@ PYBIND11_MODULE(slaythespire, m) {
         out["player_status_count"] = compact_leaf::kPlayerStatus;
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
+        out["version"] = 2;
+        out["candidate_capacity"] = 96;
         out["categorical_width"] = compact_leaf::kCatSize;
         out["scalar_width"] = compact_leaf::kFloatSize;
         return out;

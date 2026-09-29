@@ -1,4 +1,5 @@
 #include "sim/search/NoslCombatTrainer.h"
+#include "sim/search/CombatChoices.h"
 
 #include <algorithm>
 #include <array>
@@ -1228,7 +1229,7 @@ std::vector<Action> NoslNeuralSearchSession::legalActions(
     return Action::enumerateCombatActions(bc);
 }
 
-int NoslNeuralSearchSession::thinActionId(const Action &action) {
+int NoslNeuralSearchSession::thinActionId(const Action &action, const BattleContext &state) {
     // Keep this mapping aligned with env/core/action_space.py.  Native search
     // actions are complete (card + target), while the whole-run network head
     // scores the autoregressive root slot; target variants share that score.
@@ -1241,8 +1242,13 @@ int NoslNeuralSearchSession::thinActionId(const Action &action) {
             return playBase + action.getSourceIdx();
         case ActionType::POTION:
             return potionBase + action.getSourceIdx();
-        case ActionType::SINGLE_CARD_SELECT:
-            return pickBase + action.getSelectIdx();
+        case ActionType::SINGLE_CARD_SELECT: {
+            const auto choices = combatChoices(state);
+            for (std::size_t i = 0; i < choices.cards.size(); ++i)
+                if (choices.cards[i].nativeIndex == action.getSelectIdx())
+                    return pickBase + static_cast<int>(i);
+            return -1;
+        }
         case ActionType::MULTI_CARD_SELECT:
             return confirmSelect;
         case ActionType::END_TURN:
@@ -1346,7 +1352,7 @@ void NoslNeuralSearchSession::expandWithLogits(
     std::array<int, kThinActionCount> groupCounts{};
     double maxLogit = -std::numeric_limits<double>::infinity();
     for (const auto &action : actions) {
-        const int id = thinActionId(action);
+        const int id = thinActionId(action, state);
         if (id < 0) {
             continue;
         }
@@ -1370,7 +1376,7 @@ void NoslNeuralSearchSession::expandWithLogits(
     std::vector<double> weights;
     weights.reserve(actions.size());
     for (const auto &action : actions) {
-        const int id = thinActionId(action);
+        const int id = thinActionId(action, state);
         const int count = id >= 0 && id < kThinActionCount &&
                 groupCounts[static_cast<std::size_t>(id)] > 0
             ? groupCounts[static_cast<std::size_t>(id)] : 1;

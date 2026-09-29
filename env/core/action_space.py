@@ -33,6 +33,10 @@ is live for the low option ids (the thick layer enumerates real event options)
 with a reserved wide tail; SHOP_* likewise went LIVE this way (the thick layer
 enumerates real buys/removes) — both filling reserved width.
 
+ACTION_VERSION 7: combat PICK_CARD indexes the public candidate list, with
+explicit native handles for draw/discard/exhaust/generated screens. Slot widths
+stay fixed; the 71-id standalone combat codec remains a legacy interface.
+
 ACTION_VERSION 6 (was 5): PICK_CARD widens from 64 to 96, matching the
 simulator's Deck::MAX_SIZE. Full-deck select screens and the lossless master-deck
 observation now share one hard capacity. Inputs above that capacity raise an
@@ -68,7 +72,7 @@ from . import actions
 from . import game_actions as ga
 from . import vocab as V
 
-ACTION_VERSION = 6
+ACTION_VERSION = 7
 
 # ---- capacities (must match encode.py slot counts) ----
 HAND_SLOTS = actions.HAND_SLOTS        # 10  (combat hand; play slot == hand idx)
@@ -220,6 +224,8 @@ def _combat_select_only(legal_semantic, phase):
     is a reliable signal."""
     if phase != "combat":
         return False
+    if any(a[0] == ga.SELECT for a in legal_semantic):
+        return True
     kinds = [actions.decode(a[1])[0] for a in legal_semantic if a[0] == ga.COMBAT]
     return bool(kinds) and all(k == actions.KIND_SELECT for k in kinds)
 
@@ -388,7 +394,7 @@ def resolve(chosen_id, legal_semantic, pending, phase):
 
     if _PICK <= cid < _PICK + G_MAX:
         k = cid - _PICK
-        if phase == "combat":
+        if phase == "combat" and not any(a[0] == ga.SELECT for a in legal_semantic):
             return ga.combat(actions.encode_select(k)), None
         return ga.select(k), None                 # overworld grid
 

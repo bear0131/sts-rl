@@ -307,7 +307,7 @@ private:
 
     static double hpValue(const BattleContext &bc);
     static std::vector<Action> legalActions(const BattleContext &bc);
-    static int thinActionId(const Action &action);
+    static int thinActionId(const Action &action, const BattleContext &state);
     void expandWithLogits(Node &node, const BattleContext &state,
                           const std::vector<Action> &actions,
                           const std::vector<double> &logits);

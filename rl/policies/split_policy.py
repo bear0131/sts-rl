@@ -85,6 +85,13 @@ COMBAT_OBSERVATION_KEYS = frozenset({
     "relics",
     "select_context",
     "select_hand_mask",
+    "select_card_ids",
+    "select_card_upgrades",
+    "select_card_costs",
+    "select_native_indices",
+    "select_zone",
+    "pending_card_slot",
+    "pending_potion_slot",
 })
 
 OVERWORLD_OBSERVATION_KEYS = frozenset({
@@ -371,6 +378,11 @@ class CombatEncoder(_SpecialistEncoder):
         self.observation_space = observation_space
         self.global_categories = nn.ModuleDict()
         global_category_keys = ("arg_step", "character", "select_context")
+        self.public_choices = "select_native_indices" in observation_space.spaces
+        if self.public_choices:
+            global_category_keys += ("select_zone",)
+            self.choice_context = nn.Linear(1, d_model, bias=False)
+            self.choice_position = nn.Parameter(torch.zeros(A.G_MAX, d_model))
         category_width = 0
         for key in global_category_keys:
             width = _embedding_dim_for(_vocab_size(observation_space, key))
@@ -478,6 +490,16 @@ class CombatEncoder(_SpecialistEncoder):
             for key in self.global_category_keys
         )
         global_token = self.global_projection(torch.cat(global_parts, dim=1)).unsqueeze(1)
+        choice_tokens = None
+        if self.public_choices:
+            choice_tokens = shared.cards(obs["select_card_ids"], obs["select_card_upgrades"])
+            choice_tokens = choice_tokens + self.choice_context(obs["select_card_costs"].float().unsqueeze(-1))
+            # Only presence is public: the native handle's magnitude would leak
+            # draw-pile order. Skip is an explicit candidate with a PAD card.
+            present = obs["select_native_indices"].ne(0).unsqueeze(-1)
+            pooled = (choice_tokens * present).sum(dim=1, keepdim=True) / present.sum(dim=1, keepdim=True).clamp_min(1)
+            global_token = global_token + pooled
+            choice_tokens = choice_tokens + self.choice_position
         if self.combat_language is not None:
             global_token = global_token + self.combat_language_scale * self.combat_language(
                 obs["player_status_language"]
@@ -561,7 +583,12 @@ class CombatEncoder(_SpecialistEncoder):
             ("relic", relic, relic_ids.long() == 0),
             ("potion", potion, obs["potions"].long() == 0),
         ]
-        return self._run(batch_size, blocks)
+        global_out, encoded = self._run(batch_size, blocks)
+        if choice_tokens is not None:
+            # Score candidates against the contextual global token without
+            # padding every combat attention sequence with 96 empty tokens.
+            encoded["select"] = choice_tokens
+        return global_out, encoded
 
 
 class OverworldEncoder(_SpecialistEncoder):
@@ -948,7 +975,7 @@ class _SpecialistActorCritic(nn.Module):
                 ("PLAY_CARD", "hand"),
                 ("PICK_TARGET", "monster"),
                 ("USE_POTION", "potion"),
-                ("PICK_CARD", "hand"),
+                ("PICK_CARD", "select" if self.encoder.public_choices else "hand"),
             ):
                 self._assign(logits, segment, blocks, role)
         else:

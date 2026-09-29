@@ -651,8 +651,10 @@ std::vector<search::Action> search::Action::enumerateCardSelectActions(const Bat
 
         case CardSelectTask::EXHAUST_MANY:
         case CardSelectTask::GAMBLE:
-            // just dont deal with this right now
-            actions.push_back({search::Action(search::ActionType::MULTI_CARD_SELECT, 0)});
+            for (int subset = 0; subset < (1 << bc.cards.cardsInHand); ++subset) {
+                const Action candidate(ActionType::MULTI_CARD_SELECT, subset);
+                if (candidate.isValidAction(bc)) actions.push_back(candidate);
+            }
             break;
 
         default:

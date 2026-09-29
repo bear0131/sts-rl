@@ -21,7 +21,9 @@ class LegacyObservation(gym.ObservationWrapper):
         super().__init__(env)
         self.observation_space = gym.spaces.Dict({
             key: space for key, space in env.observation_space.spaces.items()
-            if key != "post_enemy_turn_boundary"
+            if key not in {"post_enemy_turn_boundary", "select_card_costs",
+                           "select_native_indices", "select_zone", "pending_card_slot",
+                           "pending_potion_slot"}
         })
 
     def observation(self, obs):

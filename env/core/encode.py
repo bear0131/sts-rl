@@ -61,7 +61,7 @@ from . import combat_language as CL
 # It adds a lossless per-card master-deck sequence (including upgrade count),
 # action-aligned upgrade fields for every overworld card choice, and persistent
 # run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
-OBS_VERSION = 16
+OBS_VERSION = 17  # fixed native slots, explicit selection entities and sources
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14
@@ -224,6 +224,13 @@ def obs_space(*, global_map_view=False, card_language=False,
         "reward_potion_ids": cat((5,), V.POTION_VOCAB_CAPACITY),
         "select_card_ids": cat((G_MAX,), N_CARDS),
         "select_card_upgrades": scal((G_MAX,)),
+        "select_card_costs": scal((G_MAX,)),
+        # Handles are for codec alignment only, never neural positional features.
+        # 0 is padding; native index n is stored as n+1, including explicit skip.
+        "select_native_indices": cat((G_MAX,), 65537),
+        "select_zone": cat((1,), 7),
+        "pending_card_slot": cat((1,), HAND_SLOTS + 1),
+        "pending_potion_slot": cat((1,), P_MAX + 1),
         # card-select screen semantics + progress (obs_design §4.1). select_context
         # says WHAT this screen is for (upgrade/exhaust/transform/remove/...) — the
         # legal card set can be identical across two opposite-intent screens, so the
@@ -305,11 +312,6 @@ def obs_space(*, global_map_view=False, card_language=False,
         })
     if deck_size_observation:
         groups["deck_size"] = scal((1,), high=1.0)
-    if interactive_reasoning:
-        # 0 means no pending card; h+1 points to hand slot h.  A targeted card
-        # play spans PLAY_CARD then PICK_TARGET, so the second feed-forward step
-        # needs this pointer to retain the anonymous card surface it is resolving.
-        groups["pending_card_slot"] = cat((1,), HAND_SLOTS + 1)
     return spaces.Dict(groups)
 
 
@@ -415,6 +417,11 @@ def _empty(*, global_map_view=False, card_language=False,
         "reward_potion_ids": np.zeros(5, _CAT),
         "select_card_ids": np.zeros(G_MAX, _CAT),
         "select_card_upgrades": np.zeros(G_MAX, _SCALAR),
+        "select_card_costs": np.zeros(G_MAX, _SCALAR),
+        "select_native_indices": np.zeros(G_MAX, _CAT),
+        "select_zone": np.zeros(1, _CAT),
+        "pending_card_slot": np.zeros(1, _CAT),
+        "pending_potion_slot": np.zeros(1, _CAT),
         "select_context": np.zeros(1, _CAT),
         "pick_remaining": np.zeros(1, _SCALAR),
         "can_pick_zero": np.zeros(1, _SCALAR),
@@ -474,8 +481,6 @@ def _empty(*, global_map_view=False, card_language=False,
         )
     if deck_size_observation:
         o["deck_size"] = np.zeros(1, _SCALAR)
-    if interactive_reasoning:
-        o["pending_card_slot"] = np.zeros(1, _CAT)
     return o
 
 
@@ -487,6 +492,13 @@ def _empty_combat(*, card_language=False, combat_language=False):
     post-enemy-turn boundary bit.
     """
     o = {
+        "select_card_ids": np.zeros(G_MAX, _CAT),
+        "select_card_upgrades": np.zeros(G_MAX, _SCALAR),
+        "select_card_costs": np.zeros(G_MAX, _SCALAR),
+        "select_native_indices": np.zeros(G_MAX, _CAT),
+        "select_zone": np.zeros(1, _CAT),
+        "pending_card_slot": np.zeros(1, _CAT),
+        "pending_potion_slot": np.zeros(1, _CAT),
         "arg_step": np.zeros(1, _CAT),
         "ascension": np.zeros(1, _SCALAR),
         "can_pick_any": np.zeros(1, _SCALAR),
@@ -589,6 +601,8 @@ def _encode_combat(o, canon):
         if i >= len(monsters):
             break
         m = monsters[i]
+        if m["id"] == "PAD":
+            continue
         present = 0.0 if m["gone"] else 1.0
         o["monster_id"][i] = _idx(V.MONSTER_VOCAB_INDEX, m["id"])
         o["monster_move"][i] = m.get("move_id", 0) or 0
@@ -799,10 +813,12 @@ def _encode_options(o, canon):
     elif phase == "card_select":
         cards = opts.get("cards", [])
         _require_capacity("options.cards", cards, G_MAX)
+        o["select_zone"][0] = 6
         for k, card in enumerate(cards):
             cid, up = _card_tuple(card)
             o["select_card_ids"][k] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
             o["select_card_upgrades"][k] = up / UPGRADE_SCALE
+            o["select_native_indices"][k] = k + 1
     elif phase == "map":
         for j, (x, room) in enumerate(opts.get("nodes", [])[:MAP_EDGES]):
             o["map_node_rooms"][j] = V.ROOM_VOCAB_INDEX.get(room, 0)
@@ -892,6 +908,7 @@ def encode(
     )
     if "pending_card_slot" in o:
         o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
+    o["pending_potion_slot"][0] = int(canon.get("pending_potion_slot", 0))
     _encode_combat(o, canon)
     _encode_global(o, canon)
     _encode_options(o, canon)
@@ -903,13 +920,15 @@ def encode_combat(canon, *, card_language=False, combat_language=False):
     """Encode only fields consumed by the split combat specialist.
 
     This compact representation is used only to transport neural-search
-    leaves.  The public Gym observation space and its version stay unchanged,
-    so existing policy checkpoints keep exactly the same parameter shapes.
+    leaves. Fields follow the same versioned public schema. Inference adapters
+    project onto a historical checkpoint's declared observation space.
     """
     o = _empty_combat(
         card_language=card_language,
         combat_language=combat_language,
     )
+    o["pending_card_slot"][0] = int(canon.get("pending_card_slot", 0))
+    o["pending_potion_slot"][0] = int(canon.get("pending_potion_slot", 0))
     _encode_combat(o, canon)
     _encode_combat_global(o, canon)
     _encode_select(o, (canon.get("options") or {}).get("select"))
@@ -923,6 +942,18 @@ def _encode_select(o, sel):
     presence, not by phase. Absent -> everything stays PAD/zero (NONE context)."""
     if not sel:
         return
+    zones = {"none": 0, "hand": 1, "draw": 2, "discard": 3,
+             "exhaust": 4, "generated": 5, "grid": 6}
+    o["select_zone"][0] = zones[sel.get("zone", "none")]
+    candidates = sel.get("candidates", ())
+    _require_capacity("options.select.candidates", candidates, G_MAX)
+    for index, candidate in enumerate(candidates):
+        o["select_native_indices"][index] = int(candidate["native_index"]) + 1
+        card = candidate["card"]
+        if card is not None:
+            o["select_card_ids"][index] = _card_idx(card)
+            o["select_card_upgrades"][index] = card.get("up", 0) / UPGRADE_SCALE
+            o["select_card_costs"][index] = card.get("cost", 0) / ENERGY_SCALE
     o["select_context"][0] = _idx(V.SELECT_CONTEXT_VOCAB_INDEX, sel.get("context", "PAD"))
     o["pick_remaining"][0] = sel.get("pick_remaining", 0) / PICK_SCALE
     o["can_pick_zero"][0] = 1.0 if sel.get("can_pick_zero") else 0.0

@@ -330,6 +330,25 @@ def test_combat_receives_all_held_relics():
     )
 
 
+def test_combat_candidates_affect_policy_and_value_without_using_native_handles():
+    torch.manual_seed(42)
+    space = _space()
+    model = _core(space)
+    obs = _fixture(space, "combat")
+    obs["select_native_indices"][0, :3] = torch.tensor([2, 7, 12])
+    obs["select_zone"][0, 0] = 2
+    with torch.no_grad():
+        baseline = model.combat_actor_critic(obs)
+        obs["select_native_indices"][0, :3] = torch.tensor([91, 3, 2])
+        remapped = model.combat_actor_critic(obs)
+        for original, mapped in zip(baseline, remapped):
+            torch.testing.assert_close(original, mapped, rtol=0, atol=0)
+        obs["select_card_ids"][0, 0] = CARD_INDEX["Demon Form"]
+        changed = model.combat_actor_critic(obs)
+    assert not torch.equal(baseline[0][:, A._PICK:A._PICK+3], changed[0][:, A._PICK:A._PICK+3])
+    assert not torch.equal(baseline[1], changed[1])
+
+
 def test_state_dict_round_trip():
     observation_space = _space()
     core = _core(observation_space)

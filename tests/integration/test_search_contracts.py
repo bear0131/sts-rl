@@ -105,7 +105,7 @@ def test_native_terminal_excludes_post_combat_healing(combat_factory):
 
 
 @pytest.mark.native
-@pytest.mark.parametrize("encounter", ["Jaw Worm", "Two Louse", "Gremlin Leader"])
+@pytest.mark.parametrize("encounter", ["Jaw Worm", "Two Louse", "Gremlin Leader", "Automaton", "Collector"])
 @pytest.mark.parametrize("batch_size", [1, 4])
 def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_size):
     env = combat_factory(["STRIKE_RED"] * 5, encounter, relics=("Akabeko",))
@@ -257,13 +257,13 @@ def test_native_search_supports_piles_larger_than_fixed_list_capacity(combat_fac
 
 @pytest.mark.native
 def test_packed_leaf_preserves_more_than_128_legal_actions(combat_factory):
-    env = combat_factory(["EXHUME"] * 5, "Jaw Worm", seed=19)
+    env = combat_factory(["PURITY"] * 5, "Jaw Worm", seed=19)
     env.thick.bc.apply_custom_state({
         "player": {"energy": 3},
-        "hand": ["EXHUME"],
+        "hand": ["PURITY"] + ["STRIKE_RED"] * 9,
         "draw": [],
         "discard": [],
-        "exhaust": ["STRIKE_RED"] * 129,
+        "exhaust": [],
     })
     root_logits = np.full(181, -100.0)
     root_logits[1] = 100.0
@@ -277,7 +277,7 @@ def test_packed_leaf_preserves_more_than_128_legal_actions(combat_factory):
     counts = np.asarray(packed["legal_action_counts"], dtype=np.uint32)
     matrix = np.asarray(packed["legal_action_bits"], dtype=np.uint32)
 
-    assert expected.size == 129
+    assert expected.size == 130  # choose up to three of nine, including empty
     assert counts.tolist() == [expected.size]
     assert matrix.shape == (1, expected.size)
     np.testing.assert_array_equal(matrix[0], expected)

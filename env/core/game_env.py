@@ -104,6 +104,8 @@ class SimGameEnv:
     def __init__(self, character=None, ascension=0, global_map_view=False,
                  interactive_reasoning=False,
                  nosl_is_az_boss_transition_target=False):
+        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 2:
+            raise RuntimeError("observation v17 requires native layout v2; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
@@ -262,6 +264,8 @@ class SimGameEnv:
         if self.is_over:
             return []
         if self.bc is not None:
+            if int(self.bc.input_state) == 2 and not self.select_descriptor()["multi"]:
+                return [ga.select(i) for i, _ in enumerate(self.select_descriptor()["candidates"])]
             # combat: reuse the verified 71-id mask, wrap each set id as COMBAT.
             mask = combat_env.legal_mask(self.bc)
             acts = [ga.combat(i) for i in np.flatnonzero(mask)]
@@ -510,6 +514,9 @@ class SimGameEnv:
         if verb == ga.COMBAT:
             kind = actions.decode(action[1])
             sts_action = combat_env.to_sts_action(kind, self.bc)
+        elif verb == ga.SELECT and self.bc is not None:
+            candidate = self.select_descriptor()["candidates"][int(action[1])]
+            sts_action = sts.Action(sts.ActionType.SINGLE_CARD_SELECT, candidate["native_index"])
         elif verb == ga.MULTI_SELECT:
             mask = 0
             for hand_index in action[1]:
@@ -589,7 +596,12 @@ class SimGameEnv:
                 raise _card_reward_state_error(gc, action)
             gc.skip_reward_cards(); return
         if verb == ga.SELECT:
-            gc.choose_select_card_option(action[1]); return
+            if self.bc is not None:
+                candidate = self.select_descriptor()["candidates"][int(action[1])]
+                self.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, candidate["native_index"]))
+            else:
+                gc.choose_select_card_option(action[1])
+            return
         if verb == ga.MULTI_SELECT:
             # combat-only: resolve an Exhaust Many / Gamble screen in one shot. The
             # sim reads the low 10 bits of the Action as a hand-index bitset
@@ -710,7 +722,7 @@ class _CombatBranchGameEnv(SimGameEnv):
     def step(self, action):
         if self.is_over:
             raise RuntimeError("combat branch is terminal")
-        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION, ga.SELECT):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         terminated = self.bc.is_battle_over
@@ -751,7 +763,7 @@ class _CombatBranchGameEnv(SimGameEnv):
         """
         if self.is_over:
             raise RuntimeError("combat branch is terminal")
-        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION, ga.SELECT):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         return bool(self.bc.is_battle_over)

@@ -110,6 +110,8 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
+    if layout.get("version") != 2:
+        raise RuntimeError("observation v17 requires native compact layout v2; rebuild the simulator")
 
     def _power_name(name):
         # Simulator enum names are intentionally normalized the same way as
@@ -518,8 +520,13 @@ class SlayTheSpireEnv(gym.Env):
         then ``legal_ids`` walks that list again.  This preserves the same
         autoregressive root/target semantics without those intermediate lists.
         """
-        native = self._combat_native_mask()
         mask = np.zeros(A.N_ACTIONS, dtype=bool)
+        if int(self.thick.bc.input_state) == 2:
+            desc = self.thick.select_descriptor()
+            if not desc["multi"]:
+                mask[A._PICK:A._PICK + len(desc["candidates"])] = True
+                return mask
+        native = self._combat_native_mask()
         for combat_id in np.flatnonzero(native):
             kind = actions.decode(int(combat_id))
             if kind[0] == actions.KIND_END:
@@ -534,6 +541,13 @@ class SlayTheSpireEnv(gym.Env):
 
     def _resolve_search_combat_action(self, aid):
         """Resolve a legal thin combat id without rebuilding semantic actions."""
+        if int(self.thick.bc.input_state) == 2 and self._pending is None:
+            desc = self.thick.select_descriptor()
+            if not desc["multi"]:
+                index = aid - A._PICK
+                if 0 <= index < len(desc["candidates"]):
+                    return ga.select(index)
+                raise ValueError(f"illegal combat selection: {aid}")
         native = self._combat_native_mask()
         if self._pending is not None:
             if self._pending[0] == "play":
@@ -1070,20 +1084,7 @@ class SlayTheSpireEnv(gym.Env):
                 int(state_nonce) & ((1 << 64) - 1),
             )
 
-        def native_to_thin(bits: int) -> int | None:
-            kind = (int(bits) >> 29) & 0xF
-            source = int(bits) & 0xFFFF
-            if kind == 0:  # CARD
-                return A._PLAY + source if 0 <= source < A.HAND_SLOTS else None
-            if kind == 1:  # POTION
-                return A._POTION + source if 0 <= source < A.P_MAX else None
-            if kind == 2:  # SINGLE_CARD_SELECT
-                return A._PICK + source if 0 <= source < A.G_MAX else None
-            if kind == 3:  # MULTI_CARD_SELECT: thin commits with CONFIRM
-                return A._CONFIRM
-            if kind == 4:  # END_TURN
-                return A.END_TURN
-            return None
+        native_to_thin = self._native_action_to_thin
 
         visit_policy = np.zeros(A.N_ACTIONS, dtype=np.float32)
         root_visit_counts = np.zeros(A.N_ACTIONS, dtype=np.int32)
@@ -1125,8 +1126,7 @@ class SlayTheSpireEnv(gym.Env):
             "native": True,
         }
 
-    @staticmethod
-    def _native_action_to_thin(bits: int) -> int | None:
+    def _native_action_to_thin(self, bits: int) -> int | None:
         """Map a complete simulator action to the whole-run root slot."""
         kind = (int(bits) >> 29) & 0xF
         source = int(bits) & 0xFFFF
@@ -1135,7 +1135,11 @@ class SlayTheSpireEnv(gym.Env):
         if kind == 1:  # POTION
             return A._POTION + source if 0 <= source < A.P_MAX else None
         if kind == 2:  # SINGLE_CARD_SELECT
-            return A._PICK + source if 0 <= source < A.G_MAX else None
+            desc = self.thick.select_descriptor()
+            for index, candidate in enumerate(desc["candidates"]):
+                if candidate["native_index"] == source:
+                    return A._PICK + index
+            return None
         if kind == 3:  # MULTI_CARD_SELECT
             return A._CONFIRM
         if kind == 4:  # END_TURN
@@ -1200,8 +1204,8 @@ class SlayTheSpireEnv(gym.Env):
         ps = int(layout["player_status_count"])
         ms = int(layout["monster_status_count"])
         card_count = int(layout["card_count"])
-        expected_cat = 10 + 5 + 5 + 5 + 5 + 1
-        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4
+        expected_cat = 10 + 5 + 5 + 5 + 5 + 1 + 193
+        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192
         if (categorical.shape[1] < expected_cat or
                 scalars.shape[1] < expected_scalar):
             return None
@@ -1247,6 +1251,10 @@ class SlayTheSpireEnv(gym.Env):
         out["monster_intent_cat"] = np.clip(c[:, 20:25], 0, len(encode.V.INTENT_CATEGORY) - 1)
         out["potions"] = np.take(potion_lut, np.clip(c[:, 25:30], 0, len(potion_lut) - 1))
         out["select_context"][:, 0] = np.clip(c[:, 30], 0, encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
+
+        out["select_card_ids"][:] = np.take(card_lut, c[:, 31:127])
+        out["select_native_indices"][:] = c[:, 127:223]
+        out["select_zone"][:, 0] = c[:, 223]
 
         f = scalars
         hp, max_hp = f[:, 0], f[:, 1]
@@ -1315,6 +1323,8 @@ class SlayTheSpireEnv(gym.Env):
         out["pick_remaining"][:, 0] = f[:, select_start] / encode.PICK_SCALE
         out["can_pick_zero"][:, 0] = f[:, select_start + 1]
         out["can_pick_any"][:, 0] = f[:, select_start + 2]
+        out["select_card_upgrades"][:] = f[:, select_start + 4:select_start + 100] / encode.UPGRADE_SCALE
+        out["select_card_costs"][:] = f[:, select_start + 100:select_start + 196] / encode.ENERGY_SCALE
         # C++ stores the multi-select marker; it is represented by the hand
         # mask only when the thin layer has a pending selection, so no extra
         # model field is needed here.
@@ -2018,12 +2028,12 @@ class SlayTheSpireEnv(gym.Env):
         self._multi_desc()
         canon = self.thick.obs_canonical()
         canon["arg_step"] = self._arg_step()
-        if self._interactive_reasoning:
-            canon["pending_card_slot"] = (
-                int(self._pending[1]) + 1
-                if self._pending is not None and self._pending[0] == "play"
-                else 0
-            )
+        canon["pending_card_slot"] = (
+            int(self._pending[1]) + 1
+            if self._pending is not None and self._pending[0] == "play" else 0)
+        canon["pending_potion_slot"] = (
+            int(self._pending[1]) + 1
+            if self._pending is not None and self._pending[0] == "potion" else 0)
         if self._multi is not None:
             sel = canon.setdefault("options", {}).setdefault("select", {})
             sel = dict(sel)                                   # don't mutate backend's
