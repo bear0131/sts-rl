@@ -183,16 +183,20 @@ class EntityCombatNetwork(nn.Module):
 
     def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None):
         state, blocks = self.encode(obs, active_relic_width)
-        source = state.new_zeros((state.shape[0], C.JOINT_END))
-        source[:, A.END_TURN] = self.end(state).flatten()
-        for start, role in ((A._PLAY,'hand'),(A._POTION,'potion'),(A._PICK,'select')):
-            source[:,start:start+blocks[role].shape[1]] = self._pointer(state,blocks[role])
+        if self.autoregressive_actions:
+            source = torch.cat((self.end(state), *(self._pointer(state, blocks[role])
+                for role in ('hand', 'potion', 'select'))), -1)
+        else:
+            source = state.new_zeros((state.shape[0], C.JOINT_END))
+            source[:, A.END_TURN] = self.end(state).flatten()
+            for start, role in ((A._PLAY,'hand'),(A._POTION,'potion'),(A._PICK,'select')):
+                source[:,start:start+blocks[role].shape[1]] = self._pointer(state,blocks[role])
         logits = self.complete_head(source,state,torch.cat((blocks['hand'],blocks['potion']),1),
             blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets,
             selected=obs['select_hand_mask'], remaining=(obs['pick_remaining']*encode.PICK_SCALE).round())
         values, outputs = self.distribution(state)
         if auxiliary_actions is not None:
-            actions = auxiliary_actions.long()
+            actions = auxiliary_actions.long() + (C.JOINT_END if self.autoregressive_actions else 0)
             row = torch.arange(len(actions),device=actions.device)
             card = (actions >= C.JOINT_PLAY) & (actions < C.JOINT_POTION)
             potion = (actions >= C.JOINT_POTION) & (actions < C.JOINT_PICK)
@@ -206,7 +210,7 @@ class EntityCombatNetwork(nn.Module):
             entity = entity + blocks['select'][row,(actions-C.JOINT_PICK).clamp(0,95)]*pick[:,None]
             if self.autoregressive_actions:
                 selected = F.one_hot((actions-C.JOINT_MULTI).clamp(0,10), 11)[:, :10].to(state.dtype)
-                selected = torch.where((actions==C.AUTOREGRESSIVE_STOP)[:,None],
+                selected = torch.where((actions==C.AUTOREGRESSIVE_STOP+C.JOINT_END)[:,None],
                     obs['select_hand_mask'].to(state.dtype), selected)
             else:
                 bits = (actions-C.JOINT_MULTI).clamp_min(0)
@@ -263,6 +267,13 @@ class EntityCombatCore(nn.Module):
         return self.actor_critic(obs)[0]
 
     def value(self, obs):
+        if self.autoregressive_actions:
+            indices = (obs['phase'].flatten() == V.PHASE_VOCAB_INDEX['combat']).nonzero().flatten()
+            result = obs['player_scalars'].new_zeros((len(obs['phase']), 1), dtype=torch.float32)
+            if indices.numel():
+                _, values = self.combat_actor_critic({k: v[indices] for k, v in obs.items()})
+                result[indices] = values.float()
+            return result
         return self.actor_critic(obs)[1]
 
 
@@ -272,6 +283,8 @@ class EntityCombatPolicy(SplitStSPointerPolicy):
         super().__init__(*args,**kwargs)
 
     def _build(self,lr_schedule):
+        if self.action_space.n != C.policy_size(C.policy_contract(self.observation_space)):
+            raise ValueError('unsupported intermediate entity action layout; use a fresh current model')
         self.core = EntityCombatCore(self.observation_space,EntityCombatConfig(**self.entity_config))
         self.optimizer = self.optimizer_class(self.parameters(),lr=lr_schedule(1),**self.optimizer_kwargs)
 

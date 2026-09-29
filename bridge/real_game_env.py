@@ -519,7 +519,7 @@ class RealGameAdapter:
             event_option_observation=self.event_option_observation,
         )
         if self.combat_action_contract in C.NEURAL_CONTRACTS:
-            obs["combat_legal"] = self.action_mask()[C.JOINT_END:]
+            obs["combat_legal"] = self.action_mask()[C.policy_offset(self.combat_action_contract):]
         return obs
 
     def obs_canonical(self, pending: tuple | None = None) -> dict[str, Any]:
@@ -566,7 +566,7 @@ class RealGameAdapter:
                 result = {}
                 if len(self.multi_selected) < maximum:
                     first = max(self.multi_selected, default=-1) + 1
-                    result.update({C.JOINT_MULTI + i: ("select_next", i)
+                    result.update({C.AUTOREGRESSIVE_MULTI + i: ("select_next", i)
                                    for i in range(first, count)})
                 if len(self.multi_selected) >= int(desc.get("pick_min", 0)):
                     result[C.AUTOREGRESSIVE_STOP] = (ga.MULTI_SELECT, tuple(sorted(self.multi_selected)))
@@ -585,6 +585,8 @@ class RealGameAdapter:
                 aid = C.JOINT_PICK + semantic[1]
             else:
                 raise ValueError("unsupported joint combat semantic: " + str(semantic))
+            if self.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT:
+                aid -= C.JOINT_END
             result[aid] = semantic
         return result
 

@@ -54,8 +54,8 @@ def _forced_end_batch(strategy, requests, check):
         mask = request.env.action_masks()
         if request.info.get('phase') == 'combat' and len(mask) != C.policy_size(strategy.combat_action_contract):
             raise ValueError('joint-v2 combat policy requires a joint-v2 environment')
-        if request.info.get('phase') == 'combat' and mask[C.JOINT_END] and np.count_nonzero(mask) == 1:
-            forced[index] = Decision(C.JOINT_END, 'forced_end_turn',
+        if request.info.get('phase') == 'combat' and mask[C.policy_offset(strategy.combat_action_contract)] and np.count_nonzero(mask) == 1:
+            forced[index] = Decision(C.policy_offset(strategy.combat_action_contract), 'forced_end_turn',
                                     {'root_forward_skipped':1, 'search_simulations':0})
     if not forced:
         return None
@@ -118,9 +118,9 @@ class PolicyStrategy:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('joint-v2 combat policy requires combat_legal observations')
             # A legacy combat solver may share the unchanged overworld policy.
-            observations['combat_legal'] = np.zeros((len(requests), (C.policy_size(self.combat_action_contract)-C.JOINT_END)), dtype=bool)
+            observations['combat_legal'] = np.zeros((len(requests), (C.policy_size(self.combat_action_contract)-C.policy_offset(self.combat_action_contract))), dtype=bool)
         if self.combat_action_contract in C.NEURAL_CONTRACTS and masks.shape[1] == C.JOINT_END:
-            masks = np.pad(masks, ((0, 0), (0, (C.policy_size(self.combat_action_contract)-C.JOINT_END))))
+            masks = np.pad(masks, ((0, 0), (0, C.policy_size(self.combat_action_contract)-C.JOINT_END)))
         if self.combat_action_contract == 'legacy' and masks.shape[1] > self.model.action_space.n:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('legacy policy cannot consume a joint-v2 combat environment')

@@ -926,7 +926,7 @@ def main() -> None:
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
         if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch != 'entity-combat':
-            raise ValueError('autoregressive-v1 requires entity-combat')
+            raise ValueError('autoregressive-v2 requires entity-combat')
         if args.combat_action_contract in C.NEURAL_CONTRACTS:
             if args.arch not in ("split-pointer", "entity-combat") or getattr(args, "combat_arch", "transformer") != "transformer":
                 raise ValueError("joint-v2 requires split-pointer Transformer or entity-combat")

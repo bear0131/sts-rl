@@ -88,7 +88,7 @@ constexpr int kJointPick = 272;
 constexpr int kJointMulti = 368;
 constexpr int kJointSize = 1392;
 constexpr int kAutoregressiveStop = kJointMulti + 10;
-constexpr int kAutoregressiveSize = kAutoregressiveStop + 1;
+constexpr int kAutoregressiveSize = kAutoregressiveStop + 1 - kJointEnd;
 // Policy-only steps. They must never be passed to Action::execute directly.
 constexpr ActionType kSelectNext = static_cast<ActionType>(5);
 constexpr ActionType kSelectStop = static_cast<ActionType>(6);
@@ -102,7 +102,11 @@ inline bool isMultiSelection(const BattleContext &bc) {
 inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int selected) {
     if (!isMultiSelection(bc)) {
         if (selected != 0) throw std::invalid_argument("selection prefix outside multi screen");
-        return Action::enumerateCombatActions(bc);
+        auto actions = Action::enumerateCombatActions(bc);
+        actions.erase(std::remove_if(actions.begin(), actions.end(), [](const Action &action) {
+            return action.getActionType() == ActionType::POTION && action.getTargetIdx() == -1;
+        }), actions.end());
+        return actions;
     }
     if (selected < 0 || selected >= (1 << bc.cards.cardsInHand))
         throw std::invalid_argument("invalid selection prefix");

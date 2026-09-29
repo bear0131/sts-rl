@@ -245,7 +245,8 @@ class SlayTheSpireEnv(gym.Env):
         self._joint_actions = combat_action_contract in C.NEURAL_CONTRACTS
         self._autoregressive_actions = combat_action_contract == C.AUTOREGRESSIVE_CONTRACT
         self._neural_size = C.policy_size(combat_action_contract) if self._joint_actions else A.N_ACTIONS
-        self._neural_width = self._neural_size - A.N_ACTIONS
+        self._policy_offset = C.policy_offset(combat_action_contract)
+        self._neural_width = self._neural_size - self._policy_offset
         if self._joint_actions and nosl_is_az_boss_transition_target:
             raise ValueError('joint-v2 requires combat-end-hp-v1')
         if self._joint_actions and _nosl_compact_layout().get('autoregressive_policy_size' if self._autoregressive_actions else 'joint_policy_size') != self._neural_size:
@@ -1261,7 +1262,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _with_joint_legal(self, obs, policy_ids):
         if self._joint_actions:
-            obs['combat_legal'] = C.joint_mask(policy_ids, contract=self.combat_action_contract)[C.JOINT_END:]
+            obs['combat_legal'] = C.joint_mask(policy_ids, contract=self.combat_action_contract)[self._policy_offset:]
         return obs
 
     def _leaf_policy_mask(self, policy_ids):
@@ -1426,8 +1427,8 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions:
             ids = np.asarray(response['legal_policy_ids'], dtype=np.int64)
             out['combat_legal'] = np.zeros((n, self._neural_width), dtype=bool)
-            rows, columns = np.nonzero(ids >= C.JOINT_END)
-            out['combat_legal'][rows, ids[rows, columns] - C.JOINT_END] = True
+            rows, columns = np.nonzero(ids >= self._policy_offset)
+            out['combat_legal'][rows, ids[rows, columns] - self._policy_offset] = True
         return out
 
     def _adapt_native_neural_result(
@@ -1621,7 +1622,7 @@ class SlayTheSpireEnv(gym.Env):
             )
         except TypeError as error:
             if self._autoregressive_actions:
-                raise RuntimeError('autoregressive-v1 requires the matching native search build') from error
+                raise RuntimeError('autoregressive-v2 requires the matching native search build') from error
             if "incompatible function arguments" not in str(error):
                 raise
             if bool(boss_transition_target):
@@ -2116,7 +2117,7 @@ class SlayTheSpireEnv(gym.Env):
         )
 
         if self._joint_actions:
-            obs['combat_legal'] = self.action_masks()[C.JOINT_END:]
+            obs['combat_legal'] = self.action_masks()[self._policy_offset:]
         return obs
 
     def action_masks(self):
@@ -2182,12 +2183,12 @@ class SlayTheSpireEnv(gym.Env):
         phase = self._phase()
 
         if self._joint_actions and phase == "combat":
-            if self._autoregressive_actions and C.JOINT_MULTI <= aid <= C.AUTOREGRESSIVE_STOP:
+            if self._autoregressive_actions and C.AUTOREGRESSIVE_MULTI <= aid <= C.AUTOREGRESSIVE_STOP:
                 if aid == C.AUTOREGRESSIVE_STOP:
                     return f"confirm multi-select {sorted(self._multi or ())}"
-                slot = aid - C.JOINT_MULTI
+                slot = aid - C.AUTOREGRESSIVE_MULTI
                 return f"select next {_card_label(self._combat_canon(), slot)} (hand #{slot})"
-            return self.thick.describe_action(C.joint_semantic_action(aid))
+            return self.thick.describe_action(C.joint_semantic_action(aid + (C.JOINT_END if self._autoregressive_actions else 0)))
 
         # combat MULTI screen: CONFIRM commits; PICK_CARD adds an unselected card.
         if self._multi is not None:

@@ -995,6 +995,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("NOSL upper rules require inner-only NOSL training")
         overworld_rule_decisions = overworld_fallback_decisions = 0
         forced_end_turn_roots = 0
+        end_action = C.policy_offset(self.combat_action_contract)
 
         def call_workers(method_name, calls):
             if not calls:
@@ -1033,12 +1034,16 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if (self.nosl_is_az_inner_only and getattr(core, "joint_actions", False)
                         and action_masks is not None):
                     phase_now = np.asarray(self._last_obs["phase"]).reshape(env.num_envs, -1)[:, 0]
-                    forced = ((phase_now == combat_phase) & action_masks[:, C.JOINT_END]
+                    forced = ((phase_now == combat_phase) & action_masks[:, end_action]
                               & (action_masks.sum(axis=1) == 1))
                     if startup_paused:
                         forced[list(startup_paused)] = False
-                active = np.flatnonzero(~forced)
-                if forced.any():
+                eligible = ~forced
+                if getattr(core, 'combat_only', False):
+                    phase_now = np.asarray(self._last_obs['phase']).reshape(env.num_envs, -1)[:, 0]
+                    eligible = eligible & (phase_now == combat_phase)
+                active = np.flatnonzero(eligible)
+                if len(active) < env.num_envs:
                     # These buffer values are unused by inner-only training.
                     # Diagnostics below explicitly mark the missing predictions.
                     logits = th.zeros((env.num_envs, self.action_space.n), device=self.device)
@@ -1347,7 +1352,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 result_by_index[index] = response["result"]
 
             for index in np.flatnonzero(forced):
-                result_by_index[int(index)] = dict(action=C.JOINT_END,
+                result_by_index[int(index)] = dict(action=end_action,
                     visit_policy=action_masks[index].astype(np.float32), root_value=np.nan)
             for env_index in range(env.num_envs):
                 if (

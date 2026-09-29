@@ -23,7 +23,7 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         '@configs/train/entity_combat_runtime.args',
     ])
     assert initial.arch == 'entity-combat'
-    assert initial.combat_action_contract == 'autoregressive-v1'
+    assert initial.combat_action_contract == 'autoregressive-v2'
     assert (initial.d_model, initial.n_layers, initial.n_heads) == (256, 4, 8)
     assert initial.init_from is None and initial.resume is None
     assert runtime.resume_state is None and runtime.fork_state is None

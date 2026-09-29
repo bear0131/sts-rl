@@ -220,8 +220,8 @@ class RealPolicyAgent:
                 return RealDecision(fallback, "fallback_no_legal")
 
             if (self.adapter.combat_action_contract in C.NEURAL_CONTRACTS
-                    and legal_ids == (C.JOINT_END,)):
-                return RealDecision("END", "forced_end_turn", action_id=C.JOINT_END, legal_ids=legal_ids)
+                    and legal_ids == (C.policy_offset(self.adapter.combat_action_contract),)):
+                return RealDecision("END", "forced_end_turn", action_id=C.policy_offset(self.adapter.combat_action_contract), legal_ids=legal_ids)
             action_id, top = self._predict(obs, mask, pending=pending)
             if self.adapter.combat_action_contract in C.NEURAL_CONTRACTS and self.adapter.phase() == "combat":
                 command = self.adapter.command_for_joint_action(action_id)

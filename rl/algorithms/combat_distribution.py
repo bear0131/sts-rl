@@ -47,9 +47,10 @@ def validate_targets(targets, values, *, action_dim=1392):
         raise ValueError('combat outcome and auxiliary masks must be explicit binary labels')
     if np.any((win == 0) & (np.asarray(values) != 0)):
         raise ValueError('a combat loss must have zero utility')
-    from env.core.native_actions import JOINT_END
+    from env.core.native_actions import JOINT_END, AUTOREGRESSIVE_SIZE
+    minimum = 0 if action_dim == AUTOREGRESSIVE_SIZE else JOINT_END
     active = action[auxiliary > 0]
-    if np.any((active < JOINT_END) | (active >= action_dim) | (active != np.floor(active))):
+    if np.any((active < minimum) | (active >= action_dim) | (active != np.floor(active))):
         raise ValueError('auxiliary action is not a complete combat action')
 
 

@@ -27,7 +27,7 @@ def explicit_fp32_precision():
 def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity):
     import slaythespire as sts
     from rl.policies.entity_combat import EntityCombatPolicy
-    env = combat_factory(['PURITY'] * 5, combat_action_contract='autoregressive-v1' if entity == 'autoregressive' else 'joint-v2',card_language=entity)
+    env = combat_factory(['PURITY'] * 5, combat_action_contract='autoregressive-v2' if entity == 'autoregressive' else 'joint-v2',card_language=entity)
     kwargs = dict(entity_config=dict(width=32,layers=1,heads=4)) if entity else dict(d_model=32,n_layers=2,n_heads=4)
     model = AccumulatingMaskablePPO(EntityCombatPolicy if entity else SplitStSPointerPolicy, env, device='cuda', seed=42,
         n_steps=8, batch_size=4, policy_kwargs=kwargs,
@@ -59,7 +59,7 @@ def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity)
     assert cache.subset_eager_rows == (0 if entity == 'autoregressive' else 4)
     if entity == 'autoregressive':
         from env.core import native_actions as C
-        env.step(C.JOINT_MULTI + 1)
+        env.step(C.AUTOREGRESSIVE_MULTI + 1)
         selected = env._obs()
         batch = {k: np.stack([selected[k]] * 4) for k in batch}
         model._native_leaf_inference = None
@@ -89,7 +89,7 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
-@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2'), ('entity','autoregressive-v1')])
+@pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2'), ('entity','autoregressive-v2')])
 def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract, monkeypatch):
     from rl.policies.entity_combat import EntityCombatPolicy
     entity=combat_arch=='entity'

@@ -21,10 +21,15 @@ JOINT_PICK = JOINT_POTION + 5 * 6
 JOINT_MULTI = JOINT_PICK + A.G_MAX
 JOINT_SIZE = JOINT_MULTI + (1 << A.HAND_SLOTS)
 JOINT_WIDTH = JOINT_SIZE - JOINT_END
-AUTOREGRESSIVE_CONTRACT = 'autoregressive-v1'
-AUTOREGRESSIVE_STOP = JOINT_MULTI + A.HAND_SLOTS
+AUTOREGRESSIVE_CONTRACT = 'autoregressive-v2'
+AUTOREGRESSIVE_END = 0
+AUTOREGRESSIVE_PLAY = 1
+AUTOREGRESSIVE_POTION = 61
+AUTOREGRESSIVE_PICK = 91
+AUTOREGRESSIVE_MULTI = 187
+AUTOREGRESSIVE_STOP = AUTOREGRESSIVE_MULTI + A.HAND_SLOTS
 AUTOREGRESSIVE_SIZE = AUTOREGRESSIVE_STOP + 1
-AUTOREGRESSIVE_WIDTH = AUTOREGRESSIVE_SIZE - JOINT_END
+AUTOREGRESSIVE_WIDTH = AUTOREGRESSIVE_SIZE
 NEURAL_CONTRACTS = (JOINT_CONTRACT, AUTOREGRESSIVE_CONTRACT)
 
 
@@ -41,6 +46,10 @@ def policy_contract(space):
     raise ValueError(f'unknown combat policy width: {width}')
 
 
+def policy_offset(contract):
+    return 0 if contract == AUTOREGRESSIVE_CONTRACT else JOINT_END
+
+
 def policy_size(contract):
     if contract == AUTOREGRESSIVE_CONTRACT:
         return AUTOREGRESSIVE_SIZE
@@ -54,22 +63,22 @@ def policy_size(contract):
 def autoregressive_action_id(bits, **kwargs):
     kind, source = int(bits) >> 29, int(bits) & 0xffff
     if kind == 5 and 0 <= source < A.HAND_SLOTS:
-        return JOINT_MULTI + source
+        return AUTOREGRESSIVE_MULTI + source
     if kind == 6 and source == 0:
         return AUTOREGRESSIVE_STOP
     if kind == 3:
         raise ValueError('complete subsets are not autoregressive policy actions')
-    return joint_action_id(bits, **kwargs)
+    return joint_action_id(bits, **kwargs) - JOINT_END
 
 
 def autoregressive_native_bits(action_id, **kwargs):
-    if JOINT_MULTI <= action_id < AUTOREGRESSIVE_STOP:
-        return 5 << 29 | (action_id-JOINT_MULTI)
+    if AUTOREGRESSIVE_MULTI <= action_id < AUTOREGRESSIVE_STOP:
+        return 5 << 29 | (action_id-AUTOREGRESSIVE_MULTI)
     if action_id == AUTOREGRESSIVE_STOP:
         return 6 << 29
-    if action_id >= JOINT_MULTI:
+    if action_id >= AUTOREGRESSIVE_MULTI or action_id < 0:
         raise ValueError('invalid autoregressive action')
-    return joint_native_bits(action_id, **kwargs)
+    return joint_native_bits(action_id + JOINT_END, **kwargs)
 
 
 def joint_action_id(bits, *, targeted=False, candidate_indices=()):
@@ -118,7 +127,7 @@ def joint_mask(policy_ids, *, contract=JOINT_CONTRACT):
     size = policy_size(contract)
     mask = np.zeros(size, dtype=bool)
     ids = np.asarray(policy_ids, dtype=np.int64)
-    if np.any((ids < JOINT_END) | (ids >= size)):
+    if np.any((ids < policy_offset(contract)) | (ids >= size)):
         raise ValueError('invalid complete combat policy ID')
     mask[ids] = True
     return mask

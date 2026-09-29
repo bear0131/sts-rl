@@ -2452,7 +2452,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 if (request.autoregressivePolicy) {
                     std::vector<int> ids;
                     for (const auto &action : request.legalActions)
-                        ids.push_back(sts::search::jointActionId(action, *request.state));
+                        ids.push_back(sts::search::jointActionId(action, *request.state) - sts::search::kJointEnd);
                     state["joint_action_ids"] = ids;
                     state["selection_prefix"] = request.selectionPrefix;
                 }
@@ -2524,7 +2524,8 @@ PYBIND11_MODULE(slaythespire, m) {
                     legal(row, static_cast<pybind11::ssize_t>(col)) =
                         request.legalActions[col].bits;
                     policy_ids(row, static_cast<pybind11::ssize_t>(col)) =
-                        sts::search::jointActionId(request.legalActions[col], *request.state);
+                        sts::search::jointActionId(request.legalActions[col], *request.state)
+                            - (request.autoregressivePolicy ? sts::search::kJointEnd : 0);
                 }
                 needs_policy.append(request.needsPolicy);
                 selection_prefix.append(request.selectionPrefix);
@@ -2914,7 +2915,7 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("autoregressive_policy_actions", [](const BattleContext &bc, int selected) {
             pybind11::list out;
             for (const auto &action : sts::search::autoregressiveActions(bc, selected)) {
-                const int id = sts::search::jointActionId(action, bc);
+                const int id = sts::search::jointActionId(action, bc) - sts::search::kJointEnd;
                 if (id >= 0) out.append(pybind11::make_tuple(id, action.bits));
             }
             return out;

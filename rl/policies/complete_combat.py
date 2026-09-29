@@ -13,7 +13,7 @@ def conditional_log_probs(logits, legal):
     return scores - scores.logsumexp(dim=-1, keepdim=True)
 
 
-def complete_logits(source_logits, target_logits, subset_logits, legal):
+def complete_logits(source_logits, target_logits, subset_logits, legal, *, compact=False):
     """Joint CE equals source CE plus pi(source)-weighted conditional CE.
 
     Single choices and complete multi subsets are directly scored. The leading
@@ -22,9 +22,13 @@ def complete_logits(source_logits, target_logits, subset_logits, legal):
     batch = source_logits.shape[0]
     valid_targets = legal[:, 1:91].reshape(batch, 15, 6)
     conditional = conditional_log_probs(target_logits, valid_targets)
-    sources = torch.cat((source_logits[:, A._PLAY:A._PLAY + 10],
-                         source_logits[:, A._POTION:A._POTION + 5]), dim=1)
+    sources = (source_logits[:, 1:16] if compact else
+               torch.cat((source_logits[:, A._PLAY:A._PLAY + 10],
+                          source_logits[:, A._POTION:A._POTION + 5]), dim=1))
     targeted = (sources.float().unsqueeze(-1) + conditional).reshape(batch, 90)
+    if compact:
+        return torch.cat((source_logits[:, :1].float(), targeted,
+                          source_logits[:, 16:].float(), subset_logits.float()), dim=1)
     return torch.cat((source_logits.float(), source_logits[:, :1].float(), targeted,
                       source_logits[:, A._PICK:A._PICK + A.G_MAX].float(),
                       subset_logits.float()), dim=1)
@@ -59,7 +63,7 @@ class CompleteCombatHead(nn.Module):
         if target_logits is None:
             target_logits = self.targets(global_token, sources, monsters)
         return complete_logits(source_logits, target_logits,
-                               subsets, legal)
+                               subsets, legal, compact=self.autoregressive)
 
 
 class AutoregressiveSubsetHead(nn.Module):

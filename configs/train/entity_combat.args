@@ -9,7 +9,7 @@ entity-combat
 --hp-quantiles
 32
 --combat-action-contract
-autoregressive-v1
+autoregressive-v2
 --card-language
 --nosl-is-az
 --nosl-is-az-cpp

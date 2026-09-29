@@ -16,7 +16,7 @@ def test_single_rank_ring_matches_local_replay_optimizer(tmp_path, short_combat_
     if entity:
         from gymnasium.wrappers import TimeLimit
         from rl.policies.entity_combat import EntityCombatPolicy
-        env = TimeLimit(short_combat_env_type(combat_action_contract='autoregressive-v1' if entity == 'autoregressive' else 'joint-v2',card_language=True),12)
+        env = TimeLimit(short_combat_env_type(combat_action_contract='autoregressive-v2' if entity == 'autoregressive' else 'joint-v2',card_language=True),12)
         model = AccumulatingMaskablePPO(EntityCombatPolicy,env,device='cpu',seed=42,
             n_steps=16,batch_size=8,nosl_is_az=True,nosl_is_az_cpp=True,nosl_is_az_inner_only=True,
             nosl_is_az_upper_strategy='rules',nosl_is_az_simulations=4,nosl_is_az_depth=0,

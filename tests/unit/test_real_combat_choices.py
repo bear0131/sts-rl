@@ -94,9 +94,9 @@ def test_autoregressive_bridge_keeps_prefix_internal_until_stop():
     adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
     frame = joint_frame(hand, multi=True)
     adapter.update(frame)
-    assert adapter.action_mask().shape == (379,)
-    assert adapter.command_for_joint_action(C.JOINT_MULTI) is None
-    assert adapter.command_for_joint_action(C.JOINT_MULTI + 2) is None
+    assert adapter.action_mask().shape == (198,)
+    assert adapter.command_for_joint_action(C.AUTOREGRESSIVE_MULTI) is None
+    assert adapter.command_for_joint_action(C.AUTOREGRESSIVE_MULTI + 2) is None
     assert adapter.frame == frame
     assert adapter.obs_canonical()['options']['select']['hand_selected'] == [0, 2]
     assert np.flatnonzero(adapter.action_mask()).tolist() == [C.AUTOREGRESSIVE_STOP]

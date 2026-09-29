@@ -293,7 +293,7 @@ class NOSLISAZReplayBuffer:
                 raise ValueError('joint policy has probability on an illegal action')
             if 'combat_legal' in observations and not np.array_equal(
                     observations['combat_legal'][policy_weights > 0],
-                    action_masks[policy_weights > 0, C.JOINT_END:]):
+                    action_masks[policy_weights > 0, C.policy_offset(self.policy_contract):]):
                 raise ValueError('joint replay observation and action masks disagree')
         if policy_weights.shape != (count,) or not np.all(
             np.isfinite(policy_weights) & (policy_weights >= 0.0)
@@ -458,7 +458,7 @@ class NOSLISAZReplayBuffer:
                 probs[dest, ids] = values
             batch.update(action_masks=masks, policy_targets=probs)
             if 'combat_legal' in self.observation_keys:
-                batch['observations']['combat_legal'] = masks[:, C.JOINT_END:]
+                batch['observations']['combat_legal'] = masks[:, C.policy_offset(self.policy_contract):]
         return batch
 
     def estimated_capacity_bytes(self) -> int:

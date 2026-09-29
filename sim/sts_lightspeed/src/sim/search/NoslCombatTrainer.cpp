@@ -1363,7 +1363,7 @@ void NoslNeuralSearchSession::expandWithLogits(
         node.edges.clear();
         double maximum = -std::numeric_limits<double>::infinity();
         for (const auto &action : actions) {
-            const int id = jointActionId(action, state);
+            const int id = jointActionId(action, state) - (config_.autoregressivePolicy ? kJointEnd : 0);
             if (id >= 0 && std::isfinite(logits[id]))
                 maximum = std::max(maximum, logits[id] / config_.priorTemperature);
         }
@@ -1371,7 +1371,7 @@ void NoslNeuralSearchSession::expandWithLogits(
             throw std::invalid_argument("joint-v2 legal action logits must be finite");
         double total = 0;
         for (const auto &action : actions) {
-            const int id = jointActionId(action, state);
+            const int id = jointActionId(action, state) - (config_.autoregressivePolicy ? kJointEnd : 0);
             if (id < 0) continue; // potion discard is outside the drink contract
             const double weight = std::isfinite(logits[id]) ?
                 std::exp(std::clamp(logits[id] / config_.priorTemperature - maximum, -80.0, 0.0)) : 0.0;
