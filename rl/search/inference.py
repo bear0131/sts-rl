@@ -52,6 +52,13 @@ class CombatLeafGraphs:
         try:
             if self.core.training:
                 raise RuntimeError('leaf graphs require eval mode')
+            prepare = getattr(self.core, 'prepare_inference_cache', None)
+            if prepare is not None:
+                # A replay skips Python forward, so refresh weight-dependent
+                # constants before replay as well as before the first capture.
+                with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+                        enabled=self.amp == 'bf16', cache_enabled=False):
+                    prepare()
             if getattr(self.core, 'joint_actions', False):
                 from env.core import native_actions as C
                 multi = np.asarray(observations['combat_legal'])[:, C.JOINT_MULTI-C.JOINT_END:].any(axis=1)

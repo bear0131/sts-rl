@@ -15,6 +15,67 @@ def make_model(env):
         policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4,quantiles=8)))
 
 
+@pytest.mark.parametrize('amp', [False, True])
+def test_card_cache_reuses_constants_but_preserves_training_and_reload(combat_factory, tmp_path, amp, monkeypatch):
+    env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],
+        combat_action_contract=C.JOINT_CONTRACT,card_language=True)
+    model=make_model(env);model.policy.set_training_mode(False)
+    network=model.policy.core.combat
+    obs={k:torch.as_tensor(v[None]) for k,v in env._obs().items()}
+    calls=[]
+    hook=network.card.local_encoder.register_forward_hook(lambda *args:calls.append(1))
+    try:
+        with torch.no_grad(), torch.autocast('cpu',dtype=torch.bfloat16,enabled=amp,cache_enabled=False):
+            for _ in range(3):
+                cached=network(obs)
+            assert len(calls)==1
+            entry=next(iter(network._card_inference_tables.values()))[1]
+            pointer=entry.data_ptr()
+            with monkeypatch.context() as patch:
+                patch.setattr(network, 'inference_card_table', network._encode_card_table)
+                reference=network(obs)
+            assert torch.equal(cached[0],reference[0])
+            assert torch.equal(cached[1],reference[1])
+        network.train()
+        model.policy.optimizer.zero_grad()
+        _,value,_=network(obs)
+        value.sum().backward()
+        assert network.card.local_encoder.weight.grad.abs().sum()>0
+        model.policy.optimizer.step()
+        network.eval()
+        with torch.inference_mode(), torch.autocast('cpu',dtype=torch.bfloat16,enabled=amp,cache_enabled=False):
+            after=network(obs)
+            assert next(iter(network._card_inference_tables.values()))[1].data_ptr()==pointer
+            assert not torch.equal(after[1],cached[1])
+            with monkeypatch.context() as patch:
+                patch.setattr(network, 'inference_card_table', network._encode_card_table)
+                expected=network(obs)
+            assert torch.equal(after[0],expected[0])
+            assert torch.equal(after[1],expected[1])
+            state={k:v.clone() for k,v in network.state_dict().items()}
+            state['card.local_encoder.bias'].add_(.25)
+            network.load_state_dict(state)
+            after=network(obs)
+            with monkeypatch.context() as patch:
+                patch.setattr(network, 'inference_card_table', network._encode_card_table)
+                expected=network(obs)
+            assert torch.equal(after[0],expected[0])
+        with torch.no_grad(), torch.autocast('cpu',dtype=torch.bfloat16,enabled=not amp,cache_enabled=False):
+            switched=network(obs)
+            with monkeypatch.context() as patch:
+                patch.setattr(network, 'inference_card_table', network._encode_card_table)
+                expected=network(obs)
+            assert torch.equal(switched[0],expected[0])
+            assert torch.equal(switched[1],expected[1])
+        assert len(network._card_inference_tables)==2
+        assert not any('inference_table' in k for k in network.state_dict())
+        path=tmp_path/'cache.zip';model.save(path)
+        restored=MaskablePPO.load(path,device='cpu')
+        assert not restored.policy.core.combat._card_inference_tables
+    finally:
+        hook.remove()
+
+
 def test_entity_model_predicts_searches_and_reloads_without_overworld(combat_factory,tmp_path):
     env=combat_factory(['STRIKE_RED']*5,'Two Louse',combat_action_contract=C.JOINT_CONTRACT,card_language=True)
     model=make_model(env)

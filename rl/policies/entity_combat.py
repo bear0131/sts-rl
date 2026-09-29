@@ -77,6 +77,33 @@ class EntityCombatNetwork(nn.Module):
         self.complete_head = CompleteCombatHead(width)
         self.distribution = CombatDistributionHead(width, config.quantiles)
         self.transition = nn.Sequential(nn.Linear(3*width, width), nn.GELU(), nn.Linear(width, 6))
+        # Runtime only: each precision owns stable storage referenced by CUDA
+        # graphs. Weight refreshes copy into it instead of replacing its address.
+        self._card_inference_tables = {}
+
+    def _apply(self, fn, recurse=True):
+        self._card_inference_tables.clear()
+        return super()._apply(fn, recurse=recurse)
+
+    def _encode_card_table(self):
+        return self.card.versioned_forward(self.card_ids, self.card_versions).reshape(self.n_cards, 2, 64)
+
+    def inference_card_table(self):
+        device = self.card.weight.device
+        precision = torch.get_autocast_dtype(device.type) if torch.is_autocast_enabled(device.type) else None
+        key = (device, self.card.weight.dtype, precision)
+        versions = tuple((id(p), p._version) for p in self.card.parameters())
+        entry = self._card_inference_tables.get(key)
+        if entry is None or entry[0] != versions:
+            # Normal (non-inference) storage permits in-place refresh under
+            # either no_grad or inference_mode and stays outside graph pools.
+            with torch.inference_mode(False), torch.no_grad():
+                table = self._encode_card_table()
+                if entry is not None:
+                    entry[1].copy_(table)
+                    table = entry[1]
+            self._card_inference_tables[key] = (versions, table)
+        return self._card_inference_tables[key][1]
 
     def _card_tokens(self, table, ids, upgrades):
         vectors = table[ids.long(), upgrades.gt(0).long()]
@@ -94,7 +121,8 @@ class EntityCombatNetwork(nn.Module):
 
     def encode(self, obs, active_relic_width=None):
         batch = obs['player_scalars'].shape[0]
-        table = self.card.versioned_forward(self.card_ids, self.card_versions).reshape(self.n_cards, 2, 64)
+        table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
+                 else self.inference_card_table())
         hp = obs['player_scalars'].float()
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2]-hp[:, :1], turn.clamp_min(0).log1p()/4,
@@ -198,6 +226,9 @@ class EntityCombatCore(nn.Module):
             raise ValueError('entity-combat requires card-language observations for upgraded piles')
         self.config = config
         self.combat = EntityCombatNetwork(space, config)
+
+    def prepare_inference_cache(self):
+        self.combat.inference_card_table()
 
     def policy_only_parameters(self):
         """Heads exclusive to action logits; the encoder remains shared."""

@@ -79,7 +79,7 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
 @pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2')])
-def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract):
+def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory, amp, batch_multiple, combat_arch, contract, monkeypatch):
     from rl.policies.entity_combat import EntityCombatPolicy
     entity=combat_arch=='entity'
     env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract=contract,card_language=entity)
@@ -97,12 +97,18 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
         batch = {k: np.stack([v] * count) for k, v in obs.items()
                  if k in model.policy.core.combat_observation_keys}
         model._native_leaf_inference = None
-        eager = forward_leaves(model, batch, autocast=model.autocast_context)
+        with monkeypatch.context() as patch:
+            if entity:
+                patch.setattr(model.policy.core.combat, 'inference_card_table', model.policy.core.combat._encode_card_table)
+            eager = forward_leaves(model, batch, autocast=model.autocast_context)
         if batch_multiple:
             padded_count = (count + batch_multiple - 1) // batch_multiple * batch_multiple
             padded = {k:np.concatenate([v, np.repeat(v[:1], padded_count-count, axis=0)])
                       for k,v in batch.items()}
-            reference = forward_leaves(model, padded, autocast=model.autocast_context)
+            with monkeypatch.context() as patch:
+                if entity:
+                    patch.setattr(model.policy.core.combat, 'inference_card_table', model.policy.core.combat._encode_card_table)
+                reference = forward_leaves(model, padded, autocast=model.autocast_context)
             # GEMM selection can change with batch shape, even for independent
             # rows. Keep graph-vs-eager bitwise at the SAME shape; separately
             # bound cross-shape floating-point drift for this small fixture.
@@ -121,6 +127,8 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
         if entity:
             model.policy.core.combat.end.bias.add_(0.125)
             model.policy.core.combat.player_projection.weight.mul_(1.1)
+            model.policy.core.combat.card.local_encoder.weight.mul_(1.5)
+            model.policy.core.combat.card.weight.add_(0.2)
         elif combat_arch == 'mlp':
             model.policy.core.combat.policy_head.bias.add_(0.125)
             model.policy.core.combat.trunk[0].weight.mul_(1.1)
@@ -131,6 +139,11 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
     compare(2)
     for size in (3, 4, 9, 5, 2):
         compare(size)
+    if entity:
+        state={k:v.clone() for k,v in model.policy.core.combat.state_dict().items()}
+        state['card.local_encoder.bias'].add_(0.25)
+        model.policy.core.combat.load_state_dict(state)
+        compare(2)
     torch._C._cuda_clearCublasWorkspaces()
     torch.cuda.empty_cache()
     compare(2)
