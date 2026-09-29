@@ -1764,8 +1764,6 @@ class SlayTheSpireEnv(gym.Env):
         # IPC response.  Arrays preserve the original Gym dtypes and are
         # C-contiguous, so obs_as_tensor can perform one conversion per field.
         observation_batch = None
-        observation_buffer = None
-        observation_spec = []
         leaf_meta = []
         if leaves:
             keys = tuple(encoded_fields)
@@ -1775,21 +1773,9 @@ class SlayTheSpireEnv(gym.Env):
                 )
                 for key in keys
             }
-            chunks = []
-            offset = 0
-            for key in keys:
-                array = observation_batch[key]
-                raw = array.view(np.uint8).reshape(-1)
-                nbytes = int(raw.nbytes)
-                observation_spec.append(
-                    (str(key), array.dtype.str, tuple(array.shape),
-                     int(offset), nbytes)
-                )
-                chunks.append(raw)
-                offset += nbytes
-            observation_buffer = b"".join(
-                chunk.tobytes() for chunk in chunks
-            )
+            # Keep canonical/language fields as arrays so grouped workers can
+            # serialize each field once per group and the decoder can consume
+            # adjacent tree spans together, as it does for native packed leaves.
             leaf_meta = [
                 {
                     "request_id": int(leaf["request_id"]),
@@ -1835,12 +1821,12 @@ class SlayTheSpireEnv(gym.Env):
             "done": False,
             "result": None,
             # Metadata-only compatibility field.  Observation payloads are
-            # carried once in observation_buffer; duplicating them in every
+            # carried once in observation_batch; duplicating them in every
             # leaf dictionary dominated IPC volume for large searches.
             "leaves": leaf_meta,
-            "observation_batch": None,
-            "observation_buffer": observation_buffer,
-            "observation_spec": observation_spec,
+            "observation_batch": observation_batch,
+            "observation_buffer": None,
+            "observation_spec": [],
             "leaf_meta": leaf_meta,
         }
 

@@ -8,6 +8,63 @@ from env.search.nosl_sampler import NOSLSampler
 from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 
+@pytest.mark.native
+@pytest.mark.parametrize('contract', ['legacy', 'joint-v2'])
+def test_language_leaf_group_transport_matches_historical_bytes(combat_factory, contract):
+    import pickle
+    from rl.search.native import decode_leaves
+    from rl.training.cached_mask_vec_env import _pack_leaf_responses, _unpack_leaf_responses
+
+    # Exercise canonical encoding with distinct hands, a multi-target encounter,
+    # piles, and a selectable card. Comparing all fields protects candidate IDs,
+    # slot order, language programs, masks, and value-only leaf metadata together.
+    envs = [combat_factory(['ARMAMENTS', 'BASH', 'DEFEND_RED', 'STRIKE_RED', 'ANGER'] * 2,
+                          'Two Louse', seed=seed, combat_action_contract=contract,
+                          card_language=True) for seed in (70, 71)]
+    responses = {i: env.nosl_is_az_cpp_begin(
+        np.zeros(env.action_space.n), state_nonce=700 + i, simulations=16, depth=0,
+        compact_observation=True) for i, env in enumerate(envs)}
+    seen = 0
+    for _ in range(32):
+        active = {i: r for i, r in responses.items() if not r['done']}
+        if not active:
+            break
+        legacy = {}
+        for i, response in active.items():
+            batch = response['observation_batch']
+            assert batch and response['observation_buffer'] is None
+            chunks, spec, offset = [], [], 0
+            for key, array in batch.items():
+                payload = array.tobytes()
+                spec.append((key, array.dtype.str, array.shape, offset, len(payload)))
+                chunks.append(payload)
+                offset += len(payload)
+            legacy[i] = dict(response, observation_batch=None,
+                             observation_buffer=b''.join(chunks), observation_spec=spec)
+        packet = _pack_leaf_responses(active)
+        if len(active) > 1:
+            assert not isinstance(packet, dict), 'language leaves must use grouped arrays'
+        actual = _unpack_leaf_responses(pickle.loads(pickle.dumps(packet)))
+        expected_records, expected = decode_leaves(legacy)
+        records, observed = decode_leaves(actual)
+        assert observed.keys() == expected.keys()
+        for (i, leaf), (j, reference) in zip(records, expected_records, strict=True):
+            assert (i, leaf['request_id'], leaf['needs_policy']) == (
+                j, reference['request_id'], reference['needs_policy'])
+            np.testing.assert_array_equal(leaf['action_mask'], reference['action_mask'])
+        for key, array in observed.items():
+            assert array.shape == expected[key].shape and array.dtype == expected[key].dtype
+            assert array.flags.c_contiguous
+            assert array.tobytes() == expected[key].tobytes(), key
+        seen += len(records)
+        for i, response in active.items():
+            responses[i] = envs[i].nosl_is_az_cpp_backprop_and_leaf_batch([
+                (leaf['request_id'], .4, np.zeros(envs[i].action_space.n))
+                for leaf in response['leaf_meta']], max_leaves=1)
+    assert seen > 8
+    assert all(r['done'] and r['result']['simulations'] == 16 for r in responses.values())
+
+
 def test_native_combat_fork_victory_does_not_settle_parent(combat_factory):
     import json
     env = combat_factory(['STRIKE_RED']*5, encounter='Cultist', relics=('Burning Blood',))

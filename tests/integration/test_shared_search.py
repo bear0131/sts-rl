@@ -1,5 +1,6 @@
 from collections import defaultdict, deque
 from dataclasses import asdict
+import pickle
 from types import SimpleNamespace
 
 import numpy as np
@@ -18,6 +19,7 @@ from rl.search.native import (
     supports_compact,
 )
 from rl.evaluation.strategies import DecisionRequest, NativeStrategy
+from rl.training.cached_mask_vec_env import _pack_leaf_responses, _unpack_leaf_responses
 
 pytestmark = pytest.mark.native
 
@@ -96,6 +98,8 @@ class _LocalGroupedMethodStream:
                 index: getattr(self.envs[index], method_name)(*args, **kwargs)
                 for index, (args, kwargs) in group_calls.items()
             }
+            responses = _unpack_leaf_responses(pickle.loads(pickle.dumps(
+                _pack_leaf_responses(responses))))
             self._pending[group] = SimpleNamespace(
                 group_index=group,
                 method_name=method_name,
@@ -147,23 +151,29 @@ def test_cancelled_native_search_discards_pending_session(combat_factory):
     assert env._nosl_cpp_pending is None
 
 
-def test_streamed_groups_match_synchronous_native_search(combat_factory):
+@pytest.mark.parametrize('entity', [False, True])
+def test_streamed_groups_match_synchronous_native_search(combat_factory, entity):
+    from sb3_contrib import MaskablePPO
+    from rl.policies.entity_combat import EntityCombatPolicy
+
+    env_kwargs = dict(combat_action_contract='joint-v2', card_language=True) if entity else {}
     synchronous_envs = [
-        combat_factory(['STRIKE_RED'] * 5, 'Two Louse', seed=seed)
+        combat_factory(['STRIKE_RED'] * 5, 'Two Louse', seed=seed, **env_kwargs)
         for seed in range(70, 74)
     ]
     streamed_envs = [
-        combat_factory(['STRIKE_RED'] * 5, 'Two Louse', seed=seed)
+        combat_factory(['STRIKE_RED'] * 5, 'Two Louse', seed=seed, **env_kwargs)
         for seed in range(70, 74)
     ]
-    model = AccumulatingMaskablePPO(
-        SplitStSPointerPolicy,
+    model = (MaskablePPO if entity else AccumulatingMaskablePPO)(
+        EntityCombatPolicy if entity else SplitStSPointerPolicy,
         synchronous_envs[0],
         device='cpu',
         seed=11,
         n_steps=8,
         batch_size=4,
-        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4),
+        policy_kwargs=(dict(entity_config=dict(width=32, layers=2, heads=4))
+                       if entity else dict(d_model=32, n_layers=2, n_heads=4)),
     )
     model.policy.set_training_mode(False)
     compact = supports_compact(model)

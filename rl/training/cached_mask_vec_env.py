@@ -55,8 +55,8 @@ class _ObservationBatchSlice(Mapping):
 def _pack_leaf_responses(responses):
     """Serialize one array per field/group, rather than per field/tree.
 
-    Only numeric native leaf batches use this wire representation. Public RPC
-    results, terminal responses and canonical/language leaves keep their schema.
+    Numeric leaf batches, including canonical/language fields, share this wire
+    representation. Public RPC results and terminal responses keep their schema.
     """
     active = {index:response['observation_batch'] for index,response in responses.items()
               if isinstance(response,dict) and response.get('observation_batch')}
