@@ -27,9 +27,9 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
     assert (initial.d_model, initial.n_layers, initial.n_heads) == (256, 4, 8)
     assert initial.init_from is None and initial.resume is None
     assert runtime.resume_state is None and runtime.fork_state is None
-    assert not runtime.nosl_is_az_train_shared_embeddings
+    assert runtime.nosl_is_az_train_shared_embeddings
     assert runtime.card_language
-    assert runtime.leaf_graph_batch_multiple == 16
+    assert runtime.leaf_graph_batch_multiple == 32
     assert runtime.total_steps == 50_000_000
     for args in (initial, runtime):
         apply_strict_training_settings(args)
@@ -42,10 +42,30 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         assert config.leaf_batch_size == 1 and config.simulations == 128
         assert args.n_envs == 96 and args.n_steps == 128
         assert args.nosl_is_az_replay_max_old_fraction == .9
-        assert args.nosl_is_az_updates == 4
-        assert args.nosl_is_az_update_schedule == 'value-warmup'
-        assert args.nosl_is_az_batch_size == 16384
-        assert args.nosl_is_az_replay_capacity == 131072
+        assert args.nosl_is_az_updates == 40
+        assert args.nosl_is_az_update_schedule == 'constant'
+        assert args.nosl_is_az_batch_size == 98304
+        assert args.nosl_is_az_micro_batch_size == 12288
+        assert args.nosl_is_az_replay_capacity == 524288
+
+
+def test_entity_runtime_matches_train24_non_architecture_settings(monkeypatch):
+    """TRAIN24 final saved config, with only architecture/search/identity excluded."""
+    from rl.search.native import apply_strict_training_settings
+    monkeypatch.chdir(ROOT)
+    args = build_parser().parse_args([
+        '--rank', '0', '--world-size', '4', '--checkpoint', 'initial.zip',
+        '@configs/train/entity_combat_runtime.args',
+        '--gradient-transport', 'ssh-ring', '--ring-port', '29789',
+        '--reasoning-batch-size', '1', '--reasoning-updates', '0', '--reasoning-coef', '0',
+        '--reasoning-gradient-accumulation-steps', '1', '--no-interactive-reasoning',
+        '--save-every-updates', '1', '--max-checkpoints', '2', '--barrier-timeout', '900',
+    ])
+    apply_strict_training_settings(args)
+    baseline = json.loads((ROOT / 'tests/fixtures/configs/train24_entity_runtime_baseline.json').read_text())
+    assert {key: getattr(args, key) for key in baseline} == baseline
+    assert args.nosl_is_az_end_turn_as_leaf is False
+    assert args.nosl_is_az_update_schedule == 'constant'
 
 
 def test_boss_transition_target_cli_is_explicit_and_defaults_to_inherit():

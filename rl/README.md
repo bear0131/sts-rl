@@ -72,9 +72,9 @@ Replay版本3及 `combat-outcome-quantiles-v1` 拒绝旧标量回放混入。
 python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args --steps 24576 --seed 0 --device cuda --amp-mode bf16 --out runs/local/entity-combat
 ```
 
-配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样4次联合policy/value更新，
-回放131072，旧样本采样上限0.9，LR5e-5。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
-`--nosl-is-az-update-schedule value-warmup` 在前5轮额外增加36次value/辅助头更新，
+配置保持96 env、128步；按TRAIN24基准使用逻辑训练batch98304、微批12288、每次采样40次联合policy/value更新，
+回放524288，旧样本采样上限0.9，LR5e-5，CUDA graph batch对齐32。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
+默认`constant`；可选实验`--nosl-is-az-updates 4 --nosl-is-az-update-schedule value-warmup` 在前5轮额外增加36次value/辅助头更新，
 第6–20轮按余弦减到0；第10/15/20轮总更新数为31/13/4，之后固定4。
 额外更新先于联合更新，训练共享表示、胜负/HP分布和动作后果；策略专用头的参数及Adam状态
 在这些更新中保持不动，但共享表示变化仍会影响策略输出。目标来自真实自博弈终局，

@@ -18,7 +18,9 @@ high
 --leaf-inference
 cuda-graph
 --leaf-graph-batch-multiple
-16
+32
+--nosl-is-az-train-shared-embeddings
+--no-nosl-is-az-end-turn-as-leaf
 --leaf-graph-profile-interval
 512
 --rollout-resource-interval

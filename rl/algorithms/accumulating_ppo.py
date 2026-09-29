@@ -560,6 +560,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("shared embedding reset requires NOSL inner-only mode")
         core = getattr(self.policy, "core", None)
         shared = getattr(core, "shared", None)
+        if getattr(core, 'combat_only', False):
+            # EntityCombat owns its embeddings inside the freshly initialized
+            # combat network; there is no separately pretrained shared table.
+            return 0
         if shared is None:
             raise ValueError("NOSL inner-only mode requires shared semantic tokenizers")
         embeddings = [

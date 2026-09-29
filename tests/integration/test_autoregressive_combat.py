@@ -230,6 +230,14 @@ def test_prefix_checkpoint_and_real_transition_replay(replayable_selection_env):
         nosl_is_az_replay_capacity=8,
         policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4)))
     model.set_logger(configure(format_strings=[]))
+    initial_parameters = {name: parameter.detach().clone()
+                          for name, parameter in model.policy.named_parameters()}
+    assert model.reset_nosl_is_az_shared_embeddings(42) == 0
+    frozen, trainable = model.configure_nosl_is_az_inner_only(train_shared_embeddings=True)
+    assert frozen == 0 and trainable > 0
+    for name, parameter in model.policy.named_parameters():
+        assert parameter.requires_grad
+        assert torch.equal(parameter, initial_parameters[name])
     model._nosl_is_az_samples = samples
     stats = model._train_nosl_is_az()
     assert stats['updates'] == 2 and stats['finite_fraction'] == 1
