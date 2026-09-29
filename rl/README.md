@@ -51,7 +51,7 @@ Replay版本3及 `combat-outcome-quantiles-v1` 拒绝旧标量回放混入。
 python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args --steps 24576 --seed 0 --device cuda --amp-mode bf16 --out runs/local/entity-combat
 ```
 
-配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样4次更新、
+配置保持96 env、128步；逻辑训练batch16384、微批256、每次采样40次更新、
 回放131072，旧样本采样上限0.9，LR5e-5。`--steps 0 --vec dummy --device cpu` 可只创建初始checkpoint。
 初始化与分布式运行共用 `configs/train/entity_combat_learning.args`；
 `entity_combat_runtime.args` 用于既有四机launcher，目标50M，BF16。
