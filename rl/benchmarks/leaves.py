@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from env.core.run_env import SlayTheSpireEnv
+from env.core import native_actions as C
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.training.resource_monitor import ResourceMonitor
 from rl.policies import model as model_utils
@@ -30,7 +31,8 @@ def run(args):
             env.close()
             env = SlayTheSpireEnv(global_map_view=True,
                 card_language=model_utils.uses_card_language(model),
-                combat_language=model_utils.uses_combat_language(model))
+                combat_language=model_utils.uses_combat_language(model),
+                combat_action_contract=C.policy_contract(model.observation_space))
         else:
             model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device=args.device,
                 seed=args.seed, n_steps=8, batch_size=4,
@@ -73,9 +75,23 @@ def run(args):
                 padded = {k:np.concatenate([v,np.repeat(v[:1],padded_count-batch_size,axis=0)])
                           for k,v in batch.items()}
                 reference = forward_leaves(model,padded,autocast=model.autocast_context)
-                for a,b in zip(actual,reference):
-                    np.testing.assert_array_equal(a,b[:batch_size])
-                equivalence = {'same_shape_bitwise': True, 'unpadded_eager': {}}
+                compiled = backend.compiled_forward is not None
+                for index,(a,b) in enumerate(zip(actual,reference)):
+                    if compiled:
+                        np.testing.assert_allclose(a,b[:batch_size],
+                            rtol=.03 if index==0 else 0, atol=.006 if index==0 else .001)
+                    else:
+                        np.testing.assert_array_equal(a,b[:batch_size])
+                equivalence = {'same_shape_bitwise': all(np.array_equal(a,b[:batch_size])
+                    for a,b in zip(actual,reference)),
+                    'contract': 'fused-bf16-tolerance' if compiled else 'bitwise',
+                    'unpadded_eager': {}}
+                if compiled:
+                    legal = torch.as_tensor(batch['combat_legal'].astype(bool))
+                    probabilities = [torch.as_tensor(logits).masked_fill(~legal,-1e9).softmax(-1)
+                                     for logits in (actual[0],reference[0][:batch_size])]
+                    torch.testing.assert_close(*probabilities, rtol=0, atol=.002)
+                    equivalence['max_probability_abs'] = float((probabilities[0]-probabilities[1]).abs().max())
                 for name,a,b in zip(('logits','values'),actual,eager):
                     delta = np.abs(a.astype(np.float64)-b.astype(np.float64))
                     equivalence['unpadded_eager'][name] = dict(

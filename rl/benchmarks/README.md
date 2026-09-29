@@ -11,14 +11,16 @@ checkpoint 环境工厂与采样器，固定 n-envs/n-steps/updates，无优化�
 SEARCH.json 是 `NativeSearchConfig` 字段。可对比 `--leaf-inference eager/cuda-graph`
 与 `--vec-env subproc/grouped --envs-per-worker N`。输出 hash 覆盖最后一个
 rollout 的观测、动作、奖励、value、log-prob 和完整战斗标签；计时不进入摘要。
-采样 workload 包含首次 CUDA graph capture，不应冒称全部是稳定热态。
+`--warmup-updates 0` 的采样包含首次 CUDA graph capture/编译；设为1则先执行一个
+完整collection，分别报告warmup_seconds与测量段时间/动作数，不能隐藏启动成本。
 
 Rollout 对照参数：`--inference-schedule fixed_wait|adaptive`、
 `--inference-batch-size N`、`--inference-wait-ms N`（0 表示有结果即可发送）、
 `--leaf-graph-batch-multiple N`、`--graph-profile-interval N`。固定同一 checkpoint、
 native 扩展、seed、env/search 预算，先短测再验证生产长度。分桶或异步调度改变
 实际合批形状时，不能要求整场搜索轨迹摘要 bitwise 相同。
-Leaves workload 在计时前自动对比 graph 与同形状 eager（逐位），并报告相对
+Leaves workload 在计时前自动对比 graph 与同形状 eager（普通graph逐位；Entity
+AR BF16融合按logits/utility/合法动作概率容差），并报告相对
 原始未补齐 eager 的 logits/value 最大、均值和 p99 绝对误差；可用实际叶 NPZ
 重复验证，不能只靠随机小模型证明生产 checkpoint 的数值误差。
 

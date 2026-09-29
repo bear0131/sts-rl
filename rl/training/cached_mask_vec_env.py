@@ -27,6 +27,23 @@ class _PackedLeafResponses:
     observations: dict[str, np.ndarray]
     slices: dict[int, tuple[int, int]]
 
+    def __reduce__(self):
+        # One writable payload avoids reconstructing a pickled ndarray object
+        # for every field on the learner's serial receive path. Each packet
+        # owns its buffer; field views never alias a later worker response.
+        payload = bytearray()
+        layout = []
+        for key, value in self.observations.items():
+            layout.append((key, value.dtype, value.shape, len(payload)))
+            payload.extend(value.tobytes(order='C'))
+        return (_restore_packed_leaf_responses, (self.responses, self.slices, layout, payload))
+
+
+def _restore_packed_leaf_responses(responses, slices, layout, payload):
+    observations = {key: np.ndarray(shape, dtype=dtype, buffer=payload, offset=offset)
+                    for key, dtype, shape, offset in layout}
+    return _PackedLeafResponses(responses, observations, slices)
+
 
 class _ObservationBatchSlice(Mapping):
     """Expose one tree's rows without allocating a view for every field.
