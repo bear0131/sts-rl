@@ -516,6 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override whether End Turn stops search at the post-enemy-turn "
              "value boundary.",
     )
+    parser.add_argument("--nosl-is-az-fixed-worldline", action=argparse.BooleanOptionalAction,
+                        default=None, help="Override fixed future RNG within each search tree.")
     parser.add_argument(
         "--nosl-is-az-prior-temperature",
         type=float,
@@ -2294,6 +2296,7 @@ def main() -> None:
             flush=True,
         )
     gumbel_overrides = (
+        args.nosl_is_az_fixed_worldline,
         args.nosl_is_az_prior_temperature,
         args.nosl_is_az_search_mode,
         args.nosl_is_az_paper_full_gumbel,
@@ -2324,6 +2327,7 @@ def main() -> None:
     model.nosl_is_az_search_mode = mode
     model.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[mode]
     gumbel_fields = (
+        ("nosl_is_az_fixed_worldline", False, bool),
         ("nosl_is_az_prior_temperature", 1.0, float),
         ("nosl_is_az_paper_full_gumbel", False, bool),
         ("nosl_is_az_gumbel_candidates", 0, int),
@@ -2346,11 +2350,14 @@ def main() -> None:
     if bool(getattr(model, "nosl_is_az_paper_full_gumbel", False)):
         apply_strict_training_settings(model, args)
     args.nosl_is_az_search_mode = mode
+    if model.nosl_is_az_fixed_worldline and not getattr(model, 'nosl_is_az_cpp', False):
+        raise ValueError('fixed-worldline training requires the C++ search backend')
     if bool(getattr(model, "nosl_is_az", False)):
         print(
             f"[rank {args.rank}] NOSL search: mode={mode} "
             f"root_mode={model.nosl_is_az_root_search_mode} "
             f"paper_full_gumbel={model.nosl_is_az_paper_full_gumbel} "
+            f"fixed_worldline={model.nosl_is_az_fixed_worldline} "
             f"prior_temperature={model.nosl_is_az_prior_temperature} "
             f"candidates={model.nosl_is_az_gumbel_candidates} "
             f"gumbel_scale={model.nosl_is_az_gumbel_scale} "

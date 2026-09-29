@@ -84,7 +84,8 @@ python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args 
 旧checkpoint和未指定该选项的入口默认constant；value-warmup仅支持entity-combat的C++ inner-only NOSL。
 初始化与分布式运行共用 `configs/train/entity_combat_learning.args`；
 `entity_combat_runtime.args` 用于既有四机launcher，目标50M，BF16。
-该实验使用Full Gumbel128，关闭Q归一化、value scale=1。
+该实验使用Full Gumbel128，关闭Q归一化、value scale=1，并启用`--nosl-is-az-fixed-worldline`：
+每棵搜索树内固定未来RNG。该开关贯通初始化、采样、分布式恢复和checkpoint；旧模型缺字段时默认关闭。
 `paper_full_gumbel` 保留论文路径的sequential halving、visit-weighted backup
 和mixed-value完成法；从本版本起Q归一化和scale尊重显式配置，默认仍为true/0.1。
 旧checkpoint中保存的canonical true/0.1不变；曾携带非默认Q字段但被旧strict

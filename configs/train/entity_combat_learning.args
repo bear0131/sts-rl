@@ -8,6 +8,7 @@ rules
 --nosl-is-az-search-mode
 full_gumbel
 --nosl-is-az-paper-full-gumbel
+--nosl-is-az-fixed-worldline
 --no-nosl-is-az-gumbel-rescale-q
 --nosl-is-az-gumbel-value-scale
 1.0

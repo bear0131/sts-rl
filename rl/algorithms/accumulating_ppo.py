@@ -125,6 +125,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_simulations: int = 8,
         nosl_is_az_depth: int = 3,
         nosl_is_az_end_turn_as_leaf: bool = False,
+        nosl_is_az_fixed_worldline: bool = False,
         nosl_is_az_rollout_steps: int = 0,
         nosl_is_az_c_puct: float = 1.5,
         nosl_is_az_temperature: float = 1.0,
@@ -287,6 +288,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_simulations = int(nosl_is_az_simulations)
         self.nosl_is_az_depth = int(nosl_is_az_depth)
         self.nosl_is_az_end_turn_as_leaf = bool(nosl_is_az_end_turn_as_leaf)
+        self.nosl_is_az_fixed_worldline = bool(nosl_is_az_fixed_worldline)
+        if self.nosl_is_az_fixed_worldline and not nosl_is_az_cpp:
+            raise ValueError('fixed-worldline training requires the C++ search backend')
         self.nosl_is_az_rollout_steps = int(nosl_is_az_rollout_steps)
         self.nosl_is_az_c_puct = float(nosl_is_az_c_puct)
         self.nosl_is_az_temperature = float(nosl_is_az_temperature)
@@ -1145,6 +1149,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "simulations": self.nosl_is_az_simulations,
                                 "depth": self.nosl_is_az_depth,
                                 "end_turn_as_leaf": self.nosl_is_az_end_turn_as_leaf,
+                                "fixed_worldline": bool(getattr(self, 'nosl_is_az_fixed_worldline', False)),
                                 "c_puct": self.nosl_is_az_c_puct,
                                 "leaf_batch_size": self.nosl_is_az_leaf_batch_size,
                                 "dirichlet_alpha": self.nosl_is_az_dirichlet_alpha,

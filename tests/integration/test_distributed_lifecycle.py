@@ -24,6 +24,13 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
+    fixed_calls = []
+    if contract == 'autoregressive-v2':
+        native_begin = short_combat_env_type.nosl_is_az_cpp_begin
+        def observed_begin(self, *args, **kwargs):
+            fixed_calls.append(kwargs.get('fixed_worldline'))
+            return native_begin(self, *args, **kwargs)
+        monkeypatch.setattr(short_combat_env_type, 'nosl_is_az_cpp_begin', observed_begin)
 
     def make_env(*_):
         def factory(hold_steps):
@@ -108,6 +115,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             '--startup-occupancy-max-age', '12',
             '--startup-occupancy-budget', '160',
         ]
+    if contract == 'autoregressive-v2':
+        argv.append('--nosl-is-az-fixed-worldline')
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -137,6 +146,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
+    if contract == 'autoregressive-v2':
+        assert fixed_calls and all(value is True for value in fixed_calls)
+        assert restored.nosl_is_az_fixed_worldline is True
     assert restored.nosl_is_az_upper_strategy == upper
     if combat_arch == 'entity':
         assert restored.policy.core.config.quantiles == 8
@@ -153,6 +165,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         manifest=json.loads((bundle/'manifest.json').read_text())
         assert manifest['config']['entity_config']['quantiles']==8
         assert manifest['config']['combat_supervision_contract']=='combat-outcome-quantiles-v1'
+        if contract == 'autoregressive-v2':
+            assert manifest['config']['nosl_is_az_fixed_worldline'] is True
     monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
@@ -168,6 +182,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert optimizer.state[parameter]['step'].item() == 4
         assert optimizer.state[final.policy.core.combat.distribution.win.weight]['step'].item() == 7
     assert finished == [0, 0]
+    if contract == 'autoregressive-v2':
+        assert all(value is True for value in fixed_calls)
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()

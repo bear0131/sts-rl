@@ -288,6 +288,8 @@ class WholeRunTask(Task):
                  "the freshly initialized combat specialist.",
         )
         parser.add_argument("--nosl-is-az-simulations", type=int, default=8)
+        parser.add_argument("--nosl-is-az-fixed-worldline", action=argparse.BooleanOptionalAction,
+                            default=False, help="Keep one future RNG worldline per search tree.")
         parser.add_argument(
             "--nosl-is-az-depth",
             type=int,

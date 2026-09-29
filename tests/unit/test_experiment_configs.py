@@ -37,6 +37,7 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         assert config.paper_full_gumbel and config.root_search_mode == 2
         assert config.gumbel_rescale_q is False
         assert config.gumbel_value_scale == 1
+        assert config.fixed_worldline is True
         assert config.gumbel_interior_min_visits == 0
         assert config.gumbel_interior_value_mode == 0
         assert config.leaf_batch_size == 1 and config.simulations == 128

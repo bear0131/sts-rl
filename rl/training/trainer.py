@@ -1088,6 +1088,7 @@ def main() -> None:
             nosl_is_az_cpp=getattr(args, "nosl_is_az_cpp", False),
             nosl_is_az_upper_strategy=getattr(args, "nosl_is_az_upper_strategy", "model"),
             nosl_is_az_simulations=getattr(args, "nosl_is_az_simulations", 8),
+            nosl_is_az_fixed_worldline=getattr(args, "nosl_is_az_fixed_worldline", False),
             nosl_is_az_depth=getattr(args, "nosl_is_az_depth", 3),
             nosl_is_az_end_turn_as_leaf=getattr(
                 args, "nosl_is_az_end_turn_as_leaf", False
@@ -1258,6 +1259,7 @@ def main() -> None:
                     args, "nosl_is_az_simulations", 8
                 ),
                 "nosl_is_az_depth": getattr(args, "nosl_is_az_depth", 3),
+                "nosl_is_az_fixed_worldline": getattr(args, "nosl_is_az_fixed_worldline", False),
                 "nosl_is_az_end_turn_as_leaf": getattr(
                     args, "nosl_is_az_end_turn_as_leaf", False
                 ),
