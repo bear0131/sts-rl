@@ -93,7 +93,7 @@ py::list monsterPowersToList(const sts::Monster &m) {
     return out;
 }
 
-py::dict rawCombatState(const sts::BattleContext &bc) {
+py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions = false) {
     py::dict d;
     d["turn"] = bc.turn;
     // Search-only marker: true only after the complete enemy phase and its
@@ -191,7 +191,7 @@ py::dict rawCombatState(const sts::BattleContext &bc) {
     }
     d["potions"] = potions;
     d["select"] = combatSelectInfo(bc);
-    d["joint_action_ids"] = sts::search::jointActionIds(bc);
+    if (includeJointActions) d["joint_action_ids"] = sts::search::jointActionIds(bc);
     return d;
 }
 
@@ -492,6 +492,23 @@ inline Row pack(const sts::BattleContext &bc) {
 // RNG streams.  Card piles are rebuilt with normal CardInstance bookkeeping so
 // subsequent draws/discards remain authoritative.
 void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+    if (spec.contains("potions")) {
+        const auto names = spec["potions"].cast<std::vector<std::string>>();
+        if (names.size() > static_cast<std::size_t>(bc.potionCapacity))
+            throw std::invalid_argument("custom potions exceed potion capacity");
+        auto potions = bc.potions;
+        std::fill(potions.begin(), potions.end(), Potion::EMPTY_POTION_SLOT);
+        int count = 0;
+        for (std::size_t slot = 0; slot < names.size(); ++slot) {
+            const auto begin = std::begin(potionNames), end = std::end(potionNames);
+            const auto found = std::find(begin + 1, end, names[slot]);
+            if (found == end) throw std::invalid_argument("unknown custom potion name");
+            potions[slot] = static_cast<Potion>(found - begin);
+            if (potions[slot] != Potion::EMPTY_POTION_SLOT) ++count;
+        }
+        bc.potions = potions;
+        bc.potionCount = count;
+    }
     auto getInt = [](const py::dict &d, const char *key, int current) {
         return d.contains(key) ? d[key].cast<int>() : current;
     };
@@ -1455,6 +1472,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["version"] = 2;
         out["candidate_capacity"] = 96;
         out["joint_policy_size"] = sts::search::kJointSize;
+        out["autoregressive_policy_size"] = sts::search::kAutoregressiveSize;
         out["categorical_width"] = compact_leaf::kCatSize;
         out["scalar_width"] = compact_leaf::kFloatSize;
         return out;
@@ -2430,7 +2448,15 @@ PYBIND11_MODULE(slaythespire, m) {
             for (const auto &request : session.nextBatch(max_leaves)) {
                 pybind11::dict item;
                 item["request_id"] = request.requestId;
-                item["state"] = rawCombatState(*request.state);
+                auto state = rawCombatState(*request.state, !request.autoregressivePolicy);
+                if (request.autoregressivePolicy) {
+                    std::vector<int> ids;
+                    for (const auto &action : request.legalActions)
+                        ids.push_back(sts::search::jointActionId(action, *request.state));
+                    state["joint_action_ids"] = ids;
+                    state["selection_prefix"] = request.selectionPrefix;
+                }
+                item["state"] = state;
                 std::vector<std::uint32_t> legal;
                 legal.reserve(request.legalActions.size());
                 for (const auto &action : request.legalActions) {
@@ -2481,6 +2507,7 @@ PYBIND11_MODULE(slaythespire, m) {
             auto legal = legal_actions.mutable_unchecked<2>();
             auto legal_count = legal_action_counts.mutable_unchecked<1>();
             pybind11::list needs_policy;
+            pybind11::list selection_prefix;
             for (pybind11::ssize_t row = 0; row < count; ++row) {
                 const auto &request = requests[static_cast<std::size_t>(row)];
                 const auto packed = compact_leaf::pack(*request.state);
@@ -2500,6 +2527,7 @@ PYBIND11_MODULE(slaythespire, m) {
                         sts::search::jointActionId(request.legalActions[col], *request.state);
                 }
                 needs_policy.append(request.needsPolicy);
+                selection_prefix.append(request.selectionPrefix);
             }
             pybind11::dict out;
             out["request_ids"] = request_ids;
@@ -2509,6 +2537,7 @@ PYBIND11_MODULE(slaythespire, m) {
             out["legal_action_counts"] = legal_action_counts;
             out["legal_policy_ids"] = legal_policy_ids;
             out["needs_policy"] = needs_policy;
+            out["selection_prefix"] = selection_prefix;
             out["done"] = requests.empty() && session.done();
             return out;
         }, pybind11::arg("max_leaves") = 16,
@@ -2783,7 +2812,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 double gumbel_interior_max_mix_visits,
                 bool paper_full_gumbel,
                 bool fixed_worldline,
-                int boss_transition_value_mode) {
+                int boss_transition_value_mode, int selection_prefix) {
                 std::vector<double> logits;
                 auto view = root_policy_logits.unchecked<1>();
                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -2795,7 +2824,11 @@ PYBIND11_MODULE(slaythespire, m) {
                 config.maxDepth = depth;
                 config.cPuct = c_puct;
                 config.priorTemperature = prior_temperature;
-                config.jointPolicy = logits.size() == sts::search::kJointSize;
+                config.autoregressivePolicy = logits.size() == sts::search::kAutoregressiveSize;
+                config.selectionPrefix = selection_prefix;
+                if (!config.autoregressivePolicy && selection_prefix != 0)
+                    throw std::invalid_argument("selection prefix requires autoregressive policy");
+                config.jointPolicy = config.autoregressivePolicy || logits.size() == sts::search::kJointSize;
                 if (config.jointPolicy && boss_transition_value_mode != 0)
                     throw std::invalid_argument("joint-v2 requires combat-end-hp-v1");
                 config.endTurnAsLeaf = end_turn_as_leaf;
@@ -2846,6 +2879,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("paper_full_gumbel") = false,
              pybind11::arg("fixed_worldline") = false,
              pybind11::arg("boss_transition_value_mode") = 0,
+             pybind11::arg("selection_prefix") = 0,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;
@@ -2854,7 +2888,7 @@ PYBIND11_MODULE(slaythespire, m) {
             bc.updateRelicsOnExit(projected);
             return projected.curHp;
         }, "HP after applying combat-exit relic healing to a temporary GameContext")
-        .def("to_dict", &rawCombatState, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
+        .def("to_dict", [](const BattleContext &bc) { return rawCombatState(bc, false); }, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
         .def("compact_leaf_arrays", [](const BattleContext &bc) {
             // Diagnostic endpoint for packed-vs-legacy contract tests. The
             // search hot path uses next_batch_packed(), which does not expose
@@ -2877,6 +2911,14 @@ PYBIND11_MODULE(slaythespire, m) {
             out["scalars"] = scalars;
             return out;
         }, "export the current state in the native compact leaf layout")
+        .def("autoregressive_policy_actions", [](const BattleContext &bc, int selected) {
+            pybind11::list out;
+            for (const auto &action : sts::search::autoregressiveActions(bc, selected)) {
+                const int id = sts::search::jointActionId(action, bc);
+                if (id >= 0) out.append(pybind11::make_tuple(id, action.bits));
+            }
+            return out;
+        }, pybind11::arg("selected") = 0, "legal next-card/STOP actions without enumerating subsets")
         .def("joint_policy_actions", [](const BattleContext &bc) {
             pybind11::list out;
             for (const auto &action : sts::search::Action::enumerateCombatActions(bc)) {

@@ -23,6 +23,8 @@ struct NoslCombatSearchConfig {
     double fpuReduction = 0.01;
     double priorTemperature = 1.0;
     bool jointPolicy = false;
+    bool autoregressivePolicy = false;
+    int selectionPrefix = 0;
     // Treat the state immediately after executing End Turn as a value-only
     // leaf.  This avoids searching through hidden enemy/random transitions.
     bool endTurnAsLeaf = false;
@@ -175,6 +177,8 @@ public:
         // the matching backprop/abort; Python bindings serialize it before
         // returning from nextBatch().
         const BattleContext *state = nullptr;
+        int selectionPrefix = 0;
+        bool autoregressivePolicy = false;
         std::vector<Action> legalActions;
         bool needsPolicy = true;
     };
@@ -260,6 +264,7 @@ private:
     struct Pending {
         std::uint64_t id = 0;
         std::unique_ptr<BattleContext> state;
+        int selectionPrefix = 0;
         std::vector<Node *> nodes;
         std::vector<Edge *> edges;
         std::vector<Action> legalActions;
@@ -308,7 +313,8 @@ private:
     int gumbelRemaining_ = 0;
 
     static double hpValue(const BattleContext &bc);
-    static std::vector<Action> legalActions(const BattleContext &bc);
+    std::vector<Action> legalActions(const BattleContext &bc, int selected = 0) const;
+    bool validAction(const Action &action, const BattleContext &bc, int selected) const;
     static int thinActionId(const Action &action, const BattleContext &state);
     void expandWithLogits(Node &node, const BattleContext &state,
                           const std::vector<Action> &actions,

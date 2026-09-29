@@ -239,13 +239,16 @@ class SlayTheSpireEnv(gym.Env):
                  interactive_reasoning=False, combat_action_contract='legacy',
                  nosl_is_az_boss_transition_target=False):
         super().__init__()
-        if combat_action_contract not in ('legacy', 'native-v1', C.JOINT_CONTRACT):
+        if combat_action_contract not in ('legacy', 'native-v1', *C.NEURAL_CONTRACTS):
             raise ValueError('combat_action_contract must be legacy, native-v1 or joint-v2')
         self.combat_action_contract = combat_action_contract
-        self._joint_actions = combat_action_contract == C.JOINT_CONTRACT
+        self._joint_actions = combat_action_contract in C.NEURAL_CONTRACTS
+        self._autoregressive_actions = combat_action_contract == C.AUTOREGRESSIVE_CONTRACT
+        self._neural_size = C.policy_size(combat_action_contract) if self._joint_actions else A.N_ACTIONS
+        self._neural_width = self._neural_size - A.N_ACTIONS
         if self._joint_actions and nosl_is_az_boss_transition_target:
             raise ValueError('joint-v2 requires combat-end-hp-v1')
-        if self._joint_actions and _nosl_compact_layout().get('joint_policy_size') != C.JOINT_SIZE:
+        if self._joint_actions and _nosl_compact_layout().get('autoregressive_policy_size' if self._autoregressive_actions else 'joint_policy_size') != self._neural_size:
             raise RuntimeError('joint-v2 requires a native build with complete-policy support')
         if self._joint_actions and interactive_reasoning:
             raise ValueError('joint-v2 does not support legacy interactive reasoning steps')
@@ -312,10 +315,10 @@ class SlayTheSpireEnv(gym.Env):
             event_option_observation=event_option_observation,
             interactive_reasoning=interactive_reasoning,
         )
-        self.action_space = spaces.Discrete(C.JOINT_SIZE if self._joint_actions else A.N_ACTIONS)
+        self.action_space = spaces.Discrete(self._neural_size)
         if self._joint_actions:
             self.observation_space.spaces['combat_legal'] = spaces.Box(
-                low=0, high=1, shape=(C.JOINT_WIDTH,), dtype=bool)
+                low=0, high=1, shape=(self._neural_width,), dtype=bool)
 
     # ---------------------------------------------------------------- gym API
     def reset(self, *, seed=None, options=None):
@@ -703,7 +706,7 @@ class SlayTheSpireEnv(gym.Env):
         """The live combat MULTI card-select descriptor, or None. Also the single
         place that RECONCILES the accumulator with the screen: a MULTI screen ->
         ensure _multi is a set; anything else -> clear it (we left the screen)."""
-        if self._joint_actions:
+        if self._joint_actions and not self._autoregressive_actions:
             return None
         if self._cached_multi_desc is _UNCACHED:
             self._cached_multi_desc = self.thick.select_descriptor()
@@ -737,13 +740,20 @@ class SlayTheSpireEnv(gym.Env):
             return not self.native_combat_actions()
         return not self.action_masks().any()
 
+    def _joint_policy_actions(self):
+        if self._autoregressive_actions:
+            self._multi_desc()
+            prefix = sum(1 << i for i in (self._multi or ()))
+            return self.thick.bc.autoregressive_policy_actions(prefix)
+        return self.thick.bc.joint_policy_actions()
+
     def native_combat_actions(self):
         """Complete legal bits for the current live root; no legacy slot mapping."""
         if (self.thick is None or self._phase() != 'combat'
                 or self.thick.is_over or self._pending is not None):
             return ()
         if self._joint_actions:
-            return tuple(bits for _, bits in self.thick.bc.joint_policy_actions())
+            return tuple(bits for _, bits in self._joint_policy_actions())
         from .native_actions import complete_actions
         return complete_actions(self.thick.bc)
 
@@ -838,10 +848,28 @@ class SlayTheSpireEnv(gym.Env):
 
     def _step_impl(self, action_id):
         if self._joint_actions and self._phase() == 'combat':
-            mapping = dict(self.thick.bc.joint_policy_actions())
+            mapping = dict(self._joint_policy_actions())
             aid = int(action_id)
             if aid not in mapping:
                 raise ValueError(f'illegal joint combat action: {aid}')
+            if self._autoregressive_actions:
+                bits = int(mapping[aid])
+                if bits >> 29 == 5:
+                    self._multi.add(bits & 0xffff)
+                    self._nosl_cpp_pending = None
+                    self._invalidate_thin_cache()
+                    info = self._info()
+                    info['simulator_transition'] = False
+                    return self._obs(), 0.0, False, False, info
+                if bits >> 29 == 6:
+                    bits = (3 << 29) | sum(1 << i for i in self._multi)
+                self._multi = None
+                self._nosl_cpp_pending = None
+                _canon, reward, terminated, tinfo = self._backend_step_native_combat(bits)
+                result = self._post_step(reward, terminated, tinfo)
+                result[4]['native_action'] = bits
+                result[4]['simulator_transition'] = True
+                return result
             return self._step_native_combat_impl(mapping[aid])
         aid = int(action_id)
 
@@ -1162,7 +1190,8 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions:
             desc = self.thick.select_descriptor() or {}
             try:
-                return C.joint_action_id(bits, targeted=self._native_action_targeted(bits),
+                mapper = C.autoregressive_action_id if self._autoregressive_actions else C.joint_action_id
+                return mapper(bits, targeted=self._native_action_targeted(bits),
                     candidate_indices=[c['native_index'] for c in desc.get('candidates', ())])
             except ValueError:
                 return None
@@ -1195,6 +1224,12 @@ class SlayTheSpireEnv(gym.Env):
                 canon["options"] = {
                     "select": combat_select_options(select)
                 }
+        if self._autoregressive_actions and 'selection_prefix' in raw_state:
+            prefix = int(raw_state['selection_prefix'])
+            sel = canon.get('options', {}).get('select')
+            if sel is not None:
+                sel['hand_selected'] = [i for i in range(10) if prefix >> i & 1]
+                sel['pick_remaining'] = max(0, int(sel.get('pick_remaining', sel.get('pick_max', 0))) - prefix.bit_count())
         global_state = dict(self._nosl_cpp_global_template or
                             normalize_sim_global(self.thick.gc))
         # The branch is a hypothetical world line.  Persistent metadata comes
@@ -1226,12 +1261,12 @@ class SlayTheSpireEnv(gym.Env):
 
     def _with_joint_legal(self, obs, policy_ids):
         if self._joint_actions:
-            obs['combat_legal'] = C.joint_mask(policy_ids)[C.JOINT_END:]
+            obs['combat_legal'] = C.joint_mask(policy_ids, contract=self.combat_action_contract)[C.JOINT_END:]
         return obs
 
     def _leaf_policy_mask(self, policy_ids):
         if self._joint_actions:
-            return C.joint_mask(policy_ids)
+            return C.joint_mask(policy_ids, contract=self.combat_action_contract)
         mask = np.zeros(self.action_space.n, dtype=bool)
         for policy_id in policy_ids:
             if int(policy_id) >= 0:
@@ -1383,9 +1418,14 @@ class SlayTheSpireEnv(gym.Env):
         # C++ stores the multi-select marker; it is represented by the hand
         # mask only when the thin layer has a pending selection, so no extra
         # model field is needed here.
+        if self._autoregressive_actions:
+            prefix = np.asarray(response['selection_prefix'], dtype=np.int32)
+            selected = (prefix[:, None] >> np.arange(10)) & 1
+            out['select_hand_mask'][:] = selected
+            out['pick_remaining'][:, 0] = np.maximum(0, out['pick_remaining'][:, 0] - selected.sum(1)/encode.PICK_SCALE)
         if self._joint_actions:
             ids = np.asarray(response['legal_policy_ids'], dtype=np.int64)
-            out['combat_legal'] = np.zeros((n, C.JOINT_WIDTH), dtype=bool)
+            out['combat_legal'] = np.zeros((n, self._neural_width), dtype=bool)
             rows, columns = np.nonzero(ids >= C.JOINT_END)
             out['combat_legal'][rows, ids[rows, columns] - C.JOINT_END] = True
         return out
@@ -1577,8 +1617,11 @@ class SlayTheSpireEnv(gym.Env):
                 bool(paper_full_gumbel),
                 bool(fixed_worldline),
                 int(terminal_mode),
+                *([sum(1 << i for i in (self._multi or ()))] if self._autoregressive_actions else []),
             )
         except TypeError as error:
+            if self._autoregressive_actions:
+                raise RuntimeError('autoregressive-v1 requires the matching native search build') from error
             if "incompatible function arguments" not in str(error):
                 raise
             if bool(boss_transition_target):
@@ -2084,8 +2127,8 @@ class SlayTheSpireEnv(gym.Env):
         mask = np.zeros(self.action_space.n, dtype=bool)
         if self._joint_actions and self._phase() == 'combat':
             # Settlement clears bc on death while the room still says combat.
-            ids = [] if self.thick.bc is None else [aid for aid, _ in self.thick.bc.joint_policy_actions()]
-            self._cached_action_mask = C.joint_mask(ids)
+            ids = [] if self.thick.bc is None else [aid for aid, _ in self._joint_policy_actions()]
+            self._cached_action_mask = C.joint_mask(ids, contract=self.combat_action_contract)
             return self._cached_action_mask.copy()
         desc = self._multi_desc()
         if desc is not None:

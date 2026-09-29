@@ -21,6 +21,55 @@ JOINT_PICK = JOINT_POTION + 5 * 6
 JOINT_MULTI = JOINT_PICK + A.G_MAX
 JOINT_SIZE = JOINT_MULTI + (1 << A.HAND_SLOTS)
 JOINT_WIDTH = JOINT_SIZE - JOINT_END
+AUTOREGRESSIVE_CONTRACT = 'autoregressive-v1'
+AUTOREGRESSIVE_STOP = JOINT_MULTI + A.HAND_SLOTS
+AUTOREGRESSIVE_SIZE = AUTOREGRESSIVE_STOP + 1
+AUTOREGRESSIVE_WIDTH = AUTOREGRESSIVE_SIZE - JOINT_END
+NEURAL_CONTRACTS = (JOINT_CONTRACT, AUTOREGRESSIVE_CONTRACT)
+
+
+def policy_contract(space):
+    """Recover the versioned action contract from the checkpoint's space."""
+    spaces = getattr(space, 'spaces', {})
+    if 'combat_legal' not in spaces:
+        return 'legacy'
+    width = spaces['combat_legal'].shape[-1]
+    if width == JOINT_WIDTH:
+        return JOINT_CONTRACT
+    if width == AUTOREGRESSIVE_WIDTH:
+        return AUTOREGRESSIVE_CONTRACT
+    raise ValueError(f'unknown combat policy width: {width}')
+
+
+def policy_size(contract):
+    if contract == AUTOREGRESSIVE_CONTRACT:
+        return AUTOREGRESSIVE_SIZE
+    if contract == JOINT_CONTRACT:
+        return JOINT_SIZE
+    if contract == 'legacy':
+        return A.N_ACTIONS
+    raise ValueError(f'unknown policy contract: {contract}')
+
+
+def autoregressive_action_id(bits, **kwargs):
+    kind, source = int(bits) >> 29, int(bits) & 0xffff
+    if kind == 5 and 0 <= source < A.HAND_SLOTS:
+        return JOINT_MULTI + source
+    if kind == 6 and source == 0:
+        return AUTOREGRESSIVE_STOP
+    if kind == 3:
+        raise ValueError('complete subsets are not autoregressive policy actions')
+    return joint_action_id(bits, **kwargs)
+
+
+def autoregressive_native_bits(action_id, **kwargs):
+    if JOINT_MULTI <= action_id < AUTOREGRESSIVE_STOP:
+        return 5 << 29 | (action_id-JOINT_MULTI)
+    if action_id == AUTOREGRESSIVE_STOP:
+        return 6 << 29
+    if action_id >= JOINT_MULTI:
+        raise ValueError('invalid autoregressive action')
+    return joint_native_bits(action_id, **kwargs)
 
 
 def joint_action_id(bits, *, targeted=False, candidate_indices=()):
@@ -65,10 +114,11 @@ def joint_native_bits(action_id, *, candidate_indices=()):
     raise ValueError('not a complete combat policy ID')
 
 
-def joint_mask(policy_ids):
-    mask = np.zeros(JOINT_SIZE, dtype=bool)
+def joint_mask(policy_ids, *, contract=JOINT_CONTRACT):
+    size = policy_size(contract)
+    mask = np.zeros(size, dtype=bool)
     ids = np.asarray(policy_ids, dtype=np.int64)
-    if np.any((ids < JOINT_END) | (ids >= JOINT_SIZE)):
+    if np.any((ids < JOINT_END) | (ids >= size)):
         raise ValueError('invalid complete combat policy ID')
     mask[ids] = True
     return mask

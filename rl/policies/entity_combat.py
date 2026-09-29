@@ -74,7 +74,8 @@ class EntityCombatNetwork(nn.Module):
         self.pointer_query = nn.Linear(width, width)
         self.pointer_key = nn.Linear(width, width)
         self.end = nn.Linear(width, 1)
-        self.complete_head = CompleteCombatHead(width)
+        self.autoregressive_actions = C.policy_contract(space) == C.AUTOREGRESSIVE_CONTRACT
+        self.complete_head = CompleteCombatHead(width, autoregressive=self.autoregressive_actions)
         self.distribution = CombatDistributionHead(width, config.quantiles)
         self.transition = nn.Sequential(nn.Linear(3*width, width), nn.GELU(), nn.Linear(width, 6))
         # Runtime only: each precision owns stable storage referenced by CUDA
@@ -187,7 +188,8 @@ class EntityCombatNetwork(nn.Module):
         for start, role in ((A._PLAY,'hand'),(A._POTION,'potion'),(A._PICK,'select')):
             source[:,start:start+blocks[role].shape[1]] = self._pointer(state,blocks[role])
         logits = self.complete_head(source,state,torch.cat((blocks['hand'],blocks['potion']),1),
-            blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets)
+            blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets,
+            selected=obs['select_hand_mask'], remaining=(obs['pick_remaining']*encode.PICK_SCALE).round())
         values, outputs = self.distribution(state)
         if auxiliary_actions is not None:
             actions = auxiliary_actions.long()
@@ -202,8 +204,13 @@ class EntityCombatNetwork(nn.Module):
             entity = blocks['hand'][row,slot]*card[:,None]
             entity = entity + blocks['potion'][row,slot.clamp_max(4)]*potion[:,None]
             entity = entity + blocks['select'][row,(actions-C.JOINT_PICK).clamp(0,95)]*pick[:,None]
-            bits = (actions-C.JOINT_MULTI).clamp_min(0)
-            selected = ((bits[:,None] >> torch.arange(10,device=actions.device)) & 1).to(state.dtype)
+            if self.autoregressive_actions:
+                selected = F.one_hot((actions-C.JOINT_MULTI).clamp(0,10), 11)[:, :10].to(state.dtype)
+                selected = torch.where((actions==C.AUTOREGRESSIVE_STOP)[:,None],
+                    obs['select_hand_mask'].to(state.dtype), selected)
+            else:
+                bits = (actions-C.JOINT_MULTI).clamp_min(0)
+                selected = ((bits[:,None] >> torch.arange(10,device=actions.device)) & 1).to(state.dtype)
             entity = entity + torch.einsum('bh,bhd->bd',selected,blocks['hand'])*multi[:,None]
             targeted = (card|potion) & ((actions-origin)%6 != 5)
             destination = blocks['monster'][row,target]*targeted[:,None]
@@ -225,6 +232,7 @@ class EntityCombatCore(nn.Module):
         if 'draw_card_upgraded_counts' not in space.spaces:
             raise ValueError('entity-combat requires card-language observations for upgraded piles')
         self.config = config
+        self.autoregressive_actions = C.policy_contract(space) == C.AUTOREGRESSIVE_CONTRACT
         self.combat = EntityCombatNetwork(space, config)
 
     def prepare_inference_cache(self):

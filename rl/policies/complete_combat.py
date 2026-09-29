@@ -1,6 +1,7 @@
 """Lossless complete-action scores with a source-conditional target policy."""
 import torch
 from torch import nn
+from math import comb
 
 from env.core import action_space as A
 from env.core import native_actions as C
@@ -30,12 +31,13 @@ def complete_logits(source_logits, target_logits, subset_logits, legal):
 
 
 class CompleteCombatHead(nn.Module):
-    def __init__(self, width):
+    def __init__(self, width, *, autoregressive=False):
         super().__init__()
+        self.autoregressive = autoregressive
         self.source_query = nn.Linear(width, width, bias=False)
         self.global_query = nn.Linear(width, width, bias=False)
         self.target_key = nn.Linear(width, width, bias=False)
-        self.subset = AutoregressiveSubsetHead(width)
+        self.subset = AutoregressiveSubsetHead(width, sequential=autoregressive)
         self.scale = width ** -0.5
         # Warm-start new target/subset factors uniformly over the legal set.
         nn.init.zeros_(self.source_query.weight)
@@ -47,9 +49,13 @@ class CompleteCombatHead(nn.Module):
         return torch.cat((scores, torch.zeros_like(scores[..., :1])), dim=-1)
 
     def forward(self, source_logits, global_token, sources, monsters, legal, *, evaluate_subsets=True,
-                target_logits=None):
-        subsets = (self.subset(global_token, sources[:, :10], legal[:, C.JOINT_MULTI-C.JOINT_END:])
-                   if evaluate_subsets else global_token.new_zeros((global_token.shape[0], 1024)))
+                target_logits=None, selected=None, remaining=None):
+        if self.autoregressive:
+            subsets = self.subset.step(global_token, sources[:, :10], selected, remaining,
+                                       legal[:, C.JOINT_MULTI-C.JOINT_END:])
+        else:
+            subsets = (self.subset(global_token, sources[:, :10], legal[:, C.JOINT_MULTI-C.JOINT_END:])
+                       if evaluate_subsets else global_token.new_zeros((global_token.shape[0], 1024)))
         if target_logits is None:
             target_logits = self.targets(global_token, sources, monsters)
         return complete_logits(source_logits, target_logits,
@@ -64,7 +70,7 @@ class AutoregressiveSubsetHead(nn.Module):
     not as a separate learned class for every subset. Prefixes containing card
     nine have a forced STOP and need no decoder evaluation.
     """
-    def __init__(self, width, decoder_width=32):
+    def __init__(self, width, decoder_width=32, *, sequential=False):
         super().__init__()
         self.hand = nn.Linear(width, decoder_width)
         self.state = nn.Linear(width, decoder_width)
@@ -75,6 +81,14 @@ class AutoregressiveSubsetHead(nn.Module):
         nn.init.zeros_(self.stop.weight)
         nn.init.zeros_(self.stop.bias)
         self.scale = decoder_width ** -.5
+        if sequential:
+            # Small combinatorial counts preserve a uniform initial set prior
+            # without materializing sets or their paths. Current native multi
+            # tasks allow any subset up to a cap, including the empty subset.
+            counts = [[sum(comb(n, j) for j in range(min(n, k)+1))
+                       for k in range(11)] for n in range(11)]
+            self.register_buffer('completion_counts', torch.tensor(counts, dtype=torch.float32), persistent=False)
+            return
         prefixes = torch.arange(512)
         cards = torch.arange(10)
         membership = (prefixes[:, None].bitwise_and(1 << cards[None, :]) != 0).float()
@@ -90,6 +104,18 @@ class AutoregressiveSubsetHead(nn.Module):
         stop_edges = torch.arange(1024).clamp_max(511)[:, None] * 11 + 10
         self.register_buffer('path_edges', torch.cat((edges, stop_edges), -1).reshape(-1), persistent=False)
         self.register_buffer('path_active', torch.cat((active, sets < 512), -1), persistent=False)
+
+    def step(self, global_token, hand_tokens, selected, remaining, legal):
+        hand = self.hand(hand_tokens)
+        prefix = torch.einsum('bh,bhd->bd', selected.to(hand.dtype), hand)
+        query = torch.tanh(self.state(global_token) + self.prefix(prefix))
+        scores = torch.einsum('bd,bhd->bh', query, self.choice_key(hand)) * self.scale
+        candidates = legal[:, :10].long()
+        later = candidates.flip(1).cumsum(1).flip(1) - candidates
+        capacity = (remaining.long().reshape(-1, 1)-1).clamp(0, 10).expand_as(later)
+        scores = scores.float() + self.completion_counts[later, capacity].log()
+        scores = torch.cat((scores, self.stop(query).float()), -1)
+        return conditional_log_probs(scores, legal)
 
     def prefix_log_probs(self, global_token, hand_tokens, legal_sets):
         # Counts of legal completions make the initial residual-zero policy

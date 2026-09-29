@@ -395,6 +395,10 @@ const CardInstance *actionCardAt(const BattleContext &bc, int collection,
 std::uint64_t publicActionKey(const BattleContext &bc, const Action &action) {
     std::uint64_t hash = 0xcbf29ce484222325ULL;
     hashValue(hash, static_cast<int>(action.getActionType()));
+    if (action.getActionType() == kSelectNext) {
+        hashValue(hash, action.getSourceIdx());
+        return hash;
+    }
     switch (action.getActionType()) {
         case ActionType::CARD: {
             hashValue(hash, action.getTargetIdx());
@@ -935,7 +939,7 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     root_.networkValueValid = true;
     root_.propagatedValue = root_.networkValue;
     root_.propagatedValid = true;
-    expandWithLogits(root_, rootState_, legalActions(rootState_), rootPolicyLogits);
+    expandWithLogits(root_, rootState_, legalActions(rootState_, config_.selectionPrefix), rootPolicyLogits);
     applyRootDirichletNoise();
     initializeGumbelRoot();
 }
@@ -1224,8 +1228,12 @@ double NoslNeuralSearchSession::hpValue(const BattleContext &bc) {
 }
 
 std::vector<Action> NoslNeuralSearchSession::legalActions(
-    const BattleContext &bc) {
-    return Action::enumerateCombatActions(bc);
+    const BattleContext &bc, int selected) const {
+    return config_.autoregressivePolicy ? autoregressiveActions(bc, selected) : Action::enumerateCombatActions(bc);
+}
+
+bool NoslNeuralSearchSession::validAction(const Action &action, const BattleContext &bc, int selected) const {
+    return config_.autoregressivePolicy ? validAutoregressiveAction(action, bc, selected) : action.isValidAction(bc);
 }
 
 int NoslNeuralSearchSession::thinActionId(const Action &action, const BattleContext &state) {
@@ -1276,6 +1284,11 @@ bool NoslNeuralSearchSession::actionTargetsEnemy(
 NoslNeuralSearchSession::ActionLabel NoslNeuralSearchSession::actionLabel(
     const BattleContext &state, const Action &action) {
     ActionLabel label;
+    if (action.getActionType() == kSelectNext || action.getActionType() == kSelectStop) {
+        label.eager = action.getActionType() == kSelectStop ? "{ finish selection }" :
+            "{ select hand " + std::to_string(action.getSourceIdx()) + " }";
+        return label;
+    }
     const auto type = action.getActionType();
     if ((type == ActionType::CARD || type == ActionType::END_TURN) &&
         action.isValidAction(state)) {
@@ -1345,7 +1358,7 @@ void NoslNeuralSearchSession::expandWithLogits(
     }
 
     if (config_.jointPolicy) {
-        if (logitsSize != kJointSize)
+        if (logitsSize != static_cast<std::size_t>(config_.autoregressivePolicy ? kAutoregressiveSize : kJointSize))
             throw std::invalid_argument("joint-v2 requires complete policy logits at every expansion");
         node.edges.clear();
         double maximum = -std::numeric_limits<double>::infinity();
@@ -1976,6 +1989,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
     while (simulationsStarted_ < config_.simulations &&
            static_cast<int>(requests.size()) < maxLeaves) {
         Pending pending;
+        pending.selectionPrefix = config_.selectionPrefix;
         pending.state = std::make_unique<BattleContext>(rootState_);
         auto &state = *pending.state;
         if (!config_.fixedWorldline) {
@@ -2010,7 +2024,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             }
             if (node->edges.empty()) {
                 pending.leaf = node;
-                pending.legalActions = legalActions(state);
+                pending.legalActions = legalActions(state, pending.selectionPrefix);
                 pending.needsPolicy = true;
                 haveLeaf = true;
                 break;
@@ -2038,12 +2052,12 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             Edge *edge = edgeIndex >= 0 ? &node->edges[edgeIndex] : nullptr;
             Action executableAction;
             bool foundAction = false;
-            if (edge != nullptr && edge->action.isValidAction(state) &&
+            if (edge != nullptr && validAction(edge->action, state, pending.selectionPrefix) &&
                 publicActionKey(state, edge->action) == edge->semanticKey) {
                 executableAction = edge->action;
                 foundAction = true;
             } else if (edge != nullptr) {
-                const auto currentActions = legalActions(state);
+                const auto currentActions = legalActions(state, pending.selectionPrefix);
                 for (const auto &candidateAction : currentActions) {
                     const auto candidateKey = publicActionKey(
                         state, candidateAction);
@@ -2065,7 +2079,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             if (!foundAction) {
                 edge = nullptr;
                 for (auto &candidate : node->edges) {
-                    if (candidate.action.isValidAction(state)) {
+                    if (validAction(candidate.action, state, pending.selectionPrefix)) {
                         edge = &candidate;
                         executableAction = candidate.action;
                         foundAction = true;
@@ -2081,8 +2095,12 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             state.stopAfterEnemyTurn =
                 config_.endTurnAsLeaf &&
                 executableAction.getActionType() == ActionType::END_TURN;
-            executableAction.execute(state);
-            ++depth;
+            if (config_.autoregressivePolicy) {
+                if (executeAutoregressiveAction(executableAction, state, pending.selectionPrefix)) ++depth;
+            } else {
+                executableAction.execute(state);
+                ++depth;
+            }
 
             if (config_.endTurnAsLeaf &&
                 executableAction.getActionType() == ActionType::END_TURN) {
@@ -2097,7 +2115,13 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 break;
             }
 
-            const auto childKey = publicStateKey(state, &stateKeyScratch_);
+            auto childKey = publicStateKey(state, &stateKeyScratch_);
+            if (config_.autoregressivePolicy) {
+                hashValue(childKey, pending.selectionPrefix);
+                // Prefix IDs refer to visible hand slots, so keep their order.
+                for (int i = 0; i < state.cards.cardsInHand; ++i)
+                    hashActionCard(childKey, state.cards.hand[i], true);
+            }
             auto childIt = edge->children.find(childKey);
             if (childIt == edge->children.end()) {
                 childIt = edge->children.emplace(
@@ -2135,6 +2159,8 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         LeafRequest request;
         request.requestId = stored.id;
         request.state = stored.state.get();
+        request.selectionPrefix = stored.selectionPrefix;
+        request.autoregressivePolicy = config_.autoregressivePolicy;
         request.legalActions = stored.legalActions;
         request.needsPolicy = stored.needsPolicy;
         requests.push_back(std::move(request));

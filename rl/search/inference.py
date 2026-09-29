@@ -59,7 +59,7 @@ class CombatLeafGraphs:
                 with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
                         enabled=self.amp == 'bf16', cache_enabled=False):
                     prepare()
-            if getattr(self.core, 'joint_actions', False):
+            if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
                 from env.core import native_actions as C
                 multi = np.asarray(observations['combat_legal'])[:, C.JOINT_MULTI-C.JOINT_END:].any(axis=1)
                 if multi.any():

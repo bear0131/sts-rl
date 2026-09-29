@@ -87,10 +87,68 @@ constexpr int kJointPotion = 242;
 constexpr int kJointPick = 272;
 constexpr int kJointMulti = 368;
 constexpr int kJointSize = 1392;
+constexpr int kAutoregressiveStop = kJointMulti + 10;
+constexpr int kAutoregressiveSize = kAutoregressiveStop + 1;
+// Policy-only steps. They must never be passed to Action::execute directly.
+constexpr ActionType kSelectNext = static_cast<ActionType>(5);
+constexpr ActionType kSelectStop = static_cast<ActionType>(6);
+
+inline bool isMultiSelection(const BattleContext &bc) {
+    return bc.outcome == Outcome::UNDECIDED && bc.inputState == InputState::CARD_SELECT &&
+        (bc.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY ||
+         bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE);
+}
+
+inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int selected) {
+    if (!isMultiSelection(bc)) {
+        if (selected != 0) throw std::invalid_argument("selection prefix outside multi screen");
+        return Action::enumerateCombatActions(bc);
+    }
+    if (selected < 0 || selected >= (1 << bc.cards.cardsInHand))
+        throw std::invalid_argument("invalid selection prefix");
+    std::vector<Action> result;
+    // Each set has exactly one increasing-index path. Native legality remains
+    // authoritative; no subset enumeration is needed for current multi tasks.
+    int last = -1;
+    for (int i = 0; i < bc.cards.cardsInHand; ++i)
+        if (selected & (1 << i)) last = i;
+    for (int i = last + 1; i < bc.cards.cardsInHand; ++i)
+        if (Action(ActionType::MULTI_CARD_SELECT, selected | (1 << i)).isValidAction(bc))
+            result.emplace_back(kSelectNext, i);
+    if (Action(ActionType::MULTI_CARD_SELECT, selected).isValidAction(bc))
+        result.emplace_back(kSelectStop);
+    if (result.empty()) throw std::invalid_argument("selection prefix has no completion");
+    return result;
+}
+
+inline bool validAutoregressiveAction(const Action &action, const BattleContext &bc, int selected) {
+    if (!isMultiSelection(bc))
+        return selected == 0 && action.getActionType() != ActionType::MULTI_CARD_SELECT &&
+            static_cast<int>(action.getActionType()) < 5 && action.isValidAction(bc);
+    const auto actions = autoregressiveActions(bc, selected);
+    return std::any_of(actions.begin(), actions.end(), [&](const Action &a) { return a.bits == action.bits; });
+}
+
+inline bool executeAutoregressiveAction(const Action &action, BattleContext &bc, int &selected) {
+    if (!validAutoregressiveAction(action, bc, selected))
+        throw std::invalid_argument("illegal autoregressive action");
+    if (action.getActionType() == kSelectNext) {
+        selected |= 1 << action.getSourceIdx();
+        return false; // no simulator transition, RNG consumption or depth
+    }
+    if (action.getActionType() == kSelectStop)
+        Action(ActionType::MULTI_CARD_SELECT, selected).execute(bc);
+    else
+        action.execute(bc);
+    selected = 0;
+    return true;
+}
 
 inline int jointActionId(const Action &action, const BattleContext &bc) {
     const int source = action.getSourceIdx();
     const int target = action.getTargetIdx();
+    if (action.getActionType() == kSelectNext) return source < 10 ? kJointMulti + source : -1;
+    if (action.getActionType() == kSelectStop) return kAutoregressiveStop;
     switch (action.getActionType()) {
         case ActionType::END_TURN: return kJointEnd;
         case ActionType::CARD:
