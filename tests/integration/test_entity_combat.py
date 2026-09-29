@@ -15,6 +15,66 @@ def make_model(env):
         policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4,quantiles=8)))
 
 
+def test_card_table_lookup_preserves_padded_choice_gradients(combat_factory):
+    env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],
+        combat_action_contract=C.JOINT_CONTRACT,card_language=True)
+    network=make_model(env).policy.core.combat
+    observation=env._obs()
+    ids=torch.as_tensor(np.repeat(observation['select_card_ids'][None],2,axis=0))
+    upgrades=torch.as_tensor(np.repeat(observation['select_card_upgrades'][None],2,axis=0))
+    ids[1,0]=1;upgrades[1,0]=1
+    table=network._encode_card_table().detach()
+
+    def run(reference):
+        weight=table.clone().requires_grad_()
+        network.zero_grad(set_to_none=True)
+        if reference:
+            vectors=weight[ids.long(),upgrades.gt(0).long()]
+            output=network.card_projection(torch.cat((vectors,upgrades.float().unsqueeze(-1)),-1))
+        else:
+            output=network._card_tokens(weight,ids,upgrades)
+        output.square().sum().backward()
+        return output.detach(),weight.grad.detach(),network.card_projection.weight.grad.detach().clone()
+
+    expected=run(True)
+    actual=run(False)
+    for observed,reference in zip(actual,expected,strict=True):
+        torch.testing.assert_close(observed,reference,rtol=1e-5,atol=1e-5)
+
+
+def test_shared_pile_attention_matches_independent_pools_and_gradients(combat_factory, monkeypatch):
+    env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],
+        combat_action_contract=C.JOINT_CONTRACT,card_language=True)
+    network=make_model(env).policy.core.combat
+    network.train()
+    obs={k:torch.as_tensor(np.repeat(v[None],2,axis=0)) for k,v in env._obs().items()}
+    # Different piles exercise all three count masks over the same card table.
+    obs['draw_counts'][1].zero_()
+    obs['discard_counts'][0].zero_()
+    original_pool=network._pool
+
+    def run(independent):
+        network.zero_grad(set_to_none=True)
+        with monkeypatch.context() as patch:
+            if independent:
+                patch.setattr(network,'_pool',lambda entities,counts,context,**kwargs:
+                    original_pool(entities,counts,context))
+            state,blocks=network.encode(obs)
+            loss=state.square().sum()+blocks['pile'].square().sum()
+            loss.backward()
+        return (state.detach().clone(),blocks['pile'].detach().clone(),
+                {name:p.grad.detach().clone() for name,p in network.named_parameters()
+                 if p.grad is not None})
+
+    old_state,old_piles,old_grads=run(True)
+    new_state,new_piles,new_grads=run(False)
+    torch.testing.assert_close(new_state,old_state,rtol=0,atol=0)
+    torch.testing.assert_close(new_piles,old_piles,rtol=0,atol=0)
+    assert new_grads.keys()==old_grads.keys()
+    for name in new_grads:
+        torch.testing.assert_close(new_grads[name],old_grads[name],rtol=1e-5,atol=1e-6)
+
+
 @pytest.mark.parametrize('amp', [False, True])
 def test_card_cache_reuses_constants_but_preserves_training_and_reload(combat_factory, tmp_path, amp, monkeypatch):
     env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],

@@ -107,12 +107,17 @@ class EntityCombatNetwork(nn.Module):
         return self._card_inference_tables[key][1]
 
     def _card_tokens(self, table, ids, upgrades):
-        vectors = table[ids.long(), upgrades.gt(0).long()]
+        # The two-dimensional advanced index scatters gradients into a tiny
+        # card table from every one of the 96 padded choice slots.  Embedding
+        # uses the dedicated table-gradient kernel for the same lookup.
+        index = ids.long() * 2 + upgrades.gt(0).long()
+        vectors = F.embedding(index, table.reshape(-1, table.shape[-1]))
         return self.card_projection(torch.cat((vectors, upgrades.float().unsqueeze(-1)), -1))
 
-    def _pool(self, entities, counts, context):
-        query = context[:, None] + self.pool_queries[None]
-        logits = torch.einsum('bkd,bnd->bkn', query, entities) * self.config.width**-.5
+    def _pool(self, entities, counts, context, *, logits=None):
+        if logits is None:
+            query = context[:, None] + self.pool_queries[None]
+            logits = torch.einsum('bkd,bnd->bkn', query, entities) * self.config.width**-.5
         weights = counts.float().clamp_min(0)
         scores = logits.float() + weights.clamp_min(1e-30).log()[:, None]
         probability = scores.masked_fill(weights[:, None] == 0, -1e9).softmax(-1)
@@ -157,6 +162,8 @@ class EntityCombatNetwork(nn.Module):
         all_ids = self.card_ids.reshape(1,-1)
         all_versions = self.card_versions.reshape(1,-1).float()/encode.UPGRADE_SCALE
         pile_entities = self._card_tokens(table, all_ids, all_versions).expand(batch,-1,-1)
+        pile_query = global_token[:, None] + self.pool_queries[None]
+        pile_logits = torch.einsum('bkd,bnd->bkn', pile_query, pile_entities) * self.config.width**-.5
         for pile_index, pile in enumerate(('draw', 'discard', 'exhaust')):
             counts = obs[pile+'_counts'].float()
             upgraded = torch.zeros_like(counts)
@@ -164,7 +171,8 @@ class EntityCombatNetwork(nn.Module):
                 upgraded = upgraded.scatter_add(1, obs[pile+'_card_ids'].long(),
                                                  obs[pile+'_card_upgraded_counts'].float())
             versions = torch.stack(((counts-upgraded).clamp_min(0),upgraded),-1).flatten(1)
-            pile_tokens.append(self._pool(pile_entities, versions, global_token)+self.pile_role.weight[pile_index])
+            pile_tokens.append(self._pool(pile_entities, versions, global_token, logits=pile_logits)
+                               + self.pile_role.weight[pile_index])
         piles = torch.cat(pile_tokens, 1)
         blocks = [('global',global_token[:,None],torch.zeros(batch,1,dtype=torch.bool,device=hp.device)),
                   ('hand',hand,obs['hand_ids']==0), ('monster',monster,obs['monster_id']==0),
