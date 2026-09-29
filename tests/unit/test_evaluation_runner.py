@@ -124,3 +124,34 @@ def test_mixed_native_transports_keep_all_workers_and_request_order():
 def test_native_transport_rejects_missing_batch_rows():
     with pytest.raises(ValueError, match='batch size'):
         decode_leaves({0: {'leaf_meta': [{'request_id': 1}], 'observation_batch': {'x': np.zeros((2, 3))}}})
+
+
+def test_joint_overworld_policy_composes_with_a_legacy_combat_solver():
+    from types import SimpleNamespace
+    from env.core import native_actions as C
+    from rl.evaluation.strategies import DecisionRequest, PolicyStrategy
+
+    class JointModel:
+        observation_space = SimpleNamespace(spaces={'seed': None, 'combat_legal': None})
+        action_space = SimpleNamespace(n=C.JOINT_SIZE)
+
+        def predict(self, obs, *, action_masks, deterministic):
+            assert not obs['combat_legal'].any()
+            assert action_masks.shape == (2, C.JOINT_SIZE)
+            assert np.flatnonzero(action_masks[0]).tolist() == [17]
+            assert np.flatnonzero(action_masks[1]).tolist() == [18]
+            return action_masks.argmax(1), None
+
+    def request(seed, phase):
+        mask = np.zeros(C.JOINT_END, bool)
+        mask[seed + 17] = True
+        return DecisionRequest(SimpleNamespace(action_masks=lambda: mask),
+                               {'seed': np.array([seed])}, {'phase': phase}, seed, 0)
+
+    policy = PolicyStrategy(JointModel())
+    strategy = PhaseStrategy(policy, {'combat': FutureStrategy()})
+    assert strategy.combat_action_contract == 'legacy'
+    decisions = strategy.decide([request(0, 'map'), request(1, 'combat'), request(1, 'map')])
+    assert [d.action for d in decisions] == [17, 1, 18]
+    with pytest.raises(ValueError, match='requires a joint-v2 environment'):
+        policy.decide([request(0, 'combat')])

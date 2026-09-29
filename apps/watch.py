@@ -209,6 +209,7 @@ def main() -> None:
         else None
     )
     env = SlayTheSpireEnv(
+        combat_action_contract="joint-v2" if "combat_legal" in model.observation_space.spaces else "legacy",
         ascension=args.ascension,
         global_map_view=_model.uses_global_map_observation(model),
         card_language=_model.uses_card_language(model),

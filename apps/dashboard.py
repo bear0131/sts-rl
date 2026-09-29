@@ -21,6 +21,7 @@ import numpy as np
 from sb3_contrib import MaskablePPO
 
 from env.core import action_space as A
+from env.core import native_actions as C
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
 from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
@@ -625,7 +626,7 @@ class WatchSession:
             and hasattr(core, "combat_observation_keys")
         )
         self.env = SlayTheSpireEnv(
-            combat_action_contract="native-v1",
+            combat_action_contract=("joint-v2" if "combat_legal" in model.observation_space.spaces else "native-v1"),
             global_map_view=_model.uses_global_map_observation(model),
             card_language=_model.uses_card_language(model),
             combat_language=_model.uses_combat_language(model),
@@ -752,6 +753,9 @@ class WatchSession:
                 "combat strategy must be one of "
                 f"{sorted(_COMBAT_STRATEGIES)}, got {strategy!r}"
             )
+        if (candidate == _COMBAT_STRATEGY_PLANNER
+                and self.env.unwrapped.combat_action_contract == C.JOINT_CONTRACT):
+            raise ValueError("joint-v2 观看会话暂不支持切换回合规划器；请使用独立评测。")
         self.combat_strategy = candidate
 
     def _apply_paper_full_gumbel_defaults(self, *, preserve_overrides: bool = False):
@@ -1804,6 +1808,10 @@ class WatchSession:
         )
 
     def _action_animation(self, action: int):
+        if action == C.JOINT_END:
+            return {"kind": "end_turn"}
+        if C.JOINT_PLAY <= action < C.JOINT_POTION:
+            return {"kind": "play_card", "slot": (action - C.JOINT_PLAY) // 6}
         play_base = A.seg_base("PLAY_CARD")
         target_base = A.seg_base("PICK_TARGET")
         if play_base <= action < play_base + A.HAND_SLOTS:
@@ -2686,7 +2694,7 @@ class DashboardState:
                 combat_action_contract=(
                     "native-v1"
                     if combat_strategy == _COMBAT_STRATEGY_PLANNER
-                    else "legacy"
+                    else getattr(strategy, "combat_action_contract", "legacy")
                 ),
                 global_map_view=_model.uses_global_map_observation(model),
                 card_language=_model.uses_card_language(model),

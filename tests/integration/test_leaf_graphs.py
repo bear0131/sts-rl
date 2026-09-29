@@ -11,6 +11,16 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.fixture(autouse=True)
+def explicit_fp32_precision():
+    # Production lifecycle tests select TF32 globally. Cross-shape FP32 error
+    # bounds below are for full FP32, independent of test ordering and hardware.
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    yield
+    torch.set_float32_matmul_precision(previous)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp):

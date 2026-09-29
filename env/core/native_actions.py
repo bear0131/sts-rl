@@ -74,6 +74,25 @@ def joint_mask(policy_ids):
     return mask
 
 
+def joint_semantic_action(action_id):
+    """Public complete policy ID -> shared semantic action (no simulator needed)."""
+    from . import actions, game_actions as ga
+    aid = int(action_id)
+    if aid == JOINT_END:
+        return ga.combat(actions.END_TURN)
+    if JOINT_PLAY <= aid < JOINT_PICK:
+        potion = aid >= JOINT_POTION
+        slot, target = divmod(aid - (JOINT_POTION if potion else JOINT_PLAY), 6)
+        target = None if target == 5 else target
+        return ga.use_potion(slot, target) if potion else ga.combat(actions.encode_play(slot, target))
+    if JOINT_PICK <= aid < JOINT_MULTI:
+        return ga.select(aid - JOINT_PICK)
+    if JOINT_MULTI <= aid < JOINT_SIZE:
+        bits = aid - JOINT_MULTI
+        return ga.multi_select(i for i in range(A.HAND_SLOTS) if bits >> i & 1)
+    raise ValueError("not a complete combat policy ID")
+
+
 def legacy_action_id(joint_id):
     """Project a leaf's own public ID to an old source-only policy slot."""
     if joint_id == JOINT_END:

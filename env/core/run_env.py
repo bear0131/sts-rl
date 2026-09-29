@@ -940,6 +940,8 @@ class SlayTheSpireEnv(gym.Env):
         Internal callers can set ``validate=False`` after selecting from that
         mask; this avoids enumerating the same legal ids a second time.
         """
+        if self._joint_actions:
+            raise ValueError("joint-v2 requires native neural search; legacy Python search_step is unsupported")
         aid = int(action_id)
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("search_step requires a live combat branch")
@@ -1996,6 +1998,8 @@ class SlayTheSpireEnv(gym.Env):
         temperature: float = 1.0,
     ):
         """Start a staged NOSL-IS-AZ search and return its first leaf request."""
+        if self._joint_actions:
+            raise ValueError("joint-v2 requires nosl_is_az_cpp_begin")
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("NOSL-IS-AZ requires a live combat state")
         from env.search.nosl_is_az import NOSLISAZConfig, NOSLISAZSession
@@ -2144,6 +2148,9 @@ class SlayTheSpireEnv(gym.Env):
         aid = int(action_id)
         legal = self._legal()
         phase = self._phase()
+
+        if self._joint_actions and phase == "combat":
+            return self.thick.describe_action(C.joint_semantic_action(aid))
 
         # combat MULTI screen: CONFIRM commits; PICK_CARD adds an unselected card.
         if self._multi is not None:

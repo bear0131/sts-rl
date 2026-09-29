@@ -52,6 +52,8 @@ def _forced_end_batch(strategy, requests, check):
     forced = {}
     for index, request in enumerate(requests):
         mask = request.env.action_masks()
+        if request.info.get('phase') == 'combat' and len(mask) != C.JOINT_SIZE:
+            raise ValueError('joint-v2 combat policy requires a joint-v2 environment')
         if request.info.get('phase') == 'combat' and mask[C.JOINT_END] and np.count_nonzero(mask) == 1:
             forced[index] = Decision(C.JOINT_END, 'forced_end_turn',
                                     {'root_forward_skipped':1, 'search_simulations':0})
@@ -110,6 +112,13 @@ class PolicyStrategy:
         check()
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
         masks = np.stack([r.env.action_masks() for r in requests])
+        if self.combat_action_contract == C.JOINT_CONTRACT and 'combat_legal' not in observations:
+            if any(r.info.get('phase') == 'combat' for r in requests):
+                raise ValueError('joint-v2 combat policy requires combat_legal observations')
+            # A legacy combat solver may share the unchanged overworld policy.
+            observations['combat_legal'] = np.zeros((len(requests), C.JOINT_WIDTH), dtype=bool)
+        if self.combat_action_contract == C.JOINT_CONTRACT and masks.shape[1] == C.JOINT_END:
+            masks = np.pad(masks, ((0, 0), (0, C.JOINT_WIDTH)))
         if self.combat_action_contract == 'legacy' and masks.shape[1] > self.model.action_space.n:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('legacy policy cannot consume a joint-v2 combat environment')
@@ -225,6 +234,8 @@ class ValueStrategy:
 
     def __init__(self, model, config, lock=None):
         from rl.search.combat_value_search import CombatValueSearch
+        if 'combat_legal' in model.observation_space.spaces:
+            raise ValueError('joint-v2 supports policy or native search, not legacy value search')
         self.search, self.lock = CombatValueSearch(model, config), lock
 
     def decide(self, requests, *, check=lambda: None):

@@ -77,6 +77,8 @@ def main(argv=None):
         )
 
     env = SlayTheSpireEnv(
+        combat_action_contract=("joint-v2" if model is not None and
+                                "combat_legal" in model.observation_space.spaces else "legacy"),
         backend_factory=lambda: SimCombatBackend(_builder, ascension=args.ascension),
         card_language=(
             _model.uses_card_language(model) if model is not None else False

@@ -179,3 +179,37 @@ def test_forced_end_roots_skip_forward_and_search_but_keep_value_samples(short_c
     assert all(np.isnan(s['estimated_value']) for s in roots)
     boundaries = [s for s in model._nosl_is_az_pending_fights[0] if s['sample_kind']=='end_turn_boundary']
     assert len(boundaries) == 4
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="joint AMP learner requires a GPU")
+def test_joint_bf16_learner_updates_autoregressive_and_target_heads(combat_factory):
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from stable_baselines3.common.logger import configure
+    env = combat_factory(['PURITY']*5, 'Two Louse', combat_action_contract=C.JOINT_CONTRACT)
+    env.thick.bc.apply_custom_state({'hand':['STRIKE_RED']*5})
+    env._invalidate_backend_cache()
+    normal, normal_mask = env._obs(), env.action_masks()
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, n_steps=4, batch_size=4,
+        policy_kwargs=dict(d_model=32,n_layers=2,n_heads=4), seed=42, device='cuda',
+        nosl_is_az=True,nosl_is_az_cpp=True,nosl_is_az_inner_only=True,amp_mode='bf16',
+        nosl_is_az_updates=2,nosl_is_az_batch_size=4,nosl_is_az_micro_batch_size=2,
+        nosl_is_az_replay_capacity=8)
+    model.set_logger(configure(format_strings=[]))
+    env.thick.bc.apply_custom_state({'hand':['PURITY']+['STRIKE_RED']*9})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD,0))
+    env._invalidate_backend_cache()
+    multi, multi_mask = env._obs(), env.action_masks()
+    samples=[]
+    for obs,mask,aid in ((normal,normal_mask,C.JOINT_PLAY+1),
+                         (multi,multi_mask,C.JOINT_MULTI+3)):
+        target=np.zeros(C.JOINT_SIZE,np.float32);target[aid]=1
+        samples.append(dict(observation=obs,action_mask=mask,policy_target=target,value_target=.25,policy_weight=1.))
+        samples.append(dict(observation=obs,action_mask=np.zeros(C.JOINT_SIZE,bool),
+                            policy_target=np.zeros(C.JOINT_SIZE,np.float32),value_target=.25,policy_weight=0.))
+    model._nosl_is_az_samples=samples
+    stats=model._train_nosl_is_az()
+    assert stats['updates']==2 and stats['finite_fraction']==1
+    head=model.policy.core.combat.complete_head
+    assert torch.count_nonzero(head.source_query.weight)>0
+    assert torch.count_nonzero(head.subset.choice_key.weight)>0
+    assert all(torch.isfinite(p).all() for p in model.policy.parameters())

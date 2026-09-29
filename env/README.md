@@ -63,4 +63,8 @@ distributed/evaluation按checkpoint空间恢复环境合同。bridge直接展开
 多选集合转为降序UI选择，逐帧核对确认和候选变化，不为每张牌重新调用模型。
 NOSL inner-only在唯一合法End Turn根旁路前推和搜索，保留同权重根价值样本、边界样本与
 采样计数；缺失的预测不进入HP-order诊断，单列forced_end_turn_roots/root_value_predictions_skipped。
-标准PPO及非inner-only NOSL仍计算GAE需要的V；搜索内部叶也保留V。完整collection验收待完成。
+标准PPO及非inner-only NOSL仍计算GAE需要的V；搜索内部叶也保留V。
+25CPU/RTX5090、96×128环境transition的完整collection和GPU图资源生命周期已经验证，
+结果见 `worklog/2026-09-29.md#joint-contract-production-length-validation`；不代表新策略已重训收敛。
+新模型可作为旧战斗规则/规划器的整局上层，只有非战斗阶段适配空combat mask；
+旧CombatTask及Python value search不支持joint-v2，观看中的规划器切换须使用独立评测。
