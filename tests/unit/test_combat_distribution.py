@@ -69,3 +69,10 @@ def test_outcome_is_explicit_and_censored_fights_are_not_deaths():
     invalid=np.zeros((1,9),np.float32)
     with pytest.raises(ValueError,match='zero utility'):
         validate_targets(invalid,np.array([.2]))
+
+
+def test_disabled_transition_target_ignores_restored_pending_fight_labels():
+    samples = [dict(executed_action=42, transition_target=np.ones(6, np.float32))]
+    outcome_targets(samples, 'win', include_transition=False)
+    np.testing.assert_array_equal(samples[0]['combat_targets'],
+                                  np.array([1, 0, 0, 0, 0, 0, 0, 0, 0], np.float32))

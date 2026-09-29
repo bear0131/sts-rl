@@ -1508,7 +1508,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     if outcome not in ('win','loss') or not np.isfinite(terminal_target):
                         incomplete_combat_roots += len(pending)
                         continue
-                    outcome_targets(pending,outcome)
+                    outcome_targets(
+                        pending, outcome,
+                        include_transition=bool(self.policy.core.config.auxiliary_loss_coef),
+                    )
                 target = next_hp[env_index]
                 if np.isfinite(terminal_target):
                     target = terminal_target

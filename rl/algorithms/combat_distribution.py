@@ -25,13 +25,13 @@ def transition_features(obs):
         obs['player_buffs'][strength], np.count_nonzero(obs['hand_ids']) / 10], dtype=np.float32)
 
 
-def outcome_targets(samples, outcome):
+def outcome_targets(samples, outcome, *, include_transition=True):
     if outcome not in ('win', 'loss'):
         raise ValueError('distribution supervision requires an observed win or loss')
     for sample in samples:
         target = np.zeros(TARGET_WIDTH, dtype=np.float32)
         target[0] = float(outcome == 'win')
-        if 'transition_target' in sample:
+        if include_transition and 'transition_target' in sample:
             target[1] = sample['executed_action']
             target[2] = 1
             target[3:] = sample['transition_target']
