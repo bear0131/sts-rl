@@ -4,6 +4,8 @@
 
 本文件只维护持久问题与验收；工作进度见 worklog/。F 编号的完整问题、证据与验收见 [codebase-audit.md](docs/2026-09-13/codebase-audit.md)；每行编号直接链接相应问题。报告是固定快照，修复状态以本表为准。
 
+当前修复优先级以 TRAIN24 的原生 NOSL + v3 规则上层为范围：P1 为下一轮正式训练前优先修复，P2 为对应路径启用/扩展前修复；“首批”优先于“随后”。算法实验不等同于已确认的实现缺陷。依据见 [当前缺陷复核](worklog/2026-09-29.md#bug21-current-known-defect-urgency-review)。
+
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | EVAL07 | 已完成；训练已恢复验收 | 固定step36175872/strict Full-Gumbel128，对照最强v3规则上层+planner8192×2，seeds200000--200099/A0：模型20/100、规则46/100；平均楼层35.18/41.95，Act2/3到达89%/37% vs 94%/63%。规则100局结果与战斗记录复现存档；差距主要在二幕（Boss前死亡22 vs 7，Boss胜率37/67 vs 63/87），甜圈八体/冠军/铜人及扎人的书突出，三哨卫全胜但模型净损血翻倍。原TRAIN24从36372480恢复，36421632四rank模型/Adam一致且+40更新、target50M。详见 `worklog/2026-09-29.md#eval07-final-comparison-and-training-restoration`；轨迹/图/CSV在 `runs/local/eval-current-vs-rulebase-20260929/`。 |
@@ -28,26 +30,26 @@
 | TRAIN06 | schema2四机生产恢复已验收；训练运行中 | checkpoint以实际backend seed和本局已提交动作日志重建原生环境，完整native action bits防止目标信息丢失；同时保存薄层pending/multi、Gym RNG、搜索计数、TimeLimit、奖励/occupancy wrapper、VecMonitor、`_last_episode_starts`及跨rollout未完成战斗样本，恢复后逐环境校验观测和action mask。schema1保持兼容但只能再做一次legacy预热。四机各96环境在step16269312从schema2实恢复，均记录`ENVIRONMENT_RESTORED`且未新增`STARTUP_OCCUPANCY`；首轮到step16318464完成40 updates，policy/Adam跨rank一致、Adam13240→13280、满replay、每机24 worker/0 zombie，W&B running。见 [实现记录](worklog/2026-09-20.md#train06-live-environment-checkpoint-recovery) 与 [生产验收](worklog/2026-09-20.md#train06perf06-four-rank-production-acceptance) |
 | TRAIN08 | 运行中；暂不调整LR/U/microbatch/clip | `u40x4-ruleupper-v1-reduced-align-768x16-20260922` / W&B `u40x4tr100a22`：小模型使用LR2.5e-4、microbatch2048、U40对齐大模型更新几何。step1966080 的 floor/KL/top1/value MAE 为22.215/.5788/.5387/.0433，优于旧小模型18.34/.6182/.5328/.0456并接近大模型25.50/.5708/.5544/.0426；截至step2457600仍改善到24.01/.5355/.5635/.0398。最近10轮KL、value MAE下降且top1、floor上升，finite fraction1；但9/10轮的轮均pre-clip norm已高于0.5，故既无降LR证据，也不应继续加LR或放宽clip。保持现参到至少3.93M匹配检查点，再按两个完整10轮窗口判断；见 [诊断](worklog/2026-09-22.md#train08-live-learning-rate-diagnosis)。 |
 | TRAIN09 | 运行中；原模型尺寸 fresh 对照 | `u40x4-ruleupper-v1-original-256-align-768x16-20260922` / W&B `u40x4tr256a22`：暂停并保存 TRAIN08 于共同 step4128768 后，从全新 `d_model=256,n_layers=8,n_heads=8` step0 checkpoint 启动；除恢复原 LR=1e-4 外沿用 TRAIN08 全部 args（768x16、microbatch2048、U40、replay/search/optimizer）。首个共同 schema-2 recovery 为 step196608，四机 policy/Adam 一致、finite fraction1，仍运行中；见 `worklog/2026-09-22.md` 的 TRAIN09 记录。 |
-| [F01](docs/2026-09-13/codebase-audit.md#f01) | 待重构 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致 |
-| [F02](docs/2026-09-13/codebase-audit.md#f02) | 待重构 | 非 reasoning 策略也能观察 pending card/potion 来源 |
-| [F03](docs/2026-09-13/codebase-audit.md#f03) | 待重构；截断和生成候选观测缺失均已复现 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确。Secret Technique/Weapon原生draw候选index>=10被71-action绑定/薄层丢弃，可使存活战斗dead_screen。EVAL08进一步确认当前Split checkpoint的能力药水30组有序候选对应相同obs/mask，combat_select_options丢generated_cards、combat PICK_CARD读hand token；native候选/执行正确，搜索后继仍能区分。验收覆盖draw/discard/exhaust/generated候选观测和native索引映射、packed/训练/评估/bridge、71/181 checkpoint版本兼容及seed110104与200031固定状态；既有strict xfail `tests/integration/test_environment_contracts.py::test_draw_selection_remains_actionable_beyond_hand_slots`；[截断证据](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction)、[生成候选证据](worklog/2026-09-29.md#eval08-fixed-state-results-and-generated-choice-observation-gap)。 |
-| [F04](docs/2026-09-13/codebase-audit.md#f04) | 待重构 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致 |
-| [F05](docs/2026-09-13/codebase-audit.md#f05) | 待重构 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义 |
+| [F01](docs/2026-09-13/codebase-audit.md#f01) | P1 首批；槽位错位仍复现 | 空怪物槽不改变 action-target 映射；canonical/packed/real 路径一致。Gremlin Leader strict xfail 仍成立，铜人/收藏家初态也有空槽；完整 native action 的执行目标仍正确，不能将观测错位等同于每次执行打错目标。随 F03 修复实体映射，packed 与 canonical 互相比对之外须核对原生槽位。 |
+| [F02](docs/2026-09-13/codebase-audit.md#f02) | P1 随后；与 F06 一并处理 | 非 reasoning 策略也能观察 pending card/potion 来源。当前完整 native action 绕过通常的两步目标状态；policy-only/回退路径仍有 Bash/Strike 目标观测相同的 strict xfail，恢复目标监督前必须补齐来源。 |
+| [F03](docs/2026-09-13/codebase-audit.md#f03) | P1 首批第一项；截断和候选缺失均复现 | 统一候选实体列表；Headbutt/Exhume/generated/multi 等来源正确。Secret Technique/Weapon原生draw候选index>=10被71-action绑定/薄层丢弃，可使存活战斗dead_screen。EVAL08进一步确认当前Split checkpoint的能力药水30组有序候选对应相同obs/mask，combat_select_options丢generated_cards、combat PICK_CARD读hand token；native候选/执行正确，搜索后继仍能区分。验收覆盖draw/discard/exhaust/generated候选观测和native索引映射、packed/训练/评估/bridge、71/181 checkpoint版本兼容及seed110104与200031固定状态；既有strict xfail `tests/integration/test_environment_contracts.py::test_draw_selection_remains_actionable_beyond_hand_slots`；[截断证据](worklog/2026-09-18.md#artifact-confirmation-result-and-f03-draw-selection-reproduction)、[生成候选证据](worklog/2026-09-29.md#eval08-fixed-state-results-and-generated-choice-observation-gap)。 |
+| [F04](docs/2026-09-13/codebase-audit.md#f04) | P2；恢复规则 teacher 训练前修 | teacher 来源显式；卡牌守恒、状态最终效果与原生/参考一致。Carnage/Impervious/Inflame 三项仍复现；当前在线 NOSL 标签不由此近似 teacher 生成，历史表征受其影响的程度未量化。 |
+| [F05](docs/2026-09-13/codebase-audit.md#f05) | P1 首批第二项；标准 target 仍不一致 | Python/C++ 搜索与 learner 共用结算前/后 HP 定义。默认 native terminal 用结算前 HP，Python/learner 用战后 HP；燃烧之血 50→56 的反例仍复现，可能压低立刻获胜分支。覆盖死亡、满血截断、多种战后遗物及 Boss 过渡开关；VALUE01 不是普通战斗终值的通用修复，当前 TRAIN24 该开关关闭。修改后明确旧 checkpoint/value 与 replay 标签兼容边界。 |
 | VALUE01 | 本轮完成；实验开关默认关闭 | 增加 --nosl-is-az-boss-transition-target：仅对确认的 Act 1/2/3 Boss terminal 标签使用过渡后 HP（败北0、A0-A4 Act1/2与Act3最终胜利满血、A5+ Act1/2保留25%战斗掉血），排除 A20 Act3 第一 Boss、纳入第二 Boss；环境 side-channel、hierarchical returns、Python/NOSL/native 搜索和 checkpoint resume 已对齐，旧扩展在显式开启时 fail closed。默认关闭，不改变现有 checkpoint 或运行中的训练；验收见 [实现记录](worklog/2026-09-25.md#value01-opt-in-boss-transition-value-target) |
-| [F06](docs/2026-09-13/codebase-audit.md#f06) | 待重构 | 搜索完整动作的 target/selection 分布可被无搜索策略学习 |
-| [F07](docs/2026-09-13/codebase-audit.md#f07) | 待重构 | Gauntlet 提交 max HP、药水、遗物计数等持久状态 |
+| [F06](docs/2026-09-13/codebase-audit.md#f06) | P1 随后；当前 native 蒸馏仍丢信息 | 搜索完整动作的 target/selection 分布可被无搜索策略学习。thinActionId 合并同牌不同目标并将 MULTI 子集归为同一确认动作，prior 按目标数均分；回传策略也按 thin ID 汇总。原生搜索可选对目标，但网络没有对应的条件目标监督。验收包含多敌/药水/多选完整动作分布、来源条件与 replay/schema 迁移。 |
+| [F07](docs/2026-09-13/codebase-audit.md#f07) | P2；启用 Gauntlet 前修 | Gauntlet 提交 max HP、药水、遗物计数等持久状态。Feed 最大血量丢失仍复现；当前完整爬塔 TRAIN24 不走 Gauntlet。 |
 | [F08](docs/2026-09-13/codebase-audit.md#f08) | 已修 | 显式 seed 后的自动 reset 序列可复现；普通/分层 PPO CPU 重复训练逐位对齐 |
 | [F09](docs/2026-09-13/codebase-audit.md#f09) | 已修 | Python NOSL depth=0 真正推进搜索；同步和分批入口在新叶处停止 |
 | [F10](docs/2026-09-13/codebase-audit.md#f10) | 已修 | Impatience 条件抽牌及 exhaust unique-ID fallback；覆盖过时、负数和越界 hint |
-| [F11](docs/2026-09-13/codebase-audit.md#f11) | 待设计 | rollout 切点不选择性漏掉上层 macro transition |
-| [F12](docs/2026-09-13/codebase-audit.md#f12) | 待设计 | 明确 PPO normalization/phase weighting 的统计边界；累积不是自动等价 |
+| [F11](docs/2026-09-13/codebase-audit.md#f11) | P2；恢复上层 PPO 前处理 | rollout 切点不选择性漏掉上层 macro transition；当前 inner-only NOSL + 规则上层不训练上层 PPO。 |
+| [F12](docs/2026-09-13/codebase-audit.md#f12) | P2；PPO 统计设计待验证 | 明确 PPO normalization/phase weighting 的统计边界；累积不是自动等价。当前 inner-only NOSL 的 PPO epochs 为 0，不将此项归为当前 Boss 战差距的直接成因。 |
 | [F13](docs/2026-09-13/codebase-audit.md#f13) | 部分完成 | policies/checkpoint 共享 metadata 预检与依赖覆盖；仍需跨入口有效配置/依赖 manifest、版本化移植协议 |
 | [F14](docs/2026-09-13/codebase-audit.md#f14) | 待重构 | 显式 native build 身份/能力校验；不静默丢搜索参数 |
 | [F15](docs/2026-09-13/codebase-audit.md#f15) | 待重构 | bridge schema 故障分类、有界重试和可重放帧 |
 | [F16](docs/2026-09-13/codebase-audit.md#f16) | 部分完成 | episode eval/dashboard 共用 strategy/runner/outcome，step_limit 独立、合作式 timeout；仍需完整固定评测集、有效 solver manifest 和进程级硬超时 |
 | [F17](docs/2026-09-13/codebase-audit.md#f17) | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
-| F20 | 待修；v3规则规避 | `GameContext::chooseEventOption` 的 Designer option1 未扣界面显示的金币，option3/4 缺 `break` 并贯穿后续 case，导致 transition 与公开按钮语义不一致。验收须逐 option 对照金币/HP/牌组、后续 CARD_SELECT/回图状态及真实游戏语义；修复前 `ironclad-overworld-v3` 不选择 1/3/4。 |
+| F20 | P2；v3规则已规避，模拟器缺陷未修 | `GameContext::chooseEventOption` 的 Designer option1 未扣界面显示的金币，option3/4 缺 `break` 并贯穿后续 case，导致 transition 与公开按钮语义不一致。验收须逐 option 对照金币/HP/牌组、后续 CARD_SELECT/回图状态及真实游戏语义；修复前 `ironclad-overworld-v3` 不选择 1/3/4。 |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | VAL01 | 部分完成 | 真实执行路径的 End-Turn boundary 与战斗胜利 terminal 已无条件采为 value-only 样本，policy mask/target/weight 均不参与 policy 监督；搜索截断与采样已分离并覆盖开关两态，新增 policy root/boundary/terminal 计数。仍需固定边界语料按怪物身份及 HP/分裂阶段验证校准及 near-terminal 覆盖，禁止用所选路线回报标注假想叶子 |
 | VAL02 | 待实验；已有单状态反例 | 在固定 combat corpus 上审计 policy prior → Full-Gumbel 搜索 → improved-policy target 的反馈：按合法完整动作数/候选裁剪分层，统计未访问动作、prior/Q 排名冲突、搜索前后 TV/KL、低 prior 高 Q 翻转率；以只改根 prior 且保留内部 policy 的 matched-nonce 消融判断根部影响，不能用全树 uniform 冒充根部消融。seed0/step8 的 Bash 固定未来反例已证明搜索可在后继直出 V 不低时通过早期不可逆淘汰独立制造错误，完整 corpus 审计仍待实验。 |
