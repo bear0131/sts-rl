@@ -120,10 +120,12 @@ class EntityCombatNetwork(nn.Module):
         pooled = torch.einsum('bkn,bnd->bkd', probability.to(entities.dtype), entities)
         return pooled + self.pool_count(weights.sum(-1, keepdim=True).log1p())[:, None]
 
-    def encode(self, obs, active_relic_width=None):
+    def encode(self, obs, active_relic_width=None, *, card_table=None):
         batch = obs['player_scalars'].shape[0]
-        table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
-                 else self.inference_card_table())
+        table = card_table
+        if table is None:
+            table = (self._encode_card_table() if self.training or torch.is_grad_enabled()
+                     else self.inference_card_table())
         hp = obs['player_scalars'].float()
         turn = hp[:, 4:5] * encode.TURN_SCALE
         extra = torch.cat((hp[:, 1:2]-hp[:, :1], turn.clamp_min(0).log1p()/4,
@@ -181,8 +183,9 @@ class EntityCombatNetwork(nn.Module):
     def _pointer(self, state, entities):
         return torch.einsum('bd,bnd->bn',self.pointer_query(state),self.pointer_key(entities))*self.config.width**-.5
 
-    def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None):
-        state, blocks = self.encode(obs, active_relic_width)
+    def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None,
+                card_table=None):
+        state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
         if self.autoregressive_actions:
             source = torch.cat((self.end(state), *(self._pointer(state, blocks[role])
                 for role in ('hand', 'potion', 'select'))), -1)
@@ -250,6 +253,16 @@ class EntityCombatCore(nn.Module):
 
     def combat_actor_critic(self, obs, **kwargs):
         logits, values, _ = self.combat(obs, **kwargs)
+        return logits, values
+
+    def graph_actor_critic(self, obs, active_relic_width, card_table):
+        """Pure leaf forward; the graph owner supplies refreshed stable storage.
+
+        Keeping cache/version bookkeeping outside this function permits whole
+        forward fusion. Training and ordinary prediction keep their eager path.
+        """
+        logits, values, _ = self.combat(obs, active_relic_width=active_relic_width,
+            evaluate_subsets=False, card_table=card_table)
         return logits, values
 
     def combat_training_outputs(self, obs, actions, **kwargs):

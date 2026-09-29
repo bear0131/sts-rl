@@ -67,7 +67,10 @@ def test_joint_multi_rows_keep_order_outside_graphs(combat_factory, amp, entity)
         model._native_leaf_inference = cache
         actual = forward_leaves(model, batch, autocast=model.autocast_context)
         for a, b in zip(actual, expected):
-            np.testing.assert_array_equal(a, b)
+            # Compiled entity leaves fuse reductions and round BF16 at fewer
+            # boundaries than eager. Other graph backends remain bitwise.
+            np.testing.assert_allclose(a, b, rtol=.03 if amp == 'bf16' else 1e-5,
+                                       atol=.003 if amp == 'bf16' else 2e-7)
     assert cache.hits >= 1
 
 
@@ -130,7 +133,11 @@ def test_graph_outputs_follow_inputs_weights_and_shapes(tmp_path, combat_factory
         model._native_leaf_inference = cache
         graphed = forward_leaves(model, batch, autocast=model.autocast_context)
         for a, b in zip(eager, graphed):
-            np.testing.assert_array_equal(a, b)
+            if cache.compiled_forward is not None:
+                np.testing.assert_allclose(a, b, rtol=.03 if amp == 'bf16' else 1e-5,
+                                           atol=.003 if amp == 'bf16' else 2e-7)
+            else:
+                np.testing.assert_array_equal(a, b)
     compare(2)
     obs['player_scalars'] = obs['player_scalars'].copy() + 0.01
     compare(2)
@@ -229,3 +236,53 @@ def test_graph_owns_workspace_after_blas_cache_is_released(combat_factory):
     actual = forward_leaves(model, batch, autocast=model.autocast_context)
     for a,b in zip(actual,expected):
         np.testing.assert_array_equal(a,b)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='requires production CUDA geometry')
+@pytest.mark.parametrize('amp', ['off', 'bf16'])
+def test_compiled_entity_production_geometry(combat_factory, amp):
+    """Fusion tolerances, dynamic shapes and live weights at 256/4/8."""
+    from rl.policies.entity_combat import EntityCombatPolicy
+    torch.compiler.reset()
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract='autoregressive-v2', card_language=True)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, device='cuda', seed=23,
+        n_steps=8, batch_size=4, policy_kwargs=dict(entity_config=dict(width=256,layers=4,heads=8)),
+        nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules')
+    model.amp_mode = amp
+    model.policy.set_training_mode(False)
+    core = model.policy.core
+    cache = CombatLeafGraphs(core, model.device, amp=amp, capacity=2, batch_multiple=32)
+    assert (cache.compiled_forward is not None) == (amp == 'bf16')
+    initial_keys = tuple(core.state_dict())
+    obs = env._obs()
+    previous = None
+    for index, (count, width) in enumerate(((32,4), (64,4), (32,8), (32,4), (32,4), (7,4), (31,4))):
+        batch = {k:np.stack([v]*count) for k,v in obs.items() if k in core.combat_observation_keys}
+        batch['relics'].fill(0)
+        batch['relics'][:,width-1] = 1
+        if index == 4:
+            with torch.no_grad():
+                core.combat.end.bias.add_(.25)
+                core.combat.card.weight.add_(.1)
+        model._native_leaf_inference = None
+        eager = forward_leaves(model, batch, autocast=model.autocast_context)
+        model._native_leaf_inference = cache
+        actual = forward_leaves(model, batch, autocast=model.autocast_context)
+        # BF16 fusion changes intermediate rounding. Bound logits, probability
+        # and utility separately; FP32 receives a much tighter error budget.
+        np.testing.assert_allclose(actual[0], eager[0], rtol=.03 if amp=='bf16' else 2e-5,
+                                   atol=.006 if amp=='bf16' else 2e-6)
+        np.testing.assert_allclose(actual[1], eager[1], rtol=0,
+                                   atol=3e-4 if amp=='bf16' else 2e-6)
+        legal = batch['combat_legal'].astype(bool)
+        probabilities = [torch.as_tensor(x[0]).masked_fill(~torch.as_tensor(legal), -1e9).softmax(-1)
+                         for x in (actual, eager)]
+        torch.testing.assert_close(*probabilities, rtol=0, atol=.002 if amp=='bf16' else 2e-6)
+        if index == 3:
+            previous = actual[0].copy()
+        if index == 4:
+            assert np.max(np.abs(previous-actual[0])) > .05
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+    assert cache.evictions >= 1 and cache.hits >= 1
+    assert tuple(core.state_dict()) == initial_keys

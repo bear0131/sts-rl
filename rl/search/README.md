@@ -28,10 +28,22 @@ mode. It requires eval mode and is never serialized in policy checkpoints.
 Distributed training selects it with `--leaf-inference cuda-graph`; eager remains
 the default for other models/devices. GPU tests in
 `tests/integration/test_leaf_graphs.py` cover input/weight changes, LRU eviction,
-FP32/BF16 same-shape bitwise equality and checkpoint exclusion. Changing batch
+FP32/BF16 same-shape bitwise equality for eager graphs and checkpoint exclusion. Changing batch
 shape may select different GEMM kernels: padded-vs-original floating-point outputs
 are not guaranteed bitwise, and search trajectories can consequently diverge.
 CPU CI cannot validate CUDA.
+
+Autoregressive EntityCombat BF16 leaves fuse the whole forward with
+`torch.compile(fullgraph=True, dynamic=True)` before CUDA graph capture. The
+callable is owned by this runtime; training, root prediction, legacy contracts
+and FP32 retain their eager path. The card table is an explicit input whose
+stable storage is refreshed before replay after weight changes. Fused BF16
+reductions have different intermediate rounding: production-geometry tests
+bound logits, legal-action probabilities and utility separately (not bitwise).
+First-use compilation is included in graph capture time; report cold startup
+and steady collection time separately. Dynamic batch/relic dimensions reuse a
+compiled program where supported, but dimension-one specialization can still
+require another compile. Replacing the backend resets its callable as well.
 
 `--leaf-graph-profile-interval N` samples CUDA stream H2D/replay/D2H intervals;
 zero disables event sampling. Capture/copy/output wall times and cache counts

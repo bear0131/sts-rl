@@ -22,6 +22,14 @@ class CombatLeafGraphs:
         if capacity < 1 or amp not in ('off', 'bf16'):
             raise ValueError('invalid graph capacity or AMP mode')
         self.core, self.device, self.amp, self.capacity = core, device, amp, capacity
+        # The callable belongs to this runtime, never the saved policy. Dynamic
+        # batch/relic dimensions avoid compiling one program per graph shape.
+        # Fusion changes floating point rounding, not model/search geometry.
+        leaf = getattr(core, 'graph_actor_critic', None)
+        # FP32 uses PyTorch's fused encoder fast path, which cannot currently
+        # be traced with symbolic shapes. Keep that supported backend eager.
+        self.compiled_forward = (torch.compile(leaf, fullgraph=True, dynamic=True)
+            if amp == 'bf16' and leaf is not None and getattr(core, 'autoregressive_actions', False) else None)
         self.entries = OrderedDict()
         self.hits = self.captures = 0
         self.failure_path = failure_path
@@ -124,7 +132,10 @@ class CombatLeafGraphs:
         entry['graph'].replay()
         if events: events[2].record()
         started = time.perf_counter()
-        result = entry['logits'][:batch].cpu().numpy(), entry['values'][:batch].cpu().numpy()
+        # One transfer/synchronization for both heads. The returned arrays are
+        # views into this call's CPU result, never into reusable GPU storage.
+        output = entry['output'][:batch].cpu().numpy()
+        result = output[:, :-1], output[:, -1]
         self.output_seconds += time.perf_counter()-started
         if events:
             events[3].record(); events[3].synchronize()
@@ -137,16 +148,15 @@ class CombatLeafGraphs:
     @staticmethod
     def _copy(entry, observations):
         for host, device, layout in entry['buffers']:
-            array = host.numpy()
-            for key, start, end, shape in layout:
-                target = array[start:end].reshape(shape)
+            for key, target in layout:
                 value = observations[key]
                 np.copyto(target[:len(value)], value)
-                # Valid duplicate rows avoid fully masked dummy observations.
-                # Combat inference is independent across batch rows; padding
-                # never enters the search or its returned action/value arrays.
-                target[len(value):] = value[0]
+                if not entry.get('initialized', False):
+                    # Later padding may retain an earlier valid independent
+                    # row. It is never returned and cannot affect real rows.
+                    target[len(value):] = value[0]
             device.copy_(host, non_blocking=True)
+        entry['initialized'] = True
 
     def _capture(self, observations, width, padded):
         groups = {}
@@ -157,13 +167,14 @@ class CombatLeafGraphs:
             count = sum(padded * int(np.prod(v.shape[1:])) for _, v in fields)
             torch_dtype = torch.from_numpy(np.empty(0, dtype=dtype)).dtype
             host = torch.empty(count, dtype=torch_dtype, pin_memory=True)
+            array = host.numpy()
             device = torch.empty(count, dtype=torch_dtype, device=self.device)
             offset, layout = 0, []
             for key, value in fields:
                 shape = (padded, *value.shape[1:])
                 end = offset + int(np.prod(shape))
                 tensors[key] = device[offset:end].view(shape)
-                layout.append((key, offset, end, shape))
+                layout.append((key, array[offset:end].reshape(shape)))
                 offset = end
             buffers.append((host, device, layout))
         entry = dict(buffers=buffers)
@@ -175,8 +186,12 @@ class CombatLeafGraphs:
             with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
                     enabled=self.amp == 'bf16', cache_enabled=False):
                 extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
-                logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
-                return logits.float(), values.float().reshape(-1)
+                if self.compiled_forward is None:
+                    logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
+                else:
+                    logits, values = self.compiled_forward(tensors, width,
+                        self.core.combat.inference_card_table())
+                return torch.cat((logits.float(), values.float().reshape(-1, 1)), dim=1)
         with torch.cuda.stream(stream):
             for _ in range(3):
                 forward()
@@ -188,8 +203,8 @@ class CombatLeafGraphs:
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(graph, stream=stream):
-            logits, values = forward()
+            output = forward()
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
-        entry.update(graph=graph, logits=logits, values=values)
+        entry.update(graph=graph, output=output)
         return entry

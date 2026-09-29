@@ -50,6 +50,16 @@ def run(args):
         if args.device == 'cuda':
             torch.cuda.synchronize()
         setup = time.perf_counter() - started
+        warmup_started = time.perf_counter()
+        for _ in range(args.warmup_updates):
+            if not model.collect_rollouts(env, callback, model.rollout_buffer, args.n_steps):
+                raise RuntimeError('rollout warmup stopped before budget')
+        if args.device == 'cuda':
+            torch.cuda.synchronize()
+        warmup = time.perf_counter() - warmup_started
+        before = model.num_timesteps
+        cache = getattr(model, '_native_leaf_inference', None)
+        warmup_graphs = None if cache is None else cache.statistics()
         if args.device == 'cuda':
             torch.cuda.reset_peak_memory_stats()
         with ResourceMonitor(interval=args.sample_interval, gpu=args.device == 'cuda') as monitor:
@@ -87,8 +97,10 @@ def run(args):
             search_config=asdict(config), output_sha256=digest.hexdigest(),
             identity=dict(torch=torch.__version__, native_sha256=hashlib.sha256(Path(slaythespire.__file__).read_bytes()).hexdigest(),
                 checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()),
-            timing=dict(setup_seconds=setup, measured_seconds=elapsed, transitions=model.num_timesteps,
-                transitions_per_second=model.num_timesteps/elapsed),
+            timing=dict(setup_seconds=setup, warmup_seconds=warmup, measured_seconds=elapsed,
+                transitions=model.num_timesteps-before,
+                transitions_per_second=(model.num_timesteps-before)/elapsed),
+            warmup_graphs=warmup_graphs,
             search_metrics=metrics, graphs=None if cache is None else cache.statistics(),
             memory=dict(cuda=None if args.device!='cuda' else dict(
                 allocated_bytes=torch.cuda.memory_allocated(),reserved_bytes=torch.cuda.memory_reserved(),
