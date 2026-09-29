@@ -16,7 +16,7 @@ full_gumbel
 --nosl-is-az-micro-batch-size
 256
 --nosl-is-az-updates
-40
+4
 --nosl-is-az-replay
 --nosl-is-az-replay-capacity
 131072

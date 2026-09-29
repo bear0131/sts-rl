@@ -40,7 +40,7 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         assert config.leaf_batch_size == 1 and config.simulations == 128
         assert args.n_envs == 96 and args.n_steps == 128
         assert args.nosl_is_az_replay_max_old_fraction == .9
-        assert args.nosl_is_az_updates == 40
+        assert args.nosl_is_az_updates == 4
         assert args.nosl_is_az_batch_size == 16384
         assert args.nosl_is_az_replay_capacity == 131072
 
