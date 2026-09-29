@@ -6,9 +6,72 @@ Only choices on the current select screen are exposed; native indices are
 execution handles, not features describing future draw order.
 """
 from dataclasses import dataclass
+import numpy as np
+from . import action_space as A
 
 
 CONTRACT = 'native-v1'
+JOINT_CONTRACT = 'joint-v2'
+# Existing overworld controls keep their IDs. Combat IDs are complete actions;
+# NONE is the sixth target, distinct from native enemy slot zero.
+JOINT_END = A.N_ACTIONS
+JOINT_PLAY = JOINT_END + 1
+JOINT_POTION = JOINT_PLAY + 10 * 6
+JOINT_PICK = JOINT_POTION + 5 * 6
+JOINT_MULTI = JOINT_PICK + A.G_MAX
+JOINT_SIZE = JOINT_MULTI + (1 << A.HAND_SLOTS)
+JOINT_WIDTH = JOINT_SIZE - JOINT_END
+
+
+def joint_action_id(bits, *, targeted=False, candidate_indices=()):
+    """Complete native action -> policy ID, preserving targets and subsets."""
+    bits = int(bits)
+    kind, source, target = bits >> 29, bits & 0xffff, (bits >> 16) & 0x1fff
+    if kind == 4:
+        return JOINT_END
+    if kind in (0, 1):
+        limit, base = (10, JOINT_PLAY) if kind == 0 else (5, JOINT_POTION)
+        if not 0 <= source < limit or (targeted and not 0 <= target < 5) or target > 5:
+            raise ValueError('invalid play/potion source or target (discard is not a drink)')
+        return base + source * 6 + (target if targeted else 5)
+    if kind == 2:
+        indices = tuple(int(i) for i in candidate_indices)
+        if source not in indices or len(indices) > A.G_MAX:
+            raise ValueError('selection handle is absent or exceeds public capacity')
+        return JOINT_PICK + indices.index(source)
+    if kind == 3 and 0 <= source < (1 << A.HAND_SLOTS):
+        return JOINT_MULTI + source
+    raise ValueError('invalid complete native action')
+
+
+def joint_native_bits(action_id, *, candidate_indices=()):
+    """Inverse policy mapping. Native no-target actions conventionally use zero."""
+    action_id = int(action_id)
+    if action_id == JOINT_END:
+        return 4 << 29
+    if JOINT_PLAY <= action_id < JOINT_PICK:
+        kind = int(action_id >= JOINT_POTION)
+        offset = action_id - (JOINT_POTION if kind else JOINT_PLAY)
+        source, target = divmod(offset, 6)
+        return kind << 29 | source | (0 if target == 5 else target) << 16
+    if JOINT_PICK <= action_id < JOINT_MULTI:
+        index = action_id - JOINT_PICK
+        indices = tuple(int(i) for i in candidate_indices)
+        if index >= len(indices):
+            raise ValueError('selection policy ID has no current entity')
+        return 2 << 29 | indices[index]
+    if JOINT_MULTI <= action_id < JOINT_SIZE:
+        return 3 << 29 | (action_id - JOINT_MULTI)
+    raise ValueError('not a complete combat policy ID')
+
+
+def joint_mask(policy_ids):
+    mask = np.zeros(JOINT_SIZE, dtype=bool)
+    ids = np.asarray(policy_ids, dtype=np.int64)
+    if np.any((ids < JOINT_END) | (ids >= JOINT_SIZE)):
+        raise ValueError('invalid complete combat policy ID')
+    mask[ids] = True
+    return mask
 
 
 def action_bits(action):
