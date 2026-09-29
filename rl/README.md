@@ -25,6 +25,16 @@
 卡牌语言字段在新网络内按ID/升级统计聚合，不能利用隐藏抽牌顺序。
 现有观测对draw/discard提供升级统计，exhaust只有基础ID计数。
 
+eval且关闭梯度时，卡牌ID/升级对应的语义向量按权重版本与autocast精度缓存；
+训练时正常重算并反传。optimizer或load_state_dict改变权重后，下一次推理原址刷新，
+CUDA graph重放前也检查刷新；图中不再重复执行卡牌程序卷积。
+该缓存不进入checkpoint。自定义权重修改须保留PyTorch版本计数，勿通过`.data`绕过；
+替换参数、迁移设备或改变dtype后须清除既有leaf graph（图持有参数地址）。
+
+joint-v2输出宽1392，包含181个legacy槽位、结束回合1、卡牌×目标60、
+药水×目标30、单选96及多选集合1024。自回归多选共享逐张/STOP的参数，
+但当前搜索仍评估完整集合，故输出保留2^10个集合槽位；普通战斗行跳过多选decoder。
+
 支持组合：whole-run环境、joint-v2动作、C++ NOSL、inner-only、rules上层，
 CPU或CUDA/BF16，普通推理或既有CUDA graph叶缓存。PPO标量critic、
 旧动作及旧split checkpoint仍走原实现；新结构须从头训练，旧权重不能直接迁移。
