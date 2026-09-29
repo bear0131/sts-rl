@@ -76,6 +76,9 @@ class NOSLISAZReplayBuffer:
         if self.policy_contract in C.NEURAL_CONTRACTS and C.policy_contract(observation_space) != self.policy_contract:
             raise ValueError('replay action/observation contracts differ')
         self.joint_rows: list | None = None
+        # Rebuilt after collection append; never persisted in checkpoints.
+        self._joint_dense_masks: np.ndarray | None = None
+        self._joint_dense_targets: np.ndarray | None = None
         self.value_contract = str(value_contract)
         from rl.algorithms.combat_distribution import CONTRACT
         if supervision_contract not in ('scalar-hp-v1', CONTRACT):
@@ -106,6 +109,8 @@ class NOSLISAZReplayBuffer:
             for array in (
                 self.action_masks,
                 self.policy_targets,
+                self._joint_dense_masks,
+                self._joint_dense_targets,
                 self.policy_weights,
                 self.value_targets,
                 self.sample_ids,
@@ -200,6 +205,8 @@ class NOSLISAZReplayBuffer:
         elif size:
             raise ValueError('nonempty replay checkpoint has no observations')
         self.size, self.position, self.total_added = size, position, int(state['total_added'])
+        self._joint_dense_masks = None
+        self._joint_dense_targets = None
 
     def _allocate(self) -> None:
         if self.observations is not None:
@@ -342,6 +349,8 @@ class NOSLISAZReplayBuffer:
             self._write(slice(0, remaining), slice(first, count), batch)
         self.position = (self.position + count) % self.capacity
         self.size = min(self.capacity, self.size + count)
+        self._joint_dense_masks = None
+        self._joint_dense_targets = None
         return len(labelled)
 
     def sample_indices(
@@ -432,11 +441,24 @@ class NOSLISAZReplayBuffer:
         assert self.value_targets is not None
         assert self.sample_ids is not None
         indices = np.asarray(indices, dtype=np.int64)
+        if self.joint_rows is not None and self._joint_dense_masks is None:
+            masks = np.zeros((self.size, self.action_dim), dtype=bool)
+            targets = np.zeros((self.size, self.action_dim), dtype=np.float32)
+            for row, (ids, probabilities) in enumerate(self.joint_rows[:self.size]):
+                masks[row, ids] = True
+                targets[row, ids] = probabilities
+            self._joint_dense_masks = masks
+            self._joint_dense_targets = targets
         fields = list(self.observations.items()) + [
             (name, getattr(self, name)) for name in (
                 "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids", "combat_targets"
             ) if getattr(self, name) is not None
         ]
+        if self.joint_rows is not None:
+            fields.extend((
+                ('action_masks', self._joint_dense_masks),
+                ('policy_targets', self._joint_dense_targets),
+            ))
         def gather(field):
             return field[1][indices]
         if workers == 1:
@@ -450,15 +472,8 @@ class NOSLISAZReplayBuffer:
             **dict(zip((key for key, _ in fields[count:]), values[count:])),
         )
         if self.joint_rows is not None:
-            masks = np.zeros((len(indices), self.action_dim), dtype=bool)
-            probs = np.zeros((len(indices), self.action_dim), dtype=np.float32)
-            for dest, src in enumerate(indices):
-                ids, values = self.joint_rows[src]
-                masks[dest, ids] = True
-                probs[dest, ids] = values
-            batch.update(action_masks=masks, policy_targets=probs)
             if 'combat_legal' in self.observation_keys:
-                batch['observations']['combat_legal'] = masks[:, C.policy_offset(self.policy_contract):]
+                batch['observations']['combat_legal'] = batch['action_masks'][:, C.policy_offset(self.policy_contract):]
         return batch
 
     def estimated_capacity_bytes(self) -> int:

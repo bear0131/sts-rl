@@ -45,6 +45,31 @@ def test_sparse_joint_replay_preserves_zero_and_tiny_probabilities_and_ring():
         make_buffer().load_state_dict(state)
 
 
+def test_joint_batch_cache_rebuilds_after_ring_write_and_restore():
+    replay = make_buffer()
+    replay.add_samples([sample(1), sample(2), sample(3)])
+    first = replay.get_batch(np.array([2, 0, 2]), workers=2)
+    assert replay._joint_dense_masks is not None
+    first['policy_targets'][0].fill(0)
+    repeated = replay.get_batch(np.array([2, 0, 2]), workers=1)
+    np.testing.assert_array_equal(repeated['policy_targets'][0], sample(3)['policy_target'])
+    replay.add_samples([sample(4)])
+    assert replay._joint_dense_masks is None
+    wrapped = replay.get_batch(np.array([0, 1, 2, 0]), workers=2)
+    for row, index in enumerate((4, 2, 3, 4)):
+        expected = sample(index)
+        np.testing.assert_array_equal(wrapped['action_masks'][row], expected['action_mask'])
+        np.testing.assert_array_equal(wrapped['policy_targets'][row], expected['policy_target'])
+        np.testing.assert_array_equal(wrapped['observations']['combat_legal'][row],
+                                      expected['observation']['combat_legal'])
+    restored = make_buffer()
+    restored.load_state_dict(replay.state_dict())
+    assert restored._joint_dense_masks is None
+    final = restored.get_batch(np.array([0, 1, 2, 0]), workers=1)
+    np.testing.assert_array_equal(final['action_masks'], wrapped['action_masks'])
+    np.testing.assert_array_equal(final['policy_targets'], wrapped['policy_targets'])
+
+
 def test_joint_replay_rejects_illegal_probability_and_accepts_value_only():
     replay = make_buffer()
     bad = sample(1)
