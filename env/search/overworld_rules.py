@@ -347,6 +347,10 @@ def event_scores(state):
         'GHOSTS': {0: -1, 1: 0}, 'SCRAP_OOZE': {0: 1 if hp > .8 else -2, 1: 0},
         'ANCIENT_WRITING': {0: 12 if curses else 2, 1: 6},
         'THE_JOUST': {0: 1, 1: 2}, 'WHEEL_OF_CHANGE': {0: 1},
+        # The portal skips remaining Act 3 rooms and goes straight to its boss.
+        # Preserve the route's card/relic/rest opportunities when both buttons
+        # are available; do not infer a benefit from an unseen future path.
+        'SECRET_PORTAL': {0: -3, 1: 0},
         # These event outcomes are fully identified by the public event id,
         # held resources, and the legal option mask. Events whose displayed
         # sacrifice is hidden from canonical state deliberately remain absent.

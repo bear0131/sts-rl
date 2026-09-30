@@ -7,6 +7,7 @@ import pytest
 
 from env.core import action_space as A
 from env.core import encode
+from env.core.vocab import EVENT_VOCAB
 from env.core.run_env import SlayTheSpireEnv
 from env.search import overworld_rules as shared_rules
 from bridge.schemas.combat_state import _sim_screen_options
@@ -110,6 +111,29 @@ def test_unknown_event_is_batched_to_explicit_fallback_without_mutation():
     assert s == before
     with pytest.raises(ValueError, match='without fallback'):
         OverworldRuleStrategy().decide(requests)
+
+
+def test_native_event_inventory_has_a_decision_or_a_non_event_screen():
+    state_for_rule = state('event')
+    # The simulator disables Colosseum and Match and Keep. Bonfire Spirits
+    # opens a card grid; Lab immediately opens a potion reward screen.
+    other_screens = {'Bonfire Elementals', 'Colosseum', 'Lab', 'Match and Keep'}
+    dynamic = {'Designer', 'Falling', 'Nloth', 'Note For Yourself', 'WeMeetAgain'}
+    uncovered = []
+    for event in EVENT_VOCAB:
+        if event in {'PAD', 'NEOW'} | other_screens | dynamic:
+            continue
+        state_for_rule['options']['event'] = event
+        if shared_rules.event_scores(state_for_rule) is None:
+            uncovered.append(event)
+    assert not uncovered
+
+
+def test_secret_portal_uses_its_real_buttons_and_can_continue_route():
+    s = state('event', act=3, floor=46)
+    s['options']['event'] = 'Secret Portal'
+    assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT + 1
+    assert choose(s, A._EVENT) == A._EVENT
 
 
 def test_reward_potion_full_slots_does_not_loop_and_healing_is_not_wasted():
