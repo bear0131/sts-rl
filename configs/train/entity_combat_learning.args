@@ -13,9 +13,9 @@ full_gumbel
 --nosl-is-az-gumbel-value-scale
 1.0
 --nosl-is-az-batch-size
-98304
+102400
 --nosl-is-az-micro-batch-size
-12288
+10240
 --nosl-is-az-updates
 40
 --nosl-is-az-update-schedule

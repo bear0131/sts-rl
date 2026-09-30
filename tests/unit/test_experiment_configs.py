@@ -45,13 +45,14 @@ def test_entity_fresh_initialization_and_distributed_search_share_requested_cont
         assert args.nosl_is_az_replay_max_old_fraction == .9
         assert args.nosl_is_az_updates == 40
         assert args.nosl_is_az_update_schedule == 'constant'
-        assert args.nosl_is_az_batch_size == 98304
-        assert args.nosl_is_az_micro_batch_size == 12288
+        assert args.nosl_is_az_batch_size == 102400
+        assert args.nosl_is_az_micro_batch_size == 10240
+        assert args.nosl_is_az_batch_size // args.nosl_is_az_micro_batch_size == 10
         assert args.nosl_is_az_replay_capacity == 524288
 
 
-def test_entity_runtime_matches_train24_non_architecture_settings(monkeypatch):
-    """TRAIN24 final saved config, with only architecture/search/identity excluded."""
+def test_entity_runtime_matches_train24_except_requested_batch_settings(monkeypatch):
+    """TRAIN24 saved config with the explicit batch/microbatch safety change."""
     from rl.search.native import apply_strict_training_settings
     monkeypatch.chdir(ROOT)
     args = build_parser().parse_args([
@@ -64,7 +65,9 @@ def test_entity_runtime_matches_train24_non_architecture_settings(monkeypatch):
     ])
     apply_strict_training_settings(args)
     baseline = json.loads((ROOT / 'tests/fixtures/configs/train24_entity_runtime_baseline.json').read_text())
-    assert {key: getattr(args, key) for key in baseline} == baseline
+    expected = dict(baseline, nosl_is_az_batch_size=102400,
+                    nosl_is_az_micro_batch_size=10240)
+    assert {key: getattr(args, key) for key in baseline} == expected
     assert args.nosl_is_az_end_turn_as_leaf is False
     assert args.nosl_is_az_update_schedule == 'constant'
 
