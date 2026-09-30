@@ -11,6 +11,7 @@ import rl.training.distributed_sb3 as distributed
 class _NoReplayDistributedModel:
     def __init__(self) -> None:
         self.nosl_is_az = True
+        self.num_timesteps = 0
         self.nosl_is_az_inner_only = True
         self.nosl_is_az_updates = 3
         self.nosl_is_az_replay_enabled = False
@@ -151,3 +152,84 @@ def test_decreasing_update_budget_does_not_reuse_transport_tags(monkeypatch):
             remote_root='unused',run_id='test',update=rollout,update_count=budget,
             ring_transport=None,barrier_timeout=1)
     assert len(tags) == len(set(tags)) == 5
+
+
+def test_nonfinite_synchronized_gradient_skips_adam_without_poisoning(monkeypatch):
+    model = _NoReplayDistributedModel()
+    model.nosl_is_az_updates = 1
+
+    def synchronize(*_args, **_kwargs):
+        model.parameter.grad = torch.tensor(float('nan'))
+        return dict(sync_sec=0., sync_mbps=0., grad_bytes=4,
+                    local_nonfinite_gradients=1.,
+                    synchronized_nonfinite_gradients=1.)
+
+    monkeypatch.setattr(distributed, 'synchronize_gradient_step', synchronize)
+    before = model.parameter.detach().clone()
+    result = distributed.distributed_nosl_is_az_update(
+        model, rank=0, world_size=1, peers=[], key=Path('unused'),
+        control_dir=Path('unused'), local_root=Path('unused'),
+        remote_root='unused', run_id='test', update=0,
+        ring_transport=None, barrier_timeout=1,
+    )
+    assert result['updates'] == 0
+    assert result['skipped_nonfinite_updates'] == 1
+    assert result['synchronized_nonfinite_gradients'] == 1
+    assert model._nosl_is_az_skipped_nonfinite_updates == 1
+    assert model.parameter.grad is None
+    assert torch.equal(model.parameter, before)
+    assert not model.policy.optimizer.state
+
+
+def test_gradient_transport_detects_nonfinite_average_before_adam(tmp_path):
+    model = _NoReplayDistributedModel()
+    model.parameter.grad = torch.ones_like(model.parameter)
+
+    class BadRing:
+        def average(self, local):
+            return torch.full_like(local, float('nan')), local.numel() * 4
+
+    result = distributed.synchronize_gradient_step(
+        model, rank=0, world_size=2, peers=[], key=tmp_path / 'key',
+        control_dir=tmp_path, local_root=tmp_path,
+        remote_root='unused', run_id='test', tag='bad',
+        ring_transport=BadRing(), barrier_timeout=1,
+    )
+    assert result['local_nonfinite_gradients'] == 0
+    assert result['synchronized_nonfinite_gradients'] == 1
+    assert torch.isnan(model.parameter.grad)
+
+
+def test_nonfinite_diagnostic_saves_exact_batch_and_pre_step_weights(tmp_path):
+    policy = torch.nn.Linear(2, 1)
+    policy.optimizer = torch.optim.Adam(policy.parameters(), lr=0.01)
+    batch = {'sample_ids': np.array([17, 23], dtype=np.uint64),
+             'value_targets': np.array([0.5, 0.0], dtype=np.float32)}
+    model = SimpleNamespace(
+        num_timesteps=49152, policy=policy,
+        _nosl_is_az_diagnostic_batch=batch,
+        _nosl_is_az_diagnostic_rng=np.random.get_state(),
+        _nosl_is_az_diagnostic_fresh_start_id=17,
+    )
+    before = policy.weight.detach().clone()
+    path = distributed.save_nonfinite_nosl_diagnostic(
+        model, local_root=tmp_path, update=1, inner_update=2, rank=0,
+        local_nonfinite_gradients=1, first_nonfinite_parameter='weight',
+    )
+    saved = torch.load(path, map_location='cpu', weights_only=False)
+    assert saved['fresh_start_id'] == 17
+    assert saved['first_nonfinite_parameter'] == 'weight'
+    np.testing.assert_array_equal(saved['batch']['sample_ids'], batch['sample_ids'])
+    assert torch.equal(saved['policy']['weight'], before)
+
+
+def test_optimizer_rejects_nonfinite_norm_before_mutating_parameters():
+    from rl.algorithms.updates import optimizer_step
+
+    model = _NoReplayDistributedModel()
+    model.parameter.grad = torch.tensor(float('nan'))
+    before = model.parameter.detach().clone()
+    with pytest.raises(RuntimeError, match='non-finite'):
+        optimizer_step(model)
+    assert torch.equal(model.parameter, before)
+    assert not model.policy.optimizer.state

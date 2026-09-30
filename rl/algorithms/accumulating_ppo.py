@@ -2184,6 +2184,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
         diagnostics_device = None
 
         for _update in range(update_count):
+            diagnostic_rng = (
+                np.random.get_state() if replay_enabled and not step_optimizer
+                else None
+            )
             indices = replay.sample_indices(
                 train_count,
                 fresh_start_id=fresh_start_id,
@@ -2204,6 +2208,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 sampled_batch = self._nosl_samples_to_batch(
                     fresh_samples[:train_count]
                 )
+            if not step_optimizer:
+                # Retain the exact ordered batch only until the distributed
+                # gradient check.  On a failure it can be saved for replay;
+                # on success the caller releases it before checkpointing.
+                self._nosl_is_az_diagnostic_batch = sampled_batch
+                self._nosl_is_az_diagnostic_rng = diagnostic_rng
+                self._nosl_is_az_diagnostic_fresh_start_id = fresh_start_id
             self.policy.optimizer.zero_grad()
             diagnostics_offset = 0
             for start in range(0, train_count, micro_batch_size):

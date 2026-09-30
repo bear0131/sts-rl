@@ -45,7 +45,10 @@ def optimizer_step(model, micro_batches=1, *, value_only=False):
         for parameter in model.policy.parameters():
             if parameter.grad is not None:
                 parameter.grad.mul_(1.0 / micro_batches)
-    norm = th.nn.utils.clip_grad_norm_(model.policy.parameters(), model.max_grad_norm)
+    norm = th.nn.utils.clip_grad_norm_(
+        model.policy.parameters(), model.max_grad_norm,
+        error_if_nonfinite=True,
+    )
     model.policy.optimizer.step()
     model.policy.optimizer.zero_grad()
     # Leave logging's device synchronization to callers that consume the norm.

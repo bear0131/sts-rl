@@ -1202,6 +1202,18 @@ def synchronize_gradient_step(
     """Average current gradients over all ranks using the selected transport."""
     pack_started = time.perf_counter()
     local_flat = pack_gradients(model)
+    local_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
+    first_nonfinite_parameter = None
+    if local_nonfinite:
+        first_index = int(th.nonzero(~th.isfinite(local_flat), as_tuple=False)[0, 0])
+        offset = 0
+        for name, parameter in model.policy.named_parameters():
+            if not parameter.requires_grad:
+                continue
+            offset += parameter.numel()
+            if first_index < offset:
+                first_nonfinite_parameter = name
+                break
     pack_seconds = time.perf_counter() - pack_started
     grad_bytes = local_flat.numel() * local_flat.element_size()
     sync_started = time.perf_counter()
@@ -1240,7 +1252,9 @@ def synchronize_gradient_step(
             rank=rank,
             world_size=world_size,
         )
+        local_flat = pack_gradients(model)
         paths_to_remove = [grad_path, *peer_paths]
+    synchronized_nonfinite = int(th.count_nonzero(~th.isfinite(local_flat)))
     for path in paths_to_remove:
         try:
             path.unlink()
@@ -1251,7 +1265,42 @@ def synchronize_gradient_step(
         "sync_sec": time.perf_counter() - sync_started,
         "sync_mbps": sync_mbps,
         "grad_bytes": float(grad_bytes),
+        "local_nonfinite_gradients": float(local_nonfinite),
+        "synchronized_nonfinite_gradients": float(synchronized_nonfinite),
+        "first_local_nonfinite_parameter": first_nonfinite_parameter,
     }
+
+
+def save_nonfinite_nosl_diagnostic(
+    model: AccumulatingMaskablePPO, *, local_root: Path,
+    update: int, inner_update: int, rank: int,
+    local_nonfinite_gradients: int, first_nonfinite_parameter: str | None,
+) -> Path:
+    """Persist the exact offending input and finite pre-step state on its rank."""
+    directory = local_root / "nonfinite-nosl-diagnostics"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (
+        f"step-{int(model.num_timesteps):012d}-u{update:06d}"
+        f"-i{inner_update:04d}-rank{rank}.pt"
+    )
+    payload = {
+        "rank": rank,
+        "global_step": int(model.num_timesteps),
+        "update": update,
+        "inner_update": inner_update,
+        "local_nonfinite_gradients": local_nonfinite_gradients,
+        "first_nonfinite_parameter": first_nonfinite_parameter,
+        "batch": getattr(model, "_nosl_is_az_diagnostic_batch", None),
+        "numpy_rng_before_sample": getattr(model, "_nosl_is_az_diagnostic_rng", None),
+        "fresh_start_id": getattr(model, "_nosl_is_az_diagnostic_fresh_start_id", None),
+        "policy": {name: tensor.detach().cpu().clone()
+                   for name, tensor in model.policy.state_dict().items()},
+        "optimizer": model.policy.optimizer.state_dict(),
+    }
+    temporary = path.with_suffix(".tmp")
+    th.save(payload, temporary, pickle_protocol=5)
+    temporary.replace(path)
+    return path
 
 
 def average_scalar_dict(
@@ -1362,7 +1411,8 @@ def distributed_nosl_is_az_update(
         additive_keys = {
             "roots", "global_roots", "gradient_batches", "updates", "metric_count",
             "replay_sampled_roots", "backward_sec", "sync_sec",
-            "optimizer_step_sec",
+            "optimizer_step_sec", "skipped_nonfinite_updates",
+            "local_nonfinite_gradients", "synchronized_nonfinite_gradients",
             "value_only_updates", "joint_updates",
         }
         weights = [max(0.0, float(row.get("metric_count", 0.0))) for row in results]
@@ -1551,6 +1601,9 @@ def distributed_nosl_is_az_update(
     grad_bytes = 0
     optimizer_step_seconds = 0.0
     gradient_norm_preclip = 0.0
+    skipped_nonfinite = 0.0
+    local_nonfinite_gradients = 0.0
+    synchronized_nonfinite_gradients = 0.0
     if global_count > 0.0:
         sync = synchronize_gradient_step(
             model,
@@ -1569,13 +1622,56 @@ def distributed_nosl_is_az_update(
         sync_seconds = float(sync["sync_sec"])
         sync_mbps = float(sync["sync_mbps"])
         grad_bytes = int(sync["grad_bytes"])
-        if model.device.type == "cuda":
-            th.cuda.synchronize(model.device)
-        step_started = time.perf_counter()
-        gradient_norm_preclip = float(optimizer_step(model, value_only=bool(value_only_updates)))
-        if model.device.type == "cuda":
-            th.cuda.synchronize(model.device)
-        optimizer_step_seconds = time.perf_counter() - step_started
+        local_nonfinite_gradients = float(sync.get("local_nonfinite_gradients", 0.0))
+        synchronized_nonfinite_gradients = float(sync.get("synchronized_nonfinite_gradients", 0.0))
+        if synchronized_nonfinite_gradients:
+            # Every rank received the same averaged vector.  Discard this
+            # update on every rank before Adam or clipping can poison weights.
+            model.policy.optimizer.zero_grad()
+            skipped_nonfinite = 1.0
+            model._nosl_is_az_skipped_nonfinite_updates = int(getattr(
+                model, "_nosl_is_az_skipped_nonfinite_updates", 0,
+            )) + 1
+            consecutive = int(getattr(model,
+                "_nosl_is_az_consecutive_nonfinite_updates", 0)) + 1
+            model._nosl_is_az_consecutive_nonfinite_updates = consecutive
+            diagnostic_path = None
+            if local_nonfinite_gradients or rank == 0:
+                if getattr(model, "_nosl_is_az_diagnostic_batch", None) is not None:
+                    diagnostic_path = save_nonfinite_nosl_diagnostic(
+                        model, local_root=local_root, update=update,
+                        inner_update=inner_update, rank=rank,
+                        local_nonfinite_gradients=int(local_nonfinite_gradients),
+                        first_nonfinite_parameter=sync.get("first_local_nonfinite_parameter"),
+                    )
+            print("NONFINITE_NOSL_GRADIENT " + json.dumps({
+                "rank": rank, "global_step": int(model.num_timesteps),
+                "inner_update": inner_update,
+                "local_nonfinite_gradients": int(local_nonfinite_gradients),
+                "synchronized_nonfinite_gradients": int(synchronized_nonfinite_gradients),
+                "first_local_nonfinite_parameter": sync.get("first_local_nonfinite_parameter"),
+                "consecutive_skips": consecutive,
+                "diagnostic_path": str(diagnostic_path) if diagnostic_path else None,
+            }, sort_keys=True), flush=True)
+            if consecutive >= 3:
+                raise FloatingPointError(
+                    "three consecutive synchronized NOSL gradients were nonfinite; "
+                    "stopped before modifying model or optimizer"
+                )
+        else:
+            if model.device.type == "cuda":
+                th.cuda.synchronize(model.device)
+            step_started = time.perf_counter()
+            gradient_norm_preclip = float(optimizer_step(model, value_only=bool(value_only_updates)))
+            model._nosl_is_az_consecutive_nonfinite_updates = 0
+            if model.device.type == "cuda":
+                th.cuda.synchronize(model.device)
+            optimizer_step_seconds = time.perf_counter() - step_started
+        for name in (
+            "_nosl_is_az_diagnostic_batch", "_nosl_is_az_diagnostic_rng",
+            "_nosl_is_az_diagnostic_fresh_start_id",
+        ):
+            model.__dict__.pop(name, None)
 
     # Record the value installed in the optimizer rather than only the CLI
     # request.  This catches accidental schedule/checkpoint overrides in a
@@ -1589,9 +1685,14 @@ def distributed_nosl_is_az_update(
         "roots": float(az_stats["roots"]),
         "policy_loss": float(az_stats["policy_loss"]),
         "value_loss": float(az_stats["value_loss"]),
-        "updates": 1.0 if global_count > 0.0 else 0.0,
-        "value_only_updates": float(global_count > 0.0 and value_only_updates > 0),
-        "joint_updates": float(global_count > 0.0 and value_only_updates == 0),
+        "updates": 1.0 if global_count > 0.0 and not skipped_nonfinite else 0.0,
+        "value_only_updates": float(global_count > 0.0 and value_only_updates > 0 and not skipped_nonfinite),
+        "joint_updates": float(global_count > 0.0 and value_only_updates == 0 and not skipped_nonfinite),
+        "skipped_nonfinite_updates": skipped_nonfinite,
+        "skipped_nonfinite_updates_total": float(getattr(model,
+            "_nosl_is_az_skipped_nonfinite_updates", 0)),
+        "local_nonfinite_gradients": local_nonfinite_gradients,
+        "synchronized_nonfinite_gradients": synchronized_nonfinite_gradients,
         "gradient_batches": float(az_stats.get("gradient_batches", 0.0)),
         "global_roots": global_count,
         "backward_sec": backward_seconds,
