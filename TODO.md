@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| PERF22 | 合并叶观测编码已实现，生产长度 A/B 待验 | TRAIN28 grouped worker 对同一包内多个 packed 叶合并 NumPy 解码，逐树恢复全局状态和合法动作；单叶仍走原路径，原生搜索/预算/价值备份不改。本地固定叶 4 路 CPU probe 约 1.49→0.49 秒/2000 组；旧/新同种子完整树的观测、合法动作、根结果和树快照一致，相关91项通过。需同3293184 checkpoint/seed0 完整96×128比较墙钟和工作量；有净收益才部署四机并验同 run 恢复。见 worklog/2026-09-30.md#perf22-grouped-python-leaf-encoding-investigation。 |
 | PERF21 | 生产路径与首轮恢复已验；稳态净提速未证实 | TRAIN28卡牌语言叶改用原生packed批量输出，逐字段/AR合同通过；同checkpoint完整96×128旧130.26/新129.90秒，差异太小。新增packed批次/叶数监控并完成四机共同2457600首轮，计数表明packed路径启用、每轮40 Adam、跨rank模型/优化器一致、进程继续运行。下一步以稳态轮和更细profile定位剩余Python叶开销；首轮重启含GPU图捕获不作稳态对照。见 worklog/2026-09-30.md#perf21-native-card-language-leaf-encoding。 |
 | PERF20 | 已部署并完成两轮四机生产验收 | 新增worker原生叶调用、Python叶处理、backprop、组打包、主进程接收/往返计时，贯穿NOSL→四rank记录/W&B；本地54 passed/1 GPU-only skip，远端四机各57 passed。恢复后共同2211840/2260992均记录非零有限指标，稳态每组响应worker方法2.281ms，其中native叶0.242ms、Python叶1.789ms，组打包0.303ms；时间跨并行进程不可相加为rollout墙钟。见worklog/2026-09-30.md#perf20-worker-search-phase-timing。 |
 | STORAGE03 | 数据盘余量已恢复；rank2系统盘需继续留意 | rank1/2旧perf09与resume-epw32各两份SHA校验tar归档到本地D盘后移除，rank0/3旧归档复制校验并迁至各自系统盘；当前run两代bundle保持完整。第二共同检查点后数据盘空闲rank0/1/2/3为6.86/7.11/6.27/8.54GiB；系统盘15.86/5.18/2.27/14.28GiB，rank2系统盘仍偏紧，后续若低于1.5GiB须先归档旧系统资料。见worklog/2026-09-30.md#train28-microbatch-and-storage-recovery。 |

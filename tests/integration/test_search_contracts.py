@@ -9,6 +9,100 @@ from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 
 @pytest.mark.native
+@pytest.mark.parametrize('contract', ['autoregressive-v2', 'joint-v2'])
+def test_grouped_packed_leaf_encoding_preserves_each_root(combat_factory, contract):
+    import pickle
+    from rl.training.cached_mask_vec_env import (
+        _materialize_grouped_packed_leaves, _pack_leaf_responses,
+        _unpack_leaf_responses,
+    )
+
+    envs = [combat_factory(['STRIKE_RED'] * 5, 'Jaw Worm', seed=70 + i,
+                           combat_action_contract=contract, card_language=True)
+            for i in range(2)]
+    responses, expected = {}, {}
+    for i, env in enumerate(envs):
+        env.thick.gc.gold = 37 + 11 * i
+        response = env.nosl_is_az_cpp_begin(
+            np.zeros(env.action_space.n), state_nonce=700 + i,
+            simulations=16, depth=0, compact_observation=True,
+            _defer_packed_observation=True)
+        assert not response['done']
+        raw = response['_native_packed_response']
+        expected[i] = (
+            env._native_packed_observation_batch(raw),
+            [env._leaf_policy_mask(np.asarray(row)[np.asarray(row) >= 0])
+             for row in raw['legal_policy_ids']],
+            list(raw['request_ids']),
+        )
+        responses[i] = response
+    _materialize_grouped_packed_leaves(envs, responses)
+    wire = _pack_leaf_responses(responses)
+    restored = _unpack_leaf_responses(pickle.loads(pickle.dumps(wire)))
+    for i, response in restored.items():
+        observation, masks, request_ids = expected[i]
+        assert observation.keys() == response['observation_batch'].keys()
+        for key, value in observation.items():
+            np.testing.assert_array_equal(value, response['observation_batch'][key],
+                                          err_msg=f'{i}:{key}')
+        for meta, mask, request_id in zip(response['leaf_meta'], masks, request_ids):
+            np.testing.assert_array_equal(meta['action_mask'], mask)
+            assert meta['request_id'] == request_id
+
+
+@pytest.mark.native
+def test_grouped_leaf_encoding_keeps_full_search_tree(combat_factory):
+    from rl.training.cached_mask_vec_env import _materialize_grouped_packed_leaves
+
+    old = [combat_factory(['STRIKE_RED'] * 5, 'Jaw Worm', seed=90 + i,
+                          combat_action_contract='autoregressive-v2',
+                          card_language=True) for i in range(2)]
+    new = [combat_factory(['STRIKE_RED'] * 5, 'Jaw Worm', seed=90 + i,
+                          combat_action_contract='autoregressive-v2',
+                          card_language=True) for i in range(2)]
+    args = dict(simulations=16, depth=1, compact_observation=True)
+    reference = {i: env.nosl_is_az_cpp_begin(
+        np.linspace(-0.5, 0.5, env.action_space.n),
+        state_nonce=170 + i, **args) for i, env in enumerate(old)}
+    candidate = {i: env.nosl_is_az_cpp_begin(
+        np.linspace(-0.5, 0.5, env.action_space.n),
+        state_nonce=170 + i, _defer_packed_observation=True, **args)
+        for i, env in enumerate(new)}
+    for _ in range(64):
+        _materialize_grouped_packed_leaves(new, candidate)
+        for i in range(2):
+            left, right = reference[i], candidate[i]
+            assert left['done'] == right['done']
+            if left['done']:
+                for key in ('action', 'native_action_bits', 'simulations',
+                            'root_value', 'used_completed_policy'):
+                    assert left['result'][key] == right['result'][key], key
+                for key in ('visit_policy', 'root_visit_policy',
+                            'improved_policy', 'root_visits'):
+                    np.testing.assert_array_equal(left['result'][key], right['result'][key])
+                assert (old[i]._nosl_cpp_last_session.tree_snapshot((), 64)
+                        == new[i]._nosl_cpp_last_session.tree_snapshot((), 64))
+                continue
+            assert len(left['leaf_meta']) == len(right['leaf_meta'])
+            for key, value in left['observation_batch'].items():
+                np.testing.assert_array_equal(value, right['observation_batch'][key],
+                                              err_msg=f'{i}:{key}')
+            updates = []
+            for a, b in zip(left['leaf_meta'], right['leaf_meta']):
+                assert a['request_id'] == b['request_id']
+                assert a['needs_policy'] == b['needs_policy']
+                np.testing.assert_array_equal(a['action_mask'], b['action_mask'])
+                updates.append((a['request_id'], .4, np.zeros(old[i].action_space.n)))
+            reference[i] = old[i].nosl_is_az_cpp_backprop_and_leaf_batch(
+                updates, max_leaves=1)
+            candidate[i] = new[i].nosl_is_az_cpp_backprop_and_leaf_batch(
+                updates, max_leaves=1, _defer_packed_observation=True)
+        if all(response['done'] for response in reference.values()):
+            return
+    pytest.fail('fixed-budget paired searches did not finish')
+
+
+@pytest.mark.native
 @pytest.mark.parametrize('contract', ['legacy', 'joint-v2'])
 def test_language_leaf_group_transport_matches_historical_bytes(combat_factory, contract):
     import pickle

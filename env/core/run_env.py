@@ -1295,6 +1295,26 @@ class SlayTheSpireEnv(gym.Env):
                 mask[C.legacy_action_id(int(policy_id))] = True
         return mask
 
+    def _native_packed_global_fields(self):
+        """Return the encoded root metadata shared by this tree's leaves."""
+        global_state = self._nosl_cpp_global_template
+        cached = self._nosl_cpp_encoded_global_template
+        if cached is None or cached[0] is not global_state:
+            template = {key: value.copy() for key, value in
+                        _nosl_compact_empty(card_language=self._card_language).items()}
+            encode._encode_combat_global(template, {
+                "phase": "combat", "arg_step": "root",
+                "global": global_state or normalize_sim_global(self.thick.gc),
+            })
+            cached = (global_state, {
+                key: template[key] for key in (
+                    "arg_step", "ascension", "character", "gold",
+                    "relics", "relic_counters")
+            })
+            if global_state is not None:
+                self._nosl_cpp_encoded_global_template = cached
+        return cached[1]
+
     def _native_packed_observation_batch(self, response):
         """Decode the fixed-width native leaf transport into model tensors.
 
@@ -1336,25 +1356,7 @@ class SlayTheSpireEnv(gym.Env):
         # A single root's persistent metadata can be copied once for the
         # complete batch; branch-local HP, potions, and combat fields follow.
         out = {key: zeros(key) for key in empty}
-        global_state = self._nosl_cpp_global_template
-        cached = self._nosl_cpp_encoded_global_template
-        if global_state is None or cached is None or cached[0] is not global_state:
-            template = {key: value.copy() for key, value in empty.items()}
-            encode._encode_combat_global(template, {
-                "phase": "combat",
-                "arg_step": "root",
-                "global": global_state or normalize_sim_global(self.thick.gc),
-            })
-            cached = (global_state, {
-                key: template[key] for key in (
-                    "arg_step", "ascension", "character", "gold",
-                    "relics", "relic_counters")
-            })
-            # Begin owns this immutable root snapshot. Direct diagnostic calls
-            # without an active root always read the current live metadata.
-            if global_state is not None:
-                self._nosl_cpp_encoded_global_template = cached
-        for key, value in cached[1].items():
+        for key, value in self._native_packed_global_fields().items():
             out[key][:] = value
 
         c = categorical
@@ -1615,6 +1617,7 @@ class SlayTheSpireEnv(gym.Env):
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
+        _defer_packed_observation: bool = False,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         begin_started = time.perf_counter()
@@ -1748,7 +1751,8 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
         self._nosl_cpp_encoded_global_template = None
         begin_seconds = time.perf_counter() - begin_started
-        response = self.nosl_is_az_cpp_leaf_batch(leaf_batch_size)
+        response = self.nosl_is_az_cpp_leaf_batch(
+            leaf_batch_size, _defer_packed_observation=_defer_packed_observation)
         response['_worker_timing']['begin_setup_seconds'] = begin_seconds
         return response
 
@@ -1759,6 +1763,7 @@ class SlayTheSpireEnv(gym.Env):
         stochastic: bool | None = None,
         state_nonce: int | None = None,
         decision_index: int | None = None,
+        _defer_packed_observation: bool = False,
     ):
         session = getattr(self, "_nosl_cpp_az_session", None)
         if session is None:
@@ -1809,15 +1814,20 @@ class SlayTheSpireEnv(gym.Env):
                     "observation_batch": None, "observation_buffer": None,
                     "observation_spec": [], "leaf_meta": [],
                 })
-            observation_batch = self._native_packed_observation_batch(
-                packed_response
-            )
+            packed_batches = 1
+            packed_rows = len(packed_response["request_ids"])
+            if _defer_packed_observation:
+                return timed({
+                    "done": False, "result": None, "leaves": None,
+                    "observation_batch": None, "observation_buffer": None,
+                    "observation_spec": [], "leaf_meta": None,
+                    "_native_packed_response": packed_response,
+                })
+            observation_batch = self._native_packed_observation_batch(packed_response)
             if observation_batch is None:
                 # next_batch_packed has already advanced the search frontier;
                 # asking next_batch again would silently skip those leaves.
                 raise RuntimeError("native packed leaf does not match observation layout")
-            packed_batches = 1
-            packed_rows = len(packed_response["request_ids"])
             if observation_batch is not None:
                 leaf_meta = []
                 request_ids = packed_response.get("request_ids", ())
@@ -1999,7 +2009,8 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_value_capture_pending = False
 
     def nosl_is_az_cpp_backprop_and_leaf_batch(
-        self, updates, max_leaves: int = 64
+        self, updates, max_leaves: int = 64, *,
+        _defer_packed_observation: bool = False,
     ):
         """Backpropagate one neural batch and return the next leaves.
 
@@ -2009,7 +2020,8 @@ class SlayTheSpireEnv(gym.Env):
         started = time.perf_counter()
         self.nosl_is_az_cpp_backprop_batch(updates)
         backprop_seconds = time.perf_counter() - started
-        response = self.nosl_is_az_cpp_leaf_batch(max_leaves)
+        response = self.nosl_is_az_cpp_leaf_batch(
+            max_leaves, _defer_packed_observation=_defer_packed_observation)
         response['_worker_timing']['backprop_seconds'] = backprop_seconds
         return response
 

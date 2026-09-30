@@ -74,6 +74,19 @@ def _pack_leaf_responses(responses):
               if isinstance(response,dict) and response.get('observation_batch')}
     if len(active) < 2:
         return responses
+    spans = [getattr(batch, '_nosl_observation_span', None)
+             for batch in active.values()]
+    if all(span is not None for span in spans):
+        source = spans[0][0]
+        if all(span[0] is source for span in spans) and all(
+            left[2] == right[1] for left, right in zip(spans, spans[1:])
+        ):
+            stripped = dict(responses)
+            slices = {}
+            for index, span in zip(active, spans):
+                slices[index] = (span[1], span[2])
+                stripped[index] = dict(responses[index], observation_batch=None)
+            return _PackedLeafResponses(stripped, source, slices)
     first = next(iter(active.values()))
     if any(value.dtype.hasobject for batch in active.values() for value in batch.values()):
         return responses
@@ -92,6 +105,83 @@ def _pack_leaf_responses(responses):
         offset += count
         stripped[index] = dict(responses[index],observation_batch=None)
     return _PackedLeafResponses(stripped,packed,slices)
+
+
+def _materialize_grouped_packed_leaves(envs, responses):
+    """Encode compatible search trees together, then restore per-tree metadata."""
+    groups = defaultdict(list)
+    for index, response in responses.items():
+        if not isinstance(response, dict):
+            continue
+        payload = response.pop('_native_packed_response', None)
+        if payload is None:
+            continue
+        env = envs[index].unwrapped
+        key = (env._card_language, env._joint_actions,
+               env._autoregressive_actions, env.action_space.n)
+        groups[key].append((index, env, response, payload))
+    for group in groups.values():
+        first_env = group[0][1]
+        if len(group) == 1:
+            _, env, response, payload = group[0]
+            observations = env._native_packed_observation_batch(payload)
+            if observations is None:
+                raise RuntimeError('native packed leaf does not match observation layout')
+            ids = np.asarray(payload['legal_policy_ids'])
+            needs_policy = payload.get('needs_policy', ())
+            meta = [{
+                'request_id': int(request_id),
+                'action_mask': env._leaf_policy_mask(row[row >= 0]),
+                'needs_policy': bool(needs_policy[i]) if i < len(needs_policy) else True,
+            } for i, (request_id, row) in enumerate(zip(payload['request_ids'], ids))]
+            response['leaves'] = meta
+            response['leaf_meta'] = meta
+            response['observation_batch'] = observations
+            continue
+        keys = ('categorical', 'scalars', 'selection_prefix',
+                'language_ids', 'language_features', 'legal_policy_ids')
+        widths = [np.asarray(item[3]['legal_policy_ids']).shape[1]
+                  for item in group]
+        maximum = max(widths)
+        combined = {}
+        for key in keys:
+            if key == 'legal_policy_ids':
+                continue
+            if key in group[0][3]:
+                combined[key] = np.concatenate([
+                    np.asarray(item[3][key]) for item in group], axis=0)
+        count = sum(len(item[3]['request_ids']) for item in group)
+        legal = np.full((count, maximum), -1, dtype=np.int32)
+        cursor = 0
+        for _, _, _, payload in group:
+            ids = np.asarray(payload['legal_policy_ids'])
+            length = len(payload['request_ids'])
+            legal[cursor:cursor + length, :ids.shape[1]] = ids
+            cursor += length
+        combined['legal_policy_ids'] = legal
+        observations = first_env._native_packed_observation_batch(combined)
+        if observations is None:
+            raise RuntimeError('native packed leaf does not match observation layout')
+        cursor = 0
+        for _, env, response, payload in group:
+            length = len(payload['request_ids'])
+            end = cursor + length
+            if env is not first_env:
+                for key, value in env._native_packed_global_fields().items():
+                    observations[key][cursor:end] = value
+            masks = [env._leaf_policy_mask(row[row >= 0])
+                     for row in legal[cursor:end]]
+            needs_policy = payload.get('needs_policy', ())
+            meta = [{
+                'request_id': int(request_id),
+                'action_mask': mask,
+                'needs_policy': bool(needs_policy[i]) if i < len(needs_policy) else True,
+            } for i, (request_id, mask) in enumerate(zip(payload['request_ids'], masks))]
+            response['leaves'] = meta
+            response['leaf_meta'] = meta
+            response['observation_batch'] = _ObservationBatchSlice(
+                observations, cursor, end)
+            cursor = end
 
 
 def _unpack_leaf_responses(payload):
@@ -327,12 +417,18 @@ def _group_worker(
             elif cmd == "env_method_batch":
                 calls = data
                 method_started = time.perf_counter()
-                responses = {
-                    int(index): envs[int(index)].get_wrapper_attr(method_name)(
-                        *args, **kwargs
-                    )
-                    for index, method_name, args, kwargs in calls
-                }
+                responses = {}
+                for index, method_name, args, kwargs in calls:
+                    env = envs[int(index)]
+                    if (method_name in ('nosl_is_az_cpp_begin',
+                                        'nosl_is_az_cpp_backprop_and_leaf_batch')
+                            and hasattr(env.unwrapped, '_native_packed_observation_batch')):
+                        kwargs = dict(kwargs, _defer_packed_observation=True)
+                    responses[int(index)] = env.get_wrapper_attr(method_name)(
+                        *args, **kwargs)
+                decode_started = time.perf_counter()
+                _materialize_grouped_packed_leaves(envs, responses)
+                decode_seconds = time.perf_counter() - decode_started
                 method_seconds = time.perf_counter() - method_started
                 leaf_calls = all(
                     method_name in ('nosl_is_az_cpp_begin','nosl_is_az_cpp_backprop_and_leaf_batch')
@@ -341,7 +437,9 @@ def _group_worker(
                     pack_started = time.perf_counter()
                     payload = _pack_leaf_responses(responses)
                     pack_seconds = time.perf_counter() - pack_started
-                    timing = {'method_seconds': method_seconds, 'pack_seconds': pack_seconds}
+                    timing = {'method_seconds': method_seconds,
+                              'pack_seconds': pack_seconds,
+                              'leaf_python_seconds': decode_seconds}
                     for response in responses.values():
                         for name, seconds in response.get('_worker_timing', {}).items():
                             timing[name] = timing.get(name, 0.0) + seconds
