@@ -72,3 +72,8 @@ mean latency per group response. Worker durations are summed across parallel
 processes and therefore must not be added to `collection_seconds` or treated
 as serial wall time. Roundtrip includes scheduling and time before a ready
 response is collected; its residual is not a pure IPC measurement.
+Within one grouped worker reply, compatible packed leaves can share a single
+NumPy observation decode. Each search tree retains its own root-global fields,
+request IDs, legal mask, and ordered response slice. A single leaf and the
+canonical fallback use the original decoder. This changes only worker-side
+observation materialization; native tree expansion and backup are unchanged.

@@ -10,7 +10,9 @@ from tests.unit.test_nosl_is_az import _Branch, _DeepBranch
 
 @pytest.mark.native
 @pytest.mark.parametrize('contract', ['autoregressive-v2', 'joint-v2'])
-def test_grouped_packed_leaf_encoding_preserves_each_root(combat_factory, contract):
+@pytest.mark.parametrize('leaf_batch_size', [1, 4])
+def test_grouped_packed_leaf_encoding_preserves_each_root(
+    combat_factory, contract, leaf_batch_size):
     import pickle
     from rl.training.cached_mask_vec_env import (
         _materialize_grouped_packed_leaves, _pack_leaf_responses,
@@ -25,7 +27,8 @@ def test_grouped_packed_leaf_encoding_preserves_each_root(combat_factory, contra
         env.thick.gc.gold = 37 + 11 * i
         response = env.nosl_is_az_cpp_begin(
             np.zeros(env.action_space.n), state_nonce=700 + i,
-            simulations=16, depth=0, compact_observation=True,
+            simulations=16, depth=0, leaf_batch_size=leaf_batch_size,
+            compact_observation=True,
             _defer_packed_observation=True)
         assert not response['done']
         raw = response['_native_packed_response']
@@ -60,7 +63,10 @@ def test_grouped_leaf_encoding_keeps_full_search_tree(combat_factory):
     new = [combat_factory(['STRIKE_RED'] * 5, 'Jaw Worm', seed=90 + i,
                           combat_action_contract='autoregressive-v2',
                           card_language=True) for i in range(2)]
-    args = dict(simulations=16, depth=1, compact_observation=True)
+    args = dict(simulations=16, depth=1, compact_observation=True,
+                root_search_mode=2, paper_full_gumbel=True,
+                gumbel_value_scale=1.0, gumbel_rescale_q=False,
+                fixed_worldline=True)
     reference = {i: env.nosl_is_az_cpp_begin(
         np.linspace(-0.5, 0.5, env.action_space.n),
         state_nonce=170 + i, **args) for i, env in enumerate(old)}
