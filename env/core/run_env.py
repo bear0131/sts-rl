@@ -1614,6 +1614,7 @@ class SlayTheSpireEnv(gym.Env):
         paper_full_gumbel: bool = False,
         fixed_worldline: bool = False,
         boss_transition_target: bool = False,
+        model_victory_terminal: bool = False,
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
@@ -1636,6 +1637,13 @@ class SlayTheSpireEnv(gym.Env):
         # temperature after the optional root-noise arguments; older builds
         # take either the root value, root-noise, or legacy five arguments.
         try:
+            terminal_args = (
+                [sum(1 << i for i in (self._multi or ()))]
+                if self._autoregressive_actions else
+                ([0] if model_victory_terminal else [])
+            )
+            if model_victory_terminal:
+                terminal_args.append(True)
             self._nosl_cpp_az_session = session_factory(
                 np.asarray(prior_logits, dtype=np.float64),
                 int(simulations), int(depth), float(c_puct),
@@ -1655,9 +1663,14 @@ class SlayTheSpireEnv(gym.Env):
                 bool(paper_full_gumbel),
                 bool(fixed_worldline),
                 int(terminal_mode),
-                *([sum(1 << i for i in (self._multi or ()))] if self._autoregressive_actions else []),
+                *terminal_args,
             )
         except TypeError as error:
+            if model_victory_terminal:
+                raise RuntimeError(
+                    'loaded simulator extension does not support model-evaluated '
+                    'victory leaves; rebuild the native extension'
+                ) from error
             if self._autoregressive_actions:
                 raise RuntimeError('autoregressive-v2 requires the matching native search build') from error
             if "incompatible function arguments" not in str(error):

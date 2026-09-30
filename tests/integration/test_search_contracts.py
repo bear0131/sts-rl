@@ -262,6 +262,39 @@ def test_native_terminal_excludes_post_combat_healing(combat_factory):
 
 
 @pytest.mark.native
+def test_model_victory_leaf_uses_value_only_and_preserves_default(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=42)
+    env.thick.bc.set_player_strength(999)
+    logits = np.full(181, -100.0)
+    logits[1:6] = 100.0
+    kwargs = dict(simulations=1, depth=0, nonce=5)
+
+    default = env.thick.bc.nosl_neural_search_begin(logits, **kwargs)
+    assert default.next_batch(1) == []
+    assert default.result()["root_value"] == pytest.approx(
+        env.thick.bc.to_dict()["player"]["hp"] / 200
+    )
+
+    experimental = env.thick.bc.nosl_neural_search_begin(
+        logits, model_victory_terminal=True, **kwargs
+    )
+    leaf = experimental.next_batch(1)
+    assert len(leaf) == 1
+    assert leaf[0]["needs_policy"] is False
+    assert leaf[0]["state"]["outcome"] == 1
+    experimental.backprop(leaf[0]["request_id"], 0.73, np.empty(0))
+    assert experimental.done()
+    assert experimental.result()["root_value"] == pytest.approx(0.73)
+
+    packed = env.thick.bc.nosl_neural_search_begin(
+        logits, model_victory_terminal=True, **kwargs
+    )
+    batch = packed.next_batch_packed(1)
+    assert batch["done"] is False
+    assert list(batch["needs_policy"]) == [False]
+
+
+@pytest.mark.native
 @pytest.mark.parametrize("encounter", ["Jaw Worm", "Two Louse", "Gremlin Leader", "Automaton", "Collector"])
 @pytest.mark.parametrize("batch_size", [1, 4])
 @pytest.mark.parametrize("card_language", [False, True])

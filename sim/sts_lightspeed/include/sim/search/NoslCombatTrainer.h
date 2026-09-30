@@ -75,6 +75,9 @@ struct NoslCombatSearchConfig {
     // post-transition max HP; mode 2 applies the A5+ Act 1/2 restoration of
     // 75% of missing HP.  Both modes label a combat loss as zero.
     int bossTransitionValueMode = 0;
+    // Experimental: send a combat victory to the same value network used
+    // for nonterminal leaves. Losses retain their exact zero value.
+    bool modelVictoryTerminal = false;
 };
 
 struct NoslCombatSearchStats {

@@ -2142,11 +2142,22 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 --simulationsStarted_;
                 break;
             }
+            if (config_.modelVictoryTerminal &&
+                state.outcome == Outcome::PLAYER_VICTORY) {
+                pending.leaf = node;
+                pending.legalActions.clear();
+                pending.needsPolicy = false;
+                haveLeaf = true;
+            }
+        }
+        if (!haveLeaf) {
             finishTerminal(pending, bossTransitionTerminalValue(
                 state, config_.bossTransitionValueMode));
             continue;
         }
-        if (state.outcome != Outcome::UNDECIDED ||
+        if ((state.outcome != Outcome::UNDECIDED &&
+             !(config_.modelVictoryTerminal &&
+               state.outcome == Outcome::PLAYER_VICTORY)) ||
             (pending.needsPolicy && pending.legalActions.empty())) {
             finishTerminal(pending, bossTransitionTerminalValue(
                 state, config_.bossTransitionValueMode));

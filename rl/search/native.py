@@ -72,6 +72,7 @@ class NativeSearchConfig:
     paper_full_gumbel: bool = True
     fixed_worldline: bool = False
     boss_transition_target: bool = False
+    model_victory_terminal: bool = False
 
     def __post_init__(self):
         if self.simulations < 1 or self.depth < 0 or self.leaf_batch_size < 1:
