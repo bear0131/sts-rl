@@ -1636,7 +1636,7 @@ def distributed_nosl_is_az_update(
                 "_nosl_is_az_consecutive_nonfinite_updates", 0)) + 1
             model._nosl_is_az_consecutive_nonfinite_updates = consecutive
             diagnostic_path = None
-            if local_nonfinite_gradients or rank == 0:
+            if consecutive == 1 and local_nonfinite_gradients:
                 if getattr(model, "_nosl_is_az_diagnostic_batch", None) is not None:
                     diagnostic_path = save_nonfinite_nosl_diagnostic(
                         model, local_root=local_root, update=update,

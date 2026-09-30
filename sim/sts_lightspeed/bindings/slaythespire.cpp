@@ -571,8 +571,8 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
 #ifdef STS_ENABLE_RULE_TRACE
                 setRulePlayerStatusByName(bc, name, amount);
 #else
-                if (name == "STRENGTH") bc.player.strength = amount;
-                else if (name == "DEXTERITY") bc.player.dexterity = amount;
+                if (name == "STRENGTH") bc.player.setStatusValueNoChecks<sts::PlayerStatus::STRENGTH>(amount);
+                else if (name == "DEXTERITY") bc.player.setStatusValueNoChecks<sts::PlayerStatus::DEXTERITY>(amount);
                 else if (name == "ARTIFACT") bc.player.artifact = amount;
 #endif
             }
@@ -601,7 +601,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
 #ifdef STS_ENABLE_RULE_TRACE
                     setRuleMonsterStatusByName(bc, i, name, amount);
 #else
-                    if (name == "STRENGTH") monster.strength = amount;
+                    if (name == "STRENGTH") monster.setStatus<sts::MonsterStatus::STRENGTH>(amount);
                     else if (name == "VULNERABLE") monster.vulnerable = amount;
                     else if (name == "WEAK") monster.weak = amount;
 #endif

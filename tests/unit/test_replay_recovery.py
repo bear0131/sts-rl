@@ -60,16 +60,17 @@ def test_unbounded_player_scalars_do_not_overflow_float16():
     assert np.isfinite(replay.observations['player_scalars'][: replay.size]).all()
 
 
-def test_old_float16_player_scalars_restore_into_float32_storage():
+@pytest.mark.parametrize('key', ['player_scalars', 'player_buffs'])
+def test_old_float16_player_features_restore_into_float32_storage(key):
     space = spaces.Dict({
-        'player_scalars': spaces.Box(
+        key: spaces.Box(
             -np.inf, np.inf, shape=(2,), dtype=np.float32
         ),
     })
     replay = NOSLISAZReplayBuffer(
         capacity=2,
         action_dim=2,
-        observation_keys=['player_scalars'],
+        observation_keys=[key],
         observation_space=space,
     )
     state = dict(
@@ -77,12 +78,12 @@ def test_old_float16_player_scalars_restore_into_float32_storage():
         value_contract=VALUE_CONTRACT,
         capacity=2,
         action_dim=2,
-        observation_keys=('player_scalars',),
+        observation_keys=(key,),
         position=1,
         size=1,
         total_added=1,
         observations={
-            'player_scalars': np.asarray([[0.25, 3.0]], dtype=np.float16),
+            key: np.asarray([[0.25, 3.0]], dtype=np.float16),
         },
         arrays={
             'action_masks': np.asarray([[True, False]], dtype=bool),
@@ -95,8 +96,48 @@ def test_old_float16_player_scalars_restore_into_float32_storage():
 
     replay.load_state_dict(state)
 
-    assert replay.observations['player_scalars'].dtype == np.float32
+    assert replay.observations[key].dtype == np.float32
     np.testing.assert_array_equal(
-        replay.observations['player_scalars'][0],
-        state['observations']['player_scalars'][0].astype(np.float32),
+        replay.observations[key][0],
+        state['observations'][key][0].astype(np.float32),
     )
+
+
+def test_player_buffs_store_large_finite_values_without_half_overflow():
+    replay = NOSLISAZReplayBuffer(
+        capacity=2, action_dim=2, observation_keys=['player_buffs'],
+        observation_space=spaces.Dict({'player_buffs': spaces.Box(
+            -np.inf, np.inf, shape=(1,), dtype=np.float32)}),
+    )
+    replay.add_samples([dict(
+        observation={'player_buffs': np.asarray([100_000.0], dtype=np.float32)},
+        action_mask=np.ones(2, dtype=bool),
+        policy_target=np.asarray([0.5, 0.5], dtype=np.float32),
+        value_target=0.25,
+    )])
+    assert replay.observations['player_buffs'].dtype == np.float32
+    assert replay.observations['player_buffs'][0, 0] == 100_000.0
+    state = replay.state_dict()
+    restored = NOSLISAZReplayBuffer(
+        capacity=2, action_dim=2, observation_keys=['player_buffs'],
+        observation_space=spaces.Dict({'player_buffs': spaces.Box(
+            -np.inf, np.inf, shape=(1,), dtype=np.float32)}),
+    )
+    restored.load_state_dict(state)
+    assert restored.observations['player_buffs'][0, 0] == 100_000.0
+
+
+@pytest.mark.parametrize('value', [np.inf, np.nan, 100_000.0])
+def test_replay_rejects_nonfinite_or_half_overflow_before_writing(value):
+    replay = NOSLISAZReplayBuffer(
+        capacity=2, action_dim=2, observation_keys=['normalized'],
+        observation_space=spaces.Dict({'normalized': spaces.Box(
+            -np.inf, np.inf, shape=(1,), dtype=np.float32)}),
+    )
+    sample = dict(observation={'normalized': np.asarray([value], dtype=np.float32)},
+                  action_mask=np.ones(2, dtype=bool),
+                  policy_target=np.asarray([0.5, 0.5], dtype=np.float32),
+                  value_target=0.25)
+    with pytest.raises(ValueError, match='normalized'):
+        replay.add_samples([sample])
+    assert replay.total_added == 0 and replay.size == 0

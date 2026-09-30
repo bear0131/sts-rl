@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <bitset>
 #include <map>
+#include <algorithm>
 
 #include <constants/CharacterClasses.h>
 #include <constants/Relics.h>
@@ -32,6 +33,16 @@ namespace sts {
 
 struct Player {
     static constexpr int MAX_BLOCK = 999;
+    static constexpr int MAX_STRENGTH_DEXTERITY = 999;
+    static int cappedStat(int value) {
+        return std::clamp(value, -MAX_STRENGTH_DEXTERITY, MAX_STRENGTH_DEXTERITY);
+    }
+    static int cappedStatSum(int value, std::int64_t amount) {
+        return static_cast<int>(std::clamp(
+            static_cast<std::int64_t>(value) + amount,
+            static_cast<std::int64_t>(-MAX_STRENGTH_DEXTERITY),
+            static_cast<std::int64_t>(MAX_STRENGTH_DEXTERITY)));
+    }
         CharacterClass cc;
 
         int16_t gold = 0;
@@ -183,7 +194,7 @@ struct Player {
                 break;
 
             case PS::DEXTERITY:
-                dexterity -= amount;    // dexterity should not be used by "hasStatusInternal"
+                dexterity = cappedStatSum(dexterity, -static_cast<std::int64_t>(amount));
                 break;
 
             case PS::FOCUS:
@@ -191,7 +202,7 @@ struct Player {
                 break;
 
             case PS::STRENGTH:
-                strength -= amount;     // strength should not be used by "hasStatusInternal"
+                strength = cappedStatSum(strength, -static_cast<std::int64_t>(amount));
                 break;
 
             default:
@@ -313,7 +324,7 @@ struct Player {
                 return;
 
             case PS::DEXTERITY:
-                dexterity += amount;
+                dexterity = cappedStatSum(dexterity, amount);
                 return;
 
             case PS::FOCUS:
@@ -321,7 +332,7 @@ struct Player {
                 return;
 
             case PS::STRENGTH:
-                strength += amount;
+                strength = cappedStatSum(strength, amount);
                 return;
 
             default:
@@ -392,11 +403,11 @@ struct Player {
         }
 
         if (s == PlayerStatus::STRENGTH) {
-            strength += amount;
+            strength = cappedStatSum(strength, amount);
             return;
         }
         if (s == PlayerStatus::DEXTERITY) {
-            dexterity += amount;
+            dexterity = cappedStatSum(dexterity, amount);
             return;
         }
         if (s == PlayerStatus::FOCUS) {
@@ -426,7 +437,7 @@ struct Player {
                 break;
 
             case PS::DEXTERITY:
-                dexterity = value;
+                dexterity = cappedStat(value);
                 break;
 
             case PS::FOCUS:
@@ -434,7 +445,7 @@ struct Player {
                 break;
 
             case PS::STRENGTH:
-                strength = value;
+                strength = cappedStat(value);
                 break;
 
             default:

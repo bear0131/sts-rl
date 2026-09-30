@@ -37,10 +37,8 @@ def _storage_dtype(space: spaces.Box, *, key: str | None = None) -> np.dtype:
         return _compact_integer_dtype(space)
     if np.issubdtype(space.dtype, np.bool_):
         return np.dtype(bool)
-    # Most features are normalized, but player_scalars also carries unbounded
-    # block/counter-derived values. Keeping this group in float32 prevents
-    # overflow to inf from poisoning the learner.
-    if key == "player_scalars":
+    # Player scalars and buffs can exceed float16 while a battle is running.
+    if key in ("player_scalars", "player_buffs"):
         return np.dtype(np.float32)
     return np.dtype(np.float16)
 
@@ -174,6 +172,8 @@ class NOSLISAZReplayBuffer:
                     raise ValueError('replay observation schema mismatch: ' + key)
                 if not np.can_cast(source.dtype, target.dtype, casting='safe'):
                     raise ValueError('replay observation schema mismatch: ' + key)
+                if np.issubdtype(source.dtype, np.floating) and not np.isfinite(source).all():
+                    raise ValueError('replay observation has nonfinite values: ' + key)
                 target[:size] = source
             for key, source in state['arrays'].items():
                 target = getattr(self, key)
@@ -315,6 +315,13 @@ class NOSLISAZReplayBuffer:
                     f"invalid replay observation {key!r} shape "
                     f"{observations[key].shape}; expected {expected}"
                 )
+            value = observations[key]
+            storage_dtype = _storage_dtype(space, key=key)
+            if np.issubdtype(value.dtype, np.floating):
+                if not np.isfinite(value).all():
+                    raise ValueError(f"replay observation {key!r} contains nonfinite values")
+                if storage_dtype == np.dtype(np.float16) and np.any(np.abs(value) > np.finfo(np.float16).max):
+                    raise ValueError(f"replay observation {key!r} exceeds float16 storage range")
 
         start_id = self.total_added
         self.total_added += count

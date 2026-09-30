@@ -6,6 +6,8 @@
 #define STS_LIGHTSPEED_MONSTER_H
 
 #include <functional>
+#include <algorithm>
+#include <cstdint>
 #include <random>
 #include <map>
 #include <game/Random.h>
@@ -28,6 +30,16 @@ namespace sts {
 
 struct Monster {
     static constexpr int MAX_BLOCK = 999;
+    static constexpr int MAX_STRENGTH = 999;
+    static int cappedStrength(int value) {
+        return std::clamp(value, -MAX_STRENGTH, MAX_STRENGTH);
+    }
+    static int cappedStrengthSum(int value, std::int64_t amount) {
+        return static_cast<int>(std::clamp(
+            static_cast<std::int64_t>(value) + amount,
+            static_cast<std::int64_t>(-MAX_STRENGTH),
+            static_cast<std::int64_t>(MAX_STRENGTH)));
+    }
 
         /*
          * Things to possibly cache about a monster
@@ -244,7 +256,7 @@ struct Monster {
                 return;
 
             case MonsterStatus::STRENGTH:
-                strength = amount;
+                strength = cappedStrength(amount);
                 return;
 
             case MonsterStatus::VULNERABLE:
@@ -292,7 +304,7 @@ struct Monster {
         }
 
         if (s == MonsterStatus::STRENGTH) {
-            strength -= amount;
+            strength = cappedStrengthSum(strength, -static_cast<std::int64_t>(amount));
             return;
         }
 
@@ -353,7 +365,7 @@ struct Monster {
                 return;
 
             case MonsterStatus::STRENGTH:
-                strength += amount;
+                strength = cappedStrengthSum(strength, amount);
                 setHasStatus<s>(true);
                 return;
 
@@ -535,7 +547,7 @@ struct Monster {
                 return;
 
             case MonsterStatus::STRENGTH:
-                strength += amount;
+                strength = cappedStrengthSum(strength, amount);
                 return;
 
             case MS::ANGRY:
