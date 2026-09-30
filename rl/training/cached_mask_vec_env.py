@@ -28,6 +28,18 @@ class _PackedLeafResponses:
     slices: dict[int, tuple[int, int]]
 
 
+@dataclass
+class _TimedWorkerPayload:
+    payload: Any
+    timing: dict[str, float]
+
+
+def _unwrap_timed_payload(payload):
+    if isinstance(payload, _TimedWorkerPayload):
+        return payload.payload, payload.timing
+    return payload, {}
+
+
 class _ObservationBatchSlice(Mapping):
     """Expose one tree's rows without allocating a view for every field.
 
@@ -314,15 +326,28 @@ def _group_worker(
                 })
             elif cmd == "env_method_batch":
                 calls = data
+                method_started = time.perf_counter()
                 responses = {
                     int(index): envs[int(index)].get_wrapper_attr(method_name)(
                         *args, **kwargs
                     )
                     for index, method_name, args, kwargs in calls
                 }
-                remote.send(_pack_leaf_responses(responses) if all(
+                method_seconds = time.perf_counter() - method_started
+                leaf_calls = all(
                     method_name in ('nosl_is_az_cpp_begin','nosl_is_az_cpp_backprop_and_leaf_batch')
-                    for _index,method_name,_args,_kwargs in calls) else responses)
+                    for _index,method_name,_args,_kwargs in calls)
+                if leaf_calls:
+                    pack_started = time.perf_counter()
+                    payload = _pack_leaf_responses(responses)
+                    pack_seconds = time.perf_counter() - pack_started
+                    timing = {'method_seconds': method_seconds, 'pack_seconds': pack_seconds}
+                    for response in responses.values():
+                        for name, seconds in response.get('_worker_timing', {}).items():
+                            timing[name] = timing.get(name, 0.0) + seconds
+                    remote.send(_TimedWorkerPayload(payload, timing))
+                else:
+                    remote.send(responses)
             elif cmd == "get_attr":
                 local_indices, attr_name = data
                 remote.send({
@@ -370,6 +395,8 @@ class GroupedMethodResponse:
     method_name: str
     responses: dict[int, Any]
     elapsed_seconds: float = 0.0
+    receive_unpack_seconds: float = 0.0
+    worker_timing: dict[str, float] | None = None
 
 
 class GroupedMethodStream:
@@ -429,10 +456,13 @@ class GroupedMethodStream:
         packets = []
         for remote in ready:
             group_index, method_name, submitted_at = self._pending.pop(remote)
+            receive_started = time.perf_counter()
             try:
-                local_responses = _unpack_leaf_responses(remote.recv())
+                payload, worker_timing = _unwrap_timed_payload(remote.recv())
+                local_responses = _unpack_leaf_responses(payload)
             except (EOFError, BrokenPipeError, OSError) as exc:
                 self._owner._raise_worker_failure(group_index, exc)
+            receive_unpack_seconds = time.perf_counter() - receive_started
             group = self._owner._groups[group_index]
             responses = {
                 int(group[int(local_index)]): response
@@ -444,6 +474,8 @@ class GroupedMethodStream:
                     method_name=method_name,
                     responses=responses,
                     elapsed_seconds=time.perf_counter() - submitted_at,
+                    receive_unpack_seconds=receive_unpack_seconds,
+                    worker_timing=worker_timing,
                 )
             )
         return packets
@@ -535,7 +567,8 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             for remote in self._wait_for_worker_connections(tuple(pending)):
                 group_index = pending.pop(remote)
                 try:
-                    results[group_index] = _unpack_leaf_responses(remote.recv())
+                    payload, _timing = _unwrap_timed_payload(remote.recv())
+                    results[group_index] = _unpack_leaf_responses(payload)
                 except (EOFError, BrokenPipeError, OSError) as exc:
                     self._raise_worker_failure(group_index, exc)
         return results

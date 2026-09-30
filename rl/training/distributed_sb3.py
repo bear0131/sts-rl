@@ -16,7 +16,7 @@ experiment targets.
 from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
-from rl.search.native import apply_strict_training_settings
+from rl.search.native import WORKER_TIMING_KEYS, apply_strict_training_settings
 
 import argparse
 import hashlib
@@ -1615,7 +1615,7 @@ def distributed_nosl_is_az_update(
         "env_step_seconds",
         "selection_prefix_decisions",
         "simulator_transitions",
-    ):
+    ) + WORKER_TIMING_KEYS:
         result[name] = float(rollout_timings.get(name, 0.0))
     result.update(diagnostic_values)
     # Aggregate the objective scalars with the same root weighting used by the
@@ -1780,6 +1780,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/cpp_backprop_rpc_seconds",
     "nosl_is_az/cpp_stream_wait_seconds",
     "nosl_is_az/cpp_ready_empty_wait_seconds",
+    *(f"nosl_is_az/{name}" for name in WORKER_TIMING_KEYS),
     "nosl_is_az/inference_batch_size_mean",
     "nosl_is_az/inference_batch_size_max",
     "nosl_is_az/inference_batch_target_mean",

@@ -63,3 +63,12 @@ The distributed entity trainer clears captured leaf graphs after each collection
 and before learner backward, then recaptures them on the next collection. The
 compiled callable remains; this releases graph private pools when the full
 learner microbatch needs GPU memory.
+
+Grouped native search also reports `nosl_is_az/worker_*` timing. Each worker
+response carries the C++ leaf call, Python leaf conversion, backpropagation,
+begin setup, grouped method, group packing, parent receive/unpack and roundtrip
+durations. The corresponding `worker_packet_count` gives the denominator for
+mean latency per group response. Worker durations are summed across parallel
+processes and therefore must not be added to `collection_seconds` or treated
+as serial wall time. Roundtrip includes scheduling and time before a ready
+response is collected; its residual is not a pure IPC measurement.

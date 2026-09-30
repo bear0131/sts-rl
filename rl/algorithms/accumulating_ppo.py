@@ -21,6 +21,7 @@ from env.core import native_actions as C
 from env.core.combat_value import VALUE_CONTRACT
 from rl.search.native import (
     LeafInferenceSchedule,
+    WORKER_TIMING_KEYS,
     complete_searches,
     complete_searches_streaming,
     observation_as_tensor as _leaf_observation_as_tensor,
@@ -965,6 +966,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "selection_prefix_decisions": 0,
             "simulator_transitions": 0,
         }
+        nosl_timings.update({name: 0.0 for name in WORKER_TIMING_KEYS})
         inference_batch_size_sum = 0.0
         inference_batch_count = 0
         inference_batch_size_max = 0
@@ -1318,6 +1320,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     )
                     for key in ("cpp_leaf_decode_seconds", "cpp_leaf_model_seconds", "cpp_backprop_rpc_seconds"):
                         nosl_timings[key] += shared_stats[key]
+                    for key in WORKER_TIMING_KEYS:
+                        nosl_timings[key] += shared_stats.get(key, 0.0)
                 else:
                     requests = call_workers("nosl_is_az_begin", begin_calls)
                     active = {

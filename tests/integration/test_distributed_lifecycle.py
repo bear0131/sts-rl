@@ -137,6 +137,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                    p['nosl_is_az/simulator_transitions'] == 32 for p in payloads)
         assert all('nosl_is_az/overworld_rule_decisions' in p and
                    'nosl_is_az/overworld_fallback_decisions' in p for p in payloads)
+        assert all('nosl_is_az/worker_packet_count' in p and
+                   'nosl_is_az/worker_native_leaf_seconds' in p and
+                   'nosl_is_az/worker_pack_seconds' in p for p in payloads)
     if staggered:
         assert payloads[0]['startup_stagger/span_steps'] == 16
         assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32

@@ -90,6 +90,9 @@ def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, com
         leaf_batch_size=4, compact_observation=compact, root_search_mode=2,
         paper_full_gumbel=True, gumbel_scale=0, gumbel_rescale_q=False,
         gumbel_value_scale=1)
+    assert response['_worker_timing']['begin_setup_seconds'] >= 0
+    assert response['_worker_timing']['native_leaf_seconds'] >= 0
+    assert response['_worker_timing']['leaf_python_seconds'] >= 0
     selected_seen = False
     for _ in range(64):
         if response['done']:
@@ -101,6 +104,7 @@ def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, com
             np.testing.assert_array_equal(leaf['action_mask'][C.AUTOREGRESSIVE_END:], obs['combat_legal'][row])
         response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
             [(leaf['request_id'], .3, logits) for leaf in response['leaf_meta']], max_leaves=4)
+        assert response['_worker_timing']['backprop_seconds'] >= 0
     assert response['done'] and selected_seen
     result = response['result']
     assert result['visit_policy'].shape == (198,)

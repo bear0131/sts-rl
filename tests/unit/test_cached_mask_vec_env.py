@@ -95,8 +95,15 @@ def test_grouped_leaf_wire_works_for_synchronous_and_streamed_rpc():
         stream=env.env_method_stream()
         stream.submit('nosl_is_az_cpp_begin',calls)
         actual={}
+        worker_packets=[]
         while stream.pending:
-            for packet in stream.receive():actual.update(packet.responses)
+            for packet in stream.receive():
+                worker_packets.append(packet)
+                actual.update(packet.responses)
+        assert len(worker_packets)==2
+        assert all(packet.worker_timing['method_seconds']>=0 for packet in worker_packets)
+        assert all(packet.worker_timing['pack_seconds']>=0 for packet in worker_packets)
+        assert all(packet.elapsed_seconds>=packet.receive_unpack_seconds for packet in worker_packets)
         for index in range(3):
             assert actual[index]['leaf_meta']==expected[index]['leaf_meta']
             np.testing.assert_array_equal(actual[index]['observation_batch']['x'],[[index+10]])

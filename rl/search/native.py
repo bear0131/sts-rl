@@ -28,6 +28,16 @@ STRICT_SEARCH_DEFAULTS = {
     'gumbel_interior_value_mode': 0, 'gumbel_interior_max_mix_visits': 64.0,
 }
 
+# Worker-group seconds are summed across concurrent processes. They describe
+# where worker CPU time goes, not additive slices of collector wall time.
+WORKER_TIMING_KEYS = (
+    'worker_packet_count', 'worker_roundtrip_seconds',
+    'worker_receive_unpack_seconds', 'worker_method_seconds',
+    'worker_pack_seconds', 'worker_native_leaf_seconds',
+    'worker_leaf_python_seconds', 'worker_backprop_seconds',
+    'worker_begin_setup_seconds',
+)
+
 
 def apply_strict_training_settings(model, *mirrors):
     """Keep new models, resumed models and their CLI metadata consistent."""
@@ -531,6 +541,15 @@ def complete_searches_streaming(
         inference_full_flushes=0,
         inference_drained_flushes=0,
         inference_watchdog_flushes=0,
+        worker_packet_count=0,
+        worker_roundtrip_seconds=0.0,
+        worker_receive_unpack_seconds=0.0,
+        worker_method_seconds=0.0,
+        worker_pack_seconds=0.0,
+        worker_native_leaf_seconds=0.0,
+        worker_leaf_python_seconds=0.0,
+        worker_backprop_seconds=0.0,
+        worker_begin_setup_seconds=0.0,
     )
     initial_controller_counts = (
         (controller.changes, controller.increases,
@@ -569,6 +588,13 @@ def complete_searches_streaming(
         nonlocal ready_leaf_count
         received_at = time.perf_counter()
         for packet in packets:
+            stats['worker_packet_count'] += 1
+            stats['worker_roundtrip_seconds'] += getattr(packet, 'elapsed_seconds', 0.0)
+            stats['worker_receive_unpack_seconds'] += getattr(packet, 'receive_unpack_seconds', 0.0)
+            for name, seconds in (getattr(packet, 'worker_timing', None) or {}).items():
+                key = 'worker_' + name
+                if key in stats:
+                    stats[key] += seconds
             active = {}
             for index, response in packet.responses.items():
                 if index not in expected:

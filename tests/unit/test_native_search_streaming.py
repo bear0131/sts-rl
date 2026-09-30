@@ -75,6 +75,13 @@ class _FakeGroupedSearchStream:
             method_name=method_name,
             responses=responses,
             elapsed_seconds=0.001,
+            receive_unpack_seconds=0.00005,
+            worker_timing={
+                'method_seconds': 0.0007,
+                'pack_seconds': 0.0001,
+                'native_leaf_seconds': 0.0003,
+                'leaf_python_seconds': 0.0002,
+            },
         )]
 
 
@@ -117,6 +124,11 @@ def test_streamed_search_batches_across_trees_without_reordering_tree_requests(
     assert stats["leaf_batches"] == 4
     assert stats["inference_batch_size_mean"] == 2.0
     assert stats["inference_batch_size_max"] == 2
+    assert stats['worker_packet_count'] == 6
+    assert stats['worker_native_leaf_seconds'] == pytest.approx(0.0018)
+    assert stats['worker_leaf_python_seconds'] == pytest.approx(0.0012)
+    assert stats['worker_pack_seconds'] == pytest.approx(0.0006)
+    assert stats['worker_receive_unpack_seconds'] == pytest.approx(0.0003)
     assert all(len(batch) == 2 for batch in inference_batches)
     for index in range(4):
         assert [item[0] for item in stream.updates[index]] == [0, 1]

@@ -39,6 +39,7 @@ let rl/train.py bridge it to sb3-contrib via ActionMasker.
 
 import copy
 import hashlib
+import time
 
 import numpy as np
 import gymnasium as gym
@@ -1598,6 +1599,7 @@ class SlayTheSpireEnv(gym.Env):
         compact_observation: bool = False,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
+        begin_started = time.perf_counter()
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("native NOSL search requires a live combat state")
         session_factory = getattr(self.thick.bc, "nosl_neural_search_begin", None)
@@ -1727,7 +1729,10 @@ class SlayTheSpireEnv(gym.Env):
         # overlaid in _native_leaf_observation().
         self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
         self._nosl_cpp_encoded_global_template = None
-        return self.nosl_is_az_cpp_leaf_batch(leaf_batch_size)
+        begin_seconds = time.perf_counter() - begin_started
+        response = self.nosl_is_az_cpp_leaf_batch(leaf_batch_size)
+        response['_worker_timing']['begin_setup_seconds'] = begin_seconds
+        return response
 
     def nosl_is_az_cpp_leaf_batch(
         self,
@@ -1740,6 +1745,15 @@ class SlayTheSpireEnv(gym.Env):
         session = getattr(self, "_nosl_cpp_az_session", None)
         if session is None:
             raise RuntimeError("native NOSL AlphaZero session is not active")
+        leaf_started = time.perf_counter()
+        native_seconds = 0.0
+
+        def timed(response):
+            response['_worker_timing'] = {
+                'native_leaf_seconds': native_seconds,
+                'leaf_python_seconds': time.perf_counter() - leaf_started - native_seconds,
+            }
+            return response
         # Language-enabled checkpoints need the legacy canonical path because
         # the packed numeric layout intentionally omits token programs.  For
         # the ordinary language-free combat specialist, keep serialization on
@@ -1748,7 +1762,9 @@ class SlayTheSpireEnv(gym.Env):
         if (self._nosl_cpp_compact_observation and
                 not self._card_language and not self._combat_language and
                 packed_fn is not None and _nosl_compact_lut() is not None):
+            native_started = time.perf_counter()
             packed_response = packed_fn(int(max_leaves))
+            native_seconds += time.perf_counter() - native_started
             if bool(packed_response.get("done", False)):
                 result = self._adapt_native_neural_result(
                     session.result(),
@@ -1765,11 +1781,11 @@ class SlayTheSpireEnv(gym.Env):
                 self._nosl_cpp_encoded_global_template = None
                 self._nosl_cpp_compact_observation = False
                 self._nosl_cpp_stochastic = False
-                return {
+                return timed({
                     "done": True, "result": result, "leaves": [],
                     "observation_batch": None, "observation_buffer": None,
                     "observation_spec": [], "leaf_meta": [],
-                }
+                })
             observation_batch = self._native_packed_observation_batch(
                 packed_response
             )
@@ -1790,7 +1806,7 @@ class SlayTheSpireEnv(gym.Env):
                         "action_mask": mask,
                         "needs_policy": bool(needs_policy[i]) if i < len(needs_policy) else True,
                     })
-                return {
+                return timed({
                     "done": False,
                     "result": None,
                     "leaves": leaf_meta,
@@ -1798,8 +1814,10 @@ class SlayTheSpireEnv(gym.Env):
                     "observation_buffer": None,
                     "observation_spec": [],
                     "leaf_meta": leaf_meta,
-                }
+                })
+        native_started = time.perf_counter()
         requests = session.next_batch(int(max_leaves))
+        native_seconds += time.perf_counter() - native_started
         leaves = []
         encoded_fields = {}
         for request in requests:
@@ -1866,7 +1884,7 @@ class SlayTheSpireEnv(gym.Env):
             self._nosl_cpp_encoded_global_template = None
             self._nosl_cpp_compact_observation = False
             self._nosl_cpp_stochastic = False
-            return {
+            return timed({
                 "done": True,
                 "result": result,
                 "leaves": [],
@@ -1874,8 +1892,8 @@ class SlayTheSpireEnv(gym.Env):
                 "observation_buffer": None,
                 "observation_spec": [],
                 "leaf_meta": [],
-            }
-        return {
+            })
+        return timed({
             "done": False,
             "result": None,
             # Metadata-only compatibility field.  Observation payloads are
@@ -1886,7 +1904,7 @@ class SlayTheSpireEnv(gym.Env):
             "observation_buffer": None,
             "observation_spec": [],
             "leaf_meta": leaf_meta,
-        }
+        })
 
     def nosl_is_az_cpp_backprop_batch(self, updates):
         session = getattr(self, "_nosl_cpp_az_session", None)
@@ -1959,8 +1977,12 @@ class SlayTheSpireEnv(gym.Env):
         Keeping both operations in one worker call removes one IPC round trip
         per leaf batch while preserving the two original public methods.
         """
+        started = time.perf_counter()
         self.nosl_is_az_cpp_backprop_batch(updates)
-        return self.nosl_is_az_cpp_leaf_batch(max_leaves)
+        backprop_seconds = time.perf_counter() - started
+        response = self.nosl_is_az_cpp_leaf_batch(max_leaves)
+        response['_worker_timing']['backprop_seconds'] = backprop_seconds
+        return response
 
     def nosl_is_az_cpp_tree_snapshot(self, path=(), max_children: int = 64):
         """Return one lazily requested node of the completed native search tree."""

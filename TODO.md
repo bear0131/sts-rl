@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| PERF20 | 搜索worker计时已实现，待四机满轮验收 | `env/core/run_env.py`、`rl/training/cached_mask_vec_env.py`、`rl/search/native.py`、`rl/algorithms/accumulating_ppo.py`、`rl/training/distributed_sb3.py`记录原生叶调用、Python叶处理、backprop、group打包、主进程接收/往返；须在TRAIN28恢复后确认四rank非零、有限、能进入日志/W&B，并与rollout墙钟按并行口径解读。见worklog/2026-09-30.md#perf20-worker-search-phase-timing。 |
 | ARCH02 | 实现及生产生命周期验收完成 | autoregressive-v2逐张/STOP多选，关闭1024集合枚举和181兼容输出；搜索/观测/policy/replay为198维，规则行跳过模型，旧joint-v2按checkpoint启用。CPU43/紧凑等价19、远端131项及discard哨兵修复后四机19项通过；完整96×128采样144.44秒，12265真实transition+23选牌前缀，graph12 capture/0 eviction/0 subset eager。TRAIN27从零两轮共同检查点、模型/Adam一致及持续运行已验；不代表长期学习收益。见 worklog/2026-09-30.md#arch02-train27-two-round-production-acceptance。 |
 | PERF14 | 用户接受127.26秒版本；完成优化并停止追加实验 | 用户最新明确以127.25674秒完整采样版本继续训练，覆盖原122.49秒恢复门槛。采用BF16整条叶前向融合、合并D2H/有效padding与wait0只收取已就绪packet；bytearray wire实测133秒已撤销。CUDA31项、当前147456模型数值/重放、CPU传输44/生命周期8通过；编译启动单列，BF16不保证bitwise。部署430962d，固定未来true，其余TRAIN24对齐配置不变。见 worklog/2026-09-30.md#train28-resume-accepted-127-second-implementation。 |
 | PERF15 | 已部署四机并验收；剩余新旧差距待剖析 | 真实BF16单微批剖析定位96候选位的卡牌表高级索引反传占GPU时间69%；等价embedding查表并共享三牌堆logits。固定344064 checkpoint/7微批单次更新8.009→2.755秒，110组参数梯度相对L2误差0.0001274、loss相同。部署59adf9f后同run首轮393216、约97150样本/U40的四rank平均backward129.80秒；部署前344064、约85987样本/U40为326.40秒，统计窗口不同，不能给严格同负载加速比。Adam280→320、跨rank模型/Adam一致、finite1并继续运行。仍高于TRAIN24历史约79.21秒，余下差距需同硬件同负载剖析；见worklog/2026-09-30.md#perf15-four-rank-deployment-and-acceptance。 |
