@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 #include "sim/ConsoleSimulator.h"
@@ -229,6 +230,9 @@ constexpr int kNativeMoves =
 constexpr int kNativePotions =
     static_cast<int>(sizeof(sts::potionNames) /
                      sizeof(sts::potionNames[0]));
+// The language observation has one slot per supported card ID. The Python
+// adapter checks this against its observation schema before enabling it.
+constexpr int kLanguageSlots = 80;
 // Categorical layout: hand cards, fixed monster slots/moves/intent classes,
 // potion slots, and the card-select task.
 constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
@@ -484,6 +488,31 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
     }
     return row;
+}
+
+template <typename Pile>
+inline void packLanguagePile(const Pile &pile, const std::int32_t *cardIndex,
+                             int *ids, float *features) {
+    // Group in first-occurrence order, as encode._encode_card_sequence does.
+    // A card's native ID is converted to its canonical model ID before
+    // grouping, so aliases cannot occupy separate observation slots.
+    std::unordered_map<int, int> positions;
+    for (const auto &card : pile) {
+        const int native = static_cast<int>(card.getId());
+        if (native < 0 || native >= kCardIds) continue;
+        const int id = cardIndex[native];
+        if (id < 0) continue;
+        auto [it, inserted] = positions.emplace(id, static_cast<int>(positions.size()));
+        const int slot = it->second;
+        if (slot >= kLanguageSlots) {
+            throw std::runtime_error("language pile capacity exceeded");
+        }
+        if (inserted) ids[slot] = id;
+        features[slot * 3] += 1.0f;
+        const int upgrades = card.getUpgradeCount();
+        features[slot * 3 + 1] += upgrades > 0 ? 1.0f : 0.0f;
+        features[slot * 3 + 2] += static_cast<float>(upgrades);
+    }
 }
 } // namespace compact_leaf
 
@@ -1470,6 +1499,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["version"] = 2;
+        out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
         out["joint_policy_size"] = sts::search::kJointSize;
         out["autoregressive_policy_size"] = sts::search::kAutoregressiveSize;
@@ -2470,7 +2500,8 @@ PYBIND11_MODULE(slaythespire, m) {
          }, pybind11::arg("max_leaves") = 16,
             "select a batch of NOSL leaf states using virtual visits")
         .def("next_batch_packed", [](search::NoslNeuralSearchSession &session,
-                                      int max_leaves) {
+                                      int max_leaves,
+                                      pybind11::object language_card_index) {
             // Keep the simulator-to-Python boundary to contiguous numeric
             // arrays. Do not call rawCombatState() here: that
             // recursively allocates Python dicts/lists for every leaf.
@@ -2487,6 +2518,29 @@ PYBIND11_MODULE(slaythespire, m) {
                 std::vector<pybind11::ssize_t>{count, compact_leaf::kCatSize});
             pybind11::array_t<float> scalars(
                 std::vector<pybind11::ssize_t>{count, compact_leaf::kFloatSize});
+            const bool language = !language_card_index.is_none();
+            pybind11::array_t<std::int32_t> language_index;
+            if (language) {
+                language_index = pybind11::array_t<std::int32_t,
+                    pybind11::array::c_style | pybind11::array::forcecast>(
+                        language_card_index);
+                if (language_index.ndim() != 1 ||
+                    language_index.shape(0) != compact_leaf::kCardIds) {
+                    throw std::invalid_argument("language card index shape mismatch");
+                }
+            }
+            pybind11::array_t<std::int32_t> language_ids;
+            pybind11::array_t<float> language_features;
+            if (language) {
+                language_ids = pybind11::array_t<std::int32_t>(
+                    std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots});
+                language_features = pybind11::array_t<float>(
+                    std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots, 3});
+                std::fill(language_ids.mutable_data(),
+                          language_ids.mutable_data() + language_ids.size(), 0);
+                std::fill(language_features.mutable_data(),
+                          language_features.mutable_data() + language_features.size(), 0.0f);
+            }
             auto cat = categorical.mutable_unchecked<2>();
             auto scalar = scalars.mutable_unchecked<2>();
             pybind11::list request_ids;
@@ -2517,6 +2571,17 @@ PYBIND11_MODULE(slaythespire, m) {
                 for (int col = 0; col < compact_leaf::kFloatSize; ++col) {
                     scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
                 }
+                if (language) {
+                    auto *ids = language_ids.mutable_data() +
+                        row * 2 * compact_leaf::kLanguageSlots;
+                    auto *features = language_features.mutable_data() +
+                        row * 2 * compact_leaf::kLanguageSlots * 3;
+                    compact_leaf::packLanguagePile(request.state->cards.drawPile,
+                        language_index.data(), ids, features);
+                    compact_leaf::packLanguagePile(request.state->cards.discardPile,
+                        language_index.data(), ids + compact_leaf::kLanguageSlots,
+                        features + compact_leaf::kLanguageSlots * 3);
+                }
                 request_ids.append(request.requestId);
                 const auto nLegal = request.legalActions.size();
                 legal_count(row) = static_cast<std::uint32_t>(nLegal);
@@ -2534,6 +2599,10 @@ PYBIND11_MODULE(slaythespire, m) {
             out["request_ids"] = request_ids;
             out["categorical"] = categorical;
             out["scalars"] = scalars;
+            if (language) {
+                out["language_ids"] = language_ids;
+                out["language_features"] = language_features;
+            }
             out["legal_action_bits"] = legal_actions;
             out["legal_action_counts"] = legal_action_counts;
             out["legal_policy_ids"] = legal_policy_ids;
@@ -2542,6 +2611,7 @@ PYBIND11_MODULE(slaythespire, m) {
             out["done"] = requests.empty() && session.done();
             return out;
         }, pybind11::arg("max_leaves") = 16,
+           pybind11::arg("language_card_index") = pybind11::none(),
            "select leaves into contiguous native categorical/scalar arrays")
         .def("backprop", [](search::NoslNeuralSearchSession &session,
                             std::uint64_t request_id,

@@ -140,12 +140,14 @@ def _nosl_compact_lut():
             encode.V.POTION_VOCAB_INDEX, str(name)
         )
     card_lut = np.zeros(len(layout.get("card_names", ())), dtype=np.int64)
+    language_card_index = np.full(len(card_lut), -1, dtype=np.int32)
     for native, name in enumerate(layout.get("card_names", ())):
         if native == 0:
             continue
-        card_lut[native] = encode.CARD_INDEX.get(
-            _sim_card_id(str(name)), encode.CARD_INDEX[encode.EMPTY]
-        )
+        canonical = _sim_card_id(str(name))
+        card_lut[native] = encode.CARD_INDEX.get(canonical, encode.CARD_INDEX[encode.EMPTY])
+        if canonical in encode.LANGUAGE_CARDS:
+            language_card_index[native] = card_lut[native]
     player_status_lut = np.full(
         len(layout.get("player_status_names", ())), -1, dtype=np.int64
     )
@@ -174,6 +176,7 @@ def _nosl_compact_lut():
         "monster": monster_lut,
         "potion": potion_lut,
         "card": card_lut,
+        "language_card_index": language_card_index,
         "player_status": player_status_lut,
         "monster_status": monster_status_lut,
         "player_status_columns": status_columns(
@@ -188,12 +191,15 @@ def _nosl_compact_lut():
     return _NOSL_COMPACT_LUT
 
 
-def _nosl_compact_empty():
+def _nosl_compact_empty(*, card_language=False):
     """Return cached single-observation shapes for packed batch allocation."""
     global _NOSL_COMPACT_EMPTY
     if _NOSL_COMPACT_EMPTY is _UNCACHED:
-        _NOSL_COMPACT_EMPTY = encode._empty_combat()
-    return _NOSL_COMPACT_EMPTY
+        _NOSL_COMPACT_EMPTY = {
+            False: encode._empty_combat(),
+            True: encode._empty_combat(card_language=True),
+        }
+    return _NOSL_COMPACT_EMPTY[bool(card_language)]
 
 
 def _nosl_card_stats():
@@ -1293,10 +1299,8 @@ class SlayTheSpireEnv(gym.Env):
         """Decode the fixed-width native leaf transport into model tensors.
 
         This path deliberately avoids constructing a canonical dict per leaf.
-        It is restricted to the language-free combat specialist, whose fields
-        are all numeric and whose global/relic metadata is invariant within a
-        root search. Older extensions or language-enabled checkpoints continue
-        through ``_native_leaf_observation`` unchanged.
+        The optional language extension carries first-occurrence grouped card-pile fields.
+        Persistent global/relic metadata is invariant within a root search.
         """
         lut = _nosl_compact_lut()
         if lut is None:
@@ -1316,7 +1320,14 @@ class SlayTheSpireEnv(gym.Env):
                 scalars.shape[1] < expected_scalar):
             return None
 
-        empty = _nosl_compact_empty()
+        if self._card_language:
+            language_ids = np.asarray(response.get("language_ids"), dtype=np.int32)
+            language_features = np.asarray(response.get("language_features"), dtype=np.float32)
+            slots = encode.PILE_LANGUAGE_SLOTS
+            if (language_ids.shape != (n, 2, slots) or
+                    language_features.shape != (n, 2, slots, 3)):
+                raise RuntimeError("native language leaf layout does not match observation schema")
+        empty = _nosl_compact_empty(card_language=self._card_language)
         def zeros(key):
             shape = empty[key].shape
             dtype = empty[key].dtype
@@ -1425,6 +1436,13 @@ class SlayTheSpireEnv(gym.Env):
         out["draw_counts"] = f[:, pile_start:pile_start + card_count]
         out["discard_counts"] = f[:, pile_start + card_count:pile_start + 2 * card_count]
         out["exhaust_counts"] = f[:, pile_start + 2 * card_count:pile_start + 3 * card_count]
+        if self._card_language:
+            for pile_index, pile in enumerate(("draw", "discard")):
+                out[f"{pile}_card_ids"][:] = language_ids[:, pile_index]
+                out[f"{pile}_card_counts"][:] = language_features[:, pile_index, :, 0]
+                out[f"{pile}_card_upgraded_counts"][:] = language_features[:, pile_index, :, 1]
+                out[f"{pile}_card_upgrades"][:] = (
+                    language_features[:, pile_index, :, 2] / encode.UPGRADE_SCALE)
         select_start = pile_start + 3 * card_count
         out["pick_remaining"][:, 0] = f[:, select_start] / encode.PICK_SCALE
         out["can_pick_zero"][:, 0] = f[:, select_start + 1]
@@ -1754,16 +1772,17 @@ class SlayTheSpireEnv(gym.Env):
                 'leaf_python_seconds': time.perf_counter() - leaf_started - native_seconds,
             }
             return response
-        # Language-enabled checkpoints need the legacy canonical path because
-        # the packed numeric layout intentionally omits token programs.  For
-        # the ordinary language-free combat specialist, keep serialization on
-        # the C++ side and return one contiguous batch directly.
+        # The optional language extension includes grouped card-pile fields. Dynamic
+        # combat-language tokens retain the canonical path.
         packed_fn = getattr(session, "next_batch_packed", None)
-        if (self._nosl_cpp_compact_observation and
-                not self._card_language and not self._combat_language and
-                packed_fn is not None and _nosl_compact_lut() is not None):
+        lut = _nosl_compact_lut()
+        if (self._nosl_cpp_compact_observation and not self._combat_language and
+                packed_fn is not None and lut is not None and
+                (not self._card_language or
+                 lut["layout"].get("language_slots") == encode.PILE_LANGUAGE_SLOTS)):
             native_started = time.perf_counter()
-            packed_response = packed_fn(int(max_leaves))
+            packed_response = (packed_fn(int(max_leaves), lut["language_card_index"])
+                               if self._card_language else packed_fn(int(max_leaves)))
             native_seconds += time.perf_counter() - native_started
             if bool(packed_response.get("done", False)):
                 result = self._adapt_native_neural_result(
@@ -1789,6 +1808,10 @@ class SlayTheSpireEnv(gym.Env):
             observation_batch = self._native_packed_observation_batch(
                 packed_response
             )
+            if observation_batch is None:
+                # next_batch_packed has already advanced the search frontier;
+                # asking next_batch again would silently skip those leaves.
+                raise RuntimeError("native packed leaf does not match observation layout")
             if observation_batch is not None:
                 leaf_meta = []
                 request_ids = packed_response.get("request_ids", ())

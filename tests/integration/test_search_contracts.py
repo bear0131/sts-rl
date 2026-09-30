@@ -164,12 +164,20 @@ def test_native_terminal_excludes_post_combat_healing(combat_factory):
 @pytest.mark.native
 @pytest.mark.parametrize("encounter", ["Jaw Worm", "Two Louse", "Gremlin Leader", "Automaton", "Collector"])
 @pytest.mark.parametrize("batch_size", [1, 4])
-def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_size):
-    env = combat_factory(["STRIKE_RED"] * 5, encounter, relics=("Akabeko",))
+@pytest.mark.parametrize("card_language", [False, True])
+def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_size, card_language):
+    from env.core.run_env import _nosl_compact_lut
+
+    env = combat_factory(["STRIKE_RED"] * 5, encounter, relics=("Akabeko",),
+                         card_language=card_language)
     env.thick.bc.apply_custom_state({
         "player": {"powers": [("STRENGTH", 3), ("ARTIFACT", 2)],
                    "counters": {"happy_flower": 2, "pen_nib": 3}},
         "monsters": [{"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}],
+        "draw": [("STRIKE_RED", 1), ("DEFEND_RED", 0),
+                 ("STRIKE_RED", 2), ("BASH", 0)],
+        "discard": [("BASH", 1), ("DEFEND_RED", 2),
+                    ("BASH", 0)],
     })
     env._nosl_cpp_global_template = normalize_sim_global(env.thick.gc)
     logits = np.zeros(181)
@@ -182,10 +190,13 @@ def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_
         raw_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
         packed_session = env.thick.bc.nosl_neural_search_begin(logits, **config)
         raw.append(raw_session.next_batch(1)[0])
-        payloads.append(packed_session.next_batch_packed(1))
+        payloads.append(packed_session.next_batch_packed(
+            1, _nosl_compact_lut()["language_card_index"])
+            if card_language else packed_session.next_batch_packed(1))
     packed = env._native_packed_observation_batch({
         key: np.concatenate([payload[key] for payload in payloads])
-        for key in ("categorical", "scalars")
+        for key in (("categorical", "scalars", "language_ids", "language_features")
+                    if card_language else ("categorical", "scalars"))
     })
     for row, leaf in enumerate(raw):
         expected = env._native_leaf_observation(leaf["state"], combat_only=True)

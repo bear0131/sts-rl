@@ -80,9 +80,9 @@ def test_prefix_steps_do_not_execute_until_stop(combat_factory, card):
     assert bc.to_dict() == oracle.to_dict()
 
 
-@pytest.mark.parametrize('compact', [False, True])
-def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, compact):
-    env = selection_env(combat_factory, card_language=not compact)
+@pytest.mark.parametrize('compact,card_language', [(False, True), (True, False), (True, True)])
+def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, compact, card_language):
+    env = selection_env(combat_factory, card_language=card_language)
     before = env.thick.bc.to_dict()
     logits = np.zeros(C.AUTOREGRESSIVE_SIZE)
     logits[C.AUTOREGRESSIVE_MULTI] = 30
@@ -115,10 +115,10 @@ def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, com
     assert env._multi == {0}
 
 
-@pytest.mark.parametrize('compact', [False, True])
-def test_non_drinkable_potion_never_leaks_into_search_leaves(combat_factory, compact):
+@pytest.mark.parametrize('compact,card_language', [(False, True), (True, False), (True, True)])
+def test_non_drinkable_potion_never_leaks_into_search_leaves(combat_factory, compact, card_language):
     env = combat_factory(['DEFEND_RED'] * 5, 'Jaw Worm',
-        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT, card_language=not compact)
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT, card_language=card_language)
     env.thick.bc.apply_custom_state({'potions': ['Fairy Potion']})
     env._invalidate_backend_cache()
     assert not env.action_masks()[C.AUTOREGRESSIVE_POTION:C.AUTOREGRESSIVE_PICK].any()
