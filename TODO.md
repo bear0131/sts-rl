@@ -8,7 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| PERF21 | 等价实现已部署；完整基准未证实净提速，生产监控及恢复待验 | TRAIN28 的卡牌语言叶改用原生 packed 批量输出，C++ 按首出现顺序聚合 draw/discard 的 canonical 牌 ID、数量、升级张数和升级总数；同叶逐字段及AR合同通过。相同checkpoint完整96×128旧130.26/新129.90秒，未证实净收益。按用户要求增加packed批次/叶数指标并尽快恢复四机；后续观察指标与生产轮数值，继续优化热点。见 worklog/2026-09-30.md#perf21-native-card-language-leaf-encoding。 |
+| PERF21 | 生产路径与首轮恢复已验；稳态净提速未证实 | TRAIN28卡牌语言叶改用原生packed批量输出，逐字段/AR合同通过；同checkpoint完整96×128旧130.26/新129.90秒，差异太小。新增packed批次/叶数监控并完成四机共同2457600首轮，计数表明packed路径启用、每轮40 Adam、跨rank模型/优化器一致、进程继续运行。下一步以稳态轮和更细profile定位剩余Python叶开销；首轮重启含GPU图捕获不作稳态对照。见 worklog/2026-09-30.md#perf21-native-card-language-leaf-encoding。 |
 | PERF20 | 已部署并完成两轮四机生产验收 | 新增worker原生叶调用、Python叶处理、backprop、组打包、主进程接收/往返计时，贯穿NOSL→四rank记录/W&B；本地54 passed/1 GPU-only skip，远端四机各57 passed。恢复后共同2211840/2260992均记录非零有限指标，稳态每组响应worker方法2.281ms，其中native叶0.242ms、Python叶1.789ms，组打包0.303ms；时间跨并行进程不可相加为rollout墙钟。见worklog/2026-09-30.md#perf20-worker-search-phase-timing。 |
 | STORAGE03 | 数据盘余量已恢复；rank2系统盘需继续留意 | rank1/2旧perf09与resume-epw32各两份SHA校验tar归档到本地D盘后移除，rank0/3旧归档复制校验并迁至各自系统盘；当前run两代bundle保持完整。第二共同检查点后数据盘空闲rank0/1/2/3为6.86/7.11/6.27/8.54GiB；系统盘15.86/5.18/2.27/14.28GiB，rank2系统盘仍偏紧，后续若低于1.5GiB须先归档旧系统资料。见worklog/2026-09-30.md#train28-microbatch-and-storage-recovery。 |
 | ARCH02 | 实现及生产生命周期验收完成 | autoregressive-v2逐张/STOP多选，关闭1024集合枚举和181兼容输出；搜索/观测/policy/replay为198维，规则行跳过模型，旧joint-v2按checkpoint启用。CPU43/紧凑等价19、远端131项及discard哨兵修复后四机19项通过；完整96×128采样144.44秒，12265真实transition+23选牌前缀，graph12 capture/0 eviction/0 subset eager。TRAIN27从零两轮共同检查点、模型/Adam一致及持续运行已验；不代表长期学习收益。见 worklog/2026-09-30.md#arch02-train27-two-round-production-acceptance。 |
