@@ -93,6 +93,9 @@ def test_native_search_exposes_prefix_leaves_without_subsets(combat_factory, com
     assert response['_worker_timing']['begin_setup_seconds'] >= 0
     assert response['_worker_timing']['native_leaf_seconds'] >= 0
     assert response['_worker_timing']['leaf_python_seconds'] >= 0
+    if compact:
+        assert response['_worker_timing']['packed_leaf_batches'] == 1
+        assert response['_worker_timing']['packed_leaf_rows'] == len(response['leaf_meta'])
     selected_seen = False
     for _ in range(64):
         if response['done']:

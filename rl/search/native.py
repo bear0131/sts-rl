@@ -35,7 +35,8 @@ WORKER_TIMING_KEYS = (
     'worker_receive_unpack_seconds', 'worker_method_seconds',
     'worker_pack_seconds', 'worker_native_leaf_seconds',
     'worker_leaf_python_seconds', 'worker_backprop_seconds',
-    'worker_begin_setup_seconds',
+    'worker_begin_setup_seconds', 'worker_packed_leaf_batches',
+    'worker_packed_leaf_rows',
 )
 
 
@@ -550,6 +551,8 @@ def complete_searches_streaming(
         worker_leaf_python_seconds=0.0,
         worker_backprop_seconds=0.0,
         worker_begin_setup_seconds=0.0,
+        worker_packed_leaf_batches=0,
+        worker_packed_leaf_rows=0,
     )
     initial_controller_counts = (
         (controller.changes, controller.increases,

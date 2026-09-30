@@ -1765,11 +1765,15 @@ class SlayTheSpireEnv(gym.Env):
             raise RuntimeError("native NOSL AlphaZero session is not active")
         leaf_started = time.perf_counter()
         native_seconds = 0.0
+        packed_batches = 0
+        packed_rows = 0
 
         def timed(response):
             response['_worker_timing'] = {
                 'native_leaf_seconds': native_seconds,
                 'leaf_python_seconds': time.perf_counter() - leaf_started - native_seconds,
+                'packed_leaf_batches': packed_batches,
+                'packed_leaf_rows': packed_rows,
             }
             return response
         # The optional language extension includes grouped card-pile fields. Dynamic
@@ -1812,6 +1816,8 @@ class SlayTheSpireEnv(gym.Env):
                 # next_batch_packed has already advanced the search frontier;
                 # asking next_batch again would silently skip those leaves.
                 raise RuntimeError("native packed leaf does not match observation layout")
+            packed_batches = 1
+            packed_rows = len(packed_response["request_ids"])
             if observation_batch is not None:
                 leaf_meta = []
                 request_ids = packed_response.get("request_ids", ())
