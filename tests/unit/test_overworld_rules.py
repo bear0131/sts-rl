@@ -136,6 +136,17 @@ def test_secret_portal_uses_its_real_buttons_and_can_continue_route():
     assert choose(s, A._EVENT) == A._EVENT
 
 
+@pytest.mark.parametrize('context', [
+    'TRANSFORM', 'TRANSFORM_UPGRADE', 'UPGRADE', 'REMOVE',
+    'DUPLICATE', 'OBTAIN', 'BOTTLE', 'BONFIRE_SPIRITS',
+])
+def test_every_native_overworld_card_grid_context_has_a_legal_rule_choice(context):
+    s = state('card_select', cards=[('Strike_R', 0), ('Uppercut', 0)])
+    s['options']['select'] = {'context': context}
+    ranked = rank_overworld(s, [A._PICK, A._PICK + 1])
+    assert ranked and ranked[0]['action'] in (A._PICK, A._PICK + 1)
+
+
 def test_reward_potion_full_slots_does_not_loop_and_healing_is_not_wasted():
     s = state()
     s['global']['potions'] = ['FIRE_POTION', 'BLOOD_POTION', 'BLOCK_POTION']
