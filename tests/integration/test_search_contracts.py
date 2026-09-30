@@ -63,7 +63,7 @@ def test_grouped_leaf_encoding_keeps_full_search_tree(combat_factory):
     new = [combat_factory(['STRIKE_RED'] * 5, 'Jaw Worm', seed=90 + i,
                           combat_action_contract='autoregressive-v2',
                           card_language=True) for i in range(2)]
-    args = dict(simulations=16, depth=1, compact_observation=True,
+    args = dict(simulations=128, depth=1, compact_observation=True,
                 root_search_mode=2, paper_full_gumbel=True,
                 gumbel_value_scale=1.0, gumbel_rescale_q=False,
                 fixed_worldline=True)
@@ -74,7 +74,7 @@ def test_grouped_leaf_encoding_keeps_full_search_tree(combat_factory):
         np.linspace(-0.5, 0.5, env.action_space.n),
         state_nonce=170 + i, _defer_packed_observation=True, **args)
         for i, env in enumerate(new)}
-    for _ in range(64):
+    for _ in range(256):
         _materialize_grouped_packed_leaves(new, candidate)
         for i in range(2):
             left, right = reference[i], candidate[i]
