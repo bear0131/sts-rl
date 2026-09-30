@@ -228,11 +228,10 @@ def restore_learner(
 ):
     """Restore learner state, optionally replacing the live environment.
 
-    ``restore_environment=False`` is an explicit fork boundary for runs that
-    intentionally change the number of actors.  Policy/Adam/replay/RNG state
-    still comes from the source bundle, while all environment-local progress is
-    reset to the freshly constructed VecEnv.  Silent state-count mismatches are
-    therefore impossible.
+    ``restore_environment=False`` is an explicit recovery boundary for an
+    incompatible simulator journal or a fork with changed actors. Policy,
+    Adam, replay and learner RNG still come from the source bundle; unfinished
+    environment episodes and their pending fight labels are reset.
     """
     manifest = read_bundle(path, rank=rank, world_size=world_size)
     if manifest['global_step'] != model.num_timesteps:
@@ -292,8 +291,8 @@ def restore_learner(
             model._episode_num = int(state['episode_num'])
             model._recovery_environment_restored = True
     elif manifest['schema_version'] >= 2:
-        # A geometry-changing fork cannot consume the source VecEnv's state
-        # array.  Reset every environment and discard source-local pending
+        # Incompatible journals cannot be replayed under changed simulator
+        # rules. Reset every environment and discard source-local pending
         # fights/episode windows while retaining learner state above.
         env = model.get_env()
         if env is None:

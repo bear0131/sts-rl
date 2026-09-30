@@ -86,6 +86,9 @@ if [ -n "${NOSL_RESUME_STEP:-}" ]; then
     fi
   else
     extra+=(--resume-state "$resume_state")
+    if [ "${NOSL_RESUME_RESET_ENVIRONMENTS:-0}" = 1 ]; then
+      extra+=(--resume-reset-environments)
+    fi
   fi
 fi
 cmd=("$python" -u -m rl.training.distributed_sb3

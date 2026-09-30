@@ -22,6 +22,8 @@ def test_fork_resume_explicitly_resets_environment_geometry():
     assert 'extra+=(--fork-reset-environments)' in fork_branch.group("body")
     assert 'resume_state="$NOSL_RESUME_ROOT/rank$rank/$generation"' in launcher
     assert 'extra+=(--resume-state "$resume_state")' in launcher
+    assert 'NOSL_RESUME_RESET_ENVIRONMENTS:-0' in launcher
+    assert 'extra+=(--resume-reset-environments)' in launcher
 
 
 def test_fourway_manager_resolves_fork_generation_path():
