@@ -69,15 +69,20 @@ def test_shared_search_arrays_keep_bits_and_own_received_storage():
     buffer = _SharedArrayBuffer(mp.get_context('spawn'), 65536)
     payload = {'ids': np.array([2**63 + 7], dtype=np.uint64),
                'policy': np.arange(724, dtype=np.float64).reshape(4, 181),
+               'values': np.array([0x80000000, 0x00000001, 0x3DCCCCCD,
+                                   0x7F800000, 0xFF800000, 0x7FC01234],
+                                  dtype=np.uint32).view(np.float32),
                'mask': np.array([True, False, True]),
                'result': {'done': True, 'action': 5}}
     wire = buffer.pack(payload)
     assert isinstance(wire, _SharedArrayMessage)
     assert len(pickle.dumps(wire)) < len(pickle.dumps(payload)) / 4
     received = buffer.unpack(pickle.loads(pickle.dumps(wire)))
-    for key in ('ids', 'policy', 'mask'):
+    for key in ('ids', 'policy', 'values', 'mask'):
         assert received[key].dtype == payload[key].dtype
         np.testing.assert_array_equal(received[key], payload[key])
+        # Numeric equality alone would miss signed zero or a changed NaN payload.
+        assert received[key].tobytes() == payload[key].tobytes()
     assert received['result'] == payload['result']
     # Both caller mutation and slot reuse are independent of the old reply.
     received['policy'][0, 0] = -9
