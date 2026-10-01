@@ -223,6 +223,39 @@ def test_fixed_worldline_keeps_one_child_per_action_path():
     assert end_turn["random_split"] is False
 
 
+@pytest.mark.parametrize('batch_size', [1, 4])
+def test_fixed_worldline_repeated_value_leaves_preserve_simulator_state(batch_size):
+    game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
+    battle = sts.create_battle(game, 'Jaw Worm')
+    original = battle.to_dict()
+    logits = np.full(200, -100., dtype=np.float64)
+    logits[0] = 100.
+    # The first redeterminized simulation samples the same hidden future as
+    # fixed mode. It supplies an uncached reference without using the live RNG.
+    reference = battle.nosl_neural_search_begin(logits, simulations=1, depth=1,
+        nonce=1729, c_puct=1000., fixed_worldline=False)
+    expected = normalize_sim(reference.next_batch(1)[0]['state'])
+    session = battle.nosl_neural_search_begin(logits, simulations=16, depth=1,
+        nonce=1729, c_puct=1000., fixed_worldline=True)
+    count = 0
+    while not session.done():
+        requests = session.next_batch(batch_size)
+        assert requests
+        for request in requests:
+            assert not request['needs_policy']
+            assert normalize_sim(request['state']) == expected
+            # Every visit still requests and backs up its own model value;
+            # caching simulator state must not memoize network predictions.
+            count += 1
+            session.backprop(request['request_id'], .2 + .01*count, np.empty(0))
+    assert count == 16
+    assert battle.to_dict() == original
+    root = session.tree_snapshot([], 64)
+    end_turn = next(edge for edge in root['children'] if edge['action_bits'] >> 29 == 4)
+    assert end_turn['visits'] == 16
+    assert end_turn['child_states'] == 1
+
+
 def test_end_turn_value_boundary_is_fully_settled_and_non_random():
     game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
     battle = sts.create_battle(game, "Jaw Worm")
