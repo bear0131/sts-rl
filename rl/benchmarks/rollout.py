@@ -44,6 +44,9 @@ def run(args):
             model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp,
                 failure_path=args.output.with_suffix('.failed-leaves.npz'), profile_interval=args.graph_profile_interval,
                 batch_multiple=args.leaf_graph_batch_multiple)
+        if args.model_workload != 'real':
+            from rl.benchmarks.virtual_inference import VirtualInference
+            VirtualInference(model, shadow=args.model_workload == 'shadow').install()
         _, callback = model._setup_learn(args.n_steps * args.n_envs * args.updates,
             callback=lambda *_: True, reset_num_timesteps=True)
         callback.on_training_start({}, {})
@@ -60,6 +63,7 @@ def run(args):
         before = model.num_timesteps
         cache = getattr(model, '_native_leaf_inference', None)
         warmup_graphs = None if cache is None else cache.statistics()
+        model_seconds_before = getattr(cache, 'model_seconds', None)
         if args.device == 'cuda':
             torch.cuda.reset_peak_memory_stats()
         with ResourceMonitor(interval=args.sample_interval, gpu=args.device == 'cuda') as monitor:
@@ -98,6 +102,8 @@ def run(args):
             identity=dict(torch=torch.__version__, native_sha256=hashlib.sha256(Path(slaythespire.__file__).read_bytes()).hexdigest(),
                 checkpoint_sha256=hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()),
             timing=dict(setup_seconds=setup, warmup_seconds=warmup, measured_seconds=elapsed,
+                controlled_model_call_seconds=(None if model_seconds_before is None
+                    else cache.model_seconds-model_seconds_before),
                 transitions=model.num_timesteps-before,
                 transitions_per_second=(model.num_timesteps-before)/elapsed),
             warmup_graphs=warmup_graphs,

@@ -26,6 +26,8 @@ def parser():
     p.add_argument("--leaf-repeats", type=int, default=200)
     p.add_argument("--leaf-input", type=Path, help="Replay a saved CPU leaf observation NPZ")
     p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
+    p.add_argument("--model-workload", choices=("real", "virtual", "shadow"), default="real",
+                   help="rollout only: virtual replies, or real inference with the same virtual replies")
     p.add_argument("--profile", action="store_true", help="Export a bounded CPU/CUDA operator trace for leaves")
     p.add_argument("--graph-profile-interval", type=int, default=0, help="sample CUDA stage timings every N leaf calls; 0 disables")
     p.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
@@ -68,6 +70,8 @@ def make_environment():
 
 
 def run_worker(args):
+    if args.model_workload != 'real' and args.workload != 'rollout':
+        raise ValueError('virtual/shadow model workloads require --workload rollout')
     if args.workload == 'leaves':
         from rl.benchmarks.leaves import run
         return run(args)
