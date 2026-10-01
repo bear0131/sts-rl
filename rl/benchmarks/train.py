@@ -28,7 +28,7 @@ def parser():
     p.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager")
     p.add_argument("--model-workload", choices=("real", "virtual", "shadow"), default="real",
                    help="rollout only: virtual replies, or real inference with the same virtual replies")
-    p.add_argument("--profile", action="store_true", help="Export a bounded CPU/CUDA operator trace for leaves")
+    p.add_argument("--profile", action="store_true", help="Export a bounded operator trace for leaves or CPU call profile for rollout")
     p.add_argument("--graph-profile-interval", type=int, default=0, help="sample CUDA stage timings every N leaf calls; 0 disables")
     p.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
                    help="pad independent leaf rows to this batch multiple; 0 keeps exact shapes")

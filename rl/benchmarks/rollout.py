@@ -67,14 +67,23 @@ def run(args):
         model_seconds_before = getattr(cache, 'model_seconds', None)
         if args.device == 'cuda':
             torch.cuda.reset_peak_memory_stats()
+        profiler = None
+        if args.profile:
+            import cProfile
+            profiler = cProfile.Profile()
         with ResourceMonitor(interval=args.sample_interval, gpu=args.device == 'cuda') as monitor:
             started = time.perf_counter()
+            if profiler is not None:
+                profiler.enable()
             for _ in range(args.updates):
                 if not model.collect_rollouts(env, callback, model.rollout_buffer, args.n_steps):
                     raise RuntimeError('rollout stopped before budget')
             if args.device == 'cuda':
                 torch.cuda.synchronize()
             elapsed = time.perf_counter() - started
+            if profiler is not None:
+                profiler.disable()
+                profiler.dump_stats(str(args.output.with_suffix('.prof')))
         digest = hashlib.sha256()
         def hash_value(value):
             if isinstance(value, dict):
