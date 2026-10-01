@@ -90,6 +90,45 @@ def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
+@pytest.mark.timeout(180)
+def test_entity_mature_first_capture_keeps_reference_compiled_layout(combat_factory):
+    import copy
+    from rl.policies.entity_combat import EntityCombatPolicy
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract='autoregressive-v2',
+                         card_language=True)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, device='cuda', seed=23,
+        n_steps=8, batch_size=4, nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules',
+        policy_kwargs=dict(entity_config=dict(width=256, layers=4, heads=8)))
+    model.policy.set_training_mode(False)
+    reference = copy.deepcopy(model.policy.core)
+    state = reference.combat.transformer.state_dict()
+    layer = torch.nn.TransformerEncoderLayer(256, 8, 1024, dropout=0., activation='gelu',
+        batch_first=True, norm_first=True, device='cuda')
+    reference.combat.transformer = torch.nn.TransformerEncoder(layer, 4, enable_nested_tensor=False)
+    reference.combat.transformer.load_state_dict(state)
+    reference.eval()
+    caches = [CombatLeafGraphs(core, model.device, amp='bf16', batch_multiple=32, capacity=2)
+              for core in (reference, model.policy.core)]
+    raw = env._obs()
+    # Starting at width=14 exposed a symbolic-shape compiler failure which
+    # fresh games (first width=1) and small toy networks did not reproduce.
+    for width, count in ((14, 46), (14, 64), (21, 128), (13, 32), (14, 46)):
+        observations = {key: np.repeat(value[None], count, axis=0)
+                        for key, value in raw.items()
+                        if key in model.policy.core.combat_observation_keys}
+        expected = caches[0](observations, width)
+        actual = caches[1](observations, width)
+        for a, b in zip(actual, expected):
+            np.testing.assert_array_equal(a, b)
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+        for a, b in zip(caches[1](observations, width), actual):
+            np.testing.assert_array_equal(a, b)
+    assert caches[1].evictions > 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph validation requires a GPU runner')
 @pytest.mark.parametrize('amp', ['off', 'bf16'])
 @pytest.mark.parametrize('batch_multiple', [0, 4])
 @pytest.mark.parametrize('combat_arch,contract', [('transformer','legacy'), ('mlp','legacy'), ('transformer','joint-v2'), ('entity','joint-v2'), ('entity','autoregressive-v2')])
