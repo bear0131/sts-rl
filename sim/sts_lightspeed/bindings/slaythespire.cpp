@@ -3017,6 +3017,21 @@ PYBIND11_MODULE(slaythespire, m) {
             return projected.curHp;
         }, "HP after applying combat-exit relic healing to a temporary GameContext")
         .def("to_dict", [](const BattleContext &bc) { return rawCombatState(bc, false); }, "export the combat state as a raw dict (sim-side, normalized to canonical in Python)")
+        .def("player_power_flags", [](const BattleContext &bc) {
+            // Display metadata only. Existing checkpoints consume the numeric
+            // powers/packed observation contract, which is intentionally unchanged.
+            pybind11::list flags;
+            for (auto status : {PlayerStatus::CONFUSED, PlayerStatus::BARRICADE,
+                    PlayerStatus::BLASPHEMER, PlayerStatus::CORRUPTION,
+                    PlayerStatus::ELECTRO, PlayerStatus::SURROUNDED,
+                    PlayerStatus::MASTER_REALITY, PlayerStatus::PEN_NIB,
+                    PlayerStatus::WRATH_NEXT_TURN}) {
+                if (bc.player.hasStatusRuntime(status)) {
+                    flags.append(playerStatusStrings[static_cast<int>(status)]);
+                }
+            }
+            return flags;
+        }, "active boolean player powers for display, independent of numeric observations")
         .def("compact_leaf_arrays", [](const BattleContext &bc) {
             // Diagnostic endpoint for packed-vs-legacy contract tests. The
             // search hot path uses next_batch_packed(), which does not expose

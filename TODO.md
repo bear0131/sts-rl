@@ -8,6 +8,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| UI07 | 已完成并部署本地：腐化等布尔buff显示 | 新增原生只读player_power_flags，Watch单独显示真实状态，兼容旧checkpoint数值观测。23项兼容测试通过，腐化实际0费/消耗、清除后消失、snapshot不改变输入/合法mask；使用build-ui07恢复seed200100/step653/max654，原canonical和下一决策一致，8765已切换。见 `worklog/2026-10-02.md#ui07-boolean-power-display-completion`。 |
+| OBS01 | 已定位，待版本化迁移：布尔状态无显式观测 | `playerPowersToList`未导出statusBits-only能力，`Player::getStatusRuntime`对其返回0，因此既有canonical/packed policy输入均缺Corruption、Barricade、Confused等直接标记。UI07只修显示；后续须定义观测版本/旧checkpoint兼容和replay分布，验证sim→canonical/packed→search/learner/eval/bridge一致以及保留模型加载/预测/两轮训练生命周期，不能只改UI或静默改变在训输入。见 `worklog/2026-10-02.md#ui07-boolean-power-display-completion`。 |
 | SIM01 | 已复现，待修：觉醒者好奇不触发 | `sim/sts_lightspeed/src/combat/BattleContext.cpp::onUsePowerCard`的CURIOSITY力量增长仍被注释；A0真实轨迹中打Dark Embrace/Combust/Feel No Pain后Boss力量不变。验收须覆盖A0/A20能力牌+1/+2、升级/免费能力、第一形态/复活后及训练与评测原生路径；当前明确扩展回归为strict xfail，不能当通过或把模型对觉醒者能力牌的选择直接判错。见 `worklog/2026-10-02.md#eval10-policy-tactics-results`。 |
 | POL01 | 待实验：同效动作分散概率使纯argmax提前结束 | EVAL10 seed200109/f33/T13：四张同升级/费用/目标的Anger各18.48%，EndTurn26.10%，逐slot argmax漏斩杀；同初态两次Anger直接获胜。不能静默合并不同目标、升级、费用或选牌来源；先定义动作等价类与搜索/监督/推理消费者，再同checkpoint固定seeds比较，作为统计行为改变的实验，不伪称数值修复。见 `worklog/2026-10-02.md#eval10-policy-tactics-results`。 |
 | UI06 | 已完成：实体战斗模型可在8765观战 | `rl/rules/visualize_card_vectors.py`按EntityCombatCore实际combat tokenizer提取卡牌向量，dashboard同步识别其语言token；修复加载step18923520时误找core.shared崩溃。22项兼容测试通过，实际模型已载入，seed200100/direct/0 simulations/Gumbel0/确定性/规则上层；见 `worklog/2026-10-01.md#ui06-entity-checkpoint-watch`。 |

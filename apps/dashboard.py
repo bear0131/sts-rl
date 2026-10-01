@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import mimetypes
 import os
@@ -2169,6 +2170,12 @@ class WatchSession:
 
     def snapshot(self):
         canon = self.env.unwrapped.thick.obs_canonical()
+        battle = self.env.unwrapped.thick.bc
+        power_flags = getattr(battle, "player_power_flags", None)
+        if power_flags is not None and "player" in canon:
+            # Never feed display-only boolean flags back into policy encoding.
+            canon = copy.deepcopy(canon)
+            canon["player"]["power_flags"] = list(power_flags())
         map_snapshot = self._update_map(canon)
         self._record_timeline(map_snapshot, canon)
         stats = self.info.get("run_stats", {}) if self.info else {}

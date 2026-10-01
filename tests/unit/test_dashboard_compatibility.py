@@ -127,6 +127,44 @@ def test_entity_checkpoint_dashboard_projects_cards_and_language(combat_factory)
     assert len(language['card']['points']) == len(dashboard.CARD_LANGUAGE_TOKENS)
 
 
+def test_watch_displays_boolean_powers_without_changing_policy_inputs(combat_factory):
+    from rl.policies.entity_combat import EntityCombatPolicy
+    from sb3_contrib import MaskablePPO
+
+    env = combat_factory(['CORRUPTION', 'DEFEND_RED', 'STRIKE_RED'],
+                         combat_action_contract='autoregressive-v2', card_language=True)
+    model = MaskablePPO(EntityCombatPolicy, env, n_steps=2, batch_size=2, device='cpu',
+                       policy_kwargs={'entity_config': {'width': 32, 'layers': 1, 'heads': 4}})
+    watch = dashboard.WatchSession(model, threading.Lock(), seed=42)
+    watch.env.close()
+    watch.env = env
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        'player': {'hp': 80, 'max_hp': 80, 'energy': 3, 'block': 0},
+        'hand': ['CORRUPTION', 'DEFEND_RED', 'STRIKE_RED'],
+        'draw': ['DEFEND_RED'] * 5, 'discard': [], 'exhaust': [],
+    })
+    env._invalidate_backend_cache()
+    assert 'Corruption' not in battle.player_power_flags()
+    env.step(6)  # Play the real power, rather than fabricating its status map.
+    assert 'Corruption' in battle.player_power_flags()
+    assert env.thick.obs_canonical()['hand'][0]['cost'] == 0
+    observation = {k: v.copy() for k, v in env._obs().items()}
+    mask = env.action_masks().copy()
+    watch.obs, watch.info = env._obs(), env._info()
+    shown = watch.snapshot()['canon']['player']
+    assert 'Corruption' in shown['power_flags']
+    assert all(np.array_equal(v, env._obs()[k]) for k, v in observation.items())
+    assert np.array_equal(mask, env.action_masks())
+    env.step(6)  # The Defend is free and goes into exhaust.
+    raw = battle.to_dict()
+    assert raw['player']['energy'] == 0
+    assert any(card[0] == 'DEFEND_RED' for card in raw['exhaust'])
+    battle.set_player_status('CORRUPTION', 0)
+    env._invalidate_backend_cache()
+    assert 'Corruption' not in watch.snapshot()['canon']['player']['power_flags']
+
+
 def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
     class Core:
         actor_critic = object()

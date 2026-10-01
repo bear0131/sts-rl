@@ -896,7 +896,12 @@ function renderAll() {
   if (appState?.checkpoint && !uploadManuallyOpen) $("uploadOverlay").classList.add("hidden");
   renderWatch(); renderEmbedding(); renderTokens(); renderEvaluation();
 }
-function powersText(powers) { return Object.entries(powers || {}).filter(([,v]) => v !== 0).map(([k,v]) => `${k} ${v}`).join(" · "); }
+function powersText(powers, flags = []) {
+  const names = {Corruption: "腐化", Barricade: "壁垒", Confused: "混乱", "Pen Nib": "钢笔尖", Surrounded: "被包围"};
+  const active = new Set(flags);
+  const numeric = Object.entries(powers || {}).filter(([k,v]) => v !== 0 && !active.has(k)).map(([k,v]) => `${k} ${v}`);
+  return [...numeric, ...active].map(value => names[value] || value).join(" · ");
+}
 function cardName(card) { const id = card.id ?? card[0]; const up = card.up ?? card[1] ?? 0; return `${appState?.card_catalog?.[id]?.name_zh || zhCards[id] || id}${up ? "+" : ""}`; }
 const skillCards = new Set(["Defend_R", "Armaments", "Battle Trance", "Bloodletting", "Burning Pact", "Disarm", "Dual Wield", "Entrench", "Exhume", "Feel No Pain", "Flame Barrier", "Flex", "Ghostly Armor", "Havoc", "Impervious", "Infernal Blade", "Intimidate", "Limit Break", "Offering", "Power Through", "Rage", "Second Wind", "Seeing Red", "Sentinel", "Sever Soul", "Shockwave", "Shrug It Off", "Spot Weakness", "True Grit", "Warcry"]);
 const powerCards = new Set(["Barricade", "Berserk", "Brutality", "Combust", "Corruption", "Dark Embrace", "Demon Form", "Evolve", "Fire Breathing", "Inflame", "Juggernaut", "Metallicize", "Rupture"]);
@@ -1294,7 +1299,7 @@ function renderWatch() {
   if (combat) {
     const hpPct = Math.max(0, Math.min(100, 100 * canon.player.hp / Math.max(1, canon.player.max_hp)));
     const blockPct = Math.max(0, Math.min(100, 100 * canon.player.block / 20));
-    $("player").innerHTML = `<div class="player-avatar"><div class="energy-orb" title="当前能量"><strong>${canon.player.energy}</strong><span>能量</span></div><div class="player-core"><div class="player-figure">战</div><div class="resource-block hp-resource"><div><span>生命</span><b>${canon.player.hp}/${canon.player.max_hp}</b></div><div class="resource-track"><i style="width:${hpPct}%"></i></div></div><div class="resource-block block-resource"><div><span>格挡</span><b>${canon.player.block}</b></div><div class="resource-track"><i style="width:${blockPct}%"></i></div></div></div><div class="player-copy"><strong>铁甲战士</strong><div>回合 ${canon.turn}</div><div class="power-row">${escapeHtml(powersText(canon.player.powers))}</div></div></div>`;
+    $("player").innerHTML = `<div class="player-avatar"><div class="energy-orb" title="当前能量"><strong>${canon.player.energy}</strong><span>能量</span></div><div class="player-core"><div class="player-figure">战</div><div class="resource-block hp-resource"><div><span>生命</span><b>${canon.player.hp}/${canon.player.max_hp}</b></div><div class="resource-track"><i style="width:${hpPct}%"></i></div></div><div class="resource-block block-resource"><div><span>格挡</span><b>${canon.player.block}</b></div><div class="resource-track"><i style="width:${blockPct}%"></i></div></div></div><div class="player-copy"><strong>铁甲战士</strong><div>回合 ${canon.turn}</div><div class="power-row">${escapeHtml(powersText(canon.player.powers, canon.player.power_flags))}</div></div></div>`;
   } else $("player").innerHTML = "";
   $("hand").innerHTML = combat ? (canon.hand || []).map((card, slot) => {
     const committed = w.pending_card_slot === slot ? "card-committed" : "";
