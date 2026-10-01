@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <array>
+#include <atomic>
 #ifdef STS_ENABLE_RULE_TRACE
 #include <functional>
 #endif
@@ -50,7 +51,7 @@ namespace sts {
     struct BattleContext {
 
         // begin for debugging purposes
-        inline static int sum = 0; // for preventing optimization in benchmarks
+        inline static std::atomic<int> sum{0}; // debug checksum, shared by native search threads
         bool haveUsedDiscoveryAction = false; // for tracking undefined behavior resulting from using the action
         bool undefinedBehaviorEvoked = false; // some cards cause inconsistent outcomes in games
         std::uint64_t seed = 0;

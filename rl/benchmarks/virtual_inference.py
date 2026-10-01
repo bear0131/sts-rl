@@ -25,6 +25,7 @@ class VirtualInference:
         self.model_seconds = 0.0
         self.max_rows = 0
         self.logits = self.values = None
+        self._measuring_value = False
 
     def install(self):
         self.model.policy.core.actor_critic = self.root
@@ -37,6 +38,8 @@ class VirtualInference:
             torch.cuda.synchronize(self.model.device)
 
     def root(self, observations, **kwargs):
+        if self._measuring_value:
+            return self.root_forward(observations, **kwargs)
         self.root_calls += 1
         if self.shadow:
             self.synchronize()
@@ -70,7 +73,11 @@ class VirtualInference:
         if self.shadow:
             self.synchronize()
             started = time.perf_counter()
-            self.value_forward(observations)
+            self._measuring_value = True
+            try:
+                self.value_forward(observations)
+            finally:
+                self._measuring_value = False
             self.synchronize()
             self.model_seconds += time.perf_counter() - started
         count = len(next(iter(observations.values())))

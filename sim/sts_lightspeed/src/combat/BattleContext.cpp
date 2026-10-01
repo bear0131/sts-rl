@@ -517,8 +517,9 @@ void BattleContext::exitBattle(GameContext &g) const {
         g.regainControl();
     }
 
-    BattleContext::sum += g.curHp + g.maxHp + g.gold + g.act
-            + g.ascension + g.floorNum + potionRng.counter + cardRandomRng.counter;
+    BattleContext::sum.fetch_add(g.curHp + g.maxHp + g.gold + g.act
+            + g.ascension + g.floorNum + potionRng.counter + cardRandomRng.counter,
+            std::memory_order_relaxed);
 }
 
 void BattleContext::updateRelicsOnExit(GameContext &g) const {
@@ -723,7 +724,7 @@ bool BattleContext::isCardPlayAllowed() const {
 
 void BattleContext::executeActions() {
     // todo find a place for checking where card queue is empty and player doesn't have control for calling onEndingTurn
-    ++sum;
+    sum.fetch_add(1, std::memory_order_relaxed);
     g_debug_bc = this;
 
     while (true)

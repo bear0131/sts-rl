@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import torch
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -21,7 +22,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy'):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -45,6 +46,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                 )
             return build
 
+        if vector == 'native':
+            from rl.training.native_vec_env import NativeSearchVecEnv
+            return NativeSearchVecEnv([factory(0), factory(16)], threads=2)
         return DummyVecEnv([factory(0), factory(16)])
 
     env = make_env()
@@ -54,7 +58,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
               if combat_arch == 'entity' else dict(d_model=32,n_layers=2,n_heads=4,combat_arch=combat_arch))
     model = AccumulatingMaskablePPO(
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
-        policy_kwargs=kwargs, device='cpu', seed=42,
+        policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
@@ -101,7 +105,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
         '--n-envs', '2', '--n-steps', '16', '--batch-size', '8', '--n-epochs', '1',
-        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'dummy',
+        '--gradient-accumulation-steps', '1', '--device', device, '--amp', amp, '--vec', vector,
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
         '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
@@ -194,7 +198,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert len(records)==4
     assert all(r['rollout_resources']['sample_count']>=2 for r in records)
     assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
-    assert all(r['rollout_resources']['gpu_devices'] is None for r in records)
+    assert all((r['rollout_resources']['gpu_devices'] is None) == (device == 'cpu') for r in records)
 
     if staggered:
         stop_file.unlink()
@@ -221,3 +225,18 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['run_id'] == 'ci-fork'
         assert manifest['wandb_id'] == 'ci-fork-run'
         assert manifest['config']['fork_source_global_step'] == 128
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 learner lifecycle requires CUDA')
+@pytest.mark.parametrize('nosl', [False, True])
+def test_cuda_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
+    previous = torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    try:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+        test_training_reaches_wandb_and_checkpoint(
+            tmp_path, monkeypatch, capsys, short_combat_env_type,
+            nosl, 'rules' if nosl else 'model', 'entity' if nosl else 'transformer',
+            'autoregressive-v2' if nosl else 'legacy', device='cuda', amp='bf16', vector='native')
+        assert not torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    finally:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = previous

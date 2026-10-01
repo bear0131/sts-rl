@@ -436,7 +436,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional CUDA autocast for rollout inference and PPO backward. "
              "BF16 keeps parameters and synchronized gradients in FP32.",
     )
-    parser.add_argument("--vec", choices=("subproc", "dummy"), default="subproc")
+    parser.add_argument("--vec", choices=("subproc", "dummy", "native"), default="subproc")
+    parser.add_argument('--native-search-threads', type=int, default=4)
     parser.add_argument("--start-method", default="fork")
     parser.add_argument(
         "--envs-per-worker",

@@ -9,6 +9,13 @@
 PPO、NOSL 与 reasoning 使用同一个梯度同步边界（ring 或 file transport）和 algorithms/updates.py 的 optimizer 更新；编排负责 rank、barrier、批次调度和日志。新的策略/学习方法应显式选择其目标和采样方式，不能通过复制整套 trainer 来添加算法。大 main 的生命周期拆分仍待做。
 
 环境构造与 checkpoint schema 适配在 `environments.py`，采样基准复用同一工厂。
+`--vec native --native-search-threads 4` 将环境留在当前进程，原生搜索线程池并行处理
+不同树的 select/backup；每棵树仍只有一个待求值叶，模型每波只接收一个数字数组批。
+支持 compact legacy/joint-v2/autoregressive-v2（含 card-language），不支持 combat-language
+或同树多个在途叶。原生扩展须重建；缺失批处理接口会明确报错。
+此模式的环境真实 step 仍由 Python 编排，只有搜索/叶编码走 C++；默认后端保持 subproc。
+无叶子 IPC 不等于端到端零开销，`native_tree_seconds` 与 `native_pack_seconds` 是
+begin/advance 的内部拆分，不能再次加到 collection 总时间。环境 checkpoint 状态沿用相同合同。
 `--leaf-inference cuda-graph` 仅加速 CUDA compact combat 叶节点；其它路径默认 eager。
 `--leaf-graph-batch-multiple`、缓存生命周期和数值边界见 [搜索说明](../search/README.md)。
 Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方仍收到原来的

@@ -434,13 +434,14 @@ def build_parser(task) -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--vec",
-        choices=["subproc", "dummy"],
+        choices=["subproc", "dummy", "native"],
         default="subproc",
         help="VecEnv backend. subproc = multiple worker processes (true "
              "multi-core sampling; default). dummy = all envs in this process, serial "
-             "(single core — use only for debugging).",
+             "(single core — use only for debugging). native = resident envs with C++ search threads.",
     )
 
+    parser.add_argument('--native-search-threads', type=int, default=4)
     parser.add_argument(
         "--envs-per-worker",
         type=int,
@@ -999,6 +1000,9 @@ def main() -> None:
             f"[trainer] subprocess workers={len(venv.remotes)} "
             f"logical_envs={args.n_envs} envs_per_worker={args.envs_per_worker}"
         )
+    elif args.vec == 'native':
+        from rl.training.native_vec_env import NativeSearchVecEnv
+        venv = NativeSearchVecEnv(env_fns, threads=args.native_search_threads)
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv, filename=str(out_dir / "monitor.csv"))

@@ -33,6 +33,8 @@
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
 #include "sim/search/NeuralSearchBatch.h"
+#include "neural-observation.h"
+#include <chrono>
 #include "constants/MonsterStatusEffects.h"
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterIds.h"
@@ -1574,18 +1576,23 @@ pybind11::dict packedNeuralLeaves(
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
+    bindNeuralObservation(m);
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
         .def(pybind11::init<int>(), pybind11::arg("threads") = 1)
         .def("begin", [](sts::search::NeuralSearchBatch &batch,
                           std::vector<std::shared_ptr<sts::search::NoslNeuralSearchSession>> sessions,
                           pybind11::object language_card_index) {
             auto ownership = batch.acquire();
+            const auto started = std::chrono::steady_clock::now();
             {
                 pybind11::gil_scoped_release release;
                 batch.begin(std::move(sessions));
             }
+            const auto selected = std::chrono::steady_clock::now();
             auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
             result["owners"] = batch.owners();
+            result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
+            result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();
             return result;
         }, pybind11::arg("sessions"), pybind11::arg("language_card_index") = pybind11::none())
         .def("advance", [](sts::search::NeuralSearchBatch &batch,
@@ -1599,12 +1606,16 @@ PYBIND11_MODULE(slaythespire, m) {
             const auto width = static_cast<std::size_t>(logits.shape(1));
             const auto *v = values.data();
             const auto *l = logits.data();
+            const auto started = std::chrono::steady_clock::now();
             {
                 pybind11::gil_scoped_release release;
                 batch.advance(v, l, rows, width);
             }
+            const auto selected = std::chrono::steady_clock::now();
             auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
             result["owners"] = batch.owners();
+            result["native_seconds"] = std::chrono::duration<double>(selected-started).count();
+            result["pack_seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now()-selected).count();
             return result;
         }, pybind11::arg("values"), pybind11::arg("logits"),
            pybind11::arg("language_card_index") = pybind11::none())

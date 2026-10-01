@@ -16,8 +16,18 @@ pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, contract, language):
     deck = ['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 4 + ['BASH', 'BATTLE_TRANCE', 'TRUE_GRIT']
     def environments():
-        return [combat_factory(deck, seed=42+i, relics=(['Burning Blood'] if i % 2 else []),
-                    combat_action_contract=contract, card_language=language) for i in range(4)]
+        result = []
+        for i, encounter in enumerate(('Jaw Worm', 'Two Louse', 'Automaton', 'Collector')):
+            env = combat_factory(deck, encounter, seed=42+i, relics=(['Burning Blood'] if i % 2 else []),
+                    combat_action_contract=contract, card_language=language)
+            env.thick.bc.apply_custom_state({
+                'player': {'powers': [('STRENGTH', -2+i), ('ARTIFACT', i)],
+                           'counters': {'happy_flower': i, 'pen_nib': 3}},
+                'draw': [('STRIKE_RED', 1), ('DEFEND_RED', 0), ('STRIKE_RED', 2), ('BASH', 0)],
+                'discard': [('BASH', 1), ('DEFEND_RED', 2), ('BASH', 0)]})
+            env._invalidate_backend_cache()
+            result.append(env)
+        return result
     native, serial = environments(), environments()
     pool = NativeSearchBatch(native, threads)
     config = NativeSearchConfig(simulations=128, fixed_worldline=True, end_turn_as_leaf=True)
@@ -40,6 +50,8 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, co
                     assert obs.keys() == reference.keys()
                     for key in obs:
                         np.testing.assert_array_equal(obs[key][row], reference[key][0], err_msg=f'{i}: {key}')
+                        assert obs[key].dtype == reference[key].dtype, key
+                        assert obs[key][row].tobytes() == reference[key][0].tobytes(), key
                     assert bool(pool.payload['needs_policy'][row]) == responses[i]['leaf_meta'][0]['needs_policy']
                 values = np.asarray(.2 + .6 * obs['player_scalars'][:, 0], dtype=np.float32)
                 logits = np.broadcast_to(np.linspace(-.2, .8, native[0].action_space.n, dtype=np.float32),
@@ -59,6 +71,36 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, co
                 for key in ('action', 'native_action_bits', 'root_value', 'simulations',
                             'visit_policy', 'root_visit_policy', 'root_visits'):
                     np.testing.assert_array_equal(actual[i][key], responses[i]['result'][key])
+    finally:
+        pool.close()
+
+
+def test_native_decoder_keeps_autoregressive_prefix(combat_factory):
+    import slaythespire as sts
+    from env.core import native_actions as C
+    env = combat_factory(['PURITY'] * 5, combat_action_contract='autoregressive-v2', card_language=True)
+    env.thick.bc.apply_custom_state({'hand': ['PURITY'] + ['STRIKE_RED'] * 5})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+    pool = NativeSearchBatch([env], 2)
+    logits = np.zeros(C.AUTOREGRESSIVE_SIZE, np.float32)
+    logits[C.AUTOREGRESSIVE_MULTI] = 30
+    calls = {0: ((logits,), dict(simulations=16, state_nonce=42, depth=1,
+        compact_observation=True, leaf_batch_size=1, root_search_mode=2,
+        paper_full_gumbel=True, gumbel_scale=0, gumbel_rescale_q=False, gumbel_value_scale=1))}
+    seen = False
+    try:
+        pool.begin(calls)
+        while not pool.done:
+            obs = pool.observations()
+            expected = env._native_packed_observation_batch(pool.payload)
+            seen |= bool(obs['select_hand_mask'].any())
+            for key in obs:
+                assert obs[key].dtype == expected[key].dtype
+                assert obs[key].tobytes() == expected[key].tobytes(), key
+            pool.advance(logits[None], np.array([.3], np.float32))
+        assert seen
+        assert pool.results()[0]['action'] == C.AUTOREGRESSIVE_MULTI
     finally:
         pool.close()
 

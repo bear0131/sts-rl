@@ -1224,7 +1224,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     if native_batch is not None:
                         result_by_index, shared_stats = complete_searches_native(
                             self, native_batch, begin_calls, autocast=self.autocast_context)
-                        for key in ('native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds'):
+                        for key in ('native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds',
+                                    'native_tree_seconds', 'native_pack_seconds'):
                             nosl_timings[key] = nosl_timings.get(key, 0.0) + shared_stats[key]
                     elif (
                         callable(stream_factory)

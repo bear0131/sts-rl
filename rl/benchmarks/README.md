@@ -24,6 +24,15 @@ AR BF16融合按logits/utility/合法动作概率容差），并报告相对
 原始未补齐 eager 的 logits/value 最大、均值和 p99 绝对误差；可用实际叶 NPZ
 重复验证，不能只靠随机小模型证明生产 checkpoint 的数值误差。
 
+`--model-workload virtual|shadow` 仅用于 rollout 性能对照：两者向搜索返回相同的
+零 logits 与 value=0.5。virtual 跳过神经计算；shadow 执行实际模型但丢弃其结果。
+这样可严格比较相同树工作量与完整输出 hash，不把神经输出变化导致的叶数差当加速。
+它们不测策略质量。`controlled_model_call_seconds` 包含同步及调用包装，不能当纯 GPU
+kernel 时间；graph 的 `replay_ms` 是按 `--graph-profile-interval` 采样的设备事件总和。
+`--vec-env native --native-search-threads 4` 使用与训练相同的常驻原生搜索路径。
+比较必须保持 checkpoint、seed、环境数、搜索预算与 warmup 相同，并报告完整采样、
+模型计算、编译/capture、观测转换、真实环境 step 与资源指标。
+
 分布式入口 `--rollout-resource-interval 2` 每2秒采样，逐 rank 的 JSON 日志
 `rollout_resources` 包含 CPU（100%=一核）、进程树 RSS、容器内存/CPU 配额、
 GPU util 与设备显存峰值。RSS 会重复计算共享页，设备采样可能包含其他进程；

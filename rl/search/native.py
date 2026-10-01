@@ -495,6 +495,8 @@ def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext)
         started = time.perf_counter()
         results = batch.results()
         stats['native_finish_seconds'] = time.perf_counter() - started
+        stats['native_tree_seconds'] = batch.native_seconds
+        stats['native_pack_seconds'] = batch.pack_seconds
         stats['by_worker'] = {index: dict(leaf_evaluations=int(count), leaf_batches=int(count))
                               for index, count in zip(batch.indices, batch.leaves)}
         return results, stats

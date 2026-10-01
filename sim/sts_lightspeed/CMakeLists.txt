@@ -15,7 +15,8 @@ set(CMAKE_CXX_FLAGS  "-Wno-shift-count-overflow -O3")
 add_subdirectory(json)
 add_subdirectory(pybind11)
 
-pybind11_add_module(slaythespire bindings/slaythespire.cpp bindings/bindings-util.cpp ${sts_lightspeed_SOURCES})
+find_package(Threads REQUIRED)
+pybind11_add_module(slaythespire bindings/slaythespire.cpp bindings/bindings-util.cpp bindings/neural-observation.cpp ${sts_lightspeed_SOURCES})
 if (STS_ENABLE_RULE_TRACE)
     target_compile_definitions(slaythespire PRIVATE STS_ENABLE_RULE_TRACE)
 endif()
@@ -46,3 +47,7 @@ add_executable(nosl-combat-train apps/nosl-combat-train.cpp ${sts_lightspeed_SOU
 target_link_directories(nosl-combat-train PRIVATE json::nlohmann_json)
 target_include_directories(nosl-combat-train PUBLIC include)
 target_include_directories(nosl-combat-train PUBLIC json/include)
+
+foreach(target slaythespire main test small-test nosl-combat-train)
+    target_link_libraries(${target} PRIVATE Threads::Threads)
+endforeach()
