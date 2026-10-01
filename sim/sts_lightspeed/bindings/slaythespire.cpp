@@ -32,6 +32,7 @@
 #include "sim/search/GameAction.h"
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
+#include "sim/search/NeuralSearchBatch.h"
 #include "constants/MonsterStatusEffects.h"
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterIds.h"
@@ -1458,9 +1459,157 @@ std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
     return mapped.bits;
 }
 
+pybind11::dict packedNeuralLeaves(
+    const std::vector<sts::search::NoslNeuralSearchSession::LeafRequest> &requests,
+    bool done, pybind11::object language_card_index) {
+    // Keep the simulator-to-Python boundary to contiguous numeric
+    // arrays. Do not call rawCombatState() here: that
+    // recursively allocates Python dicts/lists for every leaf.
+    const auto count = static_cast<pybind11::ssize_t>(requests.size());
+    std::size_t maxLegalActions = 0;
+    for (const auto &request : requests) {
+        maxLegalActions = std::max(
+            maxLegalActions, request.legalActions.size());
+    }
+    const auto legalWidth =
+        static_cast<pybind11::ssize_t>(maxLegalActions);
+    pybind11::array_t<std::int32_t> categorical(
+        std::vector<pybind11::ssize_t>{count, compact_leaf::kCatSize});
+    pybind11::array_t<float> scalars(
+        std::vector<pybind11::ssize_t>{count, compact_leaf::kFloatSize});
+    const bool language = !language_card_index.is_none();
+    pybind11::array_t<std::int32_t> language_index;
+    if (language) {
+        language_index = pybind11::array_t<std::int32_t,
+            pybind11::array::c_style | pybind11::array::forcecast>(
+                language_card_index);
+        if (language_index.ndim() != 1 ||
+            language_index.shape(0) != compact_leaf::kCardIds) {
+            throw std::invalid_argument("language card index shape mismatch");
+        }
+    }
+    pybind11::array_t<std::int32_t> language_ids;
+    pybind11::array_t<float> language_features;
+    if (language) {
+        language_ids = pybind11::array_t<std::int32_t>(
+            std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots});
+        language_features = pybind11::array_t<float>(
+            std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots, 3});
+        std::fill(language_ids.mutable_data(),
+                  language_ids.mutable_data() + language_ids.size(), 0);
+        std::fill(language_features.mutable_data(),
+                  language_features.mutable_data() + language_features.size(), 0.0f);
+    }
+    auto cat = categorical.mutable_unchecked<2>();
+    auto scalar = scalars.mutable_unchecked<2>();
+    pybind11::list request_ids;
+    pybind11::array_t<std::uint32_t> legal_actions(
+        std::vector<pybind11::ssize_t>{count, legalWidth});
+    pybind11::array_t<std::uint32_t> legal_action_counts(
+        std::vector<pybind11::ssize_t>{count});
+    if (legal_actions.size() > 0) {
+        std::fill(
+            legal_actions.mutable_data(),
+            legal_actions.mutable_data() + legal_actions.size(),
+            std::uint32_t{0});
+    }
+    pybind11::array_t<std::int32_t> legal_policy_ids(
+        std::vector<pybind11::ssize_t>{count, legalWidth});
+    std::fill(legal_policy_ids.mutable_data(), legal_policy_ids.mutable_data() + legal_policy_ids.size(), -1);
+    auto policy_ids = legal_policy_ids.mutable_unchecked<2>();
+    auto legal = legal_actions.mutable_unchecked<2>();
+    auto legal_count = legal_action_counts.mutable_unchecked<1>();
+    pybind11::list needs_policy;
+    pybind11::list selection_prefix;
+    for (pybind11::ssize_t row = 0; row < count; ++row) {
+        const auto &request = requests[static_cast<std::size_t>(row)];
+        const auto packed = compact_leaf::pack(*request.state);
+        for (int col = 0; col < compact_leaf::kCatSize; ++col) {
+            cat(row, col) = packed.categorical[static_cast<std::size_t>(col)];
+        }
+        for (int col = 0; col < compact_leaf::kFloatSize; ++col) {
+            scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
+        }
+        if (language) {
+            auto *ids = language_ids.mutable_data() +
+                row * 2 * compact_leaf::kLanguageSlots;
+            auto *features = language_features.mutable_data() +
+                row * 2 * compact_leaf::kLanguageSlots * 3;
+            compact_leaf::packLanguagePile(request.state->cards.drawPile,
+                language_index.data(), ids, features);
+            compact_leaf::packLanguagePile(request.state->cards.discardPile,
+                language_index.data(), ids + compact_leaf::kLanguageSlots,
+                features + compact_leaf::kLanguageSlots * 3);
+        }
+        request_ids.append(request.requestId);
+        const auto nLegal = request.legalActions.size();
+        legal_count(row) = static_cast<std::uint32_t>(nLegal);
+        for (std::size_t col = 0; col < nLegal; ++col) {
+            legal(row, static_cast<pybind11::ssize_t>(col)) =
+                request.legalActions[col].bits;
+            policy_ids(row, static_cast<pybind11::ssize_t>(col)) =
+                sts::search::jointActionId(request.legalActions[col], *request.state)
+                    - (request.autoregressivePolicy ? sts::search::kJointEnd : 0);
+        }
+        needs_policy.append(request.needsPolicy);
+        selection_prefix.append(request.selectionPrefix);
+    }
+    pybind11::dict out;
+    out["request_ids"] = request_ids;
+    out["categorical"] = categorical;
+    out["scalars"] = scalars;
+    if (language) {
+        out["language_ids"] = language_ids;
+        out["language_features"] = language_features;
+    }
+    out["legal_action_bits"] = legal_actions;
+    out["legal_action_counts"] = legal_action_counts;
+    out["legal_policy_ids"] = legal_policy_ids;
+    out["needs_policy"] = needs_policy;
+    out["selection_prefix"] = selection_prefix;
+    out["done"] = done;
+    return out;
+}
+
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
+    pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
+        .def(pybind11::init<int>(), pybind11::arg("threads") = 1)
+        .def("begin", [](sts::search::NeuralSearchBatch &batch,
+                          std::vector<std::shared_ptr<sts::search::NoslNeuralSearchSession>> sessions,
+                          pybind11::object language_card_index) {
+            auto ownership = batch.acquire();
+            {
+                pybind11::gil_scoped_release release;
+                batch.begin(std::move(sessions));
+            }
+            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            result["owners"] = batch.owners();
+            return result;
+        }, pybind11::arg("sessions"), pybind11::arg("language_card_index") = pybind11::none())
+        .def("advance", [](sts::search::NeuralSearchBatch &batch,
+                            pybind11::array_t<float, pybind11::array::c_style | pybind11::array::forcecast> values,
+                            pybind11::array_t<float, pybind11::array::c_style | pybind11::array::forcecast> logits,
+                            pybind11::object language_card_index) {
+            auto ownership = batch.acquire();
+            if (values.ndim() != 1 || logits.ndim() != 2 || values.shape(0) != logits.shape(0))
+                throw std::invalid_argument("native search predictions require values[N], logits[N,K]");
+            const auto rows = static_cast<std::size_t>(values.shape(0));
+            const auto width = static_cast<std::size_t>(logits.shape(1));
+            const auto *v = values.data();
+            const auto *l = logits.data();
+            {
+                pybind11::gil_scoped_release release;
+                batch.advance(v, l, rows, width);
+            }
+            auto result = packedNeuralLeaves(batch.requests(), batch.requests().empty(), language_card_index);
+            result["owners"] = batch.owners();
+            return result;
+        }, pybind11::arg("values"), pybind11::arg("logits"),
+           pybind11::arg("language_card_index") = pybind11::none())
+        .def("clear", &sts::search::NeuralSearchBatch::clear)
+        .def_property_readonly("threads", &sts::search::NeuralSearchBatch::threadCount);
     m.doc() = "pybind11 example plugin"; // optional module docstring
     m.def("play", &sts::py::play, "play Slay the Spire Console");
     m.def("get_seed_str", &SeedHelper::getString, "gets the integral representation of seed string used in the game ui");
@@ -2502,114 +2651,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("next_batch_packed", [](search::NoslNeuralSearchSession &session,
                                       int max_leaves,
                                       pybind11::object language_card_index) {
-            // Keep the simulator-to-Python boundary to contiguous numeric
-            // arrays. Do not call rawCombatState() here: that
-            // recursively allocates Python dicts/lists for every leaf.
             const auto requests = session.nextBatch(max_leaves);
-            const auto count = static_cast<pybind11::ssize_t>(requests.size());
-            std::size_t maxLegalActions = 0;
-            for (const auto &request : requests) {
-                maxLegalActions = std::max(
-                    maxLegalActions, request.legalActions.size());
-            }
-            const auto legalWidth =
-                static_cast<pybind11::ssize_t>(maxLegalActions);
-            pybind11::array_t<std::int32_t> categorical(
-                std::vector<pybind11::ssize_t>{count, compact_leaf::kCatSize});
-            pybind11::array_t<float> scalars(
-                std::vector<pybind11::ssize_t>{count, compact_leaf::kFloatSize});
-            const bool language = !language_card_index.is_none();
-            pybind11::array_t<std::int32_t> language_index;
-            if (language) {
-                language_index = pybind11::array_t<std::int32_t,
-                    pybind11::array::c_style | pybind11::array::forcecast>(
-                        language_card_index);
-                if (language_index.ndim() != 1 ||
-                    language_index.shape(0) != compact_leaf::kCardIds) {
-                    throw std::invalid_argument("language card index shape mismatch");
-                }
-            }
-            pybind11::array_t<std::int32_t> language_ids;
-            pybind11::array_t<float> language_features;
-            if (language) {
-                language_ids = pybind11::array_t<std::int32_t>(
-                    std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots});
-                language_features = pybind11::array_t<float>(
-                    std::vector<pybind11::ssize_t>{count, 2, compact_leaf::kLanguageSlots, 3});
-                std::fill(language_ids.mutable_data(),
-                          language_ids.mutable_data() + language_ids.size(), 0);
-                std::fill(language_features.mutable_data(),
-                          language_features.mutable_data() + language_features.size(), 0.0f);
-            }
-            auto cat = categorical.mutable_unchecked<2>();
-            auto scalar = scalars.mutable_unchecked<2>();
-            pybind11::list request_ids;
-            pybind11::array_t<std::uint32_t> legal_actions(
-                std::vector<pybind11::ssize_t>{count, legalWidth});
-            pybind11::array_t<std::uint32_t> legal_action_counts(
-                std::vector<pybind11::ssize_t>{count});
-            if (legal_actions.size() > 0) {
-                std::fill(
-                    legal_actions.mutable_data(),
-                    legal_actions.mutable_data() + legal_actions.size(),
-                    std::uint32_t{0});
-            }
-            pybind11::array_t<std::int32_t> legal_policy_ids(
-                std::vector<pybind11::ssize_t>{count, legalWidth});
-            std::fill(legal_policy_ids.mutable_data(), legal_policy_ids.mutable_data() + legal_policy_ids.size(), -1);
-            auto policy_ids = legal_policy_ids.mutable_unchecked<2>();
-            auto legal = legal_actions.mutable_unchecked<2>();
-            auto legal_count = legal_action_counts.mutable_unchecked<1>();
-            pybind11::list needs_policy;
-            pybind11::list selection_prefix;
-            for (pybind11::ssize_t row = 0; row < count; ++row) {
-                const auto &request = requests[static_cast<std::size_t>(row)];
-                const auto packed = compact_leaf::pack(*request.state);
-                for (int col = 0; col < compact_leaf::kCatSize; ++col) {
-                    cat(row, col) = packed.categorical[static_cast<std::size_t>(col)];
-                }
-                for (int col = 0; col < compact_leaf::kFloatSize; ++col) {
-                    scalar(row, col) = packed.scalars[static_cast<std::size_t>(col)];
-                }
-                if (language) {
-                    auto *ids = language_ids.mutable_data() +
-                        row * 2 * compact_leaf::kLanguageSlots;
-                    auto *features = language_features.mutable_data() +
-                        row * 2 * compact_leaf::kLanguageSlots * 3;
-                    compact_leaf::packLanguagePile(request.state->cards.drawPile,
-                        language_index.data(), ids, features);
-                    compact_leaf::packLanguagePile(request.state->cards.discardPile,
-                        language_index.data(), ids + compact_leaf::kLanguageSlots,
-                        features + compact_leaf::kLanguageSlots * 3);
-                }
-                request_ids.append(request.requestId);
-                const auto nLegal = request.legalActions.size();
-                legal_count(row) = static_cast<std::uint32_t>(nLegal);
-                for (std::size_t col = 0; col < nLegal; ++col) {
-                    legal(row, static_cast<pybind11::ssize_t>(col)) =
-                        request.legalActions[col].bits;
-                    policy_ids(row, static_cast<pybind11::ssize_t>(col)) =
-                        sts::search::jointActionId(request.legalActions[col], *request.state)
-                            - (request.autoregressivePolicy ? sts::search::kJointEnd : 0);
-                }
-                needs_policy.append(request.needsPolicy);
-                selection_prefix.append(request.selectionPrefix);
-            }
-            pybind11::dict out;
-            out["request_ids"] = request_ids;
-            out["categorical"] = categorical;
-            out["scalars"] = scalars;
-            if (language) {
-                out["language_ids"] = language_ids;
-                out["language_features"] = language_features;
-            }
-            out["legal_action_bits"] = legal_actions;
-            out["legal_action_counts"] = legal_action_counts;
-            out["legal_policy_ids"] = legal_policy_ids;
-            out["needs_policy"] = needs_policy;
-            out["selection_prefix"] = selection_prefix;
-            out["done"] = requests.empty() && session.done();
-            return out;
+            return packedNeuralLeaves(requests, requests.empty() && session.done(), language_card_index);
         }, pybind11::arg("max_leaves") = 16,
            pybind11::arg("language_card_index") = pybind11::none(),
            "select leaves into contiguous native categorical/scalar arrays")

@@ -1619,6 +1619,7 @@ class SlayTheSpireEnv(gym.Env):
         decision_index: int = 0,
         compact_observation: bool = False,
         _defer_packed_observation: bool = False,
+        _defer_leaf_selection: bool = False,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         begin_started = time.perf_counter()
@@ -1764,6 +1765,9 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
         self._nosl_cpp_encoded_global_template = None
         begin_seconds = time.perf_counter() - begin_started
+        if _defer_leaf_selection:
+            # A native cross-tree batch owns select/backup until completion.
+            return self._nosl_cpp_az_session
         response = self.nosl_is_az_cpp_leaf_batch(
             leaf_batch_size, _defer_packed_observation=_defer_packed_observation)
         response['_worker_timing']['begin_setup_seconds'] = begin_seconds

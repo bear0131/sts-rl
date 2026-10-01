@@ -460,6 +460,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
             f"logical_envs={args.n_envs} "
             f"envs_per_worker={args.envs_per_worker}"
         )
+    elif args.vec == 'native':
+        from rl.training.native_vec_env import NativeSearchVecEnv
+        venv = NativeSearchVecEnv(env_fns, threads=getattr(args, 'native_search_threads', 4))
     else:
         venv = DummyVecEnv(env_fns)
     venv = VecMonitor(venv)

@@ -23,7 +23,8 @@ def run(args):
     started = time.perf_counter()
     model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
     env = make_env(model, SimpleNamespace(ascension=0, interactive_reasoning=False,
-        vec='dummy' if args.vec_env == 'dummy' else 'subproc', rank=0, seed=args.seed,
+        vec=args.vec_env if args.vec_env in ('dummy', 'native') else 'subproc', rank=0, seed=args.seed,
+        native_search_threads=args.native_search_threads,
         n_envs=args.n_envs, envs_per_worker=args.envs_per_worker if args.vec_env == 'grouped' else 1,
         start_method='spawn'))
     try:

@@ -23,6 +23,7 @@ from rl.search.native import (
     LeafInferenceSchedule,
     WORKER_TIMING_KEYS,
     complete_searches,
+    complete_searches_native,
     complete_searches_streaming,
     observation_as_tensor as _leaf_observation_as_tensor,
 )
@@ -1218,7 +1219,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     # batches when each tree has one pending leaf; other VecEnv
                     # layouts retain the synchronous batch protocol.
                     stream_factory = getattr(env, "env_method_stream", None)
-                    if (
+                    native_batch = getattr(env, "native_search_batch", None)
+                    if native_batch is not None:
+                        result_by_index, shared_stats = complete_searches_native(
+                            self, native_batch, begin_calls, autocast=self.autocast_context)
+                        for key in ('native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds'):
+                            nosl_timings[key] = nosl_timings.get(key, 0.0) + shared_stats[key]
+                    elif (
                         callable(stream_factory)
                         and self.nosl_is_az_leaf_batch_size == 1
                     ):

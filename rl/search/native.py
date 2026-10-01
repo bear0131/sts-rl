@@ -463,6 +463,46 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
     return results, stats
 
 
+def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext):
+    """Drive resident independent trees with one model call per native wave.
+
+    Each tree retains one pending request. Scheduling across trees changes no
+    within-tree ordering; the model must provide equivalent replies across batches.
+    Native timings include packing and the pool barrier, with no IPC component.
+    """
+    stats = dict(leaf_batches=0, leaf_evaluations=0, cpp_leaf_decode_seconds=0.0,
+                 cpp_leaf_model_seconds=0.0, cpp_backprop_rpc_seconds=0.0,
+                 native_begin_seconds=0.0, native_advance_seconds=0.0,
+                 native_finish_seconds=0.0, inference_batch_size_max=0)
+    try:
+        started = time.perf_counter()
+        batch.begin(begin_calls)
+        stats['native_begin_seconds'] = time.perf_counter() - started
+        while not batch.done:
+            started = time.perf_counter()
+            observations = batch.observations()
+            stats['cpp_leaf_decode_seconds'] += time.perf_counter() - started
+            count = len(next(iter(observations.values())))
+            stats['leaf_batches'] += 1
+            stats['leaf_evaluations'] += count
+            stats['inference_batch_size_max'] = max(stats['inference_batch_size_max'], count)
+            started = time.perf_counter()
+            logits, values = forward_leaves(model, observations, compact=True, autocast=autocast)
+            stats['cpp_leaf_model_seconds'] += time.perf_counter() - started
+            started = time.perf_counter()
+            batch.advance(logits, values)
+            stats['native_advance_seconds'] += time.perf_counter() - started
+        started = time.perf_counter()
+        results = batch.results()
+        stats['native_finish_seconds'] = time.perf_counter() - started
+        stats['by_worker'] = {index: dict(leaf_evaluations=int(count), leaf_batches=int(count))
+                              for index, count in zip(batch.indices, batch.leaves)}
+        return results, stats
+    except BaseException:
+        batch.clear()
+        raise
+
+
 def _leaf_count(response):
     if isinstance(response, list):
         return len(response)
