@@ -1363,13 +1363,15 @@ class SlayTheSpireEnv(gym.Env):
         card_lut = lut["card"]
         monster_lut = lut["monster"]
         potion_lut = lut["potion"]
-        out["hand_ids"] = np.take(card_lut, np.clip(c[:, 0:10], 0, len(card_lut) - 1))
-        out["monster_id"] = np.take(monster_lut, np.clip(c[:, 10:15], 0, len(monster_lut) - 1))
+        # These tiny batches are dominated by NumPy dispatch/checking. take's
+        # clip mode preserves both bounds without a separate clip allocation.
+        out["hand_ids"] = np.take(card_lut, c[:, 0:10], mode='clip')
+        out["monster_id"] = np.take(monster_lut, c[:, 10:15], mode='clip')
         # Move enum order is append-only and is the source of MOVE_VOCAB.
-        out["monster_move"] = np.clip(c[:, 15:20], 0, encode.V.MOVE_VOCAB_CAPACITY - 1)
-        out["monster_intent_cat"] = np.clip(c[:, 20:25], 0, len(encode.V.INTENT_CATEGORY) - 1)
-        out["potions"] = np.take(potion_lut, np.clip(c[:, 25:30], 0, len(potion_lut) - 1))
-        out["select_context"][:, 0] = np.clip(c[:, 30], 0, encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
+        out["monster_move"] = np.minimum(np.maximum(c[:, 15:20], 0), encode.V.MOVE_VOCAB_CAPACITY - 1)
+        out["monster_intent_cat"] = np.minimum(np.maximum(c[:, 20:25], 0), len(encode.V.INTENT_CATEGORY) - 1)
+        out["potions"] = np.take(potion_lut, c[:, 25:30], mode='clip')
+        out["select_context"][:, 0] = np.minimum(np.maximum(c[:, 30], 0), encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
 
         out["select_card_ids"][:] = np.take(card_lut, c[:, 31:127])
         out["select_native_indices"][:] = c[:, 127:223]
@@ -1421,11 +1423,9 @@ class SlayTheSpireEnv(gym.Env):
         # ten Python ``card_numbers`` calls per leaf.
         stats = _nosl_card_stats()
         card_indices = np.asarray(out["hand_ids"], dtype=np.int64)
-        upgrade_indices = np.clip(
-            np.rint(hand_raw[:, :, 0]).astype(np.int64),
-            0,
-            stats["damage"].shape[1] - 1,
-        )
+        upgrade_indices = np.minimum(np.maximum(
+            np.rint(hand_raw[:, :, 0]).astype(np.int64), 0),
+            stats["damage"].shape[1] - 1)
         out["hand_damage"][:, :] = (
             stats["damage"][card_indices, upgrade_indices]
             / encode.DMG_SCALE
