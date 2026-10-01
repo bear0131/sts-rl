@@ -35,7 +35,7 @@ def _vocabulary(space, key):
 
 
 class EntityEncoderLayer(nn.TransformerEncoderLayer):
-    """Keep packed self-attention projections in batch-first layout.
+    """Keep training self-attention projections in batch-first layout.
 
     Parameter names and the pre-norm/residual/MLP operations remain PyTorch's.
     Unbinding Q/K/V also gives backward one stacked projection gradient,
@@ -43,7 +43,11 @@ class EntityEncoderLayer(nn.TransformerEncoderLayer):
     """
 
     def _sa_block(self, x, attn_mask, key_padding_mask, is_causal=False):
-        if attn_mask is not None or is_causal:
+        # The compiled leaf path keeps its established PyTorch layout. The
+        # batch-first reshape can trigger Inductor CantSplit on symbolic relic
+        # lengths; CPU/GPU smoke tests do not cover every live search shape.
+        if (not self.training or x.ndim != 3 or not self.self_attn.batch_first
+                or attn_mask is not None or is_causal):
             return super()._sa_block(x, attn_mask, key_padding_mask, is_causal)
         batch, length, width = x.shape
         attention = self.self_attn

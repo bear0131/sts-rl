@@ -43,6 +43,25 @@ def test_entity_attention_matches_pytorch_outputs_and_gradients(dtype, masked):
         torch.testing.assert_close(observed_grads[name], expected_grads[name], **tolerance)
 
 
+def test_entity_inference_keeps_reference_attention_layout():
+    from rl.policies.entity_combat import EntityEncoderLayer
+    torch.manual_seed(23)
+    kwargs = dict(d_model=32, nhead=4, dim_feedforward=128, dropout=0.,
+                  activation='gelu', batch_first=True, norm_first=True)
+    reference = torch.nn.TransformerEncoderLayer(**kwargs).eval()
+    actual = EntityEncoderLayer(**kwargs).eval()
+    actual.load_state_dict(reference.state_dict())
+    for count, length in ((2, 37), (4, 54), (3, 49)):
+        x = torch.randn(count, length, 32)
+        padding = torch.rand(count, length) > .5
+        padding[:, 0] = False
+        # Autograd enabled bypasses the fused inference fast path, exercising
+        # the attention implementation used by AMP/compiled leaf forwards.
+        torch.testing.assert_close(actual(x, src_key_padding_mask=padding),
+                                   reference(x, src_key_padding_mask=padding),
+                                   rtol=0, atol=0)
+
+
 def test_card_table_lookup_preserves_padded_choice_gradients(combat_factory):
     env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],
         combat_action_contract=C.JOINT_CONTRACT,card_language=True)
