@@ -390,6 +390,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def _setup_model(self) -> None:
         super()._setup_model()
+        from rl.algorithms.action_groups import CONTRACT
+        self.nosl_action_group_contract = CONTRACT if self.nosl_is_az else 'individual-actions'
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
         from rl.algorithms.update_schedule import CombatUpdateSchedule
@@ -539,7 +541,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError(
                 "fresh NOSL policy weights must be finite and non-negative"
             )
-        extra = {}
+        from rl.algorithms.action_groups import sample_groups
+        extra = {"action_groups": sample_groups(samples, action_dim)}
         if getattr(self,'_combat_distribution',False):
             from rl.algorithms.combat_distribution import validate_targets
             extra['combat_targets'] = np.stack([sample['combat_targets'] for sample in samples]).astype(np.float32)
@@ -1396,6 +1399,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     continue
                 result = result_by_index[env_index]
                 actions_np[env_index] = int(result["action"])
+                if (self.combat_action_contract in C.NEURAL_CONTRACTS
+                        and not forced[env_index] and "action_groups" not in result):
+                    raise RuntimeError("neural search result omitted action groups")
                 active_combat_samples[env_index].append(
                     {
                         # Replay outlives the PPO rollout buffer, so retain an
@@ -1415,6 +1421,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         "policy_target": np.asarray(
                             result["visit_policy"], dtype=np.float32
                         ).copy(),
+                        "action_groups": np.asarray(result.get("action_groups",
+                            np.arange(self.action_space.n)), dtype=np.int16).copy(),
                         "policy_weight": 1.0,
                         # Filled with objective final combat HP below.  The
                         # search root value remains diagnostic only.
@@ -2235,6 +2243,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         for key, value in sampled_batch["observations"].items()
                     },
                     "action_masks": sampled_batch["action_masks"][start:end],
+                    "action_groups": sampled_batch["action_groups"][start:end],
                     "policy_targets": sampled_batch["policy_targets"][start:end],
                     "policy_weights": sampled_batch["policy_weights"][start:end],
                     "value_targets": sampled_batch["value_targets"][start:end],
@@ -2276,10 +2285,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             observations,combat_targets[:,1],**actor_kwargs)
                     else:
                         logits, values = actor_critic(observations, **actor_kwargs)
-                    masked_logits = th.where(
-                        masks, logits, th.full_like(logits, -1.0e8)
-                    )
-                    log_probs = F.log_softmax(masked_logits, dim=-1)
+                    illegal_target_mass = (targets * (~masks).to(targets.dtype)).sum(dim=-1)
+                    from rl.algorithms.action_groups import quotient_distribution
+                    groups = transfer_array(batch["action_groups"], dtype=th.long)
+                    log_probs, targets, masks = quotient_distribution(logits, targets, masks, groups)
                     target_sum = targets.sum(dim=-1, keepdim=True).clamp_min(1e-8)
                     target_sum_error = (target_sum.squeeze(-1) - 1.0).abs()
                     targets = targets / target_sum
@@ -2310,9 +2319,6 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         policy_cross_entropy_per_sample
                         - target_entropy_per_sample
                     )
-                    illegal_target_mass = (
-                        targets * (~masks).to(dtype=targets.dtype)
-                    ).sum(dim=-1)
                     legal_actions = masks.sum(dim=-1).float()
                     target_top1 = targets.argmax(dim=-1)
                     policy_top1 = masked_probs.argmax(dim=-1)

@@ -296,7 +296,7 @@ def test_explicit_paper_full_gumbel_ignores_noncanonical_dashboard_values():
     assert config["paper_full_gumbel"] is True
     assert config["search_mode"] == "full_gumbel"
     assert config["leaf_batch_size"] == 1
-    assert config["gumbel_scale"] == pytest.approx(1.0)
+    assert config["gumbel_scale"] == pytest.approx(0.25)
 
 
 def test_explicit_paper_full_gumbel_rejects_direct_policy():

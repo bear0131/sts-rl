@@ -1559,6 +1559,7 @@ class SlayTheSpireEnv(gym.Env):
             # completed-Q target whenever the native Full Gumbel session
             # supplied one.  `root_visit_policy` is the count-normalized view.
             "visit_policy": improved_policy,
+            "action_groups": self.equivalent_action_groups().astype(np.int16),
             "root_visit_policy": root_visit_policy,
             "improved_policy": improved_policy,
             "used_completed_policy": has_improved_policy,
@@ -2213,6 +2214,24 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions:
             obs['combat_legal'] = self.action_masks()[self._policy_offset:]
         return obs
+
+    def equivalent_action_groups(self):
+        """Map complete card plays to executable representatives, keeping targets."""
+        groups = np.arange(self.action_space.n, dtype=np.int64)
+        if not self._joint_actions or self._phase() != 'combat' or self.thick.bc is None:
+            return groups
+        slots = self.thick.bc.equivalent_play_slots()
+        mask = self.action_masks()
+        base = C.AUTOREGRESSIVE_PLAY if self._autoregressive_actions else C.JOINT_PLAY
+        for slot, representative in enumerate(slots):
+            if slot == representative:
+                continue
+            for target in range(6):
+                source = base + slot * 6 + target
+                destination = base + representative * 6 + target
+                if mask[source] and mask[destination]:
+                    groups[source] = destination
+        return groups
 
     def action_masks(self):
         """Bool[N_ACTIONS] legal mask for the CURRENT (phase, arg_step). Name

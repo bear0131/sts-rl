@@ -225,6 +225,7 @@ private:
     };
     struct Edge {
         Action action;
+        std::vector<Action> playAliases;
         // NOSL samples can reach the same action prefix with different public
         // observations. Keep one child node per public-state key instead of
         // merging all hidden-world outcomes into a single node.
@@ -291,7 +292,7 @@ private:
     int simulationsCompleted_ = 0;
     std::uint64_t nextRequestId_ = 1;
     std::unordered_map<std::uint64_t, Pending> pending_;
-    std::vector<std::tuple<int, int, int, int, int, int, int>> stateKeyScratch_;
+    std::vector<std::tuple<int, int, int, int, int, int, int, int>> stateKeyScratch_;
     // Sessions are sequential; these buffers never outlive the owning tree.
     mutable std::vector<double> rawQScratch_;
     mutable std::vector<double> scaledQScratch_;
@@ -326,6 +327,7 @@ private:
                           const std::vector<Action> &actions,
                           const double *logits, std::size_t logitsSize);
     void applyRootDirichletNoise();
+    void mergeEquivalentPlays(Node &node, const BattleContext &state);
     static void expandUniform(Node &node, const BattleContext &state,
                               const std::vector<Action> &actions);
     static bool actionTargetsEnemy(const BattleContext &state,
@@ -384,6 +386,7 @@ public:
                                       int maxDecisions = 500,
                                       bool train = true);
 
+    static std::uint64_t stateKey(const BattleContext &bc);
     void clearTable();
     bool saveTable(const std::string &path) const;
     std::size_t policyStateCount() const { return policy_.size(); }
@@ -420,7 +423,6 @@ private:
     std::unordered_map<std::uint64_t, PolicyState> policy_;
     std::unordered_map<std::uint64_t, double> values_;
 
-    static std::uint64_t stateKey(const BattleContext &bc);
     static double hpValue(const BattleContext &bc);
     static std::vector<Action> legalActions(const BattleContext &bc);
 

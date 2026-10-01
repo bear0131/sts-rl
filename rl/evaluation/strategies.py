@@ -125,10 +125,31 @@ class PolicyStrategy:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('legacy policy cannot consume a joint-v2 combat environment')
             masks = masks[:, :self.model.action_space.n]
+        groups = [
+            r.env.equivalent_action_groups()
+            if (self.combat_action_contract in C.NEURAL_CONTRACTS
+                and r.info.get('phase') == 'combat')
+            else np.arange(masks.shape[1]) for r in requests
+        ]
+        grouped = any(np.any(g != np.arange(len(g))) for g in groups)
         with self.lock or nullcontext():
-            actions, _ = self.model.predict(observation_for_policy(self.model, observations),
-                                            action_masks=masks, deterministic=self.deterministic)
-        return [Decision(int(action), self.name) for action in np.asarray(actions).reshape(-1)]
+            if grouped:
+                self.model.policy.set_training_mode(False)
+                with torch.no_grad():
+                    tensor, _ = self.model.policy.obs_to_tensor(
+                        observation_for_policy(self.model, observations))
+                    distribution = self.model.policy.get_distribution(tensor, action_masks=masks)
+                    probabilities = distribution.distribution.probs
+                    mapping = torch.as_tensor(np.stack(groups), device=probabilities.device)
+                    mass = torch.zeros_like(probabilities).scatter_add_(1, mapping, probabilities)
+                    actions = (mass.argmax(dim=1) if self.deterministic else
+                               torch.multinomial(mass, 1).flatten()).cpu().numpy()
+            else:
+                actions, _ = self.model.predict(observation_for_policy(self.model, observations),
+                                                action_masks=masks, deterministic=self.deterministic)
+        return [Decision(int(action), self.name,
+                         {'action_selection': 'equivalent_play_mass_v1'} if grouped else {})
+                for action in np.asarray(actions).reshape(-1)]
 
 
 class NativeStrategy:

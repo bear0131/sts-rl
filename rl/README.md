@@ -18,6 +18,28 @@
 
 ## Entity combat 实验架构
 
+### 完整动作等价组 equivalent-plays-v1
+
+保持原198维autoregressive-v2（以及旧1392维joint-v2）权重和观测接口。
+普通出牌按卡牌ID、升级、specialData、基础/当前费用、freeToPlayOnce、retain及目标分组；
+Ritual Dagger/Genetic Algorithm的永久实例分开，药水、结束回合和选牌前缀不合并。
+环境与C++搜索使用同一个原生分组入口，以最早合法槽位为代表执行。
+PolicyStrategy（Eval/Watch）对组内概率求和后argmax或采样；底层SB3 predict仍为原始槽位接口，
+不能替代带真实环境状态的决策适配器。真实CommunicationMod尚缺完整实例字段，
+拒绝带此新合同的模型，避免静默采用不同动作语义；旧模型入口保持兼容。
+
+原生搜索每个节点只保留一条组边，合并先验、访问和Q，每组一次Gumbel。
+组边下相同公开后继共用子节点，忽略隐藏RNG、牌堆顺序和普通出牌时的手牌排列；
+自回归选牌进行中仍保留前缀和手牌位置，永久成长卡实例仍参与标识。
+不同可见随机结果仍为不同chance子节点；不跨祖先/不同动作序列共享节点，本阶段不是完整DAG。
+此合同是未来分布的抽象，不保证不同alias在同一固定RNG下产生相同轨迹。
+
+NOSL监督为 `-sum_G pi_G log(sum_{a in G} p_a)`，熵/KL/top1/合法动作数按组计算。
+198维目标中的alias质量如何分配不改变该损失。replay v4保存原始根分组，
+仅持久化60个出牌位置映射（每行120字节），取batch时还原；不从不完整旧观测猜分组。
+旧neural replay必须重新采集，legacy未合并动作可按identity迁移；保留旧checkpoint权重可加载预测。
+新训练模型记录nosl_action_group_contract，观测、HP outcome、PPO目标和模型形状未变。
+
 `--arch entity-combat` 使用 `policies/entity_combat.py`：卡牌ID与效果程序、
 实体Transformer（默认256宽/4层/8头）、带计数的牌堆query汇总、
 来源条件目标pointer及自回归多选。没有整局神经网络或历史记忆；

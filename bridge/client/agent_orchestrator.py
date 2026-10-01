@@ -129,6 +129,10 @@ def _load_model(path: str, device: str) -> MaskablePPO:
         raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
     log.info("loading checkpoint=%s device=%s", checkpoint, device)
     model = MaskablePPO.load(checkpoint, device=device)
+    if getattr(model, 'nosl_action_group_contract', None) == 'equivalent-plays-v1':
+        raise ValueError(
+            'equivalent-plays-v1 currently requires simulator-backed PolicyStrategy; '
+            'CommunicationMod lacks the per-instance fields needed for identical grouping')
     log.info(
         "loaded checkpoint; obs flags global_map=%s card_language=%s combat_language=%s "
         "deck_size=%s neow=%s event_option=%s",

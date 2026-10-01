@@ -67,7 +67,12 @@ inline void hashValue(std::uint64_t &hash, T value) {
     hashCombine(hash, static_cast<std::uint64_t>(value));
 }
 
-using CardSignature = std::tuple<int, int, int, int, int, int, int>;
+using CardSignature = std::tuple<int, int, int, int, int, int, int, int>;
+
+int persistentCardIdentity(const CardInstance &card) {
+    return card.id == CardId::RITUAL_DAGGER || card.id == CardId::GENETIC_ALGORITHM
+        ? card.uniqueId : -1;
+}
 
 template <typename Pile>
 void hashCardComposition(std::uint64_t &hash, const Pile &pile,
@@ -77,8 +82,8 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
     // relevant data in specialData, while Snecko/free-play/retain effects
     // are carried by the other per-instance fields.  Keep the collection
     // unordered for NOSL, but retain every field that can affect a future
-    // transition.  uniqueId is deliberately excluded: it is an opaque card
-    // identity and is not public information.
+    // transition.  uniqueId is excluded except for cards writing back to a permanent
+    // deck instance, where choosing a different copy has lasting effects.
     // CardManager uses std::vector unless the optional fixed-list build flag
     // is enabled, so a legal pile is not necessarily bounded by
     // MAX_GROUP_SIZE.  In particular, long runs and generated cards can make
@@ -94,12 +99,12 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
             static_cast<int>(card.costForTurn),
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0);
+            card.retain ? 1 : 0, persistentCardIdentity(card));
     }
     std::sort(cards.begin(), cards.end());
     hashValue(hash, cards.size());
     for (const auto &[cardId, specialData, cost, costForTurn, upgraded,
-                       freeToPlayOnce, retain] : cards) {
+                       freeToPlayOnce, retain, persistentId] : cards) {
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -107,11 +112,12 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
         hashValue(hash, upgraded);
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
+        hashValue(hash, persistentId);
     }
 }
 
 void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
-    using CardSignature = std::tuple<int, int, int, int, int, int, int, int>;
+    using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int>;
     std::array<CardSignature, CardManager::MAX_HAND_SIZE> cards{};
     std::size_t count = 0;
     for (int i = 0; i < bc.cards.cardsInHand; ++i) {
@@ -125,13 +131,13 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
             currentCost,
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0);
+            card.retain ? 1 : 0, persistentCardIdentity(card));
     }
     std::sort(cards.begin(), cards.begin() + count);
     hashValue(hash, count);
     for (std::size_t i = 0; i < count; ++i) {
         const auto &[cardId, specialData, cost, costForTurn, currentCost,
-                     upgraded, freeToPlayOnce, retain] = cards[i];
+                     upgraded, freeToPlayOnce, retain, persistentId] = cards[i];
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -140,6 +146,7 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
         hashValue(hash, upgraded);
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
+        hashValue(hash, persistentId);
     }
 }
 
@@ -168,8 +175,7 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, bc.postEnemyTurnBoundary ? 1 : 0);
     hashValue(hash, bc.miscBits.to_ulong());
     hashValue(hash, bc.loopCount);
-    hashValue(hash, bc.energyWasted);
-    hashValue(hash, bc.cardsDrawn);
+    // Historical scum-search scores are not part of NOSL HP futures.
     hashValue(hash, bc.haveUsedDiscoveryAction ? 1 : 0);
     hashValue(hash, bc.undefinedBehaviorEvoked ? 1 : 0);
 
@@ -364,6 +370,7 @@ void hashActionCard(std::uint64_t &hash, const CardInstance &card,
     hashValue(hash, card.upgraded ? 1 : 0);
     hashValue(hash, card.freeToPlayOnce ? 1 : 0);
     hashValue(hash, card.retain ? 1 : 0);
+    hashValue(hash, persistentCardIdentity(card));
     if (includeCost) {
         hashValue(hash, card.freeToPlayOnce ? 0 : card.costForTurn);
     }
@@ -1337,6 +1344,35 @@ void NoslNeuralSearchSession::expandUniform(
     }
 }
 
+void NoslNeuralSearchSession::mergeEquivalentPlays(
+    Node &node, const BattleContext &state) {
+    // Only complete-action policies have one logit for each source/target pair.
+    if (!config_.jointPolicy) return;
+    const auto slots = Action::equivalentPlaySlots(state);
+    std::array<int, 60> first;
+    first.fill(-1);
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < node.edges.size(); ++i) {
+        auto &edge = node.edges[i];
+        if (edge.action.getActionType() == ActionType::CARD) {
+            const int key = slots[edge.action.getSourceIdx()] * 6 + edge.action.getTargetIdx();
+            if (first[key] >= 0) {
+                auto &group = node.edges[first[key]];
+                if (group.playAliases.empty()) group.playAliases.push_back(group.action);
+                group.playAliases.push_back(edge.action);
+                group.prior += edge.prior;
+                continue;
+            }
+            first[key] = static_cast<int>(count);
+        }
+        if (count != i) node.edges[count] = std::move(edge);
+        ++count;
+    }
+    node.edges.erase(node.edges.begin() + count, node.edges.end());
+    for (auto &edge : node.edges)
+        edge.logPrior = std::log(std::max(edge.prior, 1.0e-12));
+}
+
 void NoslNeuralSearchSession::expandWithLogits(
     Node &node, const BattleContext &state,
     const std::vector<Action> &actions,
@@ -1354,6 +1390,7 @@ void NoslNeuralSearchSession::expandWithLogits(
     }
     if (logits == nullptr || logitsSize == 0) {
         expandUniform(node, state, actions);
+        mergeEquivalentPlays(node, state);
         return;
     }
 
@@ -1380,6 +1417,7 @@ void NoslNeuralSearchSession::expandWithLogits(
             total += weight;
         }
         for (auto &edge : node.edges) edge.prior /= total;
+        mergeEquivalentPlays(node, state);
         return;
     }
 
@@ -2116,7 +2154,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             }
 
             auto childKey = publicStateKey(state, &stateKeyScratch_);
-            if (config_.autoregressivePolicy) {
+            if (config_.autoregressivePolicy && state.inputState == InputState::CARD_SELECT) {
                 hashValue(childKey, pending.selectionPrefix);
                 // Prefix IDs refer to visible hand slots, so keep their order.
                 for (int i = 0; i < state.cards.cardsInHand; ++i)
@@ -2354,7 +2392,15 @@ NoslCombatDecision NoslNeuralSearchSession::result() const {
         const std::vector<double> target = rootPolicyTarget();
         result.rootPolicy.reserve(root_.edges.size());
         for (std::size_t i = 0; i < root_.edges.size(); ++i) {
-            result.rootPolicy.emplace_back(root_.edges[i].action.bits, target[i]);
+            const auto &edge = root_.edges[i];
+            if (edge.playAliases.empty()) {
+                result.rootPolicy.emplace_back(edge.action.bits, target[i]);
+            } else {
+                // Keep the existing checkpoint output width. Supervise the
+                // whole group's mass without privileging its execution slot.
+                for (const auto &alias : edge.playAliases)
+                    result.rootPolicy.emplace_back(alias.bits, target[i] / edge.playAliases.size());
+            }
         }
     } else {
         for (int i = 1; i < static_cast<int>(root_.edges.size()); ++i) {
@@ -2370,6 +2416,15 @@ NoslCombatDecision NoslNeuralSearchSession::result() const {
         }
     }
     result.action = root_.edges[best].action;
+    if (config_.jointPolicy && result.rootPolicy.empty()) {
+        for (const auto &edge : root_.edges) {
+            const double mass = root_.visits > 0
+                ? static_cast<double>(edge.visits) / root_.visits : edge.prior;
+            if (edge.playAliases.empty()) result.rootPolicy.emplace_back(edge.action.bits, mass);
+            else for (const auto &alias : edge.playAliases)
+                result.rootPolicy.emplace_back(alias.bits, mass / edge.playAliases.size());
+        }
+    }
     if (root_.edges[best].targeted) {
         result.selectedActionTargeted = true;
         result.selectedTarget = result.action.getTargetIdx();

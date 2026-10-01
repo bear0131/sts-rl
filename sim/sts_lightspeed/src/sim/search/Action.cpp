@@ -8,6 +8,30 @@
 
 using namespace sts;
 
+std::array<int, 10> search::Action::equivalentPlaySlots(const BattleContext &bc) {
+    std::array<int, 10> result{};
+    for (int i = 0; i < 10; ++i) {
+        result[i] = i;
+        if (i >= bc.cards.cardsInHand || bc.inputState != InputState::PLAYER_NORMAL)
+            continue;
+        const auto &a = bc.cards.hand[i];
+        // These cards write back to a particular permanent deck instance.
+        if (a.id == CardId::RITUAL_DAGGER || a.id == CardId::GENETIC_ALGORITHM)
+            continue;
+        for (int j = 0; j < i; ++j) {
+            const auto &b = bc.cards.hand[j];
+            if (a.id == b.id && a.upgraded == b.upgraded &&
+                a.specialData == b.specialData && a.cost == b.cost &&
+                a.costForTurn == b.costForTurn &&
+                a.freeToPlayOnce == b.freeToPlayOnce && a.retain == b.retain) {
+                result[i] = result[j];
+                break;
+            }
+        }
+    }
+    return result;
+}
+
 search::Action::Action(std::uint32_t bits) : bits(bits) {}
 search::Action::Action(search::ActionType actionType) : bits(static_cast<int>(actionType) << 29) {}
 search::Action::Action(search::ActionType actionType, int idx1) : bits((static_cast<int>(actionType) << 29) | (idx1 & 0xFFFF)) {}

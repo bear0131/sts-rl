@@ -73,6 +73,8 @@ class NOSLISAZReplayBuffer:
         self.policy_contract = ({C.JOINT_SIZE: C.JOINT_CONTRACT, C.AUTOREGRESSIVE_SIZE: C.AUTOREGRESSIVE_CONTRACT}.get(action_dim, 'legacy-thin'))
         if self.policy_contract in C.NEURAL_CONTRACTS and C.policy_contract(observation_space) != self.policy_contract:
             raise ValueError('replay action/observation contracts differ')
+        self.group_offset = C.policy_offset(self.policy_contract) + 1 if self.policy_contract in C.NEURAL_CONTRACTS else 0
+        self.group_width = 60 if self.policy_contract in C.NEURAL_CONTRACTS else self.action_dim
         self.joint_rows: list | None = None
         # Rebuilt after collection append; never persisted in checkpoints.
         self._joint_dense_masks: np.ndarray | None = None
@@ -90,6 +92,7 @@ class NOSLISAZReplayBuffer:
         self.observations: dict[str, np.ndarray] | None = None
         self.action_masks: np.ndarray | None = None
         self.policy_targets: np.ndarray | None = None
+        self.action_groups: np.ndarray | None = None
         self.policy_weights: np.ndarray | None = None
         self.value_targets: np.ndarray | None = None
         self.sample_ids: np.ndarray | None = None
@@ -109,6 +112,7 @@ class NOSLISAZReplayBuffer:
                 self.policy_targets,
                 self._joint_dense_masks,
                 self._joint_dense_targets,
+                self.action_groups,
                 self.policy_weights,
                 self.value_targets,
                 self.sample_ids,
@@ -121,7 +125,7 @@ class NOSLISAZReplayBuffer:
 
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
-        names = ('action_masks', 'policy_targets', 'policy_weights', 'value_targets', 'sample_ids')
+        names = ('action_masks', 'policy_targets', 'action_groups', 'policy_weights', 'value_targets', 'sample_ids')
         if self.supervision_contract != 'scalar-hp-v1':
             names += ('combat_targets',)
         joint = None
@@ -130,7 +134,8 @@ class NOSLISAZReplayBuffer:
             joint = dict(offsets=np.cumsum([0] + [len(row[0]) for row in rows], dtype=np.int64),
                          ids=np.concatenate([row[0] for row in rows]) if rows else np.empty(0, np.uint16),
                          probabilities=np.concatenate([row[1] for row in rows]) if rows else np.empty(0, np.float32))
-        return dict(version=2 if self.supervision_contract == 'scalar-hp-v1' else 3,
+        from rl.algorithms.action_groups import CONTRACT
+        return dict(version=4, action_group_contract=CONTRACT,
             supervision_contract=self.supervision_contract,
             value_contract=self.value_contract, policy_contract=self.policy_contract,
             joint=joint,
@@ -142,6 +147,14 @@ class NOSLISAZReplayBuffer:
             arrays={k:None if getattr(self,k) is None else getattr(self,k)[:self.size].copy() for k in names})
 
     def load_state_dict(self, state):
+        from rl.algorithms.action_groups import CONTRACT, validate_groups
+        if state.get('version') in (2,3) and self.policy_contract == 'legacy-thin':
+            # Legacy actions never merged; their historical grouping is known.
+            state = dict(state, version=4, action_group_contract=CONTRACT,
+                arrays=dict(state['arrays'], action_groups=None if state['observations'] is None else
+                    np.tile(np.arange(self.action_dim,dtype=np.int16),(state['size'],1))))
+        if state.get("action_group_contract") != CONTRACT:
+            raise ValueError("replay action group contract mismatch; collect fresh grouped targets")
         if state.get('supervision_contract','scalar-hp-v1') != self.supervision_contract:
             raise ValueError('replay supervision contract mismatch; collect fresh outcome labels')
         if state.get('policy_contract', 'legacy-thin') != self.policy_contract:
@@ -150,7 +163,7 @@ class NOSLISAZReplayBuffer:
             raise ValueError(
                 'replay value contract mismatch; migrate weights and collect '
                 'new replay instead of mixing pre/post-combat HP targets')
-        if (state['version'] != (2 if self.supervision_contract == 'scalar-hp-v1' else 3) or state['capacity'] != self.capacity
+        if (state['version'] != 4 or state['capacity'] != self.capacity
                 or state['action_dim'] != self.action_dim
                 or tuple(state['observation_keys']) != self.observation_keys):
             raise ValueError('replay checkpoint geometry does not match runtime')
@@ -165,6 +178,8 @@ class NOSLISAZReplayBuffer:
                 if state['arrays'].get('combat_targets') is None:
                     raise ValueError('missing combat distribution targets')
                 validate_targets(state['arrays']['combat_targets'],state['arrays']['value_targets'], action_dim=self.action_dim)
+            if state['arrays'].get('action_groups') is None:
+                raise ValueError('missing action group metadata')
             self._allocate()
             for key, target in self.observations.items():
                 source = state['observations'][key]
@@ -202,6 +217,12 @@ class NOSLISAZReplayBuffer:
                     if len(np.unique(row_ids)) != len(row_ids):
                         raise ValueError('duplicate complete-action id in replay')
                     self.joint_rows[row] = (row_ids.copy(), probs[lo:hi].copy())
+                masks = np.zeros((size,self.action_dim),dtype=bool)
+                for row,(ids,_) in enumerate(self.joint_rows[:size]):
+                    masks[row,ids] = True
+            else:
+                masks = self.action_masks[:size]
+            validate_groups(self._expand_groups(self.action_groups[:size]), masks)
         elif size:
             raise ValueError('nonempty replay checkpoint has no observations')
         self.size, self.position, self.total_added = size, position, int(state['total_added'])
@@ -223,6 +244,7 @@ class NOSLISAZReplayBuffer:
         else:
             self.action_masks = np.empty((self.capacity, self.action_dim), dtype=bool)
             self.policy_targets = np.empty((self.capacity, self.action_dim), dtype=np.float16)
+        self.action_groups = np.empty((self.capacity,self.group_width),dtype=np.int16)
         self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
         if self.supervision_contract != 'scalar-hp-v1':
@@ -244,6 +266,7 @@ class NOSLISAZReplayBuffer:
         else:
             self.action_masks[destination] = batch["action_masks"][source]
             self.policy_targets[destination] = batch["policy_targets"][source]
+        self.action_groups[destination] = batch["action_groups"][source, self.group_offset:self.group_offset+self.group_width]
         self.policy_weights[destination] = batch["policy_weights"][source]
         self.value_targets[destination] = batch["value_targets"][source]
         if self.combat_targets is not None:
@@ -323,6 +346,12 @@ class NOSLISAZReplayBuffer:
                 if storage_dtype == np.dtype(np.float16) and np.any(np.abs(value) > np.finfo(np.float16).max):
                     raise ValueError(f"replay observation {key!r} exceeds float16 storage range")
 
+        from rl.algorithms.action_groups import sample_groups
+        action_groups = sample_groups(labelled, self.action_dim)
+        outside = action_groups.copy()
+        outside[:,self.group_offset:self.group_offset+self.group_width] = np.arange(self.group_offset,self.group_offset+self.group_width)
+        if np.any(outside != np.arange(self.action_dim)):
+            raise ValueError('equivalent-plays-v1 only merges complete card plays')
         start_id = self.total_added
         self.total_added += count
         sample_ids = np.arange(start_id, start_id + count, dtype=np.uint64)
@@ -330,6 +359,7 @@ class NOSLISAZReplayBuffer:
             offset = count - self.capacity
             observations = {key: value[offset:] for key, value in observations.items()}
             action_masks = action_masks[offset:]
+            action_groups = action_groups[offset:]
             policy_targets = policy_targets[offset:]
             policy_weights = policy_weights[offset:]
             value_targets = value_targets[offset:]
@@ -342,6 +372,7 @@ class NOSLISAZReplayBuffer:
         batch = {
             "observations": observations,
             "action_masks": action_masks,
+            "action_groups": action_groups,
             "policy_targets": policy_targets,
             "policy_weights": policy_weights,
             "value_targets": value_targets,
@@ -458,7 +489,7 @@ class NOSLISAZReplayBuffer:
             self._joint_dense_targets = targets
         fields = list(self.observations.items()) + [
             (name, getattr(self, name)) for name in (
-                "action_masks", "policy_targets", "policy_weights", "value_targets", "sample_ids", "combat_targets"
+                "action_masks", "action_groups", "policy_targets", "policy_weights", "value_targets", "sample_ids", "combat_targets"
             ) if getattr(self, name) is not None
         ]
         if self.joint_rows is not None:
@@ -481,7 +512,13 @@ class NOSLISAZReplayBuffer:
         if self.joint_rows is not None:
             if 'combat_legal' in self.observation_keys:
                 batch['observations']['combat_legal'] = batch['action_masks'][:, C.policy_offset(self.policy_contract):]
+        batch['action_groups'] = self._expand_groups(batch['action_groups'])
         return batch
+
+    def _expand_groups(self, compact):
+        groups = np.tile(np.arange(self.action_dim,dtype=np.int16),(len(compact),1))
+        groups[:,self.group_offset:self.group_offset+self.group_width] = compact
+        return groups
 
     def estimated_capacity_bytes(self) -> int:
         obs_bytes = sum(
@@ -493,7 +530,7 @@ class NOSLISAZReplayBuffer:
         policy_bytes = self.action_dim * (6 if self.policy_contract in C.NEURAL_CONTRACTS else 3)
         per_sample = (
             obs_bytes
-            + policy_bytes
+            + policy_bytes + 2*self.group_width
             + np.dtype(np.float16).itemsize
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize

@@ -163,7 +163,7 @@ def _strict_paper_search_settings_match(
             float(prior_temperature), STRICT_SEARCH_DEFAULTS["prior_temperature"]
         )
         and int(gumbel_candidates) == STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
-        and np.isclose(float(gumbel_scale), STRICT_SEARCH_DEFAULTS["gumbel_scale"])
+        and np.isfinite(float(gumbel_scale)) and float(gumbel_scale) >= 0
         and np.isclose(
             float(gumbel_max_visit_init),
             STRICT_SEARCH_DEFAULTS["gumbel_max_visit_init"],
@@ -476,7 +476,6 @@ def _evaluation_search_config(
         selected_leaf_batch_size = STRICT_SEARCH_DEFAULTS["leaf_batch_size"]
         selected_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
         selected_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
-        selected_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
         selected_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
             "gumbel_max_visit_init"
         ]
@@ -781,7 +780,6 @@ class WatchSession:
         self.mcts_leaf_batch_size = STRICT_SEARCH_DEFAULTS["leaf_batch_size"]
         self.mcts_prior_temperature = STRICT_SEARCH_DEFAULTS["prior_temperature"]
         self.mcts_gumbel_candidates = STRICT_SEARCH_DEFAULTS["gumbel_candidates"]
-        self.mcts_gumbel_scale = STRICT_SEARCH_DEFAULTS["gumbel_scale"]
         self.mcts_gumbel_max_visit_init = STRICT_SEARCH_DEFAULTS[
             "gumbel_max_visit_init"
         ]

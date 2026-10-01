@@ -98,7 +98,7 @@ def test_distribution_replay_wrap_restore_and_reject_scalar_labels():
     state=replay.state_dict()
     restored=make_buffer(supervision_contract=CONTRACT)
     restored.load_state_dict(state)
-    assert state['version']==3
+    assert state['version']==4
     batch=restored.get_batch(np.array([0,1,2,0]),workers=2)
     for index, expected in enumerate((3,4,2,3)):
         np.testing.assert_array_equal(batch['combat_targets'][index],samples[expected]['combat_targets'])
