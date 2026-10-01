@@ -43,11 +43,17 @@ class ResourceMonitor:
                "cpu_seconds_delta": cpu_delta, "tree_rss_bytes": rss,
                "system_available_bytes": psutil.virtual_memory().available,
                "cgroup_memory_bytes": self._cgroup_number('memory.current'),
-               "gpu_devices": None}
+               "gpu_devices": None, "power_plugged": None}
+        try:
+            battery = getattr(psutil, 'sensors_battery', lambda: None)()
+            if battery is not None:
+                row['power_plugged'] = battery.power_plugged
+        except (OSError, NotImplementedError):
+            self.errors.add('battery power source unavailable')
         if self._smi:
             try:
                 result = subprocess.run(
-                    [self._smi, "--query-gpu=index,utilization.gpu,utilization.memory,memory.used,memory.total",
+                    [self._smi, "--query-gpu=index,utilization.gpu,utilization.memory,memory.used,memory.total,clocks.current.graphics,clocks.current.memory,power.draw,temperature.gpu,pstate",
                      "--format=csv,noheader,nounits"],
                     capture_output=True, text=True, timeout=3, check=True,
                 )
@@ -56,14 +62,19 @@ class ResourceMonitor:
                     cells = line.split(",")
                     def number(i):
                         try:
-                            return float(cells[i].strip())
-                        except ValueError:
+                            value = float(cells[i].strip())
+                            return value if math.isfinite(value) else None
+                        except (ValueError, IndexError):
                             return None
-                    devices.append(dict(zip(
+                    device = dict(zip(
                         ("index", "gpu_util_percent", "memory_controller_util_percent",
-                         "vram_used_mib", "vram_total_mib"),
-                        [number(i) for i in range(5)],
-                    )))
+                         "vram_used_mib", "vram_total_mib", "graphics_clock_mhz",
+                         "memory_clock_mhz", "power_watts", "temperature_c"),
+                        [number(i) for i in range(9)],
+                    ))
+                    state = cells[9].strip() if len(cells)>9 else ''
+                    device['performance_state'] = state if state.startswith('P') and state[1:].isdigit() else None
+                    devices.append(device)
                 row["gpu_devices"] = devices
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 self.errors.add(type(exc).__name__ + ": device telemetry unavailable")
@@ -100,9 +111,17 @@ class ResourceMonitor:
         for index,rows in devices.items():
             utilization = [row['gpu_util_percent'] for row in rows if row['gpu_util_percent'] is not None]
             memory = [row['vram_used_mib'] for row in rows if row['vram_used_mib'] is not None]
-            gpu_summary.append(dict(index=index,
+            summary = dict(index=index,
                 gpu_util_percent_mean=sum(utilization)/len(utilization) if utilization else None,
-                vram_peak_sampled_mib=max(memory) if memory else None))
+                vram_peak_sampled_mib=max(memory) if memory else None)
+            for key in ('graphics_clock_mhz', 'memory_clock_mhz', 'power_watts', 'temperature_c'):
+                values = [row[key] for row in rows if row[key] is not None]
+                summary[key+'_mean'] = sum(values)/len(values) if values else None
+                summary[key+'_min'] = min(values) if values else None
+                summary[key+'_max'] = max(values) if values else None
+            summary['performance_states_observed'] = sorted({row['performance_state'] for row in rows
+                if row['performance_state'] is not None}) or None
+            gpu_summary.append(summary)
         cgroup_memory = [s['cgroup_memory_bytes'] for s in self.samples if s['cgroup_memory_bytes'] is not None]
         try:
             quota,period=(Path('/sys/fs/cgroup')/'cpu.max').read_text().split()
@@ -119,6 +138,8 @@ class ResourceMonitor:
             "cgroup_memory_limit_bytes": self._cgroup_number('memory.max'),
             "cgroup_cpu_quota_cores": cpu_quota,
             "gpu_devices": gpu_summary or None,
+            "power_plugged_observed": sorted({s['power_plugged'] for s in self.samples
+                                              if s['power_plugged'] is not None}) or None,
             "errors": sorted(self.errors),
             "notes": [
                 "100% CPU means one logical core; short-lived children can be undersampled.",

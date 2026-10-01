@@ -40,6 +40,9 @@ kernel 时间；graph 的 `replay_ms` 是按 `--graph-profile-interval` 采样�
 `rollout_resources` 包含 CPU（100%=一核）、进程树 RSS、容器内存/CPU 配额、
 GPU util 与设备显存峰值。RSS 会重复计算共享页，设备采样可能包含其他进程；
 缺失指标是 null。关闭采样用0；采样器只覆盖 collection，不混入 backward。
+采样同时记录可用的GPU核心/显存时钟、功耗、温度、P-state及笔记本是否接电；
+比较前核对供电和时钟，`power_plugged_observed`出现两个值表示采样期间供电改变，
+桌面机或无电池传感器为null。不能把跨供电条件的耗时差归为代码收益。
 
 `--workload leaves --leaf-input FAILURE.npz --checkpoint MODEL` 可直接重放保存的
 叶输入；与自动进战斗 fixture 共用后续计时/后端，不需要另写临时推理程序。
