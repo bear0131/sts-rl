@@ -218,6 +218,121 @@ def _nosl_card_stats():
     return _NOSL_CARD_STATS
 
 
+def decode_nosl_observation_batch(response, global_fields):
+    """Decode numeric leaves together; global fields may vary per root/row."""
+    lut = _nosl_compact_lut()
+    if lut is None:
+        return None
+    categorical = np.asarray(response.get("categorical"), dtype=np.int32)
+    scalars = np.asarray(response.get("scalars"), dtype=np.float32)
+    if categorical.ndim != 2 or scalars.ndim != 2:
+        return None
+    n = int(categorical.shape[0])
+    layout = lut["layout"]
+    ps = int(layout["player_status_count"])
+    ms = int(layout["monster_status_count"])
+    card_count = int(layout["card_count"])
+    expected_cat = 10 + 5 + 5 + 5 + 5 + 1
+    expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4
+    if (categorical.shape[1] < expected_cat or
+            scalars.shape[1] < expected_scalar):
+        return None
+
+    empty = _nosl_compact_empty()
+    def zeros(key):
+        shape = empty[key].shape
+        dtype = empty[key].dtype
+        return np.zeros((n,) + shape, dtype=dtype)
+
+    out = {key: zeros(key) for key in empty}
+    for key, value in global_fields.items():
+        out[key][:] = value
+
+    c = categorical
+    card_lut = lut["card"]
+    monster_lut = lut["monster"]
+    potion_lut = lut["potion"]
+    out["hand_ids"] = np.take(card_lut, np.clip(c[:, 0:10], 0, len(card_lut) - 1))
+    out["monster_id"] = np.take(monster_lut, np.clip(c[:, 10:15], 0, len(monster_lut) - 1))
+    # Move enum order is append-only and is the source of MOVE_VOCAB.
+    out["monster_move"] = np.clip(c[:, 15:20], 0, encode.V.MOVE_VOCAB_CAPACITY - 1)
+    out["monster_intent_cat"] = np.clip(c[:, 20:25], 0, len(encode.V.INTENT_CATEGORY) - 1)
+    out["potions"] = np.take(potion_lut, np.clip(c[:, 25:30], 0, len(potion_lut) - 1))
+    out["select_context"][:, 0] = np.clip(c[:, 30], 0, encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
+
+    f = scalars
+    hp, max_hp = f[:, 0], f[:, 1]
+    out["player_scalars"][:, :] = np.stack((
+        np.minimum(hp, encode.HP_SCALE) / encode.HP_SCALE,
+        np.minimum(max_hp, encode.HP_SCALE) / encode.HP_SCALE,
+        f[:, 2] / encode.BLOCK_SCALE,
+        f[:, 3] / encode.ENERGY_SCALE,
+        (f[:, 4] + 1.0) / encode.TURN_SCALE,
+        np.divide(hp, max_hp, out=np.zeros_like(hp), where=max_hp != 0),
+    ), axis=1)
+    player_status = f[:, 6:6 + ps]
+    native, target = lut["player_status_columns"]
+    out["player_buffs"][:, target] = player_status[:, native] / encode.BUFF_SCALE
+    counter_start = 6 + ps
+    counters = f[:, counter_start:counter_start + encode.COMBAT_COUNTERS]
+    out["combat_counters"][:] = counters / encode.COUNTER_SCALE
+    binary = lut["binary_counters"]
+    out["combat_counters"][:, binary] = counters[:, binary] != 0
+    boundary = counter_start + encode.COMBAT_COUNTERS
+    out["post_enemy_turn_boundary"][:, 0] = f[:, boundary]
+
+    monster_start = boundary + 1
+    monster_raw = f[:, monster_start:monster_start + 5 * 6].reshape(n, 5, 6)
+    out["monster_scalars"][:, :, 0] = monster_raw[:, :, 0]
+    out["monster_scalars"][:, :, 1] = np.minimum(monster_raw[:, :, 1], encode.HP_SCALE) / encode.HP_SCALE
+    out["monster_scalars"][:, :, 2] = np.divide(
+        monster_raw[:, :, 1], monster_raw[:, :, 2],
+        out=np.zeros_like(monster_raw[:, :, 1]), where=monster_raw[:, :, 2] != 0)
+    out["monster_scalars"][:, :, 3] = monster_raw[:, :, 3] / encode.BLOCK_SCALE
+    out["monster_scalars"][:, :, 4] = monster_raw[:, :, 4] / encode.DMG_SCALE
+    out["monster_scalars"][:, :, 5] = monster_raw[:, :, 5] / encode.HITS_SCALE
+    status_start = monster_start + 5 * 6
+    monster_status = f[:, status_start:status_start + 5 * ms].reshape(n, 5, ms)
+    native, target = lut["monster_status_columns"]
+    out["monster_buffs"][:, :, target] = monster_status[:, :, native] / encode.BUFF_SCALE
+    out["monster_buffs"] *= (monster_raw[:, :, 0] > 0.0)[:, :, None]
+
+    hand_start = status_start + 5 * ms
+    hand_raw = f[:, hand_start:hand_start + 20].reshape(n, 10, 2)
+    out["hand_upgrades"][:, :] = hand_raw[:, :, 0] / encode.UPGRADE_SCALE
+    out["hand_costs"][:, :] = hand_raw[:, :, 1] / encode.ENERGY_SCALE
+    # Printed damage/block are deterministic card metadata.  Gather both
+    # fields from a cached LUT in one vectorized operation; this removes
+    # ten Python ``card_numbers`` calls per leaf.
+    stats = _nosl_card_stats()
+    card_indices = np.asarray(out["hand_ids"], dtype=np.int64)
+    upgrade_indices = np.clip(
+        np.rint(hand_raw[:, :, 0]).astype(np.int64),
+        0,
+        stats["damage"].shape[1] - 1,
+    )
+    out["hand_damage"][:, :] = (
+        stats["damage"][card_indices, upgrade_indices]
+        / encode.DMG_SCALE
+    )
+    out["hand_block"][:, :] = (
+        stats["block"][card_indices, upgrade_indices]
+        / encode.BLOCK_SCALE
+    )
+    pile_start = hand_start + 20
+    out["draw_counts"] = f[:, pile_start:pile_start + card_count]
+    out["discard_counts"] = f[:, pile_start + card_count:pile_start + 2 * card_count]
+    out["exhaust_counts"] = f[:, pile_start + 2 * card_count:pile_start + 3 * card_count]
+    select_start = pile_start + 3 * card_count
+    out["pick_remaining"][:, 0] = f[:, select_start] / encode.PICK_SCALE
+    out["can_pick_zero"][:, 0] = f[:, select_start + 1]
+    out["can_pick_any"][:, 0] = f[:, select_start + 2]
+    # C++ stores the multi-select marker; it is represented by the hand
+    # mask only when the thin layer has a pending selection, so no extra
+    # model field is needed here.
+    return out
+
+
 class SlayTheSpireEnv(gym.Env):
     """Thin gym.Env over a thick whole-run backend.
 
@@ -1179,46 +1294,12 @@ class SlayTheSpireEnv(gym.Env):
             interactive_reasoning=self._interactive_reasoning,
         )
 
-    def _native_packed_observation_batch(self, response):
-        """Decode the fixed-width native leaf transport into model tensors.
-
-        This path deliberately avoids constructing a canonical dict per leaf.
-        It is restricted to the language-free combat specialist, whose fields
-        are all numeric and whose global/relic metadata is invariant within a
-        root search. Older extensions or language-enabled checkpoints continue
-        through ``_native_leaf_observation`` unchanged.
-        """
-        lut = _nosl_compact_lut()
-        if lut is None:
-            return None
-        categorical = np.asarray(response.get("categorical"), dtype=np.int32)
-        scalars = np.asarray(response.get("scalars"), dtype=np.float32)
-        if categorical.ndim != 2 or scalars.ndim != 2:
-            return None
-        n = int(categorical.shape[0])
-        layout = lut["layout"]
-        ps = int(layout["player_status_count"])
-        ms = int(layout["monster_status_count"])
-        card_count = int(layout["card_count"])
-        expected_cat = 10 + 5 + 5 + 5 + 5 + 1
-        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4
-        if (categorical.shape[1] < expected_cat or
-                scalars.shape[1] < expected_scalar):
-            return None
-
-        empty = _nosl_compact_empty()
-        def zeros(key):
-            shape = empty[key].shape
-            dtype = empty[key].dtype
-            return np.zeros((n,) + shape, dtype=dtype)
-
-        # A single root's persistent metadata can be copied once for the
-        # complete batch; branch-local HP, potions, and combat fields follow.
-        out = {key: zeros(key) for key in empty}
+    def _native_packed_global_fields(self):
+        """Cache the numeric root metadata shared by all its leaf requests."""
         global_state = self._nosl_cpp_global_template
         cached = self._nosl_cpp_encoded_global_template
         if global_state is None or cached is None or cached[0] is not global_state:
-            template = {key: value.copy() for key, value in empty.items()}
+            template = {key: value.copy() for key, value in _nosl_compact_empty().items()}
             encode._encode_combat_global(template, {
                 "phase": "combat",
                 "arg_step": "root",
@@ -1233,92 +1314,11 @@ class SlayTheSpireEnv(gym.Env):
             # without an active root always read the current live metadata.
             if global_state is not None:
                 self._nosl_cpp_encoded_global_template = cached
-        for key, value in cached[1].items():
-            out[key][:] = value
+        return cached[1]
 
-        c = categorical
-        card_lut = lut["card"]
-        monster_lut = lut["monster"]
-        potion_lut = lut["potion"]
-        out["hand_ids"] = np.take(card_lut, np.clip(c[:, 0:10], 0, len(card_lut) - 1))
-        out["monster_id"] = np.take(monster_lut, np.clip(c[:, 10:15], 0, len(monster_lut) - 1))
-        # Move enum order is append-only and is the source of MOVE_VOCAB.
-        out["monster_move"] = np.clip(c[:, 15:20], 0, encode.V.MOVE_VOCAB_CAPACITY - 1)
-        out["monster_intent_cat"] = np.clip(c[:, 20:25], 0, len(encode.V.INTENT_CATEGORY) - 1)
-        out["potions"] = np.take(potion_lut, np.clip(c[:, 25:30], 0, len(potion_lut) - 1))
-        out["select_context"][:, 0] = np.clip(c[:, 30], 0, encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
-
-        f = scalars
-        hp, max_hp = f[:, 0], f[:, 1]
-        out["player_scalars"][:, :] = np.stack((
-            np.minimum(hp, encode.HP_SCALE) / encode.HP_SCALE,
-            np.minimum(max_hp, encode.HP_SCALE) / encode.HP_SCALE,
-            f[:, 2] / encode.BLOCK_SCALE,
-            f[:, 3] / encode.ENERGY_SCALE,
-            (f[:, 4] + 1.0) / encode.TURN_SCALE,
-            np.divide(hp, max_hp, out=np.zeros_like(hp), where=max_hp != 0),
-        ), axis=1)
-        player_status = f[:, 6:6 + ps]
-        native, target = lut["player_status_columns"]
-        out["player_buffs"][:, target] = player_status[:, native] / encode.BUFF_SCALE
-        counter_start = 6 + ps
-        counters = f[:, counter_start:counter_start + encode.COMBAT_COUNTERS]
-        out["combat_counters"][:] = counters / encode.COUNTER_SCALE
-        binary = lut["binary_counters"]
-        out["combat_counters"][:, binary] = counters[:, binary] != 0
-        boundary = counter_start + encode.COMBAT_COUNTERS
-        out["post_enemy_turn_boundary"][:, 0] = f[:, boundary]
-
-        monster_start = boundary + 1
-        monster_raw = f[:, monster_start:monster_start + 5 * 6].reshape(n, 5, 6)
-        out["monster_scalars"][:, :, 0] = monster_raw[:, :, 0]
-        out["monster_scalars"][:, :, 1] = np.minimum(monster_raw[:, :, 1], encode.HP_SCALE) / encode.HP_SCALE
-        out["monster_scalars"][:, :, 2] = np.divide(
-            monster_raw[:, :, 1], monster_raw[:, :, 2],
-            out=np.zeros_like(monster_raw[:, :, 1]), where=monster_raw[:, :, 2] != 0)
-        out["monster_scalars"][:, :, 3] = monster_raw[:, :, 3] / encode.BLOCK_SCALE
-        out["monster_scalars"][:, :, 4] = monster_raw[:, :, 4] / encode.DMG_SCALE
-        out["monster_scalars"][:, :, 5] = monster_raw[:, :, 5] / encode.HITS_SCALE
-        status_start = monster_start + 5 * 6
-        monster_status = f[:, status_start:status_start + 5 * ms].reshape(n, 5, ms)
-        native, target = lut["monster_status_columns"]
-        out["monster_buffs"][:, :, target] = monster_status[:, :, native] / encode.BUFF_SCALE
-        out["monster_buffs"] *= (monster_raw[:, :, 0] > 0.0)[:, :, None]
-
-        hand_start = status_start + 5 * ms
-        hand_raw = f[:, hand_start:hand_start + 20].reshape(n, 10, 2)
-        out["hand_upgrades"][:, :] = hand_raw[:, :, 0] / encode.UPGRADE_SCALE
-        out["hand_costs"][:, :] = hand_raw[:, :, 1] / encode.ENERGY_SCALE
-        # Printed damage/block are deterministic card metadata.  Gather both
-        # fields from a cached LUT in one vectorized operation; this removes
-        # ten Python ``card_numbers`` calls per leaf.
-        stats = _nosl_card_stats()
-        card_indices = np.asarray(out["hand_ids"], dtype=np.int64)
-        upgrade_indices = np.clip(
-            np.rint(hand_raw[:, :, 0]).astype(np.int64),
-            0,
-            stats["damage"].shape[1] - 1,
-        )
-        out["hand_damage"][:, :] = (
-            stats["damage"][card_indices, upgrade_indices]
-            / encode.DMG_SCALE
-        )
-        out["hand_block"][:, :] = (
-            stats["block"][card_indices, upgrade_indices]
-            / encode.BLOCK_SCALE
-        )
-        pile_start = hand_start + 20
-        out["draw_counts"] = f[:, pile_start:pile_start + card_count]
-        out["discard_counts"] = f[:, pile_start + card_count:pile_start + 2 * card_count]
-        out["exhaust_counts"] = f[:, pile_start + 2 * card_count:pile_start + 3 * card_count]
-        select_start = pile_start + 3 * card_count
-        out["pick_remaining"][:, 0] = f[:, select_start] / encode.PICK_SCALE
-        out["can_pick_zero"][:, 0] = f[:, select_start + 1]
-        out["can_pick_any"][:, 0] = f[:, select_start + 2]
-        # C++ stores the multi-select marker; it is represented by the hand
-        # mask only when the thin layer has a pending selection, so no extra
-        # model field is needed here.
-        return out
+    def _native_packed_observation_batch(self, response):
+        return decode_nosl_observation_batch(
+            response, self._native_packed_global_fields())
 
     def _adapt_native_neural_result(
         self,
@@ -1439,6 +1439,8 @@ class SlayTheSpireEnv(gym.Env):
         except (TypeError, ValueError, RuntimeError):
             return False
 
+    nosl_is_az_cpp_deferred_observation = True
+
     def nosl_is_az_cpp_begin(
         self,
         prior_logits,
@@ -1471,6 +1473,7 @@ class SlayTheSpireEnv(gym.Env):
         stochastic: bool = False,
         decision_index: int = 0,
         compact_observation: bool = False,
+        defer_observation: bool = False,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         if self.thick is None or self._phase() != "combat":
@@ -1599,7 +1602,8 @@ class SlayTheSpireEnv(gym.Env):
         # overlaid in _native_leaf_observation().
         self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
         self._nosl_cpp_encoded_global_template = None
-        return self.nosl_is_az_cpp_leaf_batch(leaf_batch_size)
+        return self.nosl_is_az_cpp_leaf_batch(
+            leaf_batch_size, defer_observation=defer_observation)
 
     def nosl_is_az_cpp_leaf_batch(
         self,
@@ -1608,6 +1612,7 @@ class SlayTheSpireEnv(gym.Env):
         stochastic: bool | None = None,
         state_nonce: int | None = None,
         decision_index: int | None = None,
+        defer_observation: bool = False,
     ):
         session = getattr(self, "_nosl_cpp_az_session", None)
         if session is None:
@@ -1642,9 +1647,18 @@ class SlayTheSpireEnv(gym.Env):
                     "observation_batch": None, "observation_buffer": None,
                     "observation_spec": [], "leaf_meta": [],
                 }
-            observation_batch = self._native_packed_observation_batch(
-                packed_response
-            )
+            if defer_observation:
+                # Keep native arrays until cross-tree inference batching. This
+                # removes a full NumPy decoder invocation for every single leaf.
+                n = len(packed_response["request_ids"])
+                observation_batch = {
+                    "_nosl_categorical": packed_response["categorical"],
+                    "_nosl_scalars": packed_response["scalars"],
+                    **{key: np.broadcast_to(value, (n, *value.shape))
+                       for key, value in self._native_packed_global_fields().items()},
+                }
+            else:
+                observation_batch = self._native_packed_observation_batch(packed_response)
             if observation_batch is not None:
                 leaf_meta = []
                 request_ids = packed_response.get("request_ids", ())
@@ -1814,6 +1828,14 @@ class SlayTheSpireEnv(gym.Env):
         # by the native backup path.
         array_fn = getattr(session, "backprop_batch_array", None)
         if array_fn is not None and updates:
+            if len(updates) == 1:
+                request_id, value, policy_logits = updates[0]
+                array_fn(
+                    np.asarray([request_id], dtype=np.uint64),
+                    np.asarray([value], dtype=np.float64),
+                    np.ascontiguousarray(policy_logits, dtype=np.float64).reshape(1, -1),
+                )
+                return {"done": bool(session.done())}
             request_ids = np.asarray(
                 [int(request_id) for request_id, _, _ in updates],
                 dtype=np.uint64,
@@ -1868,7 +1890,7 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_value_capture_pending = False
 
     def nosl_is_az_cpp_backprop_and_leaf_batch(
-        self, updates, max_leaves: int = 64
+        self, updates, max_leaves: int = 64, *, defer_observation: bool = False
     ):
         """Backpropagate one neural batch and return the next leaves.
 
@@ -1876,7 +1898,8 @@ class SlayTheSpireEnv(gym.Env):
         per leaf batch while preserving the two original public methods.
         """
         self.nosl_is_az_cpp_backprop_batch(updates)
-        return self.nosl_is_az_cpp_leaf_batch(max_leaves)
+        return self.nosl_is_az_cpp_leaf_batch(
+            max_leaves, defer_observation=defer_observation)
 
     def nosl_is_az_cpp_tree_snapshot(self, path=(), max_children: int = 64):
         """Return one lazily requested node of the completed native search tree."""

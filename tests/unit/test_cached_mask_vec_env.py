@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import multiprocessing as mp
 
 import gymnasium as gym
 import numpy as np
@@ -15,6 +16,8 @@ from rl.training.cached_mask_vec_env import (
     GroupedCachedMaskSubprocVecEnv,
     _pack_leaf_responses,
     _unpack_leaf_responses,
+    _SharedArrayBuffer,
+    _SharedArrayMessage,
 )
 from rl.training.distributed_sb3 import build_parser as build_distributed_parser
 
@@ -60,6 +63,39 @@ class _MaskInfoEnv(gym.Env):
 
 def _make_mask_info_env():
     return _MaskInfoEnv()
+
+
+def test_shared_search_arrays_keep_bits_and_own_received_storage():
+    buffer = _SharedArrayBuffer(mp.get_context('spawn'), 65536)
+    payload = {'ids': np.array([2**63 + 7], dtype=np.uint64),
+               'policy': np.arange(724, dtype=np.float64).reshape(4, 181),
+               'mask': np.array([True, False, True]),
+               'result': {'done': True, 'action': 5}}
+    wire = buffer.pack(payload)
+    assert isinstance(wire, _SharedArrayMessage)
+    assert len(pickle.dumps(wire)) < len(pickle.dumps(payload)) / 4
+    received = buffer.unpack(pickle.loads(pickle.dumps(wire)))
+    for key in ('ids', 'policy', 'mask'):
+        assert received[key].dtype == payload[key].dtype
+        np.testing.assert_array_equal(received[key], payload[key])
+    assert received['result'] == payload['result']
+    # Both caller mutation and slot reuse are independent of the old reply.
+    received['policy'][0, 0] = -9
+    assert payload['policy'][0, 0] == 0
+    buffer.pack({'next': np.zeros(1024)})
+    assert received['policy'][0, 0] == -9
+    assert received['ids'][0] == 2**63 + 7
+
+
+def test_shared_search_arrays_fall_back_without_truncation():
+    buffer = _SharedArrayBuffer(mp.get_context('spawn'), 128)
+    for payload in ({'data': np.arange(10000)}, {'data': np.arange(12)[::2]},
+                    {'data': np.array(['x', {'k': 1}], dtype=object)}, {'done': True}):
+        received = buffer.unpack(pickle.loads(pickle.dumps(buffer.pack(payload))))
+        if 'data' in payload:
+            np.testing.assert_array_equal(received['data'], payload['data'])
+        else:
+            assert received == payload
 
 
 def test_grouped_leaf_wire_roundtrip_preserves_rows_dtypes_and_terminals():

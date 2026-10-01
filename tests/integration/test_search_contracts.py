@@ -134,6 +134,37 @@ def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_
 
 
 @pytest.mark.native
+@pytest.mark.parametrize('mixed', [False, True])
+def test_deferred_leaf_decode_preserves_each_roots_metadata(combat_factory, mixed):
+    from rl.search.native import decode_leaves
+    eager, deferred = {}, {}
+    for index, (seed, relics, hp) in enumerate([
+        (41, ('Burning Blood',), 17), (52, ('Akabeko', 'Anchor'), 63),
+        (63, (), 39),
+    ]):
+        for responses, defer in ((eager, False), (deferred, not mixed or index != 1)):
+            env = combat_factory(['STRIKE_RED'] * 5, 'Two Louse', seed=seed, relics=relics)
+            env.thick.gc.gold = 70 + index * 131
+            env.thick.bc.apply_custom_state({'player': {'hp': hp}})
+            env._invalidate_backend_cache()
+            responses[7-index*2] = env.nosl_is_az_cpp_begin(
+                np.linspace(-1, 1, 181), state_nonce=seed+100, simulations=8,
+                paper_full_gumbel=True, root_search_mode=2, depth=0,
+                leaf_batch_size=1, compact_observation=True, defer_observation=defer)
+    records_a, observations_a = decode_leaves(eager)
+    records_b, observations_b = decode_leaves(deferred)
+    assert [i for i, _ in records_a] == [i for i, _ in records_b] == [3, 5, 7]
+    for (i, a), (j, b) in zip(records_a, records_b):
+        assert i == j and a['request_id'] == b['request_id']
+        assert a['needs_policy'] == b['needs_policy']
+        np.testing.assert_array_equal(a['action_mask'], b['action_mask'])
+    assert observations_a.keys() == observations_b.keys()
+    for key in observations_a:
+        assert observations_a[key].dtype == observations_b[key].dtype
+        np.testing.assert_array_equal(observations_a[key], observations_b[key], err_msg=key)
+
+
+@pytest.mark.native
 def test_packed_leaf_global_cache_is_root_scoped(combat_factory, monkeypatch):
     from env.core import encode
 

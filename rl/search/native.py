@@ -13,7 +13,7 @@ import numpy as np
 import torch as th
 from stable_baselines3.common.utils import obs_as_tensor
 
-from env.core.run_env import unpack_nosl_observation_buffer
+from env.core.run_env import unpack_nosl_observation_buffer, decode_nosl_observation_batch
 from rl.policies.model import observation_for_policy
 
 
@@ -336,6 +336,23 @@ def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nul
 
 def decode_leaves(responses):
     """Decode each response in stable worker/request order, including mixed transports."""
+    def is_deferred(response):
+        packed = unpack_nosl_observation_buffer(response) if isinstance(response, dict) else None
+        return packed is not None and '_nosl_categorical' in packed
+
+    deferred = {index for index, response in responses.items() if is_deferred(response)}
+    if deferred and len(deferred) != len(responses):
+        # Compatibility calls may mix eager/language leaves with deferred ones.
+        responses = dict(responses)
+        for index in deferred:
+            packed = unpack_nosl_observation_buffer(responses[index])
+            decoded = decode_nosl_observation_batch(
+                {'categorical': packed['_nosl_categorical'], 'scalars': packed['_nosl_scalars']},
+                {k: v for k, v in packed.items() if not k.startswith('_nosl_')})
+            if decoded is None:
+                raise ValueError('unsupported deferred native observation layout')
+            responses[index] = dict(responses[index], observation_batch=decoded)
+        deferred = set()
     records, spans = [], []
     validated_sources = set()
     keys = None
@@ -383,6 +400,12 @@ def decode_leaves(responses):
                         source[key][start:end] for source, start, end in spans
                     ], axis=0))
                     for key in keys}
+    if deferred:
+        observations = decode_nosl_observation_batch(
+            {'categorical': observations.pop('_nosl_categorical'),
+             'scalars': observations.pop('_nosl_scalars')}, observations)
+        if observations is None:
+            raise ValueError('unsupported deferred native observation layout')
     return records, observations
 
 
