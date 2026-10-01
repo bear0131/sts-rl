@@ -4,6 +4,8 @@
 
 参数名称和 tensor shape 是 checkpoint 契约。旧类模块路径由 rl/_compat 保留；不能靠改 key 名“整理”state_dict。mask/动作目标语义归 env 管，策略不自行压缩怪物槽。
 
+`precision.py::bf16_autocast` 是 PPO/NOSL 及 CUDA graph 的共同 BF16 入口：保留 BF16 输入/输出，禁止 CUDA GEMM 将中间归约降回 BF16。此项是进程级设置，进入 BF16 后不恢复，以使 backward 与并发推理采用同一精度策略；不修改用户选择的 FP32/TF32 精度。旧 checkpoint 参数/schema 可直接加载，但此前允许降精度归约的预测/梯度不保证逐位相同。该设置修正归约精度，不构成任意 batch 大小、动态 token 宽度或不同设备间逐位一致的承诺。
+
 `checkpoint.py` 是 SB3 `.zip` 的共享加载入口。策略 checkpoint 与 card encoder `.pt` 是不同文件：某些模型只保存外部 encoder 路径，移动文件后需要显式提供训练时同一份 encoder。eval CLI 用 `--card-vector-checkpoint PATH`，其他消费者可以设置 `STS_CARD_VECTOR_CHECKPOINT`。loader 先读 metadata 解析依赖，再加载模型；支持 SB3 的省略 `.zip` 写法。现役实验模型不保证存在于新 clone 中，先跑不需要 checkpoint 的训练冒烟可验证安装。
 
 自动探测会跳过另一台机器上不存在或无权访问的历史路径，继续尝试本地候选。显式参数或环境变量具有优先级：指定文件不可访问时直接报错，不能悄悄换用另一个 encoder。

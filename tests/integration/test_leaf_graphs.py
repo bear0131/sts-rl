@@ -11,6 +11,36 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 reduction validation requires a GPU runner')
+@pytest.mark.parametrize('backend', ['eager', 'graph'])
+def test_bf16_leaf_inference_keeps_full_precision_reductions(combat_factory, backend):
+    """A batch must match FP32-accumulating BF16, not truncated partial sums."""
+    env = combat_factory(['STRIKE_RED'] * 5)
+    model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cuda', seed=1729,
+        n_steps=8, batch_size=4, policy_kwargs=dict(d_model=256, n_layers=2, n_heads=8))
+    model.amp_mode = 'bf16'
+    model.policy.set_training_mode(False)
+    obs = env._obs()
+    batch = {k: np.stack([v] * 64) for k, v in obs.items()
+             if k in model.policy.core.combat_observation_keys}
+    original = torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    try:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+        reference = forward_leaves(model, batch, autocast=model.autocast_context,
+                                   leaf_backend=None)
+        # Simulate the process default before entering the model-owned runtime.
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+        cache = (CombatLeafGraphs(model.policy.core, model.device, amp='bf16', batch_multiple=32)
+                 if backend == 'graph' else None)
+        actual = forward_leaves(model, batch, autocast=model.autocast_context,
+                                leaf_backend=cache)
+        for expected, received in zip(reference, actual):
+            np.testing.assert_array_equal(expected, received)
+    finally:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = original
+        env.close()
+
+
 def test_constant_role_lookup_preserves_values_and_gradients(combat_factory):
     env = combat_factory(['STRIKE_RED'] * 5)
     model = AccumulatingMaskablePPO(SplitStSPointerPolicy, env, device='cpu',

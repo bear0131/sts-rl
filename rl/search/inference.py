@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from rl.policies.precision import bf16_autocast
+
 
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
@@ -141,7 +143,7 @@ class CombatLeafGraphs:
         stream = torch.cuda.Stream(device=self.device)
         stream.wait_stream(current)
         def forward():
-            with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+            with torch.inference_mode(), bf16_autocast(
                     enabled=self.amp == 'bf16', cache_enabled=False):
                 logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width)
                 return logits.float(), values.float().reshape(-1)

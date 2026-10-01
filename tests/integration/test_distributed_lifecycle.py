@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+import torch
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3.common.vec_env import DummyVecEnv
 
@@ -17,12 +18,17 @@ from rl.training.reward import ShapedRewardWrapper
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl,upper,combat_arch,grouped', [
-    (False, 'model', 'transformer', False), (True, 'model', 'transformer', False),
-    (True, 'rules', 'transformer', False), (True, 'rules', 'mlp', False),
-    (False, 'model', 'transformer', True), (True, 'model', 'transformer', True)])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, grouped):
+@pytest.mark.parametrize('nosl,upper,combat_arch,grouped,device', [
+    (False, 'model', 'transformer', False, 'cpu'), (True, 'model', 'transformer', False, 'cpu'),
+    (True, 'rules', 'transformer', False, 'cpu'), (True, 'rules', 'mlp', False, 'cpu'),
+    (False, 'model', 'transformer', True, 'cpu'), (True, 'model', 'transformer', True, 'cpu'),
+    pytest.param(False, 'model', 'transformer', True, 'cuda',
+                 marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 requires CUDA')),
+    pytest.param(True, 'model', 'transformer', True, 'cuda',
+                 marks=pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 requires CUDA'))])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, grouped, device):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
+    amp = 'bf16' if device == 'cuda' else 'off'
 
     def make_env(*_):
         def factory(hold_steps):
@@ -44,7 +50,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     env = make_env()
     model = AccumulatingMaskablePPO(
         SplitStSPointerPolicy, env, n_steps=16, batch_size=8, n_epochs=1,
-        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch), device='cpu', seed=42,
+        policy_kwargs=dict(d_model=32, n_layers=2, n_heads=4, combat_arch=combat_arch), device=device, seed=42,
+        amp_mode=amp,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
@@ -89,7 +96,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
         '--n-envs', '2', '--n-steps', '16', '--batch-size', '8', '--n-epochs', '1',
-        '--gradient-accumulation-steps', '1', '--device', 'cpu',
+        '--gradient-accumulation-steps', '1', '--device', device, '--amp-mode', amp,
         '--vec', 'subproc' if grouped else 'dummy', '--envs-per-worker', '2',
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
@@ -125,8 +132,13 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     assert restored.nosl_is_az_upper_strategy == upper
     assert restored.policy_kwargs['combat_arch'] == combat_arch
+    assert restored.amp_mode == amp
     assert restored.num_timesteps == 64
     assert restored.policy.optimizer.state
+    assert all(torch.isfinite(p).all() for p in restored.policy.parameters())
+    assert all(torch.isfinite(value).all()
+               for state in restored.policy.optimizer.state.values()
+               for value in state.values() if torch.is_tensor(value))
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
     assert (bundle/'learner.pt').is_file()
     monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
@@ -141,7 +153,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert len(records)==4
     assert all(r['rollout_resources']['sample_count']>=2 for r in records)
     assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
-    assert all(r['rollout_resources']['gpu_devices'] is None for r in records)
+    if device == 'cpu':
+        assert all(r['rollout_resources']['gpu_devices'] is None for r in records)
 
     if staggered:
         stop_file.unlink()

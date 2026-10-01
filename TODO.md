@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| PERF05-NUM | 本机根因复现及修复通过；生产Entity待验 | `rl/policies/precision.py`、PPO/NOSL与graph统一禁用BF16 GEMM中间降精度。旧Split checkpoint单状态batch32/64/96/128差异消失；13项GPU图回归、真实BF16 PPO/NOSL保存恢复通过，不承诺任意混批逐位一致。当前TRAIN28从第1轮使用BF16，380新增attention布局是另一变更，质量影响未证实；379/380恢复包已轮转，312轮四rank完整快照SHA重验通过，本轮未回退或部署。验收继续覆盖现役Entity/5090路径与完整同工作量rollout；见 [根因与历史审计](worklog/2026-10-01.md#perf05-neural-batch-discrepancy-root-cause-investigation)。 |
 | GAME02 | 三组候选已实现静态试玩；待真人筛选 | `apps/causal_rooms/` 实现蓄势、连坐、回盾各六场示例和一场可重试反例；每关独立 20 生命，逐关解锁并可选择已解锁关卡，浏览器保存最好结果。数值路径与观测指标见 [候选设计](docs/2026-09-28/misleading-encounter-curriculum.md)。仍需真人验证先验和规则发现。 |
 | GAME01 | 三场遭遇静态试玩已实现 | `apps/causal_rooms/` 逐回合复现前两场连续攻击各损失 9、第三场连续攻击损失 4、等待后损失 2；局内显示蓝色玩家生命、暖橙怪物生命、金色当前攻击、红色实际掉血数字，敌人未来意图隐藏；支持非完美通关、本关重试和选择已解锁关卡。规则边界见 [设计稿](docs/2026-09-28/reciprocal-growth-encounter.md)。 |
 | PHASE04 | 已完成 | `apps/phase_field/` 左上目标图案放大：桌面目标窗 9rem、移动端 6.4rem，节点和相位刻度随画布尺寸放大；浏览器桌面/390px 检查无溢出。见 `worklog/2026-09-28.md#phase04-larger-target-diagram`。 |
