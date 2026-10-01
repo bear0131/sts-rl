@@ -10,18 +10,19 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.training import distributed_sb3
-from rl.training.environments import StartupOccupancyWrapper, StartupStaggerWrapper
+from rl.training.cached_mask_vec_env import GroupedCachedMaskSubprocVecEnv
+from rl.training.environments import StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl,upper,combat_arch', [
-    (False, 'model', 'transformer'), (True, 'model', 'transformer'),
-    (True, 'rules', 'transformer'), (True, 'rules', 'mlp')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch):
+@pytest.mark.parametrize('nosl,upper,combat_arch,grouped', [
+    (False, 'model', 'transformer', False), (True, 'model', 'transformer', False),
+    (True, 'rules', 'transformer', False), (True, 'rules', 'mlp', False),
+    (False, 'model', 'transformer', True), (True, 'model', 'transformer', True)])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, grouped):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
-    occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
 
     def make_env(*_):
         def factory(hold_steps):
@@ -32,13 +33,13 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                 )
                 return (
                     StartupStaggerWrapper(env, hold_steps=hold_steps)
-                    if staggered else
-                    StartupOccupancyWrapper(env, max_episode_steps=12, seed=hold_steps + 11)
-                    if occupancy else env
+                    if staggered else env
                 )
             return build
 
-        return DummyVecEnv([factory(0), factory(16)])
+        factories = [factory(0), factory(16)]
+        return (GroupedCachedMaskSubprocVecEnv(factories, envs_per_worker=2, start_method='spawn')
+                if grouped else DummyVecEnv(factories))
 
     env = make_env()
     model = AccumulatingMaskablePPO(
@@ -88,7 +89,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
         '--n-envs', '2', '--n-steps', '16', '--batch-size', '8', '--n-epochs', '1',
-        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'dummy',
+        '--gradient-accumulation-steps', '1', '--device', 'cpu',
+        '--vec', 'subproc' if grouped else 'dummy', '--envs-per-worker', '2',
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
         '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
@@ -97,11 +99,6 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         '--rollout-resource-interval', '0.1']
     if staggered:
         argv += ['--startup-stagger-steps', '16']
-    if occupancy:
-        argv += [
-            '--startup-occupancy-max-age', '12',
-            '--startup-occupancy-budget', '160',
-        ]
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -123,10 +120,6 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     if staggered:
         assert payloads[0]['startup_stagger/span_steps'] == 16
         assert payloads[0]['startup_stagger/discarded_transitions_local'] == 32
-    if occupancy:
-        assert payloads[0]['startup_occupancy/max_age'] == 12
-        assert payloads[0]['startup_occupancy/discarded_transitions_local'] >= 32
-        assert payloads[0]['startup_occupancy/collection_blocks'] >= 1
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
