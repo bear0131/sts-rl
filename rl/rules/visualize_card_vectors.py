@@ -168,6 +168,9 @@ def resolve_encoder(model: Any) -> Any:
         raise RuntimeError(
             "Checkpoint policy has no current specialized '.core'."
         )
+    from rl.policies.entity_combat import EntityCombatCore
+    if isinstance(core, EntityCombatCore):
+        return core
     if getattr(core, "shared", None) is None:
         raise RuntimeError("Checkpoint policy core has no shared tokenizer.")
     combat = getattr(core, "combat", None)
@@ -274,8 +277,13 @@ def extract_vectors(
 ) -> tuple[np.ndarray, str]:
     """Return current runtime card vectors shaped [N_CARDS, vector_dim]."""
     try:
-        shared = core.shared
-        hand_context = core.combat.encoder.hand_context
+        from rl.policies.entity_combat import EntityCombatCore
+        if isinstance(core, EntityCombatCore):
+            shared = core.combat
+            hand_context = core.combat.hand_context
+        else:
+            shared = core.shared
+            hand_context = core.combat.encoder.hand_context
         embedding = shared.card
         card_projection = shared.card_projection
     except AttributeError as exc:

@@ -2451,6 +2451,8 @@ class DashboardState:
 
         sources = []
         card = getattr(getattr(encoder, "shared", None), "card", None)
+        if card is None:
+            card = getattr(getattr(encoder, "combat", None), "card", None)
         card_tokens = getattr(card, "token_embedding", None)
         if card_tokens is not None:
             sources.append((

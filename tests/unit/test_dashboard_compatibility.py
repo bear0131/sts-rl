@@ -106,6 +106,27 @@ def test_semantic_vectors_support_encoder_without_weight_attribute():
     assert upgrades.device == encoder.projection.weight.device
 
 
+def test_entity_checkpoint_dashboard_projects_cards_and_language(combat_factory):
+    from rl.policies.entity_combat import EntityCombatCore, EntityCombatConfig
+    from rl.rules.visualize_card_vectors import resolve_encoder, extract_vectors
+
+    env = combat_factory(['STRIKE_RED', 'DEFEND_RED'],
+                         combat_action_contract='autoregressive-v2', card_language=True)
+    core = EntityCombatCore(env.observation_space,
+                            EntityCombatConfig(width=32, layers=1, heads=4))
+    model = SimpleNamespace(policy=SimpleNamespace(core=core))
+    assert resolve_encoder(model) is core
+    base, _ = extract_vectors(core, 'hand', upgrades=0)
+    upgraded, _ = extract_vectors(core, 'hand', upgrades=1)
+    assert base.shape == upgraded.shape == (len(CARD_VOCAB), 32)
+    assert np.isfinite(base).all() and np.isfinite(upgraded).all()
+    app = dashboard.DashboardState()
+    projected = app._embedding(model)
+    assert len(projected['points']) == 2 * projected['card_count'] > 0
+    language = app._token_embeddings(model)
+    assert len(language['card']['points']) == len(dashboard.CARD_LANGUAGE_TOKENS)
+
+
 def test_fullrun_search_config_uses_checkpoint_defaults_and_request_overrides():
     class Core:
         actor_critic = object()
