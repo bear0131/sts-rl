@@ -478,17 +478,22 @@ def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext)
         started = time.perf_counter()
         batch.begin(begin_calls)
         stats['native_begin_seconds'] = time.perf_counter() - started
+        direct_forward = getattr(getattr(model, '_native_leaf_inference', None), 'forward_native', None)
         while not batch.done:
-            started = time.perf_counter()
-            observations = batch.observations()
-            stats['cpp_leaf_decode_seconds'] += time.perf_counter() - started
-            count = len(next(iter(observations.values())))
+            count = batch.rows
             stats['leaf_batches'] += 1
             stats['leaf_evaluations'] += count
             stats['inference_batch_size_max'] = max(stats['inference_batch_size_max'], count)
             started = time.perf_counter()
-            logits, values = forward_leaves(model, observations, compact=True, autocast=autocast)
-            stats['cpp_leaf_model_seconds'] += time.perf_counter() - started
+            decode_before = batch.decode_seconds
+            if direct_forward is not None:
+                logits, values = direct_forward(batch)
+            else:
+                observations = batch.observations()
+                logits, values = forward_leaves(model, observations, compact=True, autocast=autocast)
+            decoded = batch.decode_seconds-decode_before
+            stats['cpp_leaf_decode_seconds'] += decoded
+            stats['cpp_leaf_model_seconds'] += time.perf_counter()-started-decoded
             started = time.perf_counter()
             batch.advance(logits, values)
             stats['native_advance_seconds'] += time.perf_counter() - started

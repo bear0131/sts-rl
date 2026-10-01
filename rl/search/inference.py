@@ -58,7 +58,15 @@ class CombatLeafGraphs:
     def clear(self):
         self.entries.clear()
 
-    def __call__(self, observations, width):
+    def forward_native(self, batch):
+        # Joint subset evaluation inspects actual legal rows before splitting;
+        # it retains the ordinary materialized observation path.
+        if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
+            return self(batch.observations(), batch.active_relic_width)
+        return self(batch.observation_layout(), batch.active_relic_width,
+                    writer=batch.write_observations, failure_observations=batch.observations)
+
+    def __call__(self, observations, width, *, writer=None, failure_observations=None):
         try:
             if self.core.training:
                 raise RuntimeError('leaf graphs require eval mode')
@@ -89,19 +97,19 @@ class CombatLeafGraphs:
                         normal_result = self._forward({key: value[normal] for key, value in observations.items()}, width)
                         result_logits[normal], result_values[normal] = normal_result
                     return result_logits, result_values
-            return self._forward(observations, width)
+            return self._forward(observations, width, writer=writer)
         except RuntimeError:
             # CUDA errors can poison the context: save only CPU inputs here.
             if self.failure_path is not None:
                 target = Path(self.failure_path)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(target, **observations)
+                np.savez(target, **(failure_observations() if failure_observations else observations))
                 target.with_suffix('.json').write_text(json.dumps(dict(
                     width=width, amp=self.amp, captures=self.captures, hits=self.hits,
                     signatures=[repr(s) for s in self.entries])), encoding='utf-8')
             raise
 
-    def _forward(self, observations, width):
+    def _forward(self, observations, width, *, writer=None):
         if self.core.training:
             raise RuntimeError('leaf graphs require eval mode')
         batch = len(next(iter(observations.values())))
@@ -116,7 +124,7 @@ class CombatLeafGraphs:
                 self.entries.popitem(last=False)
                 self.evictions += 1
             started = time.perf_counter()
-            self.entries[signature] = self._capture(observations, width, padded)
+            self.entries[signature] = self._capture(observations, width, padded, writer=writer)
             self.capture_seconds += time.perf_counter()-started
             self.captures += 1
         else:
@@ -125,7 +133,7 @@ class CombatLeafGraphs:
         entry = self.entries[signature]
         self.batch_counts[batch] = self.batch_counts.get(batch, 0)+1
         started = time.perf_counter()
-        self._copy(entry, observations)
+        self._copy(entry, observations, writer=writer)
         self.copy_seconds += time.perf_counter()-started
         entry['graph'].replay()
         started = time.perf_counter()
@@ -145,7 +153,15 @@ class CombatLeafGraphs:
         return result
 
     @staticmethod
-    def _copy(entry, observations):
+    def _copy(entry, observations, *, writer=None):
+        if writer is not None:
+            writer(entry['host_views'])
+            if not entry.get('initialized', False):
+                count = len(next(iter(observations.values())))
+                for target in entry['host_views'].values():
+                    target[count:] = target[0]
+            entry['initialized'] = True
+            return
         for host, device, layout in entry['buffers']:
             for key, target in layout:
                 value = observations[key]
@@ -156,7 +172,7 @@ class CombatLeafGraphs:
                     target[len(value):] = value[0]
         entry['initialized'] = True
 
-    def _capture(self, observations, width, padded):
+    def _capture(self, observations, width, padded, *, writer=None):
         groups = {}
         for key, value in observations.items():
             groups.setdefault(value.dtype, []).append((key, value))
@@ -175,8 +191,8 @@ class CombatLeafGraphs:
                 layout.append((key, array[offset:end].reshape(shape)))
                 offset = end
             buffers.append((host, device, layout))
-        entry = dict(buffers=buffers)
-        self._copy(entry, observations)
+        entry = dict(buffers=buffers, host_views={key: array for _, _, layout in buffers for key, array in layout})
+        self._copy(entry, observations, writer=writer)
         for host, device, _ in buffers:
             device.copy_(host, non_blocking=True)
         current = torch.cuda.current_stream(self.device)

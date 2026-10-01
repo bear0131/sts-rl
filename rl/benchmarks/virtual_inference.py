@@ -111,6 +111,25 @@ class VirtualInference:
         count = len(next(iter(observations.values())))
         return torch.full((count, 1), .5, device=self.model.device)
 
+    def forward_native(self, batch):
+        if self.backend is None:
+            return self(batch.observations(), batch.active_relic_width)
+        count = batch.rows
+        self.leaf_calls += 1
+        self.leaf_rows += count
+        if not self.shadow:
+            return self.backend.forward_native(batch)
+        self.synchronize()
+        started = time.perf_counter()
+        self.backend.forward_native(batch)
+        self.synchronize()
+        self.model_seconds += time.perf_counter()-started
+        if count > self.max_rows:
+            self.logits = np.zeros((count, self.model.action_space.n), dtype=np.float32)
+            self.values = np.full(count, .5, dtype=np.float32)
+            self.max_rows = count
+        return self.logits[:count], self.values[:count]
+
     def statistics(self):
         return dict(mode='shadow' if self.shadow else 'virtual', root_calls=self.root_calls,
                     leaf_transport='model-input-and-output',

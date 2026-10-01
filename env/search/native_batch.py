@@ -1,6 +1,7 @@
 """Model-free adapter for same-process native search workers."""
 import numpy as np
 import slaythespire as sts
+import time
 
 from env.core import encode
 from env.core.run_env import _nosl_compact_lut, _nosl_compact_empty, _nosl_card_stats
@@ -22,6 +23,9 @@ class NativeSearchBatch:
         shapes = dict(_nosl_compact_empty(card_language=first._card_language))
         if first._joint_actions:
             shapes['combat_legal'] = np.zeros(first._neural_width, dtype=bool)
+        self._prototypes = {key: (value.astype(np.int32) if key in ('monster_move', 'monster_intent_cat')
+                                 else value) for key, value in shapes.items()}
+        self._layouts = {}
         self.decoder = sts.NeuralObservationDecoder(shapes, _nosl_compact_lut(), _nosl_card_stats(),
             {key: getattr(encode, key+'_SCALE') for key in
                 ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK')},
@@ -40,6 +44,7 @@ class NativeSearchBatch:
         self.indices = list(calls)
         self.leaves = np.zeros(len(self.indices), dtype=np.int64)
         self.native_seconds = self.pack_seconds = 0.0
+        self.decode_seconds = 0.0
         sessions, fields = [], []
         try:
             for index in self.indices:
@@ -51,6 +56,9 @@ class NativeSearchBatch:
                                                         _defer_leaf_selection=True))
                 fields.append(env._native_packed_global_fields())
             self.global_fields = {key: np.stack([f[key] for f in fields]) for key in fields[0]}
+            relics = self.global_fields['relics']
+            self._relic_widths = np.maximum(1, np.max(
+                (relics != 0) * np.arange(1, relics.shape[1]+1), axis=1))
             self.payload = self.pool.begin(sessions, self.language)
             self._record_timings()
         except BaseException:
@@ -62,7 +70,32 @@ class NativeSearchBatch:
         return bool(self.payload['done'])
 
     def observations(self):
-        return self.decoder.decode(self.payload, self.global_fields)
+        started = time.perf_counter()
+        result = self.decoder.decode(self.payload, self.global_fields)
+        self.decode_seconds += time.perf_counter()-started
+        return result
+
+    @property
+    def rows(self):
+        return len(self.payload['owners'])
+
+    @property
+    def active_relic_width(self):
+        return int(max(self._relic_widths[owner] for owner in self.payload['owners']))
+
+    def observation_layout(self):
+        """Shape/dtype views only; their contents are not model observations."""
+        count = self.rows
+        if count not in self._layouts:
+            self._layouts[count] = {key: np.broadcast_to(value, (count, *value.shape))
+                                    for key, value in self._prototypes.items()}
+        return self._layouts[count]
+
+    def write_observations(self, destination):
+        """Fill caller-owned contiguous arrays before their next device upload."""
+        started = time.perf_counter()
+        self.decoder.decode(self.payload, self.global_fields, destination)
+        self.decode_seconds += time.perf_counter()-started
 
     def advance(self, logits, values):
         self.leaves[np.asarray(self.payload['owners'], dtype=np.intp)] += 1

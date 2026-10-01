@@ -11,9 +11,10 @@ pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 
 
 @pytest.mark.parametrize('threads', [1, 4])
+@pytest.mark.parametrize('fixed_worldline,end_turn_as_leaf', [(True, True), (True, False), (False, False)])
 @pytest.mark.parametrize('contract,language', [
     ('legacy', False), ('joint-v2', True), ('autoregressive-v2', True)])
-def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, contract, language):
+def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fixed_worldline, end_turn_as_leaf, contract, language):
     deck = ['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 4 + ['BASH', 'BATTLE_TRANCE', 'TRUE_GRIT']
     def environments():
         result = []
@@ -30,7 +31,7 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, co
         return result
     native, serial = environments(), environments()
     pool = NativeSearchBatch(native, threads)
-    config = NativeSearchConfig(simulations=128, fixed_worldline=True, end_turn_as_leaf=True)
+    config = NativeSearchConfig(simulations=128, fixed_worldline=fixed_worldline, end_turn_as_leaf=end_turn_as_leaf)
     calls = {i: ((np.linspace(-.3, .7, e.action_space.n),), dict(
         **asdict(config), root_value=.5, state_nonce=1729+i, compact_observation=True))
         for i, e in enumerate(native)}
@@ -53,6 +54,18 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, co
                         assert obs[key].dtype == reference[key].dtype, key
                         assert obs[key][row].tobytes() == reference[key][0].tobytes(), key
                     assert bool(pool.payload['needs_policy'][row]) == responses[i]['leaf_meta'][0]['needs_policy']
+                # The pinned-buffer path must have the same bytes while leaving
+                # padding untouched; reuse the same storage as row counts shrink.
+                if total == 0:
+                    target = {key: np.full((len(native)+2, *value.shape[1:]), 1, dtype=value.dtype)
+                              for key, value in obs.items()}
+                padding = {key: value[len(owners):].tobytes() for key, value in target.items()}
+                pool.write_observations(target)
+                for key, value in obs.items():
+                    assert target[key][:len(owners)].tobytes() == value.tobytes(), key
+                    assert target[key][len(owners):].tobytes() == padding[key], key
+                active = np.flatnonzero(obs['relics'].any(axis=0))
+                assert pool.active_relic_width == (int(active[-1])+1 if active.size else 1)
                 values = np.asarray(.2 + .6 * obs['player_scalars'][:, 0], dtype=np.float32)
                 logits = np.broadcast_to(np.linspace(-.2, .8, native[0].action_space.n, dtype=np.float32),
                                           (len(owners), native[0].action_space.n)).copy()
@@ -120,5 +133,26 @@ def test_native_batch_invalid_reply_can_abort_and_reuse(combat_factory):
             n = len(pool.payload['owners'])
             pool.advance(np.zeros((n, env.action_space.n), np.float32), np.full(n, .5, np.float32))
         assert pool.results()[0]['simulations'] == 8
+    finally:
+        pool.close()
+
+
+@pytest.mark.parametrize('invalid', ['dtype', 'shape', 'rows', 'stride', 'readonly'])
+def test_native_decoder_rejects_invalid_destination(combat_factory, invalid):
+    env = combat_factory(['STRIKE_RED'] * 5)
+    pool = NativeSearchBatch([env], 1)
+    try:
+        pool.begin({0: ((np.zeros(env.action_space.n),), dict(simulations=8,
+            compact_observation=True, leaf_batch_size=1, state_nonce=1729))})
+        target = pool.observations()
+        value = target['player_scalars']
+        if invalid == 'dtype': value = value.astype(np.float64)
+        if invalid == 'shape': value = value[:, :-1].copy()
+        if invalid == 'rows': value = value[:0]
+        if invalid == 'stride': value = value[:, ::-1]
+        if invalid == 'readonly': value.setflags(write=False)
+        target['player_scalars'] = value
+        with pytest.raises(ValueError, match='destination'):
+            pool.write_observations(target)
     finally:
         pool.close()

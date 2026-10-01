@@ -22,7 +22,7 @@ public:
         : shapes_(shapes), lut_(lut), stats_(stats), scales_(scales), limits_(limits),
           offset_(offset), width_(width), autoregressive_(ar) {}
 
-    py::dict decode(py::dict packed, py::dict globals) const {
+    py::dict decode(py::dict packed, py::dict globals, py::object destination) const {
         Array<std::int32_t> cat(packed["categorical"]), prefix(packed["selection_prefix"]), legal(packed["legal_policy_ids"]);
         Array<float> scalar(packed["scalars"]);
         Array<std::int64_t> owners(packed["owners"]);
@@ -46,8 +46,20 @@ public:
             for (int d=0; d<prototype.ndim(); ++d) shape.push_back(prototype.shape(d));
             auto dtype = (name=="monster_move" || name=="monster_intent_cat")
                        ? py::dtype::of<std::int32_t>() : prototype.dtype();
-            py::array array(dtype, shape);
-            std::memset(array.mutable_data(), 0, array.nbytes());
+            py::array array;
+            if (destination.is_none()) {
+                array = py::array(dtype, shape);
+            } else {
+                array = py::cast<py::array>(destination[item.first]);
+                if (!array.dtype().is(dtype) || !array.writeable() ||
+                    !(array.flags() & py::array::c_style) || array.ndim()!=int(shape.size()) || array.shape(0)<n)
+                    throw std::invalid_argument("native observation destination layout mismatch");
+                for (int d=1; d<array.ndim(); ++d)
+                    if (array.shape(d)!=shape[d]) throw std::invalid_argument("native observation destination shape mismatch");
+            }
+            // Only real rows belong to this request. Padding remains owned by
+            // the inference backend, which initializes it from a valid row.
+            std::memset(array.mutable_data(), 0, n * array.strides(0));
             arrays.emplace(name, array); out[item.first] = array;
         }
         // Resolve all pointers once per batch, with no dictionary per leaf.
@@ -178,5 +190,6 @@ public:
 void bindNeuralObservation(py::module_ &module) {
     py::class_<NeuralObservationDecoder>(module,"NeuralObservationDecoder")
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
-        .def("decode",&NeuralObservationDecoder::decode);
+        .def("decode",&NeuralObservationDecoder::decode, py::arg("packed"),
+             py::arg("globals"), py::arg("destination")=py::none());
 }

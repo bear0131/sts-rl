@@ -11,6 +11,45 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='direct native graph inputs require CUDA')
+@pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2'])
+def test_native_writer_matches_materialized_model_inputs(combat_factory, contract):
+    import slaythespire as sts
+    from env.search.native_batch import NativeSearchBatch
+    from rl.policies.entity_combat import EntityCombatPolicy
+    entity = contract != 'legacy'
+    env = combat_factory(['PURITY'] * 5, combat_action_contract=contract, card_language=entity)
+    env.thick.bc.apply_custom_state({'hand': ['PURITY'] + ['STRIKE_RED'] * 5})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+    model = AccumulatingMaskablePPO(EntityCombatPolicy if entity else SplitStSPointerPolicy,
+        env, device='cuda', seed=1729, n_steps=8, batch_size=4,
+        nosl_is_az=entity, nosl_is_az_cpp=entity, nosl_is_az_inner_only=entity,
+        nosl_is_az_upper_strategy='rules' if entity else 'model',
+        policy_kwargs=(dict(entity_config=dict(width=32,layers=1,heads=4)) if entity
+                       else dict(d_model=32,n_layers=2,n_heads=4)))
+    model.policy.set_training_mode(False)
+    cache = CombatLeafGraphs(model.policy.core, 'cuda', amp='bf16', batch_multiple=4)
+    materialized = CombatLeafGraphs(model.policy.core, 'cuda', amp='bf16', batch_multiple=4)
+    pool = NativeSearchBatch([env], 2)
+    try:
+        pool.begin({0: ((np.zeros(env.action_space.n),), dict(simulations=16, state_nonce=1729,
+            compact_observation=True, leaf_batch_size=1, fixed_worldline=True))})
+        calls = 0
+        while not pool.done:
+            direct = cache.forward_native(pool)
+            expected = materialized(pool.observations(), pool.active_relic_width)
+            for actual, reference in zip(direct, expected):
+                assert actual.tobytes() == reference.tobytes()
+            pool.advance(*direct)
+            calls += 1
+        assert calls > 1
+    finally:
+        pool.close()
+        cache.clear()
+        materialized.clear()
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='captured transport requires a GPU runner')
 @pytest.mark.parametrize('profile_interval', [0, 2])
 def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval):
