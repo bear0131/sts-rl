@@ -15,6 +15,34 @@ def make_model(env):
         policy_kwargs=dict(entity_config=dict(width=32,layers=1,heads=4,quantiles=8)))
 
 
+@pytest.mark.parametrize('dtype', [torch.float32, torch.float64])
+@pytest.mark.parametrize('masked', [False, True])
+def test_entity_attention_matches_pytorch_outputs_and_gradients(dtype, masked):
+    from rl.policies.entity_combat import EntityEncoderLayer
+    torch.manual_seed(23)
+    kwargs = dict(d_model=32, nhead=4, dim_feedforward=128, dropout=0.,
+                  activation='gelu', batch_first=True, norm_first=True, dtype=dtype)
+    reference = torch.nn.TransformerEncoderLayer(**kwargs)
+    actual = EntityEncoderLayer(**kwargs)
+    actual.load_state_dict(reference.state_dict(), strict=True)
+    assert list(reference.state_dict()) == list(actual.state_dict())
+    data = torch.randn(3, 11, 32, dtype=dtype)
+    padding = torch.tensor([[False] * 11, [False, True] * 5 + [False],
+                            [False] + [True] * 10]) if masked else None
+    def run(layer):
+        x = data.clone().requires_grad_()
+        output = layer(x, src_key_padding_mask=padding)
+        (output.sin().square().sum()).backward()
+        return output, x.grad, {k: p.grad for k, p in layer.named_parameters()}
+    expected, expected_dx, expected_grads = run(reference)
+    observed, observed_dx, observed_grads = run(actual)
+    tolerance = dict(rtol=2e-5, atol=2e-6) if dtype == torch.float32 else dict(rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(observed, expected, **tolerance)
+    torch.testing.assert_close(observed_dx, expected_dx, **tolerance)
+    for name in expected_grads:
+        torch.testing.assert_close(observed_grads[name], expected_grads[name], **tolerance)
+
+
 def test_card_table_lookup_preserves_padded_choice_gradients(combat_factory):
     env=combat_factory(['BASH','STRIKE_RED','DEFEND_RED','ANGER','CLEAVE'],
         combat_action_contract=C.JOINT_CONTRACT,card_language=True)

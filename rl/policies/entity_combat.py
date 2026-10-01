@@ -34,6 +34,32 @@ def _vocabulary(space, key):
     return int(space[key].high.max()) + 1
 
 
+class EntityEncoderLayer(nn.TransformerEncoderLayer):
+    """Keep packed self-attention projections in batch-first layout.
+
+    Parameter names and the pre-norm/residual/MLP operations remain PyTorch's.
+    Unbinding Q/K/V also gives backward one stacked projection gradient,
+    instead of three full-size zero-filled select gradients and their sums.
+    """
+
+    def _sa_block(self, x, attn_mask, key_padding_mask, is_causal=False):
+        if attn_mask is not None or is_causal:
+            return super()._sa_block(x, attn_mask, key_padding_mask, is_causal)
+        batch, length, width = x.shape
+        attention = self.self_attn
+        query, key, value = F.linear(x, attention.in_proj_weight,
+            attention.in_proj_bias).reshape(batch, length, 3,
+                attention.num_heads, width // attention.num_heads).unbind(2)
+        # TransformerEncoderLayer canonicalizes padding to additive 0/-inf.
+        mask = None if key_padding_mask is None else key_padding_mask[:, None, None, :]
+        attended = F.scaled_dot_product_attention(
+            query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2),
+            attn_mask=mask, dropout_p=attention.dropout if self.training else 0.0)
+        attended = attended.transpose(1, 2).reshape(batch, length, width)
+        return self.dropout1(F.linear(attended, attention.out_proj.weight,
+                                     attention.out_proj.bias))
+
+
 class EntityCombatNetwork(nn.Module):
     def __init__(self, space, config):
         super().__init__()
@@ -67,7 +93,7 @@ class EntityCombatNetwork(nn.Module):
         self.pile_role = nn.Embedding(3, width)
         self.pool_count = nn.Linear(1, width)
         self.role = nn.Embedding(8, width)
-        layer = nn.TransformerEncoderLayer(width, config.heads, 4*width,
+        layer = EntityEncoderLayer(width, config.heads, 4*width,
             dropout=0., activation='gelu', batch_first=True, norm_first=True)
         self.transformer = nn.TransformerEncoder(layer, config.layers, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(width)
