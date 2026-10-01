@@ -11,6 +11,34 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 reduction validation requires a GPU runner')
+@pytest.mark.parametrize('backend', ['eager', 'graph'])
+def test_bf16_leaf_runtime_disables_partial_sum_truncation(combat_factory, backend):
+    from rl.policies.entity_combat import EntityCombatPolicy
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract='autoregressive-v2', card_language=True)
+    model = AccumulatingMaskablePPO(EntityCombatPolicy, env, device='cuda', seed=1729,
+        n_steps=8, batch_size=4, policy_kwargs=dict(entity_config=dict(width=256, layers=4, heads=8)),
+        nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='rules')
+    model.amp_mode = 'bf16'
+    model.policy.set_training_mode(False)
+    obs = env._obs()
+    batch = {k: np.stack([v] * 64) for k, v in obs.items() if k in model.policy.core.combat_observation_keys}
+    old = torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+    try:
+        cache = CombatLeafGraphs(model.policy.core, model.device, amp='bf16') if backend == 'graph' else None
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
+        expected = forward_leaves(model, batch, autocast=model.autocast_context, leaf_backend=cache)
+        if cache is not None:
+            cache.clear()
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
+        actual = forward_leaves(model, batch, autocast=model.autocast_context, leaf_backend=cache)
+        assert not torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
+        for a, b in zip(actual, expected):
+            np.testing.assert_array_equal(a, b)
+    finally:
+        torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = old
+
+
 @pytest.fixture(autouse=True)
 def explicit_fp32_precision():
     # Production lifecycle tests select TF32 globally. Cross-shape FP32 error

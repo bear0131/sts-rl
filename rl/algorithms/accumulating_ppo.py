@@ -17,6 +17,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks, is_masking_suppo
 from stable_baselines3.common.utils import explained_variance, obs_as_tensor
 
 from env.core import vocab as V
+from rl.policies.precision import bf16_autocast
 from env.core import native_actions as C
 from env.core.combat_value import VALUE_CONTRACT
 from rl.search.native import (
@@ -557,7 +558,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def autocast_context(self):
         if self.amp_mode == "bf16":
-            return th.autocast(device_type="cuda", dtype=th.bfloat16)
+            return bf16_autocast()
         return nullcontext()
 
     def reset_nosl_is_az_shared_embeddings(self, seed: int) -> int:

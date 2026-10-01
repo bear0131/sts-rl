@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from rl.policies.precision import bf16_autocast
+
 
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
@@ -64,7 +66,7 @@ class CombatLeafGraphs:
             if prepare is not None:
                 # A replay skips Python forward, so refresh weight-dependent
                 # constants before replay as well as before the first capture.
-                with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+                with torch.inference_mode(), bf16_autocast(
                         enabled=self.amp == 'bf16', cache_enabled=False):
                     prepare()
             if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
@@ -74,7 +76,7 @@ class CombatLeafGraphs:
                     indices = np.flatnonzero(multi)
                     tensors = {key: torch.as_tensor(value[indices], device=self.device)
                                for key, value in observations.items()}
-                    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+                    with torch.inference_mode(), bf16_autocast(
                             enabled=self.amp == 'bf16', cache_enabled=False):
                         logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width)
                     result_logits = np.empty((len(multi), logits.shape[1]), dtype=np.float32)
@@ -183,7 +185,7 @@ class CombatLeafGraphs:
         stream = torch.cuda.Stream(device=self.device)
         stream.wait_stream(current)
         def forward():
-            with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16,
+            with torch.inference_mode(), bf16_autocast(
                     enabled=self.amp == 'bf16', cache_enabled=False):
                 extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
                 if self.compiled_forward is None:
