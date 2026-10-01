@@ -918,8 +918,8 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
         // actions. Keep this canonical paper default separate from the
         // project's legacy `0 = all legal actions` convention.
         config_.gumbelCandidates = 16;
-        config_.gumbelScale = 1.0;
-        // Keep explicit Q-transform parameters. Their defaults remain 0.1
+        // Preserve explicit noise scale (including zero) and Q-transform
+        // parameters. The Q defaults remain 0.1
         // and normalized, independently of paper halving/backup semantics.
         config_.gumbelMaxVisitInit = 50.0;
         config_.gumbelUseMixedValue = true;

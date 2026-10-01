@@ -19,8 +19,8 @@ from rl.policies.model import observation_for_policy
 
 STRICT_SEARCH_DEFAULTS = {
     'leaf_batch_size': 1,
-    'prior_temperature': 1.0, 'gumbel_candidates': 16, 'gumbel_scale': 1.0,
-    # Q scale/normalization are explicit experiment parameters. Preserve them
+    'prior_temperature': 1.0, 'gumbel_candidates': 16,
+    # Noise and Q scale/normalization are explicit experiment parameters. Preserve them
     # without switching off paper sequential halving and visit-weighted backup.
     'gumbel_max_visit_init': 50.0, 'gumbel_use_mixed_value': True,
     'gumbel_interior_uniformity': 0.0, 'gumbel_interior_min_visits': 0,

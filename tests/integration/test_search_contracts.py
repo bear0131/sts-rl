@@ -538,6 +538,33 @@ def test_native_batch_backprop_matches_scalar_order(combat_factory):
 
 
 @pytest.mark.native
+@pytest.mark.parametrize('scale', [0.0, 0.25, 1.0])
+def test_paper_search_preserves_explicit_noise_scale(combat_factory, scale):
+    from types import SimpleNamespace
+    from rl.search.native import NativeSearchConfig, apply_strict_training_settings
+
+    model = SimpleNamespace(nosl_is_az_search_mode='full_gumbel',
+                            nosl_is_az_gumbel_scale=scale)
+    args = SimpleNamespace(nosl_is_az_gumbel_scale=scale)
+    apply_strict_training_settings(model, args)
+    config = NativeSearchConfig.from_model(model)
+    assert model.nosl_is_az_gumbel_scale == args.nosl_is_az_gumbel_scale == scale
+    assert config.gumbel_scale == scale and config.paper_full_gumbel
+    env = combat_factory(['STRIKE_RED'] * 5, 'Gremlin Leader')
+
+    def noises(noise_scale):
+        session = env.thick.bc.nosl_neural_search_begin(
+            np.zeros(181), simulations=32, nonce=123,
+            root_search_mode=2, paper_full_gumbel=True, gumbel_scale=noise_scale)
+        return np.asarray([child['gumbel'] for child in
+                           session.tree_snapshot((), 64)['children']])
+
+    reference = noises(1.0)
+    assert np.any(reference != 0)
+    np.testing.assert_array_equal(noises(config.gumbel_scale), scale * reference)
+
+
+@pytest.mark.native
 def test_strict_prior_temperature_reaches_native_tree(combat_factory):
     def root_priors(temperature):
         env = combat_factory(["STRIKE_RED"] * 5, "Jaw Worm", seed=42)

@@ -1957,10 +1957,12 @@ void BattleContext::onUsePowerCard() {
         mummifiedHandOnUsePower();
     }
 
-//    auto &m = monsters.optionMap[2];
-//    if (m.hasStatusInternal<MS::CURIOSITY>()) {
-//        m.buff<MS::STRENGTH>(m.getStatus<MS::CURIOSITY>());
-//    }
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        auto &m = monsters.arr[i];
+        if (m.isTargetable() && m.hasStatus<MS::CURIOSITY>()) {
+            m.buff<MS::STRENGTH>(m.getStatus<MS::CURIOSITY>());
+        }
+    }
 }
 
 void BattleContext::onUseStatusOrCurseCard() {
