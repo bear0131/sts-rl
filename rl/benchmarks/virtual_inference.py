@@ -6,6 +6,7 @@ cost without changing the tree workload; it does not measure policy strength.
 The collector, observation encoding, transfers and native search still run.
 """
 import time
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -13,11 +14,36 @@ import torch
 from rl.search.native import forward_leaves
 
 
+class ConstantLeafCore(torch.nn.Module):
+    """A device-side reply with the same transport boundary as the real model."""
+    def __init__(self, action_count):
+        super().__init__()
+        self.action_count = action_count
+        self.eval()
+
+    def combat_actor_critic(self, observations, **kwargs):
+        source = next(iter(observations.values()))
+        return (torch.zeros((len(source), self.action_count), device=source.device),
+                torch.full((len(source), 1), .5, device=source.device))
+
+
 class VirtualInference:
     def __init__(self, model, *, shadow=False):
         self.model = model
         self.shadow = shadow
         self.backend = getattr(model, '_native_leaf_inference', None)
+        self.virtual_model = None
+        if not shadow:
+            core = ConstantLeafCore(model.action_space.n)
+            self.virtual_model = SimpleNamespace(device=model.device, policy=SimpleNamespace(core=core))
+            if self.backend is not None:
+                from rl.search.inference import CombatLeafGraphs
+                if not isinstance(self.backend, CombatLeafGraphs):
+                    raise TypeError('virtual workload requires eager or CombatLeafGraphs transport')
+                source = self.backend
+                self.backend = CombatLeafGraphs(core, model.device, amp=source.amp,
+                    capacity=source.capacity, profile_interval=source.profile_interval,
+                    batch_multiple=source.batch_multiple)
         self.root_forward = model.policy.core.actor_critic
         self.value_forward = model.policy.core.value
         self.root_calls = self.leaf_calls = self.leaf_rows = 0
@@ -62,11 +88,13 @@ class VirtualInference:
                            leaf_backend=self.backend)
             self.synchronize()
             self.model_seconds += time.perf_counter() - started
-        if count > self.max_rows:
-            self.logits = np.zeros((count, self.model.action_space.n), dtype=np.float32)
-            self.values = np.full(count, .5, dtype=np.float32)
-            self.max_rows = count
-        return self.logits[:count], self.values[:count]
+            if count > self.max_rows:
+                self.logits = np.zeros((count, self.model.action_space.n), dtype=np.float32)
+                self.values = np.full(count, .5, dtype=np.float32)
+                self.max_rows = count
+            return self.logits[:count], self.values[:count]
+        return forward_leaves(self.virtual_model, observations, autocast=self.model.autocast_context,
+                              leaf_backend=self.backend)
 
     def value(self, observations):
         self.value_calls += 1
@@ -85,6 +113,7 @@ class VirtualInference:
 
     def statistics(self):
         return dict(mode='shadow' if self.shadow else 'virtual', root_calls=self.root_calls,
+                    leaf_transport='model-input-and-output',
                     value_calls=self.value_calls,
                     leaf_calls=self.leaf_calls, leaf_rows=self.leaf_rows,
                     model_seconds=self.model_seconds,
