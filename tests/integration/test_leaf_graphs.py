@@ -11,6 +11,42 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='captured transport requires a GPU runner')
+@pytest.mark.parametrize('profile_interval', [0, 2])
+def test_captured_transfers_own_buffers_and_return_independent_outputs(profile_interval):
+    import gc
+
+    class Core(torch.nn.Module):
+        def combat_actor_critic(self, obs, **kwargs):
+            value = sum(v.float() for v in obs.values())
+            return torch.cat((value, -value), dim=1), value
+
+    cache = CombatLeafGraphs(Core().eval(), 'cuda', capacity=2, batch_multiple=32,
+                             profile_interval=profile_interval)
+    saved = []
+    for iteration, count in enumerate((17, 31, 4, 65, 33, 17)):
+        observations = {str(dtype): (np.arange(count)[:, None] + iteration).astype(dtype)
+                        for dtype in (np.int64, np.int32, np.float32, np.bool_)}
+        expected = sum(v.astype(np.float32) for v in observations.values())
+        logits, values = cache(observations, 1)
+        np.testing.assert_array_equal(logits, np.concatenate((expected, -expected), axis=1))
+        np.testing.assert_array_equal(values, expected[:, 0])
+        saved.append((logits, values, expected))
+        del observations
+        gc.collect()
+        torch._C._cuda_clearCublasWorkspaces()
+        torch.cuda.empty_cache()
+    cache.clear()
+    for logits, values, expected in saved:
+        np.testing.assert_array_equal(logits, np.concatenate((expected, -expected), axis=1))
+        np.testing.assert_array_equal(values, expected[:, 0])
+    stats = cache.statistics()
+    assert stats['evictions'] > 0 and stats['hits'] >= 2
+    assert stats['profile_samples'] == (3 if profile_interval else 0)
+    if profile_interval:
+        assert all(stats[key] > 0 for key in ('h2d_ms', 'replay_ms', 'd2h_ms'))
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 reduction validation requires a GPU runner')
 @pytest.mark.parametrize('backend', ['eager', 'graph'])
 def test_bf16_leaf_runtime_disables_partial_sum_truncation(combat_factory, backend):

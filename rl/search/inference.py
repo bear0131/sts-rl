@@ -53,7 +53,7 @@ class CombatLeafGraphs:
             copy_seconds=self.copy_seconds, output_seconds=self.output_seconds,
             profile_samples=self.profile_samples, h2d_ms=self.h2d_ms,
             replay_ms=self.replay_ms, d2h_ms=self.d2h_ms, batch_counts=dict(self.batch_counts),
-            subset_eager_rows=self.subset_eager_rows)
+            subset_eager_rows=self.subset_eager_rows, timing_scope='captured-device-events')
 
     def clear(self):
         self.entries.clear()
@@ -124,23 +124,20 @@ class CombatLeafGraphs:
         self.entries.move_to_end(signature)
         entry = self.entries[signature]
         self.batch_counts[batch] = self.batch_counts.get(batch, 0)+1
-        events = ([torch.cuda.Event(enable_timing=True) for _ in range(4)]
-                  if self.profile_interval and (self.hits+self.captures) % self.profile_interval == 0 else None)
-        if events: events[0].record()
         started = time.perf_counter()
         self._copy(entry, observations)
         self.copy_seconds += time.perf_counter()-started
-        if events: events[1].record()
         entry['graph'].replay()
-        if events: events[2].record()
         started = time.perf_counter()
-        # One transfer/synchronization for both heads. The returned arrays are
-        # views into this call's CPU result, never into reusable GPU storage.
-        output = entry['output'][:batch].cpu().numpy()
+        # The graph owns the pinned input/output buffers and all transfers.
+        # One completion wait covers H2D, computation and D2H; copying the small
+        # CPU result preserves callers' ownership across later replays/eviction.
+        entry['done'].synchronize()
+        output = entry['host_output_array'][:batch].copy()
         result = output[:, :-1], output[:, -1]
         self.output_seconds += time.perf_counter()-started
-        if events:
-            events[3].record(); events[3].synchronize()
+        if self.profile_interval and (self.hits+self.captures) % self.profile_interval == 0:
+            events = entry['events']
             self.h2d_ms += events[0].elapsed_time(events[1])
             self.replay_ms += events[1].elapsed_time(events[2])
             self.d2h_ms += events[2].elapsed_time(events[3])
@@ -157,7 +154,6 @@ class CombatLeafGraphs:
                     # Later padding may retain an earlier valid independent
                     # row. It is never returned and cannot affect real rows.
                     target[len(value):] = value[0]
-            device.copy_(host, non_blocking=True)
         entry['initialized'] = True
 
     def _capture(self, observations, width, padded):
@@ -181,6 +177,8 @@ class CombatLeafGraphs:
             buffers.append((host, device, layout))
         entry = dict(buffers=buffers)
         self._copy(entry, observations)
+        for host, device, _ in buffers:
+            device.copy_(host, non_blocking=True)
         current = torch.cuda.current_stream(self.device)
         stream = torch.cuda.Stream(device=self.device)
         stream.wait_stream(current)
@@ -196,7 +194,7 @@ class CombatLeafGraphs:
                 return torch.cat((logits.float(), values.float().reshape(-1, 1)), dim=1)
         with torch.cuda.stream(stream):
             for _ in range(3):
-                forward()
+                warm_output = forward()
         current.wait_stream(stream)
         torch.cuda.synchronize(self.device)
         # Capture each graph's cuBLAS workspace in its own private pool. CUDA
@@ -204,9 +202,21 @@ class CombatLeafGraphs:
         # release workspace still referenced by another graph on that stream.
         torch._C._cuda_clearCublasWorkspaces()
         graph = torch.cuda.CUDAGraph()
+        host_output = torch.empty(warm_output.shape, dtype=warm_output.dtype, pin_memory=True)
+        events = ([torch.cuda.Event(enable_timing=True, external=True) for _ in range(4)]
+                  if self.profile_interval else None)
+        done = events[-1] if events else torch.cuda.Event(external=True)
         with torch.cuda.graph(graph, stream=stream):
+            if events: events[0].record()
+            for host, device, _ in buffers:
+                device.copy_(host, non_blocking=True)
+            if events: events[1].record()
             output = forward()
+            if events: events[2].record()
+            host_output.copy_(output, non_blocking=True)
+            done.record()
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
-        entry.update(graph=graph, output=output)
+        entry.update(graph=graph, output=output, host_output=host_output,
+                     host_output_array=host_output.numpy(), events=events, done=done)
         return entry

@@ -28,7 +28,10 @@ AR BF16融合按logits/utility/合法动作概率容差），并报告相对
 零 logits 与 value=0.5。virtual 跳过神经计算；shadow 执行实际模型但丢弃其结果。
 这样可严格比较相同树工作量与完整输出 hash，不把神经输出变化导致的叶数差当加速。
 它们不测策略质量。`controlled_model_call_seconds` 包含同步及调用包装，不能当纯 GPU
-kernel 时间；graph 的 `replay_ms` 是按 `--graph-profile-interval` 采样的设备事件总和。
+kernel 时间；graph 的 `replay_ms` 是按 `--graph-profile-interval` 采样的图内设备事件总和，
+不再包含Python逐个提交事件的空隙，但仍可能包含驱动/设备调度间隔。开启计时会在图中
+增加事件节点，端到端速度同时用interval=0验证。virtual也保留实际H2D/D2H，
+仅将网络替换为GPU常量输出；早期直接返回NumPy常量的结果只代表CPU下界。
 `--vec-env native --native-search-threads 4` 使用与训练相同的常驻原生搜索路径。
 比较必须保持 checkpoint、seed、环境数、搜索预算与 warmup 相同，并报告完整采样、
 模型计算、编译/capture、观测转换、真实环境 step 与资源指标。
