@@ -16,6 +16,10 @@ PPO、NOSL 与 reasoning 使用同一个梯度同步边界（ring 或 file trans
 此模式的环境真实 step 仍由 Python 编排，只有搜索/叶编码走 C++；默认后端保持 subproc。
 无叶子 IPC 不等于端到端零开销，`native_tree_seconds` 与 `native_pack_seconds` 是
 begin/advance 的内部拆分，不能再次加到 collection 总时间。环境 checkpoint 状态沿用相同合同。
+分布式 JSON 与 W&B 的 `nosl_is_az/native_{begin,advance,finish,tree,pack}_seconds`
+记录每轮 collection 的跨 rank 均值；不随该轮 learner 更新次数重复累计。
+非 native 路径或没有搜索的轮次为零。`cpp_leaf_model_seconds` 扣除了叶解码，
+仍含推理包装和数据传输，不能解释为纯 GPU kernel 时间。
 `--leaf-inference cuda-graph` 仅加速 CUDA compact combat 叶节点；其它路径默认 eager。
 `--leaf-graph-batch-multiple`、缓存生命周期和数值边界见 [搜索说明](../search/README.md)。
 Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方仍收到原来的

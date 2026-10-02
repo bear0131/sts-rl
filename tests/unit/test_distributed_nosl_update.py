@@ -154,6 +154,44 @@ def test_decreasing_update_budget_does_not_reuse_transport_tags(monkeypatch):
     assert len(tags) == len(set(tags)) == 5
 
 
+@pytest.mark.parametrize("updates", [1, 3])
+@pytest.mark.parametrize("has_timings", [False, True])
+def test_native_collection_timings_survive_updates_without_logger_values(monkeypatch, updates, has_timings):
+    model = _NoReplayDistributedModel()
+    model.nosl_is_az_updates = updates
+    # Collection has already finished. Its measurements must survive even if
+    # the logger was dumped before the synchronized learner runs.
+    model.logger = SimpleNamespace(name_to_value={})
+    measurements = {
+        "native_begin_seconds": 0.25,
+        "native_advance_seconds": 1.5,
+        "native_finish_seconds": 0.125,
+        "native_tree_seconds": 1.0,
+        "native_pack_seconds": 0.2,
+    }
+    if has_timings:
+        model._nosl_is_az_rollout_timings = measurements.copy()
+    monkeypatch.setattr(
+        distributed, "synchronize_gradient_step",
+        lambda *_args, **_kwargs: dict(sync_sec=0.0, sync_mbps=0.0, grad_bytes=4),
+    )
+
+    result = distributed.distributed_nosl_is_az_update(
+        model, rank=0, world_size=1, peers=[], key=Path("unused"),
+        control_dir=Path("unused"), local_root=Path("unused"),
+        remote_root="unused", run_id="timing-test", update=0,
+        ring_transport=None, barrier_timeout=1,
+    )
+
+    assert result["updates"] == updates
+    assert model.logger.name_to_value == {}
+    for name, seconds in measurements.items():
+        # One collection feeds all optimizer updates: never multiply its
+        # elapsed time by U, or report stale values for a non-native collector.
+        assert result[name] == pytest.approx(seconds if has_timings else 0.0)
+        assert f"nosl_is_az/{name}" in distributed._DISTRIBUTED_NOSL_METRIC_KEYS
+
+
 def test_nonfinite_synchronized_gradient_skips_adam_without_poisoning(monkeypatch):
     model = _NoReplayDistributedModel()
     model.nosl_is_az_updates = 1

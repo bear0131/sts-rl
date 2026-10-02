@@ -12,26 +12,57 @@ pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 
 @pytest.mark.parametrize('threads', [1, 4])
 @pytest.mark.parametrize('fixed_worldline,end_turn_as_leaf', [(True, True), (True, False), (False, False)])
-@pytest.mark.parametrize('contract,language', [
-    ('legacy', False), ('joint-v2', True), ('autoregressive-v2', True)])
-def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fixed_worldline, end_turn_as_leaf, contract, language):
+@pytest.mark.parametrize('contract,language,selection', [
+    ('legacy', False, False), ('joint-v2', True, False), ('autoregressive-v2', True, False),
+    pytest.param('joint-v2', True, True, id='joint-selection'),
+    pytest.param('autoregressive-v2', True, True, id='autoregressive-selection')])
+def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fixed_worldline, end_turn_as_leaf, contract, language, selection):
+    import slaythespire as sts
+
     deck = ['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 4 + ['BASH', 'BATTLE_TRANCE', 'TRUE_GRIT']
     def environments():
         result = []
         for i, encounter in enumerate(('Jaw Worm', 'Two Louse', 'Automaton', 'Collector')):
-            env = combat_factory(deck, encounter, seed=42+i, relics=(['Burning Blood'] if i % 2 else []),
+            card = 'PURITY' if i % 2 == 0 else 'SECRET_TECHNIQUE'
+            relics = (['Anchor'] if i < 2 else ['Burning Blood']) if selection else (['Burning Blood'] if i % 2 else [])
+            env = combat_factory([card] * 5 if selection else deck,
+                    'Two Louse' if selection else encounter, seed=42+i, relics=relics,
                     combat_action_contract=contract, card_language=language)
             env.thick.bc.apply_custom_state({
                 'player': {'powers': [('STRENGTH', -2+i), ('ARTIFACT', i)],
                            'counters': {'happy_flower': i, 'pen_nib': 3}},
                 'draw': [('STRIKE_RED', 1), ('DEFEND_RED', 0), ('STRIKE_RED', 2), ('BASH', 0)],
                 'discard': [('BASH', 1), ('DEFEND_RED', 2), ('BASH', 0)]})
+            if selection:
+                env.thick.gc.gold = 37 + i * 101
+                env.thick.bc.apply_custom_state({
+                    'player': {'gold': 37 + i * 101},
+                    'hand': [card, 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'ANGER', 'DEFEND_RED'],
+                    'draw': ['STRIKE_RED'] * 12 + ['SHRUG_IT_OFF', 'DEFEND_RED'],
+                    'monsters': [{'hp': 0}, {'hp': 13}],
+                })
+                env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
             env._invalidate_backend_cache()
             result.append(env)
         return result
     native, serial = environments(), environments()
+    roots = [env._obs() for env in native]
+    if selection:
+        for i, (env, root) in enumerate(zip(native, roots, strict=True)):
+            descriptor = env.thick.bc.select_info()
+            assert descriptor['zone'] == ('hand' if i % 2 == 0 else 'draw')
+            assert root['select_zone'][0] == (1 if i % 2 == 0 else 2)
+            handles = [candidate['native_index'] + 1 for candidate in descriptor['candidates']]
+            np.testing.assert_array_equal(root['select_native_indices'][:len(handles)], handles)
+            if i % 2:
+                assert min(handles) > 10, 'draw candidates must retain non-hand execution handles'
+            assert root['monster_id'][0] != 0 and root['monster_id'][1] != 0
+            np.testing.assert_array_equal(root['monster_scalars'][:2, 0], [0, 1])
+        assert len({root['gold'].tobytes() for root in roots}) == 4
+        assert roots[0]['relics'].tobytes() != roots[2]['relics'].tobytes()
     pool = NativeSearchBatch(native, threads)
-    config = NativeSearchConfig(simulations=128, fixed_worldline=fixed_worldline, end_turn_as_leaf=end_turn_as_leaf)
+    config = NativeSearchConfig(simulations=128, leaf_batch_size=1,
+                               fixed_worldline=fixed_worldline, end_turn_as_leaf=end_turn_as_leaf)
     calls = {i: ((np.linspace(-.3, .7, e.action_space.n),), dict(
         **asdict(config), root_value=.5, state_nonce=1729+i, compact_observation=True))
         for i, e in enumerate(native)}
@@ -42,6 +73,7 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fi
             responses = {i: e.nosl_is_az_cpp_begin(*calls[i][0], **calls[i][1])
                          for i, e in enumerate(serial)}
             total = 0
+            prefixes = set()
             while not pool.done:
                 owners = pool.payload['owners']
                 assert owners == [i for i, r in responses.items() if not r['done']]
@@ -54,6 +86,12 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fi
                         assert obs[key].dtype == reference[key].dtype, key
                         assert obs[key][row].tobytes() == reference[key][0].tobytes(), key
                     assert bool(pool.payload['needs_policy'][row]) == responses[i]['leaf_meta'][0]['needs_policy']
+                    if selection:
+                        for key in ('gold', 'relics', 'monster_id'):
+                            np.testing.assert_array_equal(obs[key][row], roots[i][key], err_msg=f'{i}: {key}')
+                        assert obs['monster_scalars'][row, 0, 0] == 0, 'dead target slot must remain absent'
+                        if obs['select_hand_mask'][row].any():
+                            prefixes.add(i)
                 # The pinned-buffer path must have the same bytes while leaving
                 # padding untouched; reuse the same storage as row counts shrink.
                 if total == 0:
@@ -78,12 +116,17 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fi
                 pool.advance(logits, values)
             assert total > 0
             assert sum(pool.leaves) == total
+            if selection and contract == 'autoregressive-v2':
+                assert {0, 2} <= prefixes, 'both hand-selection roots must expose real prefixes'
             actual = pool.results()
             for i in calls:
                 assert responses[i]['done']
                 for key in ('action', 'native_action_bits', 'root_value', 'simulations',
                             'visit_policy', 'root_visit_policy', 'root_visits'):
                     np.testing.assert_array_equal(actual[i][key], responses[i]['result'][key])
+                if selection:
+                    np.testing.assert_equal(native[i]._obs(), roots[i])
+                    np.testing.assert_equal(serial[i]._obs(), roots[i])
     finally:
         pool.close()
 

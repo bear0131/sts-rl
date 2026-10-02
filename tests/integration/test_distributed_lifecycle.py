@@ -10,6 +10,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
+from rl.search.native import NATIVE_TIMING_KEYS
 from rl.training import distributed_sb3
 from rl.training.environments import StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
@@ -196,6 +197,21 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()
              if line.startswith('{') and 'rollout_resources' in line]
     assert len(records)==4
+    # The collector must carry actual native work through reduction and both
+    # reporting sinks, including the two rounds after checkpoint recovery.
+    # Pin the public metric contract so deleting a key cannot weaken this test.
+    assert set(NATIVE_TIMING_KEYS) == {
+        'native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds',
+        'native_tree_seconds', 'native_pack_seconds',
+    }
+    for record, payload in zip(records, payloads, strict=True):
+        for name in NATIVE_TIMING_KEYS:
+            key = f'nosl_is_az/{name}'
+            assert record[key] == payload[key], key
+            if nosl and vector == 'native':
+                assert record[key] > 0, key
+            else:
+                assert record[key] == 0, key
     assert all(r['rollout_resources']['sample_count']>=2 for r in records)
     assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
     assert all((r['rollout_resources']['gpu_devices'] is None) == (device == 'cpu') for r in records)
@@ -225,6 +241,14 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['run_id'] == 'ci-fork'
         assert manifest['wandb_id'] == 'ci-fork-run'
         assert manifest['config']['fork_source_global_step'] == 128
+
+
+@pytest.mark.parametrize('nosl', [False, True], ids=['ppo', 'entity-nosl'])
+def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        nosl, 'rules' if nosl else 'model', 'entity' if nosl else 'transformer',
+        'autoregressive-v2' if nosl else 'legacy', vector='native')
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 learner lifecycle requires CUDA')

@@ -39,6 +39,13 @@ WORKER_TIMING_KEYS = (
     'worker_packed_leaf_rows',
 )
 
+# These describe one collection, regardless of its learner update count.
+# Tree and pack timings are internal to begin/advance, not additional wall time.
+NATIVE_TIMING_KEYS = (
+    'native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds',
+    'native_tree_seconds', 'native_pack_seconds',
+)
+
 
 def apply_strict_training_settings(model, *mirrors):
     """Keep new models, resumed models and their CLI metadata consistent."""
@@ -472,8 +479,8 @@ def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext)
     """
     stats = dict(leaf_batches=0, leaf_evaluations=0, cpp_leaf_decode_seconds=0.0,
                  cpp_leaf_model_seconds=0.0, cpp_backprop_rpc_seconds=0.0,
-                 native_begin_seconds=0.0, native_advance_seconds=0.0,
-                 native_finish_seconds=0.0, inference_batch_size_max=0)
+                 inference_batch_size_max=0)
+    stats.update({name: 0.0 for name in NATIVE_TIMING_KEYS})
     try:
         started = time.perf_counter()
         batch.begin(begin_calls)

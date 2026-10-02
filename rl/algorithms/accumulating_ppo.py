@@ -22,6 +22,7 @@ from env.core import native_actions as C
 from env.core.combat_value import VALUE_CONTRACT
 from rl.search.native import (
     LeafInferenceSchedule,
+    NATIVE_TIMING_KEYS,
     WORKER_TIMING_KEYS,
     complete_searches,
     complete_searches_native,
@@ -971,7 +972,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "selection_prefix_decisions": 0,
             "simulator_transitions": 0,
         }
-        nosl_timings.update({name: 0.0 for name in WORKER_TIMING_KEYS})
+        nosl_timings.update({name: 0.0 for name in WORKER_TIMING_KEYS + NATIVE_TIMING_KEYS})
         inference_batch_size_sum = 0.0
         inference_batch_count = 0
         inference_batch_size_max = 0
@@ -1227,9 +1228,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     if native_batch is not None:
                         result_by_index, shared_stats = complete_searches_native(
                             self, native_batch, begin_calls, autocast=self.autocast_context)
-                        for key in ('native_begin_seconds', 'native_advance_seconds', 'native_finish_seconds',
-                                    'native_tree_seconds', 'native_pack_seconds'):
-                            nosl_timings[key] = nosl_timings.get(key, 0.0) + shared_stats[key]
+                        for key in NATIVE_TIMING_KEYS:
+                            nosl_timings[key] += shared_stats[key]
                     elif (
                         callable(stream_factory)
                         and self.nosl_is_az_leaf_batch_size == 1
