@@ -20,6 +20,13 @@
 
 ### 完整动作等价组 equivalent-plays-v1
 
+战斗选牌的 `overflow-equivalent-v1` 保留96个候选槽以及旧checkpoint/replay形状。
+原始候选不超过96时，内容和顺序逐项保持；超过时使用原生卡实例等价关系合并副本，
+每个不同效果保留第一个真实执行索引，不能按卡名合并费用、强化或特殊数据不同的牌。
+这是对原先拒绝的长战斗状态（例如排斥机晕眩堆积后发掘）的兼容扩展；
+超过96个不等价候选仍明确报错，后续须单独迁移动作空间，禁止静默截断。
+canonical、packed、原生搜索和执行共用 `combatChoices`；已有合法replay无需迁移。
+
 保持原198维autoregressive-v2（以及旧1392维joint-v2）权重和观测接口。
 普通出牌按卡牌ID、升级、specialData、基础/当前费用、freeToPlayOnce、retain及目标分组；
 Ritual Dagger/Genetic Algorithm的永久实例分开，药水、结束回合和选牌前缀不合并。

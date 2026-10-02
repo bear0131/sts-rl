@@ -3,6 +3,7 @@
 #include "sim/search/Action.h"
 #include <algorithm>
 #include <stdexcept>
+#include <sstream>
 #include <tuple>
 
 namespace sts::search {
@@ -48,16 +49,19 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
         case CardSelectTask::WARCRY: result.zone = 1; break;
         default: throw std::runtime_error("unsupported combat selection context");
     }
+    auto cardAt = [&](int index) -> CardInstance {
+        return result.zone == 1 ? bc.cards.hand[index] :
+            result.zone == 2 ? bc.cards.drawPile[index] :
+            result.zone == 3 ? bc.cards.discardPile[index] :
+            result.zone == 4 ? bc.cards.exhaustPile[index] :
+            CardInstance(bc.cardSelectInfo.cards[index]);
+    };
     auto append = [&](int index) {
         if (task == CardSelectTask::CODEX && index == 3) {
             result.cards.push_back({index, CardId::INVALID, 0, 0, true});
             return;
         }
-        const CardInstance card = result.zone == 1 ? bc.cards.hand[index] :
-            result.zone == 2 ? bc.cards.drawPile[index] :
-            result.zone == 3 ? bc.cards.discardPile[index] :
-            result.zone == 4 ? bc.cards.exhaustPile[index] :
-            CardInstance(bc.cardSelectInfo.cards[index]);
+        const CardInstance card = cardAt(index);
         result.cards.push_back({index, card.getId(), card.getUpgradeCount(),
                                card.freeToPlayOnce ? 0 : card.costForTurn, false});
     };
@@ -76,8 +80,29 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
                        std::tie(b.id, b.upgrades, b.cost);
             });
     }
-    if (result.cards.size() > 96)
-        throw std::runtime_error("combat candidate capacity 96 exceeded");
+    if (result.cards.size() > 96) {
+        // overflow-equivalent-v1: battle piles can grow beyond the permanent
+        // deck capacity (e.g. Repulsor Dazed + Exhume). Preserve all previously
+        // encodable states exactly; compact only the formerly rejected states.
+        // Keep one executable handle for each effect, without truncating unique
+        // choices or treating different runtime costs as the same card.
+        std::vector<CombatChoice> unique;
+        for (const auto &choice : result.cards) {
+            const auto card = cardAt(choice.nativeIndex);
+            if (std::none_of(unique.begin(), unique.end(), [&](const CombatChoice &other) {
+                return Action::equivalentCards(card, cardAt(other.nativeIndex));
+            })) unique.push_back(choice);
+        }
+        if (unique.size() > 96) {
+            std::ostringstream detail;
+            detail << "combat candidate capacity 96 exceeded after equivalence: "
+                   << unique.size() << " distinct of " << result.cards.size()
+                   << "; task=" << cardSelectTaskStrings[static_cast<int>(task)]
+                   << "; floor=" << bc.floorNum << '\n' << bc;
+            throw std::runtime_error(detail.str());
+        }
+        result.cards = std::move(unique);
+    }
     return result;
 }
 

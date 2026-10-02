@@ -1661,6 +1661,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["version"] = 2;
         out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
+        out["candidate_overflow_contract"] = "overflow-equivalent-v1";
         out["joint_policy_size"] = sts::search::kJointSize;
         out["autoregressive_policy_size"] = sts::search::kAutoregressiveSize;
         out["categorical_width"] = compact_leaf::kCatSize;
