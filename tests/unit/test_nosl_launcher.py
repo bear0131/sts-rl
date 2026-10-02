@@ -46,6 +46,13 @@ def test_launcher_exposes_checkpoint_cadence_override():
     assert "must be a positive integer" in launcher
 
 
+def test_launcher_accepts_one_host_per_rank():
+    launcher = (ROOT / "experiments/launchers/launch_nosl_replay.sh").read_text()
+    assert 'read -r -a hosts <<< "${NOSL_PEER_HOSTS:-' in launcher
+    assert "NOSL_PEER_HOSTS must contain four space-separated hosts" in launcher
+    assert 'root@${hosts[$peer]}:${ports[$peer]}' in launcher
+
+
 def test_shared_transport_cleanup_is_manager_owned():
     launcher = (ROOT / "experiments/launchers/launch_nosl_replay.sh").read_text()
     manager = (ROOT / "experiments/launchers/manage_nosl_replay_4way.ps1").read_text()

@@ -62,10 +62,15 @@ read -r -a ports <<< "${NOSL_PEER_PORTS:-12009 17944 13500 44892}"
   echo 'NOSL_PEER_PORTS must contain four space-separated ports' >&2
   exit 2
 }
+read -r -a hosts <<< "${NOSL_PEER_HOSTS:-connect.bjb2.seetacloud.com connect.bjb2.seetacloud.com connect.bjb2.seetacloud.com connect.bjb2.seetacloud.com}"
+[ "${#hosts[@]}" -eq 4 ] || {
+  echo 'NOSL_PEER_HOSTS must contain four space-separated hosts' >&2
+  exit 2
+}
 peers=()
 for peer in 0 1 2 3; do
   [ "$peer" = "$rank" ] && continue
-  peers+=(--peer "${peer}=root@connect.bjb2.seetacloud.com:${ports[$peer]}")
+  peers+=(--peer "${peer}=root@${hosts[$peer]}:${ports[$peer]}")
 done
 extra=()
 if [ -n "${NOSL_OVERRIDES_FILE:-}" ]; then extra+=("@$NOSL_OVERRIDES_FILE"); fi
