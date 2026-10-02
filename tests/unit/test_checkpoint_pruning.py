@@ -65,7 +65,9 @@ def test_bundle_space_check_uses_previous_generation_size(tmp_path, monkeypatch)
         rf"required_bytes={previous_bytes + 20} .*"
         rf"previous_bundle_bytes={previous_bytes}"
     )):
-        ensure_bundle_disk_space(tmp_path, rank=0, reserve_bytes=20)
+        ensure_bundle_disk_space(
+            tmp_path, rank=0, reserve_bytes=20, reclaim_timeout_seconds=0,
+        )
 
 
 def test_bundle_space_check_reports_capacity_when_available(tmp_path, monkeypatch):
@@ -76,6 +78,9 @@ def test_bundle_space_check_reports_capacity_when_available(tmp_path, monkeypatc
         "disk_usage",
         lambda _path: SimpleNamespace(free=1000),
     )
+    monkeypatch.setattr(
+        checkpoints.time, "sleep", lambda _seconds: pytest.fail("unnecessary wait"),
+    )
 
     capacity = ensure_bundle_disk_space(
         tmp_path, rank=0, reserve_bytes=20,
@@ -83,3 +88,52 @@ def test_bundle_space_check_reports_capacity_when_available(tmp_path, monkeypatc
 
     assert capacity["free_bytes"] == 1000
     assert capacity["required_bytes"] == capacity["previous_bundle_bytes"] + 20
+
+
+@pytest.fixture
+def reclaim_clock(monkeypatch):
+    clock = SimpleNamespace(now=0.0, sleeps=[])
+
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+
+    monkeypatch.setattr(checkpoints.time, "monotonic", lambda: clock.now)
+    monkeypatch.setattr(checkpoints.time, "sleep", sleep)
+    return clock
+
+
+def test_bundle_space_waits_for_observed_quota_release(
+    tmp_path, monkeypatch, reclaim_clock,
+):
+    generation = _generation(tmp_path, 10)
+    (generation / "learner.pt").write_bytes(b"x" * 100)
+    previous = sum(p.stat().st_size for p in generation.iterdir())
+    free = iter((previous + 1, previous + 19, previous + 20))
+    monkeypatch.setattr(
+        checkpoints.shutil, "disk_usage", lambda _path: SimpleNamespace(free=next(free)),
+    )
+
+    capacity = ensure_bundle_disk_space(tmp_path, rank=0, reserve_bytes=20)
+
+    assert capacity["free_bytes"] == capacity["required_bytes"] == previous + 20
+    assert 0 < reclaim_clock.now <= 5.0
+    assert (generation / "learner.pt").read_bytes() == b"x" * 100
+
+
+def test_bundle_space_still_rejects_shortfall_after_bounded_wait(
+    tmp_path, monkeypatch, reclaim_clock,
+):
+    generation = _generation(tmp_path, 10)
+    (generation / "learner.pt").write_bytes(b"x" * 100)
+    monkeypatch.setattr(
+        checkpoints.shutil, "disk_usage", lambda _path: SimpleNamespace(free=1),
+    )
+
+    with pytest.raises(RuntimeError, match="insufficient disk space"):
+        ensure_bundle_disk_space(
+            tmp_path, rank=0, reserve_bytes=20, reclaim_timeout_seconds=0.25,
+        )
+
+    assert reclaim_clock.now == pytest.approx(0.25)
+    assert generation.is_dir()

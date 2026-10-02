@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import random
 import shutil
+import time
 import uuid
 
 import numpy as np
@@ -40,8 +41,9 @@ def _is_incomplete_directory_name(name):
 
 def ensure_bundle_disk_space(
     root, *, rank, reserve_bytes=_BUNDLE_SPACE_RESERVE_BYTES,
+    reclaim_timeout_seconds=5.0,
 ):
-    """Fail before an atomic save when another generation cannot fit."""
+    """Allow quota accounting to catch up after pruning, then enforce space."""
     directory = Path(root) / f'rank{rank}'
     directory.mkdir(parents=True, exist_ok=True)
     bundles = [
@@ -52,6 +54,15 @@ def ensure_bundle_disk_space(
     growth_reserve = max(reserve_bytes, previous_bytes // 10)
     required_bytes = previous_bytes + growth_reserve
     free_bytes = shutil.disk_usage(directory).free
+    # Unlink can return before XFS project quotas release a large replay file.
+    # Keep the full safety margin; only recheck the observed free space briefly.
+    deadline = time.monotonic() + reclaim_timeout_seconds
+    while free_bytes < required_bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.1, remaining))
+        free_bytes = shutil.disk_usage(directory).free
     if free_bytes < required_bytes:
         raise RuntimeError(
             'insufficient disk space for atomic recovery bundle: '
