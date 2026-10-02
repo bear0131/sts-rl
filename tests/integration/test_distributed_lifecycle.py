@@ -215,6 +215,24 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert all(r['rollout_resources']['sample_count']>=2 for r in records)
     assert all(r['rollout_resources']['tree_rss_peak_sampled_bytes']>0 for r in records)
     assert all((r['rollout_resources']['gpu_devices'] is None) == (device == 'cpu') for r in records)
+    for record in records:
+        collection, iteration = record['rollout_resources'], record['iteration_resources']
+        assert 0 < collection['elapsed_seconds'] < iteration['elapsed_seconds'] <= record['iteration_wall_sec']
+        assert iteration['sample_count'] > collection['sample_count']
+        assert iteration['tree_cpu_seconds'] >= collection['tree_cpu_seconds']
+        assert iteration['tree_rss_peak_sampled_bytes'] >= collection['tree_rss_peak_sampled_bytes']
+        assert (iteration['gpu_devices'] is None) == (device == 'cpu')
+        for resources in (collection, iteration):
+            for name in ('allocated', 'reserved'):
+                current = resources[f'torch_{name}_bytes']
+                peak = resources[f'torch_{name}_peak_sampled_bytes']
+                if device == 'cpu':
+                    assert current is None and peak is None
+                    assert resources['torch_memory_unavailable_reason']
+                else:
+                    assert 0 < current <= peak
+                    assert resources['torch_memory_unavailable_reason'] is None
+                    assert resources['torch_device'].startswith('cuda:')
 
     if staggered:
         stop_file.unlink()
@@ -249,6 +267,63 @@ def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_ty
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         nosl, 'rules' if nosl else 'model', 'entity' if nosl else 'transformer',
         'autoregressive-v2' if nosl else 'legacy', vector='native')
+
+
+@pytest.mark.parametrize('failure_stage', ['learner', 'checkpoint'])
+@pytest.mark.parametrize('monitor_exit_fails', [False, True])
+def test_iteration_monitor_closes_on_training_failure(tmp_path, monkeypatch, capsys, short_combat_env_type, failure_stage, monitor_exit_fails):
+    from rl.training import resource_monitor
+    from rl.training.native_vec_env import NativeSearchVecEnv
+
+    monitors, closed_environments = [], []
+    class ObservedMonitor(resource_monitor.ResourceMonitor):
+        def __enter__(self):
+            monitors.append(self)
+            return super().__enter__()
+
+        def __exit__(self, *args):
+            super().__exit__(*args)
+            if monitor_exit_fails:
+                raise RuntimeError('injected monitor exit failure')
+
+    monkeypatch.setattr(resource_monitor, 'ResourceMonitor', ObservedMonitor)
+    close = NativeSearchVecEnv.close
+    def observed_close(env):
+        if monitors:
+            closed_environments.append(env)
+        return close(env)
+    monkeypatch.setattr(NativeSearchVecEnv, 'close', observed_close)
+    def fail():
+        assert len(monitors) == 1
+        assert monitors[0]._thread.is_alive(), 'sampling must cover the learner and checkpoint'
+        raise RuntimeError(f'injected {failure_stage} failure')
+
+    if failure_stage == 'learner':
+        original = distributed_sb3.distributed_nosl_is_az_update
+        def failed_update(*args, **kwargs):
+            original(*args, **kwargs)
+            fail()
+        monkeypatch.setattr(distributed_sb3, 'distributed_nosl_is_az_update', failed_update)
+    else:
+        original = torch.save
+        generation = tmp_path / 'state' / 'rank0' / 'step-000000000032'
+        def failed_save(value, destination, *args, **kwargs):
+            if destination == generation / 'learner.pt':
+                assert (generation / 'model.zip').is_file()
+                fail()
+            return original(value, destination, *args, **kwargs)
+        monkeypatch.setattr(torch, 'save', failed_save)
+    expected_error = 'injected monitor exit failure' if monitor_exit_fails else f'injected {failure_stage} failure'
+    with pytest.raises(RuntimeError, match=expected_error):
+        test_training_reaches_wandb_and_checkpoint(
+            tmp_path, monkeypatch, capsys, short_combat_env_type,
+            True, 'rules', 'entity', 'autoregressive-v2', vector='native')
+    assert len(monitors) == 1
+    assert not monitors[0]._thread.is_alive()
+    assert closed_environments, 'telemetry cleanup failure must not bypass environment cleanup'
+    assert monitors[0].summary['sample_count'] >= 2
+    assert not (tmp_path / 'state' / 'rank0' / 'latest').exists()
+    assert not (tmp_path / 'state' / 'rank0' / 'step-000000000032').exists()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 learner lifecycle requires CUDA')

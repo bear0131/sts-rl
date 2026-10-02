@@ -25,6 +25,7 @@ import random
 import shlex
 import subprocess
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -481,7 +482,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
                         help="Pad independent leaf rows to this multiple; 0 preserves exact batch shapes")
     parser.add_argument("--rollout-resource-interval", type=float, default=0,
-                        help="Sample rollout process-tree CPU/RSS and device GPU every N seconds; 0 disables")
+                        help="Sample process-tree CPU/RSS and device GPU every N seconds for rollout and full iteration including update/sync/save; 0 disables")
     parser.add_argument("--wandb-project", default="sts-rl")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--wandb-id", default=None)
@@ -2772,26 +2773,29 @@ def main() -> None:
 
     records = []
     training_failed = False
+    resource_stack = ExitStack()
     try:
         for update in range(args.updates):
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
             started = time.perf_counter()
-            from contextlib import nullcontext
             monitor = None
+            rollout_resources = None
             if args.rollout_resource_interval:
                 from rl.training.resource_monitor import ResourceMonitor
-                monitor = ResourceMonitor(interval=args.rollout_resource_interval,
-                                          gpu=model.device.type=='cuda')
-            with monitor if monitor is not None else nullcontext():
-                ok = model.collect_rollouts(
-                    model.env,
-                    callback,
-                    model.rollout_buffer,
-                    n_rollout_steps=args.n_steps,
-                )
+                monitor = resource_stack.enter_context(ResourceMonitor(
+                    interval=args.rollout_resource_interval,
+                    gpu=model.device.type=='cuda', torch_device=model.device))
+            ok = model.collect_rollouts(
+                model.env,
+                callback,
+                model.rollout_buffer,
+                n_rollout_steps=args.n_steps,
+            )
             if model.device.type == "cuda":
                 th.cuda.synchronize(model.device)
+            if monitor is not None:
+                rollout_resources = monitor.snapshot()
             rollout_sec = time.perf_counter() - started
             if not ok:
                 raise RuntimeError("collect_rollouts returned False")
@@ -3180,7 +3184,7 @@ def main() -> None:
             if cuda_memory_peak is not None:
                 record["cuda_memory_peak"] = cuda_memory_peak
             if monitor is not None:
-                record['rollout_resources'] = monitor.summary
+                record['rollout_resources'] = rollout_resources
 
             # Episode metrics are maintained independently by each callback.
             # Average the fixed set across ranks before printing or sending it
@@ -3266,6 +3270,30 @@ def main() -> None:
                 ring_transport)['stop_requested'])
             save_due = bool(args.save_every_updates and (update + 1) % args.save_every_updates == 0)
             checkpoint_started = time.perf_counter()
+            if args.output is not None and save_due:
+                model.save(str(args.output.with_suffix("")))
+            if (
+                args.rank == 0
+                and args.checkpoint_dir is not None
+                and args.training_state_dir is None
+                and save_due
+            ):
+                args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                prune_checkpoints(
+                    args.checkpoint_dir,
+                    args.checkpoint_prefix,
+                    args.max_checkpoints - 1,
+                )
+                path = (
+                    args.checkpoint_dir
+                    / f"{args.checkpoint_prefix}_{global_timesteps}_steps"
+                )
+                model.save(str(path))
+                prune_checkpoints(
+                    args.checkpoint_dir,
+                    args.checkpoint_prefix,
+                    args.max_checkpoints,
+                )
             if args.training_state_dir is not None and (save_due or stop_requested):
                 # Keep one known-good generation while bounding peak disk use
                 # to max_checkpoints during the next atomic bundle write.
@@ -3280,6 +3308,11 @@ def main() -> None:
                 # Do not start the next collection until every rank published its generation.
                 average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
             record['checkpoint_sec'] = time.perf_counter() - checkpoint_started
+            if monitor is not None:
+                if model.device.type == "cuda":
+                    th.cuda.synchronize(model.device)
+                resource_stack.close()
+                record['iteration_resources'] = monitor.summary
             record['iteration_wall_sec'] = time.perf_counter() - started
             records.append(record)
             print(json.dumps(record, sort_keys=True), flush=True)
@@ -3436,35 +3469,6 @@ def main() -> None:
                 wandb_payload["legacy_step"] = int(legacy_step)
                 wandb.log(wandb_payload)
 
-            if args.output is not None and (
-                args.save_every_updates
-                and (update + 1) % args.save_every_updates == 0
-            ):
-                model.save(str(args.output.with_suffix("")))
-            if (
-                args.rank == 0
-                and args.checkpoint_dir is not None
-                and args.training_state_dir is None
-                and args.save_every_updates
-                and (update + 1) % args.save_every_updates == 0
-            ):
-                args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-                prune_checkpoints(
-                    args.checkpoint_dir,
-                    args.checkpoint_prefix,
-                    args.max_checkpoints - 1,
-                )
-                path = (
-                    args.checkpoint_dir
-                    / f"{args.checkpoint_prefix}_{global_timesteps}_steps"
-                )
-                model.save(str(path))
-                prune_checkpoints(
-                    args.checkpoint_dir,
-                    args.checkpoint_prefix,
-                    args.max_checkpoints,
-                )
-
             if stop_requested:
                 print(f'[rank {args.rank}] coordinated stop after {global_timesteps} global steps', flush=True)
                 break
@@ -3498,12 +3502,15 @@ def main() -> None:
         training_failed = True
         raise
     finally:
-        callback.on_training_end()
-        if ring_transport is not None:
-            ring_transport.close()
-        env.close()
-        if wandb_run is not None:
-            wandb_run.finish(exit_code=1 if training_failed else 0)
+        try:
+            resource_stack.close()
+        finally:
+            callback.on_training_end()
+            if ring_transport is not None:
+                ring_transport.close()
+            env.close()
+            if wandb_run is not None:
+                wandb_run.finish(exit_code=1 if training_failed else 0)
 
     summary = {
         "rank": args.rank,

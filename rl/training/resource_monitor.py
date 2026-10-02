@@ -12,21 +12,78 @@ import psutil
 
 
 class ResourceMonitor:
-    def __init__(self, *, interval: float = 0.5, gpu: bool = False):
+    def __init__(self, *, interval: float = 0.5, gpu: bool = False, torch_device=None):
         if not math.isfinite(interval) or interval <= 0:
             raise ValueError('resource sample interval must be positive')
         self.interval = interval
         self.gpu = gpu
+        self._requested_torch_device = torch_device
+        self._torch_cuda = None
+        self._torch_device_index = None
+        self._torch_device = None
+        self._torch_memory_reason = 'Torch allocator sampling not requested'
         self.samples = []
         self.errors = set()
         self._stop = threading.Event()
+        self._sample_lock = threading.RLock()
         self._previous_cpu = {}
         self._thread = None
+        self._active = False
         self._smi = shutil.which("nvidia-smi") if gpu else None
         if gpu and self._smi is None:
             self.errors.add("nvidia-smi unavailable; device metrics are null")
 
+    def _prepare_torch_sampling(self):
+        # Resolve CUDA's thread-local default on the main thread once. Sampling
+        # must not initialize CUDA, switch devices, synchronize, or reset peaks.
+        if self._requested_torch_device is None:
+            return
+        try:
+            import torch
+            device = torch.device(self._requested_torch_device)
+            self._torch_device = str(device)
+            if device.type != 'cuda':
+                self._torch_memory_reason = 'Torch allocator sampling requires a CUDA device'
+                return
+            if not torch.cuda.is_initialized():
+                self._torch_memory_reason = 'Torch CUDA is not initialized'
+                return
+            index = device.index
+            if index is None:
+                if threading.current_thread() is not threading.main_thread():
+                    self._torch_memory_reason = 'CUDA device index must be resolved on the main thread'
+                    return
+                index = torch.cuda.current_device()
+            self._torch_device_index = index
+            self._torch_device = f'cuda:{index}'
+            self._torch_cuda = torch.cuda
+            self._torch_memory_reason = None
+        except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            self._torch_memory_reason = f'{type(exc).__name__}: Torch allocator sampling unavailable'
+
+    def _torch_memory_sample(self):
+        result = dict(torch_device=self._torch_device, torch_allocated_bytes=None,
+                      torch_reserved_bytes=None,
+                      torch_memory_unavailable_reason=self._torch_memory_reason)
+        if self._torch_cuda is None:
+            return result
+        try:
+            stats = self._torch_cuda.memory_stats(self._torch_device_index)
+            for name in ('allocated', 'reserved'):
+                # memory_allocated/reserved return zero for missing stats;
+                # absence must stay distinguishable from an empty allocator.
+                result[f'torch_{name}_bytes'] = stats.get(f'{name}_bytes.all.current')
+            if any(result[f'torch_{name}_bytes'] is None for name in ('allocated', 'reserved')):
+                result['torch_memory_unavailable_reason'] = 'Torch allocator statistics are missing'
+        except (OSError, RuntimeError, ValueError) as exc:
+            result['torch_memory_unavailable_reason'] = f'{type(exc).__name__}: Torch allocator query failed'
+        return result
+
     def _sample(self):
+        with self._sample_lock:
+            self._sample_locked()
+
+    def _sample_locked(self):
         parent = psutil.Process()
         cpu_delta, rss = 0.0, 0
         for process in [parent, *parent.children(recursive=True)]:
@@ -44,6 +101,7 @@ class ResourceMonitor:
                "system_available_bytes": psutil.virtual_memory().available,
                "cgroup_memory_bytes": self._cgroup_number('memory.current'),
                "gpu_devices": None, "power_plugged": None}
+        row.update(self._torch_memory_sample())
         try:
             battery = getattr(psutil, 'sensors_battery', lambda: None)()
             if battery is not None:
@@ -92,16 +150,46 @@ class ResourceMonitor:
             self._sample()
 
     def __enter__(self):
-        self.started = time.perf_counter()
-        self._sample()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        with self._sample_lock:
+            if self._thread is not None:
+                raise RuntimeError('ResourceMonitor instances cannot be reused')
+            self._prepare_torch_sampling()
+            self.started = time.perf_counter()
+            self._sample_locked()
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._active = True
+            try:
+                self._thread.start()
+            except BaseException:
+                self._active = False
+                self._stop.set()
+                raise
         return self
 
     def __exit__(self, *_args):
         self._stop.set()
         self._thread.join()
-        self._sample()
+        with self._sample_lock:
+            try:
+                self._sample_locked()
+                self.summary = self._summarize_locked()
+            finally:
+                self._active = False
+
+    def snapshot(self):
+        """Sample now and summarize elapsed work without stopping the monitor.
+
+        The returned nested values are independent of later samples and the
+        final summary. Sampling is serialized with the background thread so
+        process CPU deltas are counted only once.
+        """
+        with self._sample_lock:
+            if not self._active or self._stop.is_set():
+                raise RuntimeError('snapshot requires an active ResourceMonitor')
+            self._sample_locked()
+            return self._summarize_locked()
+
+    def _summarize_locked(self):
         elapsed = self.samples[-1]["elapsed_seconds"]
         devices = {}
         for sample in self.samples:
@@ -128,10 +216,21 @@ class ResourceMonitor:
             cpu_quota=float(quota)/float(period)
         except (OSError,ValueError,ZeroDivisionError):
             cpu_quota=None
-        self.summary = {
+        cpu_seconds = sum(s["cpu_seconds_delta"] for s in self.samples)
+        torch_memory = {key: self.samples[-1][key] for key in (
+            'torch_device', 'torch_allocated_bytes', 'torch_reserved_bytes',
+            'torch_memory_unavailable_reason')}
+        for name in ('allocated', 'reserved'):
+            values = [s[f'torch_{name}_bytes'] for s in self.samples
+                      if s[f'torch_{name}_bytes'] is not None]
+            torch_memory[f'torch_{name}_peak_sampled_bytes'] = max(values) if values else None
+        return {
+            **torch_memory,
             "sample_count": len(self.samples),
             "interval_seconds": self.interval,
-            "tree_cpu_percent_mean": 100 * sum(s["cpu_seconds_delta"] for s in self.samples) / max(elapsed, 1e-9),
+            "elapsed_seconds": elapsed,
+            "tree_cpu_seconds": cpu_seconds,
+            "tree_cpu_percent_mean": 100 * cpu_seconds / max(elapsed, 1e-9),
             "tree_rss_peak_sampled_bytes": max(s["tree_rss_bytes"] for s in self.samples),
             "system_available_min_bytes": min(s["system_available_bytes"] for s in self.samples),
             "cgroup_memory_peak_sampled_bytes": max(cgroup_memory) if cgroup_memory else None,
@@ -145,6 +244,7 @@ class ResourceMonitor:
                 "100% CPU means one logical core; short-lived children can be undersampled.",
                 "RSS sums may double-count shared pages; sampled peaks are lower bounds.",
                 "NVIDIA telemetry is device-wide and can include other processes.",
+                "Torch allocator values cover this process and the selected CUDA device; sampled peaks are lower bounds, not allocator high-water marks.",
                 "Telemetry sampling has overhead; compare identical intervals and hardware.",
             ],
         }

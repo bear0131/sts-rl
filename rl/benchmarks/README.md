@@ -39,7 +39,15 @@ kernel 时间；graph 的 `replay_ms` 是按 `--graph-profile-interval` 采样�
 分布式入口 `--rollout-resource-interval 2` 每2秒采样，逐 rank 的 JSON 日志
 `rollout_resources` 包含 CPU（100%=一核）、进程树 RSS、容器内存/CPU 配额、
 GPU util 与设备显存峰值。RSS 会重复计算共享页，设备采样可能包含其他进程；
-缺失指标是 null。关闭采样用0；采样器只覆盖 collection，不混入 backward。
+缺失指标是 null。关闭采样用0。分布式入口的同一个采样器在 collection 结束时冻结
+`rollout_resources`，继续采集到本轮 learner、同步、周期保存及 checkpoint 发布完成，
+输出 `iteration_resources`。两者的 `elapsed_seconds`、`tree_cpu_seconds` 表示各自范围，
+不要把两个重叠范围相加；W&B 排队及整个 run 的最终收尾保存不在单轮范围。
+独立 rollout benchmark 仍只测 collection，不能代替完整训练轮验收。
+分布式资源记录还包含指定 CUDA 设备的进程内 `torch_allocated_bytes`、
+`torch_reserved_bytes` 当前值和对应 `torch_*_peak_sampled_bytes`。这些峰值是采样下界，
+不是 CUDA allocator 的精确高水位；监控器不重置训练的峰值计数。
+CPU、尚未初始化 CUDA 或查询不可用时为 null，原因见 `torch_memory_unavailable_reason`。
 采样同时记录可用的GPU核心/显存时钟、功耗、温度、P-state及笔记本是否接电；
 比较前核对供电和时钟，`power_plugged_observed`出现两个值表示采样期间供电改变，
 桌面机或无电池传感器为null。不能把跨供电条件的耗时差归为代码收益。

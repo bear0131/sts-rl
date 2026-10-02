@@ -24,8 +24,10 @@ begin/advance 的内部拆分，不能再次加到 collection 总时间。环境
 `--leaf-graph-batch-multiple`、缓存生命周期和数值边界见 [搜索说明](../search/README.md)。
 Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方仍收到原来的
 逐环境 RPC 结果；混合终局、不同 batch 长度与请求顺序有真实子进程回归。
-`--rollout-resource-interval 2` 在每个 rank 的 JSON 记录中加入 collection 的
-CPU/RSS/cgroup/GPU 采样，0 关闭；定义与复现实验入口见 [资源基准](../benchmarks/README.md)。
+`--rollout-resource-interval 2` 让同一个采样器覆盖完整训练轮：每个 rank 的 JSON 中，
+`rollout_resources` 保留 collection 快照，`iteration_resources` 还包含 learner、同步、
+本轮周期保存与 checkpoint 发布等待。两者包含 CPU/RSS/cgroup/GPU 采样，0 关闭；
+定义与复现实验入口见 [资源基准](../benchmarks/README.md)。
 
 生产恢复默认使用 `--training-state-dir DIR --save-every-updates 1 --max-checkpoints 3`。
 在需要测量 checkpoint 固定成本时，launcher 可通过
@@ -52,6 +54,8 @@ learner/environment 使用 pickle protocol 5 保存 NumPy buffer，保持 bundle
 每轮完整快照包含每 rank 的 replay，写盘成本需计入实际生产吞吐。
 `dist/iteration_wall_sec` 与吞吐分母包含指标聚合、恢复点写盘和跨 rank 发布等待，
 `dist/checkpoint_sec` 单独记录保存/发布等待；不包含随后 W&B 客户端排队的时间。
+周期性的 `--output` 和旧 `--checkpoint-dir` 保存也计入本轮保存时间；
+整个 run 结束后的最终保存属于收尾，不计入单轮时间或资源范围。
 原 `dist/rank0_total_sec` 保留旧计时口径，避免误当作新端到端口径。
 
 `--stop-file PATH` 在下一次更新/跨 rank 同步后触发保存并协同结束；多机要求 ssh-ring。
