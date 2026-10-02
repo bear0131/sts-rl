@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| TRAIN30 | 准备：从198轮完整锚点fork学习超参实验 | 用户授权保存暂停TRAIN29；从9732096保留模型/Adam/replay/RNG/环境，独立run/W&B/transport，不改搜索或96×128×4。重新选择学习率、更新/训练batch、replay混合与NOSL损失权重；验收两轮真实生产生命周期、配置生效、finite与跨rank一致及磁盘轮转空间。见 `worklog/2026-10-02.md#train30-mature-replay-fork-intent`。 |
 | UI07 | 已完成并部署本地：腐化等布尔buff显示 | 新增原生只读player_power_flags，Watch单独显示真实状态，兼容旧checkpoint数值观测。23项兼容测试通过，腐化实际0费/消耗、清除后消失、snapshot不改变输入/合法mask；使用build-ui07恢复seed200100/step653/max654，原canonical和下一决策一致，8765已切换。见 `worklog/2026-10-02.md#ui07-boolean-power-display-completion`。 |
 | OBS01 | 已定位，待版本化迁移：布尔状态无显式观测 | `playerPowersToList`未导出statusBits-only能力，`Player::getStatusRuntime`对其返回0，因此既有canonical/packed policy输入均缺Corruption、Barricade、Confused等直接标记。UI07只修显示；后续须定义观测版本/旧checkpoint兼容和replay分布，验证sim→canonical/packed→search/learner/eval/bridge一致以及保留模型加载/预测/两轮训练生命周期，不能只改UI或静默改变在训输入。见 `worklog/2026-10-02.md#ui07-boolean-power-display-completion`。 |
 | SIM01 | 已完成规则修复并部署 | fe0b78d恢复觉醒者第一形态CURIOSITY触发，A0/A20、能力升级/免费/复制、复活后及真实搜索叶验证；四机各127项通过，显式Gumbel0生效。旧run最后共同25018368已完整备份，用户要求新训练而非继续旧轨迹。见 `worklog/2026-10-02.md#pol01-group-contract-validation-and-storage`。 |

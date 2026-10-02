@@ -2,6 +2,8 @@
 
 `.args` 是 argparse 原生 response file：每行一个原样参数，不写注释、不写 shell 引号、不展开环境变量。入口添加 `@文件` 即可；后面的同名选项可覆盖前面的值。
 
+`train/entity_combat_mature_replay.args` 是已训练模型的独立NOSL学习实验：继承groups runtime的全部搜索配置和96环境×128步；学习率1e-4、每轮16次更新、每rank逻辑batch32768/微批8192、524288容量replay中当前轮至少25%、group CE与value分布损失各权重1、梯度裁剪1。四rank合计每次更新131072个样本；每轮训练样本访问2097152次，不是新增环境transition数。此为待比较的组合实验，不是已验证最优值。用完整bundle的`--fork-state`和新run/W&B身份启动，保留Adam/replay/RNG/环境，不重启预热。分布式入口的`--nosl-is-az-policy-coef`、`--nosl-is-az-value-coef`分别控制这两个损失，省略时保留checkpoint值；PPO的`--vf-coef`和`--ent-coef`不控制NOSL监督损失。
+
 - `train/`：三个已存在 NOSL 实验的训练预算/搜索/replay/optimizer 参数，原 launcher 逐项迁出。不是建议现在重启实验。
 - `eval/`：policy 与严格 Full Gumbel 固定小场景冒烟；训练 128 simulations 和烟测 8 simulations 是不同用途。
 - 地址、rank、ring、checkpoint、W&B run 身份仍在 `experiments/launchers/` 部署脚本。其余历史脚本是尚未规范化的可执行部署预设，不能当作算法实现。

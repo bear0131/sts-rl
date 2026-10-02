@@ -611,6 +611,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--nosl-is-az-update-schedule",
                         choices=("constant", "value-warmup"), default=None)
+    parser.add_argument("--nosl-is-az-policy-coef", type=float, default=None,
+                        help="NOSL group cross-entropy weight; omission preserves the checkpoint.")
+    parser.add_argument("--nosl-is-az-value-coef", type=float, default=None,
+                        help="NOSL value/distribution loss weight; omission preserves the checkpoint.")
     parser.add_argument(
         "--nosl-is-az-replay",
         dest="nosl_is_az_replay_enabled",
@@ -2040,6 +2044,10 @@ def main() -> None:
         raise ValueError("--max-grad-norm must be non-negative or inf")
     if args.envs_per_worker < 1:
         raise ValueError("--envs-per-worker must be at least 1")
+    for name in ("nosl_is_az_policy_coef", "nosl_is_az_value_coef"):
+        value = getattr(args, name)
+        if value is not None and (not np.isfinite(value) or value < 0):
+            raise ValueError(f"--{name.replace('_', '-')} must be finite and non-negative")
     if args.startup_stagger_steps < 0:
         raise ValueError("--startup-stagger-steps must be non-negative")
     if args.startup_stagger_steps % args.n_steps:
@@ -2282,6 +2290,9 @@ def main() -> None:
     }
     if args.max_grad_norm is not None:
         custom_objects["max_grad_norm"] = args.max_grad_norm
+    for name in ("nosl_is_az_policy_coef", "nosl_is_az_value_coef"):
+        if getattr(args, name) is not None:
+            custom_objects[name] = getattr(args, name)
     model = AccumulatingMaskablePPO.load(
         args.checkpoint,
         env=env,
@@ -2343,6 +2354,10 @@ def main() -> None:
     ):
         raise ValueError("--nosl-is-az-upper-strategy rules requires inner-only NOSL")
     model.nosl_is_az_upper_strategy = args.nosl_is_az_upper_strategy = upper_strategy
+    for name in ("nosl_is_az_policy_coef", "nosl_is_az_value_coef"):
+        if getattr(args, name) is not None and not model.nosl_is_az:
+            raise ValueError(f"--{name.replace('_', '-')} requires a NOSL-IS-AZ checkpoint")
+        setattr(args, name, float(getattr(model, name)))
     from env.search.overworld_rules import OVERWORLD_RULE_VERSION
     args.nosl_is_az_upper_strategy_version = (
         OVERWORLD_RULE_VERSION if upper_strategy == "rules" else "checkpoint-model"

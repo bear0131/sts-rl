@@ -260,6 +260,62 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['wandb_id'] == 'ci-fork-run'
         assert manifest['config']['fork_source_global_step'] == 128
 
+    if nosl and combat_arch == 'entity' and contract == 'autoregressive-v2':
+        stop_file.unlink()
+        fork_root = tmp_path / 'hyperparameter-fork'
+        source = tmp_path / 'state' / 'rank0' / 'step-000000000128'
+        source_learner = torch.load(source / 'learner.pt', weights_only=False)
+        restore = distributed_sb3.restore_learner
+        restored_states = []
+
+        def observe_restore(model, *args, **kwargs):
+            result = restore(model, *args, **kwargs)
+            restored_states.append((
+                model._recovery_environment_restored,
+                model._nosl_is_az_replay.total_added,
+                model._nosl_is_az_replay.size,
+            ))
+            return result
+
+        monkeypatch.setattr(distributed_sb3, 'restore_learner', observe_restore)
+        fork_argv = [*argv, '--run-id', 'ci-hyperparameters',
+            '--wandb-id', 'ci-hyperparameters', '--fork-state', str(source),
+            '--training-state-dir', str(fork_root), '--updates', '2',
+            '--learning-rate', '0.0001', '--max-grad-norm', '1',
+            '--nosl-is-az-updates', '2', '--nosl-is-az-update-schedule', 'constant',
+            '--nosl-is-az-batch-size', '16', '--nosl-is-az-micro-batch-size', '4',
+            '--nosl-is-az-replay-max-old-fraction', '0.75',
+            '--nosl-is-az-policy-coef', '0.75', '--nosl-is-az-value-coef', '1.25']
+        monkeypatch.setattr(sys, 'argv', fork_argv)
+        distributed_sb3.main()
+        # The short scenario fixture may emit schema 1 (no game journal).
+        assert restored_states == [(source_learner['schema_version'] >= 2,
+                                    source_learner['replay']['total_added'],
+                                    source_learner['replay']['size'])]
+        assert [p['global_step'] for p in payloads[-2:]] == [160, 192]
+        assert [p['legacy_step'] for p in payloads[-2:]] == [5, 6]
+        for payload in payloads[-2:]:
+            assert payload['nosl_is_az/learning_rate'] == pytest.approx(0.0001)
+            assert payload['nosl_is_az/updates'] == 2
+            assert payload['nosl_is_az/replay_old_fraction'] == pytest.approx(0.75)
+        forked = AccumulatingMaskablePPO.load(output, device='cpu')
+        assert forked.nosl_is_az_policy_coef == 0.75
+        assert forked.nosl_is_az_value_coef == 1.25
+        assert forked.max_grad_norm == 1
+        assert forked.n_steps == 16 and forked.n_envs == 2
+        assert forked.nosl_is_az_simulations == 4
+        assert forked.nosl_is_az_fixed_worldline is True
+        for parameter in forked.policy.core.policy_only_parameters():
+            assert forked.policy.optimizer.state[parameter]['step'].item() == 8
+        assert forked.policy.optimizer.state[
+            forked.policy.core.combat.distribution.win.weight]['step'].item() == 11
+        manifest = json.loads((fork_root / 'rank0' / 'step-000000000192' /
+                               'manifest.json').read_text())
+        assert manifest['run_id'] == manifest['wandb_id'] == 'ci-hyperparameters'
+        assert manifest['config']['fork_source_global_step'] == 128
+        assert manifest['config']['nosl_is_az_policy_coef'] == 0.75
+        assert manifest['config']['nosl_is_az_value_coef'] == 1.25
+
 
 @pytest.mark.parametrize('nosl', [False, True], ids=['ppo', 'entity-nosl'])
 def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
