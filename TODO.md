@@ -6,6 +6,10 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BASE05 | 已暂停，待用户恢复：Time Eater时钟候选验证 | 候选源码为`3f509ea`，原交接为`18dbf32`，均在`origin/codex/rollout-native-20261001`历史中；当前根工作区仍为较旧源码，不能直接用其评测入口冒充候选。正式基线中断于56/128、25胜且无逐局完整结果；恢复后从头以seeds200464--200591跑legacy-v8与time-clock-v9各128局，固定A0/v3上层/8192×2预算，核对身份、自然终局、配对胜率、Boss前状态与耗时后决定保留或恢复旧默认。根目录完整交接见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
+| BASE06 | 已暂停：觉醒者与高风险战斗的跨回合估值 | BASE05结束后再单独实验；从相同战斗初态检查转阶段、能力触发、耗竭/牌序和下一回合生存，分别比较模型value边界估值与Boss/高风险精英两回合扩展，不以增加全局节点预算代替修正估值。已淘汰的全局能力权重组合不直接恢复；须用新的独立seeds报告整体、Boss、小怪掉血及时间，并保留甜圈八体等反例。入口与证据见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
+| TEST01 | 待复核：Runic Dome延迟抽牌mask | 候选源码下`tests/integration/test_turn_planner_strategy.py::test_runic_dome_late_draw_choice_works_without_planner_or_legacy_mask`在明确eval11扩展中已有失败；先固定源码/构建身份核实真实合同，再修实现或fixture，不用skip掩盖支持路径。见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
+| EVALTRACE01 | 待修：AR模型详细轨迹的手写排名不兼容 | 候选源码的`CombatAudit`仍用旧native-v1动作ID执行可选`rank_actions`，AR路径可能IndexError；要求真实autoregressive-v2 checkpoint至少一局完整轨迹，只有兼容动作合同才启用可选排名，保持模型决策不变。诊断历史与继续入口见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
 | PERF05-NUM | 本机根因复现及修复通过；生产Entity待验 | `rl/policies/precision.py`、PPO/NOSL与graph统一禁用BF16 GEMM中间降精度。旧Split checkpoint单状态batch32/64/96/128差异消失；13项GPU图回归、真实BF16 PPO/NOSL保存恢复通过，不承诺任意混批逐位一致。当前TRAIN28从第1轮使用BF16，380新增attention布局是另一变更，质量影响未证实；379/380恢复包已轮转，312轮四rank完整快照SHA重验通过，本轮未回退或部署。验收继续覆盖现役Entity/5090路径与完整同工作量rollout；见 [根因与历史审计](worklog/2026-10-01.md#perf05-neural-batch-discrepancy-root-cause-investigation)。 |
 | GAME02 | 三组候选已实现静态试玩；待真人筛选 | `apps/causal_rooms/` 实现蓄势、连坐、回盾各六场示例和一场可重试反例；每关独立 20 生命，逐关解锁并可选择已解锁关卡，浏览器保存最好结果。数值路径与观测指标见 [候选设计](docs/2026-09-28/misleading-encounter-curriculum.md)。仍需真人验证先验和规则发现。 |
 | GAME01 | 三场遭遇静态试玩已实现 | `apps/causal_rooms/` 逐回合复现前两场连续攻击各损失 9、第三场连续攻击损失 4、等待后损失 2；局内显示蓝色玩家生命、暖橙怪物生命、金色当前攻击、红色实际掉血数字，敌人未来意图隐藏；支持非完美通关、本关重试和选择已解锁关卡。规则边界见 [设计稿](docs/2026-09-28/reciprocal-growth-encounter.md)。 |
