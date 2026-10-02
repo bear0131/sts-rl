@@ -45,7 +45,8 @@ param(
     [int]$MaxCheckpoints = 2,
     [ValidateRange(1, 1000000)]
     [int]$SaveEveryUpdates = 1,
-    [int[]]$Ports = @(22324, 50418, 25377, 17011),
+    [int[]]$Ports = @(37900, 50286, 21653, 53548),
+    [string]$KnownHostsFile = "",
     # The accepted native build lives under the repository's runs directory.
     # Keep this explicit so a fresh launch cannot silently select a mutable
     # or unvalidated build-gumbel-* directory.
@@ -134,6 +135,9 @@ function Invoke-Remote {
         "root@$HostName",
         $remoteCommand
     )
+    if ($KnownHostsFile) {
+        $sshArgs = @("-o", "UserKnownHostsFile=$KnownHostsFile") + $sshArgs
+    }
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         $output = (& $SshExe @sshArgs 2>&1 | Out-String).TrimEnd()
         if ($LASTEXITCODE -eq 0) {

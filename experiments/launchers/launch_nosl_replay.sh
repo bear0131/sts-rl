@@ -57,7 +57,7 @@ if [ -d "$wandb_root" ]; then
   find "$wandb_root" -mindepth 1 -maxdepth 1 -type d \
     -name "run-*-$wandb_id" -exec rm -rf -- {} +
 fi
-read -r -a ports <<< "${NOSL_PEER_PORTS:-12009 17944 13500 44892}"
+read -r -a ports <<< "${NOSL_PEER_PORTS:-37900 50286 21653 53548}"
 [ "${#ports[@]}" -eq 4 ] || {
   echo 'NOSL_PEER_PORTS must contain four space-separated ports' >&2
   exit 2

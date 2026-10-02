@@ -4,6 +4,17 @@ This is the visible, authoritative startup record for the four-machine NOSL
 trainer. The manager is the only supported production entry point:
 `manage_nosl_replay_4way.ps1`.
 
+## Connection settings
+
+The manager and Bash launcher default to the replacement rank 0–3 endpoints
+recorded in `worklog/2026-10-02.md#train29-clone-resume-running`.
+Override them with manager `-Ports` or launcher `NOSL_PEER_PORTS` when machines
+change. Connection defaults do not select a training run: pass its current
+`-RemoteRepo` and `-RunId` explicitly for `-Action status`.
+The manager accepts `-KnownHostsFile PATH` to keep SSH host identities in a
+workspace-local file. New identities use OpenSSH `accept-new`; changed keys
+are still rejected. Do not commit private keys or machine-local connection files.
+
 ## Required Sequence
 
 1. Stop and verify the previous run. Every rank must have no live
