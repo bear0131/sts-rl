@@ -44,6 +44,8 @@ def test_group_mass_beats_end_and_executes_real_card(combat_factory, contract):
     request = DecisionRequest(env, env._obs(), {'phase': 'combat'}, 42, 0)
     decision = PolicyStrategy(model).decide([request])[0]
     assert decision.action == ids[0]
+    assert decision.diagnostics == {'equivalent_play_mass_decisions': 1}
+    assert all(isinstance(value, (int, float)) for value in decision.diagnostics.values())
     before = env.thick.bc.to_dict()['monsters'][0]['hp']
     env.step(decision.action)
     assert env.thick.bc.to_dict()['monsters'][0]['hp'] == before - 6

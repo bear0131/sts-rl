@@ -148,7 +148,7 @@ class PolicyStrategy:
                 actions, _ = self.model.predict(observation_for_policy(self.model, observations),
                                                 action_masks=masks, deterministic=self.deterministic)
         return [Decision(int(action), self.name,
-                         {'action_selection': 'equivalent_play_mass_v1'} if grouped else {})
+                         {'equivalent_play_mass_decisions': 1} if grouped else {})
                 for action in np.asarray(actions).reshape(-1)]
 
 
