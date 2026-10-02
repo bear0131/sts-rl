@@ -17,11 +17,103 @@ from rl.search.native import (
     forward_root,
     search,
     supports_compact,
+    decode_leaves,
 )
 from rl.evaluation.strategies import DecisionRequest, NativeStrategy
 from rl.training.cached_mask_vec_env import _pack_leaf_responses, _unpack_leaf_responses
 
 pytestmark = pytest.mark.native
+
+
+@pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2'])
+@pytest.mark.parametrize('boundary', [False, True])
+def test_shared_numeric_workers_preserve_full_strict128_trace(combat_factory, monkeypatch, contract, boundary):
+    """Fixed callbacks isolate IPC bits from model batching arithmetic."""
+    import hashlib
+    from rl.training.cached_mask_vec_env import (
+        GroupedCachedMaskSubprocVecEnv, _SharedArrayBuffer, _SharedArrayMessage,
+    )
+
+    def make(index):
+        env = combat_factory(['BASH', 'STRIKE_RED', 'DEFEND_RED'] * 3,
+                             'Two Louse', seed=70 + index,
+                             relics=('Anchor',) if index % 2 else ('Burning Blood',),
+                             combat_action_contract=contract, card_language=contract != 'legacy')
+        env.thick.gc.gold = 43 + index * 103
+        if index == 3:
+            env.thick.bc.set_player_strength(999)
+        env._invalidate_backend_cache()
+        return env
+
+    # Spawn before the fixture closes over parent-owned native objects.
+    workers = GroupedCachedMaskSubprocVecEnv(
+        [lambda index=i: make(index) for i in range(4)],
+        envs_per_worker=2, start_method='spawn')
+    shared_replies = []
+    unpack = _SharedArrayBuffer.unpack
+    def observed_unpack(self, payload):
+        if isinstance(payload, _SharedArrayMessage):
+            shared_replies.append(sum(size for _, size in payload.buffers))
+        return unpack(self, payload)
+    monkeypatch.setattr(_SharedArrayBuffer, 'unpack', observed_unpack)
+    try:
+        direct = [make(i) for i in range(4)]
+        width = direct[0].action_space.n
+        calls = {i: ((np.linspace(-.7, .9, width),), dict(
+            state_nonce=170 + i, simulations=128, depth=0, leaf_batch_size=1,
+            root_search_mode=2, paper_full_gumbel=True, fixed_worldline=True,
+            gumbel_rescale_q=False, gumbel_value_scale=1.0,
+            end_turn_as_leaf=boundary, compact_observation=True)) for i in range(4)}
+
+        def consume(responses, trace, results):
+            active = {}
+            for i, response in responses.items():
+                if response['done']:
+                    results[i] = response['result']
+                else:
+                    active[i] = response
+            if not active:
+                return {}
+            records, observations = decode_leaves(active)
+            updates = {}
+            for row, (i, leaf) in enumerate(records):
+                digest = hashlib.sha256()
+                for key in sorted(observations):
+                    value = observations[key][row]
+                    digest.update(str((key, value.dtype, value.shape)).encode())
+                    digest.update(value.tobytes())
+                trace[i].append((leaf['request_id'], leaf['needs_policy'],
+                                 leaf['action_mask'].tobytes(), digest.hexdigest()))
+                rid = leaf['request_id']
+                logits = np.sin(np.arange(len(leaf['action_mask'])) + rid).astype(np.float32)
+                if not leaf['needs_policy']:
+                    logits = np.zeros(0)
+                updates[i] = (([(rid, .2 + (rid % 7) * .07, logits)],), {'max_leaves': 1})
+            return updates
+
+        expected_trace, actual_trace = defaultdict(list), defaultdict(list)
+        expected, actual = {}, {}
+        responses = {i: direct[i].nosl_is_az_cpp_begin(*args, **kwargs)
+                     for i, (args, kwargs) in calls.items()}
+        while responses:
+            updates = consume(responses, expected_trace, expected)
+            responses = {i: direct[i].nosl_is_az_cpp_backprop_and_leaf_batch(*args, **kwargs)
+                         for i, (args, kwargs) in updates.items()}
+        stream = workers.env_method_stream()
+        stream.submit('nosl_is_az_cpp_begin', calls)
+        while stream.pending:
+            for packet in stream.receive():
+                updates = consume(packet.responses, actual_trace, actual)
+                stream.submit('nosl_is_az_cpp_backprop_and_leaf_batch', updates)
+        assert shared_replies and all(size > 0 for size in shared_replies)
+        assert actual_trace == expected_trace
+        assert set(actual) == set(expected) == set(range(4))
+        for i in expected:
+            np.testing.assert_equal(actual[i], expected[i])
+        for a, b in zip(workers.env_method('_obs'), [env._obs() for env in direct], strict=True):
+            np.testing.assert_equal(a, b)
+    finally:
+        workers.close()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA graph search requires a GPU runner')

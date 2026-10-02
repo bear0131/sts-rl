@@ -10,22 +10,25 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.training import distributed_sb3
+from rl.training.cached_mask_vec_env import GroupedCachedMaskSubprocVecEnv
 from rl.training.environments import StartupStaggerWrapper
 from rl.training.reward import ShapedRewardWrapper
 
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
 
 
-@pytest.mark.parametrize('nosl,upper,combat_arch,contract', [
-    (False, 'model', 'transformer', 'legacy'), (True, 'model', 'transformer', 'legacy'),
-    (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
-    (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
-    (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract):
+@pytest.mark.parametrize('nosl,upper,combat_arch,contract,grouped', [
+    (False, 'model', 'transformer', 'legacy', False), (True, 'model', 'transformer', 'legacy', False),
+    (True, 'rules', 'transformer', 'legacy', False), (True, 'rules', 'mlp', 'legacy', False),
+    (False, 'model', 'transformer', 'joint-v2', False), (True, 'rules', 'transformer', 'joint-v2', False),
+    (True, 'rules', 'entity', 'joint-v2', False), (True, 'rules', 'entity', 'autoregressive-v2', False),
+    pytest.param(False, 'model', 'transformer', 'legacy', True, id='grouped-ppo'),
+    pytest.param(True, 'rules', 'entity', 'autoregressive-v2', True, id='grouped-entity-nosl')])
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, grouped):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
-    if contract == 'autoregressive-v2':
+    if contract == 'autoregressive-v2' and not grouped:
         native_begin = short_combat_env_type.nosl_is_az_cpp_begin
         def observed_begin(self, *args, **kwargs):
             fixed_calls.append(kwargs.get('fixed_worldline'))
@@ -45,7 +48,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
                 )
             return build
 
-        return DummyVecEnv([factory(0), factory(16)])
+        factories = [factory(0), factory(16)]
+        return (GroupedCachedMaskSubprocVecEnv(factories, envs_per_worker=2, start_method='spawn')
+                if grouped else DummyVecEnv(factories))
 
     env = make_env()
     from rl.policies.entity_combat import EntityCombatPolicy
@@ -101,7 +106,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     argv = ['distributed_sb3', '--rank', '0', '--world-size', '1',
         '--checkpoint', str(checkpoint), '--output', str(output), '--updates', '2',
         '--n-envs', '2', '--n-steps', '16', '--batch-size', '8', '--n-epochs', '1',
-        '--gradient-accumulation-steps', '1', '--device', 'cpu', '--vec', 'dummy',
+        '--gradient-accumulation-steps', '1', '--device', 'cpu',
+        '--vec', 'subproc' if grouped else 'dummy', '--envs-per-worker', '2',
         '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path / 'transport'), '--ssh-control-dir', str(tmp_path / 'ssh'),
         '--run-id', 'ci-lifecycle', '--wandb', '--wandb-id', 'ci-existing-run',
@@ -150,7 +156,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     if contract == 'autoregressive-v2':
-        assert fixed_calls and all(value is True for value in fixed_calls)
+        if not grouped:
+            assert fixed_calls and all(value is True for value in fixed_calls)
         assert restored.nosl_is_az_fixed_worldline is True
     assert restored.nosl_is_az_upper_strategy == upper
     if combat_arch == 'entity':
