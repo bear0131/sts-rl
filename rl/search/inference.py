@@ -18,7 +18,7 @@ from rl.policies.precision import bf16_autocast
 
 class CombatLeafGraphs:
     def __init__(self, core, device, *, amp='off', capacity=32, failure_path=None,
-                 profile_interval=0, batch_multiple=0):
+                 profile_interval=0, batch_multiple=0, compile_forward=True):
         if torch.device(device).type != 'cuda':
             raise ValueError('combat CUDA graphs require a CUDA device')
         if capacity < 1 or amp not in ('off', 'bf16'):
@@ -28,10 +28,14 @@ class CombatLeafGraphs:
         # batch/relic dimensions avoid compiling one program per graph shape.
         # Fusion changes floating point rounding, not model/search geometry.
         leaf = getattr(core, 'graph_actor_critic', None)
+        self.compile_forward = bool(compile_forward)
         # FP32 uses PyTorch's fused encoder fast path, which cannot currently
         # be traced with symbolic shapes. Keep that supported backend eager.
-        self.compiled_forward = (torch.compile(leaf, fullgraph=True, dynamic=True)
-            if amp == 'bf16' and leaf is not None and getattr(core, 'autoregressive_actions', False) else None)
+        self.graph_forward = (leaf
+            if amp == 'bf16' and leaf is not None and getattr(core, 'autoregressive_actions', False)
+            else None)
+        self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True)
+            if self.compile_forward and self.graph_forward is not None else None)
         self.entries = OrderedDict()
         self.hits = self.captures = 0
         self.failure_path = failure_path
@@ -202,8 +206,11 @@ class CombatLeafGraphs:
             with torch.inference_mode(), bf16_autocast(
                     enabled=self.amp == 'bf16', cache_enabled=False):
                 extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
-                if self.compiled_forward is None:
+                if self.graph_forward is None:
                     logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
+                elif self.compiled_forward is None:
+                    logits, values = self.graph_forward(
+                        tensors, width, self.core.combat.inference_card_table())
                 else:
                     logits, values = self.compiled_forward(tensors, width,
                         self.core.combat.inference_card_table())

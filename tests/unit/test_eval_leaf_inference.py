@@ -9,6 +9,7 @@ import torch
 
 from rl.evaluation import eval as cli
 from rl.evaluation import strategies as S
+from rl.search.inference import CombatLeafGraphs
 from rl.search.native import forward_leaves
 
 
@@ -117,13 +118,48 @@ def test_graph_cache_belongs_only_to_separate_combat_model(monkeypatch):
     assert manifest['config']['simulations'] == 128
     assert manifest['config']['leaf_batch_size'] == 1
     assert manifest['leaf_inference'] == dict(backend='cuda-graph', amp='off',
-        capacity=32, batch_multiple=0, statistics={'captures': 7})
+        capacity=32, batch_multiple=0, compile_forward=True, statistics={'captures': 7})
     eager = S.native_strategy(lower, args()).routes['combat']
     second = S.native_strategy(lower, args('cuda-graph')).routes['combat']
     assert eager.leaf_backend is None
     assert native.leaf_backend is not second.leaf_backend
     assert S.strategy_manifest(eager)['leaf_inference'] == {'backend': 'eager'}
     assert native.leaf_backend.core is second.leaf_backend.core
+
+
+def test_bf16_graph_uses_production_padding(monkeypatch):
+    class Cache:
+        def __init__(self, core, device, **kwargs):
+            self.core, self.device = core, device
+            self.__dict__.update(kwargs)
+
+        def statistics(self):
+            return {'captures': 0}
+
+    monkeypatch.setattr(S, 'CombatLeafGraphs', Cache)
+    configured = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--leaf-inference', 'cuda-graph',
+        '--leaf-amp', 'bf16', '--leaf-graph-batch-multiple', '32', '--no-leaf-compile'])
+    combat = S.native_strategy(model('cuda'), configured).routes['combat']
+    manifest = S.strategy_manifest(combat)
+    assert manifest['leaf_inference']['amp'] == 'bf16'
+    assert manifest['leaf_inference']['batch_multiple'] == 32
+    assert manifest['leaf_inference']['compile_forward'] is False
+
+
+def test_bf16_graph_can_skip_inductor_without_changing_forward(monkeypatch):
+    calls = []
+    leaf = lambda *a: None
+    core = SimpleNamespace(
+        graph_actor_critic=leaf,
+        autoregressive_actions=True,
+    )
+    monkeypatch.setattr(torch, 'compile', lambda *a, **kw: calls.append((a, kw)))
+    cache = CombatLeafGraphs(core, 'cuda', amp='bf16', compile_forward=False)
+    assert cache.graph_forward is leaf
+    assert cache.compiled_forward is None
+    assert cache.compile_forward is False
+    assert calls == []
 
 
 def test_explicit_backend_does_not_change_legacy_model_backend():

@@ -64,6 +64,11 @@ Native 搜索可用 `--fixed-worldline` / `--no-fixed-worldline` 显式控制整
 `--native-search-threads N` 让整局评测复用训练rollout的同进程`NativeSearchBatch`和
 C++线程池；0保留同步兼容路径。该模式要求compact观测与leaf batch 1，并在
 `effective_strategy`记录实际线程数。
+生产吞吐口径还可显式使用`--leaf-amp bf16 --leaf-graph-batch-multiple 32
+--float32-matmul-precision high`，分别对齐训练的autocast、图输入补齐和矩阵精度；
+这些参数可能改变浮点舍入，评测结果必须记录，不能冒充FP32语义等价优化。
+若本机PyTorch Inductor不能编译该模型，可加`--no-leaf-compile`；它仍调用相同的
+`graph_actor_critic`并捕获CUDA graph，只跳过捕获前的`torch.compile`，manifest会记录该差异。
 
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
 

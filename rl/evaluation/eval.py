@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import time
 
+import torch
+
 from env.core.run_env import SlayTheSpireEnv
 from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
@@ -67,6 +69,14 @@ def build_parser():
                         help='Use the same-process C++ native search pool with this many threads')
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
                         help='Native leaf backend; cuda-graph requires a CUDA FP32 combat model and keeps exact batch shapes')
+    parser.add_argument('--leaf-amp', choices=['off', 'bf16'], default='off',
+                        help='Autocast combat root/leaf inference; bf16 requires CUDA graph mode')
+    parser.add_argument('--leaf-graph-batch-multiple', type=int, default=0,
+                        help='Pad CUDA graph leaf rows to this multiple; 0 keeps exact shapes')
+    parser.add_argument('--leaf-compile', action=argparse.BooleanOptionalAction, default=True,
+                        help='Compile the BF16 graph forward before CUDA capture')
+    parser.add_argument('--float32-matmul-precision', choices=['highest', 'high', 'medium'],
+                        default='high')
     parser.add_argument('--fixed-worldline', action=argparse.BooleanOptionalAction, default=None,
                         help='Keep one redeterminized future per search tree; default inherits the checkpoint setting')
     add_combat_search_args(parser)
@@ -118,11 +128,21 @@ def file_identity(path):
 
 def main():
     args = build_parser().parse_args()
+    torch.set_float32_matmul_precision(args.float32_matmul_precision)
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
     if args.native_search_threads < 0:
         raise ValueError('--native-search-threads must be non-negative')
+    if args.leaf_graph_batch_multiple < 0:
+        raise ValueError('--leaf-graph-batch-multiple must be non-negative')
+    if args.leaf_amp != 'off' and (args.solver != 'native' or args.leaf_inference != 'cuda-graph'):
+        raise ValueError('--leaf-amp bf16 requires --solver native --leaf-inference cuda-graph')
+    if args.leaf_graph_batch_multiple and args.leaf_inference != 'cuda-graph':
+        raise ValueError('--leaf-graph-batch-multiple requires --leaf-inference cuda-graph')
+    if not args.leaf_compile and (args.solver != 'native' or
+                                  args.leaf_inference != 'cuda-graph' or args.leaf_amp != 'bf16'):
+        raise ValueError('--no-leaf-compile requires native BF16 CUDA graph inference')
     if args.compare_combats < 0 or ((args.compare_combats or args.trace) and args.task != 'wholerun'):
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:

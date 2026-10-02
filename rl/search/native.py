@@ -321,9 +321,9 @@ def supports_compact(model):
     return hasattr(core, 'combat_actor_critic') and hasattr(core, 'combat_observation_keys')
 
 
-def forward_root(model, observations, *, lock=None):
+def forward_root(model, observations, *, lock=None, autocast=nullcontext):
     tensor, _ = model.policy.obs_to_tensor(observation_for_policy(model, observations))
-    with lock or nullcontext(), th.inference_mode():
+    with lock or nullcontext(), th.inference_mode(), autocast():
         logits, values = model.policy.core.actor_critic(tensor)
     return logits.float().cpu().numpy(), values.float().reshape(-1).cpu().numpy()
 

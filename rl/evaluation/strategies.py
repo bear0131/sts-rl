@@ -14,6 +14,7 @@ import torch
 from env.core import native_actions as C
 
 from rl.policies.model import observation_for_policy
+from rl.policies.precision import bf16_autocast
 from rl.search.native import (
     MODEL_LEAF_BACKEND,
     NativeSearchConfig,
@@ -97,6 +98,7 @@ def strategy_manifest(strategy):
         if isinstance(backend, CombatLeafGraphs):
             result['leaf_inference'] = dict(backend='cuda-graph', amp=backend.amp,
                 capacity=backend.capacity, batch_multiple=backend.batch_multiple,
+                compile_forward=backend.compile_forward,
                 statistics=backend.statistics())
     if isinstance(strategy, PolicyStrategy):
         result['deterministic'] = strategy.deterministic
@@ -106,8 +108,9 @@ def strategy_manifest(strategy):
 class PolicyStrategy:
     name = 'policy'
 
-    def __init__(self, model, *, deterministic=True, lock=None):
+    def __init__(self, model, *, deterministic=True, lock=None, autocast=nullcontext):
         self.model, self.deterministic, self.lock = model, deterministic, lock
+        self.autocast = autocast
         self.combat_action_contract = C.policy_contract(getattr(model, 'observation_space', None))
 
     def decide(self, requests, *, check=lambda: None):
@@ -140,7 +143,7 @@ class PolicyStrategy:
             else np.arange(masks.shape[1]) for r in requests
         ]
         grouped = any(np.any(g != np.arange(len(g))) for g in groups)
-        with self.lock or nullcontext():
+        with self.lock or nullcontext(), self.autocast():
             if grouped:
                 self.model.policy.set_training_mode(False)
                 with torch.no_grad():
@@ -164,10 +167,12 @@ class NativeStrategy:
     name = 'native'
 
     def __init__(self, model, config: NativeSearchConfig, *, master_nonce=0, lock=None,
-                 leaf_backend=MODEL_LEAF_BACKEND, native_search_threads=0):
+                 leaf_backend=MODEL_LEAF_BACKEND, native_search_threads=0,
+                 root_autocast=nullcontext):
         self.model, self.config, self.lock = model, config, lock
         self.master_nonce = int(master_nonce)
         self.leaf_backend = leaf_backend
+        self.root_autocast = root_autocast
         self.native_search_threads = int(native_search_threads)
         if self.native_search_threads < 0:
             raise ValueError('native search threads must be non-negative')
@@ -198,7 +203,8 @@ class NativeStrategy:
         started = time.monotonic()
         compact = supports_compact(self.model)
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
-        logits, values = forward_root(self.model, observations, lock=self.lock)
+        logits, values = forward_root(
+            self.model, observations, lock=self.lock, autocast=self.root_autocast)
         responses = {}
         begin_calls = {}
         local_to_native = {}
@@ -380,7 +386,10 @@ class MapRouteStrategy:
 
 
 def policy_strategy(model, args, lock=None):
-    return PolicyStrategy(model, deterministic=not args.stochastic, lock=lock)
+    autocast = (bf16_autocast if getattr(args, 'leaf_amp', 'off') == 'bf16'
+                else nullcontext)
+    return PolicyStrategy(
+        model, deterministic=not args.stochastic, lock=lock, autocast=autocast)
 
 
 def native_strategy(model, args, lock=None):
@@ -397,8 +406,14 @@ def native_strategy(model, args, lock=None):
             raise ValueError('cuda-graph evaluation requires an eval-mode FP32 combat model')
         # Exact shapes preserve the eager batch geometry. This runtime-only
         # cache changes neither the model weights nor per-tree leaf concurrency.
-        backend = CombatLeafGraphs(model.policy.core, model.device,
-            amp='off', capacity=32, batch_multiple=0)
+        backend = CombatLeafGraphs(
+            model.policy.core,
+            model.device,
+            amp=getattr(args, 'leaf_amp', 'off'),
+            capacity=32,
+            batch_multiple=getattr(args, 'leaf_graph_batch_multiple', 0),
+            compile_forward=getattr(args, 'leaf_compile', True),
+        )
     modes = {'puct': 0, 'gumbel': 1, 'full': 2, 'strict': 2}
     config = NativeSearchConfig.from_model(model, simulations=args.simulations, depth=args.depth,
         leaf_batch_size=args.leaf_batch_size, root_search_mode=modes[args.search_mode],
@@ -419,10 +434,13 @@ def native_strategy(model, args, lock=None):
         if not np.isfinite(gumbel_scale) or gumbel_scale < 0.0:
             raise ValueError('gumbel scale must be finite and non-negative')
         object.__setattr__(config, 'gumbel_scale', gumbel_scale)
+    root_autocast = (bf16_autocast if getattr(args, 'leaf_amp', 'off') == 'bf16'
+                     else nullcontext)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
         model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
         leaf_backend=backend,
-        native_search_threads=getattr(args, 'native_search_threads', 0))},
+        native_search_threads=getattr(args, 'native_search_threads', 0),
+        root_autocast=root_autocast)},
         predicates={'combat': lambda request: getattr(request.env.unwrapped, '_pending', None) is None})
 
 
