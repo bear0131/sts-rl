@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import pickle
 import time
 from collections import defaultdict
 from collections.abc import Mapping
@@ -20,51 +19,6 @@ from stable_baselines3.common.vec_env.subproc_vec_env import (
     _patch_env,
     _stack_obs,
 )
-
-
-@dataclass(frozen=True)
-class _SharedArrayMessage:
-    metadata: bytes
-    buffers: tuple[tuple[int, int], ...]
-
-
-class _SharedArrayBuffer:
-    """One bounded numeric slot for a worker's single in-flight command.
-
-    Pickle protocol 5 keeps array bytes out of the pipe. Replies take one owned
-    copy before the slot is reused, so callers can safely retain observations.
-    Oversized/unsupported payloads keep the ordinary pipe representation.
-    """
-
-    def __init__(self, context, capacity):
-        self.storage = context.RawArray('B', capacity)
-
-    def pack(self, payload):
-        buffers = []
-        metadata = pickle.dumps(payload, protocol=5, buffer_callback=buffers.append)
-        spans, offset = [], 0
-        for buffer in buffers:
-            offset = (offset + 7) & ~7
-            size = buffer.raw().nbytes
-            spans.append((offset, size))
-            offset += size
-        if not spans or offset > len(self.storage):
-            return payload
-        target = memoryview(self.storage).cast('B')
-        for buffer, (start, size) in zip(buffers, spans):
-            target[start:start + size] = buffer.raw()
-        return _SharedArrayMessage(metadata, tuple(spans))
-
-    def unpack(self, payload):
-        if not isinstance(payload, _SharedArrayMessage):
-            return payload
-        end = max((start + size for start, size in payload.buffers), default=0)
-        if end > len(self.storage) or any(start < 0 or size < 0 for start, size in payload.buffers):
-            raise ValueError('shared search array exceeds its slot')
-        owned = np.frombuffer(self.storage, dtype=np.uint8, count=end).copy()
-        view = memoryview(owned)
-        return pickle.loads(payload.metadata, buffers=[
-            view[start:start + size] for start, size in payload.buffers])
 
 
 @dataclass
@@ -385,7 +339,6 @@ def _group_worker(
     parent_remote: mp.connection.Connection,
     env_fn_wrappers: list[CloudpickleWrapper],
     group_index: int,
-    search_buffer: _SharedArrayBuffer,
 ) -> None:
     """Run several independent Gym envs behind one pipe.
 
@@ -408,7 +361,7 @@ def _group_worker(
     try:
         while True:
             try:
-                cmd, data = search_buffer.unpack(remote.recv())
+                cmd, data = remote.recv()
             except (EOFError, KeyboardInterrupt):
                 break
             if cmd == "step":
@@ -461,7 +414,7 @@ def _group_worker(
                     )
                     for index in local_indices
                 })
-            elif cmd in ("env_method_batch", "nosl_search_batch"):
+            elif cmd == "env_method_batch":
                 calls = data
                 method_started = time.perf_counter()
                 responses = {}
@@ -490,8 +443,7 @@ def _group_worker(
                     for response in responses.values():
                         for name, seconds in response.get('_worker_timing', {}).items():
                             timing[name] = timing.get(name, 0.0) + seconds
-                    reply = _TimedWorkerPayload(payload, timing)
-                    remote.send(search_buffer.pack(reply) if cmd == 'nosl_search_batch' else reply)
+                    remote.send(_TimedWorkerPayload(payload, timing))
                 else:
                     remote.send(responses)
             elif cmd == "get_attr":
@@ -586,11 +538,7 @@ class GroupedMethodStream:
                 )
         for group_index, group_calls in grouped_calls.items():
             remote = self._owner.remotes[group_index]
-            if method_name in ('nosl_is_az_cpp_begin', 'nosl_is_az_cpp_backprop_and_leaf_batch'):
-                remote.send(self._owner._search_buffers[group_index].pack(
-                    ('nosl_search_batch', group_calls)))
-            else:
-                remote.send(("env_method_batch", group_calls))
+            remote.send(("env_method_batch", group_calls))
             self._pending[remote] = (group_index, method_name, time.perf_counter())
 
     def receive(
@@ -608,8 +556,7 @@ class GroupedMethodStream:
             group_index, method_name, submitted_at = self._pending.pop(remote)
             receive_started = time.perf_counter()
             try:
-                payload, worker_timing = _unwrap_timed_payload(
-                    self._owner._search_buffers[group_index].unpack(remote.recv()))
+                payload, worker_timing = _unwrap_timed_payload(remote.recv())
                 local_responses = _unpack_leaf_responses(payload)
             except (EOFError, BrokenPipeError, OSError) as exc:
                 self._owner._raise_worker_failure(group_index, exc)
@@ -670,10 +617,6 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
                 else "spawn"
             )
         ctx = mp.get_context(start_method)
-        # One request or reply at a time per group; capacity is a transport
-        # optimization only. Large batches fall back without truncation.
-        self._search_buffers = [_SharedArrayBuffer(ctx, len(group) * 65536)
-                                for group in self._groups]
         self.remotes, self.work_remotes = zip(
             *[ctx.Pipe() for _group in self._groups], strict=True
         )
@@ -684,7 +627,7 @@ class GroupedCachedMaskSubprocVecEnv(VecEnv):
             wrappers = [CloudpickleWrapper(env_fns[index]) for index in group]
             process = ctx.Process(
                 target=_group_worker,
-                args=(work_remote, remote, wrappers, group_index, self._search_buffers[group_index]),
+                args=(work_remote, remote, wrappers, group_index),
                 name=f"sts-env-group-{group_index}",
                 daemon=True,
             )

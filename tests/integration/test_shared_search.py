@@ -27,12 +27,10 @@ pytestmark = pytest.mark.native
 
 @pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2'])
 @pytest.mark.parametrize('boundary', [False, True])
-def test_shared_numeric_workers_preserve_full_strict128_trace(combat_factory, monkeypatch, contract, boundary):
+def test_grouped_workers_preserve_full_strict128_trace(combat_factory, contract, boundary):
     """Fixed callbacks isolate IPC bits from model batching arithmetic."""
     import hashlib
-    from rl.training.cached_mask_vec_env import (
-        GroupedCachedMaskSubprocVecEnv, _SharedArrayBuffer, _SharedArrayMessage,
-    )
+    from rl.training.cached_mask_vec_env import GroupedCachedMaskSubprocVecEnv
 
     def make(index):
         env = combat_factory(['BASH', 'STRIKE_RED', 'DEFEND_RED'] * 3,
@@ -49,13 +47,6 @@ def test_shared_numeric_workers_preserve_full_strict128_trace(combat_factory, mo
     workers = GroupedCachedMaskSubprocVecEnv(
         [lambda index=i: make(index) for i in range(4)],
         envs_per_worker=2, start_method='spawn')
-    shared_replies = []
-    unpack = _SharedArrayBuffer.unpack
-    def observed_unpack(self, payload):
-        if isinstance(payload, _SharedArrayMessage):
-            shared_replies.append(sum(size for _, size in payload.buffers))
-        return unpack(self, payload)
-    monkeypatch.setattr(_SharedArrayBuffer, 'unpack', observed_unpack)
     try:
         direct = [make(i) for i in range(4)]
         width = direct[0].action_space.n
@@ -105,13 +96,122 @@ def test_shared_numeric_workers_preserve_full_strict128_trace(combat_factory, mo
             for packet in stream.receive():
                 updates = consume(packet.responses, actual_trace, actual)
                 stream.submit('nosl_is_az_cpp_backprop_and_leaf_batch', updates)
-        assert shared_replies and all(size > 0 for size in shared_replies)
         assert actual_trace == expected_trace
         assert set(actual) == set(expected) == set(range(4))
         for i in expected:
             np.testing.assert_equal(actual[i], expected[i])
         for a, b in zip(workers.env_method('_obs'), [env._obs() for env in direct], strict=True):
             np.testing.assert_equal(a, b)
+    finally:
+        workers.close()
+
+
+@pytest.mark.parametrize('contract', ['autoregressive-v2', 'joint-v2'])
+def test_grouped_workers_preserve_selection_candidates_and_monster_slots(combat_factory, contract):
+    """Real worker transport retains selection zones, handles, and sparse targets."""
+    import slaythespire as sts
+    from env.core import native_actions as C
+    from rl.training.cached_mask_vec_env import GroupedCachedMaskSubprocVecEnv
+
+    def make(index):
+        card = 'PURITY' if index % 2 == 0 else 'SECRET_TECHNIQUE'
+        env = combat_factory([card] * 5, 'Two Louse', seed=80 + index,
+                             relics=('Anchor',) if index < 2 else ('Burning Blood',),
+                             combat_action_contract=contract, card_language=True)
+        env.thick.gc.gold = 37 + index * 101
+        env.thick.bc.apply_custom_state({
+            'player': {'gold': 37 + index * 101},
+            'hand': [card, 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'ANGER', 'DEFEND_RED'],
+            'draw': ['STRIKE_RED'] * 12 + ['SHRUG_IT_OFF', 'DEFEND_RED'],
+            'monsters': [{'hp': 0}, {'hp': 13}],
+        })
+        env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+        env._invalidate_backend_cache()
+        return env
+
+    # Each process gets both selection kinds. Construct workers before the
+    # fixture closes over any parent-owned native environments.
+    workers = GroupedCachedMaskSubprocVecEnv(
+        [lambda index=i: make(index) for i in range(4)],
+        envs_per_worker=2, start_method='spawn')
+    try:
+        direct = [make(i) for i in range(4)]
+        roots = [env._obs() for env in direct]
+        for i, (actual, expected) in enumerate(zip(workers.env_method('_obs'), roots, strict=True)):
+            np.testing.assert_equal(actual, expected)
+            descriptor = direct[i].thick.bc.select_info()
+            assert descriptor['zone'] == ('hand' if i % 2 == 0 else 'draw')
+            assert expected['select_zone'][0] == (1 if i % 2 == 0 else 2)
+            handles = [candidate['native_index'] + 1 for candidate in descriptor['candidates']]
+            np.testing.assert_array_equal(expected['select_native_indices'][:len(handles)], handles)
+            if i % 2:
+                assert min(handles) > 10, 'draw candidates must retain non-hand execution handles'
+            assert expected['monster_id'][0] != 0 and expected['monster_id'][1] != 0
+            np.testing.assert_array_equal(expected['monster_scalars'][:2, 0], [0, 1])
+        assert len({root['gold'].tobytes() for root in roots}) == 4
+        assert roots[0]['relics'].tobytes() != roots[2]['relics'].tobytes()
+
+        logits = np.zeros(direct[0].action_space.n, dtype=np.float32)
+        if contract == C.AUTOREGRESSIVE_CONTRACT:
+            logits[C.AUTOREGRESSIVE_MULTI] = 30
+        calls = {i: ((logits,), dict(
+            state_nonce=800 + i, simulations=32, depth=1, leaf_batch_size=4,
+            root_search_mode=2, paper_full_gumbel=True, fixed_worldline=True,
+            gumbel_scale=0, gumbel_rescale_q=False, gumbel_value_scale=1.0,
+            compact_observation=True)) for i in range(4)}
+
+        def consume(responses, trace, results):
+            active = {}
+            for i, response in responses.items():
+                if response['done']:
+                    results[i] = response['result']
+                else:
+                    active[i] = response
+            if not active:
+                return {}
+            records, observations = decode_leaves(active)
+            updates = defaultdict(list)
+            for row, (i, leaf) in enumerate(records):
+                # Own the trace bytes so comparisons do not depend on the
+                # transport's allocation or buffer lifetime strategy.
+                fields = tuple((key, value.dtype.str, value[row].shape, value[row].tobytes())
+                               for key, value in sorted(observations.items()))
+                trace[i].append((leaf['request_id'], leaf['needs_policy'],
+                                 leaf['action_mask'].tobytes(), fields))
+                for key in ('gold', 'relics', 'monster_id'):
+                    np.testing.assert_array_equal(observations[key][row], roots[i][key])
+                np.testing.assert_array_equal(observations['monster_scalars'][row, :2, 0], [0, 1])
+                updates[i].append((leaf['request_id'], .3, logits))
+            return {i: ((rows,), {'max_leaves': 4}) for i, rows in updates.items()}
+
+        expected_trace, actual_trace = defaultdict(list), defaultdict(list)
+        expected, actual = {}, {}
+        responses = {i: direct[i].nosl_is_az_cpp_begin(*args, **kwargs)
+                     for i, (args, kwargs) in calls.items()}
+        for _ in range(128):
+            updates = consume(responses, expected_trace, expected)
+            if not updates:
+                break
+            responses = {i: direct[i].nosl_is_az_cpp_backprop_and_leaf_batch(*args, **kwargs)
+                         for i, (args, kwargs) in updates.items()}
+        assert set(expected) == set(range(4)), 'bounded direct searches must finish'
+        stream = workers.env_method_stream()
+        stream.submit('nosl_is_az_cpp_begin', calls)
+        while stream.pending:
+            for packet in stream.receive():
+                stream.submit('nosl_is_az_cpp_backprop_and_leaf_batch',
+                              consume(packet.responses, actual_trace, actual))
+        assert all(expected_trace[i] for i in range(4))
+        if contract == C.AUTOREGRESSIVE_CONTRACT:
+            assert any(any(key == 'select_hand_mask' and np.frombuffer(data, dtype=dtype).any()
+                           for key, dtype, _shape, data in entry[3])
+                       for i in (0, 2) for entry in expected_trace[i]), 'must visit real selection prefixes'
+        assert actual_trace == expected_trace
+        np.testing.assert_equal(actual, expected)
+        assert all(result['simulations'] == 32 for result in actual.values())
+        for env, remote, root in zip(direct, workers.env_method('_obs'), roots, strict=True):
+            np.testing.assert_equal(env._obs(), root)
+            np.testing.assert_equal(remote, root)
     finally:
         workers.close()
 

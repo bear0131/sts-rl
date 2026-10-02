@@ -13,13 +13,6 @@ PPO、NOSL 与 reasoning 使用同一个梯度同步边界（ring 或 file trans
 `--leaf-graph-batch-multiple`、缓存生命周期和数值边界见 [搜索说明](../search/README.md)。
 Grouped worker 对同一组 native 数字观测按字段合并 IPC，调用方仍收到原来的
 逐环境 RPC 结果；混合终局、不同 batch 长度与请求顺序有真实子进程回归。
-streamed native 搜索保留 worker 内按组解码、各根 metadata 和阶段计时，
-将请求与响应中的连续数组通过共享存储传递。
-每组只有一个在途请求，以每环境64KiB的有界共享槽承载双向数组；管道传递
-pickle protocol 5 的结构信息，超出容量或不适用的对象保持普通传输而不截断。
-收到数组后取得独立存储，之后复用共享槽不会改写已保留的观测；仍保持每树
-请求顺序和strict单叶语义。同步RPC保留原传输；语言观测沿用相同共享数组路径，
-不新增训练配置开关，checkpoint/观测/action schema不变。
 `--rollout-resource-interval 2` 在每个 rank 的 JSON 记录中加入 collection 的
 CPU/RSS/cgroup/GPU 采样，0 关闭；定义与复现实验入口见 [资源基准](../benchmarks/README.md)。
 
