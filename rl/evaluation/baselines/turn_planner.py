@@ -25,7 +25,7 @@ class TurnPlannerStrategy:
             'current-player-turn-plus-enemy-phase' if self.config.lookahead_turns == 1
             else 'two-player-turns-through-second-enemy-phase'),
             information='independent-NOSL-futures', dome='visible-rule-fallback',
-            leaf='handwritten-state-value', draw_selection='redeterminize-then-remap-native-entity',
+            leaf=self.config.leaf_profile, draw_selection='redeterminize-then-remap-native-entity',
             resources='conservative-no-output-guard-with-public-relics',
             enemy_progress='public-slime-and-awakened-phase-potential',
             value_horizon='shared-root-public-enemy-hp-and-strength',

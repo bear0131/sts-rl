@@ -146,4 +146,4 @@ def test_cli_composition_preserves_planner_budget_and_supplied_upper():
     assert manifest['combat_action_contract'] == 'native-v1'
     assert manifest['config'] == dict(
         worlds=3, node_budget=97, beam_width=4, max_depth=9, master_nonce=777,
-        lookahead_turns=1)
+        lookahead_turns=1, leaf_profile='time-clock-v9')

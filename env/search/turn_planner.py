@@ -18,7 +18,10 @@ from env.core.native_actions import complete_actions
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v8-awakened-phase'
+PLANNER_VERSION = 'ironclad-turn-v9-time-clock'
+LEGACY_LEAF_PROFILE = 'legacy-v8'
+TIME_CLOCK_LEAF_PROFILE = 'time-clock-v9'
+LEAF_PROFILES = (LEGACY_LEAF_PROFILE, TIME_CLOCK_LEAF_PROFILE)
 _END = 4 << 29
 _DRAW_SELECT = frozenset(('SECRET_TECHNIQUE', 'SECRET_WEAPON', 'SEEK'))
 _JUNK = frozenset(('WOUND', 'DAZED', 'BURN', 'VOID', 'SLIMED', 'INJURY',
@@ -48,7 +51,6 @@ _DAMAGE_OR_CARD_RELICS = frozenset((
     'mercuryhourglass', 'bronzescales', 'charonsashes', 'letteropener',
     'stonecalendar', 'deadbranch', 'nilryscodex', 'tingsha', 'toolbox',
 ))
-
 
 def no_remaining_damage_source(raw, public_relics=None):
     """Recognize a narrow, proven resource dead end; unknown means possible.
@@ -94,10 +96,13 @@ class TurnPlannerConfig:
     max_depth: int = 16
     master_nonce: int = 20260918
     lookahead_turns: int = 1
+    leaf_profile: str = TIME_CLOCK_LEAF_PROFILE
 
     def __post_init__(self):
         if self.lookahead_turns not in (1, 2):
             raise ValueError('lookahead_turns must be 1 or 2')
+        if self.leaf_profile not in LEAF_PROFILES:
+            raise ValueError(f'leaf_profile must be one of {LEAF_PROFILES}')
         for key in ('worlds', 'node_budget', 'beam_width', 'max_depth'):
             if getattr(self, key) < 1:
                 raise ValueError(f'{key} must be positive')
@@ -162,7 +167,21 @@ def enemy_burden(monsters):
     return damage, bodies
 
 
-def state_value(raw, *, partial=False, public_relics=None, horizon=None):
+def _time_warp_boundary_penalty(raw):
+    """Penalize handing the next turn to Time Eater with almost no card budget."""
+    if not raw.get('post_enemy_turn_boundary', False):
+        return 0.
+    for monster in raw['monsters']:
+        if monster['id'] != 'TIME_EATER' or monster['hp'] <= 0 or monster['gone']:
+            continue
+        counter = _powers(monster).get('timewarp', 0)
+        if counter > 7:
+            return 3. * (counter - 7) ** 2
+    return 0.
+
+
+def state_value(raw, *, partial=False, public_relics=None, horizon=None,
+                leaf_profile=TIME_CLOCK_LEAF_PROFILE):
     """HP, remaining threats, lasting growth, and reusable combat resources.
 
     At enemy boundaries actual loss already includes block, Weak, Intangible,
@@ -211,6 +230,10 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
         value += .55 * min(150, p['block']) + 4 * horizon
     piles = raw['hand'] + raw['draw'] + raw['discard']
     value -= .7 * sum(c[0] in _JUNK for c in piles)
+    if leaf_profile == TIME_CLOCK_LEAF_PROFILE:
+        value -= _time_warp_boundary_penalty(raw)
+    elif leaf_profile != LEGACY_LEAF_PROFILE:
+        raise ValueError(f'unknown leaf profile {leaf_profile!r}')
     if partial:
         incoming = sum(max(0, m['adjusted_damage']) * max(0, m['hits']) for m in monsters)
         value -= 1.3 * max(0, incoming - p['block'])
@@ -218,14 +241,16 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None):
     return value
 
 
-def leaf_value(raw, *, public_relics=None, horizon=None):
+def leaf_value(raw, *, public_relics=None, horizon=None,
+               leaf_profile=TIME_CLOCK_LEAF_PROFILE):
     """Lexicographic terminal class and the unchanged scalar heuristic.
 
     The heuristic alone is not a terminal utility: a huge live power can exceed
     the historical victory bonus. Keep it for ordering within a terminal class.
     """
     rank = -1 if raw['player']['hp'] <= 0 or raw['outcome'] == 2 else 1 if raw['outcome'] == 1 else 0
-    value = state_value(raw, public_relics=public_relics, horizon=horizon)
+    value = state_value(raw, public_relics=public_relics, horizon=horizon,
+                        leaf_profile=leaf_profile)
     if not math.isfinite(value):
         raise ValueError('planner leaf heuristic must be finite')
     return rank, value
@@ -357,14 +382,16 @@ class NativeTurnPlanner:
                     stats['second_turn_entries'] += 1
             if raw['outcome'] != 0 or raw['post_enemy_turn_boundary']:
                 stats['completed_horizon_leaves'] += int(raw['post_enemy_turn_boundary'])
-                value = leaf_value(raw, public_relics=public_relics, horizon=horizon)
+                value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
+                                   leaf_profile=self.config.leaf_profile)
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
                 elif value == best and value[0] == 1:
                     stats['winning_steps'] = min(stats['winning_steps'], depth)
                 return
-            partial = state_value(raw, partial=True, public_relics=public_relics, horizon=horizon)
+            partial = state_value(raw, partial=True, public_relics=public_relics,
+                                  horizon=horizon, leaf_profile=self.config.leaf_profile)
             if not math.isfinite(partial):
                 raise ValueError('planner partial heuristic must be finite')
             best_partial = partial if best_partial is None else max(best_partial, partial)

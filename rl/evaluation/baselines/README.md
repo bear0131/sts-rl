@@ -67,10 +67,11 @@ python -m rl.evaluation.eval UPPER.zip --combat-checkpoint COMBAT.zip --solver n
 
 `--solver turn-planner` 使用 `env/search/turn_planner.py`，自动要求 `native-v1` 完整动作契约。
 配置项为 `--planner-nodes`、`--planner-worlds`、`--planner-beam`、`--planner-depth`、
-`--planner-turns` 和 `--planner-nonce`；`effective_strategy` 记录实际配置及版本。例如：
+`--planner-turns`、`--planner-leaf-profile` 和 `--planner-nonce`；默认 `time-clock-v9`，
+`legacy-v8` 仅用于冻结旧叶子分数的配对复现。`effective_strategy` 记录实际配置及版本。例如：
 
 ```bash
-python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 8192 --planner-worlds 2 --planner-beam 8 --planner-depth 16 --planner-turns 1 --planner-nonce 20260918 --episodes 128 --seed 150000 --device cpu --num-envs 8 --max-steps 6000 --timeout 1800 --output runs/local/turn-planner-development.json
+python -m rl.evaluation.eval UPPER.zip --solver turn-planner --planner-nodes 8192 --planner-worlds 2 --planner-beam 8 --planner-depth 16 --planner-turns 1 --planner-leaf-profile time-clock-v9 --planner-nonce 20260918 --episodes 128 --seed 150000 --device cpu --num-envs 8 --max-steps 6000 --timeout 1800 --output runs/local/turn-planner-development.json
 ```
 
 它沿用 upper checkpoint，但战斗叶子由人工状态价值评价；可与 `--upper-strategy rules` 组合。

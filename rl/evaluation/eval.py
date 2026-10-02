@@ -63,6 +63,9 @@ def build_parser():
     parser.add_argument('--planner-beam', type=int, default=8)
     parser.add_argument('--planner-depth', type=int, default=16)
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--planner-leaf-profile',
+                        choices=('legacy-v8', 'time-clock-v9'),
+                        default='time-clock-v9')
     parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
     parser.add_argument('--native-search-threads', type=int, default=0,

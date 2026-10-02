@@ -466,6 +466,7 @@ def turn_planner_strategy(model, args, lock=None):
         beam_width=getattr(args, 'planner_beam', 8),
         max_depth=getattr(args, 'planner_depth', 16),
         lookahead_turns=getattr(args, 'planner_turns', 1),
+        leaf_profile=getattr(args, 'planner_leaf_profile', 'time-clock-v9'),
         master_nonce=getattr(args, 'planner_nonce', 20260918),
     )
     return PhaseStrategy(
