@@ -328,6 +328,12 @@ def native_strategy(model, args, lock=None):
         # __post_init__. Apply an explicit evaluation override afterwards;
         # the native strict branch still owns all other canonical defaults.
         object.__setattr__(config, 'prior_temperature', prior_temperature)
+    gumbel_scale = getattr(args, 'gumbel_scale', None)
+    if gumbel_scale is not None:
+        gumbel_scale = float(gumbel_scale)
+        if not np.isfinite(gumbel_scale) or gumbel_scale < 0.0:
+            raise ValueError('gumbel scale must be finite and non-negative')
+        object.__setattr__(config, 'gumbel_scale', gumbel_scale)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
         model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
         leaf_backend=backend)},

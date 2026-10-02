@@ -56,6 +56,23 @@ def test_explicit_prior_temperature_reaches_strict_native_config():
     assert combat.config.gumbel_interior_min_visits == 0
 
 
+def test_explicit_zero_gumbel_scale_reaches_strict_native_config():
+    configured = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--search-mode', 'strict',
+        '--gumbel-scale', '0'])
+    combat = S.native_strategy(model(), configured).routes['combat']
+    assert combat.config.paper_full_gumbel is True
+    assert combat.config.gumbel_scale == 0.0
+
+
+@pytest.mark.parametrize('value', ['-1', 'nan', 'inf'])
+def test_invalid_gumbel_scale_is_rejected(value):
+    configured = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--gumbel-scale', value])
+    with pytest.raises(ValueError, match='gumbel scale'):
+        S.native_strategy(model(), configured)
+
+
 def test_cuda_graph_refuses_cpu():
     with pytest.raises(ValueError, match='CUDA combat model'):
         S.native_strategy(model(), args('cuda-graph'))
@@ -122,7 +139,7 @@ def test_explicit_backend_does_not_change_legacy_model_backend():
 
 
 @pytest.mark.parametrize('interrupted', [False, True])
-def test_cli_reports_final_candidate_cache_statistics(tmp_path, monkeypatch, interrupted):
+def test_cli_reports_final_candidate_cache_statistics(tmp_path, monkeypatch, capsys, interrupted):
     class Cache:
         def __init__(self, core, device, **kwargs):
             self.__dict__.update(kwargs)
@@ -156,6 +173,7 @@ def test_cli_reports_final_candidate_cache_statistics(tmp_path, monkeypatch, int
             cli.main()
     else:
         cli.main()
+    assert 'wins=1 win_rate=1.0000' in capsys.readouterr().out
     payload = json.loads(output.read_text())
     assert payload['state'] == ('error' if interrupted else 'complete')
     candidate = payload['combat_candidates']['native']['phases']['combat']['leaf_inference']

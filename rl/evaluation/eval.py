@@ -52,6 +52,8 @@ def build_parser():
     parser.add_argument('--search-mode', choices=['puct', 'gumbel', 'full', 'strict'], default='strict')
     parser.add_argument('--prior-temperature', type=float,
                         help='Override the native policy-prior temperature for evaluation')
+    parser.add_argument('--gumbel-scale', type=float,
+                        help='Override native root Gumbel noise scale; use 0 for deterministic ranking')
     parser.add_argument('--simulations', type=int)
     parser.add_argument('--depth', type=int)
     parser.add_argument('--planner-nodes', type=int, default=512)
@@ -180,7 +182,13 @@ def main():
                 progress=progress, trace_factory=trace_factory):
             rows.append(row)
             if args.progress_every and len(rows) % args.progress_every == 0:
-                print(f"[eval] {len(rows)}/{args.episodes}: seed={row['seed']} result={row['result']} floor={row['floor']} steps={row['steps']}", flush=True)
+                wins = sum(item['result'] == 'win' for item in rows)
+                print(
+                    f"[eval] {len(rows)}/{args.episodes}: wins={wins} "
+                    f"win_rate={wins / len(rows):.4f} seed={row['seed']} "
+                    f"result={row['result']} floor={row['floor']} steps={row['steps']}",
+                    flush=True,
+                )
     except (Exception, KeyboardInterrupt) as exc:
         failure = {"type": type(exc).__name__, "message": str(exc)}
         raise
