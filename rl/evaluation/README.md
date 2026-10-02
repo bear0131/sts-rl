@@ -61,6 +61,9 @@ Native 搜索可用 `--fixed-worldline` / `--no-fixed-worldline` 显式控制整
 并固定 checkpoint、episode seed、搜索预算和并行度。
 `--gumbel-scale 0` 显式关闭根节点Gumbel噪声；未指定时继承checkpoint。确定性评测还应
 关闭`--stochastic`并固定seed、master nonce、worldline设置和并行度。
+`--native-search-threads N` 让整局评测复用训练rollout的同进程`NativeSearchBatch`和
+C++线程池；0保留同步兼容路径。该模式要求compact观测与leaf batch 1，并在
+`effective_strategy`记录实际线程数。
 
 CLI 正常结束写 `state=complete`；episode 循环超时、异常或 Ctrl-C 时仍按 `--output` / `--output-csv` 保存已完成的局，JSON 写 `state=error` 与错误类型，并继续以失败退出。部分结果不能当作原定完整评测集；硬杀进程、加载前失败或磁盘写入失败无法靠这个 finally 边界保留结果。dashboard 的策略初始化失败也会显示 error，避免一直停在 running。
 

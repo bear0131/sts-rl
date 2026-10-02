@@ -470,7 +470,14 @@ def complete_searches(model, call_workers, responses, *, leaf_batch_size,
     return results, stats
 
 
-def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext):
+def complete_searches_native(
+    model,
+    batch,
+    begin_calls,
+    *,
+    autocast=nullcontext,
+    leaf_backend=MODEL_LEAF_BACKEND,
+):
     """Drive resident independent trees with one model call per native wave.
 
     Each tree retains one pending request. Scheduling across trees changes no
@@ -485,7 +492,9 @@ def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext)
         started = time.perf_counter()
         batch.begin(begin_calls)
         stats['native_begin_seconds'] = time.perf_counter() - started
-        direct_forward = getattr(getattr(model, '_native_leaf_inference', None), 'forward_native', None)
+        backend = (getattr(model, '_native_leaf_inference', None)
+                   if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
+        direct_forward = getattr(backend, 'forward_native', None)
         while not batch.done:
             count = batch.rows
             stats['leaf_batches'] += 1
@@ -497,7 +506,13 @@ def complete_searches_native(model, batch, begin_calls, *, autocast=nullcontext)
                 logits, values = direct_forward(batch)
             else:
                 observations = batch.observations()
-                logits, values = forward_leaves(model, observations, compact=True, autocast=autocast)
+                logits, values = forward_leaves(
+                    model,
+                    observations,
+                    compact=True,
+                    autocast=autocast,
+                    leaf_backend=leaf_backend,
+                )
             decoded = batch.decode_seconds-decode_before
             stats['cpp_leaf_decode_seconds'] += decoded
             stats['cpp_leaf_model_seconds'] += time.perf_counter()-started-decoded

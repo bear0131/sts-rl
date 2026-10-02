@@ -63,6 +63,8 @@ def build_parser():
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
     parser.add_argument('--planner-nonce', type=int, default=20260918)
     parser.add_argument('--leaf-batch-size', type=int)
+    parser.add_argument('--native-search-threads', type=int, default=0,
+                        help='Use the same-process C++ native search pool with this many threads')
     parser.add_argument('--leaf-inference', choices=['eager', 'cuda-graph'], default='eager',
                         help='Native leaf backend; cuda-graph requires a CUDA FP32 combat model and keeps exact batch shapes')
     parser.add_argument('--fixed-worldline', action=argparse.BooleanOptionalAction, default=None,
@@ -119,6 +121,8 @@ def main():
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
+    if args.native_search_threads < 0:
+        raise ValueError('--native-search-threads must be non-negative')
     if args.compare_combats < 0 or ((args.compare_combats or args.trace) and args.task != 'wholerun'):
         raise ValueError('combat auditing requires wholerun and a non-negative combat count')
     if args.compare_combats and args.stochastic:

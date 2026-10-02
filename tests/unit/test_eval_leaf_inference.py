@@ -65,6 +65,14 @@ def test_explicit_zero_gumbel_scale_reaches_strict_native_config():
     assert combat.config.gumbel_scale == 0.0
 
 
+def test_native_search_threads_reach_strategy_manifest():
+    configured = cli.build_parser().parse_args([
+        'upper.zip', '--solver', 'native', '--native-search-threads', '4'])
+    combat = S.native_strategy(model(), configured).routes['combat']
+    assert combat.native_search_threads == 4
+    assert S.strategy_manifest(combat)['native_search_threads'] == 4
+
+
 @pytest.mark.parametrize('value', ['-1', 'nan', 'inf'])
 def test_invalid_gumbel_scale_is_rejected(value):
     configured = cli.build_parser().parse_args([

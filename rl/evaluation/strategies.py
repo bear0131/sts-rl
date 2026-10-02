@@ -14,7 +14,14 @@ import torch
 from env.core import native_actions as C
 
 from rl.policies.model import observation_for_policy
-from rl.search.native import MODEL_LEAF_BACKEND, NativeSearchConfig, complete_searches, forward_root, supports_compact
+from rl.search.native import (
+    MODEL_LEAF_BACKEND,
+    NativeSearchConfig,
+    complete_searches,
+    complete_searches_native,
+    forward_root,
+    supports_compact,
+)
 from rl.search.inference import CombatLeafGraphs
 
 
@@ -83,6 +90,7 @@ def strategy_manifest(strategy):
         result['predicate_phases'] = sorted(strategy.predicates)
     if isinstance(strategy, NativeStrategy):
         result.update(config=asdict(strategy.config), master_nonce=strategy.master_nonce)
+        result['native_search_threads'] = strategy.native_search_threads
         backend = (getattr(strategy.model, '_native_leaf_inference', None)
                    if strategy.leaf_backend is MODEL_LEAF_BACKEND else strategy.leaf_backend)
         result['leaf_inference'] = {'backend': 'eager' if backend is None else type(backend).__name__}
@@ -156,11 +164,30 @@ class NativeStrategy:
     name = 'native'
 
     def __init__(self, model, config: NativeSearchConfig, *, master_nonce=0, lock=None,
-                 leaf_backend=MODEL_LEAF_BACKEND):
+                 leaf_backend=MODEL_LEAF_BACKEND, native_search_threads=0):
         self.model, self.config, self.lock = model, config, lock
         self.master_nonce = int(master_nonce)
         self.leaf_backend = leaf_backend
+        self.native_search_threads = int(native_search_threads)
+        if self.native_search_threads < 0:
+            raise ValueError('native search threads must be non-negative')
+        self._native_batch = None
+        self._native_env_indices = None
         self.combat_action_contract = C.policy_contract(getattr(model, 'observation_space', None))
+
+    def bind_environments(self, environments):
+        self.unbind_environments()
+        if not self.native_search_threads:
+            return
+        from env.search.native_batch import NativeSearchBatch
+        self._native_batch = NativeSearchBatch(environments, self.native_search_threads)
+        self._native_env_indices = {id(env): index for index, env in enumerate(environments)}
+
+    def unbind_environments(self):
+        if self._native_batch is not None:
+            self._native_batch.close()
+        self._native_batch = None
+        self._native_env_indices = None
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
@@ -173,28 +200,60 @@ class NativeStrategy:
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
         logits, values = forward_root(self.model, observations, lock=self.lock)
         responses = {}
+        begin_calls = {}
+        local_to_native = {}
         try:
             for index, request in enumerate(requests):
                 check()
                 nonce = (self.master_nonce ^ request.seed ^ (request.step * 0x9E3779B97F4A7C15)) & ((1 << 64) - 1)
-                responses[index] = request.env.unwrapped.nosl_is_az_cpp_begin(
-                    logits[index], root_value=float(values[index]), state_nonce=nonce,
-                    decision_index=request.step, stochastic=False, compact_observation=compact,
-                    dirichlet_alpha=0.0, dirichlet_epsilon=0.0, **asdict(self.config))
-            results, stats = complete_searches(
-                self.model, lambda method, calls: {
-                    i: getattr(requests[i].env.unwrapped, method)(*args, **kw)
-                    for i, (args, kw) in calls.items()}, responses,
-                leaf_batch_size=self.config.leaf_batch_size, compact=compact, lock=self.lock,
-                check=check, leaf_backend=self.leaf_backend)
+                kwargs = dict(
+                    root_value=float(values[index]),
+                    state_nonce=nonce,
+                    decision_index=request.step,
+                    stochastic=False,
+                    compact_observation=compact,
+                    dirichlet_alpha=0.0,
+                    dirichlet_epsilon=0.0,
+                    **asdict(self.config),
+                )
+                if self._native_batch is None:
+                    responses[index] = request.env.unwrapped.nosl_is_az_cpp_begin(
+                        logits[index], **kwargs)
+                else:
+                    native_index = self._native_env_indices.get(id(request.env))
+                    if native_index is None:
+                        raise ValueError('native search received an environment outside its bound pool')
+                    local_to_native[index] = native_index
+                    begin_calls[native_index] = ((logits[index],), kwargs)
+            if self._native_batch is None:
+                results, stats = complete_searches(
+                    self.model, lambda method, calls: {
+                        i: getattr(requests[i].env.unwrapped, method)(*args, **kw)
+                        for i, (args, kw) in calls.items()}, responses,
+                    leaf_batch_size=self.config.leaf_batch_size, compact=compact, lock=self.lock,
+                    check=check, leaf_backend=self.leaf_backend)
+            else:
+                native_results, stats = complete_searches_native(
+                    self.model,
+                    self._native_batch,
+                    begin_calls,
+                    leaf_backend=self.leaf_backend,
+                )
+                results = {index: native_results[native_index]
+                           for index, native_index in local_to_native.items()}
         except BaseException:
-            for request in requests:
-                request.env.unwrapped.nosl_is_az_cpp_abort()
+            if self._native_batch is not None:
+                self._native_batch.clear()
+            else:
+                for request in requests:
+                    request.env.unwrapped.nosl_is_az_cpp_abort()
             raise
         # Batch costs are attributed equally, never multiplied by worker count.
         return [Decision(int(results[i]['action']), self.name, {
             'search_decisions': 1, 'search_simulations': self.config.simulations,
-            'search_leaf_evaluations': stats['by_worker'][i]['leaf_evaluations'],
+            'search_leaf_evaluations': stats['by_worker'][
+                local_to_native.get(i, i)
+            ]['leaf_evaluations'],
             'search_seconds': (time.monotonic() - started) / len(requests),
         }) for i in range(len(requests))]
 
@@ -241,6 +300,32 @@ class PhaseStrategy:
             for (index, _), decision in zip(indexed, decisions):
                 result[index] = decision
         return result
+
+    def _unique_strategies(self):
+        seen = set()
+        for strategy in (self.default, *self.routes.values()):
+            if id(strategy) not in seen:
+                seen.add(id(strategy))
+                yield strategy
+
+    def bind_environments(self, environments):
+        bound = []
+        try:
+            for strategy in self._unique_strategies():
+                bind = getattr(strategy, 'bind_environments', None)
+                if bind is not None:
+                    bind(environments)
+                    bound.append(strategy)
+        except BaseException:
+            for strategy in reversed(bound):
+                strategy.unbind_environments()
+            raise
+
+    def unbind_environments(self):
+        for strategy in self._unique_strategies():
+            unbind = getattr(strategy, 'unbind_environments', None)
+            if unbind is not None:
+                unbind()
 
 
 class LeftmostStrategy:
@@ -336,7 +421,8 @@ def native_strategy(model, args, lock=None):
         object.__setattr__(config, 'gumbel_scale', gumbel_scale)
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': NativeStrategy(
         model, config, master_nonce=getattr(model, 'nosl_is_az_master_nonce', 0), lock=lock,
-        leaf_backend=backend)},
+        leaf_backend=backend,
+        native_search_threads=getattr(args, 'native_search_threads', 0))},
         predicates={'combat': lambda request: getattr(request.env.unwrapped, '_pending', None) is None})
 
 

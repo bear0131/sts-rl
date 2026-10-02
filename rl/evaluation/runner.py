@@ -87,6 +87,9 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
             env = scenario.make_env()
             environments.append(env)
             active[index] = start(env)
+        bind = getattr(strategy, 'bind_environments', None)
+        if bind is not None:
+            bind(environments)
         while active:
             check()
             indices = sorted(active)
@@ -144,6 +147,9 @@ def evaluate(strategy: DecisionStrategy, scenario: Scenario, config: EvaluationC
                     else:
                         active[index] = replacement
     finally:
+        unbind = getattr(strategy, 'unbind_environments', None)
+        if unbind is not None:
+            unbind()
         for env in environments:
             env.close()
 

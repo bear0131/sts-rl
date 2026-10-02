@@ -62,6 +62,33 @@ def test_new_strategy_batches_reuses_environments_and_preserves_seeds():
     assert strategy.routes['custom'].batch_sizes == [2] * 6 + [1] * 3
 
 
+def test_runner_binds_and_unbinds_strategy_before_closing_environments():
+    envs = []
+
+    class BoundStrategy(FutureStrategy):
+        def __init__(self):
+            super().__init__()
+            self.bound = None
+            self.unbound = False
+
+        def bind_environments(self, environments):
+            assert self.bound is None
+            self.bound = list(environments)
+
+        def decide(self, requests, *, check):
+            assert self.bound and all(request.env in self.bound for request in requests)
+            return super().decide(requests, check=check)
+
+        def unbind_environments(self):
+            assert self.bound and not any(env.closed for env in self.bound)
+            self.unbound = True
+
+    strategy = BoundStrategy()
+    rows = list(evaluate(strategy, scenario(envs), EvaluationConfig(episodes=3, num_envs=2)))
+    assert len(rows) == 3 and strategy.unbound
+    assert all(env.closed for env in envs)
+
+
 def test_step_limits_are_not_deaths():
     envs = []
     rows = list(evaluate(FutureStrategy(), scenario(envs), EvaluationConfig(episodes=1, max_steps=1)))
