@@ -38,6 +38,13 @@ python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
   --trajectory-output runs/local/eval-trajectories
 ```
 
+规划器 v10 在终局计数、叶均值和最短胜利长度均精确平分后，才比较已完成存活
+边界的最短动作数；平分组任一根存在未完成 fallback 时，整组保留 native bits tie。
+`root_outcomes.live_horizon_steps_total/mean` 记录各 world 最佳已完成存活叶的
+最短动作深度之和/均值，包括根动作、END 和 pending selection，不是存活回合数。
+均值分母为 `boundary_live`，无此叶时为 null；fallback 不贡献伪造的零深度。
+这是有版本的策略变化，叶权重 `time-clock-v9`、搜索预算和遍历不变。
+
 双回合实验可显式设置 `--planner-turns 2 --planner-turn-scope boss-elite-v1`：
 所有公开 `BOSS` 房间及 `ELITE` 房间中的 `GREMLIN_NOB/LAGAVULIN/NEMESIS`
 使用双回合，其余战斗保持单回合；事件里的同名精英不命中。默认 scope 为 `all`，

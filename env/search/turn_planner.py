@@ -19,7 +19,7 @@ from env.core.combat_value import combat_terminal_outcome, combat_terminal_targe
 from env.search.nosl_sampler import NOSLSampler
 
 
-PLANNER_VERSION = 'ironclad-turn-v9-time-clock'
+PLANNER_VERSION = 'ironclad-turn-v10-live-boundary'
 LEGACY_LEAF_PROFILE = 'legacy-v8'
 TIME_CLOCK_LEAF_PROFILE = 'time-clock-v9'
 LEAF_PROFILES = (LEGACY_LEAF_PROFILE, TIME_CLOCK_LEAF_PROFILE)
@@ -326,6 +326,7 @@ class NativeTurnPlanner:
         values = {bits: [] for bits in roots}
         unresolved = {bits: 0 for bits in roots}
         winning_steps = {bits: 0 for bits in roots}
+        live_steps = {bits: 0 for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0,
@@ -345,6 +346,7 @@ class NativeTurnPlanner:
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
+                live_steps[bits] += counts['live_steps']
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves',
                             'second_turn_entries', 'completed_horizon_leaves'):
                     stats[key] += counts[key]
@@ -360,15 +362,29 @@ class NativeTurnPlanner:
         # Only break an exact tie in death count, win count and mean utility.
         # Otherwise receding-horizon planning can forever postpone an equally
         # good proved win behind a harmless, self-replacing zero-cost card.
-        # Nonwinning roots have zero winning steps, preserving their old tie.
-        selected = max(roots, key=lambda bits: (priorities[bits], -winning_steps[bits], -bits))
+        primary = {bits: (priorities[bits], -winning_steps[bits]) for bits in roots}
+        best_priority = max(primary.values())
+        tied = [bits for bits in roots if primary[bits] == best_priority]
+        # An equally valued live boundary can also be postponed forever by a
+        # self-replacing card. Prefer reaching it sooner only when every tied
+        # root has completed all sampled horizons. A fallback has no proved
+        # boundary length, so never compare its placeholder zero with a depth.
+        live_worlds = self.config.worlds + best_priority[0][0] - best_priority[0][1]
+        if live_worlds > 0 and all(unresolved[bits] == 0 for bits in tied):
+            selected = min(tied, key=lambda bits: (live_steps[bits], bits))
+        else:
+            selected = min(tied)
         stats.update(root_values={str(k): v[2] for k, v in priorities.items()},
             root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
                                        unresolved=unresolved[k],
                                        boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
                                        **{('model_value_mean' if leaf_evaluator is not None else 'heuristic_mean'): v[2]},
                                        winning_steps_total=winning_steps[k],
-                                       winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
+                                       winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.,
+                                       live_horizon_steps_total=live_steps[k],
+                                       live_horizon_steps_mean=(live_steps[k] /
+                                           (self.config.worlds+v[0]-v[1]-unresolved[k])
+                                           if self.config.worlds+v[0]-v[1]-unresolved[k] else None))
                            for k, v in priorities.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
@@ -380,7 +396,8 @@ class NativeTurnPlanner:
                                             horizon, final_player_turn, leaf_evaluator)
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
-                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0)
+                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
+                     live_steps=0)
         frontier = []
         serial = 0
         best = None
@@ -413,8 +430,11 @@ class NativeTurnPlanner:
                 if best is None or value > best:
                     best = value
                     stats['winning_steps'] = depth if value[0] == 1 else 0
+                    stats['live_steps'] = depth if value[0] == 0 else 0
                 elif value == best and value[0] == 1:
                     stats['winning_steps'] = min(stats['winning_steps'], depth)
+                elif value == best and value[0] == 0:
+                    stats['live_steps'] = min(stats['live_steps'], depth)
                 return
             partial = state_value(raw, partial=True, public_relics=public_relics,
                                   horizon=horizon, leaf_profile=self.config.leaf_profile)
@@ -473,6 +493,7 @@ class NativeTurnPlanner:
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
+                     live_steps=0,
                      depth_limit_hits=0)
         if leaf_evaluator is not None:
             stats.update(model_leaf_evaluations=0, model_leaf_batches=0, model_leaf_seconds=0.)
@@ -484,8 +505,11 @@ class NativeTurnPlanner:
             if best is None or value > best:
                 best = value
                 stats['winning_steps'] = depth if value[0] == 1 else 0
+                stats['live_steps'] = depth if value[0] == 0 else 0
             elif value == best and value[0] == 1:
                 stats['winning_steps'] = min(stats['winning_steps'], depth)
+            elif value == best and value[0] == 0:
+                stats['live_steps'] = min(stats['live_steps'], depth)
 
         def evaluate(states):
             check()

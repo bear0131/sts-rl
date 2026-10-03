@@ -26,8 +26,12 @@ env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一�
 `turn_planner.py` 提供无模型 native 回合规划器。它在独立 NOSL 样本中搜索完整战斗动作，
 每次只提交首个动作并重新观察；`node_budget` 是每个 sampled world 的 transition 预算，
 `worlds`、实际 transition、根覆盖下限和 fallback leaf 均进入诊断。人工状态价值不是胜率或
-游戏 oracle。`ironclad-turn-v9-time-clock` 在 v8 的 slime/Awakened phase、终局优先级、
-最短等价胜利和资源保护逻辑上，只补充 Time Eater 回合边界的公开 Time Warp 计数：计数
+游戏 oracle。当前 `ironclad-turn-v10-live-boundary` 保留终局/价值/最短同值胜利的
+优先级；仅在这些层级精确平分、且全部平分根均已完成采样边界时，优先以更少原子动作
+到达同值的存活边界。含未完成 fallback 的平分组仍按 native bits 选择，不加数值容差。
+该规则修复已复现的自替换出牌递延，不保证所有有限预算重规划都无循环。
+叶权重仍为 `time-clock-v9`：在 v8 的 slime/Awakened phase 和资源保护逻辑上，
+补充 Time Eater 回合边界的公开 Time Warp 计数：计数
 超过7时，叶子按下一回合被强制结束前的剩余出牌额度降权；触发第12张后计数重置，不处罚。
 `legacy-v8` profile 保留原值用于配对复现。Runic Dome 不进入
 native 规划，adapter 回退 `rules-ironclad-v3`。主要回归入口为

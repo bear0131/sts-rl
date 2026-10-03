@@ -1,4 +1,4 @@
-"""Break equivalent proved-win ties without changing terminal/HP preferences.
+"""Break completed-horizon ties without changing terminal/HP preferences.
 
 Reduced public mechanism from R4 seed150037/floor24/turn3. This is not a
 private-state replay and does not reproduce the original 2375 preceding cards.
@@ -90,25 +90,67 @@ def test_slower_higher_hp_victory_still_beats_immediate_kill(combat_factory, loo
     assert battle.to_dict()['outcome'] == 1 and battle.to_dict()['player']['hp'] == 79
 
 
-@pytest.mark.parametrize('lookahead_turns', [1, 2])
-def test_nonwinning_roots_keep_previous_tie_break(combat_factory, lookahead_turns):
+@pytest.mark.parametrize('lookahead_turns,boundary,model', [
+    (1, 'enemy-phase', False),
+    (1, 'next-decision', False), (1, 'next-decision', True),
+])
+def test_live_hex_loop_reaches_equal_boundary_sooner(combat_factory, lookahead_turns, boundary, model):
     battle = _chosen_loop(combat_factory, combust=False)
-    result = _planner(lookahead_turns).choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
+    before = battle.to_dict()
+    planner = NativeTurnPlanner(TurnPlannerConfig(worlds=2, node_budget=2048,
+        lookahead_turns=lookahead_turns, leaf_boundary=boundary))
+    result = planner.choose(battle, state_nonce=2375, public_relics=('Medical Kit',),
+        leaf_evaluator=(lambda states: [.5] * len(states)) if model else None)
     outcomes = result.diagnostics['root_outcomes']
     assert all(o['wins'] == 0 for o in outcomes.values())
     assert all(o['winning_steps_total'] == o['winning_steps_mean'] == 0 for o in outcomes.values())
-    previous = max((int(bits) for bits in outcomes), key=lambda bits: (
-        -outcomes[str(bits)]['deaths'], outcomes[str(bits)]['wins'],
-        outcomes[str(bits)]['heuristic_mean'], -bits))
-    assert result.action_bits == previous
-    if lookahead_turns == 1:
-        assert len({o['heuristic_mean'] for o in outcomes.values()}) == 1
-        assert result.action_bits == 0
+    assert all(o['boundary_live'] == 2 and o['unresolved'] == 0 for o in outcomes.values())
+    assert len(set(result.diagnostics['root_values'].values())) == 1
+    assert result.action_bits == END
+    assert outcomes[str(END)]['live_horizon_steps_mean'] == lookahead_turns
+    assert all(outcomes[str(i)]['live_horizon_steps_mean'] == lookahead_turns + 1
+               for i in range(8))
+    assert result.diagnostics['native_transitions'] <= result.diagnostics['effective_total_budget']
+    assert battle.to_dict() == before
+    battle.execute(sts.Action(result.action_bits))
+    assert battle.turn > before['turn'] and battle.to_dict()['outcome'] == 0
+
+
+def test_unfinished_two_turn_hex_roots_keep_previous_tie(combat_factory):
+    battle = _chosen_loop(combat_factory, combust=False)
+    result = _planner(2).choose(battle, state_nonce=2375, public_relics=('Medical Kit',))
+    outcomes = result.diagnostics['root_outcomes']
+    assert all(outcomes[str(i)]['wins'] == outcomes[str(i)]['boundary_live'] == 0
+               and outcomes[str(i)]['unresolved'] > 0 for i in range(8))
+    assert outcomes[str(END)]['deaths'] == 2
+    assert all(o['live_horizon_steps_total'] == 0 and o['live_horizon_steps_mean'] is None
+               for o in outcomes.values())
+    assert result.action_bits == 0
+
+
+@pytest.mark.parametrize('lookahead_turns', [1, 2])
+def test_redundant_block_does_not_delay_completed_live_horizon(combat_factory, lookahead_turns):
+    battle = combat_factory(['WOUND'] * 15).thick.bc
+    battle.apply_custom_state({'hand': ['DEFEND_RED'], 'draw': ['WOUND'] * 15,
+        'discard': [], 'player': {'hp': 80, 'energy': 3, 'block': 999},
+        'monsters': [{'move': 'JAW_WORM_CHOMP'}]})
+    before = battle.to_dict()
+    result = _planner(lookahead_turns).choose(battle, state_nonce=42)
+    outcomes = result.diagnostics['root_outcomes']
+    assert len(set(result.diagnostics['root_values'].values())) == 1
+    assert all(o['boundary_live'] == 2 and o['unresolved'] == 0 for o in outcomes.values())
+    assert outcomes[str(END)]['live_horizon_steps_mean'] == lookahead_turns
+    assert outcomes['0']['live_horizon_steps_mean'] == lookahead_turns + 1
+    assert result.action_bits == END
+    assert battle.to_dict() == before
 
 
 def test_manifest_declares_secondary_winning_length_preference():
-    assert TurnPlannerStrategy().manifest()['winning_tie_break'] == (
+    manifest = TurnPlannerStrategy().manifest()
+    assert manifest['winning_tie_break'] == (
         'fewest-actions-to-equally-valued-sampled-wins')
+    assert manifest['live_tie_break'] == 'fewest-actions-to-equally-valued-completed-live-horizons'
+    assert manifest['live_tie_scope'] == 'exact-primary-and-winning-length-ties-with-no-fallback'
 
 
 def test_dazed_is_not_a_legal_active_card_without_medical_kit(combat_factory):

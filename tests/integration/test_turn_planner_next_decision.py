@@ -113,16 +113,49 @@ def test_h1_v1_same_traversal_and_live_leaves(combat_factory, monkeypatch, kind)
         assert snapshot(battle) == snapshot(pristine)
 
 
-def test_model_batches_are_bounded_even_with_many_complete_leaves(combat_factory):
+@pytest.mark.parametrize('monster_hp', [40, 30000])
+def test_model_batches_are_bounded_even_with_many_complete_leaves(combat_factory, monster_hp):
     battle = combat_factory(['ANGER'] * 10).thick.bc
     battle.apply_custom_state({'hand': ['ANGER'] * 8, 'draw': ['WOUND'] * 5,
-                               'monsters': [{'hp': 30000, 'max_hp': 30000}]})
+                               'monsters': [{'max_hp': monster_hp}]})
+    # Native custom-state HP is first clamped against the existing maximum.
+    battle.apply_custom_state({'monsters': [{'hp': monster_hp}]})
+    assert battle.to_dict()['monsters'][0]['hp'] == monster_hp
     sizes = []
     result = planner(worlds=1, node_budget=8192, beam_width=32, max_depth=8).choose(
         battle, state_nonce=9, leaf_evaluator=lambda states: sizes.append(len(states)) or [.3]*len(states))
     assert len(sizes) > result.diagnostics['root_actions']
     assert max(sizes) == 64 and min(sizes) > 0
     assert sum(sizes) == result.diagnostics['model_leaf_evaluations']
+    outcomes = result.diagnostics['root_outcomes']
+    assert outcomes[str(END)]['live_horizon_steps_mean'] == 1
+    if monster_hp == 30000:
+        assert result.action_bits == END
+        assert all(outcomes[str(i)]['live_horizon_steps_mean'] == 2 for i in range(8))
+    else:
+        assert result.action_bits == 0
+        assert all(outcomes[str(i)]['wins'] == 1 and outcomes[str(i)]['live_horizon_steps_total'] == 0
+                   and outcomes[str(i)]['live_horizon_steps_mean'] is None for i in range(8))
+
+
+def test_best_live_depth_resets_for_a_later_higher_value(combat_factory):
+    battle = combat_factory(['WOUND'] * 10).thick.bc
+    battle.apply_custom_state({'hand': ['DEFEND_RED', 'STRIKE_RED'],
+        'draw': ['WOUND'] * 5, 'discard': [],
+        'player': {'hp': 80, 'energy': 3},
+        'monsters': [{'hp': 40, 'block': 0, 'move': 'JAW_WORM_CHOMP'}]})
+    before = snapshot(battle)
+    seen_hp = []
+    def evaluate(states):
+        hp = [s.to_dict()['monsters'][0]['hp'] for s in states]
+        seen_hp.extend(hp)
+        return [.6 if value < 40 else .5 for value in hp]
+    value, counts = planner()._root(battle, 0, 100, lambda: None, (),
+        power_horizon(battle.to_dict()), battle.turn, evaluate)
+    assert seen_hp == [40, 34]  # Defend -> END, then Defend -> Strike -> END.
+    assert value == (0, .6) and counts['live_steps'] == 3
+    assert counts['winning_steps'] == counts['fallback_leaves'] == 0
+    assert snapshot(battle) == before
 
 
 def test_pending_depth_fallback_uses_model_scale_and_no_extra_execute(combat_factory):
@@ -206,6 +239,7 @@ def test_delayed_live_batch_does_not_replace_win_or_its_shortest_depth(combat_fa
     assert seen and counts['model_leaf_evaluations'] == len(seen)
     assert value == (1, combat_terminal_target(direct))
     assert counts['winning_steps'] == 2
+    assert counts['live_steps'] == 0
 
 
 def test_equal_terminal_model_values_keep_shortest_winning_sequence(combat_factory):

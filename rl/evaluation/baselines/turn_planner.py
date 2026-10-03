@@ -79,7 +79,9 @@ class TurnPlannerStrategy:
             world_aggregation=('lexicographic-fewer-deaths-more-wins-mean-heuristic'
                                if self.checkpoint_value is None else
                                'lexicographic-fewer-deaths-more-wins-mean-combat-end-hp-value'),
-            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
+            winning_tie_break='fewest-actions-to-equally-valued-sampled-wins',
+            live_tie_break='fewest-actions-to-equally-valued-completed-live-horizons',
+            live_tie_scope='exact-primary-and-winning-length-ties-with-no-fallback')
 
     def decide(self, requests, *, check=lambda: None):
         decisions = []
