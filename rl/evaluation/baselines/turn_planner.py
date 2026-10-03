@@ -1,4 +1,4 @@
-"""DecisionStrategy adapter for the model-free native turn planner."""
+"""DecisionStrategy adapters for bounded native turn planning."""
 from dataclasses import asdict, replace
 
 import numpy as np
@@ -6,6 +6,7 @@ import numpy as np
 from env.core.native_actions import complete_actions
 from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig
 import slaythespire as sts
+from schemas.combat_state import normalize_sim_global
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
 from rl.evaluation.strategies import Decision, PhaseStrategy
 
@@ -53,23 +54,31 @@ class TurnPlannerStrategy:
     version = PLANNER_VERSION
     combat_action_contract = 'native-v1'
 
-    def __init__(self, config=TurnPlannerConfig(), *, trace=None):
+    def __init__(self, config=TurnPlannerConfig(), *, trace=None, checkpoint_value=None):
+        if checkpoint_value is not None and (config.leaf_boundary != 'next-decision'
+                                            or config.lookahead_turns != 1):
+            raise ValueError('checkpoint planner value requires one-turn next-decision leaves')
         self.config = config
         self.planner = NativeTurnPlanner(config)
         self.fallback = CombatRuleStrategy()
         self.trace = trace
+        self.checkpoint_value = checkpoint_value
 
     def manifest(self):
         return dict(config=asdict(self.config), turn_scope='all', horizon=(
+            'next-legal-player-decision' if self.config.leaf_boundary == 'next-decision' else
             'current-player-turn-plus-enemy-phase' if self.config.lookahead_turns == 1
             else 'two-player-turns-through-second-enemy-phase'),
             information='independent-NOSL-futures', dome='visible-rule-fallback',
             leaf=self.config.leaf_profile, draw_selection='redeterminize-then-remap-native-entity',
+            leaf_value=('heuristic' if self.checkpoint_value is None else self.checkpoint_value.manifest()),
             resources='conservative-no-output-guard-with-public-relics',
             enemy_progress='public-slime-and-awakened-phase-potential',
             value_horizon='shared-root-public-enemy-hp-and-strength',
             terminal_priority='per-world-death-live-win',
-            world_aggregation='lexicographic-fewer-deaths-more-wins-mean-heuristic',
+            world_aggregation=('lexicographic-fewer-deaths-more-wins-mean-heuristic'
+                               if self.checkpoint_value is None else
+                               'lexicographic-fewer-deaths-more-wins-mean-combat-end-hp-value'),
             winning_tie_break='fewest-actions-to-equally-valued-sampled-wins')
 
     def decide(self, requests, *, check=lambda: None):
@@ -95,8 +104,13 @@ class TurnPlannerStrategy:
                 # Per-episode step is an opaque decision counter, not game seed
                 # or simulator RNG. Identical public inputs at the same counter
                 # get identical hidden samples regardless of the actual future.
+                value_options = {}
+                if self.checkpoint_value is not None:
+                    root_global = normalize_sim_global(env.thick.gc)
+                    value_options['leaf_evaluator'] = lambda battles: self.checkpoint_value.evaluate(
+                        battles, root_global=root_global)
                 plan = self.planner.choose(env.thick.bc, state_nonce=request.step, check=check,
-                                           public_relics=public_relics)
+                                           public_relics=public_relics, **value_options)
                 decision = Decision(None, self.name,
                     {key: value for key, value in plan.diagnostics.items()
                      if isinstance(value, (int, float)) and key != 'max_action_depth'},
@@ -121,6 +135,8 @@ class TurnPlannerStrategy:
                     room=str(env.thick.gc.cur_room).split('.')[-1],
                     encounter=str(env.thick.gc.encounter).split('.')[-1],
                     lookahead_turns=self.config.lookahead_turns,
+                    leaf_boundary=self.config.leaf_boundary,
+                    leaf_value='checkpoint' if self.checkpoint_value is not None else 'heuristic',
                     turn2_applied=not dome and self.config.lookahead_turns == 2,
                     action=decision.action, native_action=decision.native_action,
                     source=decision.source, diagnostics=(decision.diagnostics if dome else

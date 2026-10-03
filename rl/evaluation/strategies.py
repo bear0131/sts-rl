@@ -465,6 +465,17 @@ def validate_planner_turn_scope(args):
                           args.task != 'wholerun' or args.planner_turns != 2):
         raise ValueError('--planner-turn-scope boss-elite-v1 requires --task wholerun '
                          '--solver turn-planner --planner-turns 2')
+    boundary = getattr(args, 'planner_leaf_boundary', 'enemy-phase')
+    value = getattr(args, 'planner_leaf_value', 'heuristic')
+    if boundary not in ('enemy-phase', 'next-decision') or value not in ('heuristic', 'checkpoint'):
+        raise ValueError('unsupported planner leaf boundary or value')
+    if boundary != 'enemy-phase' or value != 'heuristic':
+        if (args.solver != 'turn-planner' or args.task != 'wholerun'
+                or getattr(args, 'planner_turns', 1) != 1 or scope != 'all'):
+            raise ValueError('next-decision/checkpoint leaves require --task wholerun '
+                             '--solver turn-planner --planner-turns 1 --planner-turn-scope all')
+        if value == 'checkpoint' and boundary != 'next-decision':
+            raise ValueError('--planner-leaf-value checkpoint requires --planner-leaf-boundary next-decision')
 
 
 def turn_planner_strategy(model, args, lock=None):
@@ -478,13 +489,18 @@ def turn_planner_strategy(model, args, lock=None):
         max_depth=getattr(args, 'planner_depth', 16),
         lookahead_turns=getattr(args, 'planner_turns', 1),
         leaf_profile=getattr(args, 'planner_leaf_profile', 'time-clock-v9'),
+        leaf_boundary=getattr(args, 'planner_leaf_boundary', 'enemy-phase'),
         master_nonce=getattr(args, 'planner_nonce', 20260918),
     )
+    checkpoint_value = None
+    if getattr(args, 'planner_leaf_value', 'heuristic') == 'checkpoint':
+        from rl.evaluation.baselines.planner_value import CheckpointLeafValue
+        checkpoint_value = CheckpointLeafValue(model)
     return PhaseStrategy(
         policy_strategy(model, args, lock),
         {'combat': (RiskTurnPlannerStrategy(config)
                     if getattr(args, 'planner_turn_scope', 'all') == 'boss-elite-v1'
-                    else TurnPlannerStrategy(config))},
+                    else TurnPlannerStrategy(config, checkpoint_value=checkpoint_value))},
     )
 
 

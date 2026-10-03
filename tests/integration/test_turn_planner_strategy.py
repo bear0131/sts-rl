@@ -205,7 +205,7 @@ def test_cli_composition_preserves_planner_budget_and_supplied_upper():
     assert manifest['combat_action_contract'] == 'native-v1'
     assert manifest['config'] == dict(
         worlds=3, node_budget=97, beam_width=4, max_depth=9, master_nonce=777,
-        lookahead_turns=1, leaf_profile='time-clock-v9')
+        lookahead_turns=1, leaf_profile='time-clock-v9', leaf_boundary='enemy-phase')
 
 
 @pytest.mark.parametrize('room,encounter,selected', [
@@ -325,3 +325,43 @@ def test_risk_cli_cannot_be_rewritten_to_legacy_value_search(monkeypatch):
     monkeypatch.setattr(cli, 'load_checkpoint', lambda *a, **kw: pytest.fail('loaded checkpoint'))
     with pytest.raises(ValueError, match='combat-search cannot be combined'):
         cli.main()
+
+
+def test_checkpoint_leaf_glue_uses_each_request_root_metadata(combat_factory):
+    from schemas.combat_state import normalize_sim_global
+    calls = []
+    class Value:
+        def manifest(self):
+            return {'adapter': 'fixture'}
+        def evaluate(self, battles, *, root_global):
+            calls.append(root_global)
+            assert all(b.to_dict()['outcome'] == 0 for b in battles)
+            return [.5] * len(battles)
+    strategy = TurnPlannerStrategy(TurnPlannerConfig(node_budget=64,
+        leaf_boundary='next-decision'), checkpoint_value=Value())
+    for floor in (7, 19):
+        env = combat_factory(['DEFEND_RED'] * 5, combat_action_contract='native-v1')
+        env.thick.gc.floor_num = floor
+        before = env.thick.bc.to_dict()
+        old_count = len(calls)
+        decision = strategy.decide([_request(env)])[0]
+        assert len(calls) > old_count
+        assert all(x == normalize_sim_global(env.thick.gc) for x in calls[old_count:])
+        assert decision.diagnostics['model_leaf_evaluations'] > 0
+        assert decision.native_action in env.native_combat_actions()
+        assert env.thick.bc.to_dict() == before
+
+
+def test_checkpoint_leaf_glue_dome_never_calls_value(combat_factory):
+    class Value:
+        def evaluate(self, *args, **kwargs):
+            pytest.fail('Dome reached checkpoint value')
+    env = combat_factory(['STRIKE_RED'] * 5, relics=['Runic Dome'],
+                         combat_action_contract='native-v1')
+    strategy = TurnPlannerStrategy(TurnPlannerConfig(leaf_boundary='next-decision'),
+                                   checkpoint_value=Value(), trace=(trace := []).append)
+    decision = strategy.decide([_request(env)])[0]
+    assert decision.diagnostics['planner_dome_fallback'] == 1
+    assert decision.diagnostics.get('model_leaf_evaluations', 0) == 0
+    assert trace[0]['leaf_value'] == 'checkpoint'
+    assert trace[0]['state']['monsters'] == []

@@ -15,6 +15,7 @@ import time
 from env.core import _BUILD  # noqa: F401  (explicit native build bootstrap)
 import slaythespire as sts
 from env.core.native_actions import complete_actions
+from env.core.combat_value import combat_terminal_outcome, combat_terminal_target
 from env.search.nosl_sampler import NOSLSampler
 
 
@@ -97,12 +98,17 @@ class TurnPlannerConfig:
     master_nonce: int = 20260918
     lookahead_turns: int = 1
     leaf_profile: str = TIME_CLOCK_LEAF_PROFILE
+    leaf_boundary: str = 'enemy-phase'
 
     def __post_init__(self):
         if self.lookahead_turns not in (1, 2):
             raise ValueError('lookahead_turns must be 1 or 2')
         if self.leaf_profile not in LEAF_PROFILES:
             raise ValueError(f'leaf_profile must be one of {LEAF_PROFILES}')
+        if self.leaf_boundary not in ('enemy-phase', 'next-decision'):
+            raise ValueError('leaf_boundary must be enemy-phase or next-decision')
+        if self.leaf_boundary == 'next-decision' and self.lookahead_turns != 1:
+            raise ValueError('next-decision currently requires lookahead_turns=1')
         for key in ('worlds', 'node_budget', 'beam_width', 'max_depth'):
             if getattr(self, key) < 1:
                 raise ValueError(f'{key} must be positive')
@@ -290,7 +296,13 @@ class NativeTurnPlanner:
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
-    def choose(self, battle, *, state_nonce: int, check=None, public_relics=None) -> PlanResult:
+    def choose(self, battle, *, state_nonce: int, check=None, public_relics=None,
+               leaf_evaluator=None) -> PlanResult:
+        if leaf_evaluator is not None:
+            if self.config.leaf_boundary != 'next-decision':
+                raise ValueError('leaf evaluator requires next-decision boundary')
+            if not callable(leaf_evaluator):
+                raise TypeError('leaf evaluator must be callable')
         check = check or (lambda: None)
         check()
         started = time.monotonic()
@@ -318,6 +330,10 @@ class NativeTurnPlanner:
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0,
             second_turn_entries=0, completed_horizon_leaves=0, max_action_depth=0)
+        if leaf_evaluator is not None:
+            stats.update(model_leaf_evaluations=0, model_leaf_batches=0, model_leaf_seconds=0.)
+        if self.config.leaf_boundary == 'next-decision':
+            stats['depth_limit_hits'] = 0
         for world in range(self.config.worlds):
             sample = self.sampler.clone_and_redeterminize(
                 battle, state_nonce=state_nonce, simulation_index=world)
@@ -325,7 +341,7 @@ class NativeTurnPlanner:
                 check()
                 action = sample.remap_draw_selection_from(battle, bits) if select_draw else bits
                 score, counts = self._root(sample, action, quota, check, public_relics,
-                                           horizon, final_player_turn)
+                                           horizon, final_player_turn, leaf_evaluator)
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
@@ -334,6 +350,11 @@ class NativeTurnPlanner:
                     stats[key] += counts[key]
                 stats['max_action_depth'] = max(stats['max_action_depth'], counts['max_action_depth'])
                 stats['budget_exhausted'] |= counts['budget_exhausted']
+                if leaf_evaluator is not None:
+                    for key in ('model_leaf_evaluations', 'model_leaf_batches', 'model_leaf_seconds'):
+                        stats[key] += counts[key]
+                if self.config.leaf_boundary == 'next-decision':
+                    stats['depth_limit_hits'] += counts['depth_limit_hits']
             stats['worlds_completed'] += 1
         priorities = {bits: aggregate_world_values(scores) for bits, scores in values.items()}
         # Only break an exact tie in death count, win count and mean utility.
@@ -345,13 +366,18 @@ class NativeTurnPlanner:
             root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
                                        unresolved=unresolved[k],
                                        boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
-                                       heuristic_mean=v[2], winning_steps_total=winning_steps[k],
+                                       **{('model_value_mean' if leaf_evaluator is not None else 'heuristic_mean'): v[2]},
+                                       winning_steps_total=winning_steps[k],
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
             search_seconds=time.monotonic() - started, search_decisions=1)
         return PlanResult(selected, stats)
 
-    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn):
+    def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn,
+              leaf_evaluator=None):
+        if self.config.leaf_boundary == 'next-decision':
+            return self._root_next_decision(branch, bits, quota, check, public_relics,
+                                            horizon, final_player_turn, leaf_evaluator)
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
                      completed_horizon_leaves=0, max_action_depth=0, winning_steps=0)
@@ -432,4 +458,128 @@ class NativeTurnPlanner:
             if best_partial is None:
                 raise RuntimeError('planner produced no complete or partial leaf')
             best = (0, best_partial)
+        return best, stats
+
+    def _root_next_decision(self, branch, bits, quota, check, public_relics,
+                            horizon, root_turn, leaf_evaluator):
+        """H1/V1 share traversal; only completed-leaf scoring may use a model.
+
+        Normal execution preserves this sampled world's draw/RNG and callbacks.
+        END and pending choices consume the same quota/depth as card actions.
+        Completed live states are buffered in bounded batches, never expanded
+        according to model values. The default enemy-phase implementation above
+        remains separate so its historical boundary/depth behavior is unchanged.
+        """
+        stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
+                     budget_exhausted=False, second_turn_entries=0,
+                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0,
+                     depth_limit_hits=0)
+        if leaf_evaluator is not None:
+            stats.update(model_leaf_evaluations=0, model_leaf_batches=0, model_leaf_seconds=0.)
+        frontier, pending = [], []
+        serial, best, best_partial, best_partial_state = 0, None, None, None
+
+        def score(value, depth):
+            nonlocal best
+            if best is None or value > best:
+                best = value
+                stats['winning_steps'] = depth if value[0] == 1 else 0
+            elif value == best and value[0] == 1:
+                stats['winning_steps'] = min(stats['winning_steps'], depth)
+
+        def evaluate(states):
+            check()
+            started = time.monotonic()
+            values = list(leaf_evaluator(states))
+            stats['model_leaf_seconds'] += time.monotonic() - started
+            stats['model_leaf_batches'] += 1
+            stats['model_leaf_evaluations'] += len(states)
+            if len(values) != len(states):
+                raise ValueError('leaf evaluator returned a wrong value count')
+            values = [float(value) for value in values]
+            if any(not math.isfinite(value) or not 0. <= value <= 1. for value in values):
+                raise ValueError('leaf evaluator values must be finite and in [0, 1]')
+            check()
+            return values
+
+        def flush():
+            if pending:
+                values = evaluate([state for state, _ in pending])
+                for (_, depth), value in zip(pending, values):
+                    score((0, value), depth)
+                pending.clear()
+
+        def take(state, action, depth):
+            nonlocal serial, best_partial, best_partial_state
+            stats['native_transitions'] += 1
+            stats['max_action_depth'] = max(stats['max_action_depth'], depth)
+            child = state.clone()
+            child.execute(sts.Action(action))
+            raw = child.to_dict()
+            if raw['post_enemy_turn_boundary']:
+                raise ValueError('next-decision cannot resume a projected enemy boundary')
+            terminal = raw['outcome'] != 0 or raw.get('escaped', False)
+            if terminal:
+                outcome = combat_terminal_outcome(raw)
+                if outcome not in ('win', 'loss'):
+                    raise ValueError('next-decision leaf has unknown or escaped terminal outcome')
+                if leaf_evaluator is None:
+                    value = leaf_value(raw, public_relics=public_relics, horizon=horizon,
+                                       leaf_profile=self.config.leaf_profile)
+                else:
+                    value = (1 if outcome == 'win' else -1, combat_terminal_target(raw))
+                score(value, depth)
+                return
+            if raw['turn'] > root_turn:
+                if not complete_actions(child):
+                    raise ValueError('next-decision boundary has no legal live decision')
+                stats['second_turn_entries'] += 1
+                stats['completed_horizon_leaves'] += 1
+                if leaf_evaluator is None:
+                    score(leaf_value(raw, public_relics=public_relics, horizon=horizon,
+                                     leaf_profile=self.config.leaf_profile), depth)
+                else:
+                    pending.append((child, depth))
+                    if len(pending) == 64:
+                        flush()
+                return
+            partial = state_value(raw, partial=True, public_relics=public_relics,
+                                  horizon=horizon, leaf_profile=self.config.leaf_profile)
+            if not math.isfinite(partial):
+                raise ValueError('planner partial heuristic must be finite')
+            if best_partial is None or partial > best_partial:
+                best_partial, best_partial_state = partial, child
+            serial += 1
+            heapq.heappush(frontier, (-partial, serial, depth, child))
+
+        take(branch, bits, 1)
+        while frontier and stats['native_transitions'] < quota:
+            check()
+            _, _, depth, node = heapq.heappop(frontier)
+            stats['expanded_nodes'] += 1
+            if depth >= self.config.max_depth:
+                stats['depth_limit_hits'] += 1
+                continue
+            legal = complete_actions(node)
+            if _END in legal:
+                take(node, _END, depth + 1)
+            for action in legal:
+                if action == _END:
+                    continue
+                if stats['native_transitions'] >= quota:
+                    stats['budget_exhausted'] = True
+                    break
+                take(node, action, depth + 1)
+            if len(frontier) > self.config.beam_width:
+                frontier = heapq.nsmallest(self.config.beam_width, frontier)
+                heapq.heapify(frontier)
+        stats['budget_exhausted'] |= bool(frontier)
+        flush()
+        if best is None:
+            stats['fallback_leaves'] += 1
+            if best_partial_state is None:
+                raise RuntimeError('planner produced no complete or partial leaf')
+            value = (best_partial if leaf_evaluator is None
+                     else evaluate([best_partial_state])[0])
+            best = (0, value)
         return best, stats

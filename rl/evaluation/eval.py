@@ -69,6 +69,12 @@ def build_parser():
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
     parser.add_argument('--planner-turn-scope', choices=('all', 'boss-elite-v1'), default='all',
                         help='Restrict two-turn planning to all bosses and Nob/Lagavulin/Nemesis elites')
+    parser.add_argument('--planner-leaf-boundary', choices=('enemy-phase', 'next-decision'),
+                        default='enemy-phase',
+                        help='Stop at enemy-phase projection, or the next legal player decision (turn1 only)')
+    parser.add_argument('--planner-leaf-value', choices=('heuristic', 'checkpoint'),
+                        default='heuristic',
+                        help='Checkpoint value requires next-decision leaves and a compatible Entity AR model')
     parser.add_argument('--planner-leaf-profile',
                         choices=('legacy-v8', 'time-clock-v9'),
                         default='time-clock-v9')

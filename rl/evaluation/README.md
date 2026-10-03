@@ -53,6 +53,24 @@ trace 的 `lookahead_turns` 表示所选配置，`turn2_applied` 表示实际调
 `planner_turn1_decisions/planner_turn2_decisions` 只统计实际搜索次数。Runic Dome
 仍使用公开规则回退，两项搜索计数和实际预算为 0，即使所选配置是双回合。
 
+Checkpoint 叶估值是独立实验：在 `--solver turn-planner --planner-turns 1`
+及默认 `--planner-turn-scope all` 下，`--planner-leaf-boundary next-decision`
+正常执行到下一玩家合法决策，包含下一手抽牌及回合开始能力。默认
+`--planner-leaf-value heuristic` 为 H1；加 `--planner-leaf-value checkpoint`
+为 V1。H0 则保留默认 `enemy-phase` 边界与启发式。H0 历史单回合搜索可能在
+深度上限处再执行一次 END；新 next-decision 路径的深度上限计入所有动作。
+因此 H0/H1 要同时报告边界与实际深度差异，不能总称纯视野消融；H1/V1 才保持
+同一边界及深度合同，用于隔离估值变化。不要把下一手信息带来的收益归因于模型。
+
+V1 当前只支持带完整目标元数据的 Entity autoregressive-v2/combat-only
+检查点，目标须为 `combat-end-hp-v1`，关闭 end-turn-as-leaf 和 boss-transition
+目标；不支持的模型或组合在启动时拒绝。执行环境仍为 native-v1，共享编码器
+按模型合同构造采样分支的 AR 输入，不修改环境合同。实际终局使用精确战斗结束
+HP 目标，live 叶与未完成回退使用 [0,1] 的 checkpoint value；两者保留原终局
+优先级。frontier 仍按同一启发式剪枝，H1/V1 在同起点有相同的叶候选集。
+模型只重评叶子，不额外推进或重采样；eager forward 每批最多64项，模型计数和
+耗时单独记录。深度和节点预算也包含 END 与所有待选动作。Runic Dome 仍回退。
+
 训练模型直推或搜索仍使用同一入口：省略 `--upper-strategy rules`（默认
 `model`），并按需选择 `--solver policy`、`native`、`value` 或
 `turn-planner`。因此评测算法和轨迹格式不会随 checkpoint 复制一份。
