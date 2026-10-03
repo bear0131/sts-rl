@@ -155,11 +155,13 @@ def test_native_transport_rejects_missing_batch_rows():
 
 def test_joint_overworld_policy_composes_with_a_legacy_combat_solver():
     from types import SimpleNamespace
+    from gymnasium.spaces import MultiBinary
     from env.core import native_actions as C
     from rl.evaluation.strategies import DecisionRequest, PolicyStrategy
 
     class JointModel:
-        observation_space = SimpleNamespace(spaces={'seed': None, 'combat_legal': None})
+        observation_space = SimpleNamespace(spaces={
+            'seed': None, 'combat_legal': MultiBinary(C.JOINT_WIDTH)})
         action_space = SimpleNamespace(n=C.JOINT_SIZE)
 
         def predict(self, obs, *, action_masks, deterministic):
