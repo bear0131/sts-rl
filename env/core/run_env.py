@@ -67,7 +67,6 @@ def unpack_nosl_observation_buffer(response):
 from . import native_actions as C
 from . import _BUILD  # noqa: F401  (sys.path bootstrap for slaythespire/schemas)
 from schemas.combat_state import (
-    combat_select_options,
     normalize_sim,
     normalize_sim_global,
     _sim_card_id,
@@ -81,6 +80,7 @@ from . import encode
 from . import game_actions as ga
 from .boss_value import context_value_mode
 from .game_env import SimGameEnv
+from .native_observation import encode_native_observation
 
 
 _UNCACHED = object()
@@ -1236,40 +1236,12 @@ class SlayTheSpireEnv(gym.Env):
         return None
 
     def _native_leaf_observation(self, raw_state, *, combat_only=False):
-        """Encode one C++ branch state without exposing hidden RNG/pile order."""
-        canon = normalize_sim(raw_state)
-        canon["phase"] = "combat"
-        canon["arg_step"] = A.ROOT
-        if int(raw_state.get("input_state", 1)) == 2:
-            select = raw_state.get("select") or {}
-            if select:
-                canon["options"] = {
-                    "select": combat_select_options(select)
-                }
-        if self._autoregressive_actions and 'selection_prefix' in raw_state:
-            prefix = int(raw_state['selection_prefix'])
-            sel = canon.get('options', {}).get('select')
-            if sel is not None:
-                sel['hand_selected'] = [i for i in range(10) if prefix >> i & 1]
-                sel['pick_remaining'] = max(0, int(sel.get('pick_remaining', sel.get('pick_max', 0))) - prefix.bit_count())
-        global_state = dict(self._nosl_cpp_global_template or
-                            normalize_sim_global(self.thick.gc))
-        # The branch is a hypothetical world line.  Persistent metadata comes
-        # from the live run, while combat HP/potions come from this branch.
-        global_state["hp"] = int(raw_state["player"]["hp"])
-        global_state["max_hp"] = int(raw_state["player"]["max_hp"])
-        if "potions" in raw_state:
-            global_state["potions"] = list(raw_state["potions"])
-        canon["global"] = global_state
-        if combat_only:
-            obs = encode.encode_combat(
-                canon,
-                card_language=self._card_language,
-                combat_language=self._combat_language,
-            )
-            return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
-        obs = encode.encode(
-            canon,
+        """Encode one C++ branch using the shared native observation contract."""
+        return encode_native_observation(
+            raw_state,
+            root_global=(self._nosl_cpp_global_template or normalize_sim_global(self.thick.gc)),
+            combat_action_contract=self.combat_action_contract,
+            combat_only=combat_only,
             global_map_view=self._global_map_view,
             card_language=self._card_language,
             combat_language=self._combat_language,
@@ -1278,8 +1250,6 @@ class SlayTheSpireEnv(gym.Env):
             event_option_observation=self._event_option_observation,
             interactive_reasoning=self._interactive_reasoning,
         )
-
-        return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
 
     def _with_joint_legal(self, obs, policy_ids):
         if self._joint_actions:
