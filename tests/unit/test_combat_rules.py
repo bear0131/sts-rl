@@ -85,6 +85,15 @@ def test_multi_exhaust_removes_junk_then_confirms(view):
     assert pick(view, A._PICK+1, A._CONFIRM) == A._CONFIRM
 
 
+@pytest.mark.parametrize('context,pile', [
+    ('HEADBUTT', 'discard'), ('EXHUME', 'exhaust'), ('SECRET_WEAPON', 'draw')])
+def test_selection_scores_public_candidates_at_their_native_handles(view, context, pile):
+    view.select = {'context': context, 'zone': pile, 'multi': False,
+                   'candidates': [{'native_index': 12}, {'native_index': 13}]}
+    view.piles[pile] = [card('Carnage', 2)] * 12 + [card('Strike_R'), card('Carnage', 2)]
+    assert pick(view, A._PICK, A._PICK+1) == A._PICK+1
+
+
 def test_missing_selection_candidate_fails_loudly(view):
     view.select = {'context': 'EXHUME'}
     with pytest.raises(ValueError, match='missing from exhaust'):

@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import slaythespire as sts
 
+from env.core import action_space as A, combat_env
 from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
 from env.search.turn_planner import TurnPlannerConfig
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate
@@ -46,25 +47,82 @@ def test_runic_dome_uses_same_visible_rule_action_without_calling_planner(
     json.dumps(trace)  # Persistable diagnostic payload, with no raw hidden intent.
 
 
+@pytest.mark.parametrize('choices', [
+    ['DEFEND_RED', 'SHRUG_IT_OFF'], ['SHRUG_IT_OFF', 'DEFEND_RED']])
 def test_runic_dome_late_draw_choice_works_without_planner_or_legacy_mask(
-        combat_factory, monkeypatch):
+        combat_factory, monkeypatch, choices):
     env = _native(combat_factory(['SECRET_TECHNIQUE'] * 5, relics=['Runic Dome']))
     env.thick.bc.apply_custom_state({
         'hand': ['SECRET_TECHNIQUE'],
-        'draw': ['STRIKE_RED'] * 12 + ['DEFEND_RED', 'SHRUG_IT_OFF'],
+        'draw': ['STRIKE_RED'] * 12 + choices,
         'discard': [], 'exhaust': [],
     })
     env._invalidate_backend_cache()
     env.step_native_combat(0)
-    assert not np.any(env.action_masks())
+    # The standalone 71-action mask cannot represent native draw indices 12/13.
+    # ACTION_VERSION 7 maps the whole-run mask through the public candidate list.
+    assert not np.any(combat_env.legal_mask(env.thick.bc))
+    descriptor = env.thick.select_descriptor()
+    assert descriptor['zone'] == 'draw'
+    assert {candidate['native_index'] for candidate in descriptor['candidates']} == {12, 13}
+    assert [candidate['card']['id'] for candidate in descriptor['candidates']] == ['Defend_R', 'Shrug It Off']
+    np.testing.assert_array_equal(np.flatnonzero(env.action_masks()), [A._PICK, A._PICK + 1])
     strategy = TurnPlannerStrategy()
     monkeypatch.setattr(strategy.planner, 'choose', _forbidden)
     decision = strategy.decide([_request(env)])[0]
-    assert decision.action is None
-    assert decision.native_action in env.native_combat_actions()
+    assert decision.action == A._PICK + 1
+    assert decision.native_action is None
     assert decision.diagnostics['planner_dome_fallback'] == 1
-    _, _, _, truncated, _ = env.step_native_combat(decision.native_action)
+    oracle = env.thick.bc.clone()
+    oracle.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, 12 + choices.index('SHRUG_IT_OFF')))
+    _, _, _, truncated, info = env.step(decision.action)
     assert not truncated
+    assert not info.get('illegal')
+    assert env.thick.bc.to_dict() == oracle.to_dict()
+    assert env.thick.select_descriptor() is None
+
+
+@pytest.mark.parametrize('context', ['CODEX', 'DISCOVERY'])
+def test_runic_dome_generated_choices_keep_native_handles_and_codex_skip(
+        combat_factory, monkeypatch, context):
+    from rl.evaluation.baselines.combat_rules import selection_score, visible_combat
+
+    relics = ['Runic Dome'] + (["Nilry's Codex"] if context == 'CODEX' else [])
+    env = _native(combat_factory(['DISCOVERY'] * 5, relics=relics))
+    action = sts.ActionType.END_TURN if context == 'CODEX' else sts.ActionType.CARD
+    env.thick.bc.execute(sts.Action(action, 0))
+    env._invalidate_backend_cache()
+    descriptor = env.thick.select_descriptor()
+    assert descriptor['context'] == context and descriptor['zone'] == 'generated'
+    assert len(env.thick.bc.select_info()['generated_cards']) == 3
+    count = 4 if context == 'CODEX' else 3
+    assert [candidate['native_index'] for candidate in descriptor['candidates']] == list(range(count))
+    np.testing.assert_array_equal(np.flatnonzero(env.action_masks()), A._PICK + np.arange(count))
+    view = visible_combat(_request(env))
+    for index, candidate in enumerate(descriptor['candidates'][:3]):
+        assert candidate['card']['id'] == view.piles['generated'][index]['id']
+        assert np.isfinite(selection_score(index, view)[0])
+    if context == 'CODEX':
+        assert descriptor['candidates'][3]['card'] is None
+        assert selection_score(3, view) == (2., {'skip_generated': 2.})
+        oracle = env.thick.bc.clone()
+        oracle.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, 3))
+        branch = env.fork_combat()
+        try:
+            branch.step(A._PICK + 3)
+            assert branch.thick.bc.to_dict() == oracle.to_dict()
+        finally:
+            branch.close()
+    strategy = TurnPlannerStrategy()
+    monkeypatch.setattr(strategy.planner, 'choose', _forbidden)
+    decision = strategy.decide([_request(env)])[0]
+    assert decision.native_action is None and env.action_masks()[decision.action]
+    assert decision.diagnostics['planner_dome_fallback'] == 1
+    native_index = descriptor['candidates'][decision.action - A._PICK]['native_index']
+    oracle = env.thick.bc.clone()
+    oracle.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, native_index))
+    env.step(decision.action)
+    assert env.thick.bc.to_dict() == oracle.to_dict()
     assert env.thick.select_descriptor() is None
 
 

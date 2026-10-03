@@ -537,6 +537,13 @@ def selection_score(index, view):
         raise ValueError(f'unsupported combat selection context: {context}')
     pile = SELECT_PILE[context]
     candidates = view.hand if pile == 'hand' else view.piles[pile]
+    if 'candidates' in view.select and not view.select.get('multi'):
+        public = view.select['candidates']
+        if not 0 <= index < len(public):
+            raise ValueError(f'{context} candidate {index} missing from {pile} candidate list')
+        # PICK_CARD is a public candidate slot, not a position in its source
+        # pile. Filtered/sorted screens keep that position in the native handle.
+        index = public[index]['native_index']
     if context == 'CODEX' and index == 3:
         return 2., {'skip_generated': 2.}
     if not 0 <= index < len(candidates):
