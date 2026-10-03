@@ -117,6 +117,76 @@ def test_trace_retains_native_complete_target_not_just_root_id(combat_factory):
     assert trace[0]['native_action'] == dict(bits=0, kind='CARD', source=0, target=0)
 
 
+@pytest.mark.parametrize('contract', ['legacy', 'native-v1'])
+def test_audit_trace_keeps_compatible_rule_ranking(combat_factory, contract):
+    env = combat_factory(['STRIKE_RED'] * 5, combat_action_contract=contract)
+    strategy, trace = CombatRuleStrategy(), []
+    expected = strategy.decide([request(env)])
+    actual = CombatAuditStrategy(strategy, trace=trace.append).decide(
+        [request(env)], check=lambda: None)
+    assert actual == expected
+    event = json.loads(json.dumps(trace[0]))
+    assert event['combat_action_contract'] == contract
+    assert event['rule_ranking_status'] == 'available'
+    assert event['rule_action'] == expected[0].action == event['ranked'][0]['action']
+    assert {row['action'] for row in event['ranked']} == set(np.flatnonzero(env.action_masks()))
+
+
+@pytest.mark.parametrize('contract', ['joint-v2', 'autoregressive-v2'])
+@pytest.mark.parametrize('selection', [False, True], ids=['combat-root', 'selection'])
+@pytest.mark.parametrize('solver', ['policy', 'native'])
+def test_audit_trace_keeps_neural_decisions_without_legacy_ranking(combat_factory, monkeypatch, contract, selection, solver):
+    import slaythespire as sts
+    from sb3_contrib import MaskablePPO
+    from rl.evaluation.baselines import combat_audit
+    from rl.evaluation.strategies import NativeStrategy, PolicyStrategy
+    from rl.policies.entity_combat import EntityCombatPolicy
+    from rl.search.native import NativeSearchConfig
+
+    env = combat_factory(['PURITY', 'STRIKE_RED', 'DEFEND_RED', 'BASH', 'ANGER'],
+                         combat_action_contract=contract, card_language=True)
+    if selection:
+        env.thick.bc.apply_custom_state({'hand': ['PURITY', 'STRIKE_RED', 'DEFEND_RED']})
+        env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+        env._invalidate_backend_cache()
+        assert env.thick.select_descriptor() is not None
+    model = MaskablePPO(EntityCombatPolicy, env, seed=42, n_steps=4, batch_size=4,
+                       device='cpu', policy_kwargs=dict(
+                           entity_config=dict(width=32, layers=1, heads=4, quantiles=8)))
+    strategy = (PolicyStrategy(model) if solver == 'policy' else NativeStrategy(
+        model, NativeSearchConfig(simulations=4, fixed_worldline=True, gumbel_scale=0)))
+    before = json.dumps(env.thick.bc.to_dict(), sort_keys=True)
+    expected = strategy.decide([request(env)])
+    expected_native = env._nosl_cpp_pending
+    if solver == 'native':
+        env.nosl_is_az_cpp_abort()
+    def incompatible_ranking(*_args):
+        pytest.fail('neural action IDs must not enter the legacy rule scorer')
+    monkeypatch.setattr(combat_audit, 'rank_actions', incompatible_ranking)
+    trace = []
+    actual = CombatAuditStrategy(strategy, trace=trace.append).decide(
+        [request(env)], check=lambda: None)
+    assert actual[0].action == expected[0].action
+    assert actual[0].source == expected[0].source
+    assert {key: value for key, value in actual[0].diagnostics.items() if key != 'search_seconds'} == {
+        key: value for key, value in expected[0].diagnostics.items() if key != 'search_seconds'}
+    assert env._nosl_cpp_pending == expected_native
+    assert env.action_masks()[actual[0].action]
+    assert json.dumps(env.thick.bc.to_dict(), sort_keys=True) == before
+    event = json.loads(json.dumps(trace[0]))
+    assert event['action'] == expected[0].action
+    assert event['source'] == expected[0].source
+    assert event['combat_action_contract'] == contract
+    assert event['rule_action'] is None and event['ranked'] == []
+    assert event['rule_ranking_status'] == 'unsupported_action_contract'
+    if expected_native is not None:
+        complete = sts.Action(int(expected_native[1]))
+        assert event['native_action'] == dict(bits=int(expected_native[1]),
+            kind=complete.action_type.name, source=complete.source_idx, target=complete.target_idx)
+    assert event['state']['player']['hp'] == env.thick.bc.to_dict()['player']['hp']
+    assert bool(event['state']['select']) == selection
+
+
 def test_runic_dome_hides_intent_from_rule_state_and_decision(combat_factory):
     from dataclasses import asdict
     env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH', 'STRIKE_RED', 'DEFEND_RED'],

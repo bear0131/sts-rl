@@ -59,7 +59,12 @@ class CombatAuditStrategy:
         if self.trace:
             for index, view in views.items():
                 request, decision = requests[index], decisions[index]
-                ranking = rank_actions(view, np.flatnonzero(request.env.action_masks()))
+                contract = request.env.unwrapped.combat_action_contract
+                # The optional hand-written scorer consumes legacy policy slots.
+                # Native-v1 retains that mask; joint/AR masks encode different
+                # actions and must never be interpreted as legacy hand indices.
+                ranking = (rank_actions(view, np.flatnonzero(request.env.action_masks()))
+                           if contract in ('legacy', 'native-v1') else None)
                 native = getattr(request.env.unwrapped, '_nosl_cpp_pending', None)
                 native_action = None
                 if native is not None:
@@ -69,8 +74,12 @@ class CombatAuditStrategy:
                                          source=complete.source_idx, target=complete.target_idx)
                 self.trace(dict(kind='reference_decision', seed=request.seed, step=request.step,
                     floor=request.info.get('run_stats', {}).get('floor'), source=decision.source,
-                    action=decision.action, native_action=native_action, rule_action=ranking[0]['action'],
-                    state=public_state(view), ranked=ranking))
+                    action=decision.action, native_action=native_action,
+                    combat_action_contract=contract,
+                    rule_action=ranking[0]['action'] if ranking else None,
+                    rule_ranking_status=('unsupported_action_contract' if ranking is None
+                                         else 'available' if ranking else 'no_legal_actions'),
+                    state=public_state(view), ranked=ranking if ranking is not None else []))
         return decisions
 
     def _audit(self, request, view, check):
