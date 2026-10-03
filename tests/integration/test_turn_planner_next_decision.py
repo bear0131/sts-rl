@@ -38,6 +38,19 @@ def setup(combat_factory, kind):
         for _ in range(11):
             battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
         assert ('Time Warp', 11) in battle.to_dict()['monsters'][0]['powers']
+    elif kind == 'darkling':
+        battle = combat_factory(['DEFEND_RED'] * 15, encounter='Three Darklings').thick.bc
+        battle.apply_custom_state({'player': {'hp': 80, 'block': 999, 'energy': 3},
+            'hand': ['STRIKE_RED'], 'draw': ['DEFEND_RED'] * 15, 'discard': [],
+            'monsters': [{}, {'hp': 6, 'block': 0}, {}]})
+        battle.execute(sts.Action(sts.ActionType.CARD, 0, 1))
+        killed = battle.to_dict()
+        assert killed['outcome'] == 0 and killed['monsters'][1]['half_dead']
+        assert killed['monsters'][1]['move'] == 'DARKLING_REGROW'
+        battle.execute(sts.Action(sts.ActionType.END_TURN))
+        waiting = battle.to_dict()
+        assert waiting['outcome'] == 0 and waiting['monsters'][1]['half_dead']
+        assert waiting['monsters'][1]['move'] == 'DARKLING_REINCARNATE'
     else:
         battle = combat_factory(['STRIKE_RED'] * 10, encounter='Awakened One').thick.bc
         battle.apply_custom_state({'hand': ['STRIKE_RED'], 'draw': ['DEFEND_RED'] * 5,
@@ -47,7 +60,7 @@ def setup(combat_factory, kind):
     return battle
 
 
-@pytest.mark.parametrize('kind', ['headbutt', 'codex', 'time-warp', 'rebirth'])
+@pytest.mark.parametrize('kind', ['headbutt', 'codex', 'time-warp', 'rebirth', 'darkling'])
 def test_h1_v1_same_traversal_and_live_leaves(combat_factory, monkeypatch, kind):
     battle = setup(combat_factory, kind)
     before = snapshot(battle)
@@ -101,6 +114,12 @@ def test_h1_v1_same_traversal_and_live_leaves(combat_factory, monkeypatch, kind)
         assert {'WOUND', 'CARNAGE'} <= {json.loads(s)['hand'][0][0] for s in v1_leaves}
     if kind == 'rebirth':
         assert all(json.loads(s)['monsters'][2]['hp'] == 300 for s in v1_leaves)
+    if kind == 'darkling':
+        for state in map(json.loads, v1_leaves):
+            assert [m['id'] for m in state['monsters']] == ['DARKLING'] * 3
+            middle = state['monsters'][1]
+            assert middle['hp'] == middle['max_hp'] // 2
+            assert not middle['half_dead'] and not middle['gone']
     # Root RNG/callback preservation includes actual future draws and intents,
     # which are not proven merely by equality of the current to_dict snapshot.
     for _ in range(4):
