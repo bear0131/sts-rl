@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from collections import Counter
 import copy
+import hashlib
 from html import escape
 import json
+from pathlib import Path
 import re
+import time
 import numpy as np
 
 
@@ -134,6 +137,27 @@ def _snapshot(env):
     return _jsonable(copy.deepcopy(thick.obs_canonical()))
 
 
+def restore_combat_snapshot(env, path, *, expected_sha256=None):
+    """Restore an opt-in evaluation artifact into an identically configured env.
+
+    Seed and committed actions rebuild native callbacks through normal gameplay;
+    the environment verifies its observation and mask before returning. These
+    offline artifacts contain hidden state and must never be strategy inputs.
+    """
+    data = Path(path).read_bytes()
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest() != expected_sha256:
+        raise ValueError('combat snapshot checksum mismatch')
+    artifact = json.loads(data)
+    if artifact.get('schema_version') != 1 or artifact.get('kind') != 'evaluation-combat-start':
+        raise ValueError('unsupported combat snapshot schema')
+    state = artifact['environment_state']
+    # Schema-1 thin pending decisions are tuples; JSON has only arrays. Native
+    # pending actions and journal tuples are normalized by restore_training_state.
+    if state['pending'] is not None:
+        state['pending'] = tuple(state['pending'])
+    return env.unwrapped.restore_training_state(state)
+
+
 def _global(state):
     return state.get("global", state)
 
@@ -206,10 +230,12 @@ class EpisodeTraceCollector:
     which also makes this work with native complete combat actions.
     """
 
-    def __init__(self, env, episode: int, seed: int):
+    def __init__(self, env, episode: int, seed: int, *, combat_snapshot_output=None):
         self.env = env
         self.episode = int(episode)
         self.seed = int(seed)
+        self.combat_snapshot_output = (None if combat_snapshot_output is None
+                                       else Path(combat_snapshot_output))
         self.map_path = []
         self.events = []
         self.combats = []
@@ -267,6 +293,42 @@ class EpisodeTraceCollector:
                 "pre_hp": _global(state).get("hp", state.get("player", {}).get("hp")),
                 "pre_state": state,
             }
+            if self.combat_snapshot_output is not None:
+                started = time.perf_counter()
+                env = self.env.unwrapped
+                artifact = {
+                    'schema_version': 1, 'kind': 'evaluation-combat-start',
+                    'episode': self.episode, 'seed': self.seed,
+                    'combat_index': len(self.combats),
+                    'position': _position(state),
+                    'environment_options': {
+                        'combat_action_contract': env.combat_action_contract,
+                        'ascension': int(env.thick._ascension),
+                        'character': str(env.thick._character),
+                        **{name: bool(getattr(env, '_' + name)) for name in (
+                            'global_map_view', 'card_language', 'combat_language',
+                            'deck_size_observation', 'neow_observation',
+                            'event_option_observation', 'interactive_reasoning')},
+                    },
+                    'environment_state': env.export_training_state(),
+                    'canonical_state': state,
+                    # Keep actual order here. The separate public decision
+                    # trace deliberately sorts hidden draw cards.
+                    'native_state': env.thick.bc.to_dict(),
+                }
+                data = (json.dumps(_jsonable(artifact), sort_keys=True, ensure_ascii=False,
+                                   allow_nan=False) + '\n').encode('utf-8')
+                self.combat_snapshot_output.mkdir(parents=True, exist_ok=True)
+                path = self.combat_snapshot_output / (
+                    f'seed-{self.seed}-episode-{self.episode:06d}-combat-{len(self.combats):03d}.json')
+                # An interrupted write has no completed trajectory reference;
+                # refuse overwrite so a rerun cannot replace existing evidence.
+                with path.open('xb') as stream:
+                    stream.write(data)
+                self._active_combat['snapshot'] = {
+                    'path': str(path.resolve()), 'sha256': hashlib.sha256(data).hexdigest(),
+                    'capture_seconds': time.perf_counter() - started,
+                }
 
     def after_step(self, action, reward, terminated, truncated, info,
                    native_action=None):
@@ -355,6 +417,8 @@ class EpisodeTraceCollector:
             "question_mark_events": [event for event in self.events if event.get("event") != "NEOW"],
             "events": self.events,
             "combats": self.combats,
+            "combat_snapshot_seconds": sum(
+                row.get('snapshot', {}).get('capture_seconds', 0.0) for row in self.combats),
             "shops": self.shops,
             "rewards": self.rewards,
             "chests": self.chests,

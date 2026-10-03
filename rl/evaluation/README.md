@@ -13,6 +13,21 @@
 候选及领取、宝箱和 Boss 遗物候选/选择。事件的 typed 候选缺失时保留事件名与
 选项编号，不从本地化文本推测实体。
 
+需要冻结同一起点战斗时，另加 `--combat-snapshot-output runs/local/<run>/combats`，
+仅支持 whole-run 且要求 `--trajectory-output`。每场首次动作前保存一个 JSON：
+包含 backend seed、完整已执行动作 journal、恢复所需 wrapper/RNG 状态、观测/mask
+校验值、环境配置及未排序的原生状态。策略不接收这些含隐藏信息的离线工件。
+轨迹 `combats[].snapshot` 保留文件路径、SHA-256 和 `capture_seconds`，
+`combat_snapshot_seconds` 是每局导出总耗时；它包含在评测墙钟内，不能计为 planner
+时间或在性能对照中忽略。两组比较应启用相同导出设置。
+
+用相同源码/扩展和环境配置构造环境，再调用
+`rl.evaluation.trajectory.restore_combat_snapshot(env, path, expected_sha256=sha)`。
+恢复通过 seed+journal 重建原生回调，并验证观测及合法动作，不是从可见状态猜隐藏牌序。
+应进一步核对后续固定动作的真实 transition；不同源码/规则不能保证恢复兼容。
+JSON 文件拒绝覆盖；硬中止可能留下未完成文件，只有完成的轨迹引用和匹配哈希才是
+有效工件。使用新的输出目录重跑，不能将稀疏轨迹的相同战前 HP 当完整状态等价。
+
 最新规则上层 + 回合规划搜索的固定示例：
 
 ```text

@@ -47,6 +47,8 @@ def build_parser():
     parser.add_argument('--output', type=Path, help='Structured per-episode rows and summary JSON')
     parser.add_argument('--trajectory-output', type=Path,
                         help='Directory for sparse episode traces (episodes.jsonl, report.json, summary.md)')
+    parser.add_argument('--combat-snapshot-output', type=Path,
+                        help='Opt-in replayable combat-start JSON directory; requires --trajectory-output and wholerun')
     parser.add_argument('--trajectory-format', choices=['jsonl'], default='jsonl')
     parser.add_argument('--trajectory-detail', choices=['sparse'], default='sparse')
     parser.add_argument('--floor-lo', type=int, default=1)
@@ -133,6 +135,8 @@ def main():
     args = build_parser().parse_args()
     torch.set_float32_matmul_precision(args.float32_matmul_precision)
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
+    if args.combat_snapshot_output is not None and (args.trajectory_output is None or args.task != 'wholerun'):
+        raise ValueError('--combat-snapshot-output requires --trajectory-output and --task wholerun')
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
         raise ValueError('progress interval must be non-negative')
     if args.native_search_threads < 0:
@@ -185,7 +189,8 @@ def main():
     rows = []
     combat_rows = []
     failure = None
-    trace_factory = (lambda env, episode, seed: EpisodeTraceCollector(env, episode, seed)
+    trace_factory = (lambda env, episode, seed: EpisodeTraceCollector(
+                        env, episode, seed, combat_snapshot_output=args.combat_snapshot_output)
                      if args.trajectory_output else None)
     try:
         if args.trace:

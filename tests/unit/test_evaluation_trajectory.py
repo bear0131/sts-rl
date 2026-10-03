@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from rl.evaluation.trajectory import EpisodeTraceCollector, render_episode_markdown, state_diff
 
@@ -75,7 +76,19 @@ def test_combat_trace_records_only_boundary_hp():
     assert row["combats"][0]["pre_hp"] == 70
     assert row["combats"][0]["post_hp"] == 61
     assert row["combats"][0]["hp_loss"] == 9
+    assert 'snapshot' not in row['combats'][0]
+    assert row['combat_snapshot_seconds'] == 0
     assert "actions" in row
+
+
+@pytest.mark.parametrize('extra', [[], ['--trajectory-output', 'unused', '--task', 'combat']])
+def test_combat_snapshot_cli_requires_wholerun_trajectory(monkeypatch, extra):
+    import sys
+    from rl.evaluation import eval as cli
+    monkeypatch.setattr(sys, 'argv', ['eval', 'unused.zip',
+        '--combat-snapshot-output', 'unused-snapshots', *extra])
+    with pytest.raises(ValueError, match='requires --trajectory-output and --task wholerun'):
+        cli.main()
 
 
 def test_markdown_uses_chinese_names_and_colored_resources():
