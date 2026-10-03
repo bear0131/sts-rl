@@ -47,6 +47,20 @@ NOSL监督为 `-sum_G pi_G log(sum_{a in G} p_a)`，熵/KL/top1/合法动作数�
 旧neural replay必须重新采集，legacy未合并动作可按identity迁移；保留旧checkpoint权重可加载预测。
 新训练模型记录nosl_action_group_contract，观测、HP outcome、PPO目标和模型形状未变。
 
+TRAIN32蓝线复现实验用`configs/train/entity_combat_blue_repro_runtime.args`，
+`--no-nosl-is-az-merge-equivalent-actions`恢复POL01之前的独立槽位搜索：
+不合并重复出牌边，AR后继始终保留手牌顺序与前缀，恢复历史计数字段的状态判定。
+保留原NOSL隐藏信息处理，不新增跨路径DAG。模型标记`individual-actions`，
+采样/replay保存identity映射，组损失在此映射下等于普通槽位交叉熵，
+PolicyStrategy按原槽位决策；native search配置随模型及恢复manifest持久化。
+默认仍保持旧POL01模型的合并合同，旧模型载入不静默变更语义。
+新实验保留线程批处理、FP32归约、候选溢出修复和STORAGE05，不回退已确认正确性修复。
+
+模拟器SIM02/03/04修复不改变198维动作宽度：Dark Shackles临时负力量及Artifact，
+Panache每5次出牌循环并在回合开始重置，Forethought+（预谋+）支持任意子集含空集。
+预谋+用现有AR升序槽位前缀和STOP，完整子集按升序槽位依次移到牌底；
+各牌基础费用>0才赋予下一次免费标记，非升级版仍强制选一张。
+
 `--arch entity-combat` 使用 `policies/entity_combat.py`：卡牌ID与效果程序、
 实体Transformer（默认256宽/4层/8头）、带计数的牌堆query汇总、
 来源条件目标pointer及自回归多选。没有整局神经网络或历史记忆；

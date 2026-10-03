@@ -133,3 +133,45 @@ def test_future_identity_ignores_rng_and_interchangeable_slots(combat_factory):
     assert a.nosl_future_key() == b.nosl_future_key()
     b.apply_custom_state({'player': {'energy': 0}})
     assert a.nosl_future_key() != b.nosl_future_key()
+
+
+@pytest.mark.parametrize('mode', [0, 2])
+def test_blue_search_keeps_alias_edges_and_slot_targets(combat_factory, mode):
+    env = _env(combat_factory)
+    ids = [1 + 6 * i for i in range(4)]
+    logits = np.full(198, -100.0)
+    logits[0] = np.log(.261)
+    logits[ids] = np.log(.739 / 4)
+    response = env.nosl_is_az_cpp_begin(logits, simulations=32, depth=1,
+        state_nonce=42, root_search_mode=mode, paper_full_gumbel=mode == 2,
+        gumbel_scale=0, fixed_worldline=True, leaf_batch_size=1,
+        merge_equivalent_actions=False, compact_observation=True)
+    for _ in range(64):
+        if response['done']:
+            break
+        response = env.nosl_is_az_cpp_backprop_and_leaf_batch(
+            [(leaf['request_id'], .5, logits) for leaf in response['leaf_meta']], max_leaves=1)
+    assert response['done']
+    children = env.nosl_is_az_cpp_tree_snapshot((), 64)['children']
+    assert len(children) == 5
+    plays = [c for c in children if c['action_bits'] >> 29 == 0]
+    assert len(plays) == 4
+    assert [c['prior'] for c in plays] == pytest.approx([.739 / 4] * 4)
+    np.testing.assert_array_equal(response['result']['action_groups'], np.arange(198))
+    assert response['result']['visit_policy'].sum() == pytest.approx(1)
+    assert sum(c['visits'] for c in children) == 32
+
+
+def test_individual_policy_does_not_regroup_same_cards(combat_factory):
+    env = _env(combat_factory)
+    policy = EntityCombatPolicy(env.observation_space, env.action_space, lambda _: 0.0,
+        entity_config=dict(width=32, layers=1, heads=4, quantiles=8))
+    logits = np.full(198, -100.0)
+    logits[0] = np.log(.261)
+    logits[[1, 7, 13, 19]] = np.log(.739 / 4)
+    policy.core.action_logits = lambda obs: torch.as_tensor(logits[None], device=policy.device)
+    model = SimpleNamespace(policy=policy, predict=policy.predict,
+        observation_space=env.observation_space, action_space=env.action_space,
+        nosl_action_group_contract='individual-actions')
+    request = DecisionRequest(env, env._obs(), {'phase': 'combat'}, 42, 0)
+    assert PolicyStrategy(model).decide([request])[0].action == 0

@@ -139,6 +139,7 @@ class PolicyStrategy:
         groups = [
             r.env.equivalent_action_groups()
             if (self.combat_action_contract in C.NEURAL_CONTRACTS
+                and getattr(self.model, 'nosl_action_group_contract', 'equivalent-plays-v1') != 'individual-actions'
                 and r.info.get('phase') == 'combat')
             else np.arange(masks.shape[1]) for r in requests
         ]

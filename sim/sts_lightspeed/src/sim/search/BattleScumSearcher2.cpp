@@ -349,6 +349,12 @@ void search::BattleScumSearcher2::enumerateCardSelectActions(search::BattleScumS
             break;
 
         case CardSelectTask::FORETHOUGHT:
+            if (bc.cardSelectInfo.canPickAnyNumber) {
+                for (const auto &action : Action::enumerateCardSelectActions(bc))
+                    node.edges.push_back({action});
+                break;
+            }
+            [[fallthrough]];
         case CardSelectTask::WARCRY:
             setupCardOptionsHelper(node, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand);
             break;

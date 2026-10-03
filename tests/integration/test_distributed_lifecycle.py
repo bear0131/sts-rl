@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy'):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -61,6 +61,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
+        nosl_is_az_merge_equivalent_actions=merge,
         nosl_is_az_upper_strategy=upper,
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
         nosl_is_az_update_schedule=(dict(mode='value-warmup', peak_updates=3,
@@ -158,6 +159,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert fixed_calls and all(value is True for value in fixed_calls)
         assert restored.nosl_is_az_fixed_worldline is True
     assert restored.nosl_is_az_upper_strategy == upper
+    assert restored.nosl_is_az_merge_equivalent_actions is merge
+    if nosl and not merge:
+        assert restored.nosl_action_group_contract == 'individual-actions'
     if combat_arch == 'entity':
         assert restored.policy.core.config.quantiles == 8
         for payload in payloads:
@@ -169,6 +173,13 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
     assert (bundle/'learner.pt').is_file()
+    if nosl and not merge:
+        state = torch.load(bundle/'learner.pt', map_location='cpu', weights_only=False)['replay']
+        assert state['size'] > 0
+        import numpy as np
+        groups = state['arrays']['action_groups'][:state['size']]
+        # Compact replay stores the 60 card/target slots starting at policy id 1.
+        np.testing.assert_array_equal(groups, np.broadcast_to(np.arange(1, 61), groups.shape))
     if combat_arch == 'entity':
         manifest=json.loads((bundle/'manifest.json').read_text())
         assert manifest['config']['entity_config']['quantiles']==8
@@ -325,6 +336,12 @@ def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_ty
         'autoregressive-v2' if nosl else 'legacy', vector='native')
 
 
+def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'rules', 'entity', 'autoregressive-v2', vector='native', merge=False)
+
+
 @pytest.mark.parametrize('failure_stage', ['learner', 'checkpoint'])
 @pytest.mark.parametrize('monitor_exit_fails', [False, True])
 def test_iteration_monitor_closes_on_training_failure(tmp_path, monkeypatch, capsys, short_combat_env_type, failure_stage, monitor_exit_fails):
@@ -383,15 +400,16 @@ def test_iteration_monitor_closes_on_training_failure(tmp_path, monkeypatch, cap
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='BF16 learner lifecycle requires CUDA')
-@pytest.mark.parametrize('nosl', [False, True])
-def test_cuda_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl):
+@pytest.mark.parametrize('nosl,merge', [(False, True), (True, True), (True, False)],
+                         ids=['ppo', 'nosl-grouped', 'nosl-blue-individual'])
+def test_cuda_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, merge):
     previous = torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
     try:
         torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = True
         test_training_reaches_wandb_and_checkpoint(
             tmp_path, monkeypatch, capsys, short_combat_env_type,
             nosl, 'rules' if nosl else 'model', 'entity' if nosl else 'transformer',
-            'autoregressive-v2' if nosl else 'legacy', device='cuda', amp='bf16', vector='native')
+            'autoregressive-v2' if nosl else 'legacy', device='cuda', amp='bf16', vector='native', merge=merge)
         assert not torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
     finally:
         torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = previous

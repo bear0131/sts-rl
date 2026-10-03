@@ -788,24 +788,16 @@ Action Actions::ForethoughtAction(bool upgraded) {
             return;
         }
 
-        // todo implement Upgraded version
-//        //
-//        if (upgraded) {
-//            bc.cardSelectInfo.cardSelectTask = CardSelectTask::FORETHOUGHT;
-//            bc.cardSelectInfo.canPickAnyNumber = true;
-//            bc.inputState = InputState::CARD_SELECT;
-//
-//        } else {
-        if (bc.cards.cardsInHand == 1) {
+        if (!upgraded && bc.cards.cardsInHand == 1) {
             bc.chooseForethoughtCard(0);
         } else {
+            bc.cardSelectInfo = CardSelectInfo{};
             bc.cardSelectInfo.cardSelectTask = CardSelectTask::FORETHOUGHT;
-            bc.cardSelectInfo.canPickAnyNumber = false;
+            bc.cardSelectInfo.canPickAnyNumber = upgraded;
+            bc.cardSelectInfo.canPickZero = upgraded;
+            bc.cardSelectInfo.pickCount = upgraded ? bc.cards.cardsInHand : 1;
             bc.inputState = InputState::CARD_SELECT;
         }
-//        }
-
-
     }};
 }
 

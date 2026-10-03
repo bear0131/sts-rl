@@ -152,7 +152,7 @@ bool isValidCardAction(const BattleContext &bc, const search::Action &a) {
 }
 
 bool isValidSingleCardSelectAction(const BattleContext &bc, const search::Action &a) {
-    if (bc.inputState != InputState::CARD_SELECT) {
+    if (bc.inputState != InputState::CARD_SELECT || bc.cardSelectInfo.isMultiSelection()) {
         return false;
     }
 
@@ -222,6 +222,8 @@ bool isValidSingleCardSelectAction(const BattleContext &bc, const search::Action
 }
 
 bool isValidMultiCardSelectAction(const BattleContext &bc, const search::Action &a) { // this can be sped up using compiler intrinsics
+    if (bc.inputState != InputState::CARD_SELECT || !bc.cardSelectInfo.isMultiSelection())
+        return false;
     switch (bc.cardSelectInfo.cardSelectTask) {
         case sts::CardSelectTask::EXHAUST_MANY: {
             const auto selected = a.getSelectedIdxs();
@@ -236,6 +238,7 @@ bool isValidMultiCardSelectAction(const BattleContext &bc, const search::Action 
             return true;
         }
 
+        case sts::CardSelectTask::FORETHOUGHT:
         case sts::CardSelectTask::GAMBLE: {
             const auto selected = a.getSelectedIdxs();
             for (auto x : selected) {
@@ -547,6 +550,10 @@ void executeMultiCardSelectActionHelper(BattleContext &bc, search::Action a) {
     // assumed to be valid action here
     switch (bc.cardSelectInfo.cardSelectTask) {
 
+        case sts::CardSelectTask::FORETHOUGHT:
+            bc.chooseForethoughtCards(a.getSelectedIdxs());
+            break;
+
         case sts::CardSelectTask::EXHAUST_MANY:
             bc.chooseExhaustCards(a.getSelectedIdxs());
             break;
@@ -618,6 +625,14 @@ void setupCardOptionsHelper(std::vector<search::Action> &actions, const ForwardI
 
 std::vector<search::Action> search::Action::enumerateCardSelectActions(const BattleContext &bc) {
     std::vector<search::Action> actions;
+
+    if (bc.cardSelectInfo.isMultiSelection()) {
+        for (int subset = 0; subset < (1 << bc.cards.cardsInHand); ++subset) {
+            const Action candidate(ActionType::MULTI_CARD_SELECT, subset);
+            if (candidate.isValidAction(bc)) actions.push_back(candidate);
+        }
+        return actions;
+    }
 
     switch (bc.cardSelectInfo.cardSelectTask) {
         case CardSelectTask::ARMAMENTS:

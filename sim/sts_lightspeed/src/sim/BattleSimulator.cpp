@@ -452,7 +452,7 @@ void BattleSimulator::takeCardSelectAction(const std::string &action) {
 
         case CardSelectTask::FORETHOUGHT:
             if (bc->cardSelectInfo.canPickAnyNumber) {
-
+                bc->chooseForethoughtCards(getIdxListFromString(action));
             } else {
                 bc->chooseForethoughtCard(std::stoi(action));
             }

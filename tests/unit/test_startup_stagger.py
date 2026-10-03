@@ -94,7 +94,7 @@ def test_retired_occupancy_arguments_do_not_install_an_unreleased_hold(monkeypat
     args = SimpleNamespace(ascension=0, interactive_reasoning=False, startup_stagger_steps=0,
         startup_occupancy_budget=160, startup_occupancy_max_age=12, seed=42, rank=0,
         n_envs=2, vec='dummy')
-    env = runtime.make_env(SimpleNamespace(), args)
+    env = runtime.make_env(SimpleNamespace(observation_space=None), args)
     try:
         env.reset()
         for value in range(1, 5):
@@ -310,6 +310,21 @@ def test_metrics_callback_excludes_incumbent_episode_entirely():
     assert recorded["game/deck_size_mean"] == 12
     assert recorded["rollout/ep_rew_mean"] == 1.0
     assert recorded["rollout/ep_len_mean"] == 7
+
+
+@pytest.mark.parametrize('act,outcome,won', [
+    (3, 'PLAYER_VICTORY', 1.0), (4, 'UNDECIDED', 1.0),
+    (3, 'PLAYER_LOSS', 0.0), (3, 'UNDECIDED', 0.0)])
+def test_final_act_metric_agrees_with_native_outcome(act, outcome, won):
+    recorded = {}
+    callback = StSMetricsCallback(window=100)
+    callback.model = SimpleNamespace(logger=SimpleNamespace(
+        record=lambda k, v: recorded.__setitem__(k, v)))
+    callback.locals = {'infos': [{'episode': {'r': 0, 'l': 1},
+        'run_stats': {'floor': 51, 'act': act, 'outcome': outcome, 'deck_size': 10}}]}
+    callback._on_step()
+    callback._on_rollout_end()
+    assert recorded['game/win_rate'] == recorded['game/act_3_won_mean'] == won
 
 
 def test_occupancy_startup_preserves_replay_rng_and_drops_warmup_roots():

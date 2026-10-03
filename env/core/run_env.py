@@ -1559,7 +1559,9 @@ class SlayTheSpireEnv(gym.Env):
             # completed-Q target whenever the native Full Gumbel session
             # supplied one.  `root_visit_policy` is the count-normalized view.
             "visit_policy": improved_policy,
-            "action_groups": self.equivalent_action_groups().astype(np.int16),
+            "action_groups": (self.equivalent_action_groups().astype(np.int16)
+                if getattr(self, '_nosl_merge_equivalent_actions', True)
+                else np.arange(self.action_space.n, dtype=np.int16)),
             "root_visit_policy": root_visit_policy,
             "improved_policy": improved_policy,
             "used_completed_policy": has_improved_policy,
@@ -1621,9 +1623,11 @@ class SlayTheSpireEnv(gym.Env):
         compact_observation: bool = False,
         _defer_packed_observation: bool = False,
         _defer_leaf_selection: bool = False,
+        merge_equivalent_actions: bool = True,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         begin_started = time.perf_counter()
+        self._nosl_merge_equivalent_actions = bool(merge_equivalent_actions)
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("native NOSL search requires a live combat state")
         session_factory = getattr(self.thick.bc, "nosl_neural_search_begin", None)
@@ -1646,6 +1650,9 @@ class SlayTheSpireEnv(gym.Env):
             )
             if model_victory_terminal:
                 terminal_args.append(True)
+            if not merge_equivalent_actions:
+                terminal_args = [sum(1 << i for i in (self._multi or ())),
+                                 bool(model_victory_terminal), False]
             self._nosl_cpp_az_session = session_factory(
                 np.asarray(prior_logits, dtype=np.float64),
                 int(simulations), int(depth), float(c_puct),
@@ -1668,6 +1675,8 @@ class SlayTheSpireEnv(gym.Env):
                 *terminal_args,
             )
         except TypeError as error:
+            if not merge_equivalent_actions:
+                raise RuntimeError('individual-actions requires the matching native search build') from error
             if model_victory_terminal:
                 raise RuntimeError(
                     'loaded simulator extension does not support model-evaluated '

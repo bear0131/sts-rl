@@ -480,6 +480,11 @@ void search::SimpleAgent::stepBattleCardSelect(BattleContext &bc) {
             break;
 
         case CardSelectTask::FORETHOUGHT:
+            if (bc.cardSelectInfo.canPickAnyNumber) {
+                takeAction(bc, search::Action(search::ActionType::MULTI_CARD_SELECT, 0));
+                return;
+            }
+            [[fallthrough]];
         case CardSelectTask::WARCRY:
             setupCardOptionsHelper(actions, bc.cards.hand.begin(), bc.cards.hand.begin() + bc.cards.cardsInHand);
             break;

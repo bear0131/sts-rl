@@ -5,6 +5,23 @@ from gymnasium import spaces
 
 from env.core import native_actions as C
 from rl.algorithms.action_groups import quotient_distribution
+
+
+def test_identity_groups_equal_individual_cross_entropy_and_gradient():
+    torch.manual_seed(42)
+    logits = torch.randn(4, 198, requires_grad=True)
+    masks = torch.rand(4, 198) > .4
+    targets = torch.rand(4, 198) * masks
+    targets /= targets.sum(-1, keepdim=True)
+    identity = torch.arange(198).expand(4, -1)
+    grouped, grouped_targets, grouped_mask = quotient_distribution(logits, targets, masks, identity)
+    individual = torch.log_softmax(logits.masked_fill(~masks, -1e8), -1)
+    torch.testing.assert_close(grouped, individual, rtol=0, atol=0)
+    torch.testing.assert_close(grouped_targets, targets, rtol=0, atol=0)
+    assert torch.equal(grouped_mask, masks)
+    a = torch.autograd.grad(-(targets * grouped).sum(), logits, retain_graph=True)[0]
+    b = torch.autograd.grad(-(targets * individual).sum(), logits)[0]
+    torch.testing.assert_close(a, b, rtol=0, atol=0)
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 
 

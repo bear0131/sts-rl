@@ -66,7 +66,13 @@ namespace sts {
         int pickCount = 0;
         int data0 = 0;
 
-        CardSelectTask cardSelectTask;
+        CardSelectTask cardSelectTask = CardSelectTask::INVALID;
+
+        bool isMultiSelection() const {
+            return cardSelectTask == CardSelectTask::EXHAUST_MANY ||
+                cardSelectTask == CardSelectTask::GAMBLE ||
+                (cardSelectTask == CardSelectTask::FORETHOUGHT && canPickAnyNumber);
+        }
 
         std::array<CardId, 3>& discovery_Cards() { return cards; }
         int& discovery_CopyCount() { return data0; }

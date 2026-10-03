@@ -220,6 +220,7 @@ namespace sts {
         void chooseExhaustOneCard(int handIdx);
         void chooseExhumeCard(int exhaustIdx);
         void chooseForethoughtCard(int handIdx);
+        void chooseForethoughtCards(const fixed_list<int, 10> &idxs);
         void chooseHeadbuttCard(int discardIdx);
         void chooseRecycleCard(int handIdx);
         void chooseWarcryCard(int handIdx);

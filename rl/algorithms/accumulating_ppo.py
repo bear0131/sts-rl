@@ -138,6 +138,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_paper_full_gumbel: bool = False,
         nosl_is_az_gumbel_candidates: int = 0,
         nosl_is_az_gumbel_scale: float = 1.0,
+        nosl_is_az_merge_equivalent_actions: bool = True,
         nosl_is_az_gumbel_value_scale: float = 0.1,
         nosl_is_az_gumbel_max_visit_init: float = 50.0,
         nosl_is_az_gumbel_rescale_q: bool = True,
@@ -308,6 +309,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         ]
         self.nosl_is_az_gumbel_candidates = int(nosl_is_az_gumbel_candidates)
         self.nosl_is_az_gumbel_scale = float(nosl_is_az_gumbel_scale)
+        self.nosl_is_az_merge_equivalent_actions = bool(nosl_is_az_merge_equivalent_actions)
         self.nosl_is_az_gumbel_value_scale = float(nosl_is_az_gumbel_value_scale)
         self.nosl_is_az_gumbel_max_visit_init = float(
             nosl_is_az_gumbel_max_visit_init
@@ -392,7 +394,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
     def _setup_model(self) -> None:
         super()._setup_model()
         from rl.algorithms.action_groups import CONTRACT
-        self.nosl_action_group_contract = CONTRACT if self.nosl_is_az else 'individual-actions'
+        self.nosl_action_group_contract = (CONTRACT if self.nosl_is_az and
+            self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
         from rl.algorithms.update_schedule import CombatUpdateSchedule
@@ -1180,6 +1183,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "paper_full_gumbel": self.nosl_is_az_paper_full_gumbel,
                                 "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
                                 "gumbel_scale": self.nosl_is_az_gumbel_scale,
+                                "merge_equivalent_actions": self.nosl_is_az_merge_equivalent_actions,
                                 "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
                                 "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,

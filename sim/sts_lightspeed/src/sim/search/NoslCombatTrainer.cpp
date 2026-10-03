@@ -76,7 +76,7 @@ int persistentCardIdentity(const CardInstance &card) {
 
 template <typename Pile>
 void hashCardComposition(std::uint64_t &hash, const Pile &pile,
-                         std::vector<CardSignature> &cards) {
+                         std::vector<CardSignature> &cards, bool equivalentFutures = true) {
     // Card id/upgrade count is not a complete card state.  Temporary cards
     // and cards such as Masterful Stab/Blood for Blood carry transition
     // relevant data in specialData, while Snecko/free-play/retain effects
@@ -112,11 +112,11 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
         hashValue(hash, upgraded);
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
-        hashValue(hash, persistentId);
+        if (equivalentFutures) hashValue(hash, persistentId);
     }
 }
 
-void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
+void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equivalentFutures = true) {
     using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int>;
     std::array<CardSignature, CardManager::MAX_HAND_SIZE> cards{};
     std::size_t count = 0;
@@ -146,7 +146,7 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
         hashValue(hash, upgraded);
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
-        hashValue(hash, persistentId);
+        if (equivalentFutures) hashValue(hash, persistentId);
     }
 }
 
@@ -157,7 +157,8 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
 // must be part of the information-set key.  Hidden RNG streams, pile order,
 // and hand slot order remain deliberately excluded for NOSL.
 std::uint64_t publicStateKey(const BattleContext &bc,
-                            std::vector<CardSignature> *scratch = nullptr) {
+                            std::vector<CardSignature> *scratch = nullptr,
+                            bool equivalentFutures = true) {
     std::vector<CardSignature> localScratch;
     auto &cards = scratch != nullptr ? *scratch : localScratch;
     std::uint64_t hash = 0xcbf29ce484222325ULL;
@@ -176,6 +177,10 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, bc.miscBits.to_ulong());
     hashValue(hash, bc.loopCount);
     // Historical scum-search scores are not part of NOSL HP futures.
+    if (!equivalentFutures) {
+        hashValue(hash, bc.energyWasted);
+        hashValue(hash, bc.cardsDrawn);
+    }
     hashValue(hash, bc.haveUsedDiscoveryAction ? 1 : 0);
     hashValue(hash, bc.undefinedBehaviorEvoked ? 1 : 0);
 
@@ -241,12 +246,12 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         }
     }
 
-    hashHandComposition(hash, bc);
-    hashCardComposition(hash, bc.cards.drawPile, cards);
-    hashCardComposition(hash, bc.cards.discardPile, cards);
-    hashCardComposition(hash, bc.cards.exhaustPile, cards);
-    hashCardComposition(hash, bc.cards.limbo, cards);
-    hashCardComposition(hash, bc.cards.stasisCards, cards);
+    hashHandComposition(hash, bc, equivalentFutures);
+    hashCardComposition(hash, bc.cards.drawPile, cards, equivalentFutures);
+    hashCardComposition(hash, bc.cards.discardPile, cards, equivalentFutures);
+    hashCardComposition(hash, bc.cards.exhaustPile, cards, equivalentFutures);
+    hashCardComposition(hash, bc.cards.limbo, cards, equivalentFutures);
+    hashCardComposition(hash, bc.cards.stasisCards, cards, equivalentFutures);
     hashValue(hash, bc.cards.cardsInHand);
     hashValue(hash, bc.cards.handNormalityCount);
     hashValue(hash, bc.cards.handPainCount);
@@ -1348,6 +1353,7 @@ void NoslNeuralSearchSession::mergeEquivalentPlays(
     Node &node, const BattleContext &state) {
     // Only complete-action policies have one logit for each source/target pair.
     if (!config_.jointPolicy) return;
+    if (!config_.mergeEquivalentActions) return;
     const auto slots = Action::equivalentPlaySlots(state);
     std::array<int, 60> first;
     first.fill(-1);
@@ -2153,8 +2159,9 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 break;
             }
 
-            auto childKey = publicStateKey(state, &stateKeyScratch_);
-            if (config_.autoregressivePolicy && state.inputState == InputState::CARD_SELECT) {
+            auto childKey = publicStateKey(state, &stateKeyScratch_, config_.mergeEquivalentActions);
+            if (config_.autoregressivePolicy &&
+                (!config_.mergeEquivalentActions || state.inputState == InputState::CARD_SELECT)) {
                 hashValue(childKey, pending.selectionPrefix);
                 // Prefix IDs refer to visible hand slots, so keep their order.
                 for (int i = 0; i < state.cards.cardsInHand; ++i)

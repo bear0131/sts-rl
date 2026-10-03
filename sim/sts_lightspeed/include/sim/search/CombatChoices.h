@@ -65,7 +65,7 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
         result.cards.push_back({index, card.getId(), card.getUpgradeCount(),
                                card.freeToPlayOnce ? 0 : card.costForTurn, false});
     };
-    if (task == CardSelectTask::EXHAUST_MANY || task == CardSelectTask::GAMBLE) {
+    if (bc.cardSelectInfo.isMultiSelection()) {
         for (int i = 0; i < bc.cards.cardsInHand; ++i) append(i);
     } else {
         for (const auto &action : Action::enumerateCardSelectActions(bc)) {
@@ -120,8 +120,7 @@ constexpr ActionType kSelectStop = static_cast<ActionType>(6);
 
 inline bool isMultiSelection(const BattleContext &bc) {
     return bc.outcome == Outcome::UNDECIDED && bc.inputState == InputState::CARD_SELECT &&
-        (bc.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY ||
-         bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE);
+        bc.cardSelectInfo.isMultiSelection();
 }
 
 inline std::vector<Action> autoregressiveActions(const BattleContext &bc, int selected) {

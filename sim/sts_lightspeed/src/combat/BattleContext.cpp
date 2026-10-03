@@ -1345,8 +1345,8 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::DARK_SHACKLES:
-            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? 15 : 9) );
-            if (monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
+            addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -15 : -9) );
+            if (!monsters.arr[t].hasStatus<MS::ARTIFACT>()) {
                 addToBot( Actions::BuffEnemy<MS::SHACKLED>(t, up ? 15 : 9) );
             }
             break;
@@ -1719,6 +1719,7 @@ void BattleContext::onUseAttackCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1849,6 +1850,7 @@ void BattleContext::onUseSkillCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1928,6 +1930,7 @@ void BattleContext::onUsePowerCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -1993,6 +1996,7 @@ void BattleContext::onUseStatusOrCurseCard() {
     }
 
     if (p.hasStatus<PS::PANACHE>() && --p.panacheCounter <= 0) {
+        p.panacheCounter = 5;
         addToBot( Actions::DamageAllEnemy(p.getStatus<PS::PANACHE>()) );
     }
 
@@ -3183,6 +3187,18 @@ void BattleContext::chooseHeadbuttCard(int discardIdx) {
 #endif
     cards.moveToDrawPileTop(cards.discardPile[discardIdx]);
     cards.removeFromDiscard(discardIdx);
+}
+
+void BattleContext::chooseForethoughtCards(const fixed_list<int, 10> &idxs) {
+    // Subset actions have a canonical ascending source-slot order. Removing
+    // an earlier selected card shifts the remaining source indices by one.
+    auto ordered = idxs;
+    std::sort(ordered.begin(), ordered.end());
+    int removed = 0;
+    for (const int idx : ordered) {
+        chooseForethoughtCard(idx - removed);
+        ++removed;
+    }
 }
 
 void BattleContext::chooseRecycleCard(int handIdx) {

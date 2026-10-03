@@ -101,12 +101,12 @@ class StSMetricsCallback(BaseCallback):
         if self._win:
             self.logger.record("game/win_rate", mean(self._win))
             self.logger.record("game/floor_mean", mean(self._floor))
-            # Per-act clear rate: clearing act x bumps act to x+1, so "won act x"
-            # == final act > x. act_3 ~= win_rate; the ladder shows where runs die.
+            # Native full-run victory can remain at act 3. Use the same
+            # terminal outcome as win_rate for the final act.
             for x in (1, 2, 3):
                 self.logger.record(
                     f"game/act_{x}_won_mean",
-                    mean([1.0 if a > x else 0.0 for a in self._act]),
+                    mean(self._win) if x == 3 else mean([1.0 if a > x else 0.0 for a in self._act]),
                 )
         if self._deck:
             self.logger.record("game/deck_size_mean", mean(self._deck))
@@ -158,6 +158,9 @@ class WholeRunTask(Task):
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument('--nosl-is-az-merge-equivalent-actions',
+                            action=argparse.BooleanOptionalAction, default=True,
+                            help='Group equivalent plays/futures; disable for pre-POL01 slot search.')
         parser.add_argument("--combat-action-contract", choices=("legacy", "joint-v2", "autoregressive-v2"),
                             default=None, help="Complete combat policy; migrate old weights with --init-from.")
         parser.add_argument(

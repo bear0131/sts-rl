@@ -24,6 +24,8 @@ struct NoslCombatSearchConfig {
     double priorTemperature = 1.0;
     bool jointPolicy = false;
     bool autoregressivePolicy = false;
+    // False reproduces the pre-POL01 slot actions and ordered AR futures.
+    bool mergeEquivalentActions = true;
     int selectionPrefix = 0;
     // Treat the state immediately after executing End Turn as a value-only
     // leaf.  This avoids searching through hidden enemy/random transitions.

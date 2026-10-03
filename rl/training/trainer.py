@@ -1119,6 +1119,7 @@ def main() -> None:
             nosl_is_az_gumbel_scale=getattr(
                 args, "nosl_is_az_gumbel_scale", 1.0
             ),
+            nosl_is_az_merge_equivalent_actions=getattr(args, 'nosl_is_az_merge_equivalent_actions', True),
             nosl_is_az_gumbel_value_scale=getattr(
                 args, "nosl_is_az_gumbel_value_scale", 0.1
             ),
@@ -1289,6 +1290,7 @@ def main() -> None:
                 "nosl_is_az_gumbel_scale": getattr(
                     args, "nosl_is_az_gumbel_scale", 1.0
                 ),
+                "nosl_is_az_merge_equivalent_actions": getattr(args, 'nosl_is_az_merge_equivalent_actions', True),
                     "nosl_is_az_gumbel_value_scale": getattr(
                     args, "nosl_is_az_gumbel_value_scale", 0.1
                 ),

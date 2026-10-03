@@ -484,8 +484,7 @@ inline Row pack(const sts::BattleContext &bc) {
         bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
     row.scalars[f++] = selecting && bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
     const auto task = bc.cardSelectInfo.cardSelectTask;
-    row.scalars[f++] = selecting && (task == CardSelectTask::EXHAUST_MANY ||
-                        task == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
+    row.scalars[f++] = selecting && bc.cardSelectInfo.isMultiSelection() ? 1.0f : 0.0f;
     for (std::size_t i = 0; i < choices.cards.size(); ++i) {
         row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
         row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
@@ -915,8 +914,7 @@ std::vector<sts::search::Action> legalRuleCombatActions(const sts::BattleContext
     using SA = sts::search::Action;
     using AT = sts::search::ActionType;
     if (bc.inputState != sts::InputState::CARD_SELECT
-        || (bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::EXHAUST_MANY
-            && bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::GAMBLE)) {
+        || !bc.cardSelectInfo.isMultiSelection()) {
         return legalCombatActions(bc);
     }
 
@@ -1375,8 +1373,7 @@ py::dict selectScreenInfo(const sts::GameContext &gc) {
 py::dict combatSelectInfo(const sts::BattleContext &bc) {
     const auto &csi = bc.cardSelectInfo;
     const auto task = csi.cardSelectTask;
-    const bool multi = task == sts::CardSelectTask::EXHAUST_MANY ||
-                       task == sts::CardSelectTask::GAMBLE;
+    const bool multi = csi.isMultiSelection();
     py::dict d;
     d["context"] = std::string(
         sts::cardSelectTaskStrings[static_cast<int>(task)]);
@@ -1390,7 +1387,7 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     int pickMax = 0;
     if (task == sts::CardSelectTask::EXHAUST_MANY) {
         pickMax = csi.pickCount;
-    } else if (task == sts::CardSelectTask::GAMBLE) {
+    } else if (multi) {
         pickMax = bc.cards.cardsInHand;
     }
     d["pick_max"] = pickMax;
@@ -2943,7 +2940,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 bool paper_full_gumbel,
                 bool fixed_worldline,
                 int boss_transition_value_mode, int selection_prefix,
-                bool model_victory_terminal) {
+                bool model_victory_terminal, bool merge_equivalent_actions) {
                 std::vector<double> logits;
                 auto view = root_policy_logits.unchecked<1>();
                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -2982,6 +2979,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 config.fixedWorldline = fixed_worldline;
                 config.bossTransitionValueMode = boss_transition_value_mode;
                 config.modelVictoryTerminal = model_victory_terminal;
+                config.mergeEquivalentActions = merge_equivalent_actions;
                 config.seed = nonce;
                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
                     bc, logits, config, nonce, root_value);
@@ -3013,6 +3011,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("boss_transition_value_mode") = 0,
              pybind11::arg("selection_prefix") = 0,
              pybind11::arg("model_victory_terminal") = false,
+             pybind11::arg("merge_equivalent_actions") = true,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;

@@ -362,6 +362,11 @@ struct Player {
             ++combustHpLoss;
         }
 
+        // Stacking Panache increases damage without restarting its countdown.
+        if (s == PS::PANACHE && !hasStatus<s>()) {
+            panacheCounter = 5;
+        }
+
         if (hasStatus<s>()) {
             statusMap[s] += amount;
         } else {

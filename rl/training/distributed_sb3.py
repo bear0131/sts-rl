@@ -554,6 +554,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override root Gumbel top-k size; 0 means all legal actions.",
     )
     parser.add_argument("--nosl-is-az-gumbel-scale", type=float, default=None)
+    parser.add_argument('--nosl-is-az-merge-equivalent-actions',
+                        action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument(
         "--nosl-is-az-gumbel-value-scale", type=float, default=None
     )
@@ -2466,6 +2468,7 @@ def main() -> None:
     model.nosl_is_az_search_mode = mode
     model.nosl_is_az_root_search_mode = NOSL_IS_AZ_SEARCH_MODES[mode]
     gumbel_fields = (
+        ("nosl_is_az_merge_equivalent_actions", True, bool),
         ("nosl_is_az_fixed_worldline", False, bool),
         ("nosl_is_az_prior_temperature", 1.0, float),
         ("nosl_is_az_paper_full_gumbel", False, bool),
@@ -2489,6 +2492,9 @@ def main() -> None:
     if bool(getattr(model, "nosl_is_az_paper_full_gumbel", False)):
         apply_strict_training_settings(model, args)
     args.nosl_is_az_search_mode = mode
+    from rl.algorithms.action_groups import CONTRACT
+    model.nosl_action_group_contract = (CONTRACT if model.nosl_is_az_merge_equivalent_actions
+                                        else 'individual-actions')
     if model.nosl_is_az_fixed_worldline and not getattr(model, 'nosl_is_az_cpp', False):
         raise ValueError('fixed-worldline training requires the C++ search backend')
     if bool(getattr(model, "nosl_is_az", False)):
