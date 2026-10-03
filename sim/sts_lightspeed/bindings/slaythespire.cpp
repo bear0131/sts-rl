@@ -68,20 +68,27 @@ py::list cardPileToList(const Pile &pile) {
 
 py::dict combatSelectInfo(const sts::BattleContext &bc);
 
+int playerPowerObservation(const sts::Player &p, PlayerStatus status) {
+    // OBS18: presence powers live in status bits, not necessarily statusMap.
+    // Keep getStatusRuntime unchanged: search keys and game rules use it too.
+    switch (status) {
+        case PlayerStatus::CONFUSED: case PlayerStatus::HEX:
+        case PlayerStatus::DRAW_REDUCTION: case PlayerStatus::BARRICADE:
+        case PlayerStatus::BLASPHEMER: case PlayerStatus::CORRUPTION:
+        case PlayerStatus::ELECTRO: case PlayerStatus::SURROUNDED:
+        case PlayerStatus::MASTER_REALITY: case PlayerStatus::PEN_NIB:
+        case PlayerStatus::WRATH_NEXT_TURN:
+            return p.hasStatusRuntime(status) ? 1 : 0;
+        default:
+            return p.getStatusRuntime(status);
+    }
+}
+
 py::list playerPowersToList(const sts::Player &p) {
     py::list out;
-    if (p.strength)  out.append(py::make_tuple("Strength", p.strength));
-    if (p.dexterity) out.append(py::make_tuple("Dexterity", p.dexterity));
-    if (p.focus)     out.append(py::make_tuple("Focus", p.focus));
-    if (p.artifact)  out.append(py::make_tuple("Artifact", p.artifact));
-    for (const auto &kv : p.statusMap) {
-        // statusMap retains the last numeric value after removeStatus() clears
-        // the corresponding status bit. Export only powers that are still
-        // active, otherwise consumed powers such as Akabeko's Vigor remain
-        // visible in canonical observations and the dashboard.
-        if (p.hasStatusRuntime(kv.first) && kv.second != 0) {
-            out.append(py::make_tuple(playerStatusStrings[static_cast<int>(kv.first)], kv.second));
-        }
+    for (int i = 1; i <= static_cast<int>(PlayerStatus::THE_BOMB); ++i) {
+        const int amount = playerPowerObservation(p, static_cast<PlayerStatus>(i));
+        if (amount != 0) out.append(py::make_tuple(playerStatusStrings[i], amount));
     }
     return out;
 }
@@ -399,7 +406,7 @@ inline Row pack(const sts::BattleContext &bc) {
     row.scalars[f++] = static_cast<float>(bc.turn);
     row.scalars[f++] = static_cast<float>(bc.player.gold);
     for (int status = 1; status <= kPlayerStatus; ++status) {
-        row.scalars[f++] = static_cast<float>(bc.player.getStatusRuntime(
+        row.scalars[f++] = static_cast<float>(playerPowerObservation(bc.player,
             static_cast<PlayerStatus>(status)));
     }
     // Keep this order synchronized with encode.COMBAT_COUNTER_KEYS.
@@ -976,6 +983,15 @@ void setRulePlayerStatusByName(
     SET_PLAYER_STATUS(INTANGIBLE)
     SET_PLAYER_STATUS(BARRICADE)
     SET_PLAYER_STATUS(CORRUPTION)
+    SET_PLAYER_STATUS(CONFUSED)
+    SET_PLAYER_STATUS(HEX)
+    SET_PLAYER_STATUS(DRAW_REDUCTION)
+    SET_PLAYER_STATUS(BLASPHEMER)
+    SET_PLAYER_STATUS(ELECTRO)
+    SET_PLAYER_STATUS(SURROUNDED)
+    SET_PLAYER_STATUS(MASTER_REALITY)
+    SET_PLAYER_STATUS(PEN_NIB)
+    SET_PLAYER_STATUS(WRATH_NEXT_TURN)
     SET_PLAYER_STATUS(DOUBLE_TAP)
     SET_PLAYER_STATUS(BRUTALITY)
     SET_PLAYER_STATUS(COMBUST)
@@ -1655,7 +1671,8 @@ PYBIND11_MODULE(slaythespire, m) {
         out["player_status_count"] = compact_leaf::kPlayerStatus;
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
-        out["version"] = 2;
+        out["version"] = 3;
+        out["observation_version"] = 18;
         out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
         out["candidate_overflow_contract"] = "overflow-equivalent-v1";

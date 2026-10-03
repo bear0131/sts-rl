@@ -61,7 +61,7 @@ from . import combat_language as CL
 # It adds a lossless per-card master-deck sequence (including upgrade count),
 # action-aligned upgrade fields for every overworld card choice, and persistent
 # run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
-OBS_VERSION = 17  # fixed native slots, explicit selection entities and sources
+OBS_VERSION = 18  # active boolean player powers, including Pen Nib
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14

@@ -55,6 +55,8 @@ TRAIN32蓝线复现实验用`configs/train/entity_combat_blue_repro_runtime.args
 PolicyStrategy按原槽位决策；native search配置随模型及恢复manifest持久化。
 默认仍保持旧POL01模型的合并合同，旧模型载入不静默变更语义。
 新实验保留线程批处理、FP32归约、候选溢出修复和STORAGE05，不回退已确认正确性修复。
+TRAIN32进一步使用OBS18/native layout v3，补齐腐化/壁垒等布尔状态并包含Pen Nib。
+按用户要求不迁移旧checkpoint/replay；旧实验只在保留的旧构建运行。
 
 模拟器SIM02/03/04修复不改变198维动作宽度：Dark Shackles临时负力量及Artifact，
 Panache每5次出牌循环并在回合开始重置，Forethought+（预谋+）支持任意子集含空集。

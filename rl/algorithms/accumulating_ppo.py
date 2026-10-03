@@ -393,6 +393,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
     def _setup_model(self) -> None:
         super()._setup_model()
+        from env.core.encode import OBS_VERSION
+        self.observation_version = OBS_VERSION
         from rl.algorithms.action_groups import CONTRACT
         self.nosl_action_group_contract = (CONTRACT if self.nosl_is_az and
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')

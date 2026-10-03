@@ -337,9 +337,22 @@ def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_ty
 
 
 def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type):
+    class VisiblePowerEnv(short_combat_env_type):
+        def reset(self, **kwargs):
+            super().reset(**kwargs)
+            self.thick.bc.set_player_status('BARRICADE', 1)
+            self._invalidate_backend_cache()
+            return self._obs(), self._info()
     test_training_reaches_wandb_and_checkpoint(
-        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        tmp_path, monkeypatch, capsys, VisiblePowerEnv,
         True, 'rules', 'entity', 'autoregressive-v2', vector='native', merge=False)
+    from env.core import encode
+    bundle = tmp_path / 'state' / 'rank0' / 'step-000000000128'
+    manifest = json.loads((bundle / 'manifest.json').read_text())
+    assert manifest['observation_version'] == encode.OBS_VERSION == 18
+    replay = torch.load(bundle / 'learner.pt', map_location='cpu', weights_only=False)['replay']
+    index = encode.V.PLAYER_BUFF_VOCAB_INDEX['Barricade']
+    assert (replay['observations']['player_buffs'][:, index] > 0).any()
 
 
 @pytest.mark.parametrize('failure_stage', ['learner', 'checkpoint'])

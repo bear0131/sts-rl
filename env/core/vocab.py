@@ -702,6 +702,7 @@ PLAYER_BUFF_VOCAB = [
     'Electro',
     'Surrounded',
     'Master Reality',
+    'Pen Nib',
     'Wrath Next Turn',
     'Amplify',
     'Blur',

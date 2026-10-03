@@ -104,8 +104,8 @@ class SimGameEnv:
     def __init__(self, character=None, ascension=0, global_map_view=False,
                  interactive_reasoning=False,
                  nosl_is_az_boss_transition_target=False):
-        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 2:
-            raise RuntimeError("observation v17 requires native layout v2; rebuild the simulator")
+        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 3:
+            raise RuntimeError("observation v18 requires native layout v3; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view

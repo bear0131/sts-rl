@@ -212,7 +212,9 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
         if environment is not None:
             torch.save(environment, temporary / 'environment.pt', pickle_protocol=5)
             files.append('environment.pt')
-        manifest = dict(schema_version=schema_version, rank=rank, world_size=world_size,
+        from env.core.encode import OBS_VERSION
+        manifest = dict(schema_version=schema_version, observation_version=OBS_VERSION,
+            rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,
             environment_resume=(
                 'action-journal replay; live episodes restored'

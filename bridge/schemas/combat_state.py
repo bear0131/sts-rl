@@ -27,16 +27,25 @@ localized `name` field, which is GBK-localized and unstable):
 # ============================ real-game side ============================
 
 # powers that one side tracks only cosmetically -> drop on both sides so they
-# don't show as spurious diffs. "Pen Nib" is a real-game attack counter shown as
-# a power; the sim keeps it inside the relic (its doubled hit still lands, so the
-# effect is still validated via monster hp). "Asleep" is a sim-internal flag the
-# real CommunicationMod never exposes.
-_POWER_DROP = {"Pen Nib", "Asleep", "Split"}
+# don't show as spurious diffs. Pen Nib's armed power is observable separately
+# from its relic counter; OBS18 includes it in player_buffs.
+_POWER_DROP = {"Asleep", "Split"}
+BOOLEAN_PLAYER_POWERS = frozenset({
+    "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
+    "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
+    "Wrath Next Turn",
+})
 
 
 def _powers_real(power_list):
     # real game flattens every buff/debuff into a list; key by stable English id
     return {p["id"]: p["amount"] for p in power_list if p["id"] not in _POWER_DROP}
+
+
+def _player_powers_real(power_list):
+    # Presence powers commonly use amount=-1 in CommunicationMod.
+    return {name: 1 if name in BOOLEAN_PLAYER_POWERS else amount
+            for name, amount in _powers_real(power_list).items()}
 
 
 # status cards with no upgraded variant: the sim can mark them upgraded (e.g. an
@@ -125,7 +134,7 @@ def normalize_real(game_state):
             "energy": p["energy"],
             "gold": game_state.get("gold", 0),
             "combat_counters": combat_counters,
-            "powers": _powers_real(p["powers"]),
+            "powers": _player_powers_real(p["powers"]),
         },
         "monsters": [_monster_real(m) for m in cs["monsters"]],
         "hand": _cards_real(cs["hand"], include_cost=True),

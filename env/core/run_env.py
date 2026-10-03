@@ -112,8 +112,8 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 2:
-        raise RuntimeError("observation v17 requires native compact layout v2; rebuild the simulator")
+    if layout.get("version") != 3:
+        raise RuntimeError("observation v18 requires native compact layout v3; rebuild the simulator")
 
     def _power_name(name):
         # Simulator enum names are intentionally normalized the same way as
