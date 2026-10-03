@@ -38,6 +38,21 @@ python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
   --trajectory-output runs/local/eval-trajectories
 ```
 
+双回合实验可显式设置 `--planner-turns 2 --planner-turn-scope boss-elite-v1`：
+所有公开 `BOSS` 房间及 `ELITE` 房间中的 `GREMLIN_NOB/LAGAVULIN/NEMESIS`
+使用双回合，其余战斗保持单回合；事件里的同名精英不命中。默认 scope 为 `all`，
+维持 `--planner-turns` 对全部战斗生效的既有行为。定向 scope 仅支持
+`--task wholerun --solver turn-planner --planner-turns 2`。配置通过同一
+`PhaseStrategy` 组合，manifest 保存完整公开谓词、冻结名单及两个分支配置。
+
+定向双回合不增加 nodes/worlds/beam/depth；depth 是两个玩家回合合计上限。
+原有最低覆盖预算仍为 `max(nodes, (turns + 1) * root_actions)`，比较时必须核对
+逐次 trace 的 `effective_node_budget/effective_total_budget`，不能仅比较 CLI nodes。
+trace 的 `lookahead_turns` 表示所选配置，`turn2_applied` 表示实际调用双回合搜索，
+不保证预算内到达第二回合；另看 `second_turn_entries` 和 `completed_horizon_leaves`。
+`planner_turn1_decisions/planner_turn2_decisions` 只统计实际搜索次数。Runic Dome
+仍使用公开规则回退，两项搜索计数和实际预算为 0，即使所选配置是双回合。
+
 训练模型直推或搜索仍使用同一入口：省略 `--upper-strategy rules`（默认
 `model`），并按需选择 `--solver policy`、`native`、`value` 或
 `turn-planner`。因此评测算法和轨迹格式不会随 checkpoint 复制一份。

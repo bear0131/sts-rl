@@ -1,12 +1,51 @@
 """DecisionStrategy adapter for the model-free native turn planner."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import numpy as np
 
 from env.core.native_actions import complete_actions
 from env.search.turn_planner import NativeTurnPlanner, PLANNER_VERSION, TurnPlannerConfig
+import slaythespire as sts
 from rl.evaluation.baselines.combat_rules import CombatRuleStrategy
-from rl.evaluation.strategies import Decision
+from rl.evaluation.strategies import Decision, PhaseStrategy
+
+
+class RiskTurnPlannerStrategy(PhaseStrategy):
+    """Frozen public encounter routing; dispatch remains owned by PhaseStrategy."""
+    elite_encounters = ('GREMLIN_NOB', 'LAGAVULIN', 'NEMESIS')
+
+    def __init__(self, config, *, trace=None):
+        if config.lookahead_turns != 2:
+            raise ValueError('boss-elite-v1 requires planner-turns 2')
+        super().__init__(TurnPlannerStrategy(replace(config, lookahead_turns=1)),
+                         {'combat': TurnPlannerStrategy(config)},
+                         predicates={'combat': self.is_risk_combat})
+        self.name = 'turn-planner:boss-elite-v1'
+        self.trace = trace
+
+    @classmethod
+    def is_risk_combat(cls, request):
+        gc = request.env.unwrapped.thick.gc
+        return gc.cur_room == sts.Room.BOSS or (
+            gc.cur_room == sts.Room.ELITE and
+            gc.encounter in tuple(getattr(sts.MonsterEncounter, name)
+                                  for name in cls.elite_encounters))
+
+    def manifest(self):
+        return dict(turn_scope='boss-elite-v1', default_lookahead_turns=1,
+                    selected_lookahead_turns=2, predicate=dict(
+                        source='public-gc.cur_room-and-gc.encounter',
+                        all_rooms=['BOSS'], encounter_room='ELITE',
+                        encounters=list(self.elite_encounters)))
+
+    @property
+    def trace(self):
+        return self.default.trace
+
+    @trace.setter
+    def trace(self, trace):
+        for strategy in self._unique_strategies():
+            strategy.trace = trace
 
 
 class TurnPlannerStrategy:
@@ -21,7 +60,7 @@ class TurnPlannerStrategy:
         self.trace = trace
 
     def manifest(self):
-        return dict(config=asdict(self.config), horizon=(
+        return dict(config=asdict(self.config), turn_scope='all', horizon=(
             'current-player-turn-plus-enemy-phase' if self.config.lookahead_turns == 1
             else 'two-player-turns-through-second-enemy-phase'),
             information='independent-NOSL-futures', dome='visible-rule-fallback',
@@ -62,6 +101,14 @@ class TurnPlannerStrategy:
                     {key: value for key, value in plan.diagnostics.items()
                      if isinstance(value, (int, float)) and key != 'max_action_depth'},
                     native_action=plan.action_bits)
+            # Only additive counts belong in runner diagnostics. Chosen horizon
+            # is per-request trace metadata, including unsupported Dome search.
+            decision.diagnostics.update(
+                planner_turn1_decisions=int(not dome and self.config.lookahead_turns == 1),
+                planner_turn2_decisions=int(not dome and self.config.lookahead_turns == 2))
+            if dome:
+                decision.diagnostics.update(effective_node_budget=0, effective_total_budget=0,
+                                            native_transitions=0, second_turn_entries=0)
             if self.trace:
                 raw = env.thick.bc.to_dict()
                 raw['draw'] = sorted(raw['draw'])
@@ -71,7 +118,12 @@ class TurnPlannerStrategy:
                     raw['monsters'] = []
                 self.trace(dict(kind='turn-planner-decision', seed=request.seed, step=request.step,
                     floor=int(env.thick.gc.floor_num), state=raw,
+                    room=str(env.thick.gc.cur_room).split('.')[-1],
+                    encounter=str(env.thick.gc.encounter).split('.')[-1],
+                    lookahead_turns=self.config.lookahead_turns,
+                    turn2_applied=not dome and self.config.lookahead_turns == 2,
                     action=decision.action, native_action=decision.native_action,
-                    source=decision.source, diagnostics=(decision.diagnostics if dome else plan.diagnostics)))
+                    source=decision.source, diagnostics=(decision.diagnostics if dome else
+                        dict(plan.diagnostics, **decision.diagnostics))))
             decisions.append(decision)
         return decisions

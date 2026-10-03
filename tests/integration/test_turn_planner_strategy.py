@@ -1,13 +1,14 @@
 """Public-information and shared-runner contracts for the planner adapter."""
 from dataclasses import asdict
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import slaythespire as sts
 
 from env.core import action_space as A, combat_env
-from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
+from rl.evaluation.baselines.turn_planner import RiskTurnPlannerStrategy, TurnPlannerStrategy
 from env.search.turn_planner import TurnPlannerConfig
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate
 from rl.evaluation.strategies import DecisionRequest, PhaseStrategy, strategy_manifest
@@ -205,3 +206,122 @@ def test_cli_composition_preserves_planner_budget_and_supplied_upper():
     assert manifest['config'] == dict(
         worlds=3, node_budget=97, beam_width=4, max_depth=9, master_nonce=777,
         lookahead_turns=1, leaf_profile='time-clock-v9')
+
+
+@pytest.mark.parametrize('room,encounter,selected', [
+    ('BOSS', 'SLIME_BOSS', True), ('BOSS', 'AWAKENED_ONE', True),
+    ('BOSS', 'DONU_AND_DECA', True), ('BOSS', 'TIME_EATER', True),
+    ('ELITE', 'GREMLIN_NOB', True), ('ELITE', 'LAGAVULIN', True),
+    ('ELITE', 'NEMESIS', True), ('ELITE', 'THREE_SENTRIES', False),
+    ('EVENT', 'GREMLIN_NOB', False), ('EVENT', 'LAGAVULIN_EVENT', False),
+    ('MONSTER', 'NEMESIS', False), ('BOSS_TREASURE', 'TIME_EATER', False),
+])
+def test_risk_route_uses_only_public_room_and_frozen_encounters(room, encounter, selected):
+    # No battle, intent, observation or model is available to this predicate.
+    gc = SimpleNamespace(cur_room=getattr(sts.Room, room),
+                         encounter=getattr(sts.MonsterEncounter, encounter))
+    env = SimpleNamespace(unwrapped=SimpleNamespace(thick=SimpleNamespace(gc=gc)))
+    assert RiskTurnPlannerStrategy.is_risk_combat(SimpleNamespace(env=env)) is selected
+
+
+def test_risk_cli_manifest_mixed_native_batch_and_both_traces(combat_factory, monkeypatch):
+    from rl.evaluation.eval import build_parser
+    from rl.evaluation.strategies import compose_strategy
+    args = build_parser().parse_args([
+        'unused.zip', '--task', 'wholerun', '--solver', 'turn-planner',
+        '--planner-turns', '2', '--planner-turn-scope', 'boss-elite-v1',
+        '--planner-nodes', '64', '--planner-worlds', '2', '--planner-depth', '6'])
+    trace = []
+    composed = compose_strategy(object(), args, trace=trace.append)
+    strategy = composed.routes['combat']
+    manifest = strategy_manifest(composed)['phases']['combat']
+    assert manifest['turn_scope'] == 'boss-elite-v1'
+    assert manifest['predicate'] == dict(
+        source='public-gc.cur_room-and-gc.encounter', all_rooms=['BOSS'],
+        encounter_room='ELITE', encounters=['GREMLIN_NOB', 'LAGAVULIN', 'NEMESIS'])
+    one = manifest['default']['config']
+    two = manifest['phases']['combat']['config']
+    assert one == dict(two, lookahead_turns=1)
+    assert two['lookahead_turns'] == 2 and two['node_budget'] == 64 and two['max_depth'] == 6
+    assert composed.combat_action_contract == 'native-v1'
+    json.dumps(manifest)
+    requests, originals, expected = [], [], []
+    for step, room in enumerate((sts.Room.BOSS, sts.Room.MONSTER, sts.Room.BOSS)):
+        env = combat_factory(['DEFEND_RED'] * 5, combat_action_contract='native-v1')
+        env.thick.gc.cur_room = room
+        env.thick.bc.apply_custom_state({'hand': ['DEFEND_RED'], 'draw': ['STRIKE_RED'] * 5,
+            'discard': [], 'monsters': [{'hp': 40, 'move': 'JAW_WORM_CHOMP'}]})
+        env._invalidate_backend_cache()
+        request = DecisionRequest(env, env._obs(), env._info(), 42, step)
+        requests.append(request)
+        originals.append(env.thick.bc.to_dict())
+        config = TurnPlannerConfig(**(one if room == sts.Room.MONSTER else two))
+        expected.append(TurnPlannerStrategy(config).decide([request])[0])
+    calls = {1: [], 2: []}
+    for turns, child in ((1, strategy.default), (2, strategy.routes['combat'])):
+        original_decide = child.decide
+        def counted(batch, *, check, turns=turns, original_decide=original_decide):
+            calls[turns].extend(r.step for r in batch)
+            return original_decide(batch, check=check)
+        monkeypatch.setattr(child, 'decide', counted)
+    actual = composed.decide(requests)
+    assert [d.native_action for d in actual] == [d.native_action for d in expected]
+    assert calls == {1: [1], 2: [0, 2]}
+    assert len(trace) == 3
+    by_step = {row['step']: row for row in trace}
+    for i, decision in enumerate(actual):
+        turns = 1 if i == 1 else 2
+        assert decision.diagnostics[f'planner_turn{turns}_decisions'] == 1
+        assert decision.diagnostics[f'planner_turn{3 - turns}_decisions'] == 0
+        assert by_step[i]['lookahead_turns'] == turns
+        assert by_step[i]['turn2_applied'] is (turns == 2)
+        assert by_step[i]['diagnostics']['effective_node_budget'] == 64
+        assert by_step[i]['diagnostics']['effective_total_budget'] == 128
+        assert decision.diagnostics['native_transitions'] <= 128
+        assert requests[i].env.thick.bc.to_dict() == originals[i]
+    json.dumps(trace)
+
+
+def test_risk_dome_trace_distinguishes_chosen_horizon_from_search(combat_factory, monkeypatch):
+    env = combat_factory(['STRIKE_RED'] * 5, relics=['Runic Dome'],
+                         combat_action_contract='native-v1')
+    env.thick.gc.cur_room = sts.Room.BOSS
+    trace = []
+    strategy = RiskTurnPlannerStrategy(TurnPlannerConfig(lookahead_turns=2), trace=trace.append)
+    for child in strategy._unique_strategies():
+        monkeypatch.setattr(child.planner, 'choose', _forbidden)
+    decision = strategy.decide([_request(env)])[0]
+    assert decision.diagnostics['planner_dome_fallback'] == 1
+    assert decision.diagnostics['planner_turn1_decisions'] == 0
+    assert decision.diagnostics['planner_turn2_decisions'] == 0
+    assert decision.diagnostics['effective_total_budget'] == 0
+    assert decision.diagnostics['native_transitions'] == 0
+    assert trace[0]['lookahead_turns'] == 2 and trace[0]['turn2_applied'] is False
+    assert trace[0]['state']['monsters'] == []
+
+
+@pytest.mark.parametrize('options', [
+    ['--solver', 'policy', '--planner-turns', '2'],
+    ['--solver', 'policy', '--planner-turns', '2', '--combat-search-depth', '1'],
+    ['--solver', 'turn-planner', '--planner-turns', '1'],
+    ['--solver', 'turn-planner', '--planner-turns', '2', '--task', 'combat'],
+])
+def test_invalid_risk_cli_scope_fails_before_checkpoint_load(monkeypatch, options):
+    import sys
+    from rl.evaluation import eval as cli
+    monkeypatch.setattr(sys, 'argv', ['eval', 'unused.zip', '--planner-turn-scope',
+                                     'boss-elite-v1', *options])
+    monkeypatch.setattr(cli, 'load_checkpoint', lambda *a, **kw: pytest.fail('loaded checkpoint'))
+    with pytest.raises(ValueError, match='boss-elite-v1 requires'):
+        cli.main()
+
+
+def test_risk_cli_cannot_be_rewritten_to_legacy_value_search(monkeypatch):
+    import sys
+    from rl.evaluation import eval as cli
+    monkeypatch.setattr(sys, 'argv', ['eval', 'unused.zip', '--solver', 'turn-planner',
+        '--planner-turn-scope', 'boss-elite-v1', '--planner-turns', '2',
+        '--combat-search-depth', '1'])
+    monkeypatch.setattr(cli, 'load_checkpoint', lambda *a, **kw: pytest.fail('loaded checkpoint'))
+    with pytest.raises(ValueError, match='combat-search cannot be combined'):
+        cli.main()

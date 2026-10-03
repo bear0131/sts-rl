@@ -15,7 +15,9 @@ from rl.policies import model as policy_model
 from rl.policies.checkpoint import load_checkpoint
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate, summarize
 from rl.evaluation.trajectory import EpisodeTraceCollector, render_episode_markdown
-from rl.evaluation.strategies import STRATEGIES, compose_strategy, strategy_manifest
+from rl.evaluation.strategies import (
+    STRATEGIES, compose_strategy, strategy_manifest, validate_planner_turn_scope,
+)
 from rl.search.combat_value_search import add_combat_search_args
 
 
@@ -65,6 +67,8 @@ def build_parser():
     parser.add_argument('--planner-beam', type=int, default=8)
     parser.add_argument('--planner-depth', type=int, default=16)
     parser.add_argument('--planner-turns', type=int, choices=(1, 2), default=1)
+    parser.add_argument('--planner-turn-scope', choices=('all', 'boss-elite-v1'), default='all',
+                        help='Restrict two-turn planning to all bosses and Nob/Lagavulin/Nemesis elites')
     parser.add_argument('--planner-leaf-profile',
                         choices=('legacy-v8', 'time-clock-v9'),
                         default='time-clock-v9')
@@ -133,6 +137,7 @@ def file_identity(path):
 
 def main():
     args = build_parser().parse_args()
+    validate_planner_turn_scope(args)
     torch.set_float32_matmul_precision(args.float32_matmul_precision)
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
     if args.combat_snapshot_output is not None and (args.trajectory_output is None or args.task != 'wholerun'):

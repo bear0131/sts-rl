@@ -457,9 +457,20 @@ def rule_strategy(model, args, lock=None):
     return PhaseStrategy(policy_strategy(model, args, lock), {'combat': CombatRuleStrategy()})
 
 
+def validate_planner_turn_scope(args):
+    scope = getattr(args, 'planner_turn_scope', 'all')
+    if scope not in ('all', 'boss-elite-v1'):
+        raise ValueError(f'unsupported planner turn scope: {scope}')
+    if scope != 'all' and (args.solver != 'turn-planner' or
+                          args.task != 'wholerun' or args.planner_turns != 2):
+        raise ValueError('--planner-turn-scope boss-elite-v1 requires --task wholerun '
+                         '--solver turn-planner --planner-turns 2')
+
+
 def turn_planner_strategy(model, args, lock=None):
     from env.search.turn_planner import TurnPlannerConfig
-    from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
+    from rl.evaluation.baselines.turn_planner import RiskTurnPlannerStrategy, TurnPlannerStrategy
+    validate_planner_turn_scope(args)
     config = TurnPlannerConfig(
         worlds=getattr(args, 'planner_worlds', 2),
         node_budget=getattr(args, 'planner_nodes', 512),
@@ -471,7 +482,9 @@ def turn_planner_strategy(model, args, lock=None):
     )
     return PhaseStrategy(
         policy_strategy(model, args, lock),
-        {'combat': TurnPlannerStrategy(config)},
+        {'combat': (RiskTurnPlannerStrategy(config)
+                    if getattr(args, 'planner_turn_scope', 'all') == 'boss-elite-v1'
+                    else TurnPlannerStrategy(config))},
     )
 
 
@@ -484,6 +497,7 @@ STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': val
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
+    validate_planner_turn_scope(args)
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
     if args.solver == 'turn-planner':
         strategy.routes['combat'].trace = trace
