@@ -2,7 +2,13 @@
 
 `nosl_sampler.py` 派生 opaque nonce；`nosl_is_az.py` 提供只依赖 NumPy/观测编码的 Python tree/session。模型前推由外部 value callback/leaf request 提供，不导入 Torch、训练器或 policy。
 
-env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一接口消费。这里解决了过去 env 反向导入 rl 的耦合。原生严格 Full Gumbel 树仍归 sim/；checkpoint value 对照搜索归 rl/search/。
+env/core/run_env.py 在 worker 中驱动这些 session；学习侧通过同一接口消费。这里解决了过去 env 反向导入 rl 的耦合。原生严格 Full Gumbel 树仍归 sim/；value-guided lookahead 对照搜索归 rl/search/。
+
+`turn_planner.py` 持有原生回合规划的采样、展开、预算和终局排序，不加载模型。
+可选 `leaf_evaluator` 只评价已选定的合法分支，不增加 transition 或重采样。
+评测侧 `rl/evaluation/baselines/turn_planner.py` 负责请求与策略组合，
+`planner_value.py::CheckpointLeafValue` 负责按模型合同调用共享观测编码器和叶推理。
+边界、兼容范围及命令参数统一见 [evaluation README](../../rl/evaluation/README.md)。
 
 `native_batch.py` 是常驻环境的无模型跨树适配层：C++ 线程池持有独立 session，
 仅 select/backup 在无 GIL 线程运行，Python 在每一波边界调用外部模型。C++ 数字观测

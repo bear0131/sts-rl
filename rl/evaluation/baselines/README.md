@@ -4,6 +4,11 @@
 `combat` 请求（含目标、药水、选牌子步骤）交给它，其余请求仍交给指定的上层 checkpoint。
 它是可解释的工程启发式，不代表人类平均水平，也不把分数解释成 Q 或真实终局 HP。
 
+本页的无前瞻规则说明针对 `CombatRuleStrategy`。同包的 `TurnPlannerStrategy`
+通过 `env/search/turn_planner.py` 执行原生回合规划；`CheckpointLeafValue`
+只适配模型叶值，不另建搜索或环境。规划器的 H0/H1/V1 边界、定向双回合、
+模型兼容范围与 CLI 参数统一见 [evaluation README](../README.md)。
+
 ## 支持与信息边界
 
 当前支持 simulator whole-run Ironclad、现有 thin action codec。75 张铁甲战士卡牌复用
