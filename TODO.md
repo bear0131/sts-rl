@@ -9,7 +9,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | AUDIT01 | 启动差异、合并审计及同期差距分析完成；因果归因待消融 | TRAIN28蓝线/初始eede419与TRAIN29红线/84de907并非只差SIM01/POL01；蓝线中途改变固定未来、aux、batch/micro及数值/rollout实现。POL01未复现新增训练错误，非穷举无bug证明。300–380轮75个双方完整窗口蓝35.923%、红28.890%，差7.033pp，主要出现在第三幕；总胜率计算/聚合六函数AST相同，觉醒者改变实际规则难度。窗口相关且每种设计只有一条训练轨迹，不能排除训练方差或量化合并负效应；需同模型同seed规则/合并推理消融及规则固定的训练消融，未启动实验。最新任务转为TRAIN32：暂停红线、回退搜索合并、修规则及OBS01后从零训练；因果归因仍未证明。见 `worklog/2026-10-03.md#audit01-red-blue-gap-attribution-results` 及原审计记录。 |
-| TRAIN32 | 搜索/规则修复已通过四机CPU与CUDA验收；观测修复待完成后启动 | 关闭POL01新增动作/未来合并，保留原蓝NOSL合同；SIM02/03/04已修、SIM01/POL02/数值/线程/存储修复保留。96×128×4、Gumbel1、原蓝稳定期学习配置、50M预算；独立step0。原红397完整保护，198/343冷归档解压校验后可恢复。用户新增要求补齐OBS01且不做旧模型兼容，生产尚未启动。见 worklog/2026-10-03.md#train32-implementation-validation。 |
+| TRAIN32 | 已从零启动；四机两轮保存及384环境恢复验收通过 | 新root sts-entity-train32，run entity-combat-d256-ar-blue-repro-g1-fresh-50m-20261003 / W&B entity256blue32p03。source a2cd3f2：蓝线individual slot搜索、Gumbel1、OBS18、SIM01/02/03/04、POL02及数值/线程/存储修复，96×128×4及原稳定期学习配置不变，50M绝对预算。49152/98304四rank model/Adam一致、Adam40/80、replay identity、finite1；196608每rank96环境journal恢复观测SHA一致。最新245760/5轮，训练窗口0/400（非独立评测）；未宣称复现蓝线胜率。红397及其他锚点保护，30分钟监控跟随TRAIN32。见 worklog/2026-10-03.md#train32-production-launch-acceptance。 |
 | METRIC01 | 已修复并回归通过 | 第三幕通过率使用与win_rate一致的终局胜利条件；总win_rate口径不变。act=3/victory、act>3/undecided、loss、截断4种回归通过；tests/unit/test_startup_stagger.py。 |
 | SIM02 | 已修复并四机原生回归通过 | Dark Shackles实际施加-9/-15力量，Artifact成功阻挡时不产生恢复buff；普通/升级、Artifact0/1/2、回合恢复覆盖。tests/integration/test_audit01_simulator_rules.py；见worklog/2026-10-03.md#train32-implementation-validation。 |
 | SIM03 | 已修复并四机原生回归通过 | Panache首次获得计数5，每5张触发后复位，叠加不重置当前进度，回合开始重置。首次/5张/10张/各牌类型/升级/叠加/跨回合覆盖，同SIM02测试入口。 |

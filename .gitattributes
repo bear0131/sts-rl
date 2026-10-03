@@ -1,3 +1,6 @@
 # Archived source material retains original bytes.
 docs/archive/** -whitespace
 docs/2026-09-13/codebase-audit.md -whitespace
+
+# Linux launchers must survive Windows checkouts without CRLF shell errors.
+experiments/launchers/*.sh text eol=lf
