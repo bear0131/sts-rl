@@ -43,6 +43,56 @@ def test_entity_attention_matches_pytorch_outputs_and_gradients(dtype, masked):
         torch.testing.assert_close(observed_grads[name], expected_grads[name], **tolerance)
 
 
+@pytest.mark.parametrize('optimized', [False, True])
+@pytest.mark.parametrize('masked', [False, True])
+@pytest.mark.parametrize('width,heads,length', [(32, 4, 11), (256, 8, 54)])
+def test_entity_attention_matches_explicit_fp64_formula(optimized, masked, width, heads, length):
+    """Judge both implementations against the formula, not against each other."""
+    from rl.policies.entity_combat import EntityEncoderLayer
+    torch.manual_seed(1729)
+    layer_type = EntityEncoderLayer if optimized else torch.nn.TransformerEncoderLayer
+    layer = layer_type(width, heads, 4*width, dropout=0., batch_first=True,
+                       norm_first=True, dtype=torch.float64).train()
+    data = torch.randn(3, length, width, dtype=torch.float64)
+    padding = torch.zeros(3, length, dtype=torch.float64)
+    if masked:
+        padding[1, 1::2] = -torch.inf
+        padding[2, 1:] = -torch.inf  # One visible key, as in a mostly empty state.
+    upstream = torch.randn_like(data) / data.numel()
+    attention = layer.self_attn
+    parameters = (attention.in_proj_weight, attention.in_proj_bias,
+                  attention.out_proj.weight, attention.out_proj.bias)
+
+    def explicit_attention(x):
+        # Independent per-head projections: no combined QKV reshape, MHA or SDPA.
+        head_width = width // heads
+        head_outputs = []
+        for head in range(heads):
+            projected = []
+            for component in range(3):
+                start = component * width + head * head_width
+                projected.append(torch.nn.functional.linear(
+                    x, attention.in_proj_weight[start:start+head_width],
+                    attention.in_proj_bias[start:start+head_width]))
+            query, key, value = projected
+            scores = query @ key.transpose(-1, -2) / head_width**.5
+            probabilities = torch.softmax(scores + padding[:, None, :], dim=-1)
+            head_outputs.append(probabilities @ value)
+        return torch.nn.functional.linear(torch.cat(head_outputs, dim=-1),
+                                          attention.out_proj.weight, attention.out_proj.bias)
+
+    x = data.clone().requires_grad_()
+    expected = explicit_attention(x)
+    expected_grads = torch.autograd.grad((expected*upstream).sum(), (x, *parameters))
+    y = data.clone().requires_grad_()
+    actual = layer._sa_block(y, None, padding)
+    actual_grads = torch.autograd.grad((actual*upstream).sum(), (y, *parameters))
+    # FP64 accumulation may reorder additions; this is far below FP32/BF16 noise.
+    torch.testing.assert_close(actual, expected, rtol=1e-11, atol=1e-12)
+    for observed, reference in zip(actual_grads, expected_grads, strict=True):
+        torch.testing.assert_close(observed, reference, rtol=1e-11, atol=1e-12)
+
+
 def test_entity_inference_keeps_reference_attention_layout():
     from rl.policies.entity_combat import EntityEncoderLayer
     torch.manual_seed(23)
