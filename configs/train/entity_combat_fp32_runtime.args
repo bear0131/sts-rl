@@ -3,3 +3,5 @@
 off
 --float32-matmul-precision
 highest
+--nosl-is-az-micro-batch-size
+5120

@@ -27,8 +27,9 @@ considered started merely because a PID file or parent process exists.
 For a full FP32 run, use `configs/train/entity_combat_fp32_runtime.args`
 and pass `-Float32MatmulPrecision highest` to the manager. This disables
 BF16 autocast and TF32 matmuls; the launcher otherwise retains its historical
-`high` default. Sampling, search and learning settings are inherited unchanged
-from the blue reproduction configuration.
+`high` default. The microbatch is 5120 to fit FP32 activations on a 32 GB GPU;
+the effective batch remains 102400. Other sampling, search and learning
+settings are inherited unchanged from the blue reproduction configuration.
 
 ## Forbidden Startup Sequences
 
