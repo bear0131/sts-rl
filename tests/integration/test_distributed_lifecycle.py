@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -63,7 +63,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_merge_equivalent_actions=merge,
         nosl_is_az_upper_strategy=upper,
-        nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
+        nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=3 if step_schedule else 1,
         nosl_is_az_update_schedule=(dict(mode='value-warmup', peak_updates=3,
             hold_rollouts=1, decay_rollouts=2) if combat_arch == 'entity' else None),
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
@@ -123,6 +123,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         ]
     if contract == 'autoregressive-v2':
         argv.append('--nosl-is-az-fixed-worldline')
+    if step_schedule:
+        argv += ['--nosl-is-az-update-schedule',
+                 '{"mode":"step","hold_rollouts":2,"final_updates":1}']
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
@@ -192,14 +195,17 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert payloads[-1]['legacy_step'] == 4
     if combat_arch == 'entity':
         assert [p['nosl_is_az/schedule_round'] for p in payloads] == [1, 2, 3, 4]
-        assert [p['nosl_is_az/scheduled_updates'] for p in payloads] == [3, 2, 1, 1]
-        assert [p['nosl_is_az/value_only_updates'] for p in payloads] == [2, 1, 0, 0]
-        assert [p['nosl_is_az/joint_updates'] for p in payloads] == [1, 1, 1, 1]
+        assert [p['nosl_is_az/scheduled_updates'] for p in payloads] == ([3, 3, 1, 1] if step_schedule else [3, 2, 1, 1])
+        assert [p['nosl_is_az/value_only_updates'] for p in payloads] == ([0, 0, 0, 0] if step_schedule else [2, 1, 0, 0])
+        assert [p['nosl_is_az/joint_updates'] for p in payloads] == ([3, 3, 1, 1] if step_schedule else [1, 1, 1, 1])
         final = AccumulatingMaskablePPO.load(output, device='cpu')
         optimizer = final.policy.optimizer
         for parameter in final.policy.core.policy_only_parameters():
-            assert optimizer.state[parameter]['step'].item() == 4
-        assert optimizer.state[final.policy.core.combat.distribution.win.weight]['step'].item() == 7
+            assert optimizer.state[parameter]['step'].item() == (8 if step_schedule else 4)
+        assert optimizer.state[final.policy.core.combat.distribution.win.weight]['step'].item() == (8 if step_schedule else 7)
+        if step_schedule:
+            from rl.algorithms.update_schedule import CombatUpdateSchedule
+            assert CombatUpdateSchedule.from_config(final.nosl_is_az_update_schedule).plan(4, 3) == (1, 0)
     assert finished == [0, 0]
     if contract == 'autoregressive-v2':
         assert all(value is True for value in fixed_calls)
@@ -271,7 +277,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['wandb_id'] == 'ci-fork-run'
         assert manifest['config']['fork_source_global_step'] == 128
 
-    if nosl and combat_arch == 'entity' and contract == 'autoregressive-v2':
+    if nosl and combat_arch == 'entity' and contract == 'autoregressive-v2' and not step_schedule:
         stop_file.unlink()
         fork_root = tmp_path / 'hyperparameter-fork'
         source = tmp_path / 'state' / 'rank0' / 'step-000000000128'
@@ -334,6 +340,13 @@ def test_cpu_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_ty
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         nosl, 'rules' if nosl else 'model', 'entity' if nosl else 'transformer',
         'autoregressive-v2' if nosl else 'legacy', vector='native')
+
+
+def test_joint_step_schedule_survives_resume_at_boundary(tmp_path, monkeypatch, capsys, short_combat_env_type):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'rules', 'entity', 'autoregressive-v2', vector='native',
+        merge=False, step_schedule=True)
 
 
 def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type):

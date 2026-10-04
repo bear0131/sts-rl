@@ -16,6 +16,7 @@ experiment targets.
 from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
 
 import argparse
@@ -612,7 +613,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Joint policy/value updates per collection (warmup adds value updates).",
     )
     parser.add_argument("--nosl-is-az-update-schedule",
-                        choices=("constant", "value-warmup"), default=None)
+                        type=parse_update_schedule, default=None,
+                        help="constant, value-warmup, or a schedule JSON object.")
     parser.add_argument("--nosl-is-az-policy-coef", type=float, default=None,
                         help="NOSL group cross-entropy weight; omission preserves the checkpoint.")
     parser.add_argument("--nosl-is-az-value-coef", type=float, default=None,

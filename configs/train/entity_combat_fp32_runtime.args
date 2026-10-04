@@ -5,3 +5,5 @@ off
 highest
 --nosl-is-az-micro-batch-size
 5120
+--nosl-is-az-update-schedule
+{"mode":"step","hold_rollouts":100,"final_updates":16}

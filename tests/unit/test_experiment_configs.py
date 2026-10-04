@@ -9,6 +9,38 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_fp32_runtime_only_changes_precision_microbatch_and_joint_update_schedule(monkeypatch):
+    from rl.algorithms.update_schedule import CombatUpdateSchedule
+    from rl.tasks import TASKS
+    from rl.training.trainer import build_parser as initial_parser
+    monkeypatch.chdir(ROOT)
+    parser = build_parser()
+    base = ['--rank', '0', '--world-size', '4', '--checkpoint', 'unused.zip']
+    blue = vars(parser.parse_args([*base, '@configs/train/entity_combat_blue_repro_runtime.args']))
+    fp32 = vars(parser.parse_args([*base, '@configs/train/entity_combat_fp32_runtime.args']))
+    assert {key for key in blue if blue[key] != fp32[key]} == {
+        'amp_mode', 'float32_matmul_precision', 'nosl_is_az_micro_batch_size',
+        'nosl_is_az_update_schedule'}
+    assert fp32['amp_mode'] == 'off' and fp32['float32_matmul_precision'] == 'highest'
+    assert fp32['nosl_is_az_micro_batch_size'] == 5120
+    assert fp32['n_envs'] == 96 and fp32['n_steps'] == 128
+    schedule = CombatUpdateSchedule.from_config(fp32['nosl_is_az_update_schedule'])
+    assert schedule.plan(99, fp32['nosl_is_az_updates']) == (40, 0)
+    assert schedule.plan(100, fp32['nosl_is_az_updates']) == (16, 0)
+    initial = initial_parser(TASKS['wholerun']).parse_args([
+        '--task', 'wholerun', '--nosl-is-az-update-schedule',
+        json.dumps(fp32['nosl_is_az_update_schedule'])])
+    assert initial.nosl_is_az_update_schedule == fp32['nosl_is_az_update_schedule']
+
+
+@pytest.mark.parametrize('schedule', ['step', '{"mode":"step","final_updates":0}',
+                                     '{"mode":"typo"}', '{"hold_rollouts":true}'])
+def test_schedule_cli_rejects_invalid_objects(schedule):
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(['--rank', '0', '--world-size', '1',
+            '--checkpoint', 'unused.zip', '--nosl-is-az-update-schedule', schedule])
+
+
 def test_entity_fresh_initialization_and_distributed_search_share_requested_contract(monkeypatch):
     from rl.tasks import TASKS
     from rl.training.trainer import build_parser as initial_parser

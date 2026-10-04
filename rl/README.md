@@ -127,6 +127,10 @@ python -m rl.training.trainer --task wholerun @configs/train/entity_combat.args 
 并非另行采集的均匀随机策略数据。该曲线是实验设计，尚未证明优于固定U4/U40。
 调度按累计global steps除以四机整轮动作量计算（生产每轮49152），保存恢复不重启warmup。
 日志区分scheduled_updates、value_only_updates、joint_updates；零有效标签时实际更新可以为0。
+阶跃实验用 `--nosl-is-az-updates 40 --nosl-is-az-update-schedule '{"mode":"step","hold_rollouts":100,"final_updates":16}'`：
+前100轮全部为40次联合更新，第101轮起全部为16次联合更新，没有额外value-only更新。
+JSON对象也可作为args文件中独立一行。`step`同样仅支持entity-combat C++ inner-only NOSL；
+调度随checkpoint保存，用绝对采样步数恢复，暂停/恢复不会重新等待100轮。TRAIN33的FP32运行配置使用此规则。
 旧checkpoint和未指定该选项的入口默认constant；value-warmup仅支持entity-combat的C++ inner-only NOSL。
 初始化与分布式运行共用 `configs/train/entity_combat_learning.args`；
 `entity_combat_runtime.args` 用于既有四机launcher，目标50M，BF16。

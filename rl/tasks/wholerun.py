@@ -12,6 +12,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from env.core.run_env import SlayTheSpireEnv
 from rl.policies.split_policy import SplitStSPointerPolicy
 from rl.tasks.base import Task
+from rl.algorithms.update_schedule import parse_update_schedule
 
 
 # Hard per-episode step cap (safety net for bug #1's infinite-combat / pathological
@@ -465,7 +466,8 @@ class WholeRunTask(Task):
         )
         parser.add_argument("--nosl-is-az-updates", type=int, default=1)
         parser.add_argument("--nosl-is-az-update-schedule",
-                            choices=("constant", "value-warmup"), default="constant")
+                            type=parse_update_schedule, default="constant",
+                            help="constant, value-warmup, or a schedule JSON object.")
         parser.add_argument("--nosl-is-az-policy-coef", type=float, default=1.0)
         parser.add_argument("--nosl-is-az-value-coef", type=float, default=0.5)
 
