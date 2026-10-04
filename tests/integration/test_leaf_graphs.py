@@ -12,13 +12,18 @@ pytestmark = pytest.mark.native
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='direct native graph inputs require CUDA')
-@pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2'])
+@pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2', 'boss'])
 def test_native_writer_matches_materialized_model_inputs(combat_factory, contract):
     import slaythespire as sts
     from env.search.native_batch import NativeSearchBatch
     from rl.policies.entity_combat import EntityCombatPolicy
+    boss_weight = .9 if contract == 'boss' else 0.
+    if boss_weight:
+        contract = 'autoregressive-v2'
     entity = contract != 'legacy'
     env = combat_factory(['PURITY'] * 5, combat_action_contract=contract, card_language=entity)
+    if boss_weight:
+        env.thick.gc.cur_room = sts.Room.BOSS
     env.thick.bc.apply_custom_state({'hand': ['PURITY'] + ['STRIKE_RED'] * 5})
     env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
     env._invalidate_backend_cache()
@@ -26,7 +31,7 @@ def test_native_writer_matches_materialized_model_inputs(combat_factory, contrac
         env, device='cuda', seed=1729, n_steps=8, batch_size=4,
         nosl_is_az=entity, nosl_is_az_cpp=entity, nosl_is_az_inner_only=entity,
         nosl_is_az_upper_strategy='rules' if entity else 'model',
-        policy_kwargs=(dict(entity_config=dict(width=32,layers=1,heads=4)) if entity
+        policy_kwargs=(dict(entity_config=dict(width=32,layers=1,heads=4,boss_win_weight=boss_weight)) if entity
                        else dict(d_model=32,n_layers=2,n_heads=4)))
     model.policy.set_training_mode(False)
     cache = CombatLeafGraphs(model.policy.core, 'cuda', amp='bf16', batch_multiple=4)
@@ -34,7 +39,8 @@ def test_native_writer_matches_materialized_model_inputs(combat_factory, contrac
     pool = NativeSearchBatch([env], 2)
     try:
         pool.begin({0: ((np.zeros(env.action_space.n),), dict(simulations=16, state_nonce=1729,
-            compact_observation=True, leaf_batch_size=1, fixed_worldline=True))})
+            compact_observation=True, leaf_batch_size=1, fixed_worldline=True,
+            boss_win_weight=boss_weight))})
         calls = 0
         while not pool.done:
             direct = cache.forward_native(pool)

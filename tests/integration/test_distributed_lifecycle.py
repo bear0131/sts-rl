@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0.):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -57,6 +57,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     policy = EntityCombatPolicy if combat_arch == 'entity' else SplitStSPointerPolicy
     kwargs = (dict(entity_config=dict(width=32,layers=1,heads=4,quantiles=8))
               if combat_arch == 'entity' else dict(d_model=32,n_layers=2,n_heads=4,combat_arch=combat_arch))
+    if combat_arch == 'entity':
+        kwargs['entity_config']['boss_win_weight'] = boss_weight
     model = AccumulatingMaskablePPO(
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
@@ -349,6 +351,27 @@ def test_joint_step_schedule_survives_resume_at_boundary(tmp_path, monkeypatch, 
         merge=False, step_schedule=True)
 
 
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='boss BF16 lifecycle requires CUDA'))])
+def test_boss_utility_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, device):
+    import slaythespire as sts
+    class BossEnv(short_combat_env_type):
+        def reset(self, **kwargs):
+            super().reset(**kwargs)
+            self.thick.gc.cur_room = sts.Room.BOSS
+            self._invalidate_backend_cache()
+            return self._obs(), self._info()
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, BossEnv, True, 'rules', 'entity',
+        'autoregressive-v2', vector='native', boss_weight=.9, device=device,
+        amp='bf16' if device == 'cuda' else 'off')
+    bundle=tmp_path/'state'/'rank0'/'step-000000000128'
+    manifest=json.loads((bundle/'manifest.json').read_text())
+    assert manifest['config']['entity_config']['boss_win_weight']==.9
+    replay=torch.load(bundle/'learner.pt',map_location='cpu',weights_only=False)['replay']
+    assert (replay['observations']['combat_is_boss'] > 0).any()
+
+
 def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type):
     class VisiblePowerEnv(short_combat_env_type):
         def reset(self, **kwargs):
@@ -362,7 +385,7 @@ def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_c
     from env.core import encode
     bundle = tmp_path / 'state' / 'rank0' / 'step-000000000128'
     manifest = json.loads((bundle / 'manifest.json').read_text())
-    assert manifest['observation_version'] == encode.OBS_VERSION == 18
+    assert manifest['observation_version'] == encode.OBS_VERSION == 19
     replay = torch.load(bundle / 'learner.pt', map_location='cpu', weights_only=False)['replay']
     index = encode.V.PLAYER_BUFF_VOCAB_INDEX['Barricade']
     assert (replay['observations']['player_buffs'][:, index] > 0).any()

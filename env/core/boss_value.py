@@ -14,6 +14,24 @@ import math
 HP_SCALE = 200.0
 
 
+def is_boss_room(room) -> bool:
+    """Public room identity; stable through splits, summons and resurrection.
+
+    Includes both A20 bosses and the Heart. The transition-healing experiment
+    below has different eligibility and must not be reused for this objective.
+    """
+    return enum_name(room).split('.')[-1] in {'BOSS', 'MONSTERROOMBOSS'}
+
+
+def win_hp_utility(win, hp, weight):
+    """Expectation or observed label: win * (weight + (1-weight) * hp).
+
+    hp is capped pre-settlement HP / 200 conditional on winning. Inputs may
+    be scalars or tensors; callers own outcome validation and the boss mask.
+    """
+    return win * (weight + (1.0 - weight) * hp)
+
+
 def enum_name(value) -> str:
     """Return a stable tail name for strings and pybind enum values."""
     if value is None:

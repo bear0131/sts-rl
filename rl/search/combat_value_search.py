@@ -182,6 +182,8 @@ class CombatValueSearch:
     ) -> None:
         self.model = model
         self.policy = model.policy
+        if getattr(self.policy, 'entity_config', {}).get('boss_win_weight', 0.0):
+            raise ValueError('boss utility currently requires native AR search')
         self.config = config or CombatValueSearchConfig()
         self.model_lock = model_lock
         self.expanded_nodes = 0

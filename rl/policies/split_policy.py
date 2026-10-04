@@ -45,6 +45,7 @@ def _active_prefix_width(ids: torch.Tensor) -> int:
 # Runtime routing is deliberately stricter than the unified Gym Dict space.
 # A specialist cannot accidentally consume fields owned by the other phase.
 COMBAT_OBSERVATION_KEYS = frozenset({
+    "combat_is_boss",
     "combat_legal",
     "arg_step",
     "ascension",

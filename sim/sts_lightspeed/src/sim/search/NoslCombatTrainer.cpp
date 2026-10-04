@@ -22,7 +22,12 @@ namespace {
 // learner's HP target (encode.HP_SCALE).
 constexpr double HP_VALUE_SCALE = 200.0;
 
-double bossTransitionTerminalValue(const BattleContext &bc, int mode) {
+double bossTransitionTerminalValue(const BattleContext &bc, int mode, double winWeight = 0.0) {
+    if (winWeight > 0.0) {
+        if (bc.outcome == Outcome::PLAYER_LOSS) return 0.0;
+        const double hp = std::clamp(static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
+        return bc.outcome == Outcome::PLAYER_VICTORY ? winWeight + (1.0 - winWeight) * hp : hp;
+    }
     if (mode == 0 || bc.outcome == Outcome::UNDECIDED) {
         return std::clamp(
             static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
@@ -861,6 +866,10 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     std::uint64_t searchNonce,
     double rootValue)
     : config_(config), rootState_(rootState), searchNonce_(searchNonce) {
+    if (!std::isfinite(config_.bossWinWeight) || config_.bossWinWeight < 0.0 ||
+        config_.bossWinWeight > 1.0 || (config_.bossWinWeight > 0.0 &&
+        (!config_.autoregressivePolicy || config_.bossTransitionValueMode != 0 || config_.modelVictoryTerminal)))
+        throw std::invalid_argument("boss utility requires AR and exact fight-local terminal outcomes");
     // NOSL treats draw-pile order as hidden. Canonicalize the copied root once
     // so every simulation can shuffle the same representation without paying
     // an O(n log n) sort before its independent permutation.
@@ -2197,7 +2206,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         }
         if (!haveLeaf) {
             finishTerminal(pending, bossTransitionTerminalValue(
-                state, config_.bossTransitionValueMode));
+                state, config_.bossTransitionValueMode, config_.bossWinWeight));
             continue;
         }
         if ((state.outcome != Outcome::UNDECIDED &&
@@ -2205,7 +2214,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                state.outcome == Outcome::PLAYER_VICTORY)) ||
             (pending.needsPolicy && pending.legalActions.empty())) {
             finishTerminal(pending, bossTransitionTerminalValue(
-                state, config_.bossTransitionValueMode));
+                state, config_.bossTransitionValueMode, config_.bossWinWeight));
             continue;
         }
 

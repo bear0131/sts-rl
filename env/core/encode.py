@@ -61,7 +61,7 @@ from . import combat_language as CL
 # It adds a lossless per-card master-deck sequence (including upgrade count),
 # action-aligned upgrade fields for every overworld card choice, and persistent
 # run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
-OBS_VERSION = 18  # active boolean player powers, including Pen Nib
+OBS_VERSION = 19  # public boss-room identity for fight utility
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14
@@ -181,6 +181,7 @@ def obs_space(*, global_map_view=False, card_language=False,
         "player_buffs": scal((V.PLAYER_BUFF_VEC,)),
         "combat_counters": scal((COMBAT_COUNTERS,)),
         "post_enemy_turn_boundary": scal((1,)),
+        "combat_is_boss": scal((1,)),
         # ---- monsters (fixed slots; slot i == action target i) ----
         "monster_id": cat((MAX_MONSTERS,), V.MONSTER_VOCAB_CAPACITY),
         "monster_move": cat((MAX_MONSTERS,), V.MOVE_VOCAB_CAPACITY),
@@ -383,6 +384,7 @@ def _empty(*, global_map_view=False, card_language=False,
         "player_buffs": np.zeros(V.PLAYER_BUFF_VEC, _SCALAR),
         "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
         "post_enemy_turn_boundary": np.zeros(1, _SCALAR),
+        "combat_is_boss": np.zeros(1, _SCALAR),
         "monster_id": np.zeros(MAX_MONSTERS, _CAT),
         "monster_move": np.zeros(MAX_MONSTERS, _CAT),
         "monster_intent_cat": np.zeros(MAX_MONSTERS, _CAT),
@@ -506,6 +508,7 @@ def _empty_combat(*, card_language=False, combat_language=False):
         "character": np.zeros(1, _CAT),
         "combat_counters": np.zeros(COMBAT_COUNTERS, _SCALAR),
         "post_enemy_turn_boundary": np.zeros(1, _SCALAR),
+        "combat_is_boss": np.zeros(1, _SCALAR),
         "discard_counts": np.zeros(N_CARDS, _SCALAR),
         "draw_counts": np.zeros(N_CARDS, _SCALAR),
         "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
@@ -669,6 +672,7 @@ def _encode_combat_global(o, canon):
         canon.get("arg_step", "root"), 0
     )
     g = canon.get("global")
+    o["combat_is_boss"][0] = float(bool((g or {}).get("combat_is_boss", False)))
     if g is None:
         return
     o["character"][0] = V.CHARACTER_VOCAB_INDEX.get(
@@ -716,6 +720,7 @@ def _encode_global(o, canon):
     # omit it -> root, index 0). Kept here so it is filled every phase.
     o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(canon.get("arg_step", "root"), 0)
     g = canon.get("global")
+    o["combat_is_boss"][0] = float(bool((g or {}).get("combat_is_boss", False)))
     if g is None:
         return
     o["character"][0] = V.CHARACTER_VOCAB_INDEX.get(g.get("character", "INVALID"), 0)

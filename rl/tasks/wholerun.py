@@ -277,6 +277,8 @@ class WholeRunTask(Task):
         )
         parser.add_argument("--nosl-is-az-upper-strategy", choices=("model", "rules"), default=None,
                             help="Whole-run decisions outside combat; entity-combat requires rules.")
+        parser.add_argument("--boss-win-weight", type=float, default=0.0,
+                            help="Entity combat boss utility: w * P(win) + (1-w) * E(win*HP/200).")
         parser.add_argument("--hp-quantiles", type=int, default=32,
                             help="Conditional HP utility quantiles for entity-combat.")
         parser.add_argument(
@@ -533,7 +535,7 @@ class WholeRunTask(Task):
             from rl.policies.entity_combat import EntityCombatPolicy
             return EntityCombatPolicy, dict(entity_config=dict(
                 width=args.d_model, layers=args.n_layers, heads=args.n_heads,
-                quantiles=args.hp_quantiles))
+                quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight))
         if args.arch == "semantic-reasoning":
             if args.interactive_reasoning is False:
                 raise ValueError(

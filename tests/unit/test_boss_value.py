@@ -227,6 +227,7 @@ def test_opt_in_native_search_fails_closed_on_legacy_extension():
             raise TypeError("incompatible function arguments")
 
     env = SlayTheSpireEnv.__new__(SlayTheSpireEnv)
+    env._autoregressive_actions = False
     env.thick = SimpleNamespace(
         gc=SimpleNamespace(
             cur_room="BOSS",

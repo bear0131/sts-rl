@@ -1,0 +1,10 @@
+@configs/train/entity_combat_runtime.args
+--vec
+native
+--native-search-threads
+4
+--leaf-graph-profile-interval
+0
+--nosl-is-az-gumbel-scale
+1
+--nosl-is-az-merge-equivalent-actions

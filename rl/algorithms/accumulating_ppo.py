@@ -1186,6 +1186,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
                                 "gumbel_scale": self.nosl_is_az_gumbel_scale,
                                 "merge_equivalent_actions": self.nosl_is_az_merge_equivalent_actions,
+                                "boss_win_weight": getattr(self.policy, "entity_config", {}).get("boss_win_weight", 0.0),
                                 "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
                                 "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
@@ -2369,6 +2370,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
                 pred_values = values.float().flatten()
                 target_values = value_targets.float().flatten()
+                if getattr(self, "_combat_distribution", False) and "boss_win_weight" in distribution_outputs:
+                    from env.core.boss_value import win_hp_utility
+                    target_values = win_hp_utility(combat_targets[:, 0].float(), target_values,
+                        distribution_outputs["boss_win_weight"].float().flatten())
                 monitor_values = {
                     "target_entropy": target_entropy_per_sample,
                     "policy_entropy": policy_entropy_per_sample,

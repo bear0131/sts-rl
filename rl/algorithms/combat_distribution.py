@@ -1,6 +1,8 @@
 """Observed fight outcomes and losses for the entity combat experiment.
 
-Utility remains min(pre-settlement HP, 200)/200, with zero on death.
+Labels retain min(pre-settlement HP, 200)/200 and explicit win/loss. The
+policy's optional boss weight transforms only the utility expectation/target;
+conditional HP quantiles and win BCE retain their original interpretation.
 No inferred win labels, censored fights, or imagined search leaves are accepted.
 """
 import numpy as np
@@ -69,8 +71,12 @@ def distribution_loss(outputs, targets, values, *, mean_coef=.25, auxiliary_coef
     error = values.float().flatten()[:, None] - quantiles
     pinball = torch.maximum(tau * error, (tau - 1) * error).mean(-1) * win
     bce = F.binary_cross_entropy_with_logits(logits, win, reduction='none')
-    expectation = torch.sigmoid(logits) * quantiles.mean(-1)
-    mean = (expectation - values.flatten().float()).square()
+    from env.core.boss_value import win_hp_utility
+    weight = outputs.get("boss_win_weight")
+    weight = 0.0 if weight is None else weight.float().flatten()
+    expectation = win_hp_utility(torch.sigmoid(logits), quantiles.mean(-1), weight)
+    utility_target = win_hp_utility(win, values.flatten().float(), weight)
+    mean = (expectation - utility_target).square()
     if auxiliary_coef:
         aux = F.smooth_l1_loss(outputs['transition'].float(), targets[:, 3:].float(),
                               reduction='none').mean(-1) * targets[:, 2]

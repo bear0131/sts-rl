@@ -676,6 +676,7 @@ class RealGameAdapter:
         return canon
 
     def _global_block(self) -> dict[str, Any]:
+        from env.core.boss_value import is_boss_room
         ss = _screen_state(self.gs)
         return {
             "character": self.gs.get("class") or self.character,
@@ -685,6 +686,7 @@ class RealGameAdapter:
             ),
             "act": int(self.gs.get("act", 0) or 0),
             "floor": int(self.gs.get("floor", 0) or 0),
+            "combat_is_boss": is_boss_room(self.gs.get("room_type", "")),
             "boss": _normalize_boss(
                 self.gs.get("boss")
                 or self.gs.get("act_boss")

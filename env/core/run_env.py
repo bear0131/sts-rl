@@ -112,8 +112,8 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 3:
-        raise RuntimeError("observation v18 requires native compact layout v3; rebuild the simulator")
+    if layout.get("version") != 3 or layout.get("observation_version") != encode.OBS_VERSION:
+        raise RuntimeError("observation v19 requires matching native compact layout v3; rebuild the simulator")
 
     def _power_name(name):
         # Simulator enum names are intentionally normalized the same way as
@@ -1308,7 +1308,7 @@ class SlayTheSpireEnv(gym.Env):
             })
             cached = (global_state, {
                 key: template[key] for key in (
-                    "arg_step", "ascension", "character", "gold",
+                    "arg_step", "ascension", "character", "gold", "combat_is_boss",
                     "relics", "relic_counters")
             })
             if global_state is not None:
@@ -1624,8 +1624,14 @@ class SlayTheSpireEnv(gym.Env):
         _defer_packed_observation: bool = False,
         _defer_leaf_selection: bool = False,
         merge_equivalent_actions: bool = True,
+        boss_win_weight: float = 0.0,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
+        from env.core.boss_value import is_boss_room
+        if not 0 <= boss_win_weight <= 1:
+            raise ValueError("boss_win_weight must be in [0, 1]")
+        if boss_win_weight and (not self._autoregressive_actions or boss_transition_target or model_victory_terminal):
+            raise ValueError("boss utility requires AR actions and exact fight-local terminal outcomes")
         begin_started = time.perf_counter()
         self._nosl_merge_equivalent_actions = bool(merge_equivalent_actions)
         if self.thick is None or self._phase() != "combat":
@@ -1653,6 +1659,10 @@ class SlayTheSpireEnv(gym.Env):
             if not merge_equivalent_actions:
                 terminal_args = [sum(1 << i for i in (self._multi or ())),
                                  bool(model_victory_terminal), False]
+            if boss_win_weight:
+                terminal_args = [sum(1 << i for i in (self._multi or ())),
+                                 False, bool(merge_equivalent_actions),
+                                 float(boss_win_weight) if is_boss_room(self.thick.gc.cur_room) else 0.0]
             self._nosl_cpp_az_session = session_factory(
                 np.asarray(prior_logits, dtype=np.float64),
                 int(simulations), int(depth), float(c_puct),
@@ -1675,6 +1685,8 @@ class SlayTheSpireEnv(gym.Env):
                 *terminal_args,
             )
         except TypeError as error:
+            if boss_win_weight:
+                raise RuntimeError('boss utility requires the matching native search build') from error
             if not merge_equivalent_actions:
                 raise RuntimeError('individual-actions requires the matching native search build') from error
             if model_victory_terminal:

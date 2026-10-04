@@ -81,8 +81,13 @@ class NativeSearchConfig:
     boss_transition_target: bool = False
     model_victory_terminal: bool = False
     merge_equivalent_actions: bool = True
+    boss_win_weight: float = 0.0
 
     def __post_init__(self):
+        if not 0 <= self.boss_win_weight <= 1:
+            raise ValueError('boss_win_weight must be in [0, 1]')
+        if self.boss_win_weight and (self.boss_transition_target or self.model_victory_terminal):
+            raise ValueError('boss utility requires exact fight-local terminal outcomes')
         if self.simulations < 1 or self.depth < 0 or self.leaf_batch_size < 1:
             raise ValueError("search requires simulations >= 1, depth >= 0, leaf_batch_size >= 1")
         if self.root_search_mode not in (0, 1, 2):
@@ -100,6 +105,7 @@ class NativeSearchConfig:
     @classmethod
     def from_model(cls, model, **overrides):
         values = {f.name: getattr(model, 'nosl_is_az_' + f.name, f.default) for f in fields(cls)}
+        values['boss_win_weight'] = getattr(getattr(model, 'policy', None), 'entity_config', {}).get('boss_win_weight', 0.0)
         values.update({key: value for key, value in overrides.items() if value is not None})
         return cls(**values)
 
@@ -876,6 +882,8 @@ def search(model, env, observation, config, *, nonce, decision_index=0, stochast
     """Single-tree adapter used by interactive and fixed-scenario evaluation."""
     started = time.monotonic()
     base = env.unwrapped
+    if config.boss_win_weight != getattr(model.policy, 'entity_config', {}).get('boss_win_weight', 0.0):
+        raise ValueError('search and policy boss utility must match; use NativeSearchConfig.from_model')
     compact = supports_compact(model)
     logits, value = root_outputs if root_outputs is not None else forward_root(model, observation, lock=lock)
     logits = np.asarray(logits).reshape(-1)

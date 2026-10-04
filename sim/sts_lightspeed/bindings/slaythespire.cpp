@@ -1672,7 +1672,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["version"] = 3;
-        out["observation_version"] = 18;
+        out["observation_version"] = 19;
         out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
         out["candidate_overflow_contract"] = "overflow-equivalent-v1";
@@ -2957,7 +2957,8 @@ PYBIND11_MODULE(slaythespire, m) {
                 bool paper_full_gumbel,
                 bool fixed_worldline,
                 int boss_transition_value_mode, int selection_prefix,
-                bool model_victory_terminal, bool merge_equivalent_actions) {
+                bool model_victory_terminal, bool merge_equivalent_actions,
+                double boss_win_weight) {
                 std::vector<double> logits;
                 auto view = root_policy_logits.unchecked<1>();
                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -2997,6 +2998,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 config.bossTransitionValueMode = boss_transition_value_mode;
                 config.modelVictoryTerminal = model_victory_terminal;
                 config.mergeEquivalentActions = merge_equivalent_actions;
+                config.bossWinWeight = boss_win_weight;
                 config.seed = nonce;
                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
                     bc, logits, config, nonce, root_value);
@@ -3029,6 +3031,7 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("selection_prefix") = 0,
              pybind11::arg("model_victory_terminal") = false,
              pybind11::arg("merge_equivalent_actions") = true,
+             pybind11::arg("boss_win_weight") = 0.0,
              "start a neural-guided C++ NOSL AlphaZero session")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;

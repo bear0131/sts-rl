@@ -22,8 +22,11 @@ class EntityCombatConfig:
     quantiles: int = 32
     mean_loss_coef: float = .25
     auxiliary_loss_coef: float = 0.0
+    boss_win_weight: float = 0.0
 
     def __post_init__(self):
+        if not 0 <= self.boss_win_weight <= 1:
+            raise ValueError('boss_win_weight must be finite and in [0, 1]')
         if min(self.width, self.layers, self.heads, self.pile_queries) < 1 or self.width % self.heads:
             raise ValueError('invalid entity transformer geometry')
         if self.quantiles < 2 or min(self.mean_loss_coef, self.auxiliary_loss_coef) < 0:
@@ -89,6 +92,8 @@ class EntityCombatNetwork(nn.Module):
         self.scalar_keys = ('player_scalars','player_buffs','combat_counters',
                             'post_enemy_turn_boundary','ascension','gold','pick_remaining',
                             'can_pick_zero','can_pick_any')
+        if config.boss_win_weight:
+            self.scalar_keys += ('combat_is_boss',)
         # Additional HP deficit, log turn, and soft threshold features.
         self.player_projection = nn.Linear(sum(prod(space[k].shape) for k in self.scalar_keys)+6, width)
         self.turn_bucket = nn.Embedding(32, width)
@@ -105,6 +110,8 @@ class EntityCombatNetwork(nn.Module):
         self.pointer_key = nn.Linear(width, width)
         self.end = nn.Linear(width, 1)
         self.autoregressive_actions = C.policy_contract(space) == C.AUTOREGRESSIVE_CONTRACT
+        if config.boss_win_weight and not self.autoregressive_actions:
+            raise ValueError('boss utility requires autoregressive-v2 actions')
         self.complete_head = CompleteCombatHead(width, autoregressive=self.autoregressive_actions)
         self.distribution = CombatDistributionHead(width, config.quantiles)
         self.transition = nn.Sequential(nn.Linear(3*width, width), nn.GELU(), nn.Linear(width, 6))
@@ -244,6 +251,12 @@ class EntityCombatNetwork(nn.Module):
             blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets,
             selected=obs['select_hand_mask'], remaining=(obs['pick_remaining']*encode.PICK_SCALE).round())
         values, outputs = self.distribution(state)
+        if self.config.boss_win_weight:
+            from env.core.boss_value import win_hp_utility
+            weight = obs["combat_is_boss"].float() * self.config.boss_win_weight
+            values = win_hp_utility(outputs["win_logits"].sigmoid(),
+                                    outputs["hp_quantiles"].mean(-1, keepdim=True), weight)
+            outputs["boss_win_weight"] = weight
         if auxiliary_actions is not None and self.config.auxiliary_loss_coef:
             actions = auxiliary_actions.long() + (C.JOINT_END if self.autoregressive_actions else 0)
             row = torch.arange(len(actions),device=actions.device)

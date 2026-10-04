@@ -550,6 +550,7 @@ def normalize_sim_global(gc):
         "hp": gc.cur_hp,
         "max_hp": gc.max_hp,
         "boss": _enum_tail(gc.boss),
+        "combat_is_boss": _enum_tail(getattr(gc, "cur_room", "")) == "BOSS",
         "relics": [item["id"] for item in relic_state],
         "relic_counters": [item["counter"] for item in relic_state],
         "potions": list(gc.overworld_potions),

@@ -1,0 +1,6 @@
+@configs/train/entity_combat.args
+--boss-win-weight
+0.9
+--nosl-is-az-merge-equivalent-actions
+--nosl-is-az-gumbel-scale
+1
