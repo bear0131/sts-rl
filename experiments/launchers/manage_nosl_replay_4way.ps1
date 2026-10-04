@@ -41,6 +41,8 @@ param(
     [int]$TimeoutSeconds = 1200,
     [int]$PollSeconds = 15,
     [int]$RingPort = 29789,
+    [ValidateSet("highest", "high", "medium")]
+    [string]$Float32MatmulPrecision = "high",
     [ValidateRange(2, 100)]
     [int]$MaxCheckpoints = 2,
     [ValidateRange(1, 1000000)]
@@ -260,6 +262,7 @@ function Get-LaunchCommand($Peer) {
 set -euo pipefail
 repo=$repo
 cd "`$repo"
+export NOSL_REPO="`$repo"
 # Windows worktrees can carry CRLF even though the remote runtime is Bash.
 sed -i 's/\r$//' experiments/launchers/launch_nosl_replay.sh
 export NOSL_RUN_ID=$(ConvertTo-BashQuote $RunId)
@@ -269,6 +272,7 @@ export NOSL_ARGS_FILE=$args
 export NOSL_CHECKPOINT=$checkpoint
 export NOSL_PEER_PORTS=$ports
 export NOSL_RING_PORT=$RingPort
+export NOSL_FLOAT32_MATMUL_PRECISION=$(ConvertTo-BashQuote $Float32MatmulPrecision)
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
 export NOSL_SAVE_EVERY_UPDATES=$SaveEveryUpdates
 # The manager cleans the shared transport root once for all ranks before

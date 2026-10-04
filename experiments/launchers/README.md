@@ -24,6 +24,12 @@ The cleanup and skip behavior is implemented in
 `launch_nosl_replay.sh` and `manage_nosl_replay_4way.ps1`. A run is not
 considered started merely because a PID file or parent process exists.
 
+For a full FP32 run, use `configs/train/entity_combat_fp32_runtime.args`
+and pass `-Float32MatmulPrecision highest` to the manager. This disables
+BF16 autocast and TF32 matmuls; the launcher otherwise retains its historical
+`high` default. Sampling, search and learning settings are inherited unchanged
+from the blue reproduction configuration.
+
 ## Forbidden Startup Sequences
 
 - Do not let every rank execute `rm -rf` on the shared transport root.

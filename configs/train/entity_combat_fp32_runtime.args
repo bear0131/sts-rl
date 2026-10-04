@@ -1,0 +1,5 @@
+@configs/train/entity_combat_blue_repro_runtime.args
+--amp-mode
+off
+--float32-matmul-precision
+highest

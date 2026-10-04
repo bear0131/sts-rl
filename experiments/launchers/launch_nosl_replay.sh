@@ -17,6 +17,8 @@ python="$repo/.venv/bin/python"
 build=${STS_LIGHTSPEED_BUILD_DIR:-$repo/runs/local/search-perf04-20260919/accepted-build-latest-rules}
 checkpoint=${NOSL_CHECKPOINT:-$repo/migration/nosl-az/nosl_az_random_start_s512_boundary_step0.zip}
 save_every_updates=${NOSL_SAVE_EVERY_UPDATES:-1}
+matmul_precision=${NOSL_FLOAT32_MATMUL_PRECISION:-high}
+case "$matmul_precision" in highest|high|medium) ;; *) echo 'invalid float32 matmul precision' >&2; exit 2 ;; esac
 [[ "$save_every_updates" =~ ^[1-9][0-9]*$ ]] || {
   echo 'NOSL_SAVE_EVERY_UPDATES must be a positive integer' >&2
   exit 2
@@ -107,7 +109,7 @@ cmd=("$python" -u -m rl.training.distributed_sb3
   --leaf-inference "${NOSL_LEAF_INFERENCE:-cuda-graph}"
   --wandb --wandb-project sts-rl --wandb-id "$wandb_id" --wandb-name "$run_name"
   --save-every-updates "$save_every_updates" --max-checkpoints "$max_checkpoints" --training-state-dir "$run_dir/recovery"
-  --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision high
+  --stop-file "$stop_file" --barrier-timeout 900 --float32-matmul-precision "$matmul_precision"
   "${peers[@]}")
 cd "$repo"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
