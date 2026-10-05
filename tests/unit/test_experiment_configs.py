@@ -9,6 +9,43 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_boss_normalized_q_experiment_only_changes_requested_search_parameters(monkeypatch):
+    from rl.search.native import NativeSearchConfig, apply_strict_training_settings
+    from rl.tasks import TASKS
+    from rl.training.trainer import build_parser as initial_parser
+
+    monkeypatch.chdir(ROOT)
+    override = '@configs/train/entity_combat_boss_normalized_q.args'
+    parser = build_parser()
+    base = ['--rank', '0', '--world-size', '4', '--checkpoint', 'fresh-step0.zip',
+            '@configs/train/entity_combat_boss_gumbel_half.args']
+    previous = parser.parse_args(base)
+    experiment = parser.parse_args([*base, override])
+    for args in (previous, experiment):
+        apply_strict_training_settings(args)
+    assert {key: (vars(previous)[key], vars(experiment)[key]) for key in vars(previous)
+            if vars(previous)[key] != vars(experiment)[key]} == {
+        'nosl_is_az_gumbel_scale': (.5, 1.),
+        'nosl_is_az_gumbel_rescale_q': (False, True),
+        'nosl_is_az_gumbel_value_scale': (1., .1),
+    }
+    initial = initial_parser(TASKS['wholerun']).parse_args([
+        '--task', 'wholerun', '@configs/train/entity_combat_boss_utility.args',
+        override, '--steps', '0'])
+    apply_strict_training_settings(initial)
+    for args in (initial, experiment):
+        config = NativeSearchConfig.from_model(args)
+        assert config.gumbel_scale == 1 and config.gumbel_rescale_q
+        assert config.gumbel_value_scale == .1 and config.gumbel_max_visit_init == 50
+        assert config.paper_full_gumbel and config.fixed_worldline
+        assert config.merge_equivalent_actions
+        assert config.simulations == 128 and config.depth == 0
+        assert args.n_envs == 96 and args.n_steps == 128
+        assert args.nosl_is_az_updates == 40 and args.nosl_is_az_update_schedule == 'constant'
+    assert initial.init_from is None and initial.resume is None and initial.boss_win_weight == .9
+    assert experiment.resume_state is None and experiment.fork_state is None
+
+
 def test_fp32_runtime_only_changes_precision_microbatch_and_joint_update_schedule(monkeypatch):
     from rl.algorithms.update_schedule import CombatUpdateSchedule
     from rl.tasks import TASKS
