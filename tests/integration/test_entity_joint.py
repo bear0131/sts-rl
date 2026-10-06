@@ -57,6 +57,11 @@ def test_combat_unchanged_and_optimizers_independent(combat_factory, tmp_path):
     restored = AccumulatingMaskablePPO.load(tmp_path / 'joint.zip', device='cpu')
     assert restored.policy.upper_optimizer.state_dict()['state']
     assert not restored.policy.optimizer.state_dict()['state']
+    from rl.policies.checkpoint import load_checkpoint
+    shared_loaded = load_checkpoint(tmp_path / 'joint', device='cpu')
+    assert shared_loaded.policy.upper_optimizer.state_dict()['state']
+    for key, value in shared_loaded.policy.state_dict().items():
+        torch.testing.assert_close(value, joint.policy.state_dict()[key], rtol=0, atol=0)
     # Distributed NOSL synchronizes after the decorated local gradient call.
     # Nested phase scopes must retain that gradient for the outer all-reduce.
     upper_before = copy.deepcopy(joint.policy.core.overworld.state_dict())

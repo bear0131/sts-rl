@@ -51,7 +51,17 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
 
 
 def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None):
-    model = MaskablePPO.load(checkpoint, device=device,
-                             custom_objects=custom_objects(checkpoint, card_vector_checkpoint))
+    path = Path(checkpoint)
+    if not path.exists() and Path(str(path) + '.zip').is_file():
+        path = Path(str(path) + '.zip')
+    algorithm = MaskablePPO
+    with ZipFile(path) as archive:
+        if 'policy.upper_optimizer.pth' in archive.namelist():
+            # The joint policy owns two optimizers. Its training class declares
+            # both saved state dictionaries; the generic SB3 loader knows one.
+            from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+            algorithm = AccumulatingMaskablePPO
+    model = algorithm.load(path, device=device,
+                           custom_objects=custom_objects(path, card_vector_checkpoint))
     model.policy.set_training_mode(False)
     return model
