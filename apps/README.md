@@ -38,6 +38,9 @@ opening SHA 校验。它保留训练开场的牌组、遗物、HP、药水、随
 复用同一开场工厂，不写回共享开场。训练开场模式禁止自定义状态及旧路线快进混用。
 本功能依赖 `boss_opening_route_version() == 1` 的原生构建。
 只需交互时指定 `--eval-episodes 0`，加载参数后不会另外启动整局评测。
+查看留出集或失败子集时，用 `--boss-opening-label` 标明数据集来源；页面只列出数据集
+实际包含的 Boss。子集应原样保留开场 journal/source_seed/opening SHA，不能把评测调度
+seed 当作原始开场种子，也不能将留出失败筛选集的结果作为新的无偏胜率统计。
 
 “完整爬塔评测”独立选择上层与下层。上层支持 checkpoint masked argmax，或
 `ironclad-overworld-v3`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL

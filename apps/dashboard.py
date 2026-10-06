@@ -2412,6 +2412,7 @@ class DashboardState:
         self.token_embeddings: dict = {}
         self.watch: WatchSession | None = None
         self.boss_opening_pool: BossOpeningPool | None = None
+        self.boss_opening_label = "训练开场"
         self.eval_status: dict = {"state": "idle"}
         self.eval_token = ""
         self.error: str | None = None
@@ -2424,6 +2425,7 @@ class DashboardState:
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
                 "checkpoint_format": self.checkpoint_format,
                 "boss_openings": {
+                    "label": self.boss_opening_label,
                     "sha256": self.boss_opening_pool.sha256,
                     "entries": [{"seed": e['source_seed'], "boss": e['boss']}
                                 for e in self.boss_opening_pool.entries],
@@ -3113,9 +3115,12 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=50, help="0 disables evaluation on load")
     parser.add_argument("--boss-opening-dataset", type=Path,
                         help="Shared training Boss opening dataset for manual Watch")
+    parser.add_argument("--boss-opening-label", default="训练开场",
+                        help="Display label distinguishing training/held-out opening datasets")
     args = parser.parse_args()
     if args.boss_opening_dataset:
         APP.boss_opening_pool = BossOpeningPool(args.boss_opening_dataset)
+        APP.boss_opening_label = args.boss_opening_label
     checkpoint = args.checkpoint or _default_dashboard_checkpoint()
     if checkpoint:
         APP.load_checkpoint(checkpoint, args.eval_episodes)

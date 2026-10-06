@@ -5,7 +5,7 @@ let stepping = false;
 let manualBusy = false;
 let manualSlot = null;
 let trainingDatasetKey = "";
-const trainingBossNames = {CHAMP: "冠军", AUTOMATON: "铜制机械人", COLLECTOR: "收藏家"};
+const trainingBossNames = {CHAMP: "第一勇士（Champ）", AUTOMATON: "铜制机械人", COLLECTOR: "收藏家"};
 let plotPoints = [];
 let plotScreenPoints = [];
 let tokenSource = "card";
@@ -1338,14 +1338,17 @@ function renderWatch() {
   const dataset = appState?.boss_openings;
   if (trainingDatasetKey !== (dataset?.sha256 || "")) {
     trainingDatasetKey = dataset?.sha256 || "";
+    const availableBosses = Object.keys(trainingBossNames).filter(boss => (dataset?.entries || []).some(e => e.boss === boss));
+    $("trainingBoss").innerHTML = availableBosses.map(boss => `<option value="${boss}">${trainingBossNames[boss]}</option>`).join("");
     if (w.training_opening) $("trainingBoss").value = w.training_opening.boss;
     renderTrainingSeeds();
     if (w.training_opening) $("trainingSeed").value = w.training_opening.source_seed;
   }
   const opening = w.training_opening;
+  const datasetLabel = dataset?.label || "训练开场";
   $("trainingOpeningStatus").textContent = opening
-    ? `${trainingBossNames[opening.boss]} · 种子 ${opening.source_seed} · 牌组、遗物、血量、药水与训练开场一致`
-    : dataset ? `${dataset.entries.length} 个训练开场 · 跳过此前战斗，保留路线资源` : "未配置训练开场数据集";
+    ? `${datasetLabel} · ${trainingBossNames[opening.boss]} · 种子 ${opening.source_seed} · 保留原开场牌组、遗物、血量和药水`
+    : dataset ? `${datasetLabel} · ${dataset.entries.length} 个开场 · 跳过此前战斗，保留路线资源` : "未配置二层开场数据集";
   $("trainingLoad").disabled = manualBusy || stepping || !$("trainingSeed").value;
   $("ordinaryRun").hidden = !opening;
   $("ordinaryRun").disabled = manualBusy || stepping;
