@@ -33,6 +33,7 @@ def test_combat_unchanged_and_optimizers_independent(combat_factory, tmp_path):
                          combat_action_contract='autoregressive-v2')
     old = make_joint(env, EntityCombatPolicy)
     joint = make_joint(env)
+    assert joint.reset_nosl_is_az_shared_embeddings(7) == 0
     joint.configure_nosl_is_az_inner_only()
     old_params = old.policy.core.combat.state_dict()
     for key, value in joint.policy.core.combat.state_dict().items():

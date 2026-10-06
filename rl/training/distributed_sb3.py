@@ -2381,6 +2381,8 @@ def main() -> None:
         raise ValueError("NOSL-IS-AZ upper strategy must be model or rules")
     if getattr(getattr(model.policy,'core',None),'combat_only',False) and upper_strategy != 'rules':
         raise ValueError('combat-only model requires rules upper strategy')
+    if joint_upper(model) and upper_strategy != 'model':
+        raise ValueError('joint strategic PPO requires sampled model upper actions')
     if upper_strategy == "rules" and not (
         model.nosl_is_az and model.nosl_is_az_inner_only
     ):

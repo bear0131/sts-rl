@@ -129,6 +129,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         ]
     if contract == 'autoregressive-v2':
         argv.append('--nosl-is-az-fixed-worldline')
+    if joint:
+        argv.append('--nosl-is-az-train-shared-embeddings')
     if step_schedule:
         argv += ['--nosl-is-az-update-schedule',
                  '{"mode":"step","hold_rollouts":2,"final_updates":1}']
