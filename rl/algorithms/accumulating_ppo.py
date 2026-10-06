@@ -33,6 +33,7 @@ from rl.algorithms.ppo import PPOLossComponents, ppo_loss_components
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
 from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
+from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, capture_step, update_upper
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 
 
@@ -403,7 +404,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         from rl.algorithms.update_schedule import CombatUpdateSchedule
         CombatUpdateSchedule.from_config(self.nosl_is_az_update_schedule).validate_model(self)
         if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
-                and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == 'rules'):
+                and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == ('model' if joint_upper(self) else 'rules')):
             raise ValueError('entity-combat training requires C++ inner-only NOSL and rules upper strategy')
         self.combat_action_contract = C.policy_contract(self.observation_space)
         if self.combat_action_contract in C.NEURAL_CONTRACTS:
@@ -438,6 +439,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_samples",
             "_nosl_is_az_fresh_samples",
             "_nosl_is_az_pending_fights",
+            "_upper_pending", "_upper_completed", "_upper_episode_ids",
             "_nosl_is_az_replay",
             "_nosl_is_az_replay_prepare_stats",
             "_nosl_is_az_rollout_hp_order",
@@ -450,6 +452,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_policy_weight_sum",
             "_nosl_is_az_value_loss_sum",
         ]
+
+    def _get_torch_save_params(self):
+        state_dicts, variables = super()._get_torch_save_params()
+        if joint_upper(self):
+            state_dicts = [*state_dicts, 'policy.upper_optimizer']
+        return state_dicts, variables
 
     def _ensure_nosl_is_az_replay(self) -> NOSLISAZReplayBuffer:
         """Create runtime replay state, including when loading an old checkpoint."""
@@ -615,7 +623,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
         core = getattr(self.policy, "core", None)
         combat = getattr(core, "combat", None)
-        if getattr(core,'combat_only',False):
+        if getattr(core,'combat_only',False) or joint_upper(self):
             for parameter in self.policy.parameters():
                 parameter.requires_grad_(True)
             if not core.config.auxiliary_loss_coef:
@@ -799,6 +807,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 "and log-probabilities"
             )
         captured = []
+        if joint_upper(self):
+            self._upper_completed = []
+            self._upper_censored = 0
         reasoning_samples = []
         original_step_wait = env.step_wait
         original_step_async = env.step_async
@@ -1453,6 +1464,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             log_probs = distribution.log_prob(actions).float()
             env_started = time.perf_counter()
             new_obs, rewards, dones, infos = env.step(actions_np)
+            if joint_upper(self):
+                capture_step(self, self._last_obs, actions_np, action_masks,
+                    values_np, log_probs.detach().cpu().numpy(), new_obs, dones, infos)
             prefix_steps = sum(info.get('simulator_transition') is False for info in infos)
             nosl_timings['selection_prefix_decisions'] += prefix_steps
             nosl_timings['simulator_transitions'] += env.num_envs - prefix_steps
@@ -2019,6 +2033,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 return 0
         return min(int(self.nosl_is_az_batch_size), replay.size)
 
+    @combat_update
     def _train_nosl_is_az(
         self,
         *,
@@ -2715,6 +2730,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_stats = (
             self._train_nosl_is_az() if self.nosl_is_az else {}
         )
+        if joint_upper(self):
+            update_upper(self)
 
         flat_values = self.rollout_buffer.values.flatten()
         flat_returns = self.rollout_buffer.returns.flatten()

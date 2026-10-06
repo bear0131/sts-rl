@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from collections import deque
 
@@ -174,6 +175,8 @@ class WholeRunTask(Task):
     }
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument('--upper-config', type=json.loads, default=None,
+                            help='Strategic PPO architecture and learning configuration for entity-joint.')
         parser.add_argument('--nosl-is-az-merge-equivalent-actions',
                             action=argparse.BooleanOptionalAction, default=True,
                             help='Group equivalent plays/futures; disable for pre-POL01 slot search.')
@@ -213,7 +216,7 @@ class WholeRunTask(Task):
         )
         parser.add_argument(
             "--arch",
-            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat"],
+            choices=["auto", "split-pointer", "semantic-reasoning", "entity-combat", "entity-joint"],
             default="auto",
             help="Independent combat and overworld Transformer actor-critics "
                  "with shared card/relic/potion tokenizers. --n-layers is the "
@@ -547,11 +550,18 @@ class WholeRunTask(Task):
                 map_dag=args.map_dag,
                 card_vector_checkpoint=args.card_vector_checkpoint,
             )
-        if args.arch == "entity-combat":
+        if args.arch in ("entity-combat", "entity-joint"):
             from rl.policies.entity_combat import EntityCombatPolicy
-            return EntityCombatPolicy, dict(entity_config=dict(
+            policy = EntityCombatPolicy
+            upper = {}
+            if args.arch == 'entity-joint':
+                from dataclasses import asdict
+                from rl.policies.entity_joint import EntityJointPolicy, UpperConfig
+                policy = EntityJointPolicy
+                upper = dict(upper_config=asdict(UpperConfig(**(args.upper_config or {}))))
+            return policy, dict(entity_config=dict(
                 width=args.d_model, layers=args.n_layers, heads=args.n_heads,
-                quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight))
+                quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight), **upper)
         if args.arch == "semantic-reasoning":
             if args.interactive_reasoning is False:
                 raise ValueError(

@@ -99,6 +99,9 @@ def _checkpoint_policy_arch(model: AccumulatingMaskablePPO) -> str | None:
     from rl.policies.entity_combat import EntityCombatPolicy
 
     policy = model.policy
+    from rl.policies.entity_joint import EntityJointPolicy
+    if isinstance(policy, EntityJointPolicy):
+        return "entity-joint"
     if isinstance(policy, EntityCombatPolicy):
         return "entity-combat"
     if isinstance(policy, SemanticReasoningPolicy):
@@ -586,20 +589,21 @@ def main() -> None:
             from stable_baselines3.common.save_util import load_from_zip_file
             resume_settings, _, _ = load_from_zip_file(args.resume, device="cpu")
             from rl.policies.entity_combat import EntityCombatPolicy
-            if resume_settings.get("policy_class") is EntityCombatPolicy and args.arch == "auto":
-                args.arch = "entity-combat"
+            from rl.policies.entity_joint import EntityJointPolicy
+            if resume_settings.get("policy_class") in (EntityCombatPolicy, EntityJointPolicy) and args.arch == "auto":
+                args.arch = "entity-joint" if resume_settings['policy_class'] is EntityJointPolicy else "entity-combat"
                 args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
                 args.nosl_is_az_cpp = resume_settings["nosl_is_az_cpp"]
         if args.nosl_is_az_upper_strategy is None:
             args.nosl_is_az_upper_strategy = resume_settings.get("nosl_is_az_upper_strategy", "model")
-        if args.arch == "entity-combat":
+        if args.arch in ("entity-combat", "entity-joint"):
             args.card_language = True
             if args.combat_action_contract is None and not args.resume:
                 args.combat_action_contract = C.AUTOREGRESSIVE_CONTRACT
             if args.combat_action_contract not in (*C.NEURAL_CONTRACTS, None) or not (
                     (args.nosl_is_az or resume_settings.get("nosl_is_az"))
                     and args.nosl_is_az_inner_only and args.nosl_is_az_cpp
-                    and args.nosl_is_az_upper_strategy == "rules"):
+                    and args.nosl_is_az_upper_strategy == ("model" if args.arch == 'entity-joint' else "rules")):
                 raise ValueError("entity-combat requires joint-v2, C++ inner-only NOSL and rules upper strategy")
             if args.interactive_reasoning or args.card_vector_checkpoint:
                 raise ValueError("entity-combat has its own card encoder and no history/reasoning decoder")
@@ -652,7 +656,7 @@ def main() -> None:
             )
 
     if getattr(args, "nosl_is_az", False):
-        if args.card_language and args.arch != "entity-combat":
+        if args.card_language and args.arch not in ("entity-combat", "entity-joint"):
             raise ValueError(
                 "--nosl-is-az requires card_language=false so ordered hidden "
                 "draw-pile information is not present in the policy observation"
@@ -761,7 +765,7 @@ def main() -> None:
     if getattr(args, "nosl_is_az_inner_only", False):
         if not getattr(args, "nosl_is_az", False):
             raise ValueError("--nosl-is-az-inner-only requires --nosl-is-az")
-        if not (args.init_from or args.resume) and args.arch != "entity-combat":
+        if not (args.init_from or args.resume) and args.arch not in ("entity-combat", "entity-joint"):
             raise ValueError(
                 "--nosl-is-az-inner-only requires --init-from or --resume "
                 "to provide the frozen outer policy"
@@ -903,7 +907,7 @@ def main() -> None:
             print(
                 f"[trainer] inferred --arch {args.arch} from {args.init_from}"
             )
-    if getattr(args, "nosl_is_az", False) and args.card_language and args.arch != "entity-combat":
+    if getattr(args, "nosl_is_az", False) and args.card_language and args.arch not in ("entity-combat", "entity-joint"):
         raise ValueError(
             "--nosl-is-az requires card_language=false except for the "
             "order-invariant entity-combat encoder"
@@ -926,10 +930,10 @@ def main() -> None:
         args.combat_action_contract = args.combat_action_contract or source_contract
         if args.resume and args.combat_action_contract != source_contract:
             raise ValueError("combat action migration requires --init-from, not --resume")
-        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch != 'entity-combat':
+        if args.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT and args.arch not in ('entity-combat', 'entity-joint'):
             raise ValueError('autoregressive-v2 requires entity-combat')
         if args.combat_action_contract in C.NEURAL_CONTRACTS:
-            if args.arch not in ("split-pointer", "entity-combat") or getattr(args, "combat_arch", "transformer") != "transformer":
+            if args.arch not in ("split-pointer", "entity-combat", "entity-joint") or getattr(args, "combat_arch", "transformer") != "transformer":
                 raise ValueError("joint-v2 requires split-pointer Transformer or entity-combat")
             if getattr(args, "nosl_is_az", False) and not args.nosl_is_az_cpp:
                 raise ValueError("joint-v2 NOSL requires --nosl-is-az-cpp")
@@ -1453,10 +1457,12 @@ def main() -> None:
 
     if getattr(args, "nosl_is_az_inner_only", False):
         frozen, trainable = model.configure_nosl_is_az_inner_only()
-        print(
-            "[trainer] NOSL-IS-AZ inner-only: skipped overworld PPO and froze "
-            f"{frozen:,} parameters; {trainable:,} combat parameters trainable"
-        )
+        if getattr(model.policy.core, 'joint_upper', False):
+            print(f"[trainer] joint whole-run: separate strategic PPO and combat NOSL; "
+                  f"{frozen:,} auxiliary parameters frozen; {trainable:,} parameters trainable")
+        else:
+            print("[trainer] NOSL-IS-AZ inner-only: skipped overworld PPO and froze "
+                  f"{frozen:,} parameters; {trainable:,} combat parameters trainable")
 
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)

@@ -200,6 +200,8 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
                 nosl_is_az_pending_fights=copy.deepcopy(getattr(
                     model, '_nosl_is_az_pending_fights', None,
                 )),
+                upper_pending=copy.deepcopy(getattr(model, '_upper_pending', None)),
+                upper_episode_ids=copy.deepcopy(getattr(model, '_upper_episode_ids', None)),
                 ep_info_buffer=copy.deepcopy(list(model.ep_info_buffer or ())),
                 ep_success_buffer=copy.deepcopy(list(model.ep_success_buffer or ())),
                 episode_num=int(getattr(model, '_episode_num', 0)),
@@ -293,6 +295,8 @@ def restore_learner(
             model._nosl_is_az_pending_fights = copy.deepcopy(
                 state['nosl_is_az_pending_fights']
             )
+            model._upper_pending = copy.deepcopy(state.get('upper_pending'))
+            model._upper_episode_ids = copy.deepcopy(state.get('upper_episode_ids'))
             if model.ep_info_buffer is not None:
                 model.ep_info_buffer.clear()
                 model.ep_info_buffer.extend(copy.deepcopy(state['ep_info_buffer']))
@@ -315,6 +319,8 @@ def restore_learner(
         model._nosl_is_az_pending_fights = [
             [] for _ in range(env.num_envs)
         ]
+        model._upper_pending = None
+        model._upper_episode_ids = None
         if hasattr(env, 'episode_returns'):
             env.episode_returns[...] = 0.0
         if hasattr(env, 'episode_lengths'):

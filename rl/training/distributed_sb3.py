@@ -16,6 +16,7 @@ experiment targets.
 from __future__ import annotations
 
 from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microbatch_backward
+from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
 
@@ -1036,7 +1037,7 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
         if key.startswith((
-            "game/", "boss/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
+            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
         )):
             if isinstance(value, np.generic):
                 value = value.item()
@@ -1334,6 +1335,7 @@ def average_scalar_dict(
     return {key: float(value) for key, value in zip(keys, averaged.tolist())}
 
 
+@combat_update
 def distributed_nosl_is_az_update(
     model: AccumulatingMaskablePPO,
     *,
@@ -2223,8 +2225,14 @@ def main() -> None:
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
     args.policy_architecture = type(probe_model.policy).__name__
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
-    if getattr(getattr(probe_model.policy,'core',None),'combat_only',False):
+    if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model):
         args.entity_config = dict(probe_model.policy.entity_config)
+        if joint_upper(probe_model):
+            args.upper_config = dict(probe_model.policy.upper_config)
+            if args.world_size > 1 and args.gradient_transport != 'ssh-ring':
+                raise ValueError('joint strategic PPO requires ring gradient synchronization')
+            if args.boss_opening_dataset:
+                raise ValueError('joint training requires whole-run environments')
         if args.disable_entity_transition_auxiliary:
             args.entity_config['auxiliary_loss_coef'] = 0.0
     elif args.disable_entity_transition_auxiliary:
@@ -2748,6 +2756,7 @@ def main() -> None:
             "reasoning/*",
             "nosl_is_az/*",
             "boss/*",
+            "upper/*",
             "global_step",
             "time/total_timesteps",
             "env_steps_per_second",
@@ -2852,7 +2861,7 @@ def main() -> None:
             graph_release_sec = 0.0
             graph_release_memory = None
             if (args.leaf_inference == 'cuda-graph'
-                    and getattr(model.policy.core, 'combat_only', False)):
+                    and hasattr(model.policy.core, 'graph_actor_critic')):
                 release_started = time.perf_counter()
                 allocated_before = th.cuda.memory_allocated(model.device)
                 reserved_before = th.cuda.memory_reserved(model.device)
@@ -2995,6 +3004,20 @@ def main() -> None:
                 sync_mbps.append(float(nosl_update["sync_mbps"]))
                 grad_bytes = int(nosl_update["grad_bytes"])
                 step_seconds = float(nosl_update["optimizer_step_sec"])
+
+            upper_update = {}
+            upper_started = time.perf_counter()
+            if joint_upper(model):
+                def sync_upper(epoch):
+                    return synchronize_gradient_step(model, rank=args.rank, world_size=args.world_size,
+                        peers=peers, key=key, control_dir=control_dir, local_root=local_root,
+                        remote_root=args.remote_root, run_id=run_id,
+                        tag=f'u{update:06d}_upper{epoch:03d}', ring_transport=ring_transport,
+                        barrier_timeout=args.barrier_timeout)
+                upper_update = update_upper(model, world_size=args.world_size,
+                    average=lambda values: average_scalar_dict(values, ring_transport),
+                    synchronize=sync_upper)
+            upper_seconds = time.perf_counter() - upper_started if joint_upper(model) else 0.0
 
             reasoning_records = []
             reasoning_sync_seconds = 0.0
@@ -3197,6 +3220,7 @@ def main() -> None:
                 ),
                 "total_sec_rank": (
                     rollout_sec
+                    + upper_seconds
                     + graph_release_sec
                     + backward_seconds
                     + gradient_pack_seconds
@@ -3304,6 +3328,9 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            record.update({'upper/' + key: value for key, value in upper_update.items()})
+            if joint_upper(model):
+                record['upper/total_sec_rank'] = upper_seconds
             if args.boss_opening_dataset:
                 record['episode_scope'] = 'boss-opening'
 
@@ -3493,6 +3520,7 @@ def main() -> None:
                         ],
                     })
                 _add_game_metrics_to_wandb_payload(wandb_payload, record)
+                wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS

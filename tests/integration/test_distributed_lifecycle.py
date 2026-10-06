@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0.):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -59,6 +59,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
               if combat_arch == 'entity' else dict(d_model=32,n_layers=2,n_heads=4,combat_arch=combat_arch))
     if combat_arch == 'entity':
         kwargs['entity_config']['boss_win_weight'] = boss_weight
+    if joint:
+        from rl.policies.entity_joint import EntityJointPolicy
+        policy = EntityJointPolicy
+        kwargs['upper_config'] = dict(width=32, layers=1, heads=4, epochs=2, micro_batch_size=8)
     model = AccumulatingMaskablePPO(
         policy, env, n_steps=16, batch_size=8, n_epochs=1,
         policy_kwargs=kwargs, device=device, seed=42, amp_mode=amp,
@@ -209,6 +213,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             from rl.algorithms.update_schedule import CombatUpdateSchedule
             assert CombatUpdateSchedule.from_config(final.nosl_is_az_update_schedule).plan(4, 3) == (1, 0)
     assert finished == [0, 0]
+    if joint:
+        assert all('upper/samples' in p and 'upper/updates' in p for p in payloads)
+        assert sum(p['upper/updates'] for p in payloads) > 0
+        final = AccumulatingMaskablePPO.load(output, device='cpu')
+        assert final.policy.upper_optimizer.state_dict()['state']
     if contract == 'autoregressive-v2':
         assert all(value is True for value in fixed_calls)
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
@@ -462,3 +471,12 @@ def test_cuda_native_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_t
         assert not torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction
     finally:
         torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = previous
+
+
+@pytest.mark.parametrize('device', ['cpu', pytest.param('cuda', marks=pytest.mark.skipif(
+    not torch.cuda.is_available(), reason='BF16 joint lifecycle requires CUDA'))])
+def test_joint_wholerun_lifecycle(tmp_path, monkeypatch, capsys, short_combat_env_type, device):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', device=device,
+        amp='bf16' if device == 'cuda' else 'off', vector='native', joint=True)

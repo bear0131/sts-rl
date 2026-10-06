@@ -1022,7 +1022,8 @@ class _SpecialistActorCritic(nn.Module):
                 rows = torch.arange(logits.shape[0], device=logits.device)
                 logits[:, A._TARGET:A._TARGET + 5] = targets[rows, selected, :5].float()
             else:
-                logits = torch.nn.functional.pad(logits, (0, C.JOINT_WIDTH), value=-1e9)
+                width = C.policy_size(C.policy_contract(self.encoder.observation_space))
+                logits = torch.nn.functional.pad(logits, (0, width - A.N_ACTIONS), value=-1e9)
         return logits, values
 
 

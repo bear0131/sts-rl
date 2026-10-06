@@ -32,7 +32,7 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
     return components, loss
 
 
-def optimizer_step(model, micro_batches=1, *, value_only=False):
+def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None):
     """Average accumulation once, clip once, then Adam and clear gradients."""
     if micro_batches < 1:
         return 0.0
@@ -46,11 +46,12 @@ def optimizer_step(model, micro_batches=1, *, value_only=False):
             if parameter.grad is not None:
                 parameter.grad.mul_(1.0 / micro_batches)
     norm = th.nn.utils.clip_grad_norm_(
-        model.policy.parameters(), model.max_grad_norm,
+        model.policy.parameters(), model.max_grad_norm if max_grad_norm is None else max_grad_norm,
         error_if_nonfinite=True,
     )
-    model.policy.optimizer.step()
-    model.policy.optimizer.zero_grad()
+    optimizer = model.policy.optimizer if optimizer is None else optimizer
+    optimizer.step()
+    optimizer.zero_grad()
     # Leave logging's device synchronization to callers that consume the norm.
     return norm.detach()
 
