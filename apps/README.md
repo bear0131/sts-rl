@@ -27,6 +27,18 @@ HP 和最大 HP 固定为开局值并清空药水，但保留牌组、遗物、�
 Boss 是真实战斗，停在所选下层策略的第一手决策。此功能是查看指定 Boss 打牌的路线
 沙盒，不是可用于胜率统计的自然整局评测。
 
+当前专项训练的开场由 `--boss-opening-dataset <dataset.json>` 显式接入 Watch。
+“训练同款二层”选择 Boss 和数据集中的 source seed 后，复用
+`env.core.boss_opening.BossOpeningPool` 的固定开场工厂；原生路线重放必须通过数据集
+opening SHA 校验。它保留训练开场的牌组、遗物、HP、药水、随机数状态；此前战斗被
+跳过，是专项训练的合成入场分布，不代表自然爬塔到达 Boss 时的资源。
+点击“载入训练开场”默认人工控制，可点手牌或右侧合法动作（含目标、药水、单选及
+多选确认），支持撤销与“重开同一局”。取消“手动操作”可切回当前 checkpoint/搜索。
+手动操作清除缓存模型动作并校验画面版本，防止重复点击或执行过期目标；重开/撤销
+复用同一开场工厂，不写回共享开场。训练开场模式禁止自定义状态及旧路线快进混用。
+本功能依赖 `boss_opening_route_version() == 1` 的原生构建。
+只需交互时指定 `--eval-episodes 0`，加载参数后不会另外启动整局评测。
+
 “完整爬塔评测”独立选择上层与下层。上层支持 checkpoint masked argmax，或
 `ironclad-overworld-v3`（未知画面回退 checkpoint）；下层支持 checkpoint direct/NOSL
 搜索，或上述固定配置的 `ironclad-turn-v8-awakened-phase`。评测状态记录两项选择、版本和

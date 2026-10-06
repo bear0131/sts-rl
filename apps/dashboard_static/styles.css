@@ -432,3 +432,15 @@ main { min-height: calc(100vh - 58px); }
   .card-flight, .resource-track i { transition-duration: .01ms; }
   .monster-hit, .player-hit, .player-blocked, .combat-text { animation-duration: .01ms; }
 }
+.training-opening-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 16px; padding: 14px 18px; border: 1px solid #668879; border-radius: 12px; background: #192c24; color: #e4eee8; }
+.training-opening-bar label { display: flex; align-items: center; gap: 6px; }
+.training-opening-bar span { flex-basis: 100%; font-size: 13px; color: #b5cabc; }
+.manual-panel { padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid #4a6255; }
+.manual-panel[hidden] { display: none; }
+.manual-panel p { color: #bac6bc; font-size: 13px; line-height: 1.6; }
+.manual-actions { display: grid; gap: 7px; margin-top: 10px; max-height: 430px; overflow-y: auto; }
+.manual-actions button { text-align: left; white-space: normal; min-height: 38px; }
+.game-card.manual-playable { cursor: pointer; outline: 2px solid #8fbf83; }
+.game-card.manual-playable:focus-visible { outline: 3px solid #f8d676; }
+.manual-actions small { display: block; margin: 5px 0; color: var(--muted); line-height: 1.5; }
+.card-energy { position: absolute; top: -5px; left: -5px; z-index: 2; min-width: 23px; height: 23px; display: grid; place-items: center; background: #206484; border: 2px solid #bdd9ea; border-radius: 50%; color: #fff4cf; font-weight: bold; }

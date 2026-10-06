@@ -173,7 +173,7 @@ def test_watch_can_execute_replay_and_switch_from_turn_planner():
         )
 
         assert snapshot["combat_strategy"] == "planner"
-        assert snapshot["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
+        assert snapshot["combat_strategy_version"] == dashboard.PLANNER_VERSION
         assert snapshot["decision"]["source"] == "turn-planner"
         assert snapshot["decision"]["native_direct"] is True
         native = snapshot["decision"]["native_action_bits"]

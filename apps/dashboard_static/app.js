@@ -2,6 +2,10 @@ const $ = (id) => document.getElementById(id);
 let appState = null;
 let playing = false;
 let stepping = false;
+let manualBusy = false;
+let manualSlot = null;
+let trainingDatasetKey = "";
+const trainingBossNames = {CHAMP: "冠军", AUTOMATON: "铜制机械人", COLLECTOR: "收藏家"};
 let plotPoints = [];
 let plotScreenPoints = [];
 let tokenSource = "card";
@@ -376,8 +380,6 @@ function gumbelSearchParams(prefix) {
 
 const strictPaperControlValues = {
   GumbelCandidates: 16,
-  GumbelScale: 1,
-  GumbelValueScale: 0.1,
   GumbelMaxVisitInit: 50,
   GumbelInteriorUniformity: 0,
   GumbelInteriorCoverageFraction: 0,
@@ -392,7 +394,6 @@ function applyStrictPaperControls(prefix) {
     const node = $(`${prefix}${suffix}`);
     if (node) node.value = value;
   });
-  $(`${prefix}GumbelRescaleQ`).checked = true;
   $(`${prefix}GumbelMixedValue`).checked = true;
   if (prefix === "watch") setWatchPolicyMode(false, false);
   const simulations = $(`${prefix}Simulations`);
@@ -410,7 +411,8 @@ function setGumbelControlsVisible(prefix) {
     const input = control.querySelector("[id]");
     if (input?.id.startsWith(prefix)) {
       control.classList.toggle("unavailable", !visible);
-      input.disabled = !visible || strict;
+      const experimentParameter = ["GumbelScale", "GumbelValueScale", "GumbelRescaleQ"].some(suffix => input.id === `${prefix}${suffix}`);
+      input.disabled = !visible || (strict && !experimentParameter);
     }
   });
   $(`${prefix}SearchMode`).disabled = strict;
@@ -462,6 +464,7 @@ function restoreGumbelControls(prefix, source, modeDirty, paramsDirty, paperMode
 }
 
 $("resetButton").addEventListener("click", async () => {
+  if (manualBusy || stepping) return;
   pause();
   const button = $("resetButton");
   button.disabled = true;
@@ -471,6 +474,8 @@ $("resetButton").addEventListener("click", async () => {
   try {
     appState.watch = await api("/api/watch/reset", {method:"POST", body:JSON.stringify({
       seed: Number($("watchSeed").value),
+      training_opening_seed: appState?.watch?.training_opening?.source_seed,
+      manual_mode: Boolean(appState?.watch?.manual_mode),
       simulations: Number($("watchSimulations").value),
       depth: Number($("watchDepth").value),
       leaf_batch_size: Number($("watchLeafBatchSize").value),
@@ -498,7 +503,90 @@ $("resetButton").addEventListener("click", async () => {
     renderWatch();
   }
   catch (e) { toast(e.message); }
-  finally { button.disabled = false; button.textContent = "重开"; }
+  finally { button.disabled = false; button.textContent = appState?.watch?.training_opening ? "重开同一局" : "重开"; }
+});
+
+function renderTrainingSeeds() {
+  const entries = (appState?.boss_openings?.entries || []).filter(e => e.boss === $("trainingBoss").value);
+  $("trainingSeed").innerHTML = entries.map(e => `<option value="${Number(e.seed)}">${Number(e.seed)}</option>`).join("");
+  $("trainingLoad").disabled = !entries.length || manualBusy;
+}
+$("trainingBoss").addEventListener("change", renderTrainingSeeds);
+async function changeManualWatch(path, body) {
+  if (manualBusy || stepping) return;
+  pause();
+  manualBusy = true;
+  manualSlot = null;
+  renderWatch();
+  try {
+    appState.watch = await api(path, {method:"POST", body:JSON.stringify(body), headers:{"Content-Type":"application/json"}});
+    watchSeedDirty = false;
+    selectedMapAct = null;
+    previewedMapKeys.clear();
+  } catch (e) { toast(e.message); }
+  finally { manualBusy = false; renderWatch(); }
+}
+$("trainingLoad").addEventListener("click", () => changeManualWatch("/api/watch/reset", {
+  seed: Number($("trainingSeed").value), training_opening_seed: Number($("trainingSeed").value),
+  manual_mode: true, precompute: false,
+}));
+$("ordinaryRun").addEventListener("click", () => changeManualWatch("/api/watch/reset", {
+  seed: Number($("watchSeed").value), manual_mode: false,
+}));
+$("manualMode").addEventListener("change", () => changeManualWatch("/api/watch/apply", {
+  manual_mode: $("manualMode").checked,
+}));
+$("manualShowAll").addEventListener("click", () => { manualSlot = null; renderManualActions(); });
+function manualActionText(action, w) {
+  const choice = action.choice;
+  if (choice?.kind === "potion") return `药水 ${choice.slot + 1}：${choice.name}${choice.target == null ? "" : ` → 敌人 ${choice.target + 1}`}`;
+  if (choice?.kind === "select_card") {
+    const zone = {hand:"手牌", discard:"弃牌堆", exhaust:"消耗堆", draw:"抽牌堆", generated:"备选牌"}[choice.zone] || choice.zone;
+    return choice.card ? `选择 ${cardName(choice.card)}（${zone} #${choice.index + 1}）` : "跳过选牌";
+  }
+  if (choice?.kind === "select_hand") return `选入 ${cardName(choice.card)}（手牌 ${choice.index + 1}）`;
+  if (choice?.kind === "confirm") return `确认选择：${choice.selected.map(i => i + 1).join("、") || "不选"}`;
+  const animation = action.animation;
+  if (animation?.kind === "play_card") {
+    const card = w.canon?.hand?.[animation.slot];
+    const target = animation.target;
+    return `${Number(animation.slot) + 1}. ${card ? cardName(card) : action.label}${target != null && target < 5 ? ` → 敌人 ${target + 1}` : ""}`;
+  }
+  if (animation?.kind === "end_turn") return "结束回合";
+  return actionDisplayText(action, w.event);
+}
+function renderManualActions() {
+  const w = appState?.watch;
+  $("manualPanel").hidden = !w?.manual_mode;
+  if (!w?.manual_mode) { manualSlot = null; return; }
+  const actions = w.manual_actions || [];
+  if (!actions.some(a => a.animation?.kind === "play_card" && a.animation.slot === manualSlot)) manualSlot = null;
+  const filtered = manualSlot == null ? actions : actions.filter(a => a.animation?.kind === "play_card" && a.animation.slot === manualSlot);
+  $("manualShowAll").hidden = manualSlot == null;
+  $("manualHint").textContent = w.done ? (w.won ? "战斗胜利。可以重开同一局比较打法。" : "战斗结束。可以撤销或重开同一局。") : manualSlot == null ? "点击手牌或下方动作；药水、选牌和结束回合也在这里。" : "为这张牌选择目标：";
+  $("manualActions").innerHTML = filtered.map(a => {
+    const detail = a.choice?.card ? cardMeta(a.choice.card).effect : "";
+    return `<button type="button" data-manual-action="${a.action}" ${manualBusy ? "disabled" : ""}>${escapeHtml(manualActionText(a, w))}${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</button>`;
+  }).join("");
+}
+$("manualActions").addEventListener("click", event => {
+  const button = event.target.closest("[data-manual-action]");
+  if (button) changeManualWatch("/api/watch/action", {action:Number(button.dataset.manualAction), revision:appState.watch.action_revision});
+});
+function selectManualCard(slot) {
+  const w = appState?.watch;
+  if (!w?.manual_mode || manualBusy) return;
+  const actions = (w.manual_actions || []).filter(a => a.animation?.kind === "play_card" && a.animation.slot === slot);
+  if (actions.length === 1) changeManualWatch("/api/watch/action", {action:actions[0].action, revision:w.action_revision});
+  else if (actions.length > 1) { manualSlot = slot; renderManualActions(); }
+}
+$("hand").addEventListener("click", event => {
+  const card = event.target.closest(".game-card[data-slot]");
+  if (card) selectManualCard(Number(card.dataset.slot));
+});
+$("hand").addEventListener("keydown", event => {
+  const card = event.target.closest(".game-card[data-slot]");
+  if (card && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); selectManualCard(Number(card.dataset.slot)); }
 });
 $("watchSeed").addEventListener("input", () => { watchSeedDirty = true; });
 $("watchSimulations").addEventListener("input", () => { watchSimulationsDirty = true; });
@@ -574,7 +662,7 @@ $("watchBossButton").addEventListener("click", async () => {
     toast(e.message);
   } finally {
     button.disabled = false;
-    button.textContent = "快进 Boss";
+    button.textContent = "沙盒快进 Boss";
   }
 });
 function watchStochasticValue() {
@@ -694,6 +782,7 @@ $("searchTreeRoot").addEventListener("click", async event => {
   }
 });
 $("undoButton").addEventListener("click", async () => {
+  if (manualBusy || stepping) return;
   pause();
   try { appState.watch = await api("/api/watch/undo", {method:"POST"}); renderWatch(); }
   catch (e) { toast(e.message); }
@@ -708,7 +797,7 @@ function switchMapAct(delta) {
 async function previewMapAct(act) {
   const w = appState?.watch;
   const key = `${w?.seed}:${act}`;
-  if (!w || mapPreviewing || previewedMapKeys.has(key) || w.timeline_exhausted) return;
+  if (!w || w.manual_mode || w.training_opening || mapPreviewing || previewedMapKeys.has(key) || w.timeline_exhausted) return;
   previewedMapKeys.add(key);
   mapPreviewing = true;
   $("miniMapPanel").classList.add("loading");
@@ -729,7 +818,7 @@ async function previewMapAct(act) {
 $("stepButton").addEventListener("click", stepOnce);
 $("playButton").addEventListener("click", () => { playing ? pause() : play(); });
 async function stepOnce() {
-  if (stepping || !appState?.watch || appState.watch.done) return;
+  if (stepping || manualBusy || !appState?.watch || appState.watch.done || appState.watch.manual_mode) return;
   stepping = true; $("stepButton").disabled = true;
   const transition = captureCombatTransition(appState.watch);
   try {
@@ -742,9 +831,9 @@ async function stepOnce() {
     playCombatOutcome(transition, nextWatch);
   }
   catch (e) { pause(); toast(e.message); }
-  finally { stepping = false; $("stepButton").disabled = false; }
+  finally { stepping = false; $("stepButton").disabled = Boolean(appState?.watch?.done || appState?.watch?.manual_mode); }
 }
-function play() { playing = true; $("playIcon").textContent = "Ⅱ"; $("playText").textContent = "暂停"; autoplay(); }
+function play() { if (appState?.watch?.manual_mode || manualBusy) return; playing = true; $("playIcon").textContent = "Ⅱ"; $("playText").textContent = "暂停"; autoplay(); }
 function pause() { playing = false; $("playIcon").textContent = "▶"; $("playText").textContent = "自动"; }
 async function autoplay() {
   if (!playing) return;
@@ -1002,6 +1091,7 @@ function renderVectorCard(card, {index = null, slot = null, className = "", comp
   ];
   if (slot != null) attrs.push(`data-slot="${slot}"`);
   return `<div ${attrs.join(" ")}>
+    <span class="card-energy" title="牌面费用">${escapeHtml(meta.cost === -1 ? "X" : Number(meta.cost) < -1 ? "—" : meta.cost)}</span>
     ${showOrder && index != null ? `<span class="card-order">${index + 1}</span>` : ""}
     ${cardArtSvg(meta)}
   </div>`;
@@ -1245,6 +1335,25 @@ function playCombatOutcome(before, after) {
 function renderWatch() {
   const w = appState?.watch;
   if (!w) return;
+  const dataset = appState?.boss_openings;
+  if (trainingDatasetKey !== (dataset?.sha256 || "")) {
+    trainingDatasetKey = dataset?.sha256 || "";
+    if (w.training_opening) $("trainingBoss").value = w.training_opening.boss;
+    renderTrainingSeeds();
+    if (w.training_opening) $("trainingSeed").value = w.training_opening.source_seed;
+  }
+  const opening = w.training_opening;
+  $("trainingOpeningStatus").textContent = opening
+    ? `${trainingBossNames[opening.boss]} · 种子 ${opening.source_seed} · 牌组、遗物、血量、药水与训练开场一致`
+    : dataset ? `${dataset.entries.length} 个训练开场 · 跳过此前战斗，保留路线资源` : "未配置训练开场数据集";
+  $("trainingLoad").disabled = manualBusy || stepping || !$("trainingSeed").value;
+  $("ordinaryRun").hidden = !opening;
+  $("ordinaryRun").disabled = manualBusy || stepping;
+  if (!manualBusy) $("manualMode").checked = Boolean(w.manual_mode);
+  $("manualMode").disabled = manualBusy || stepping;
+  $("watchPrecompute").disabled = Boolean(opening || w.manual_mode);
+  $("resetButton").textContent = opening ? "重开同一局" : "重开";
+  $("resetButton").disabled = manualBusy || stepping;
   const capabilities = appState?.capabilities || {};
   $("miniMapPanel").classList.toggle("dag-enabled", Boolean(capabilities.map_dag));
   if (!watchSeedDirty && document.activeElement !== $("watchSeed")) {
@@ -1278,8 +1387,9 @@ function renderWatch() {
     : "";
   const upperStatus = w.upper_strategy === "rules" ? "规则" : "模型";
   $("watchMeta").textContent = `step ${stepProgress} · return ${Number(w.total_reward).toFixed(2)} · 上层 ${upperStatus}${routeStatus}`;
-  $("undoButton").disabled = !w.can_undo;
-  $("stepButton").disabled = w.done;
+  $("undoButton").disabled = manualBusy || stepping || !w.can_undo;
+  $("stepButton").disabled = manualBusy || stepping || w.done || w.manual_mode;
+  $("playButton").disabled = manualBusy || w.done || w.manual_mode;
   const stats = w.stats || {}, canon = w.canon || {}, global = canon.global || {};
   const currentAct = Math.max(1, Math.min(3, Number(stats.act ?? global.act ?? 1)));
   if (selectedMapAct == null) selectedMapAct = currentAct;
@@ -1305,6 +1415,14 @@ function renderWatch() {
     const committed = w.pending_card_slot === slot ? "card-committed" : "";
     return renderVectorCard(card, {slot, className: `game-card ${committed}`});
   }).join("") : "";
+  if (w.manual_mode) $("hand").querySelectorAll(".game-card[data-slot]").forEach(card => {
+    const playable = !manualBusy && (w.manual_actions || []).some(a => a.animation?.kind === "play_card" && a.animation.slot === Number(card.dataset.slot));
+    card.classList.toggle("manual-playable", playable);
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-disabled", String(!playable));
+    card.tabIndex = playable ? 0 : -1;
+  });
+  renderManualActions();
   $("piles").textContent = combat ? `抽牌 ${canon.draw?.length || 0}　弃牌 ${canon.discard?.length || 0}　消耗 ${canon.exhaust?.length || 0}` : "";
   $("overworld").classList.toggle("visible", !combat);
   const eventVisible = !combat && w.phase === "event" && Boolean(w.event);
@@ -1329,8 +1447,8 @@ function renderWatch() {
   }
   const d = w.decision;
   const turnPlannerActive = w.phase === "combat" && w.combat_strategy === "planner";
-  $("decisionHeading").textContent = turnPlannerActive ? "回合规划决策" : "模型决策";
-  $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : "等待模型");
+  $("decisionHeading").textContent = w.manual_mode ? "人工控制中" : turnPlannerActive ? "回合规划决策" : "模型决策";
+  $("chosenAction").textContent = actionDisplayText(d, w.event) || (w.done ? "没有下一步动作" : w.manual_mode ? "取消“手动操作”可让模型接管" : "等待模型");
   $("valueEstimate").textContent = d?.value == null ? "V(s) —" : `V(s) ${Number(d.value).toFixed(3)}`;
   const search = d?.search;
   const actions = search?.root_actions?.length ? search.root_actions : (d?.top_actions || []);
@@ -1348,7 +1466,7 @@ function renderWatch() {
     return `<div class="action-row${selected ? " selected" : ""}"><b>${probability}</b><span>${escapeHtml(actionDisplayText(a, w.event))}${detail ? `<small>${detail}</small>` : ""}</span><div class="prob-track"><i style="width:${actingProb == null ? 0 : actingProb*100}%"></i></div></div>`;
   }).join("");
   const planner = d?.combat_planner;
-  $("searchStatus").textContent = turnPlannerActive
+  $("searchStatus").textContent = w.manual_mode ? "手动操作期间不预选模型动作" : turnPlannerActive
     ? `回合规划下层 · ${w.combat_strategy_version || "ironclad-turn-v8-awakened-phase"}${planner ? ` · ${planner.worlds_completed || 0} worlds · ${planner.native_transitions || 0} transitions` : ""} · 下方为 checkpoint prior 对照`
     : search
     ? (search.method === "nosl_is_az_cpp"

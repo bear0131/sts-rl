@@ -71,7 +71,7 @@
               <option value="3">Act 3</option>
             </select>
           </label>
-          <button id="watchBossButton" type="button" title="仅推进外层决策，忽略 HP、最大 HP 和药水，并停在指定 Boss 战">快进 Boss</button>
+          <button id="watchBossButton" type="button" title="旧沙盒：固定 HP、最大 HP 并清空药水，与训练开场不同">沙盒快进 Boss</button>
         </div>
         <button id="resetButton">重开</button>
         <button id="undoButton" class="icon-command" title="撤销上一步"><span>↶</span>撤销</button>
@@ -84,6 +84,16 @@
         </label>
         <span id="watchMeta" class="toolbar-meta"></span>
       </div>
+
+      <section class="training-opening-bar" aria-label="训练同款二层">
+        <strong>训练同款二层</strong>
+        <label>Boss <select id="trainingBoss"><option value="CHAMP">冠军</option><option value="AUTOMATON">铜制机械人</option><option value="COLLECTOR">收藏家</option></select></label>
+        <label>开场种子 <select id="trainingSeed"></select></label>
+        <button id="trainingLoad" class="primary" type="button">载入训练开场</button>
+        <label><input id="manualMode" type="checkbox"> 手动操作</label>
+        <button id="ordinaryRun" type="button">返回普通爬塔</button>
+        <span id="trainingOpeningStatus">未配置训练开场</span>
+      </section>
 
       <div class="battle-layout">
         <section id="arena" class="arena" aria-label="模拟战斗场景">
@@ -120,6 +130,12 @@
         </section>
 
         <aside class="decision-panel">
+          <section id="manualPanel" class="manual-panel" hidden aria-label="手动操作">
+            <strong>手动操作</strong>
+            <p id="manualHint">点击手牌或下方动作；有多个目标时选择目标。</p>
+            <button id="manualShowAll" type="button" hidden>显示全部动作</button>
+            <div id="manualActions" class="manual-actions"></div>
+          </section>
           <div class="panel-heading"><span id="decisionHeading">模型决策</span><b id="valueEstimate">V(s) —</b></div>
           <div id="chosenAction" class="chosen-action">等待模型</div>
           <div id="searchStatus" class="search-status"></div>

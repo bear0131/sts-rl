@@ -24,6 +24,7 @@ from sb3_contrib import MaskablePPO
 from env.core import action_space as A
 from env.core import native_actions as C
 from env.core.run_env import SlayTheSpireEnv
+from env.core.boss_opening import BossOpeningPool, CONTRACT as BOSS_OPENING_CONTRACT
 import slaythespire as sts
 from rl.evaluation.runner import evaluate, summarize, Scenario, EvaluationConfig, EvaluationCancelled
 from rl.evaluation.runner import is_win
@@ -604,7 +605,8 @@ def _evaluation_strategy(
 
 
 class WatchSession:
-    def __init__(self, model: Any, model_lock: threading.Lock, seed: int = 0):
+    def __init__(self, model: Any, model_lock: threading.Lock, seed: int = 0,
+                 boss_opening_pool: BossOpeningPool | None = None):
         self.model = model
         self.model_lock = model_lock
         set_training_mode = getattr(getattr(model, "policy", None), "set_training_mode", None)
@@ -628,6 +630,11 @@ class WatchSession:
             neow_observation=_model.uses_neow_observation(model),
             event_option_observation=_model.uses_event_option_observation(model),
         )
+        self._run_backend_factory = self.env._backend_factory
+        self.boss_opening_pool = boss_opening_pool
+        self.training_opening = None
+        self.manual_mode = False
+        self.action_revision = 0
         self.seed = seed
         self.history: list[int | None] = []
         self.native_history: list[int | None] = []
@@ -658,7 +665,7 @@ class WatchSession:
         self.mcts_end_turn_as_leaf = _model_search_bool(
             model, "nosl_is_az_end_turn_as_leaf", True
         )
-        self.mcts_fixed_worldline = False
+        self.mcts_fixed_worldline = _model_search_bool(model, "nosl_is_az_fixed_worldline", False)
         self.mcts_prior_temperature = _clamp_float(
             self._model_search_param(
                 "nosl_is_az_prior_temperature",
@@ -825,7 +832,30 @@ class WatchSession:
         upper_strategy: str | None = None,
         combat_strategy: str | None = None,
         target_boss_act: int | None = None,
+        training_opening_seed: int | None = None,
+        manual_mode: bool = False,
     ):
+        opening = None
+        factory = self._run_backend_factory
+        if training_opening_seed is not None:
+            if self.boss_opening_pool is None:
+                raise ValueError("未配置训练开场数据集")
+            if precompute or target_boss_act is not None:
+                raise ValueError("训练开场不能与旧路线快进或整局预处理混用")
+            pool = self.boss_opening_pool
+            index = next((i for i, e in enumerate(pool.entries)
+                          if int(e['source_seed']) == int(training_opening_seed)), None)
+            if index is None:
+                raise ValueError("该种子不在训练开场数据集中")
+            # Replay and validate before replacing the live session.
+            pool.opening(index)
+            factory = pool.factory(fixed_index=index)
+            entry = pool.entries[index]
+            seed = int(entry['source_seed'])
+            opening = {key: entry[key] for key in ('source_seed', 'boss', 'opening_sha256')}
+            opening.update(dataset_sha256=pool.sha256, contract=BOSS_OPENING_CONTRACT)
+        if manual_mode and precompute:
+            raise ValueError("手动操作不能同时预处理整局")
         requested_simulations = (
             self.mcts_simulations if simulations is None else int(simulations)
         )
@@ -934,6 +964,10 @@ class WatchSession:
                     "whole-run precompute and route-only boss fast-forward are exclusive"
                 )
         self.precompute_enabled = bool(precompute)
+        self.env._backend_factory = factory
+        self.training_opening = opening
+        self.manual_mode = bool(manual_mode)
+        self.action_revision += 1
         self.history = []
         self.native_history = []
         self.native_direct_history = []
@@ -971,6 +1005,8 @@ class WatchSession:
         resulting BattleContext.  ``move`` is intentionally a one-turn
         override; ending the turn lets the simulator roll the next intent.
         """
+        if self.training_opening is not None:
+            raise ValueError("请先返回普通爬塔，再编辑自定义状态")
         if not isinstance(spec, dict):
             raise ValueError("自定义状态必须是 JSON 对象")
         thick = self.env.unwrapped.thick
@@ -1059,6 +1095,7 @@ class WatchSession:
         fixed_worldline: bool | None = None,
         stochastic: bool | None = None,
         combat_strategy: str | None = None,
+        manual_mode: bool | None = None,
     ):
         """Apply search settings without resetting the current run."""
         requested_simulations = (
@@ -1160,6 +1197,9 @@ class WatchSession:
         # that pending action is no longer the displayed decision and must not
         # leak into the next direct-policy/search step.
         self.env.unwrapped._nosl_cpp_pending = None
+        if manual_mode is not None:
+            self.manual_mode = bool(manual_mode)
+        self.action_revision += 1
         self._prepare_decision()
         return self.snapshot()
 
@@ -1287,6 +1327,8 @@ class WatchSession:
         return self.seek(original_position)
 
     def advance_to_timeline(self, target_index: int):
+        if self.training_opening is not None or self.manual_mode:
+            return self.snapshot()
         target_index = int(target_index)
         if target_index < 0 or target_index >= 48:
             raise ValueError(f"timeline index must be between 0 and 47, got {target_index}")
@@ -1312,6 +1354,8 @@ class WatchSession:
         return self.snapshot()
 
     def preview_map(self, act: int):
+        if self.training_opening is not None or self.manual_mode:
+            return self.snapshot()
         act = int(act)
         if act < 1 or act > 3:
             raise ValueError(f"act must be between 1 and 3, got {act}")
@@ -1365,9 +1409,10 @@ class WatchSession:
 
 
     def _run_native_search(self, root_logits, root_value):
-        config = NativeSearchConfig(**{
-            field.name: getattr(self, "mcts_" + field.name, field.default)
+        config = NativeSearchConfig.from_model(self.model, **{
+            field.name: getattr(self, "mcts_" + field.name)
             for field in fields(NativeSearchConfig)
+            if hasattr(self, "mcts_" + field.name)
         })
         nonce = int(self.mcts_master_nonce) ^ int(self.seed) ^ (int(self.position) * 0x9E3779B97F4A7C15)
         return native_search(self.model, self.env, None, config, nonce=nonce,
@@ -1450,7 +1495,7 @@ class WatchSession:
         return label
 
     def _prepare_decision(self):
-        if self.terminated or self.truncated:
+        if self.terminated or self.truncated or self.manual_mode:
             self.decision = None
             return
         # The native combat bridge can advance the thick simulator while the
@@ -1804,6 +1849,15 @@ class WatchSession:
         )
 
     def _action_animation(self, action: int):
+        if self.env.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT:
+            if self.info and self.info.get('phase') not in ('combat', 'select'):
+                return None
+            if action == C.AUTOREGRESSIVE_END:
+                return {"kind": "end_turn"}
+            if C.AUTOREGRESSIVE_PLAY <= action < C.AUTOREGRESSIVE_POTION:
+                slot, target = divmod(action - C.AUTOREGRESSIVE_PLAY, 6)
+                return {"kind": "play_card", "slot": slot, "target": target}
+            return None
         if action == C.JOINT_END:
             return {"kind": "end_turn"}
         if C.JOINT_PLAY <= action < C.JOINT_POTION:
@@ -1819,10 +1873,60 @@ class WatchSession:
         return None
 
     def step(self):
-        if self.decision is None:
+        if self.manual_mode or self.decision is None:
             return self.snapshot()
         self._advance_one()
         return self.snapshot()
+
+    def manual_action(self, action: int, revision: int):
+        if not self.manual_mode:
+            raise ValueError("请先启用手动操作")
+        if revision != self.action_revision:
+            raise ValueError("画面已更新，请按当前手牌重新选择")
+        if self.terminated or self.truncated:
+            raise ValueError("战斗已结束，请重开同一局")
+        mask = self.env.action_masks()
+        if type(action) is not int or not 0 <= action < len(mask) or not mask[action]:
+            raise ValueError("当前状态不能执行该动作")
+        # Human choices must never consume a previously cached model target/subset.
+        self.env.unwrapped._nosl_cpp_pending = None
+        self.decision = {"action": action, "label": self.env.describe_action(action),
+                         "animation": self._action_animation(action), "source": "manual"}
+        self._advance_one()
+        return self.snapshot()
+
+    def _manual_actions(self, canon):
+        if not self.manual_mode or self.terminated or self.truncated:
+            return []
+        mapping = (dict(self.env._joint_policy_actions())
+                   if self.info.get('phase') == 'combat'
+                   and self.env.combat_action_contract in C.NEURAL_CONTRACTS else {})
+        candidates = {c['native_index']: c for c in
+                      canon.get('options', {}).get('select', {}).get('candidates', [])}
+        result = []
+        for action in np.flatnonzero(self.env.action_masks()):
+            action = int(action)
+            item = {"action": action, "label": self.env.describe_action(action),
+                    "animation": self._action_animation(action)}
+            bits = mapping.get(action)
+            if bits is not None:
+                kind, source, target = int(bits) >> 29, int(bits) & 0xffff, (int(bits) >> 16) & 0x1fff
+                if kind == 1:
+                    item['choice'] = dict(kind='potion', slot=source,
+                        name=str(self.env.thick.bc.potions[source]),
+                        target=target if self.env.thick.bc.is_targeted_action(int(bits)) else None)
+                elif kind == 2:
+                    candidate = candidates.get(source)
+                    if candidate is None:
+                        raise RuntimeError('manual selection lacks its public candidate')
+                    item['choice'] = dict(kind='select_card', card=candidate['card'],
+                                         zone=canon['options']['select']['zone'], index=source)
+                elif kind == 5:
+                    item['choice'] = dict(kind='select_hand', card=canon['hand'][source], index=source)
+                elif kind == 6:
+                    item['choice'] = dict(kind='confirm', selected=sorted(self.env._multi or ()))
+            result.append(item)
+        return result
 
     def _advance_one(self, *, route_mode: str | None = None):
         if self.decision is None:
@@ -1947,6 +2051,7 @@ class WatchSession:
                 self.env.step(action)
             )
         self.position += 1
+        self.action_revision += 1
         if active_route_mode == _ROUTE_STEP_SKIP_COMBAT:
             self._apply_route_step_mode(active_route_mode)
         elif (
@@ -1979,6 +2084,7 @@ class WatchSession:
             raise ValueError(
                 f"step must be between 0 and {len(self.history)}, got {target_step}"
             )
+        self.action_revision += 1
         self.obs, self.info = self.env.reset(seed=self.seed)
         self.terminated = self.truncated = False
         self.total_reward = 0.0
@@ -2193,6 +2299,10 @@ class WatchSession:
                 option["action"] = event_base + option["index"]
         return _jsonable({
             "seed": self.seed,
+            "manual_mode": self.manual_mode,
+            "action_revision": self.action_revision,
+            "training_opening": self.training_opening,
+            "manual_actions": self._manual_actions(canon),
             "step": self.position,
             "max_step": len(self.history),
             "precomputed_steps": len(self.history) if self.timeline_exhausted else 0,
@@ -2301,6 +2411,7 @@ class DashboardState:
         self.embedding: dict | None = None
         self.token_embeddings: dict = {}
         self.watch: WatchSession | None = None
+        self.boss_opening_pool: BossOpeningPool | None = None
         self.eval_status: dict = {"state": "idle"}
         self.eval_token = ""
         self.error: str | None = None
@@ -2312,6 +2423,11 @@ class DashboardState:
                 "checkpoint": self.checkpoint.name if self.checkpoint else None,
                 "checkpoint_path": str(self.checkpoint) if self.checkpoint else None,
                 "checkpoint_format": self.checkpoint_format,
+                "boss_openings": {
+                    "sha256": self.boss_opening_pool.sha256,
+                    "entries": [{"seed": e['source_seed'], "boss": e['boss']}
+                                for e in self.boss_opening_pool.entries],
+                } if self.boss_opening_pool else None,
                 "capabilities": {
                     "global_map": _model.uses_global_map_observation(self.model)
                     if self.model else False,
@@ -2378,7 +2494,8 @@ class DashboardState:
         model.set_random_seed(0)
         embedding = self._embedding(model)
         token_embeddings = self._token_embeddings(model)
-        watch = WatchSession(model, self.model_lock, seed=0)
+        watch = WatchSession(model, self.model_lock, seed=0,
+                             boss_opening_pool=self.boss_opening_pool)
         with self.lock:
             old_watch = self.watch
             self.checkpoint = path
@@ -2390,7 +2507,8 @@ class DashboardState:
             self.error = None
         if old_watch:
             old_watch.close()
-        self.start_evaluation(episodes=episodes, seed=0)
+        if episodes > 0:
+            self.start_evaluation(episodes=episodes, seed=0)
 
     def _embedding(self, model: Any):
         try:
@@ -2812,6 +2930,8 @@ class Handler(BaseHTTPRequestHandler):
                         upper_strategy=body.get("upper_strategy"),
                         combat_strategy=body.get("combat_strategy"),
                         target_boss_act=body.get("target_boss_act"),
+                        training_opening_seed=body.get("training_opening_seed"),
+                        manual_mode=bool(body.get("manual_mode", False)),
                     )
                 self._send_json(result)
             elif path == "/api/watch/apply":
@@ -2820,6 +2940,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not APP.watch:
                         raise RuntimeError("no checkpoint loaded")
                     result = APP.watch.configure_search(
+                        manual_mode=body.get("manual_mode"),
                         simulations=body.get("simulations"),
                         depth=body.get("depth"),
                         leaf_batch_size=body.get("leaf_batch_size"),
@@ -2857,6 +2978,13 @@ class Handler(BaseHTTPRequestHandler):
                         body.get("path", ()),
                         max_children=body.get("max_children", 64),
                     )
+                self._send_json(result)
+            elif path == "/api/watch/action":
+                body = self._read_json()
+                with APP.lock:
+                    if not APP.watch:
+                        raise RuntimeError("no checkpoint loaded")
+                    result = APP.watch.manual_action(body.get("action"), body.get("revision"))
                 self._send_json(result)
             elif path == "/api/watch/step":
                 with APP.lock:
@@ -2982,8 +3110,12 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--eval-episodes", type=int, default=50)
+    parser.add_argument("--eval-episodes", type=int, default=50, help="0 disables evaluation on load")
+    parser.add_argument("--boss-opening-dataset", type=Path,
+                        help="Shared training Boss opening dataset for manual Watch")
     args = parser.parse_args()
+    if args.boss_opening_dataset:
+        APP.boss_opening_pool = BossOpeningPool(args.boss_opening_dataset)
     checkpoint = args.checkpoint or _default_dashboard_checkpoint()
     if checkpoint:
         APP.load_checkpoint(checkpoint, args.eval_episodes)

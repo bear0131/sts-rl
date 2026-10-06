@@ -1,5 +1,7 @@
 import copy
 import json
+import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -24,6 +26,132 @@ def make_env(pool, index):
     return SlayTheSpireEnv(backend_factory=pool.factory(fixed_index=index),
                           global_map_view=True, card_language=True,
                           combat_action_contract='autoregressive-v2')
+
+
+@pytest.fixture
+def manual_watch(pool):
+    from apps.dashboard import WatchSession
+
+    class Watch(WatchSession):
+        def _policy_outputs(self, observation, mask):
+            probabilities = np.asarray(mask, dtype=np.float32)
+            return probabilities / probabilities.sum(), 0.0, None
+
+    env = make_env(pool, 0)
+    model = SimpleNamespace(observation_space=env.observation_space,
+                            policy=SimpleNamespace(set_training_mode=lambda enabled: None),
+                            nosl_is_az_simulations=0)
+    env.close()
+    session = Watch(model, threading.Lock(), boss_opening_pool=pool)
+    yield session
+    session.close()
+
+
+@pytest.mark.parametrize('index', range(3))
+def test_dashboard_training_opening_matches_actor_and_restarts(pool, manual_watch, index):
+    session = manual_watch
+    seed = pool.entries[index]['source_seed']
+    state = session.reset(seed, training_opening_seed=seed, manual_mode=True)
+    actor = make_env(pool, index)
+    try:
+        expected, _ = actor.reset(seed=456)
+        assert session.env.thick.bc.to_dict() == actor.thick.bc.to_dict()
+        assert opening_digest(session.env.thick) == pool.entries[index]['opening_sha256']
+        assert set(expected) == set(session.obs)
+        for key in expected:
+            np.testing.assert_array_equal(session.obs[key], expected[key])
+        assert state['manual_mode'] and state['decision'] is None
+        assert not state['route_preprocess']['enabled']
+        assert state['training_opening']['dataset_sha256'] == pool.sha256
+        assert {a['action'] for a in state['manual_actions']} == set(np.flatnonzero(actor.action_masks()))
+        original = actor.thick.bc.to_dict()
+        action = next(a['action'] for a in state['manual_actions'] if a['animation'] and a['animation']['kind'] == 'play_card')
+        # A cached model decision with the same policy ID must not hijack the human action.
+        session.env._nosl_cpp_pending = (action, 4 << 29)
+        actor.step(action)
+        after = session.manual_action(action, state['action_revision'])
+        assert session.env.thick.bc.to_dict() == actor.thick.bc.to_dict()
+        with pytest.raises(ValueError, match='画面已更新'):
+            session.manual_action(action, state['action_revision'])
+        assert session.position == 1
+        session.undo()
+        assert session.env.thick.bc.to_dict() == original
+        session.manual_action(action, session.action_revision)
+        assert session.env.thick.bc.to_dict() == actor.thick.bc.to_dict()
+        session.reset(seed, training_opening_seed=seed, manual_mode=True)
+        assert session.env.thick.bc.to_dict() == original
+        assert opening_digest(pool.opening(index)) == pool.entries[index]['opening_sha256']
+        session.preview_map(3)
+        assert session.position == 0
+        assert session.step()['step'] == 0  # autoplay cannot move manual state
+        session.configure_search(manual_mode=False)
+        assert session.decision is not None
+        with pytest.raises(ValueError, match='手动操作'):
+            session.manual_action(action, session.action_revision)
+        session.configure_search(manual_mode=True)
+        with pytest.raises(ValueError, match='当前状态'):
+            session.manual_action(999999, session.action_revision)
+        session.reset(0)
+        assert session.training_opening is None
+        assert session.env.thick.bc is None
+    finally:
+        actor.close()
+
+
+def test_dashboard_training_opening_rejects_resource_editor_and_mixed_modes(pool, manual_watch):
+    session = manual_watch
+    seed = pool.entries[0]['source_seed']
+    session.reset(seed, training_opening_seed=seed, manual_mode=True)
+    before = session.env.thick.bc.to_dict()
+    for kwargs in ({'precompute': True}, {'target_boss_act': 2}):
+        with pytest.raises(ValueError, match='混用'):
+            session.reset(seed, training_opening_seed=seed, **kwargs)
+    with pytest.raises(ValueError, match='不在'):
+        session.reset(seed, training_opening_seed=999999)
+    with pytest.raises(ValueError, match='普通爬塔'):
+        session.apply_custom_state({})
+    assert session.env.thick.bc.to_dict() == before
+
+
+def test_dashboard_search_retains_model_utility_and_hidden_search_settings(manual_watch, monkeypatch):
+    from apps import dashboard
+    session = manual_watch
+    session.model.policy.entity_config = {'boss_win_weight': 0.9}
+    session.model.nosl_is_az_merge_equivalent_actions = False
+    seen = []
+    def capture(model, env, observation, config, **kwargs):
+        seen.append(config)
+        return {}
+    monkeypatch.setattr(dashboard, 'native_search', capture)
+    session.configure_search(simulations=128, paper_full_gumbel=True,
+                             gumbel_value_scale=1.0, gumbel_rescale_q=False, gumbel_scale=0.0)
+    session._run_native_search(np.zeros(198), 0.0)
+    assert seen[0].boss_win_weight == 0.9
+    assert not seen[0].merge_equivalent_actions
+    assert seen[0].gumbel_value_scale == 1 and not seen[0].gumbel_rescale_q
+    assert seen[0].gumbel_scale == 0
+
+
+def test_dashboard_manual_multi_selection(manual_watch, replayable_selection_env):
+    session = manual_watch
+    session.env.close()
+    session.env = replayable_selection_env
+    session._run_backend_factory = session.env._backend_factory
+    state = session.reset(42, manual_mode=True)
+    play = next(a for a in state['manual_actions'] if a['animation'] and a['animation']['kind'] == 'play_card' and a['animation']['slot'] == 0)
+    state = session.manual_action(play['action'], state['action_revision'])
+    choices = [a for a in state['manual_actions'] if a.get('choice', {}).get('kind') == 'select_hand']
+    assert len(choices) == 5
+    choice = choices[0]
+    assert choice['choice']['card']['id'] == 'Strike_R'
+    state = session.manual_action(choice['action'], state['action_revision'])
+    confirm = next(a for a in state['manual_actions'] if a.get('choice', {}).get('kind') == 'confirm')
+    assert confirm['choice']['selected'] == [choice['choice']['index']]
+    state = session.manual_action(confirm['action'], state['action_revision'])
+    assert len(state['canon']['hand']) == 4
+    assert len(state['canon']['exhaust']) == 2  # Purity plus the chosen Strike
+    session.undo()
+    assert session.env._multi == {choice['choice']['index']}
 
 
 @pytest.mark.parametrize('index', range(3))
