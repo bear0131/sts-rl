@@ -88,6 +88,9 @@ def test_actor_isolation_restore_and_true_loss(pool, index):
     assert done and not truncated
     assert info['nosl_value_terminal_outcome'] == 'loss'
     assert info['nosl_value_terminal_target'] == 0
+    assert info['run_stats']['episode_scope'] == 'boss-opening'
+    assert info['run_stats']['boss'] == BOSSES[index]
+    assert info['run_stats']['combat_outcome'] == 'loss'
     assert boss_episode_outcome(env, info, done, truncated)['result'] == 'death'
     assert env.thick.gc.outcome.name == 'UNDECIDED'  # no mutation of cached GC
     assert opening_digest(pool.opening(index)) == opening

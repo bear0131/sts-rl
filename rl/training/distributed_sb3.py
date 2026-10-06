@@ -1036,7 +1036,7 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
         if key.startswith((
-            "game/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
+            "game/", "boss/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
         )):
             if isinstance(value, np.generic):
                 value = value.item()
