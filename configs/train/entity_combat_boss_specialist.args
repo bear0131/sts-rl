@@ -1,0 +1,5 @@
+@configs/train/entity_combat_boss_utility_runtime.args
+--boss-opening-dataset
+runs/datasets/boss-opening-train.json
+--total-steps
+18923520

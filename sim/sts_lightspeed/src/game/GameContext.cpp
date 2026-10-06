@@ -1122,6 +1122,15 @@ void GameContext::enterBattle(MonsterEncounter encounter) {
     screenState = ScreenState::BATTLE;
     info.encounter = encounter;
     if (skipBattles) {
+        // Skipping does not construct/exit a BattleContext. Consume its
+        // fight-limited charge here, otherwise Neow's three early fights
+        // incorrectly survive into late-game curriculum/preview openings.
+        if (hasRelic(RelicId::NEOWS_LAMENT)) {
+            auto &charges = relics.getRelicValueRef(RelicId::NEOWS_LAMENT);
+            if (charges > 0) {
+                --charges;
+            }
+        }
         afterBattle();
     }
 }

@@ -29,6 +29,8 @@ def build_parser():
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
+    parser.add_argument('--boss-opening-dataset', type=Path,
+                        help='Evaluate every journal in an opening-only Boss dataset exactly once')
     parser.add_argument('--solver', choices=tuple(STRATEGIES), default='policy')
     parser.add_argument('--upper-strategy', choices=['model', 'rules'], default='model',
                         help='Keep the upper checkpoint, or use overworld rules with explicit model fallback')
@@ -109,15 +111,30 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
     models = [model] + ([combat_model] if combat_model is not None else [])
     def uses(feature):
         return any(feature(m) for m in models)
-    return Scenario('wholerun', lambda: SlayTheSpireEnv(
-        ascension=args.ascension,
-        combat_action_contract=combat_action_contract,
-        global_map_view=uses(policy_model.uses_global_map_observation),
-        card_language=uses(policy_model.uses_card_language),
-        combat_language=uses(policy_model.uses_combat_language),
-        deck_size_observation=uses(policy_model.uses_deck_size_observation),
-        neow_observation=uses(policy_model.uses_neow_observation),
-        event_option_observation=uses(policy_model.uses_event_option_observation)))
+    boss_pool = None
+    if getattr(args, 'boss_opening_dataset', None):
+        from env.core.boss_opening import BossOpeningPool
+        boss_pool = BossOpeningPool(args.boss_opening_dataset)
+        if args.episodes != len(boss_pool.entries):
+            raise ValueError('Boss evaluation episodes must equal the dataset size')
+    def make(backend_factory=None):
+        return SlayTheSpireEnv(
+            backend_factory=backend_factory,
+            ascension=args.ascension,
+            combat_action_contract=combat_action_contract,
+            global_map_view=uses(policy_model.uses_global_map_observation),
+            card_language=uses(policy_model.uses_card_language),
+            combat_language=uses(policy_model.uses_combat_language),
+            deck_size_observation=uses(policy_model.uses_deck_size_observation),
+            neow_observation=uses(policy_model.uses_neow_observation),
+            event_option_observation=uses(policy_model.uses_event_option_observation))
+    if boss_pool is not None:
+        from env.core.boss_opening import boss_episode_outcome
+        def reset(env, seed):
+            env._backend_factory = boss_pool.factory(fixed_index=seed - args.seed, ascension=args.ascension)
+            return env.reset(seed=seed)
+        return Scenario('boss-opening', make, boss_episode_outcome, reset)
+    return Scenario('wholerun', make)
 
 
 def file_identity(path):
@@ -131,6 +148,8 @@ def file_identity(path):
 
 def main():
     args = build_parser().parse_args()
+    if args.boss_opening_dataset and args.task != 'wholerun':
+        raise ValueError('Boss openings require the whole-run observation/action environment')
     torch.set_float32_matmul_precision(args.float32_matmul_precision)
     config = EvaluationConfig(args.episodes, args.seed, args.num_envs, args.max_steps, args.timeout)
     if args.progress_every < 0 or args.heartbeat_seconds < 0:
@@ -224,6 +243,18 @@ def main():
             trace_stream.close()
         rows.sort(key=lambda row: row['episode'])
         summary = summarize(rows)
+        if args.boss_opening_dataset:
+            # Run-clear rates are undefined for episodes that begin at a Boss.
+            for key in list(summary):
+                if key.startswith(('act1_', 'act2_', 'act3_')):
+                    del summary[key]
+            summary['episode_scope'] = 'boss-opening'
+            summary['by_boss'] = {
+                boss: dict(episodes=len(group), wins=sum(r['result'] == 'win' for r in group),
+                           win_rate=sum(r['result'] == 'win' for r in group) / len(group))
+                for boss in sorted({r['boss'] for r in rows})
+                for group in [[r for r in rows if r['boss'] == boss]]
+            }
         payload = dict(schema_version=1, task=args.task, strategy=strategy.name,
                        state="error" if failure else "complete", error=failure,
                        checkpoint=str(args.checkpoint.resolve()), config=vars(args),
@@ -234,7 +265,8 @@ def main():
         payload.update(identities=dict(upper=file_identity(args.checkpoint),
             combat=file_identity(args.combat_checkpoint or args.checkpoint),
             card_encoder=file_identity(args.card_vector_checkpoint),
-            native=file_identity(slaythespire.__file__)), rule_version=RULE_VERSION,
+            native=file_identity(slaythespire.__file__),
+            boss_openings=file_identity(args.boss_opening_dataset)), rule_version=RULE_VERSION,
             effective_strategy=strategy_manifest(configured_strategy),
             combat_candidates={name: strategy_manifest(solver) for name, solver in candidate_strategies.items()},
             combat_rows=combat_rows, combat_comparison=summarize_pairs(combat_rows))
@@ -275,7 +307,8 @@ def main():
                 f'- 胜率（Wilson 95% 区间）：{summary["win_rate"]:.1%} '
                 f'（{summary["win_ci95"][0]:.1%}–{summary["win_ci95"][1]:.1%}）\n'
                 f'- 结束楼层均值/中位数：{summary["floor_mean"]:.2f}/{summary["floor_median"]:.2f}\n'
-                f'- 到达 Act1/Act2/Act3：{summary["act1_rate"]:.1%}/{summary["act2_rate"]:.1%}/{summary["act3_rate"]:.1%}\n'
+                + (f'- 到达 Act1/Act2/Act3：{summary["act1_rate"]:.1%}/{summary["act2_rate"]:.1%}/{summary["act3_rate"]:.1%}\n'
+                   if not args.boss_opening_dataset else '- 范围：单场Boss开场评测，非整局通关率\n') +
                 f'- 策略：`{strategy.name}`\n'
                 f'- 轨迹文件：[`episodes.jsonl`](episodes.jsonl)、[`episodes.md`](episodes.md)\n',
                 encoding='utf-8')

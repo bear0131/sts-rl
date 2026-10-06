@@ -388,6 +388,8 @@ class SlayTheSpireEnv(gym.Env):
             "schema_version": 1,
             "combat_action_contract": self.combat_action_contract,
             "backend_seed": int(self._episode_backend_seed),
+            "backend_identity": (self.thick.training_identity()
+                                 if hasattr(self.thick, 'training_identity') else None),
             "actions": copy.deepcopy(self._episode_action_journal),
             "np_random_state": copy.deepcopy(self.np_random.bit_generator.state),
             "pending": copy.deepcopy(self._pending),
@@ -411,6 +413,10 @@ class SlayTheSpireEnv(gym.Env):
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
         SlayTheSpireEnv.reset(self, seed=int(state["backend_seed"]))
+        identity = (self.thick.training_identity()
+                    if hasattr(self.thick, 'training_identity') else None)
+        if identity != state.get('backend_identity'):
+            raise ValueError('environment backend/dataset identity mismatch')
         for position, record in enumerate(state["actions"]):
             kind = record.get("kind")
             if kind == "thin":

@@ -49,6 +49,8 @@ class StSMetricsCallback(BaseCallback):
         self._rew = deque(maxlen=window)
         self._len = deque(maxlen=window)
         self._win = deque(maxlen=window)
+        self._boss = deque(maxlen=window)
+        self._boss_censored = 0
         self._floor = deque(maxlen=window)
         self._act = deque(maxlen=window)
         self._deck = deque(maxlen=window)
@@ -73,6 +75,11 @@ class StSMetricsCallback(BaseCallback):
             if info.get("startup_occupancy_incumbent_episode"):
                 self._excluded_startup_episodes += 1
                 continue
+            stats = info.get('run_stats') or {}
+            if (stats.get('episode_scope') == 'boss-opening' and
+                    stats.get('combat_outcome') not in ('win', 'loss')):
+                self._boss_censored += 1
+                continue
             self._n_episodes += 1
             self._rew.append(ep["r"])
             self._len.append(ep["l"])
@@ -85,6 +92,7 @@ class StSMetricsCallback(BaseCallback):
                 # reach — so testing it alone made win_rate stay 0.
                 won = stats["act"] > 3 or stats["outcome"] == "PLAYER_VICTORY"
                 self._win.append(1.0 if won else 0.0)
+                self._boss.append(stats.get('boss') if stats.get('episode_scope') == 'boss-opening' else None)
                 self._floor.append(stats["floor"])
                 self._act.append(stats["act"])
                 self._deck.append(stats["deck_size"])
@@ -113,6 +121,13 @@ class StSMetricsCallback(BaseCallback):
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
         self.logger.record("game/episodes_window", len(self._win))
+        if any(self._boss):
+            self.logger.record('boss/censored_episodes_total', self._boss_censored)
+            from env.core.boss_opening import BOSSES
+            for boss in BOSSES:
+                pairs = [(name, won) for name, won in zip(self._boss, self._win) if name == boss]
+                self.logger.record(f'boss/{boss}/episodes_window', len(pairs))
+                self.logger.record(f'boss/{boss}/wins_window', sum(won for _, won in pairs))
         self.logger.record(
             "game/startup_episodes_excluded_total",
             self._excluded_startup_episodes,
@@ -485,6 +500,7 @@ class WholeRunTask(Task):
 
         def _thunk():
             env = SlayTheSpireEnv(
+                backend_factory=getattr(args, 'backend_factory', None),
                 ascension=ascension,
                 global_map_view=args.global_map_view,
                 card_language=(args.card_language or interactive_reasoning),

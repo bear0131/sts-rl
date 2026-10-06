@@ -47,3 +47,22 @@ def test_wandb_omits_game_rates_until_a_complete_fresh_episode_exists():
         "game/episodes_total": 0.0,
         "game/startup_episodes_excluded_total": 384.0,
     }
+
+
+def test_boss_windows_keep_encounter_denominators_and_omit_run_clear_rates():
+    counts = []
+    for wins, total in [(3, 4), (8, 20)]:
+        values = _prepare_distributed_game_scalars({
+            'game/episodes_window': total, 'game/win_rate': wins / total,
+            'boss/CHAMP/episodes_window': total, 'boss/CHAMP/wins_window': wins,
+        })
+        counts.append(values)
+    reduced = {key: sum(row[key] for row in counts) / 2 for key in counts[0]}
+    _finalize_distributed_game_scalars(reduced, world_size=2)
+    reduced['episode_scope'] = 'boss-opening'
+    payload = {}
+    _add_game_metrics_to_wandb_payload(payload, reduced)
+    assert payload['boss/CHAMP/episodes_window'] == 24
+    assert payload['boss/CHAMP/win_rate'] == 11 / 24
+    assert payload['boss/win_rate'] == 11 / 24
+    assert not any(key.startswith(('game/act_', 'game/floor_', 'game/layer_')) for key in payload)

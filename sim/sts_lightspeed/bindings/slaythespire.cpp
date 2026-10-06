@@ -1589,6 +1589,7 @@ pybind11::dict packedNeuralLeaves(
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
+    m.def("boss_opening_route_version", []() { return 1; });
     bindNeuralObservation(m);
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
         .def(pybind11::init<int>(), pybind11::arg("threads") = 1)

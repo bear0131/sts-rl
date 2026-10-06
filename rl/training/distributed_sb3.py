@@ -357,6 +357,8 @@ def build_parser() -> argparse.ArgumentParser:
         "using checkpoint num_timesteps plus world_size*n_envs*n_steps/update.",
     )
     parser.add_argument("--n-envs", type=int, default=32)
+    parser.add_argument('--boss-opening-dataset', type=Path,
+                        help='Opening-only Act 2 Boss curriculum; 2:1:1 Champ/Automaton/Collector actors')
     parser.add_argument("--n-steps", type=int, default=256)
     parser.add_argument(
         "--startup-stagger-steps",
@@ -1817,6 +1819,9 @@ _DISTRIBUTED_GAME_COUNT_KEYS = (
     "game/episodes_window",
     "game/episodes_total",
     "game/startup_episodes_excluded_total",
+    'boss/censored_episodes_total',
+    *(f'boss/{boss}/{metric}' for boss in ('CHAMP', 'AUTOMATON', 'COLLECTOR')
+      for metric in ('episodes_window', 'wins_window')),
 )
 
 
@@ -1853,10 +1858,22 @@ def _finalize_distributed_game_scalars(
 def _add_game_metrics_to_wandb_payload(
     payload: dict[str, object], record: dict[str, object],
 ) -> None:
-    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_COUNT_KEYS})
+    payload.update({key: record[key] for key in _DISTRIBUTED_GAME_COUNT_KEYS
+                    if key in record and (not key.startswith('boss/') or
+                                          record.get('episode_scope') == 'boss-opening')})
     if float(record["game/episodes_window"]) <= 0.0:
         return
     payload.update({key: record[key] for key in _DISTRIBUTED_GAME_METRIC_KEYS})
+    if record.get('episode_scope') == 'boss-opening':
+        payload['boss/win_rate'] = record['game/win_rate']
+        for key in list(payload):
+            if key.startswith('game/act_') or key.startswith('game/floor_'):
+                del payload[key]
+        for boss in ('CHAMP', 'AUTOMATON', 'COLLECTOR'):
+            count = record[f'boss/{boss}/episodes_window']
+            if count:
+                payload[f'boss/{boss}/win_rate'] = record[f'boss/{boss}/wins_window'] / count
+        return
     for floor in range(5, 55, 5):
         payload[f"game/layer_{floor}_win_rate"] = record[
             f"game/floor_won/{floor:02d}"
@@ -2213,6 +2230,9 @@ def main() -> None:
     elif args.disable_entity_transition_auxiliary:
         raise ValueError('--disable-entity-transition-auxiliary requires EntityCombatPolicy')
     source_nosl_is_az = bool(getattr(probe_model, "nosl_is_az", False))
+    if args.boss_opening_dataset and (not source_nosl_is_az or
+            args.combat_supervision_contract != 'combat-outcome-quantiles-v1'):
+        raise ValueError('Boss specialization requires entity NOSL outcome supervision')
     source_nosl_is_az_replay_enabled = bool(
         getattr(probe_model, "nosl_is_az_replay_enabled", True)
     )
@@ -3283,6 +3303,8 @@ def main() -> None:
                 hp_order_fraction(aggregate_scalars) or 0.0
             )
             record.update(aggregate_scalars)
+            if args.boss_opening_dataset:
+                record['episode_scope'] = 'boss-opening'
 
             global_timesteps = int(record["global_timesteps"])
             # Keep saved checkpoints/resumes on the global env-step axis rather

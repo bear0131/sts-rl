@@ -419,7 +419,14 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args.interactive_reasoning = interactive_reasoning
     env_args.map_dag = True
 
-    base_env_fn = WholeRunTask().make_env_fn(env_args)
+    boss_dataset = getattr(args, 'boss_opening_dataset', None)
+    boss_pool = None
+    if boss_dataset:
+        from env.core.boss_opening import BossOpeningPool
+        if args.n_envs % 4 or interactive_reasoning:
+            raise ValueError('Boss specialization requires n_envs divisible by 4 and no reasoning')
+        boss_pool = BossOpeningPool(boss_dataset)
+        args.boss_opening_dataset_sha256 = boss_pool.sha256
     expected_space = getattr(model, "observation_space", None)
 
     stagger_steps = int(getattr(args, "startup_stagger_steps", 0))
@@ -434,7 +441,12 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
 
     def compat_env_fn(hold_steps: int, env_index: int):
         def make():
-            env = base_env_fn()
+            local_args = copy.copy(env_args)
+            if boss_pool is not None:
+                from env.core.boss_opening import BOSSES
+                group = 0 if env_index < args.n_envs // 2 else 1 if env_index < 3 * args.n_envs // 4 else 2
+                local_args.backend_factory = boss_pool.factory(boss=BOSSES[group], ascension=args.ascension)
+            env = WholeRunTask().make_env_fn(local_args)()
             if expected_space is not None:
                 env = CheckpointObservationCompat(env, expected_space)
             if stagger_steps:
