@@ -2747,6 +2747,7 @@ def main() -> None:
             "dist/*",
             "reasoning/*",
             "nosl_is_az/*",
+            "boss/*",
             "global_step",
             "time/total_timesteps",
             "env_steps_per_second",
