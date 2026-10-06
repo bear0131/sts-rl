@@ -1,0 +1,7 @@
+@configs/train/entity_joint_runtime.args
+--n-envs
+384
+--nosl-is-az-updates
+40
+--learning-rate
+0.0002
