@@ -522,6 +522,32 @@ def test_original_width_globalbatch_preset_uses_four_rank_root_batch():
     assert args.total_steps == 30_000_000
 
 
+def test_joint_upper_batch4x_e10_keeps_learning_rates_and_effective_lower_batch():
+    from rl.tasks import TASKS
+    from rl.training.trainer import build_parser as initial_parser
+
+    parser = build_parser()
+    runtime = parser.parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/entity_joint_upper_batch4x_e10_runtime.args'}",
+    ])
+    initial = initial_parser(TASKS["wholerun"]).parse_args([
+        "--task", "wholerun",
+        f"@{ROOT / 'configs/train/entity_joint_upper_batch4x_e10.args'}",
+        "--steps", "0",
+    ])
+
+    assert runtime.n_envs == 384 and runtime.n_steps == 128
+    assert runtime.n_envs * runtime.n_steps * runtime.world_size == 196_608
+    assert runtime.learning_rate == 5e-5
+    assert runtime.nosl_is_az_updates == 40
+    assert runtime.nosl_is_az_batch_size == 102_400
+    assert runtime.nosl_is_az_micro_batch_size == 8_192
+    upper = initial.upper_config
+    assert upper["epochs"] == 10
+    assert upper["learning_rate"] == 1e-4
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

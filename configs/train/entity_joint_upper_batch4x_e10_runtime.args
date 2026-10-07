@@ -1,0 +1,5 @@
+@configs/train/entity_joint_runtime.args
+--n-envs
+384
+--nosl-is-az-micro-batch-size
+8192
