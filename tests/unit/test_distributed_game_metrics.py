@@ -20,6 +20,8 @@ def test_game_metrics_are_weighted_by_their_actual_rank_windows():
         "game/startup_episodes_excluded_total": 7.0,
         **{key: 0.5 for key in _DISTRIBUTED_GAME_METRIC_KEYS},
     }
+    left["game/deck_size_mean"] = 18.0
+    right["game/deck_size_mean"] = 30.0
     left = _prepare_distributed_game_scalars(left)
     right = _prepare_distributed_game_scalars(right)
     averaged = {key: (left[key] + right[key]) / 2.0 for key in left}
@@ -27,6 +29,7 @@ def test_game_metrics_are_weighted_by_their_actual_rank_windows():
     _finalize_distributed_game_scalars(averaged, world_size=2)
 
     assert averaged["game/win_rate"] == (40 * 0.25 + 100 * 0.5) / 140
+    assert averaged["game/deck_size_mean"] == (40 * 18.0 + 100 * 30.0) / 140
     assert averaged["game/episodes_window"] == 140
     assert averaged["game/episodes_total"] == 180
     assert averaged["game/startup_episodes_excluded_total"] == 12

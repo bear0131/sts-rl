@@ -9,6 +9,8 @@ from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.algorithms.upper_ppo import train_phase, update_upper
 from rl.policies.entity_combat import EntityCombatPolicy
 from rl.policies.entity_joint import EntityJointPolicy
+from rl.rules.rule_vector_model import FROZEN_CARD_VECTOR_TABLE_SCHEMA
+from env.core.cards_vocab import CARD_VOCAB
 from rl.training.checkpoints import save_bundle, restore_learner
 from rl.training.environments import TrainingStateWrapper
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -17,8 +19,10 @@ from stable_baselines3.common.logger import configure
 pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(120)]
 
 
-def make_joint(env, policy=EntityJointPolicy):
+def make_joint(env, policy=EntityJointPolicy, card_vector_checkpoint=None):
     kwargs = dict(entity_config=dict(width=32, layers=1, heads=4, quantiles=8, auxiliary_loss_coef=0))
+    if card_vector_checkpoint is not None:
+        kwargs['entity_config']['card_vector_checkpoint'] = str(card_vector_checkpoint)
     if policy is EntityJointPolicy:
         kwargs['upper_config'] = dict(width=32, layers=1, heads=4, epochs=2, micro_batch_size=2)
     return AccumulatingMaskablePPO(policy, env, seed=7, n_steps=8, batch_size=4,
@@ -26,6 +30,39 @@ def make_joint(env, policy=EntityJointPolicy):
         nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='model' if policy is EntityJointPolicy else 'rules',
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=1,
         nosl_is_az_batch_size=8, nosl_is_az_micro_batch_size=4, nosl_is_az_replay_capacity=128)
+
+
+def test_frozen_card_vectors_are_shared_and_locked(tmp_path):
+    vectors = torch.randn(len(CARD_VOCAB), 2, 12, generator=torch.Generator().manual_seed(19))
+    vector_checkpoint = tmp_path / 'card-vectors.pt'
+    torch.save(dict(schema=FROZEN_CARD_VECTOR_TABLE_SCHEMA,
+                    card_vocab=list(CARD_VOCAB), vectors=vectors), vector_checkpoint)
+    env = DummyVecEnv([lambda: TrainingStateWrapper(SlayTheSpireEnv(
+        card_language=False, global_map_view=True,
+        combat_action_contract='autoregressive-v2'))])
+    model = make_joint(env, card_vector_checkpoint=vector_checkpoint)
+    core = model.policy.core
+    assert 'draw_card_ids' not in model.observation_space.spaces
+    assert core.combat.card is core.upper_tokenizer.card
+    assert tuple(core.combat.card.parameters()) == ()
+    torch.testing.assert_close(core.combat.card.vectors, vectors, rtol=0, atol=0)
+    assert core.combat.card_projection.in_features == 13
+    assert core.upper_tokenizer.card_projection.in_features == 13
+    before = core.combat.card.vectors.clone()
+    for optimizer, parameters in (
+            (model.policy.optimizer, core.combat.parameters()),
+            (model.policy.upper_optimizer, core.upper_parameters())):
+        optimizer.zero_grad()
+        sum(parameter.square().sum() for parameter in parameters
+            if parameter.requires_grad).backward()
+        optimizer.step()
+        torch.testing.assert_close(core.combat.card.vectors, before, rtol=0, atol=0)
+    model.save(tmp_path / 'joint-frozen.zip')
+    restored = AccumulatingMaskablePPO.load(tmp_path / 'joint-frozen.zip', device='cpu')
+    torch.testing.assert_close(restored.policy.core.combat.card.vectors,
+                               before, rtol=0, atol=0)
+    assert restored.policy.core.combat.card is restored.policy.core.upper_tokenizer.card
+    env.close()
 
 
 def test_combat_unchanged_and_optimizers_independent(combat_factory, tmp_path):

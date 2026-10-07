@@ -594,10 +594,17 @@ def main() -> None:
                 args.arch = "entity-joint" if resume_settings['policy_class'] is EntityJointPolicy else "entity-combat"
                 args.nosl_is_az_inner_only = resume_settings["nosl_is_az_inner_only"]
                 args.nosl_is_az_cpp = resume_settings["nosl_is_az_cpp"]
+            saved_policy_kwargs = resume_settings.get("policy_kwargs") or {}
+            saved_entity_config = saved_policy_kwargs.get("entity_config") or {}
+            if args.card_vector_checkpoint is None:
+                args.card_vector_checkpoint = (
+                    saved_entity_config.get("card_vector_checkpoint")
+                    or saved_policy_kwargs.get("card_vector_checkpoint")
+                )
         if args.nosl_is_az_upper_strategy is None:
             args.nosl_is_az_upper_strategy = resume_settings.get("nosl_is_az_upper_strategy", "model")
         if args.arch in ("entity-combat", "entity-joint"):
-            args.card_language = True
+            args.card_language = not bool(args.card_vector_checkpoint)
             if args.combat_action_contract is None and not args.resume:
                 args.combat_action_contract = C.AUTOREGRESSIVE_CONTRACT
             if args.combat_action_contract not in (*C.NEURAL_CONTRACTS, None) or not (
@@ -605,8 +612,8 @@ def main() -> None:
                     and args.nosl_is_az_inner_only and args.nosl_is_az_cpp
                     and args.nosl_is_az_upper_strategy == ("model" if args.arch == 'entity-joint' else "rules")):
                 raise ValueError("entity-combat requires joint-v2, C++ inner-only NOSL and rules upper strategy")
-            if args.interactive_reasoning or args.card_vector_checkpoint:
-                raise ValueError("entity-combat has its own card encoder and no history/reasoning decoder")
+            if args.interactive_reasoning:
+                raise ValueError("entity-combat has no history/reasoning decoder")
 
     source_hierarchical = False
     source_combat_gamma = 1.0
@@ -1216,32 +1223,41 @@ def main() -> None:
         # params come from the zip; env + device + tensorboard sink are rebound
         # here, and the CLI-tunable PPO knobs override via custom_objects
         # (everything else in the .zip wins).
+        resume_custom_objects = {
+            "learning_rate": args.learning_rate,
+            "ent_coef": args.ent_coef,
+            "clip_range": args.clip_range,
+            "gamma": args.gamma,
+            "gae_lambda": args.gae_lambda,
+            "vf_coef": args.vf_coef,
+            "n_epochs": args.n_epochs,
+            "n_steps": args.n_steps,
+            "batch_size": args.batch_size,
+            "gradient_accumulation_steps": (
+                args.gradient_accumulation_steps
+            ),
+            "performance_profile": args.profile_performance,
+            "hierarchical_combat_hp": getattr(
+                args, "hierarchical_combat_hp", False
+            ),
+            "nosl_is_az_boss_transition_target": getattr(
+                args, "nosl_is_az_boss_transition_target", False
+            ),
+        }
+        # A moved entity checkpoint stores its card-vector dependency inside
+        # entity_config. Resolve an explicit/local replacement before SB3
+        # constructs the policy, just like evaluation/checkpoint loading.
+        from rl.policies.checkpoint import custom_objects as checkpoint_custom_objects
+        dependency_override = checkpoint_custom_objects(
+            args.resume, args.card_vector_checkpoint)
+        resume_custom_objects.update(dependency_override)
         model = AccumulatingMaskablePPO.load(
             args.resume,
             env=venv,
             device=args.device,
             tensorboard_log=tensorboard_log,
             amp_mode=args.amp_mode,
-            custom_objects={
-                "learning_rate": args.learning_rate,
-                "ent_coef": args.ent_coef,
-                "clip_range": args.clip_range,
-                "gamma": args.gamma,
-                "gae_lambda": args.gae_lambda,
-                "vf_coef": args.vf_coef,
-                "n_epochs": args.n_epochs,
-                "n_steps": args.n_steps,
-                "batch_size": args.batch_size,
-                "gradient_accumulation_steps": (
-                    args.gradient_accumulation_steps
-                ),
-                "performance_profile": args.profile_performance,
-                "hierarchical_combat_hp": getattr(
-                    args, "hierarchical_combat_hp", False
-                ),
-                "nosl_is_az_boss_transition_target": getattr(
-                    args, "nosl_is_az_boss_transition_target", False
-                ),
+            custom_objects=resume_custom_objects | {
                 "combat_hp_gamma": getattr(args, "combat_hp_gamma", 1.0),
                 "combat_hp_gae_lambda": getattr(
                     args, "combat_hp_gae_lambda", 0.95
@@ -1356,7 +1372,10 @@ def main() -> None:
                     args, "nosl_is_az_inference_schedule", "fixed_wait"
                 ),
                 "nosl_is_az_updates": getattr(args, "nosl_is_az_updates", 1),
-                "nosl_is_az_update_schedule": model.nosl_is_az_update_schedule,
+                "nosl_is_az_update_schedule": (
+                    getattr(args, "nosl_is_az_update_schedule", None)
+                    or resume_settings.get("nosl_is_az_update_schedule")
+                ),
                 "nosl_is_az_policy_coef": getattr(
                     args, "nosl_is_az_policy_coef", 1.0
                 ),

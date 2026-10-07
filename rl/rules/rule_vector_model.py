@@ -33,6 +33,7 @@ from env.core.card_language import (
     TOKEN_VOCAB as CARD_RULE_VOCAB,
     encoded_card_version_programs,
 )
+from env.core.cards_vocab import CARD_VOCAB
 from env.core.rule_language import COMBAT_RELIC_RULES
 from env.core.encode import COMBAT_COUNTER_KEYS
 
@@ -351,6 +352,82 @@ def load_frozen_card_rule_encoder(
     for parameter in encoder.parameters():
         parameter.requires_grad_(False)
     return encoder
+
+
+FROZEN_CARD_VECTOR_TABLE_SCHEMA = "frozen-card-vector-table-v1"
+
+
+class FrozenCardVectorTable(nn.Module):
+    """A fixed base/upgraded vector for every canonical card id.
+
+    The table is a persistent buffer rather than a Parameter, so neither the
+    combat optimizer nor the strategic optimizer can update it. Persisting it
+    records the exact table in every policy checkpoint; the source artifact is
+    still required while SB3 constructs the policy during load.
+    """
+
+    def __init__(self, vectors: torch.Tensor) -> None:
+        super().__init__()
+        vectors = torch.as_tensor(vectors, dtype=torch.float32).detach().contiguous()
+        if vectors.ndim != 3 or vectors.shape[1] != 2 or vectors.shape[2] < 1:
+            raise ValueError("card vector table must have shape [cards, 2, width]")
+        if not bool(torch.isfinite(vectors).all()):
+            raise ValueError("card vector table contains non-finite values")
+        self.register_buffer("vectors", vectors.clone(), persistent=True)
+
+    @property
+    def embedding_dim(self) -> int:
+        return int(self.vectors.shape[2])
+
+    @property
+    def num_embeddings(self) -> int:
+        return int(self.vectors.shape[0])
+
+    def versioned_forward(
+        self, card_ids: torch.Tensor, upgrades: torch.Tensor
+    ) -> torch.Tensor:
+        ids = card_ids.long()
+        versions = upgrades.long().gt(0).long().clamp(0, 1)
+        return self.vectors[ids, versions]
+
+    def forward(self, card_ids: torch.Tensor) -> torch.Tensor:
+        return self.vectors[card_ids.long(), 0]
+
+    def effective_weight(self) -> torch.Tensor:
+        return self.vectors[:, 0]
+
+
+def load_frozen_card_vector_table(
+    checkpoint_path: str,
+    *,
+    expected_num_cards: int,
+) -> FrozenCardVectorTable:
+    """Load a compact frozen table or materialize a standalone rule encoder."""
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if (isinstance(checkpoint, dict)
+            and checkpoint.get("schema") == FROZEN_CARD_VECTOR_TABLE_SCHEMA):
+        vocabulary = checkpoint.get("card_vocab")
+        if vocabulary != list(CARD_VOCAB):
+            raise ValueError("card vector table vocabulary does not match the current environment")
+        vectors = checkpoint.get("vectors")
+        if not isinstance(vectors, torch.Tensor):
+            raise ValueError("card vector table checkpoint has no tensor 'vectors'")
+        table = FrozenCardVectorTable(vectors)
+    else:
+        encoder = load_frozen_card_rule_encoder(
+            checkpoint_path, expected_num_cards=expected_num_cards
+        )
+        ids = torch.arange(expected_num_cards, dtype=torch.long)[:, None].expand(-1, 2)
+        upgrades = torch.arange(2, dtype=torch.long)[None].expand(expected_num_cards, -1)
+        with torch.no_grad():
+            table = FrozenCardVectorTable(encoder.versioned_forward(ids, upgrades))
+    if table.num_embeddings != expected_num_cards:
+        raise ValueError(
+            "card vector table does not match the environment: "
+            f"checkpoint={table.num_embeddings}, environment={expected_num_cards}"
+        )
+    return table
 
 
 _RELIC_WORD_RE = re.compile(r"[A-Za-z0-9]+|%|[^\sA-Za-z0-9]", re.ASCII)

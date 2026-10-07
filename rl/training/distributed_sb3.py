@@ -1811,6 +1811,7 @@ def distributed_nosl_is_az_update(
 _DISTRIBUTED_GAME_METRIC_KEYS = (
     "game/win_rate",
     "game/floor_mean",
+    "game/deck_size_mean",
     "game/act_1_won_mean",
     "game/act_2_won_mean",
     "game/act_3_won_mean",
@@ -2289,9 +2290,15 @@ def main() -> None:
         if isinstance(checkpoint_core_cfg, dict):
             policy_kwargs = dict(checkpoint_core_cfg)
     if args.card_vector_checkpoint is not None:
-        policy_kwargs["card_vector_checkpoint"] = str(
-            args.card_vector_checkpoint
-        )
+        if isinstance(policy_kwargs.get("entity_config"), dict):
+            policy_kwargs["entity_config"] = dict(policy_kwargs["entity_config"])
+            policy_kwargs["entity_config"]["card_vector_checkpoint"] = str(
+                args.card_vector_checkpoint
+            )
+        else:
+            policy_kwargs["card_vector_checkpoint"] = str(
+                args.card_vector_checkpoint
+            )
     env = make_env(probe_model, args)
     del probe_model
     custom_objects = {

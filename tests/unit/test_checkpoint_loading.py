@@ -43,6 +43,20 @@ def test_inaccessible_saved_path_falls_back_to_checkpoint_sibling(inaccessible_e
     assert custom_objects(checkpoint)['policy_kwargs']['card_vector_checkpoint'] == str(encoder.resolve())
 
 
+def test_nested_entity_card_vector_path_is_rebased(tmp_path):
+    encoder = tmp_path / 'card-vector-run' / 'vectors.pt'
+    encoder.parent.mkdir()
+    encoder.touch()
+    checkpoint = tmp_path / 'model.zip'
+    with ZipFile(checkpoint, 'w') as archive:
+        archive.writestr('data', data_to_json({'policy_kwargs': {
+            'entity_config': {'width': 32, 'card_vector_checkpoint':
+                              '/root/old/card-vector-run/vectors.pt'}}}))
+    kwargs = custom_objects(checkpoint)['policy_kwargs']
+    assert kwargs['entity_config']['card_vector_checkpoint'] == str(encoder.resolve())
+    assert 'card_vector_checkpoint' not in kwargs
+
+
 def test_inaccessible_history_without_replacement_reports_missing_dependency(inaccessible_encoder):
     checkpoint, _ = inaccessible_encoder
     with pytest.raises(FileNotFoundError, match='missing card-vector encoder'):

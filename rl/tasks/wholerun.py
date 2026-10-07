@@ -238,9 +238,9 @@ class WholeRunTask(Task):
         parser.add_argument(
             "--card-vector-checkpoint",
             default=None,
-            help="Load the standalone v7 anonymous card vectors and freeze the "
-                 "card-rule encoder for non-reasoning split-pointer wholerun "
-                 "training. The checkpoint must contain card_encoder weights.",
+            help="Load anonymous card vectors and freeze them for non-reasoning "
+                 "whole-run training. Entity policies also disable card-language "
+                 "observations when this option is present.",
         )
         parser.add_argument(
             "--max-reasoning-tokens",
@@ -561,7 +561,8 @@ class WholeRunTask(Task):
                 upper = dict(upper_config=asdict(UpperConfig(**(args.upper_config or {}))))
             return policy, dict(entity_config=dict(
                 width=args.d_model, layers=args.n_layers, heads=args.n_heads,
-                quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight), **upper)
+                quantiles=args.hp_quantiles, boss_win_weight=args.boss_win_weight,
+                card_vector_checkpoint=args.card_vector_checkpoint), **upper)
         if args.arch == "semantic-reasoning":
             if args.interactive_reasoning is False:
                 raise ValueError(

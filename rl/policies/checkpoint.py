@@ -18,7 +18,9 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
     with ZipFile(checkpoint) as archive:
         data = json_to_data(archive.read('data').decode('utf-8'))
     policy_kwargs = dict(data.get('policy_kwargs') or {})
-    saved = policy_kwargs.get('card_vector_checkpoint')
+    entity_config = dict(policy_kwargs.get('entity_config') or {})
+    saved = (entity_config.get('card_vector_checkpoint')
+             or policy_kwargs.get('card_vector_checkpoint'))
     if not saved:
         return {}
     explicit = card_vector_checkpoint or os.environ.get('STS_CARD_VECTOR_CHECKPOINT')
@@ -46,7 +48,11 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
             raise FileNotFoundError(f'missing card-vector encoder {saved}; pass --card-vector-checkpoint or set STS_CARD_VECTOR_CHECKPOINT')
     if not resolved.is_file():
         raise FileNotFoundError(f'card-vector encoder is not a file: {resolved}')
-    policy_kwargs['card_vector_checkpoint'] = str(resolved)
+    if entity_config.get('card_vector_checkpoint'):
+        entity_config['card_vector_checkpoint'] = str(resolved)
+        policy_kwargs['entity_config'] = entity_config
+    else:
+        policy_kwargs['card_vector_checkpoint'] = str(resolved)
     return {'policy_kwargs': policy_kwargs}
 
 

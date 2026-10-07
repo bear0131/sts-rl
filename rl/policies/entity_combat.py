@@ -11,6 +11,7 @@ from rl.policies.model import CardLanguageEmbedding
 from rl.policies.complete_combat import CompleteCombatHead
 from rl.policies.combat_distribution import CombatDistributionHead
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS, SplitStSPointerPolicy
+from rl.rules.rule_vector_model import load_frozen_card_vector_table
 
 
 @dataclass(frozen=True)
@@ -23,10 +24,13 @@ class EntityCombatConfig:
     mean_loss_coef: float = .25
     auxiliary_loss_coef: float = 0.0
     boss_win_weight: float = 0.0
+    card_vector_checkpoint: str | None = None
 
     def __post_init__(self):
         if not 0 <= self.boss_win_weight <= 1:
             raise ValueError('boss_win_weight must be finite and in [0, 1]')
+        if self.card_vector_checkpoint is not None and not self.card_vector_checkpoint:
+            raise ValueError('card_vector_checkpoint must be a non-empty path')
         if min(self.width, self.layers, self.heads, self.pile_queries) < 1 or self.width % self.heads:
             raise ValueError('invalid entity transformer geometry')
         if self.quantiles < 2 or min(self.mean_loss_coef, self.auxiliary_loss_coef) < 0:
@@ -68,13 +72,20 @@ class EntityEncoderLayer(nn.TransformerEncoderLayer):
 
 
 class EntityCombatNetwork(nn.Module):
-    def __init__(self, space, config):
+    def __init__(self, space, config, *, card_embedding=None):
         super().__init__()
         self.config = config
         width = config.width
         self.n_cards = _vocabulary(space, 'hand_ids')
-        self.card = CardLanguageEmbedding(self.n_cards, 64)
-        self.card_projection = nn.Linear(65, width)
+        self.card = (
+            card_embedding
+            if card_embedding is not None
+            else CardLanguageEmbedding(self.n_cards, 64)
+        )
+        card_dim = int(getattr(self.card, 'embedding_dim', 64))
+        if int(getattr(self.card, 'num_embeddings', self.n_cards)) != self.n_cards:
+            raise ValueError('card embedding does not cover the environment vocabulary')
+        self.card_projection = nn.Linear(card_dim + 1, width)
         self.register_buffer('card_ids', torch.arange(self.n_cards).repeat_interleave(2), persistent=False)
         self.register_buffer('card_versions', torch.arange(2).repeat(self.n_cards), persistent=False)
         self.hand_context = nn.Linear(4, width)
@@ -126,13 +137,18 @@ class EntityCombatNetwork(nn.Module):
         return super()._apply(fn, recurse=recurse)
 
     def _encode_card_table(self):
-        return self.card.versioned_forward(self.card_ids, self.card_versions).reshape(self.n_cards, 2, 64)
+        if hasattr(self.card, 'vectors'):
+            return self.card.vectors
+        return self.card.versioned_forward(self.card_ids, self.card_versions).reshape(
+            self.n_cards, 2, int(self.card.embedding_dim))
 
     def inference_card_table(self):
-        device = self.card.weight.device
+        device = self.card_ids.device
         precision = torch.get_autocast_dtype(device.type) if torch.is_autocast_enabled(device.type) else None
-        key = (device, self.card.weight.dtype, precision)
-        versions = tuple((id(p), p._version) for p in self.card.parameters())
+        tensors = tuple(self.card.parameters()) + tuple(self.card.buffers())
+        dtype = tensors[0].dtype if tensors else torch.float32
+        key = (device, dtype, precision)
+        versions = tuple((id(p), p._version) for p in tensors)
         entry = self._card_inference_tables.get(key)
         if entry is None or entry[0] != versions:
             # Normal (non-inference) storage permits in-place refresh under
@@ -295,11 +311,20 @@ class EntityCombatCore(nn.Module):
         super().__init__()
         if 'combat_legal' not in space.spaces:
             raise ValueError('entity-combat requires joint-v2 actions')
-        if 'draw_card_upgraded_counts' not in space.spaces:
-            raise ValueError('entity-combat requires card-language observations for upgraded piles')
+        has_card_language = 'draw_card_upgraded_counts' in space.spaces
+        if config.card_vector_checkpoint is None and not has_card_language:
+            raise ValueError('entity-combat requires card-language observations or frozen card vectors')
+        if config.card_vector_checkpoint is not None and has_card_language:
+            raise ValueError('frozen card vectors require card-language observations to be disabled')
         self.config = config
         self.autoregressive_actions = C.policy_contract(space) == C.AUTOREGRESSIVE_CONTRACT
-        self.combat = EntityCombatNetwork(space, config)
+        card_embedding = None
+        if config.card_vector_checkpoint is not None:
+            card_embedding = load_frozen_card_vector_table(
+                config.card_vector_checkpoint,
+                expected_num_cards=_vocabulary(space, 'hand_ids'),
+            )
+        self.combat = EntityCombatNetwork(space, config, card_embedding=card_embedding)
 
     def prepare_inference_cache(self):
         self.combat.inference_card_table()

@@ -46,8 +46,16 @@ class EntityJointCore(EntityCombatCore):
         # Build combat first: its architecture, initialization and leaf path are identical.
         super().__init__(space, config)
         self.upper_config = upper_config
-        self.upper_tokenizer = SharedSemanticTokenizer(space, upper_config.width,
-                                                       card_language=True)
+        if config.card_vector_checkpoint is None:
+            # Preserve the established entity-joint initialization exactly
+            # when no frozen dependency is requested.
+            self.upper_tokenizer = SharedSemanticTokenizer(
+                space, upper_config.width, card_language=True)
+        else:
+            card_dim = int(self.combat.card.embedding_dim)
+            self.upper_tokenizer = SharedSemanticTokenizer(
+                space, upper_config.width, card_language=False,
+                card_dim=card_dim, card_embedding=self.combat.card)
         encoder = OverworldEncoder(space, d_model=upper_config.width,
             n_layers=upper_config.layers, n_heads=upper_config.heads,
             features_dim=upper_config.width, map_dag=True)
