@@ -252,6 +252,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
             assert all(p['train/optimizer_steps'] == 0 for p in payloads)
             assert all(p['nosl_is_az/rulebase_lower_decisions'] > 0
                        for p in payloads)
+            assert all(p['nosl_is_az/rulebase_lower_batch_seconds'] > 0
+                       for p in payloads)
             for name, value in final.policy.core.combat.state_dict().items():
                 torch.testing.assert_close(value, initial_combat[name], rtol=0, atol=0)
     if contract == 'autoregressive-v2':

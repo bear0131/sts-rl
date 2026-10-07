@@ -16,3 +16,9 @@ class NativeSearchVecEnv(DummyVecEnv):
     def close(self):
         self.native_search_batch.close()
         super().close()
+
+    def env_method_batch(self, method_name, calls):
+        if method_name == 'rulebase_turn_decision':
+            return self.native_search_batch.rulebase_turn_decisions(calls)
+        return {index: self.env_method(method_name, *args, indices=index, **kwargs)[0]
+                for index, (args, kwargs) in calls.items()}

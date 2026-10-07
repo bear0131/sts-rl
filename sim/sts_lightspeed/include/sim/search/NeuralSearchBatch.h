@@ -32,6 +32,9 @@ public:
     const auto &owners() const { return owners_; }
     const auto &sessions() const { return sessions_; }
     int threadCount() const { return static_cast<int>(threads_.size()); }
+    // Reuse the same resident workers for model-free independent root jobs.
+    // Caller owns acquire() across this call and result encoding.
+    void runIndependent(std::size_t count, std::function<void(std::size_t)> work);
 
 private:
     void parallel(std::size_t count, std::function<void(std::size_t)> work);

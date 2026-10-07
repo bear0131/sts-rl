@@ -33,6 +33,7 @@
 #include "sim/search/Nosl.h"
 #include "sim/search/NoslCombatTrainer.h"
 #include "sim/search/NeuralSearchBatch.h"
+#include "sim/search/RuleTurnPlanner.h"
 #include "neural-observation.h"
 #include <chrono>
 #include "constants/MonsterStatusEffects.h"
@@ -1586,6 +1587,48 @@ pybind11::dict packedNeuralLeaves(
     return out;
 }
 
+std::vector<search::Action> completeRuleCombatActions(const BattleContext &bc) {
+    auto out=legalRuleCombatActions(bc);
+    if (bc.outcome==Outcome::UNDECIDED && bc.inputState==InputState::PLAYER_NORMAL) {
+        for (int slot=0;slot<bc.potionCapacity;++slot) {
+            const auto potion=bc.potions[slot];
+            if (potion==Potion::INVALID || potion==Potion::EMPTY_POTION_SLOT) continue;
+            const int targets=potionRequiresTarget(potion) ? bc.monsters.monsterCount:1;
+            for (int target=0;target<targets;++target) {
+                search::Action a(search::ActionType::POTION,slot,target);
+                if (a.isValidAction(bc)) out.push_back(a);
+            }
+        }
+    }
+    std::vector<search::Action> unique;
+    for (auto a:out) if (std::find(unique.begin(),unique.end(),a)==unique.end()) unique.push_back(a);
+    return unique;
+}
+
+py::dict ruleTurnResult(const search::ruleturn::Result &r,int worlds) {
+    const auto &s=r.stats;
+    py::dict d,values,outcomes;
+    for (const auto &root:r.roots) {
+        const auto key=std::to_string(root.bits);
+        values[py::str(key)]=root.mean;
+        py::dict o;
+        o["deaths"]=root.deaths; o["wins"]=root.wins;
+        o["live"]=worlds-root.deaths-root.wins; o["unresolved"]=root.unresolved;
+        o["boundary_live"]=worlds-root.deaths-root.wins-root.unresolved;
+        o["heuristic_mean"]=root.mean; o["winning_steps_total"]=root.winningSteps;
+        o["winning_steps_mean"]=root.wins ? double(root.winningSteps)/root.wins:0.;
+        outcomes[py::str(key)]=o;
+    }
+    d["native_transitions"]=s.nativeTransitions; d["expanded_nodes"]=s.expandedNodes;
+    d["worlds_completed"]=worlds; d["budget_exhausted"]=s.budgetExhausted;
+    d["effective_node_budget"]=r.budget; d["effective_total_budget"]=r.budget*worlds;
+    d["root_actions"]=r.roots.size(); d["fallback_leaves"]=s.fallbackLeaves;
+    d["second_turn_entries"]=s.secondTurnEntries; d["completed_horizon_leaves"]=s.completedHorizonLeaves;
+    d["max_action_depth"]=s.maxDepth; d["root_values"]=values; d["root_outcomes"]=outcomes;
+    d["search_seconds"]=r.seconds; d["search_decisions"]=1;
+    py::dict out; out["action_bits"]=r.action; out["diagnostics"]=d; return out;
+}
+
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
@@ -1593,6 +1636,48 @@ PYBIND11_MODULE(slaythespire, m) {
     bindNeuralObservation(m);
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")
         .def(pybind11::init<int>(), pybind11::arg("threads") = 1)
+        .def("rule_turn_plan", [](sts::search::NeuralSearchBatch &batch,
+                std::vector<const BattleContext *> battles,
+                const std::vector<std::vector<std::uint64_t>> &nonces,
+                const std::vector<std::vector<std::string>> &relics,
+                int worlds,int nodes,int beam,int depth,int turns,const std::string &profile) {
+            auto ownership=batch.acquire();
+            if (worlds<1 || nodes<1 || beam<1 || depth<1 || (turns!=1 && turns!=2) ||
+                (profile!="legacy-v8" && profile!="time-clock-v9") ||
+                battles.size()!=nonces.size() || battles.size()!=relics.size())
+                throw std::invalid_argument("invalid native rule-search batch/config");
+            std::vector<std::unique_ptr<BattleContext>> copies;
+            std::vector<bool> outputRelics;
+            const std::unordered_set<std::string> outputs={"mercuryhourglass","bronzescales","charonsashes",
+                "letteropener","stonecalendar","deadbranch","nilryscodex","tingsha","toolbox"};
+            for (std::size_t i=0;i<battles.size();++i) {
+                if (!battles[i] || nonces[i].size()!=static_cast<std::size_t>(worlds))
+                    throw std::invalid_argument("one nonce per world and a nonnull battle are required");
+                copies.push_back(std::make_unique<BattleContext>(*battles[i]));
+                bool output=false;
+                for (const auto &relic:relics[i]) {
+                    std::string key;
+                    for (unsigned char c:relic) if (std::isalnum(c)) key+=char(std::tolower(c));
+                    output|=outputs.count(key)>0;
+                }
+                outputRelics.push_back(output);
+            }
+            const sts::search::ruleturn::Planner planner{
+                {worlds,nodes,beam,depth,turns,profile=="time-clock-v9"},
+                completeRuleCombatActions,remapDrawSelection,playerPowerObservation};
+            std::vector<sts::search::ruleturn::Result> results(battles.size());
+            {
+                pybind11::gil_scoped_release release;
+                batch.runIndependent(results.size(),[&](std::size_t i){
+                    results[i]=planner.choose(*copies[i],nonces[i],outputRelics[i]);
+                });
+            }
+            pybind11::list out;
+            for (const auto &r:results) out.append(ruleTurnResult(r,worlds));
+            return out;
+        },pybind11::arg("battles"),pybind11::arg("nonces"),pybind11::arg("relics"),
+          pybind11::arg("worlds"),pybind11::arg("nodes"),pybind11::arg("beam"),
+          pybind11::arg("depth"),pybind11::arg("turns"),pybind11::arg("profile"))
         .def("begin", [](sts::search::NeuralSearchBatch &batch,
                           std::vector<std::shared_ptr<sts::search::NoslNeuralSearchSession>> sessions,
                           pybind11::object language_card_index) {

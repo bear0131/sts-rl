@@ -189,6 +189,13 @@ LR1e-4。为了只比较下层替换的影响，应从TRAIN41相同的fresh step
 声称配对。`nosl_is_az/rulebase_lower_*`记录规则决策、节点和耗时；验收要求
 `train/optimizer_steps=0`、下层权重逐字节不变且`upper/updates>0`。
 
-这个规则搜索每个战斗根最多展开 `2×8192` 节点，墙钟吞吐可能显著低于模型搜索。
+`--vec native` 使用同一常驻 C++ 线程池批处理规则搜索；树维护和评分直接读取原生
+状态，不逐节点构建 Python 字典。需要包含 `rule_turn_plan` 的扩展，缺少时明确报错；
+Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完成多选仍走共用
+动作适配，不能切换规则版本、预算、nonce 或平局规则来冒充等价加速。
+`rulebase_lower_batch_seconds` 是实际批处理墙钟时间，`rulebase_lower_search_seconds`
+是各根耗时之和，多线程时二者不能互换。跨设备性能用实际整轮采样和更新耗时衡量。
+
+这个规则搜索每个战斗根有 `2×8192` 节点预算（动作过多时按既有每根最低配额扩容）。
 判断上层推进效率时以相同上层样本数/环境transition下的楼层、过幕和胜率曲线为主，
 同时报告规则搜索耗时；不能仅按训练小时比较。

@@ -1920,6 +1920,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/rulebase_lower_decisions",
     "nosl_is_az/rulebase_lower_expanded_nodes",
     "nosl_is_az/rulebase_lower_search_seconds",
+    "nosl_is_az/rulebase_lower_batch_seconds",
     "nosl_is_az/root_value_predictions_skipped",
     "nosl_is_az/combat_roots",
     "nosl_is_az/combat_policy_roots",

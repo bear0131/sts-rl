@@ -79,6 +79,12 @@ void NeuralSearchBatch::clear() {
     sessions_.clear();
 }
 
+void NeuralSearchBatch::runIndependent(std::size_t count, std::function<void(std::size_t)> work) {
+    if (!requests_.empty() || !sessions_.empty())
+        throw std::logic_error("clear neural sessions before independent search jobs");
+    parallel(count, std::move(work));
+}
+
 void NeuralSearchBatch::begin(std::vector<std::shared_ptr<NoslNeuralSearchSession>> sessions) {
     if (!requests_.empty()) throw std::logic_error("finish or clear the previous search batch");
     std::unordered_set<const NoslNeuralSearchSession *> distinct;

@@ -830,6 +830,14 @@ class SlayTheSpireEnv(gym.Env):
                 ),
             }
 
+        return self._apply_rulebase_turn_decision(bits, diagnostics)
+
+    def _apply_rulebase_turn_decision(self, bits, diagnostics):
+        """Shared native/thin mapping for serial and threaded fixed policies."""
+        selected = tuple(sorted(self._multi or ()))
+        if int(bits) >> 29 == 3:
+            self._rulebase_pending_multi = int(bits) & 0xffff
+
         bits = int(bits)
         if bits >> 29 == 3 and self._autoregressive_actions:
             desired = bits & 0xffff

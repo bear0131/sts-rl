@@ -130,3 +130,35 @@ class NativeSearchBatch:
         if self.pool is not None:
             self.clear()
             self.pool = None
+
+    def rulebase_turn_decisions(self, calls):
+        """Search independent combats in the existing GIL-free worker pool."""
+        from env.search.turn_planner import NativeTurnPlanner, TurnPlannerConfig
+
+        results, indices, battles, nonces, relic_lists = {}, [], [], [], []
+        config = None
+        for index, (args, kwargs) in calls.items():
+            if args:
+                raise ValueError('rulebase batch accepts keyword configuration only')
+            env = self.envs[index]
+            if env.thick is None or env._phase() != 'combat' or env.thick.bc is None:
+                raise RuntimeError('rulebase turn policy requires a live combat state')
+            current = TurnPlannerConfig(**{k: v for k, v in kwargs.items() if k != 'state_nonce'})
+            if config is not None and config != current:
+                raise ValueError('batched rule search requires a common configuration')
+            config = current
+            relics = tuple(item['id'] for item in env.thick.gc.relic_state())
+            if 'Runic Dome' in relics or env._rulebase_pending_multi is not None:
+                results[index] = env.rulebase_turn_decision(**kwargs)
+                continue
+            indices.append(index)
+            battles.append(env.thick.bc)
+            nonces.append(kwargs['state_nonce'])
+            relic_lists.append(relics)
+        if indices:
+            plans = NativeTurnPlanner(config).choose_batch(battles, state_nonces=nonces,
+                public_relics=relic_lists, pool=self.pool)
+            for index, plan in zip(indices, plans, strict=True):
+                results[index] = self.envs[index]._apply_rulebase_turn_decision(
+                    plan.action_bits, dict(plan.diagnostics, planner_dome_fallback=0))
+        return {index: results[index] for index in calls}

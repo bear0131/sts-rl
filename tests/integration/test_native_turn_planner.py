@@ -72,3 +72,33 @@ def test_native_rule_worker_preserves_dome_and_action_execution(combat_factory):
         pool.close()
         for e in references:
             e.close()
+
+
+@pytest.mark.parametrize('relics,powers,hand', [
+    ((), [], ['FIEND_FIRE', 'STRIKE_RED', 'WOUND']),
+    (('Bronze Scales',), [], ['DEFEND_RED', 'WOUND']),
+    ((), [('COMBUST', 5), ('CORRUPTION', 1), ('BARRICADE', 1)], ['DEFEND_RED', 'WOUND']),
+    ((), [('DEMON_FORM', 2), ('STRENGTH', -2), ('FEEL_NO_PAIN', 3)], ['DEFEND_RED', 'BURN']),
+])
+def test_native_rule_resource_and_power_scores(combat_factory, relics, powers, hand):
+    env = combat_factory(['STRIKE_RED'] * 5, relics=relics)
+    env.thick.bc.apply_custom_state({'hand': hand, 'draw': ['DEFEND_RED'],
+        'discard': [], 'player': {'hp': 37, 'max_hp': 80, 'block': 17, 'powers': powers}})
+    planner = NativeTurnPlanner(TurnPlannerConfig(worlds=2, node_budget=512, leaf_profile='legacy-v8'))
+    expected = planner.choose(env.thick.bc, state_nonce=77, public_relics=relics)
+    actual = planner.choose_batch([env.thick.bc], state_nonces=[77], public_relics=[relics],
+                                 pool=sts.NeuralSearchBatch(4))[0]
+    assert_plan_equal(actual, expected)
+
+
+def test_native_rule_pool_recovers_after_worker_error(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5)
+    bad = env.thick.bc.clone()
+    bad.execute_to_enemy_boundary(4 << 29)
+    planner = NativeTurnPlanner(TurnPlannerConfig(worlds=1, node_budget=64))
+    pool = sts.NeuralSearchBatch(4)
+    with pytest.raises(ValueError, match='live combat decision'):
+        planner.choose_batch([env.thick.bc, bad], state_nonces=[1, 2], public_relics=[(), ()], pool=pool)
+    expected = planner.choose(env.thick.bc, state_nonce=3, public_relics=())
+    actual = planner.choose_batch([env.thick.bc], state_nonces=[3], public_relics=[()], pool=pool)[0]
+    assert_plan_equal(actual, expected)

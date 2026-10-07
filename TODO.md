@@ -7,6 +7,7 @@
 当前修复优先级以 TRAIN24 的原生 NOSL + v3 规则上层为范围：P1 为下一轮正式训练前优先修复，P2 为对应路径启用/扩展前修复；“首批”优先于“随后”。算法实验不等同于已确认的实现缺陷。依据见 [当前缺陷复核](worklog/2026-09-29.md#bug21-current-known-defect-urgency-review)。
 
 | ID | 状态 | 范围 / 验收 |
+| UPPER03 | 实现与原生对照通过；完整采样和部署验收中 | `env/search/turn_planner.py`、`native_batch.py`、原生`RuleTurnPlanner.h`及`NativeSearchVecEnv`：将同一v8规则搜索树维护/评分移至常驻C++线程池，保持节点配额、独立未来nonce、枚举和平局规则；新增批处理墙钟指标。验收Python参考/原生单多线程动作、逐根评分和计数完全一致，384×128真实采样轨迹/上层样本一致，再从TRAIN42共同完整断点原run续训；不改算法预算、不回step0。见worklog/2026-10-08.md#upper03-native-rulebase-optimization-intent。 |
 |---|---|---|
 | METRIC02 | 已在TRAIN40生产上报 | `StSMetricsCallback`原已产生rank内`game/deck_size_mean`，但分布式固定聚合键遗漏它。现已按各rank滚动窗口真实episode数加权聚合并进入`game/*` payload；TRAIN40首批生产轮已上报11.76、11.825等真实值，聚焦单测覆盖不等rank窗口加权。见worklog/2026-10-07.md#metric02-distributed-deck-size-monitoring及#train40-production-launch-and-acceptance。 |
 | TRAIN41 | 已正常暂停并只读保护39轮全状态 | 用户授权切换固定规则下层实验；四rank共同7667712完整bundle逐文件SHA通过、策略与双Adam跨rank一致，STOP保留，最终状态以硬链接只读保护于各机`runs/snapshots/<TRAIN41 run>/step-000007667712/rankN`。不自动恢复或覆盖。TRAIN42从相同fresh step0独立启动；见worklog/2026-10-08.md#train42-rulebase-lower-launch。 |

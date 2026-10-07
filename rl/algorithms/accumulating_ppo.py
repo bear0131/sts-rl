@@ -1088,6 +1088,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         rulebase_lower_decisions = rulebase_lower_nodes = 0
         rulebase_lower_roots = 0
         rulebase_lower_seconds = 0.0
+        rulebase_lower_batch_seconds = 0.0
         forced_end_turn_roots = 0
         end_action = C.policy_offset(self.combat_action_contract)
 
@@ -1225,6 +1226,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     overworld_rule_decisions += 1
             result_by_index = {}
             if combat_indices and rulebase_lower:
+                rule_batch_started = time.perf_counter()
                 results = call_workers("rulebase_turn_decision", {
                     env_index: ((), {
                         "state_nonce": (
@@ -1244,6 +1246,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         )),
                     }) for env_index in combat_indices
                 })
+                rulebase_lower_batch_seconds += time.perf_counter() - rule_batch_started
                 for env_index, response in results.items():
                     result_by_index[env_index] = response
                     diagnostics = response.get("diagnostics", {})
@@ -1761,6 +1764,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "rulebase_lower_decisions": float(rulebase_lower_decisions),
             "rulebase_lower_expanded_nodes": float(rulebase_lower_nodes),
             "rulebase_lower_search_seconds": float(rulebase_lower_seconds),
+            "rulebase_lower_batch_seconds": float(rulebase_lower_batch_seconds),
         }
         for name, count in self._nosl_is_az_rollout_upper_counts.items():
             self.logger.record("nosl_is_az/" + name, count)

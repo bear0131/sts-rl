@@ -290,6 +290,21 @@ class NativeTurnPlanner:
         self.config = config
         self.sampler = NOSLSampler(config.master_nonce)
 
+    def choose_batch(self, battles, *, state_nonces, public_relics, pool):
+        """Same planner on the resident C++ workers; no Python leaf objects."""
+        if not hasattr(pool, 'rule_turn_plan'):
+            raise RuntimeError('rule batching requires the native rule_turn_plan build')
+        if len(battles) != len(state_nonces) or len(battles) != len(public_relics):
+            raise ValueError('rule search requires one nonce/relic list per battle')
+        if any(relics is None for relics in public_relics):
+            raise ValueError('batched rule search requires explicit public relics')
+        nonces = [[self.sampler.nonce(state_nonce=int(nonce), simulation_index=world)
+                   for world in range(self.config.worlds)] for nonce in state_nonces]
+        c = self.config
+        rows = pool.rule_turn_plan(battles, nonces, public_relics, c.worlds,
+            c.node_budget, c.beam_width, c.max_depth, c.lookahead_turns, c.leaf_profile)
+        return [PlanResult(int(row['action_bits']), row['diagnostics']) for row in rows]
+
     def choose(self, battle, *, state_nonce: int, check=None, public_relics=None) -> PlanResult:
         check = check or (lambda: None)
         check()
