@@ -548,6 +548,35 @@ def test_joint_upper_batch4x_e10_keeps_learning_rates_and_effective_lower_batch(
     assert upper["learning_rate"] == 1e-4
 
 
+def test_joint_rulebase_lower_preset_only_trains_upper_with_validated_v8_planner():
+    from rl.tasks import TASKS
+    from rl.training.trainer import build_parser as initial_parser
+
+    runtime = build_parser().parse_args([
+        "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",
+        f"@{ROOT / 'configs/train/entity_joint_rulebase_lower_runtime.args'}",
+    ])
+    initial = initial_parser(TASKS["wholerun"]).parse_args([
+        "--task", "wholerun",
+        f"@{ROOT / 'configs/train/entity_joint_rulebase_lower.args'}",
+        "--steps", "0",
+    ])
+    for args in (runtime, initial):
+        assert args.nosl_is_az_combat_strategy == "turn-planner"
+        assert args.nosl_is_az_replay_enabled is False
+        assert args.rulebase_planner_worlds == 2
+        assert args.rulebase_planner_nodes == 8192
+        assert args.rulebase_planner_beam == 8
+        assert args.rulebase_planner_depth == 16
+        assert args.rulebase_planner_turns == 1
+        assert args.rulebase_planner_leaf_profile == "legacy-v8"
+        assert args.rulebase_planner_nonce == 20260918
+    assert runtime.n_envs == 384 and runtime.n_steps == 128
+    assert runtime.nosl_is_az_updates == 40  # ignored by the fixed lower path
+    assert initial.upper_config["epochs"] == 10
+    assert initial.upper_config["learning_rate"] == 1e-4
+
+
 def test_occ1k_resume_override_retains_fastest_validated_leaf_schedule():
     args = build_parser().parse_args([
         "--rank", "0", "--world-size", "4", "--checkpoint", "unused.zip",

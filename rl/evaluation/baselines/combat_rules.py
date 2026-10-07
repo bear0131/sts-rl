@@ -80,14 +80,14 @@ class CombatView:
                    - powers.get('Plated Armor', 0))
 
 
-def visible_combat(request):
+def visible_combat_state(env, info):
     """Simulator adapter; preserves slot identity and hides ordinary draw order.
 
     A draw-pile SELECT screen is the only point where draw indices are exposed:
     they identify visible choices, never used to predict the next draw.
     """
-    env = request.env.unwrapped
-    if request.info.get('phase') != 'combat' or env.thick.bc is None:
+    env = env.unwrapped
+    if info.get('phase') != 'combat' or env.thick.bc is None:
         raise ValueError('combat rules require the simulator combat backend')
     raw = env.thick.bc.to_dict()
     canon = normalize_sim(raw)
@@ -118,7 +118,12 @@ def visible_combat(request):
             targets.setdefault(('potion', semantic[1]), []).append(semantic[2])
     return CombatView(canon['player'], monsters, canon['hand'], piles,
         list(raw['potions']), relics,
-        select, request.info.get('pending'), targets, canon['turn'])
+        select, info.get('pending'), targets, canon['turn'])
+
+
+def visible_combat(request):
+    """DecisionStrategy adapter for :func:`visible_combat_state`."""
+    return visible_combat_state(request.env, request.info)
 
 
 def intent(monster):
@@ -581,6 +586,79 @@ def rank_actions(view, legal):
         ranked.append(dict(action=int(action), score=round(float(score), 6), target=target,
                            reasons={k: round(float(v), 4) for k, v in reasons.items() if v}))
     return sorted(ranked, key=lambda x: (-x['score'], x['action']))
+
+
+def visible_rule_native_action(env, info, *, selected=()):
+    """Choose one complete native action using the public v3 rule policy.
+
+    This is the atomic equivalent of repeatedly applying ``CombatRuleStrategy``
+    through the legacy source/target and MULTI prefixes.  It is shared by the
+    evaluator and upper-only training so Runic Dome never exposes the live
+    hidden intent to either caller.
+    """
+    from env.core.native_actions import (
+        complete_actions, joint_action_id, legacy_action_id,
+    )
+
+    env = env.unwrapped
+    view = visible_combat_state(env, info)
+    complete = tuple(int(bits) for bits in complete_actions(env.thick.bc))
+    if not complete:
+        raise ValueError('combat rule received no complete legal action')
+    desc = env.thick.select_descriptor() or {}
+
+    if desc.get('multi'):
+        selected_mask = sum(1 << int(index) for index in selected)
+        candidates = [bits for bits in complete
+                      if bits >> 29 == 3 and (bits & selected_mask) == selected_mask]
+        if not candidates:
+            raise ValueError('combat rule has no legal MULTI completion')
+        scored = []
+        for bits in candidates:
+            subset = bits & 0xffff
+            score = sum(selection_score(index, view)[0]
+                        for index in range(A.HAND_SLOTS) if subset >> index & 1)
+            scored.append((float(score), -int(bits), int(bits)))
+        score, _tie, bits = max(scored)
+        return bits, {
+            'rule_score': score,
+            'rule_decisions': 1,
+            'rule_unknown_choices': 0,
+            'rule_unknown_options': 0,
+        }
+
+    candidate_indices = [int(item['native_index'])
+                         for item in desc.get('candidates', ())]
+    projected = {}
+    for bits in complete:
+        targeted = bool(env.thick.bc.is_targeted_action(bits))
+        policy_id = joint_action_id(
+            bits, targeted=targeted, candidate_indices=candidate_indices,
+        )
+        projected.setdefault(legacy_action_id(policy_id), []).append(bits)
+    ranked = rank_actions(view, sorted(projected))
+    if not ranked:
+        raise ValueError('combat rule received no legal action')
+    best = ranked[0]
+    choices = projected[best['action']]
+    target = best['target']
+    if target is not None:
+        choices = [bits for bits in choices
+                   if ((bits >> 16) & 0x1fff) == int(target)]
+    else:
+        choices = [bits for bits in choices
+                   if not env.thick.bc.is_targeted_action(bits)] or choices
+    if not choices:
+        raise ValueError('visible rule target is absent from complete actions')
+    bits = min(choices)
+    unknown = int('unknown_card' in best['reasons'])
+    return bits, {
+        'rule_score': float(best['score']),
+        'rule_decisions': 1,
+        'rule_unknown_choices': unknown,
+        'rule_unknown_options': sum(
+            'unknown_card' in option['reasons'] for option in ranked),
+    }
 
 
 class CombatRuleStrategy:

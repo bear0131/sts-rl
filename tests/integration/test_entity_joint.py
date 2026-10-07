@@ -146,3 +146,40 @@ def test_actual_wholerun_upper_collection_update_and_bundle(tmp_path):
                 np.testing.assert_array_equal(a['observation'][key], b['observation'][key])
     assert loaded.policy.upper_optimizer.state_dict()['state']
     env.close()
+
+
+def test_rulebase_lower_collects_no_combat_replay_and_never_updates_combat(
+        combat_factory, tmp_path, monkeypatch):
+    combat = combat_factory(
+        ['BASH', 'STRIKE_RED', 'DEFEND_RED'],
+        card_language=True,
+        combat_action_contract='autoregressive-v2',
+    )
+    env = DummyVecEnv([lambda: combat])
+    model = make_joint(env)
+    model.nosl_is_az_combat_strategy = 'turn-planner'
+    model.rulebase_planner_worlds = 1
+    model.rulebase_planner_nodes = 8
+    model.rulebase_planner_beam = 2
+    model.rulebase_planner_depth = 4
+    model.rulebase_planner_turns = 1
+    model.rulebase_planner_leaf_profile = 'legacy-v8'
+    model.rulebase_planner_nonce = 20260918
+    model.nosl_is_az_replay_enabled = False
+    model.configure_nosl_is_az_inner_only()
+    frozen, upper = model.configure_rulebase_lower()
+    assert frozen > 0 and upper > 0
+    assert all(not p.requires_grad for p in model.policy.core.combat.parameters())
+    model.set_logger(configure(str(tmp_path), []))
+    _, callback = model._setup_learn(8)
+    callback.on_training_start({}, {})
+    before = copy.deepcopy(model.policy.core.combat.state_dict())
+    assert model.collect_rollouts(env, callback, model.rollout_buffer,
+                                  n_rollout_steps=8)
+    assert model._nosl_is_az_samples == []
+    monkeypatch.setattr(model, '_train_nosl_is_az',
+                        lambda: pytest.fail('fixed lower reached NOSL learner'))
+    model.train()
+    for key, value in model.policy.core.combat.state_dict().items():
+        torch.testing.assert_close(value, before[key], rtol=0, atol=0)
+    env.close()

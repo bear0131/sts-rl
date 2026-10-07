@@ -510,6 +510,23 @@ def build_parser() -> argparse.ArgumentParser:
              "or overworld-v1 rules with deterministic model fallback.",
     )
     parser.add_argument(
+        "--nosl-is-az-combat-strategy",
+        choices=("model", "turn-planner"),
+        default=None,
+        help="Combat actor: checkpoint model search or fixed model-free turn planner.",
+    )
+    parser.add_argument("--rulebase-planner-worlds", type=int, default=None)
+    parser.add_argument("--rulebase-planner-nodes", type=int, default=None)
+    parser.add_argument("--rulebase-planner-beam", type=int, default=None)
+    parser.add_argument("--rulebase-planner-depth", type=int, default=None)
+    parser.add_argument("--rulebase-planner-turns", type=int, default=None)
+    parser.add_argument(
+        "--rulebase-planner-leaf-profile",
+        choices=("legacy-v8", "time-clock-v9"),
+        default=None,
+    )
+    parser.add_argument("--rulebase-planner-nonce", type=int, default=None)
+    parser.add_argument(
         "--nosl-is-az-simulations",
         type=int,
         default=None,
@@ -1899,6 +1916,10 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/overworld_rule_decisions",
     "nosl_is_az/overworld_fallback_decisions",
     "nosl_is_az/forced_end_turn_roots",
+    "nosl_is_az/rulebase_lower_roots",
+    "nosl_is_az/rulebase_lower_decisions",
+    "nosl_is_az/rulebase_lower_expanded_nodes",
+    "nosl_is_az/rulebase_lower_search_seconds",
     "nosl_is_az/root_value_predictions_skipped",
     "nosl_is_az/combat_roots",
     "nosl_is_az/combat_policy_roots",
@@ -2408,6 +2429,61 @@ def main() -> None:
     print(f"[rank {args.rank}] NOSL upper strategy: {upper_strategy} "
           f"version={args.nosl_is_az_upper_strategy_version} "
           f"fallback={fallback_label}", flush=True)
+    combat_strategy = args.nosl_is_az_combat_strategy or getattr(
+        model, "nosl_is_az_combat_strategy", "model"
+    )
+    if combat_strategy not in ("model", "turn-planner"):
+        raise ValueError("NOSL-IS-AZ combat strategy must be model or turn-planner")
+    if combat_strategy == "turn-planner":
+        if not joint_upper(model):
+            raise ValueError("turn-planner combat requires joint strategic PPO")
+        if not (model.nosl_is_az and model.nosl_is_az_inner_only):
+            raise ValueError("turn-planner combat requires inner-only NOSL collection")
+        if args.nosl_is_az_replay_enabled:
+            raise ValueError("turn-planner combat requires --no-nosl-is-az-replay")
+    model.nosl_is_az_combat_strategy = args.nosl_is_az_combat_strategy = combat_strategy
+    planner_defaults = {
+        "worlds": 2,
+        "nodes": 8192,
+        "beam": 8,
+        "depth": 16,
+        "turns": 1,
+        "leaf_profile": "legacy-v8",
+        "nonce": 20260918,
+    }
+    for suffix, default in planner_defaults.items():
+        arg_name = f"rulebase_planner_{suffix}"
+        value = getattr(args, arg_name)
+        if value is None:
+            value = getattr(model, arg_name, default)
+        setattr(args, arg_name, value)
+        setattr(model, arg_name, value)
+    from env.search.turn_planner import TurnPlannerConfig
+    from env.search.turn_policy import rulebase_turn_policy_version
+    planner_config = TurnPlannerConfig(
+        worlds=int(args.rulebase_planner_worlds),
+        node_budget=int(args.rulebase_planner_nodes),
+        beam_width=int(args.rulebase_planner_beam),
+        max_depth=int(args.rulebase_planner_depth),
+        lookahead_turns=int(args.rulebase_planner_turns),
+        leaf_profile=str(args.rulebase_planner_leaf_profile),
+        master_nonce=int(args.rulebase_planner_nonce),
+    )
+    args.nosl_is_az_combat_strategy_version = (
+        rulebase_turn_policy_version(planner_config)
+        if combat_strategy == "turn-planner"
+        else "checkpoint-model+configured-search"
+    )
+    if combat_strategy == "turn-planner":
+        frozen, upper_trainable = model.configure_rulebase_lower()
+        print(
+            f"[rank {args.rank}] fixed combat strategy: "
+            f"{args.nosl_is_az_combat_strategy_version} "
+            f"config={planner_config} froze={frozen:,} upper_trainable={upper_trainable:,}",
+            flush=True,
+        )
+    else:
+        print(f"[rank {args.rank}] combat strategy: model", flush=True)
     if args.nosl_is_az_updates is not None:
         if not bool(getattr(model, "nosl_is_az", False)):
             raise ValueError(
@@ -2907,8 +2983,12 @@ def main() -> None:
             optimizer_steps = 0
             cuda_memory_peak = None
 
-            distributed_nosl = bool(
+            inner_only_nosl = bool(
                 model.nosl_is_az and model.nosl_is_az_inner_only
+            )
+            distributed_nosl = bool(
+                inner_only_nosl
+                and getattr(model, "nosl_is_az_combat_strategy", "model") == "model"
             )
             nosl_update = None
             if distributed_nosl:
@@ -2935,7 +3015,11 @@ def main() -> None:
                     scheduled_updates=float(scheduled_updates),
                     scheduled_value_only_updates=float(scheduled_value_only))
 
-            for epoch in range(0 if distributed_nosl else args.n_epochs):
+            # Inner-only always delegates learning away from the ordinary PPO
+            # buffer.  A learned lower uses the distributed NOSL update above;
+            # a fixed rulebase lower has no lower learner at all.  In both
+            # cases the only strategic update is the macro-action PPO below.
+            for epoch in range(0 if inner_only_nosl else args.n_epochs):
                 accumulated = 0
                 model.policy.optimizer.zero_grad()
                 for rollout_data in model.rollout_buffer.get(args.batch_size):
@@ -3271,6 +3355,14 @@ def main() -> None:
             upper_counts = getattr(model, "_nosl_is_az_rollout_upper_counts", {})
             record["nosl_is_az_upper_strategy"] = model.nosl_is_az_upper_strategy
             record["nosl_is_az_upper_strategy_version"] = args.nosl_is_az_upper_strategy_version
+            record["nosl_is_az_combat_strategy"] = model.nosl_is_az_combat_strategy
+            record["nosl_is_az_combat_strategy_version"] = args.nosl_is_az_combat_strategy_version
+            for suffix in (
+                "worlds", "nodes", "beam", "depth", "turns", "leaf_profile", "nonce"
+            ):
+                record[f"rulebase_planner_{suffix}"] = getattr(
+                    args, f"rulebase_planner_{suffix}"
+                )
             for name, value in upper_counts.items():
                 record[name + "_local"] = float(value)
                 callback_scalars["nosl_is_az/" + name] = float(value)

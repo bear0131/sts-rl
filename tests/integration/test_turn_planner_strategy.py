@@ -7,7 +7,11 @@ import pytest
 import slaythespire as sts
 
 from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
+from rl.evaluation.baselines.combat_rules import visible_rule_native_action
 from env.search.turn_planner import TurnPlannerConfig
+from env.search.turn_policy import (
+    VALIDATED_RULEBASE_VERSION, rulebase_turn_policy_version,
+)
 from rl.evaluation.runner import EvaluationConfig, Scenario, evaluate
 from rl.evaluation.strategies import DecisionRequest, PhaseStrategy, strategy_manifest
 
@@ -44,6 +48,43 @@ def test_runic_dome_uses_same_visible_rule_action_without_calling_planner(
     assert env.action_masks()[decisions[0].action]
     assert all(row['state']['monsters'] == [] for row in trace)
     json.dumps(trace)  # Persistable diagnostic payload, with no raw hidden intent.
+
+
+def test_rulebase_lower_maps_public_dome_target_to_autoregressive_action(combat_factory):
+    env = combat_factory(
+        ['STRIKE_RED'] * 5,
+        encounter='Three Sentries',
+        relics=['Runic Dome'],
+        combat_action_contract='autoregressive-v2',
+    )
+    env.thick.bc.apply_custom_state({
+        'hand': ['STRIKE_RED'],
+        'monsters': [{'hp': 0}, {'hp': 10, 'block': 0}, {'hp': 0}],
+    })
+    env._invalidate_backend_cache()
+    bits, diagnostics = visible_rule_native_action(env, env._info())
+    native = sts.Action(bits)
+    assert native.action_type == sts.ActionType.CARD
+    assert native.source_idx == 0 and native.target_idx == 1
+    assert diagnostics['rule_decisions'] == 1
+
+    result = env.rulebase_turn_decision(state_nonce=123, worlds=1, node_budget=8)
+    assert env.action_masks()[result['action']]
+    assert result['native_action_bits'] == bits
+    _obs, _reward, _terminated, truncated, info = env.step(result['action'])
+    assert not truncated and info['simulator_transition'] is True
+    assert env.thick.bc.to_dict()['monsters'][1]['hp'] == 4
+
+
+def test_validated_rulebase_identity_requires_exact_evaluated_budget():
+    exact = TurnPlannerConfig(
+        worlds=2, node_budget=8192, beam_width=8, max_depth=16,
+        lookahead_turns=1, leaf_profile='legacy-v8', master_nonce=20260918,
+    )
+    assert rulebase_turn_policy_version(exact) == VALIDATED_RULEBASE_VERSION
+    assert rulebase_turn_policy_version(
+        TurnPlannerConfig(**{**asdict(exact), 'node_budget': 8191})
+    ).endswith('+custom')
 
 
 def test_runic_dome_late_draw_choice_works_without_planner_or_legacy_mask(

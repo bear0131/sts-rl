@@ -126,6 +126,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az: bool = False,
         nosl_is_az_inner_only: bool = False,
         nosl_is_az_upper_strategy: str = "model",
+        nosl_is_az_combat_strategy: str = "model",
+        rulebase_planner_worlds: int = 2,
+        rulebase_planner_nodes: int = 8192,
+        rulebase_planner_beam: int = 8,
+        rulebase_planner_depth: int = 16,
+        rulebase_planner_turns: int = 1,
+        rulebase_planner_leaf_profile: str = "legacy-v8",
+        rulebase_planner_nonce: int = 20260918,
         nosl_is_az_cpp: bool = False,
         nosl_is_az_simulations: int = 8,
         nosl_is_az_depth: int = 3,
@@ -261,6 +269,22 @@ class AccumulatingMaskablePPO(MaskablePPO):
             nosl_is_az and nosl_is_az_inner_only
         ):
             raise ValueError("NOSL upper rules require inner-only NOSL training")
+        if nosl_is_az_combat_strategy not in ("model", "turn-planner"):
+            raise ValueError("NOSL-IS-AZ combat strategy must be model or turn-planner")
+        if nosl_is_az_combat_strategy == "turn-planner" and not (
+            nosl_is_az and nosl_is_az_inner_only
+        ):
+            raise ValueError("turn-planner combat requires inner-only NOSL collection")
+        from env.search.turn_planner import TurnPlannerConfig
+        TurnPlannerConfig(
+            worlds=int(rulebase_planner_worlds),
+            node_budget=int(rulebase_planner_nodes),
+            beam_width=int(rulebase_planner_beam),
+            max_depth=int(rulebase_planner_depth),
+            lookahead_turns=int(rulebase_planner_turns),
+            leaf_profile=str(rulebase_planner_leaf_profile),
+            master_nonce=int(rulebase_planner_nonce),
+        )
         self.gradient_accumulation_steps = int(gradient_accumulation_steps)
         self.performance_profile = bool(performance_profile)
         self.amp_mode = amp_mode
@@ -279,6 +303,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
         )
         self.nosl_is_az_inner_only = bool(nosl_is_az_inner_only)
         self.nosl_is_az_upper_strategy = str(nosl_is_az_upper_strategy)
+        self.nosl_is_az_combat_strategy = str(nosl_is_az_combat_strategy)
+        self.rulebase_planner_worlds = int(rulebase_planner_worlds)
+        self.rulebase_planner_nodes = int(rulebase_planner_nodes)
+        self.rulebase_planner_beam = int(rulebase_planner_beam)
+        self.rulebase_planner_depth = int(rulebase_planner_depth)
+        self.rulebase_planner_turns = int(rulebase_planner_turns)
+        self.rulebase_planner_leaf_profile = str(rulebase_planner_leaf_profile)
+        self.rulebase_planner_nonce = int(rulebase_planner_nonce)
         self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
         self.hierarchical_combat_hp = bool(
             hierarchical_combat_hp or self.nosl_is_az
@@ -662,6 +694,25 @@ class AccumulatingMaskablePPO(MaskablePPO):
         )
         return frozen, trainable
 
+    def configure_rulebase_lower(self) -> tuple[int, int]:
+        """Freeze the learned combat core for upper-only rulebase collection."""
+        if getattr(self, "nosl_is_az_combat_strategy", "model") != "turn-planner":
+            raise ValueError("rulebase lower is not enabled")
+        if not joint_upper(self):
+            raise ValueError("rulebase lower requires the joint strategic policy")
+        for parameter in self.policy.core.combat.parameters():
+            parameter.requires_grad_(False)
+            parameter.grad = None
+        frozen = sum(
+            parameter.numel() for parameter in self.policy.core.combat.parameters()
+            if not parameter.requires_grad
+        )
+        trainable = sum(
+            parameter.numel() for parameter in self.policy.core.upper_parameters()
+            if parameter.requires_grad
+        )
+        return frozen, trainable
+
     def _sync_device(self) -> None:
         if self.device.type == "cuda":
             th.cuda.synchronize(self.device)
@@ -1028,9 +1079,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
         started = time.perf_counter()
 
         upper_rules = getattr(self, "nosl_is_az_upper_strategy", "model") == "rules"
+        rulebase_lower = getattr(
+            self, "nosl_is_az_combat_strategy", "model"
+        ) == "turn-planner"
         if upper_rules and not self.nosl_is_az_inner_only:
             raise ValueError("NOSL upper rules require inner-only NOSL training")
         overworld_rule_decisions = overworld_fallback_decisions = 0
+        rulebase_lower_decisions = rulebase_lower_nodes = 0
+        rulebase_lower_roots = 0
+        rulebase_lower_seconds = 0.0
         forced_end_turn_roots = 0
         end_action = C.policy_offset(self.combat_action_contract)
 
@@ -1068,16 +1125,21 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     and hasattr(core, "combat_actor_critic")
                     and hasattr(core, "combat_observation_keys")
                 )
+                phase_now = np.asarray(
+                    self._last_obs["phase"]
+                ).reshape(env.num_envs, -1)[:, 0]
                 if (self.nosl_is_az_inner_only and getattr(core, "joint_actions", False)
                         and action_masks is not None):
-                    phase_now = np.asarray(self._last_obs["phase"]).reshape(env.num_envs, -1)[:, 0]
                     forced = ((phase_now == combat_phase) & action_masks[:, end_action]
                               & (action_masks.sum(axis=1) == 1))
                     if startup_paused:
                         forced[list(startup_paused)] = False
                 eligible = ~forced
+                if rulebase_lower:
+                    rulebase_roots = phase_now == combat_phase
+                    eligible = eligible & ~rulebase_roots
+                    rulebase_lower_roots += int(rulebase_roots.sum())
                 if getattr(core, 'combat_only', False):
-                    phase_now = np.asarray(self._last_obs['phase']).reshape(env.num_envs, -1)[:, 0]
                     eligible = eligible & (phase_now == combat_phase)
                 active = np.flatnonzero(eligible)
                 if len(active) < env.num_envs:
@@ -1162,7 +1224,36 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     actions_np[index] = action
                     overworld_rule_decisions += 1
             result_by_index = {}
-            if combat_indices:
+            if combat_indices and rulebase_lower:
+                results = call_workers("rulebase_turn_decision", {
+                    env_index: ((), {
+                        "state_nonce": (
+                            int(self.nosl_is_az_master_nonce)
+                            ^ (int(self.num_timesteps) * 0x9E3779B97F4A7C15)
+                            ^ (int(n_steps) * 0xD1B54A32D192ED03)
+                            ^ int(env_index)
+                        ),
+                        "worlds": int(getattr(self, "rulebase_planner_worlds", 2)),
+                        "node_budget": int(getattr(self, "rulebase_planner_nodes", 8192)),
+                        "beam_width": int(getattr(self, "rulebase_planner_beam", 8)),
+                        "max_depth": int(getattr(self, "rulebase_planner_depth", 16)),
+                        "master_nonce": int(getattr(self, "rulebase_planner_nonce", 20260918)),
+                        "lookahead_turns": int(getattr(self, "rulebase_planner_turns", 1)),
+                        "leaf_profile": str(getattr(
+                            self, "rulebase_planner_leaf_profile", "legacy-v8"
+                        )),
+                    }) for env_index in combat_indices
+                })
+                for env_index, response in results.items():
+                    result_by_index[env_index] = response
+                    diagnostics = response.get("diagnostics", {})
+                    rulebase_lower_decisions += int(
+                        diagnostics.get("search_decisions", 0)
+                        or diagnostics.get("rule_decisions", 0)
+                    )
+                    rulebase_lower_nodes += int(diagnostics.get("expanded_nodes", 0))
+                    rulebase_lower_seconds += float(diagnostics.get("search_seconds", 0.0))
+            if combat_indices and not rulebase_lower:
                 begin_calls = {}
                 for env_index in combat_indices:
                     startup_nonce_rng = getattr(
@@ -1419,10 +1510,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 result = result_by_index[env_index]
                 actions_np[env_index] = int(result["action"])
                 if (self.combat_action_contract in C.NEURAL_CONTRACTS
-                        and not forced[env_index] and "action_groups" not in result):
+                        and not rulebase_lower and not forced[env_index]
+                        and "action_groups" not in result):
                     raise RuntimeError("neural search result omitted action groups")
-                active_combat_samples[env_index].append(
-                    {
+                if not rulebase_lower:
+                    active_combat_samples[env_index].append(
+                        {
                         # Replay outlives the PPO rollout buffer, so retain an
                         # independent combat-only observation at every root.
                         "observation": {
@@ -1456,8 +1549,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                             }
                         ),
                         "sample_kind": "combat_root",
-                    }
-                )
+                        }
+                    )
             actions = th.as_tensor(actions_np, dtype=th.long, device=self.device)
             # Search/rules may replace model actions. Recompute their old
             # log-probability so the rollout remains internally consistent even
@@ -1660,7 +1753,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "overworld_rule_decisions": float(overworld_rule_decisions),
             "overworld_fallback_decisions": float(overworld_fallback_decisions),
             "forced_end_turn_roots": float(forced_end_turn_roots),
-            "root_value_predictions_skipped": float(forced_end_turn_roots),
+            "rulebase_lower_roots": float(rulebase_lower_roots),
+            "root_value_predictions_skipped": float(
+                rulebase_lower_roots if rulebase_lower
+                else forced_end_turn_roots
+            ),
+            "rulebase_lower_decisions": float(rulebase_lower_decisions),
+            "rulebase_lower_expanded_nodes": float(rulebase_lower_nodes),
+            "rulebase_lower_search_seconds": float(rulebase_lower_seconds),
         }
         for name, count in self._nosl_is_az_rollout_upper_counts.items():
             self.logger.record("nosl_is_az/" + name, count)
@@ -2729,7 +2829,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
 
         reasoning_stats = {} if inner_only else self._train_reasoning()
         nosl_is_az_stats = (
-            self._train_nosl_is_az() if self.nosl_is_az else {}
+            self._train_nosl_is_az()
+            if self.nosl_is_az and getattr(
+                self, "nosl_is_az_combat_strategy", "model"
+            ) == "model"
+            else {}
         )
         if joint_upper(self):
             update_upper(self)

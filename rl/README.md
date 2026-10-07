@@ -172,3 +172,23 @@ OBS19新增公开的`combat_is_boss`，由房间身份生成，涵盖A20两场Bo
 上层将一次进入战斗的决策延迟到战斗真实结束才结算，跨采样轮持久保存 pending；GAE以战略动作而非战斗点击为时间单位。尚未完成的末尾动作等待后续轮，截断/异常状态丢弃而不当作死亡。跨轮完成的动作保留原行为log_prob，属于延迟宏动作的PPO近似，不能宣称所有样本均由本轮同一策略产生；通过clip及KL门槛约束更新，不复用上层历史replay。下层replay完全沿用原契约。
 
 模型zip包含两个Adam；完整bundle还保存上层pending/episode序号以及原model/replay/RNG/environment。普通resume从同实验完整bundle继续，不只加载权重。`upper/*`记录战略样本/更新数/KL/损失，原`nosl_is_az/*`仍是战斗学习指标。回归见 `tests/unit/test_upper_ppo.py`、`tests/integration/test_entity_joint.py` 和 `test_distributed_lifecycle.py` 的 joint_wholerun CPU/CUDA两轮更新再恢复路径；不得将本机测试称作四机生产验收。
+
+### 固定规则下层的上层学习实验
+
+`entity_joint_rulebase_lower.args` 和 `entity_joint_rulebase_lower_runtime.args`
+将战斗决策固定为已完整评测的 `ironclad-turn-v8-awakened-phase`：2个独立未来、
+每未来8192节点、beam 8、depth 16、一回合、nonce 20260918；符文圆顶使用同一套
+只读公开信息的v3规则回退。完整native动作会严格映射到联合模型的
+`autoregressive-v2`动作，包括目标和多选前缀，不能退化为按手牌位置重复调用规则。
+
+该模式关闭战斗replay，不收集NOSL监督，不执行下层Adam、下层梯度同步或普通逐步
+PPO，并冻结战斗网络；每轮只有上层宏动作PPO更新。runtime preset保持TRAIN41的
+每rank `384×128`（四rank全局196608 transition）、四层MapDAG、最多10 epoch、
+LR1e-4。为了只比较下层替换的影响，应从TRAIN41相同的fresh step0 checkpoint启动，
+并核对policy tensor SHA、冻结卡向量SHA与上层空Adam一致，不能重新随机初始化后直接
+声称配对。`nosl_is_az/rulebase_lower_*`记录规则决策、节点和耗时；验收要求
+`train/optimizer_steps=0`、下层权重逐字节不变且`upper/updates>0`。
+
+这个规则搜索每个战斗根最多展开 `2×8192` 节点，墙钟吞吐可能显著低于模型搜索。
+判断上层推进效率时以相同上层样本数/环境transition下的楼层、过幕和胜率曲线为主，
+同时报告规则搜索耗时；不能仅按训练小时比较。

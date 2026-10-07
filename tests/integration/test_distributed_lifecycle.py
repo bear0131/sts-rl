@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -69,12 +69,19 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         nosl_is_az=nosl, nosl_is_az_cpp=nosl, nosl_is_az_inner_only=nosl,
         nosl_is_az_merge_equivalent_actions=merge,
         nosl_is_az_upper_strategy=upper,
+        nosl_is_az_combat_strategy='turn-planner' if fixed_lower else 'model',
         nosl_is_az_simulations=4, nosl_is_az_depth=0, nosl_is_az_updates=3 if step_schedule else 1,
         nosl_is_az_update_schedule=(dict(mode='value-warmup', peak_updates=3,
             hold_rollouts=1, decay_rollouts=2) if combat_arch == 'entity' else None),
+        nosl_is_az_replay_enabled=not fixed_lower,
         nosl_is_az_replay_capacity=128, nosl_is_az_batch_size=16,
         nosl_is_az_micro_batch_size=8, nosl_is_az_leaf_batch_size=1,
         hierarchical_combat_hp=nosl)
+    initial_combat = (
+        {name: value.detach().clone()
+         for name, value in model.policy.core.combat.state_dict().items()}
+        if fixed_lower else None
+    )
     checkpoint = tmp_path / 'initial.zip'
     model.save(checkpoint)
     env.close()
@@ -131,6 +138,24 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv.append('--nosl-is-az-fixed-worldline')
     if joint:
         argv.append('--nosl-is-az-train-shared-embeddings')
+    if fixed_lower:
+        argv += [
+            '--nosl-is-az-combat-strategy', 'turn-planner',
+            '--no-nosl-is-az-replay',
+            '--rulebase-planner-worlds', '1',
+            '--rulebase-planner-nodes', '8',
+            '--rulebase-planner-beam', '2',
+            '--rulebase-planner-depth', '4',
+            '--rulebase-planner-turns', '1',
+            '--rulebase-planner-leaf-profile', 'legacy-v8',
+            '--rulebase-planner-nonce', '20260918',
+        ]
+        monkeypatch.setattr(
+            distributed_sb3, 'distributed_nosl_is_az_update',
+            lambda *a, **kw: pytest.fail(
+                'fixed lower reached distributed NOSL learner'
+            ),
+        )
     if step_schedule:
         argv += ['--nosl-is-az-update-schedule',
                  '{"mode":"step","hold_rollouts":2,"final_updates":1}']
@@ -167,7 +192,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
     if contract == 'autoregressive-v2':
-        assert fixed_calls and all(value is True for value in fixed_calls)
+        assert (not fixed_calls if fixed_lower
+                else fixed_calls and all(value is True for value in fixed_calls))
         assert restored.nosl_is_az_fixed_worldline is True
     assert restored.nosl_is_az_upper_strategy == upper
     assert restored.nosl_is_az_merge_equivalent_actions is merge
@@ -175,13 +201,14 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert restored.nosl_action_group_contract == 'individual-actions'
     if combat_arch == 'entity':
         assert restored.policy.core.config.quantiles == 8
-        for payload in payloads:
+        for payload in payloads if not fixed_lower else ():
             assert 0 < payload['nosl_is_az/win_probability'] < 1
             assert payload['nosl_is_az/win_bce'] > 0
     else:
         assert restored.policy_kwargs['combat_arch'] == combat_arch
     assert restored.num_timesteps == 64
-    assert restored.policy.optimizer.state
+    if not fixed_lower:
+        assert restored.policy.optimizer.state
     bundle = tmp_path/'state'/'rank0'/'step-000000000064'
     assert (bundle/'learner.pt').is_file()
     if nosl and not merge:
@@ -201,7 +228,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
-    if combat_arch == 'entity':
+    if combat_arch == 'entity' and not fixed_lower:
         assert [p['nosl_is_az/schedule_round'] for p in payloads] == [1, 2, 3, 4]
         assert [p['nosl_is_az/scheduled_updates'] for p in payloads] == ([3, 3, 1, 1] if step_schedule else [3, 2, 1, 1])
         assert [p['nosl_is_az/value_only_updates'] for p in payloads] == ([0, 0, 0, 0] if step_schedule else [2, 1, 0, 0])
@@ -220,8 +247,17 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert sum(p['upper/updates'] for p in payloads) > 0
         final = AccumulatingMaskablePPO.load(output, device='cpu')
         assert final.policy.upper_optimizer.state_dict()['state']
+        if fixed_lower:
+            assert final.nosl_is_az_combat_strategy == 'turn-planner'
+            assert all(p['train/optimizer_steps'] == 0 for p in payloads)
+            assert all(p['nosl_is_az/rulebase_lower_decisions'] > 0
+                       for p in payloads)
+            for name, value in final.policy.core.combat.state_dict().items():
+                torch.testing.assert_close(value, initial_combat[name], rtol=0, atol=0)
     if contract == 'autoregressive-v2':
-        assert all(value is True for value in fixed_calls)
+        assert not fixed_calls if fixed_lower else all(
+            value is True for value in fixed_calls
+        )
     assert (tmp_path/'state'/'rank0'/'step-000000000128'/'manifest.json').is_file()
     assert all(p['dist/iteration_wall_sec'] >= p['dist/checkpoint_sec'] >= 0 for p in payloads)
     records=[json.loads(line) for line in capsys.readouterr().out.splitlines()
@@ -238,7 +274,7 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         for name in NATIVE_TIMING_KEYS:
             key = f'nosl_is_az/{name}'
             assert record[key] == payload[key], key
-            if nosl and vector == 'native':
+            if nosl and vector == 'native' and not fixed_lower:
                 assert record[key] > 0, key
             else:
                 assert record[key] == 0, key
@@ -290,7 +326,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['wandb_id'] == 'ci-fork-run'
         assert manifest['config']['fork_source_global_step'] == 128
 
-    if nosl and combat_arch == 'entity' and contract == 'autoregressive-v2' and not step_schedule:
+    if (nosl and combat_arch == 'entity' and contract == 'autoregressive-v2'
+            and not step_schedule and not fixed_lower):
         stop_file.unlink()
         fork_root = tmp_path / 'hyperparameter-fork'
         source = tmp_path / 'state' / 'rank0' / 'step-000000000128'
@@ -482,3 +519,11 @@ def test_joint_wholerun_lifecycle(tmp_path, monkeypatch, capsys, short_combat_en
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         True, 'model', 'entity', 'autoregressive-v2', device=device,
         amp='bf16' if device == 'cuda' else 'off', vector='native', joint=True)
+
+
+def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
+        tmp_path, monkeypatch, capsys, short_combat_env_type):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', vector='native',
+        joint=True, fixed_lower=True)

@@ -603,6 +603,10 @@ def main() -> None:
                 )
         if args.nosl_is_az_upper_strategy is None:
             args.nosl_is_az_upper_strategy = resume_settings.get("nosl_is_az_upper_strategy", "model")
+        if args.nosl_is_az_combat_strategy is None:
+            args.nosl_is_az_combat_strategy = resume_settings.get(
+                "nosl_is_az_combat_strategy", "model"
+            )
         if args.arch in ("entity-combat", "entity-joint"):
             args.card_language = not bool(args.card_vector_checkpoint)
             if args.combat_action_contract is None and not args.resume:
@@ -1102,6 +1106,16 @@ def main() -> None:
             ),
             nosl_is_az_cpp=getattr(args, "nosl_is_az_cpp", False),
             nosl_is_az_upper_strategy=getattr(args, "nosl_is_az_upper_strategy", "model"),
+            nosl_is_az_combat_strategy=getattr(args, "nosl_is_az_combat_strategy", "model"),
+            rulebase_planner_worlds=getattr(args, "rulebase_planner_worlds", 2),
+            rulebase_planner_nodes=getattr(args, "rulebase_planner_nodes", 8192),
+            rulebase_planner_beam=getattr(args, "rulebase_planner_beam", 8),
+            rulebase_planner_depth=getattr(args, "rulebase_planner_depth", 16),
+            rulebase_planner_turns=getattr(args, "rulebase_planner_turns", 1),
+            rulebase_planner_leaf_profile=getattr(
+                args, "rulebase_planner_leaf_profile", "legacy-v8"
+            ),
+            rulebase_planner_nonce=getattr(args, "rulebase_planner_nonce", 20260918),
             nosl_is_az_simulations=getattr(args, "nosl_is_az_simulations", 8),
             nosl_is_az_fixed_worldline=getattr(args, "nosl_is_az_fixed_worldline", False),
             nosl_is_az_depth=getattr(args, "nosl_is_az_depth", 3),
@@ -1280,6 +1294,16 @@ def main() -> None:
                 ),
                 "nosl_is_az_cpp": getattr(args, "nosl_is_az_cpp", False),
                 "nosl_is_az_upper_strategy": getattr(args, "nosl_is_az_upper_strategy", "model"),
+                "nosl_is_az_combat_strategy": getattr(args, "nosl_is_az_combat_strategy", "model"),
+                "rulebase_planner_worlds": getattr(args, "rulebase_planner_worlds", 2),
+                "rulebase_planner_nodes": getattr(args, "rulebase_planner_nodes", 8192),
+                "rulebase_planner_beam": getattr(args, "rulebase_planner_beam", 8),
+                "rulebase_planner_depth": getattr(args, "rulebase_planner_depth", 16),
+                "rulebase_planner_turns": getattr(args, "rulebase_planner_turns", 1),
+                "rulebase_planner_leaf_profile": getattr(
+                    args, "rulebase_planner_leaf_profile", "legacy-v8"
+                ),
+                "rulebase_planner_nonce": getattr(args, "rulebase_planner_nonce", 20260918),
                 "nosl_is_az_simulations": getattr(
                     args, "nosl_is_az_simulations", 8
                 ),
@@ -1482,6 +1506,16 @@ def main() -> None:
         else:
             print("[trainer] NOSL-IS-AZ inner-only: skipped overworld PPO and froze "
                   f"{frozen:,} parameters; {trainable:,} combat parameters trainable")
+    if getattr(args, "nosl_is_az_combat_strategy", "model") == "turn-planner":
+        if not getattr(model.policy.core, "joint_upper", False):
+            raise ValueError("turn-planner combat requires entity-joint upper training")
+        if getattr(args, "nosl_is_az_replay_enabled", True):
+            raise ValueError("turn-planner combat requires --no-nosl-is-az-replay")
+        frozen, trainable = model.configure_rulebase_lower()
+        print(
+            f"[trainer] fixed rulebase lower: froze {frozen:,} combat parameters; "
+            f"{trainable:,} upper parameters trainable"
+        )
 
     if args.freeze_encoder:
         core = getattr(model.policy, "core", None)

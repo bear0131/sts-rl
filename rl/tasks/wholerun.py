@@ -177,6 +177,21 @@ class WholeRunTask(Task):
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument('--upper-config', type=json.loads, default=None,
                             help='Strategic PPO architecture and learning configuration for entity-joint.')
+        parser.add_argument(
+            '--nosl-is-az-combat-strategy',
+            choices=('model', 'turn-planner'),
+            default=None,
+            help='Combat actor during NOSL collection. turn-planner fixes the '
+                 'lower policy and trains only the entity-joint upper policy.',
+        )
+        parser.add_argument('--rulebase-planner-worlds', type=int, default=2)
+        parser.add_argument('--rulebase-planner-nodes', type=int, default=8192)
+        parser.add_argument('--rulebase-planner-beam', type=int, default=8)
+        parser.add_argument('--rulebase-planner-depth', type=int, default=16)
+        parser.add_argument('--rulebase-planner-turns', type=int, default=1)
+        parser.add_argument('--rulebase-planner-leaf-profile',
+                            choices=('legacy-v8', 'time-clock-v9'), default='legacy-v8')
+        parser.add_argument('--rulebase-planner-nonce', type=int, default=20260918)
         parser.add_argument('--nosl-is-az-merge-equivalent-actions',
                             action=argparse.BooleanOptionalAction, default=True,
                             help='Group equivalent plays/futures; disable for pre-POL01 slot search.')

@@ -300,6 +300,8 @@ class SlayTheSpireEnv(gym.Env):
         # Native C++ NOSL returns a complete simulator action. Keep it beside
         # the thin root id until the collector submits that id through step().
         self._nosl_cpp_pending = None
+        self._rulebase_pending_multi = None
+        self._rulebase_turn_policy_cache = None
         self._nosl_cpp_az_session = None
         # Completed session retained for the dashboard's lazy search-tree
         # inspection. It is replaced on the next combat decision/reset.
@@ -345,6 +347,7 @@ class SlayTheSpireEnv(gym.Env):
         self._multi = None
         self._nosl_is_az_session = None
         self._nosl_cpp_pending = None
+        self._rulebase_pending_multi = None
         self._nosl_cpp_az_session = None
         self._nosl_cpp_last_session = None
         self._nosl_cpp_global_template = None
@@ -395,6 +398,7 @@ class SlayTheSpireEnv(gym.Env):
             "pending": copy.deepcopy(self._pending),
             "multi": None if self._multi is None else sorted(self._multi),
             "nosl_cpp_pending": pending_native,
+            "rulebase_pending_multi": self._rulebase_pending_multi,
             "nosl_cpp_state_nonce": int(self._nosl_cpp_state_nonce),
             "nosl_cpp_decision_index": int(self._nosl_cpp_decision_index),
             "nosl_cpp_stochastic": bool(self._nosl_cpp_stochastic),
@@ -445,6 +449,10 @@ class SlayTheSpireEnv(gym.Env):
             self._nosl_cpp_pending = (
                 int(pending_native[0]), int(pending_native[1])
             )
+        pending_multi = state.get("rulebase_pending_multi")
+        self._rulebase_pending_multi = (
+            None if pending_multi is None else int(pending_multi)
+        )
         self._nosl_cpp_state_nonce = int(state["nosl_cpp_state_nonce"])
         self._nosl_cpp_decision_index = int(state["nosl_cpp_decision_index"])
         self._nosl_cpp_stochastic = bool(state["nosl_cpp_stochastic"])
@@ -476,6 +484,8 @@ class SlayTheSpireEnv(gym.Env):
         branch._multi = set(self._multi) if self._multi is not None else None
         branch._nosl_is_az_session = None
         branch._nosl_cpp_pending = None
+        branch._rulebase_pending_multi = self._rulebase_pending_multi
+        branch._rulebase_turn_policy_cache = None
         branch._nosl_cpp_az_session = None
         branch._nosl_cpp_last_session = None
         branch._nosl_cpp_global_template = None
@@ -770,6 +780,84 @@ class SlayTheSpireEnv(gym.Env):
             return tuple(bits for _, bits in self._joint_policy_actions())
         from .native_actions import complete_actions
         return complete_actions(self.thick.bc)
+
+    def rulebase_turn_decision(
+        self,
+        *,
+        state_nonce,
+        worlds=2,
+        node_budget=8192,
+        beam_width=8,
+        max_depth=16,
+        master_nonce=20260918,
+        lookahead_turns=1,
+        leaf_profile="legacy-v8",
+    ):
+        """Return a legal policy action from the fixed model-free lower policy."""
+        if self.thick is None or self._phase() != "combat" or self.thick.bc is None:
+            raise RuntimeError("rulebase turn policy requires a live combat state")
+        from env.search.turn_planner import TurnPlannerConfig
+        from env.search.turn_policy import RulebaseTurnPolicy
+
+        config = TurnPlannerConfig(
+            worlds=int(worlds),
+            node_budget=int(node_budget),
+            beam_width=int(beam_width),
+            max_depth=int(max_depth),
+            master_nonce=int(master_nonce),
+            lookahead_turns=int(lookahead_turns),
+            leaf_profile=str(leaf_profile),
+        )
+        cached = self._rulebase_turn_policy_cache
+        if cached is None or cached.config != config:
+            cached = RulebaseTurnPolicy(config)
+            self._rulebase_turn_policy_cache = cached
+
+        selected = tuple(sorted(self._multi or ()))
+        if self._rulebase_pending_multi is None:
+            bits, diagnostics = cached.choose(
+                self, state_nonce=int(state_nonce), selected=selected,
+            )
+            if int(bits) >> 29 == 3:
+                self._rulebase_pending_multi = int(bits) & 0xffff
+        else:
+            bits = (3 << 29) | int(self._rulebase_pending_multi)
+            diagnostics = {
+                "search_decisions": 0,
+                "planner_dome_fallback": int(
+                    any(item["id"] == "Runic Dome"
+                        for item in self.thick.gc.relic_state())
+                ),
+            }
+
+        bits = int(bits)
+        if bits >> 29 == 3 and self._autoregressive_actions:
+            desired = bits & 0xffff
+            selected_mask = sum(1 << index for index in selected)
+            remaining = desired & ~selected_mask
+            if remaining:
+                index = (remaining & -remaining).bit_length() - 1
+                action = C.AUTOREGRESSIVE_MULTI + index
+            else:
+                action = C.AUTOREGRESSIVE_STOP
+                self._rulebase_pending_multi = None
+        else:
+            action = self._native_action_to_thin(bits)
+            if action is None:
+                raise ValueError(f"rulebase action cannot map to policy contract: {bits}")
+            self._nosl_cpp_pending = (int(action), bits)
+
+        mask = self.action_masks()
+        if not 0 <= int(action) < len(mask) or not mask[int(action)]:
+            raise ValueError(f"rulebase produced illegal policy action: {action}")
+        return {
+            "action": int(action),
+            "native_action_bits": bits,
+            "diagnostics": {
+                key: value for key, value in diagnostics.items()
+                if isinstance(value, (int, float, bool))
+            },
+        }
 
     def combat_selection_candidates(self):
         """Versioned public entity map for the currently open single-pick screen."""
