@@ -392,6 +392,13 @@ def observation_flags(model: AccumulatingMaskablePPO) -> dict[str, bool]:
 
 def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     flags = observation_flags(model)
+    # A fresh distributed run may start from an ordinary entity checkpoint
+    # and replace its learned card-language module with a frozen vector table.
+    # The replacement policy deliberately has the smaller non-language
+    # observation contract, so derive that one explicit flag from the launch
+    # override instead of the probe checkpoint.
+    if getattr(args, "card_vector_checkpoint", None) is not None:
+        flags["card_language"] = False
 
     class EnvArgs:
         pass

@@ -106,6 +106,35 @@ def test_retired_occupancy_arguments_do_not_install_an_unreleased_hold(monkeypat
         env.close()
 
 
+def test_frozen_card_vector_launch_disables_probe_card_language(monkeypatch):
+    from rl.training import environments as runtime
+
+    flags = dict.fromkeys((
+        'global_map_view', 'card_language', 'combat_language',
+        'deck_size_observation', 'neow_observation',
+        'event_option_observation', 'interactive_reasoning'), False)
+    flags['card_language'] = True
+    observed = []
+    monkeypatch.setattr(runtime, 'observation_flags', lambda model: dict(flags))
+
+    def capture(_task, args):
+        observed.append(args.card_language)
+        return CounterEnv
+
+    monkeypatch.setattr(runtime.WholeRunTask, 'make_env_fn', capture)
+    args = SimpleNamespace(
+        ascension=0, interactive_reasoning=False,
+        startup_stagger_steps=0, seed=42, rank=0, n_envs=1,
+        vec='dummy', card_vector_checkpoint='vectors.pt',
+    )
+    env = runtime.make_env(SimpleNamespace(observation_space=None), args)
+    try:
+        env.reset()
+        assert observed == [False]
+    finally:
+        env.close()
+
+
 class FakeModel:
     def __init__(self, env):
         self.env = env
