@@ -127,6 +127,43 @@ def test_entity_checkpoint_dashboard_projects_cards_and_language(combat_factory)
     assert len(language['card']['points']) == len(dashboard.CARD_LANGUAGE_TOKENS)
 
 
+def test_dashboard_delegates_checkpoint_algorithm_selection(monkeypatch, tmp_path):
+    checkpoint = tmp_path / 'joint.zip'
+    checkpoint.write_bytes(b'PK\x05\x06' + b'\0' * 18)
+    calls = []
+
+    class Model:
+        policy = object()
+
+        def set_random_seed(self, seed):
+            calls.append(('seed', seed))
+
+    model = Model()
+    watch = object()
+    monkeypatch.setattr(
+        dashboard,
+        '_load_checkpoint',
+        lambda path, device: calls.append(('load', path, device)) or model,
+    )
+    monkeypatch.setattr(
+        dashboard.DashboardState, '_embedding', lambda self, loaded: {}
+    )
+    monkeypatch.setattr(
+        dashboard.DashboardState, '_token_embeddings', lambda self, loaded: {}
+    )
+    monkeypatch.setattr(
+        dashboard, 'WatchSession',
+        lambda loaded, lock, seed, boss_opening_pool: watch,
+    )
+
+    app = dashboard.DashboardState()
+    app.load_checkpoint(checkpoint, episodes=0)
+
+    assert calls == [('load', checkpoint, 'auto'), ('seed', 0)]
+    assert app.model is model
+    assert app.watch is watch
+
+
 def test_watch_displays_boolean_powers_without_changing_policy_inputs(combat_factory):
     from rl.policies.entity_combat import EntityCombatPolicy
     from sb3_contrib import MaskablePPO

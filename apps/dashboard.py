@@ -19,7 +19,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import numpy as np
-from sb3_contrib import MaskablePPO
 
 from env.core import action_space as A
 from env.core import native_actions as C
@@ -36,7 +35,7 @@ from rl.evaluation.strategies import (
 )
 from rl.evaluation.baselines.overworld_rules import OverworldRuleStrategy
 from rl.evaluation.baselines.turn_planner import TurnPlannerStrategy
-from rl.policies.checkpoint import custom_objects as _sb3_load_custom_objects
+from rl.policies.checkpoint import load_checkpoint as _load_checkpoint
 from dataclasses import asdict, fields
 from rl.search.native import (
     STRICT_SEARCH_DEFAULTS,
@@ -2485,11 +2484,7 @@ class DashboardState:
     def load_checkpoint(self, path: Path, episodes: int):
         suffix = path.suffix.lower()
         if suffix == ".zip":
-            model = MaskablePPO.load(
-                path,
-                device="auto",
-                custom_objects=_sb3_load_custom_objects(path),
-            )
+            model = _load_checkpoint(path, device="auto")
             checkpoint_format = "sb3"
         else:
             raise ValueError("checkpoint must be an SB3 .zip")
