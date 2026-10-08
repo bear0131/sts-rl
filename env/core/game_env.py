@@ -126,6 +126,7 @@ class SimGameEnv:
         self.rmap = None          # RunMap for the current act
         self._np_random = None
         self._prev_hp = None
+        self._chest_relic_pending = False
 
     # ------------------------------------------------------------------ reset
     def reset(self, *, seed=None):
@@ -137,6 +138,7 @@ class SimGameEnv:
 
         self.gc = sts.GameContext(self._character, game_seed, self._ascension)
         self.bc = None
+        self._chest_relic_pending = False
         self._rebuild_map()
         self._prev_hp = self.gc.cur_hp
         # GameContext starts on the Neow event; that IS the first decision point.
@@ -401,6 +403,20 @@ class SimGameEnv:
             won = self.gc.outcome == sts.GameOutcome.PLAYER_VICTORY
             reward = 1.0 if (cleared_run or won) else -1.0
         info = self._info()
+        # One event per treasure opportunity, not per reward-screen click.
+        # Journal replay reconstructs pending offers across checkpoint boundaries.
+        if action[0] == ga.CHEST:
+            info["chest_opened"] = bool(action[1])
+            self._chest_relic_pending = bool(
+                action[1] and self.gc.get_reward_info().get("relics")
+            )
+        elif self._chest_relic_pending:
+            if action[0] == ga.CLAIM and action[1] == ga.CLAIM_RELIC:
+                info["chest_relic_taken"] = True
+                self._chest_relic_pending = False
+            elif action[0] == ga.PROCEED:
+                info["chest_relic_taken"] = False
+                self._chest_relic_pending = False
         if terminal_combat_state is not None:
             info["nosl_value_terminal_state"] = terminal_combat_state
         if terminal_combat_target is not None:

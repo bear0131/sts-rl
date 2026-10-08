@@ -176,3 +176,6 @@
 | TRAIN07 | 进行中 | 新建 `SplitStSPointerPolicy` fresh step0 checkpoint，保持 `n_layers=8`，用 `d_model=100/n_heads=4` 将 combat 参数缩小至725,864（约5.13x）；四机启动 `u40x4-ruleupper-v1-transformer-reduced-20260921`，规则上层、原搜索/replay/batch/graph/occupancy 配置不变，目标30M steps。首轮 fresh 恢复标志 bug 已修复；待 occupancy 完成后验收首个40-update generation。 |
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
+
+| METRIC03 | 实现及四机CPU生命周期通过，待生产指标验收 | 宝箱打开/条件领取率按机会计数，覆盖真实环境、journal恢复、跨rank分母加权及PPO/NOSL完整生命周期。见worklog/2026-10-08.md#train43-chest-metrics-batch4x-intent。 |
+| TRAIN43 | 进行中 | 保存暂停TRAIN42，以同fresh初始权重、1536×128/每rank、upper10epoch/LR1e-4和固定规则下层从step0训练，总预算2亿；两轮四rank验收并更新小时巡检。见同节。 |

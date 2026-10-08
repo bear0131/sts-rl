@@ -7,6 +7,41 @@ from rl.training.distributed_sb3 import (
 )
 
 
+def test_chest_windows_are_independent_of_episodes_and_rank_sizes():
+    from types import SimpleNamespace
+    from stable_baselines3.common.logger import Logger
+    from rl.tasks.wholerun import StSMetricsCallback
+
+    scalars = []
+    for events in ([{'chest_opened': True}, {'chest_relic_taken': True}],
+                   [{'chest_opened': False}] * 3 + [{'chest_opened': True},
+                    {'chest_relic_taken': False}, {}, {}]):
+        callback = StSMetricsCallback(window=100)
+        callback.model = SimpleNamespace(logger=Logger(None, []))
+        callback.locals = {'infos': events}
+        callback._on_step()
+        callback._on_rollout_end()
+        scalars.append(_prepare_distributed_game_scalars(logger_scalars(callback.model)))
+    aggregate = {k: sum(s[k] for s in scalars) / 2 for k in scalars[0]}
+    _finalize_distributed_game_scalars(aggregate, world_size=2)
+    payload = {}
+    _add_game_metrics_to_wandb_payload(payload, aggregate)
+    assert payload['game/chest_open_rate'] == 2 / 5
+    assert payload['game/chest_relic_take_rate'] == 1 / 2
+    assert payload['game/chest_opportunities_window'] == 5
+    assert payload['game/chest_relic_opportunities_window'] == 2
+    assert 'game/win_rate' not in payload
+
+
+def test_no_chest_offers_does_not_report_zero_probability():
+    values = _prepare_distributed_game_scalars({})
+    _finalize_distributed_game_scalars(values, world_size=4)
+    payload = {}
+    _add_game_metrics_to_wandb_payload(payload, values)
+    assert 'game/chest_open_rate' not in payload
+    assert 'game/chest_relic_take_rate' not in payload
+
+
 def test_game_metrics_are_weighted_by_their_actual_rank_windows():
     left = {
         "game/episodes_window": 40.0,

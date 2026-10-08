@@ -932,6 +932,9 @@ class SlayTheSpireEnv(gym.Env):
         if not terminated and self._no_legal_action():
             return self._truncate_dead()
         info = self._info()
+        for key in ("chest_opened", "chest_relic_taken"):
+            if key in (transition_info or {}):
+                info[key] = transition_info[key]
         trace = (transition_info or {}).get("reasoning_trace")
         if trace is not None:
             trace = dict(trace)

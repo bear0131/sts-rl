@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -166,6 +166,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert [p['legacy_step'] for p in payloads] == [1, 2]
     assert all(p['dist/avg_grad_sec'] == 0 for p in payloads)
     assert all('game/episodes_window' in p for p in payloads)
+    if chests:
+        assert all(p['game/chest_opportunities_window'] > 0 for p in payloads)
+        assert all(p['game/chest_open_rate'] == p['game/chest_opened_window'] /
+                   p['game/chest_opportunities_window'] for p in payloads)
+        assert any(p.get('game/chest_relic_opportunities_window', 0) > 0 for p in payloads)
     assert all(
         ('game/layer_5_win_rate' in p) == (p['game/episodes_window'] > 0)
         for p in payloads
@@ -228,6 +233,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
+    if chests:
+        assert payloads[-1]['game/chest_opportunities_window'] > 0
+        assert 'game/chest_open_rate' in payloads[-1]
     if combat_arch == 'entity' and not fixed_lower:
         assert [p['nosl_is_az/schedule_round'] for p in payloads] == [1, 2, 3, 4]
         assert [p['nosl_is_az/scheduled_updates'] for p in payloads] == ([3, 3, 1, 1] if step_schedule else [3, 2, 1, 1])
@@ -529,3 +537,13 @@ def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         True, 'model', 'entity', 'autoregressive-v2', vector='native',
         joint=True, fixed_lower=True)
+
+
+@pytest.mark.parametrize('mode', ['ppo', 'nosl', 'fixed-lower'])
+def test_chest_metrics_training_lifecycle(tmp_path, monkeypatch, capsys, chest_env_type, mode):
+    fixed = mode == 'fixed-lower'
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, chest_env_type,
+        mode != 'ppo', 'model', 'entity' if fixed else 'transformer',
+        'autoregressive-v2' if fixed else 'legacy', chests=True,
+        vector='native' if fixed else 'dummy', joint=fixed, fixed_lower=fixed)

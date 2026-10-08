@@ -1839,6 +1839,10 @@ _DISTRIBUTED_GAME_COUNT_KEYS = (
     "game/episodes_window",
     "game/episodes_total",
     "game/startup_episodes_excluded_total",
+    "game/chest_opened_window",
+    "game/chest_opportunities_window",
+    "game/chest_relic_taken_window",
+    "game/chest_relic_opportunities_window",
     'boss/censored_episodes_total',
     *(f'boss/{boss}/{metric}' for boss in ('CHAMP', 'AUTOMATON', 'COLLECTOR')
       for metric in ('episodes_window', 'wins_window')),
@@ -1873,6 +1877,16 @@ def _finalize_distributed_game_scalars(
         )
     for key in _DISTRIBUTED_GAME_COUNT_KEYS:
         aggregate_scalars[key] *= world_size
+    for rate, numerator, denominator in _CHEST_RATE_COUNTS:
+        count = aggregate_scalars[denominator]
+        if count:
+            aggregate_scalars[rate] = aggregate_scalars[numerator] / count
+
+
+_CHEST_RATE_COUNTS = (
+    ("game/chest_open_rate", "game/chest_opened_window", "game/chest_opportunities_window"),
+    ("game/chest_relic_take_rate", "game/chest_relic_taken_window", "game/chest_relic_opportunities_window"),
+)
 
 
 def _add_game_metrics_to_wandb_payload(
@@ -1881,6 +1895,9 @@ def _add_game_metrics_to_wandb_payload(
     payload.update({key: record[key] for key in _DISTRIBUTED_GAME_COUNT_KEYS
                     if key in record and (not key.startswith('boss/') or
                                           record.get('episode_scope') == 'boss-opening')})
+    for rate, numerator, denominator in _CHEST_RATE_COUNTS:
+        if record.get(denominator, 0):
+            payload[rate] = record[numerator] / record[denominator]
     if float(record["game/episodes_window"]) <= 0.0:
         return
     payload.update({key: record[key] for key in _DISTRIBUTED_GAME_METRIC_KEYS})

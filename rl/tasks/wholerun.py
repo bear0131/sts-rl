@@ -55,6 +55,9 @@ class StSMetricsCallback(BaseCallback):
         self._floor = deque(maxlen=window)
         self._act = deque(maxlen=window)
         self._deck = deque(maxlen=window)
+        # Independent opportunity windows; an unfinished offer is not a skip.
+        self._chest_opened = deque(maxlen=window)
+        self._chest_relic_taken = deque(maxlen=window)
         self._n_episodes = 0
         self._excluded_startup_episodes = 0
         self._t0 = None
@@ -70,6 +73,11 @@ class StSMetricsCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         for info in self.locals.get("infos", []):
+            if not info.get("startup_occupancy_incumbent_episode"):
+                for key, buf in (("chest_opened", self._chest_opened),
+                                 ("chest_relic_taken", self._chest_relic_taken)):
+                    if key in info:
+                        buf.append(int(info[key]))
             ep = info.get("episode")
             if ep is None:
                 continue  # not an episode boundary for this sub-env
@@ -122,6 +130,14 @@ class StSMetricsCallback(BaseCallback):
             self.logger.record("game/deck_size_mean", mean(self._deck))
         self.logger.record("game/episodes_total", self._n_episodes)
         self.logger.record("game/episodes_window", len(self._win))
+        for buf, numerator, denominator, rate in (
+            (self._chest_opened, "chest_opened_window", "chest_opportunities_window", "chest_open_rate"),
+            (self._chest_relic_taken, "chest_relic_taken_window", "chest_relic_opportunities_window", "chest_relic_take_rate"),
+        ):
+            self.logger.record(f"game/{numerator}", sum(buf))
+            self.logger.record(f"game/{denominator}", len(buf))
+            if buf:
+                self.logger.record(f"game/{rate}", mean(buf))
         if any(self._boss):
             self.logger.record('boss/censored_episodes_total', self._boss_censored)
             from env.core.boss_opening import BOSSES

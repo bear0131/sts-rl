@@ -1,0 +1,5 @@
+@configs/train/entity_joint_rulebase_lower_runtime.args
+--n-envs
+1536
+--total-steps
+200000000

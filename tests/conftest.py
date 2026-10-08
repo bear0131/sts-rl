@@ -80,3 +80,34 @@ def replayable_selection_env():
     env.reset(seed=42)
     yield env
     env.close()
+
+
+@pytest.fixture
+def chest_env_type():
+    """Real treasure/reward state machine, reached through a replayable route."""
+    from env.core.game_env import SimGameEnv
+    from env.core import game_actions as ga
+
+    class ChestBackend(SimGameEnv):
+        def reset(self, *, seed=None):
+            super().reset(seed=seed)
+            self.gc.skip_battles = True
+            for _ in range(500):
+                if self.phase() == 'chest':
+                    break
+                acts = self.legal_semantic_actions()
+                self.step(ga.proceed() if ga.proceed() in acts else acts[0])
+            assert self.phase() == 'chest'
+            self.gc.skip_battles = False
+            return self._canonical(), self._info()
+
+        def _settle(self):
+            super()._settle()
+            if self.bc is not None:
+                self.bc.set_player_strength(999)
+
+    class ChestEnv(SlayTheSpireEnv):
+        def __init__(self, **kwargs):
+            super().__init__(backend_factory=ChestBackend, **kwargs)
+
+    return ChestEnv
