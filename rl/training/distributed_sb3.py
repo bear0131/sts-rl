@@ -388,6 +388,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override only strategic PPO's forward/backward chunk size; "
              "each epoch still accumulates all completed upper samples.",
     )
+    parser.add_argument(
+        "--upper-gae-lambda", type=float, default=None,
+        help="Override strategic PPO GAE lambda (0..1); omission preserves the checkpoint value.",
+    )
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
@@ -2053,6 +2057,8 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.upper_micro_batch_size is not None and args.upper_micro_batch_size < 1:
         raise ValueError('--upper-micro-batch-size must be positive')
+    if args.upper_gae_lambda is not None and not 0.0 <= args.upper_gae_lambda <= 1.0:
+        raise ValueError('--upper-gae-lambda must be finite and between 0 and 1')
     if args.resume_state is not None and args.fork_state is not None:
         raise ValueError("--resume-state and --fork-state are mutually exclusive")
     if args.fork_reset_environments and args.fork_state is None:
@@ -2272,6 +2278,8 @@ def main() -> None:
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
     if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
         raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
+    if args.upper_gae_lambda is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-gae-lambda requires joint strategic PPO')
     args.policy_architecture = type(probe_model.policy).__name__
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
     if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model):
@@ -2280,6 +2288,8 @@ def main() -> None:
             args.upper_config = dict(probe_model.policy.upper_config)
             if args.upper_micro_batch_size is not None:
                 args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
+            if args.upper_gae_lambda is not None:
+                args.upper_config['gae_lambda'] = args.upper_gae_lambda
             if args.world_size > 1 and args.gradient_transport != 'ssh-ring':
                 raise ValueError('joint strategic PPO requires ring gradient synchronization')
             if args.boss_opening_dataset:

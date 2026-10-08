@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None, upper_lambda_override=None):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -140,6 +140,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv.append('--nosl-is-az-train-shared-embeddings')
     if upper_micro_override is not None:
         argv += ['--upper-micro-batch-size', str(upper_micro_override)]
+    if upper_lambda_override is not None:
+        argv += ['--upper-gae-lambda', str(upper_lambda_override)]
     if fixed_lower:
         argv += [
             '--nosl-is-az-combat-strategy', 'turn-planner',
@@ -202,6 +204,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert restored.policy.core.upper_config.micro_batch_size == upper_micro_override
         assert restored.policy.upper_config['micro_batch_size'] == upper_micro_override
         assert restored.policy_kwargs['upper_config']['micro_batch_size'] == upper_micro_override
+    if upper_lambda_override is not None:
+        assert restored.policy.core.upper_config.gae_lambda == upper_lambda_override
+        assert restored.policy.upper_config['gae_lambda'] == upper_lambda_override
+        assert restored.policy_kwargs['upper_config']['gae_lambda'] == upper_lambda_override
     if contract == 'autoregressive-v2':
         assert (not fixed_calls if fixed_lower
                 else fixed_calls and all(value is True for value in fixed_calls))
@@ -242,6 +248,11 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         # Omit the override: ordinary resume must preserve it from the ZIP.
         index = resume_argv.index('--upper-micro-batch-size')
         del resume_argv[index:index + 2]
+    if upper_lambda_override is not None:
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        assert manifest['config']['upper_config']['gae_lambda'] == upper_lambda_override
+        index = resume_argv.index('--upper-gae-lambda')
+        del resume_argv[index:index + 2]
     monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
@@ -270,6 +281,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         if upper_micro_override is not None:
             assert final.policy.core.upper_config.micro_batch_size == upper_micro_override
             assert final.policy_kwargs['upper_config']['micro_batch_size'] == upper_micro_override
+        if upper_lambda_override is not None:
+            assert final.policy.core.upper_config.gae_lambda == upper_lambda_override
+            assert final.policy_kwargs['upper_config']['gae_lambda'] == upper_lambda_override
         assert final.policy.upper_optimizer.state_dict()['state']
         if fixed_lower:
             assert final.nosl_is_az_combat_strategy == 'turn-planner'
@@ -571,3 +585,19 @@ def test_chest_metrics_training_lifecycle(tmp_path, monkeypatch, capsys, chest_e
         mode != 'ppo', 'model', 'entity' if fixed else 'transformer',
         'autoregressive-v2' if fixed else 'legacy', chests=True,
         vector='native' if fixed else 'dummy', joint=fixed, fixed_lower=fixed)
+
+
+def test_upper_lambda_override_survives_plain_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', vector='native',
+        joint=True, fixed_lower=True, upper_lambda_override=1.)
+
+
+@pytest.mark.parametrize('value', ['-0.01', '1.01', 'nan', 'inf'])
+def test_upper_lambda_rejects_invalid_override(monkeypatch, value):
+    monkeypatch.setattr(sys, 'argv', ['distributed_sb3', '--rank', '0',
+        '--world-size', '1', '--checkpoint', 'unused.zip', '--upper-gae-lambda', value])
+    with pytest.raises(ValueError, match='upper-gae-lambda must be finite'):
+        distributed_sb3.main()

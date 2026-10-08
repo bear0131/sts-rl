@@ -54,3 +54,15 @@ def test_censored_macro_not_a_defeat_label():
     capture_step(model, obs, [0], np.ones((1, 198)), [0], [0], obs, [True],
                  [dict(run_stats=dict(act=1, floor=28, outcome='UNDECIDED'), **{'TimeLimit.truncated': True})])
     assert model._upper_pending == [None] and model._upper_completed == [] and model._upper_censored == 1
+
+
+def test_lambda_one_returns_real_rewards_and_retains_only_truncation_bootstrap():
+    # Interleaved environments, one true terminal and one collection boundary.
+    records = [dict(env=0, episode=0, terminal=False, reward=.02, value=.8),
+               dict(env=1, episode=0, terminal=False, reward=.1, value=.9),
+               dict(env=0, episode=0, terminal=True, reward=.3, value=.2),
+               dict(env=1, episode=0, terminal=False, reward=.2, value=.4),
+               dict(env=0, episode=1, terminal=True, reward=0., value=.7)]
+    advantages, returns = macro_advantages(records, [.2, .4, 99., .6, 99.], 1., 1.)
+    np.testing.assert_allclose(returns, [.32, .9, .3, .8, 0.], atol=1e-7)
+    np.testing.assert_allclose(advantages, [-.48, 0., .1, .4, -.7], atol=1e-7)
