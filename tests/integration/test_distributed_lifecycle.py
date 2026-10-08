@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.native, pytest.mark.training, pytest.mark.timeout(90)]
     (True, 'rules', 'transformer', 'legacy'), (True, 'rules', 'mlp', 'legacy'),
     (False, 'model', 'transformer', 'joint-v2'), (True, 'rules', 'transformer', 'joint-v2'),
     (True, 'rules', 'entity', 'joint-v2'), (True, 'rules', 'entity', 'autoregressive-v2')])
-def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False):
+def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, short_combat_env_type, nosl, upper, combat_arch, contract, device='cpu', amp='off', vector='dummy', merge=True, step_schedule=False, boss_weight=0., joint=False, fixed_lower=False, chests=False, upper_micro_override=None):
     staggered = nosl and upper == 'rules' and combat_arch == 'mlp'
     occupancy = nosl and upper == 'rules' and combat_arch == 'transformer'
     fixed_calls = []
@@ -138,6 +138,8 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         argv.append('--nosl-is-az-fixed-worldline')
     if joint:
         argv.append('--nosl-is-az-train-shared-embeddings')
+    if upper_micro_override is not None:
+        argv += ['--upper-micro-batch-size', str(upper_micro_override)]
     if fixed_lower:
         argv += [
             '--nosl-is-az-combat-strategy', 'turn-planner',
@@ -196,6 +198,10 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
     assert identities[0]['id'] == 'ci-existing-run'
     assert finished == [0]
     restored = AccumulatingMaskablePPO.load(output, device='cpu')
+    if upper_micro_override is not None:
+        assert restored.policy.core.upper_config.micro_batch_size == upper_micro_override
+        assert restored.policy.upper_config['micro_batch_size'] == upper_micro_override
+        assert restored.policy_kwargs['upper_config']['micro_batch_size'] == upper_micro_override
     if contract == 'autoregressive-v2':
         assert (not fixed_calls if fixed_lower
                 else fixed_calls and all(value is True for value in fixed_calls))
@@ -229,7 +235,14 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert manifest['config']['combat_supervision_contract']=='combat-outcome-quantiles-v1'
         if contract == 'autoregressive-v2':
             assert manifest['config']['nosl_is_az_fixed_worldline'] is True
-    monkeypatch.setattr(sys, 'argv', [*sys.argv, '--resume-state', str(bundle)])
+    resume_argv = list(sys.argv)
+    if upper_micro_override is not None:
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        assert manifest['config']['upper_config']['micro_batch_size'] == upper_micro_override
+        # Omit the override: ordinary resume must preserve it from the ZIP.
+        index = resume_argv.index('--upper-micro-batch-size')
+        del resume_argv[index:index + 2]
+    monkeypatch.setattr(sys, 'argv', [*resume_argv, '--resume-state', str(bundle)])
     distributed_sb3.main()
     assert [p['global_step'] for p in payloads] == [32, 64, 96, 128]
     assert payloads[-1]['legacy_step'] == 4
@@ -254,6 +267,9 @@ def test_training_reaches_wandb_and_checkpoint(tmp_path, monkeypatch, capsys, sh
         assert all('upper/samples' in p and 'upper/updates' in p for p in payloads)
         assert sum(p['upper/updates'] for p in payloads) > 0
         final = AccumulatingMaskablePPO.load(output, device='cpu')
+        if upper_micro_override is not None:
+            assert final.policy.core.upper_config.micro_batch_size == upper_micro_override
+            assert final.policy_kwargs['upper_config']['micro_batch_size'] == upper_micro_override
         assert final.policy.upper_optimizer.state_dict()['state']
         if fixed_lower:
             assert final.nosl_is_az_combat_strategy == 'turn-planner'
@@ -537,6 +553,14 @@ def test_joint_wholerun_fixed_rulebase_lower_lifecycle(
         tmp_path, monkeypatch, capsys, short_combat_env_type,
         True, 'model', 'entity', 'autoregressive-v2', vector='native',
         joint=True, fixed_lower=True)
+
+
+def test_upper_microbatch_override_survives_plain_resume(
+        tmp_path, monkeypatch, capsys, short_combat_env_type):
+    test_training_reaches_wandb_and_checkpoint(
+        tmp_path, monkeypatch, capsys, short_combat_env_type,
+        True, 'model', 'entity', 'autoregressive-v2', vector='native',
+        joint=True, fixed_lower=True, upper_micro_override=5)
 
 
 @pytest.mark.parametrize('mode', ['ppo', 'nosl', 'fixed-lower'])

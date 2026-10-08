@@ -180,3 +180,4 @@
 | METRIC03 | 已完成并部署验收 | 宝箱打开率/条件领取率按独立机会窗口计数，跨rank按分母加权；四机各14项原生/PPO/NOSL/规则下层生命周期通过，两轮生产实际上报及1536环境恢复通过。见worklog/2026-10-08.md#train43-two-round-production-acceptance。 |
 | TRAIN43 | 运行中；两轮四机生产验收完成 | 1536×128/每rank，全局786432 transition；固定v8规则下层、upper10epoch/LR1e-4/BF16、总预算2亿。共同786432/1572864上层Adam10/20、finite/模型双Adam同步/下层冻结/1536环境重放通过；首轮upper样本为旧实验3.99倍。TRAIN42已停在100073472/509轮且全状态只读保护。小时巡检现役TRAIN43；见worklog/2026-10-08.md#train43-two-round-production-acceptance。 |
 | PERF19 | 本地实验完成；未部署预算变化 | 固定v8/C++4线程，192场自然开局+300场二层Boss；Boss8192/4096/2048/1024/512分别270/271/271/266/266胜。2048为本次较稳妥的减预算候选，同胜Boss多掉0.79HP、固定根搜索墙钟降18.5%，按现役分项估整轮仅约1%收益，不宣称普遍无损或数学最小预算。TRAIN43仍8192。见worklog/2026-10-08.md#perf19-confirmation-and-conclusion。 |
+| PERF20 | 进行中：上层microbatch受控测试及续训 | 用户授权扩大TRAIN43 upper micro256；固定真实样本、checkpoint及算法参数测试更大分块，记录显存高水位、耗时和loss/梯度差，再从最新共同完整状态同run续训并验证两轮保存恢复。见worklog/2026-10-08.md#perf20-upper-microbatch-intent。 |

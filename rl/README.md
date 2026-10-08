@@ -167,6 +167,8 @@ OBS19新增公开的`combat_is_boss`，由房间身份生成，涵盖A20两场Bo
 
 上层默认 Adam LR1e-4，每轮收集到的已完成宏动作做最多4次完整批次 PPO 更新，micro256，gamma1、GAE.95、clip.2、entropy.02、value.5、梯度裁剪.5，近似KL超过.03停止本轮剩余更新。按全局实际样本数归一化优势与梯度，空样本rank仍参加同序集合通信。奖励为每推进一层+.002、通过一/二幕额外+.1/+.2、最终胜利+1；不使用HP、卡牌优劣或Boss战术标签。这是独立的战略目标，原整局episode_reward日志仍沿用环境原奖励。
 
+分布式入口的 `--upper-micro-batch-size N` 可覆盖上层前后向分块大小，须为正整数且只支持 `entity-joint`。每个 epoch 仍累积本轮全部已完成的上层样本，按全局行数加权后执行一次梯度同步、裁剪和 Adam；有效 batch、epoch 数和学习率不随分块变化。覆盖值写入模型构造配置及恢复 manifest，后续普通 resume 即使省略该参数也保留该值。BF16 分块变化不保证逐位相同；先在同一 checkpoint/样本上检查数值、显存和完整更新耗时，再用于生产续训。
+
 `entity-joint` 可通过 `--card-vector-checkpoint` 使用冻结的匿名规则卡向量。该模式关闭 card-language 观测，把 `[card id, base/upgraded]` 的完整固定表同时用于上下层；表注册为持久 buffer，不属于任何优化器参数，上下层仍各自训练独立的 `129 -> 256` 投影。输入可为原 standalone rule-encoder checkpoint，也可为 `frozen-card-vector-table-v1` 紧凑表；两者都严格校验371张全局卡表及基础/升级两版，不能用只有75张未升级战士牌的PCA展示数据替代。普通不传该参数的 entity-joint 初始化与既有 card-language 路径保持不变。
 
 上层将一次进入战斗的决策延迟到战斗真实结束才结算，跨采样轮持久保存 pending；GAE以战略动作而非战斗点击为时间单位。尚未完成的末尾动作等待后续轮，截断/异常状态丢弃而不当作死亡。跨轮完成的动作保留原行为log_prob，属于延迟宏动作的PPO近似，不能宣称所有样本均由本轮同一策略产生；通过clip及KL门槛约束更新，不复用上层历史replay。下层replay完全沿用原契约。

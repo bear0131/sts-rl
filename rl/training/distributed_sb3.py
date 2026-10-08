@@ -383,6 +383,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
+    parser.add_argument(
+        "--upper-micro-batch-size", type=int, default=None,
+        help="Override only strategic PPO's forward/backward chunk size; "
+             "each epoch still accumulates all completed upper samples.",
+    )
     parser.add_argument("--n-epochs", type=int, default=1)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument(
@@ -2046,6 +2051,8 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.upper_micro_batch_size is not None and args.upper_micro_batch_size < 1:
+        raise ValueError('--upper-micro-batch-size must be positive')
     if args.resume_state is not None and args.fork_state is not None:
         raise ValueError("--resume-state and --fork-state are mutually exclusive")
     if args.fork_reset_environments and args.fork_state is None:
@@ -2263,12 +2270,16 @@ def main() -> None:
     # Load once without env to infer obs flags, then load again with env and
     # custom_objects so SB3 rebuilds the rollout buffer at the requested shape.
     probe_model = AccumulatingMaskablePPO.load(args.checkpoint, device=args.device)
+    if args.upper_micro_batch_size is not None and not joint_upper(probe_model):
+        raise ValueError('--upper-micro-batch-size requires joint strategic PPO')
     args.policy_architecture = type(probe_model.policy).__name__
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
     if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model):
         args.entity_config = dict(probe_model.policy.entity_config)
         if joint_upper(probe_model):
             args.upper_config = dict(probe_model.policy.upper_config)
+            if args.upper_micro_batch_size is not None:
+                args.upper_config['micro_batch_size'] = args.upper_micro_batch_size
             if args.world_size > 1 and args.gradient_transport != 'ssh-ring':
                 raise ValueError('joint strategic PPO requires ring gradient synchronization')
             if args.boss_opening_dataset:
@@ -2338,6 +2349,8 @@ def main() -> None:
             policy_kwargs["card_vector_checkpoint"] = str(
                 args.card_vector_checkpoint
             )
+    if joint_upper(probe_model):
+        policy_kwargs['upper_config'] = dict(args.upper_config)
     env = make_env(probe_model, args)
     del probe_model
     custom_objects = {
