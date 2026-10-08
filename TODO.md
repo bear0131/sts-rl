@@ -177,5 +177,5 @@
 
 后续大重构验收：先建立固定 game fixtures 和版本化契约，再改接口。旧 checkpoint 的原环境复现与新环境迁移评测分开；跨平台/多 GPU/多机准确性不得从单机 CPU 结果推断。
 
-| METRIC03 | 实现及四机CPU生命周期通过，待生产指标验收 | 宝箱打开/条件领取率按机会计数，覆盖真实环境、journal恢复、跨rank分母加权及PPO/NOSL完整生命周期。见worklog/2026-10-08.md#train43-chest-metrics-batch4x-intent。 |
-| TRAIN43 | 进行中 | 保存暂停TRAIN42，以同fresh初始权重、1536×128/每rank、upper10epoch/LR1e-4和固定规则下层从step0训练，总预算2亿；两轮四rank验收并更新小时巡检。见同节。 |
+| METRIC03 | 已完成并部署验收 | 宝箱打开率/条件领取率按独立机会窗口计数，跨rank按分母加权；四机各14项原生/PPO/NOSL/规则下层生命周期通过，两轮生产实际上报及1536环境恢复通过。见worklog/2026-10-08.md#train43-two-round-production-acceptance。 |
+| TRAIN43 | 运行中；两轮四机生产验收完成 | 1536×128/每rank，全局786432 transition；固定v8规则下层、upper10epoch/LR1e-4/BF16、总预算2亿。共同786432/1572864上层Adam10/20、finite/模型双Adam同步/下层冻结/1536环境重放通过；首轮upper样本为旧实验3.99倍。TRAIN42已停在100073472/509轮且全状态只读保护。小时巡检现役TRAIN43；见worklog/2026-10-08.md#train43-two-round-production-acceptance。 |
