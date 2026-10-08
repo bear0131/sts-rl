@@ -3,6 +3,9 @@
 `analysis/` 放诊断/绘图/实验分析，`benchmarks/` 放低层性能探针，`checkpoints/` 放 checkpoint 迁移/向量合并，`validation/` 放有预算的跨版本数值检查。
 运行方式：仓库根目录 `python -m tools.<package>.<command> --help`。这些命令允许依赖运行时，rl/env 不反向导入 tools。诊断结果不是源代码，写入 runs/local；需要长期复用的实验参数放 configs。
 
+`python -m tools.operations.monitor_nosl --relic-guard --log RUN/rank0.log --state RUN/relic-guard/state.json --stop-file RUN/STOP --iteration-steps 786432 --pid-file RUN/rank0.pid --watch-seconds 259200 --poll-seconds 30`
+为已授权的四rank实验监控宝箱条件遗物领取率，不修改学习参数。每轮至少400个已决遗物机会；最高连续5轮均值作为参考，之后连续3轮均低于参考一半且下降至少20个百分点时，以独占创建方式写原STOP，训练入口通过现有ring协议在完整轮保存后全体停止。STOP保持且不得被自动故障恢复清除；监控只负责请求停止，操作方仍须核查四rank最终完整包并保护。日志轮转时保留已见参考，重复global step只算一轮，缺报/零分母/断档打断连续确认。`iteration-steps`必须是当前全局每轮实际transition数。默认只检查一次；watch必须显式限定秒数并绑定本run实际PID，停止、训练退出或预算耗尽时结束。结果是相关的训练窗口趋势，不是独立胜率评测。
+
 `python -m tools.analysis.probe_nosl_updates BUNDLE --batch-sizes 1024 --updates 10 --max-seconds 120 --output runs/local/update-probe.json`
 对不可变的完整恢复包做有预算的 **克隆 learner 拟合诊断**（默认 CPU，可选 CUDA），复用真实 NOSL learner、保存的 Adam/replay；不启动训练环境、W&B、SSH 或保存训练 checkpoint。
 这一入口独立于纯推理 HP CLI，因为它会在私有模型副本上执行 optimizer；不能把这种操作混进日常只读推理接口。

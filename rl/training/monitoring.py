@@ -66,3 +66,66 @@ def assess(records, interventions=(), *, now):
         proposal = dict(zip(('parameter','value'), RECOVERY_STEPS[index])) if index < len(RECOVERY_STEPS) else None
         return dict(result, status='collapse' if proposal else 'strict_baseline_exhausted', proposal=proposal)
     return result
+
+
+RELIC_GUARD_KEYS = (
+    'global_timesteps', 'game/chest_relic_taken_window',
+    'game/chest_relic_opportunities_window', 'game/chest_relic_take_rate',
+)
+
+
+def assess_relic_collapse(records, *, iteration_steps, min_opportunities=400):
+    """A five-round reference and three *later*, consecutive low windows.
+
+    Windows are training telemetry, not independent evaluation episodes. Missing
+    or undersized windows break a streak; repeated steps never count twice.
+    """
+    if iteration_steps <= 0 or min_opportunities <= 0:
+        raise ValueError('iteration steps and minimum opportunities must be positive')
+    rows = {}
+    for record in records:
+        try:
+            step = int(record['global_timesteps'])
+            if step <= 0 or step != record['global_timesteps']:
+                continue
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        rows[step] = None
+        try:
+            taken = float(record['game/chest_relic_taken_window'])
+            count = float(record['game/chest_relic_opportunities_window'])
+            rate = float(record['game/chest_relic_take_rate'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (all(math.isfinite(v) for v in (taken, count, rate))
+                and 0 <= taken <= count and count >= min_opportunities
+                and math.isclose(rate, taken / count, abs_tol=1e-9)):
+            rows[step] = rate
+    points = sorted(rows.items())
+    result = dict(status='insufficient_history', stop=False, points=len(points),
+                  latest=points[-1][1] if points else None,
+                  last_step=points[-1][0] if points else None,
+                  reference=None, threshold=None)
+
+    def contiguous(window):
+        return (all(rate is not None for _, rate in window)
+                and all(b[0] - a[0] == iteration_steps for a, b in zip(window, window[1:])))
+
+    if len(points) < 8:
+        return result
+    # Exclude the confirmation rounds from the historical reference.
+    previous = points[:-3]
+    windows = [previous[i:i + 5] for i in range(len(previous) - 4)]
+    baselines = [sum(rate for _, rate in w) / 5 for w in windows if contiguous(w)]
+    if not baselines:
+        return result
+    reference = max(baselines)
+    threshold = min(reference * .5, reference - .20)
+    result.update(reference=reference, threshold=threshold)
+    if not contiguous(points[-3:]):
+        return dict(result, status='incomplete_recent_windows')
+    recent = [rate for _, rate in points[-3:]]
+    collapsed = all(rate <= threshold + 1e-12 for rate in recent)
+    return dict(result, status='collapse' if collapsed else 'healthy',
+                stop=collapsed, recent=recent,
+                confirmation_steps=[step for step, _ in points[-3:]])
