@@ -3,3 +3,5 @@
 1536
 --total-steps
 200000000
+--upper-micro-batch-size
+4096

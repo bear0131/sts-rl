@@ -204,7 +204,7 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 
 `entity_upper_rulebase_batch4x_runtime.args` 将上述规则下层实验的每rank采样
 扩大为 `1536×128`，四rank每轮786432 transition；上层仍按当轮实际完成的
-宏动作做完整批次更新，micro256、最多10epoch与LR1e-4不变，总预算2亿。
+宏动作做完整批次更新，micro4096、最多10epoch、LR1e-4，总预算2亿。
 实际宏动作样本数取决于战斗长度，不能将环境transition等同于上层样本。
 
 ### 宝箱选择指标
