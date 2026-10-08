@@ -493,7 +493,7 @@ def test_dashboard_evaluation_status_records_selected_strategies(monkeypatch):
     assert state.eval_status["upper_strategy_version"] == "ironclad-overworld-v3"
     assert state.eval_status["upper_fallback"] == "masked_argmax"
     assert state.eval_status["combat_strategy"] == "planner"
-    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v9-time-clock"
+    assert state.eval_status["combat_strategy_version"] == "ironclad-turn-v8-awakened-phase"
     assert state.eval_status["search_method"] == "turn_planner"
 
     with pytest.raises(ValueError, match="upper strategy"):

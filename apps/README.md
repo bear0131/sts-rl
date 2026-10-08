@@ -36,9 +36,13 @@ Dashboard 的 Watch 页可在 `ironclad-overworld-v3` 规则上层（默认）�
 回退 checkpoint masked argmax，因此不是完全无模型的整局策略。战斗下层可独立选择
 checkpoint 模型/所选 NOSL 搜索，或 `ironclad-turn-v8-awakened-phase` 回合规划器。规划器
 使用 native-v1 完整动作覆盖出牌、目标、选牌和药水；前端固定使用历史 R10 配置
-`worlds=2,node_budget=8192,beam_width=8,max_depth=16,lookahead_turns=1,master_nonce=20260918`。
+`worlds=2,node_budget=8192,beam_width=8,max_depth=16,lookahead_turns=1,master_nonce=20260918,leaf_profile=legacy-v8`。
 它不调用 checkpoint 决定战斗动作；Runic Dome 等不支持的隐藏意图场景按版本契约回退
 `rules-ironclad-v3`。页面显示的 checkpoint value/prior 仅用于对照。
+联合模型的 `joint-v2` / `autoregressive-v2` Watch 也支持此规则下层，复用训练环境的
+`rulebase_turn_decision` 映射；多选逐个 token 后确认，不绕过原子动作契约。
+撤销/seek 保留当时规划的完整子集；已选了一部分牌时须完成多选再切换规则、模型或手动控制。
+查看 TRAIN42 时选择「模型上层」和「回合规划下层」；其下层网络未训练，不应用于打牌。
 
 Watch 的 native 搜索树在每个已展开节点标题中单独显示“模型直出 V”：它是该节点观测
 第一次送入 checkpoint 模型时直接得到的 value，不含搜索回传、样本平均、Q 变换或

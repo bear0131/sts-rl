@@ -173,7 +173,7 @@ def test_watch_can_execute_replay_and_switch_from_turn_planner():
         )
 
         assert snapshot["combat_strategy"] == "planner"
-        assert snapshot["combat_strategy_version"] == dashboard.PLANNER_VERSION
+        assert snapshot["combat_strategy_version"] == dashboard.rulebase_turn_policy_version(session._turn_planner.config)
         assert snapshot["decision"]["source"] == "turn-planner"
         assert snapshot["decision"]["native_direct"] is True
         native = snapshot["decision"]["native_action_bits"]
@@ -199,5 +199,55 @@ def test_watch_can_execute_replay_and_switch_from_turn_planner():
 
         with pytest.raises(ValueError, match="combat strategy"):
             session.configure_search(combat_strategy="unknown")
+    finally:
+        session.close()
+
+
+def test_neural_watch_rulebase_multi_prefix_undo_replays_same_subset(replayable_selection_env, monkeypatch):
+    from env.core import native_actions as C
+    from env.search.turn_policy import RulebaseTurnPolicy
+    env = replayable_selection_env
+    session = _FixedModelOutputWatchSession(_dummy_model(), threading.Lock(), seed=42)
+    session.env.close()
+    session.env = env
+    session._run_backend_factory = env._backend_factory
+    original = RulebaseTurnPolicy.choose
+    calls = []
+
+    def choose(policy, current, **kwargs):
+        if current._multi_desc() is not None:
+            calls.append(kwargs['state_nonce'])
+            return (3 << 29) | 0b101, {'worlds_completed': 2}
+        return original(policy, current, **kwargs)
+
+    monkeypatch.setattr(RulebaseTurnPolicy, 'choose', choose)
+    try:
+        session.manual_mode = True
+        session.manual_action(env._native_action_to_thin(0), session.action_revision)
+        session.manual_mode = False
+        session.configure_search(simulations=0, paper_full_gumbel=False, combat_strategy='planner')
+        assert session.decision['source'] == 'turn-planner'
+        assert not session.decision['native_direct']
+        assert session.decision['action'] == C.AUTOREGRESSIVE_MULTI
+        before = env.thick.bc.to_dict()
+        session.step()
+        assert env.thick.bc.to_dict() == before  # First token must not exhaust cards yet.
+        assert session.decision['action'] == C.AUTOREGRESSIVE_MULTI + 2
+        first_token_step = session.position
+        with pytest.raises(ValueError, match='完成当前多选'):
+            session.configure_search(manual_mode=True)
+        assert session.manual_mode is False
+        session.step()
+        assert session.decision['action'] == C.AUTOREGRESSIVE_STOP
+        session.step()
+        after = env.thick.bc.to_dict()
+        assert len(after['exhaust']) == 3  # Purity itself, plus exactly two selected strikes.
+        assert len(calls) == 1
+        session.seek(first_token_step)
+        assert session.decision['action'] == C.AUTOREGRESSIVE_MULTI + 2
+        session.step()
+        session.step()
+        assert env.thick.bc.to_dict() == after
+        assert len(calls) == 1  # Saved subset, not a new search with a different prefix.
     finally:
         session.close()

@@ -54,6 +54,7 @@ from env.search.card_ranking import CardRanking
 from env.search.nosl_sampler import NOSLSampler
 from env.search.overworld_rules import OVERWORLD_RULE_VERSION
 from env.search.turn_planner import PLANNER_VERSION, TurnPlannerConfig
+from env.search.turn_policy import rulebase_turn_policy_version
 from env.core.cards_vocab import CARD_INDEX
 from env.core.card_language import (
     TOKEN_DOC as CARD_LANGUAGE_DOC,
@@ -560,6 +561,7 @@ _TURN_PLANNER_CONFIG = TurnPlannerConfig(
     beam_width=8,
     max_depth=16,
     lookahead_turns=1,
+    leaf_profile="legacy-v8",
     master_nonce=20260918,
 )
 
@@ -756,9 +758,6 @@ class WatchSession:
                 "combat strategy must be one of "
                 f"{sorted(_COMBAT_STRATEGIES)}, got {strategy!r}"
             )
-        if (candidate == _COMBAT_STRATEGY_PLANNER
-                and self.env.unwrapped.combat_action_contract in C.NEURAL_CONTRACTS):
-            raise ValueError("joint-v2 观看会话暂不支持切换回合规划器；请使用独立评测。")
         self.combat_strategy = candidate
 
     def _apply_paper_full_gumbel_defaults(self, *, preserve_overrides: bool = False):
@@ -1100,6 +1099,14 @@ class WatchSession:
         manual_mode: bool | None = None,
     ):
         """Apply search settings without resetting the current run."""
+        controller_change = (
+            (combat_strategy is not None and combat_strategy != self.combat_strategy)
+            or (manual_mode is not None and bool(manual_mode) != self.manual_mode)
+        )
+        if controller_change and self.env.unwrapped._multi:
+            raise ValueError("请先完成当前多选，再切换模型、规则或手动操作")
+        if controller_change:
+            self.env.unwrapped._rulebase_pending_multi = None
         requested_simulations = (
             self.mcts_simulations if simulations is None else int(simulations)
         )
@@ -1441,6 +1448,16 @@ class WatchSession:
         return rule_action, "overworld_rules"
 
     def _select_combat_planner_action(self, legal):
+        if self.env.combat_action_contract in C.NEURAL_CONTRACTS:
+            # Use the training codec, including autoregressive multi-pick
+            # prefixes. A complete native subset cannot be stepped atomically
+            # through this contract.
+            row = self.env.rulebase_turn_decision(
+                state_nonce=self.position, **asdict(self._turn_planner.config)
+            )
+            diagnostics = dict(row["diagnostics"],
+                               planned_native_action_bits=row["native_action_bits"])
+            return row["action"], None, diagnostics, "turn-planner"
         request = DecisionRequest(
             self.env,
             self.obs,
@@ -1459,6 +1476,17 @@ class WatchSession:
         if not np.any(np.asarray(legal, dtype=np.int64) == action):
             raise RuntimeError(f"illegal turn-planner fallback action: {action}")
         return action, None, dict(decision.diagnostics), decision.source
+
+    def _restore_planner_native(self, action, native):
+        """Restore a saved rule plan without bypassing a multi-pick prefix."""
+        base = self.env.unwrapped
+        if base._autoregressive_actions and int(native) >> 29 == 3:
+            base._rulebase_pending_multi = (
+                None if action == C.AUTOREGRESSIVE_STOP else int(native) & 0xffff
+            )
+            base._nosl_cpp_pending = None
+        else:
+            base._nosl_cpp_pending = (int(action), int(native))
 
     def _describe_native_action(self, action_bits: int, thin_action: int | None):
         action = sts.Action(int(action_bits))
@@ -1892,6 +1920,7 @@ class WatchSession:
             raise ValueError("当前状态不能执行该动作")
         # Human choices must never consume a previously cached model target/subset.
         self.env.unwrapped._nosl_cpp_pending = None
+        self.env.unwrapped._rulebase_pending_multi = None
         self.decision = {"action": action, "label": self.env.describe_action(action),
                          "animation": self._action_animation(action), "source": "manual"}
         self._advance_one()
@@ -1951,6 +1980,9 @@ class WatchSession:
             else None
         )
         displayed_native = decision_native if direct_native else pending_native
+        planned = (decision_before.get("combat_planner") or {}).get("planned_native_action_bits")
+        if planned is not None:
+            displayed_native = int(planned)
 
         # ``seek``/``undo`` rebuild the current decision but historically left
         # the future action history intact.  Replaying that suffix blindly can
@@ -2002,9 +2034,7 @@ class WatchSession:
             execute_native = historical_direct
             active_route_mode = historical_route_mode
             if native is not None and not execute_native:
-                self.env.unwrapped._nosl_cpp_pending = (
-                    int(action), int(native)
-                )
+                self._restore_planner_native(action, native)
         else:
             if replaying:
                 del self.history[self.position:]
@@ -2110,7 +2140,7 @@ class WatchSession:
             if index < len(self.native_history):
                 native = self.native_history[index]
                 if native is not None and not direct_native:
-                    self.env.unwrapped._nosl_cpp_pending = (int(action), int(native))
+                    self._restore_planner_native(action, native)
             label = (
                 self._describe_native_action(native, action)
                 if direct_native
@@ -2322,7 +2352,7 @@ class WatchSession:
             ),
             "combat_strategy": self.combat_strategy,
             "combat_strategy_version": (
-                PLANNER_VERSION
+                rulebase_turn_policy_version(self._turn_planner.config)
                 if self.combat_strategy == _COMBAT_STRATEGY_PLANNER
                 else "checkpoint-model+configured-search"
             ),
@@ -2715,7 +2745,7 @@ class DashboardState:
                 ),
                 "combat_strategy": combat_strategy,
                 "combat_strategy_version": (
-                    PLANNER_VERSION
+                    rulebase_turn_policy_version(_TURN_PLANNER_CONFIG)
                     if combat_strategy == _COMBAT_STRATEGY_PLANNER
                     else "checkpoint-model+configured-search"
                 ),
