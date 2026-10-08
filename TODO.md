@@ -187,4 +187,4 @@
 | UPPER07 | 随TRAIN45主动暂停正常退出 | 30秒检查、72小时有界保护实现及历史state保留；历史最高连续5轮均值为参考，之后连续3轮均低于参考一半且下降至少20pp时写STOP。用户在第37轮主动暂停先于阈值触发，guard确认intentional_stop后退出，非监控故障；不得自动重启监控或清除训练STOP。后续恢复须由用户明确决定。26项回归与原部署证据见worklog/2026-10-09.md#upper07-relic-collapse-guard-deployment，暂停见#train45-user-pause-during-decline。 |
 | UPPER08 | TRAIN45下降机制阶段诊断完成；最早估值偏差来源待定位 | 27/38双分布3817同状态、四机384×512局部损失对照、32独立现场512配对续打、23200 macro账本及FP32编码复算完成；已确认学习出的普遍遗物负V、晚期GAE/MC方向冲突及动量/熵下降作用。进度与遗物数混淆是待证因果假说，不能宣判共享value梯度或某旧优化为唯一初因。生产STOP与27/38锚点不变；后续固定样本/真实结局目标对照，验收须改善反事实V排序且不以窗口噪声/单rank更新代替因果。见worklog/2026-10-09.md#upper08-train45-reversal-diagnosis-results。 |
 
-| TRAIN46 | 实现及部署中 | `rl/training/distributed_sb3.py`、upper lambda1 preset：从TRAIN45第27轮完整状态分叉，仅upper lambda改1，跑到38轮按开箱率70%门槛决定是否fresh再试38轮；真实保存恢复/首两轮四机验收、旧锚点保护、遗物监控与条件后续必须落实。见 `worklog/2026-10-09.md#train46-lambda1-from-round27-intent`。 |
+| TRAIN46 | 已启动；首轮验收通过、第二轮待验收 | `rl/training/distributed_sb3.py`、upper lambda1 preset：从TRAIN45第27轮完整状态分叉，仅upper lambda改1，跑到38轮按开箱率70%门槛决定是否fresh再试38轮；真实保存恢复/首两轮四机验收、旧锚点保护、遗物监控与条件后续必须落实。见 `worklog/2026-10-09.md#train46-lambda1-from-round27-intent`。 |
