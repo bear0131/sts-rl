@@ -5,6 +5,32 @@
 旧 apps.dashboard / apps.watch / apps.play_gauntlet 入口继续可用。训练和算法不能反向依赖 apps；UI 只消费 env/policy/evaluation。
 日志、截图和 dashboard session JSON 写入 runs/local，不放仓库根目录。启动前查看 --help，自行指定端口/结果路径。
 
+### 战士选牌排名
+
+打开 `http://127.0.0.1:8765/?view=ranking`，75 种战士牌（含基础牌）与
+「跳过」按从优先到放弃排列。拖动左侧手柄、点击箭头或输入全局名次；可搜索卡名/效果
+和筛选类型，筛选不会改变未显示的卡牌顺序。初始顺序来自卡牌目录，不是推荐排名。
+中文效果中的 `普通/升级` 数值复用现有卡表，英文 ID 用于区分同名译文。
+
+点击「保存排名」写入本机 JSON；支持撤销、导入草稿、导出 JSON、读取已保存文件，
+未保存离开有提示。独立使用不需要 checkpoint：
+
+```text
+python -m apps.dashboard --ranking-only --card-ranking-file runs/local/card-ranking/ironclad.json
+```
+
+默认路径是当前 checkout 的 `runs/local/card-ranking/ironclad.json`；有多个 checkout 时
+可指定同一个绝对路径。原子保存、版本/完整唯一 ID 校验及 revision 冲突检测防止半文件和
+旧页面覆盖新排名。一次只由一个 dashboard 进程管理该文件。
+
+文件契约为 `schema_version=1 / character=IRONCLAD / upgrade_policy=shared / order`；
+`order` 包含全部 canonical 卡 ID 与 `__skip__` 各一次。`env.search.card_ranking.CardRanking`
+的 `from_dict(json.loads(path.read_text()))` 加载它，`choose(legal_card_ids, can_skip=True)`
+返回输入候选中的索引或 `None`（跳过）。普通/升级共用卡种排名，重复卡选首个候选；未知卡
+明确报错，由调用方决定回退策略。调用方只传合法候选并自行映射回动作 ID。
+页面试选使用这个相同函数；这里只提供奖励选牌规则原语，未改变训练或 Watch 的策略，
+也不把奖励排名套用于删牌、升级、商店或战斗内选牌。
+
 Dashboard 的 Watch 页可在 `ironclad-overworld-v3` 规则上层（默认）与 checkpoint 模型
 上层之间切换。规则复用训练 worker 的 `overworld_rule_decision()`；未覆盖的未知画面显式
 回退 checkpoint masked argmax，因此不是完全无模型的整局策略。战斗下层可独立选择

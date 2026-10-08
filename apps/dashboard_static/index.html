@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>STS-RL 参数检验台</title>
   <link rel="stylesheet" href="/styles.css?v=20260911-endturn-leaf">
+  <link rel="stylesheet" href="/ranking.css">
 </head>
 <body>
   <header class="topbar">
@@ -16,12 +17,56 @@
       <button class="tab" data-tab="tokens">Token 向量</button>
       <button class="tab" data-tab="evaluation">爬塔评测</button>
       <button class="tab" data-tab="customCombat">自定义战斗</button>
+      <button class="tab" data-tab="ranking">选牌排名</button>
     </nav>
     <div id="checkpointPill" class="checkpoint-pill">未载入参数</div>
     <button id="replaceButton" class="icon-button" title="载入其他 checkpoint">＋</button>
   </header>
 
   <main>
+    <section id="rankingView" class="view">
+      <div class="ranking-page">
+        <div class="ranking-heading">
+          <div><span class="ranking-eyebrow">IRONCLAD · 你的选牌偏好</span><h1>战士卡牌排名</h1><p>越靠前，越优先拿。拖动卡牌，或直接修改名次。</p></div>
+          <div class="ranking-save"><span id="rankingStatus" role="status">正在读取…</span><button id="rankingSave" class="primary" disabled>保存排名</button></div>
+        </div>
+        <div id="rankingError" class="ranking-error" role="alert" hidden></div>
+        <div class="ranking-layout">
+          <div class="ranking-main">
+            <div class="ranking-tools">
+              <input id="rankingSearch" type="search" placeholder="搜索卡名 / 效果" aria-label="搜索卡名或效果">
+              <select id="rankingKind" aria-label="卡牌类型"><option value="">所有类型</option><option value="attack">攻击</option><option value="skill">技能</option><option value="power">能力</option></select>
+              <span id="rankingCount"></span>
+              <button id="rankingUndo" disabled>撤销</button>
+            </div>
+            <div class="ranking-list-label"><span>优先拿取 ↑</span><span>名次 / 上下移动</span></div>
+            <ol id="rankingList" class="ranking-list" aria-label="卡牌排名，从优先到放弃"></ol>
+          </div>
+          <aside class="ranking-sidebar">
+            <div class="ranking-panel">
+              <h2>把「跳过」放在分界处</h2>
+              <p>候选中排名最高的牌仍在「跳过」之后，就不拿牌。不能跳过时，仍选候选中最好的一张。</p>
+              <button id="rankingFindSkip">定位跳过分界</button>
+              <p class="ranking-note">普通版和升级版共用排名。同一种牌重复出现时选最左一张。暂不考虑牌组搭配、楼层或已有数量。</p>
+            </div>
+            <div class="ranking-panel">
+              <h2>试选三张牌</h2><p>预览当前草稿会怎么选。</p>
+              <label>候选 1<select id="rankingOffer0" class="ranking-offer"></select></label>
+              <label>候选 2<select id="rankingOffer1" class="ranking-offer"></select></label>
+              <label>候选 3<select id="rankingOffer2" class="ranking-offer"></select></label>
+              <label class="ranking-checkbox"><input id="rankingCanSkip" type="checkbox" checked> 允许跳过</label>
+              <strong id="rankingChoice" class="ranking-choice" aria-live="polite">—</strong>
+            </div>
+            <div class="ranking-panel">
+              <h2>保存与备份</h2><p>保存到本机，可供选牌规则直接读取。导入文件会先成为草稿，点击保存才覆盖。</p>
+              <button id="rankingSaveSide" class="primary" disabled>保存排名</button>
+              <div class="ranking-file-tools"><button id="rankingExport">导出 JSON</button><button id="rankingImport">导入 JSON</button><input id="rankingFile" type="file" accept=".json,application/json" hidden><button id="rankingReload">读取已保存</button></div>
+              <p id="rankingPath" class="ranking-note ranking-path"></p>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
     <section id="watchView" class="view active">
       <div class="watch-toolbar">
         <label>Seed <input id="watchSeed" type="number" value="0"></label>
@@ -313,5 +358,6 @@
   </div>
   <div id="toast" class="toast"></div>
   <script src="/app.js?v=20260911-leaf-batch"></script>
+  <script type="module" src="/ranking.js"></script>
 </body>
 </html>

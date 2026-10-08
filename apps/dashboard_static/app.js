@@ -227,6 +227,7 @@ document.querySelectorAll(".tab").forEach(button => button.addEventListener("cli
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === button));
   document.querySelectorAll(".view").forEach(x => x.classList.remove("active"));
   $(`${button.dataset.tab}View`).classList.add("active");
+  if (button.dataset.tab === "ranking") $("uploadOverlay").classList.add("hidden");
   if (button.dataset.tab === "embedding") drawEmbedding();
   if (button.dataset.tab === "tokens") drawTokens();
   if (button.dataset.tab === "evaluation") drawDistribution();
@@ -1691,7 +1692,7 @@ async function poll() {
 window.addEventListener("resize",()=>{drawEmbedding();drawTokens();drawDistribution();});
 const initialParams = new URLSearchParams(location.search);
 const initialView = initialParams.get("view");
-if (["watch", "embedding", "tokens", "evaluation"].includes(initialView)) {
+if (["watch", "embedding", "tokens", "evaluation", "customCombat", "ranking"].includes(initialView)) {
   document.querySelector(`.tab[data-tab="${initialView}"]`).click();
 }
 if (initialParams.get("upload") === "1") {

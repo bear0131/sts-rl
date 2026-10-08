@@ -49,6 +49,8 @@ from rl.rules.visualize_card_vectors import (
     resolve_encoder,
 )
 from apps.watch import _action_dist
+from apps.card_ranking import RankingStore, preview_ranking
+from env.search.card_ranking import CardRanking
 from env.search.nosl_sampler import NOSLSampler
 from env.search.overworld_rules import OVERWORLD_RULE_VERSION
 from env.search.turn_planner import PLANNER_VERSION, TurnPlannerConfig
@@ -71,6 +73,7 @@ from rl.policies import split_policy as _split_policy  # noqa: F401
 
 STATIC_DIR = Path(__file__).with_name("dashboard_static")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RANKINGS = RankingStore(PROJECT_ROOT / "runs/local/card-ranking/ironclad.json")
 UPLOAD_DIR = Path("runs/dashboard/uploads")
 def _default_dashboard_checkpoint() -> Path | None:
     """Pick the newest local training checkpoint for a no-argument launch.
@@ -2867,6 +2870,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == "/api/card-ranking":
+            try:
+                self._send_json(RANKINGS.load())
+            except (ValueError, OSError) as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
         if path == "/api/state":
             self._send_json(APP.public_state())
             return
@@ -2896,7 +2905,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path == "/api/upload":
+            if path.startswith("/api/card-ranking"):
+                if int(self.headers.get("Content-Length", "0")) > 65536:
+                    raise ValueError("排名数据不能超过 64 KiB")
+                body = self._read_json()
+                if path == "/api/card-ranking":
+                    self._send_json(RANKINGS.save(body))
+                elif path == "/api/card-ranking/validate":
+                    self._send_json(CardRanking.from_dict(body).to_dict())
+                elif path == "/api/card-ranking/preview":
+                    self._send_json(preview_ranking(body))
+                else:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+            elif path == "/api/upload":
                 self._upload()
             elif path == "/api/watch/reset":
                 body = self._read_json()
@@ -3107,16 +3128,21 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--checkpoint", type=Path, default=None)
+    parser.add_argument("--ranking-only", action="store_true",
+                        help="Open the dashboard without discovering/loading a checkpoint")
+    parser.add_argument("--card-ranking-file", type=Path, default=RANKINGS.path,
+                        help="Local JSON ranking saved by the card ranking page")
     parser.add_argument("--eval-episodes", type=int, default=50, help="0 disables evaluation on load")
     parser.add_argument("--boss-opening-dataset", type=Path,
                         help="Shared training Boss opening dataset for manual Watch")
     parser.add_argument("--boss-opening-label", default="训练开场",
                         help="Display label distinguishing training/held-out opening datasets")
     args = parser.parse_args()
+    RANKINGS.path = args.card_ranking_file.resolve()
     if args.boss_opening_dataset:
         APP.boss_opening_pool = BossOpeningPool(args.boss_opening_dataset)
         APP.boss_opening_label = args.boss_opening_label
-    checkpoint = args.checkpoint or _default_dashboard_checkpoint()
+    checkpoint = None if args.ranking_only else args.checkpoint or _default_dashboard_checkpoint()
     if checkpoint:
         APP.load_checkpoint(checkpoint, args.eval_episodes)
     else:

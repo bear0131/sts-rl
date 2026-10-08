@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| RANK01 | 已完成，本地8765已启动 | 75种战士牌+跳过的排序页，拖动/箭头/名次、检索效果、撤销、原子保存及JSON导入导出；共享纯函数按候选索引选最高，普通/升级共用排名，未知卡报错。35项聚焦测试及实际浏览器排序/保存刷新/试选/导入导出通过；文件D:/sts-rl/runs/local/card-ranking/ironclad.json在用户首次保存时生成，尚未替用户排序或接入训练。见 worklog/2026-10-08.md#rank01-completion。 |
 | UPPER04 | 早期退化后部分恢复；200M续训中，归因待诊断 | 最终236–255轮窗口均值win2.3125%、floor29.2856、deck18.7694，后续部分恢复（非独立评测），见worklog/2026-10-08.md#train42-hourly-check-1056。早期TRAIN42第27–36轮与49–58轮各10轮训练窗口均值：deck21.47→15.34、floor23.33→20.12、一幕通过63.7%→42.1%，lower权重逐值冻结/Adam空/replay无、upper正常更新。不能仅凭牌组变小判定跳牌增加，早死也会缩小牌组；未复盘动作/路线归因，不能归因于C++加速或确认算法bug。后续验收应以固定开场/种子比较upper动作分布与逐项回报，区分抓牌、路线、存活长度和训练目标，另行授权行为变更。见worklog/2026-10-08.md#train42-hourly-check-0501。 |
 | UPPER03 | 已部署TRAIN42并通过四rank两轮生产验收 | 同一v8规则搜索移至常驻C++四线程池，算法/预算不变；384×128对照30672根动作、评分、计数及整轮轨迹/upper样本hash完全一致。实现5f5a15f；原run由共同4128768正常续训，4325376/4521984完整保存、双Adam同步、下层冻结及每rank384环境CPU重放通过。生产整轮约431→107秒；独立native-build-rulefast SHA bca67238…6d76b，恢复须使用此构建。见worklog/2026-10-08.md#upper03-deployment-and-production-acceptance。 |
 | METRIC02 | 已在TRAIN40生产上报 | `StSMetricsCallback`原已产生rank内`game/deck_size_mean`，但分布式固定聚合键遗漏它。现已按各rank滚动窗口真实episode数加权聚合并进入`game/*` payload；TRAIN40首批生产轮已上报11.76、11.825等真实值，聚焦单测覆盖不等rank窗口加权。见worklog/2026-10-07.md#metric02-distributed-deck-size-monitoring及#train40-production-launch-and-acceptance。 |

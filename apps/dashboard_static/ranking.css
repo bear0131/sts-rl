@@ -1,0 +1,61 @@
+.ranking-page { max-width: 1420px; margin: auto; padding: 30px 28px 60px; }
+.ranking-heading { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 26px; }
+.ranking-eyebrow { font-size: 11px; letter-spacing: .16em; color: var(--gold); }
+.ranking-heading h1 { font-size: 28px; margin: 9px 0; }
+.ranking-page p { color: var(--muted); font-size: 13px; line-height: 1.75; margin: 8px 0; }
+.ranking-save { display: flex; align-items: center; gap: 14px; }
+#rankingStatus { font-size: 12px; color: var(--gold); max-width: 240px; }
+.ranking-layout { display: grid; grid-template-columns: minmax(0, 1fr) 288px; gap: 24px; align-items: start; }
+.ranking-tools { display: flex; gap: 10px; align-items: center; padding: 12px 0; position: sticky; top: 58px; z-index: 5; background: var(--bg); }
+#rankingSearch { flex: 1; min-width: 100px; height: 38px; }
+#rankingCount { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.ranking-list-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; padding: 10px 12px; }
+.ranking-list { list-style: none; margin: 0; padding: 0; }
+.ranking-row { display: grid; grid-template-columns: 26px minmax(140px, .9fr) minmax(120px, 1.25fr) 122px; align-items: center; gap: 12px; padding: 13px 12px; margin-bottom: 7px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 6px; scroll-margin-top: 130px; }
+.ranking-row.skill { border-left-color: var(--blue); }
+.ranking-row.power { border-left-color: var(--gold); }
+.ranking-row.below-skip { background: #151b18; }
+.ranking-row.skip { border: 1px dashed var(--gold); border-left: 3px solid var(--gold); background: #29271d; }
+.ranking-row.drop-before { border-top: 3px solid var(--gold); }
+.ranking-row.drop-after { border-bottom: 3px solid var(--gold); }
+.ranking-row.dragging { opacity: .45; }
+.ranking-handle { padding: 0; color: var(--muted); font-size: 19px; cursor: grab; border: 0; background: none; }
+.ranking-card-title { font-size: 15px; font-weight: 650; }
+.ranking-card-id { font-size: 11px; color: var(--muted); margin: 3px 0 7px; }
+.ranking-meta { font-size: 11px; color: var(--gold); }
+.ranking-effect { color: #c2c8c4; font-size: 12px; line-height: 1.65; }
+.ranking-move { display: flex; align-items: center; gap: 4px; }
+.ranking-move input { width: 52px; padding: 0 4px; text-align: center; }
+.ranking-move button { width: 28px; min-width: 28px; padding: 0; }
+.ranking-sidebar { position: sticky; top: 78px; display: grid; gap: 14px; }
+.ranking-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+.ranking-panel h2 { font-size: 15px; margin: 0 0 10px; }
+.ranking-panel label { font-size: 12px; color: var(--muted); display: block; margin-top: 10px; }
+.ranking-offer { display: block; width: 100%; margin-top: 5px; }
+.ranking-panel .ranking-checkbox { display: flex; align-items: center; gap: 6px; }
+.ranking-checkbox input { height: auto; }
+.ranking-choice { display: block; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; color: var(--gold); font-size: 16px; }
+.ranking-panel .ranking-note { font-size: 11px; }
+.ranking-path { overflow-wrap: anywhere; }
+.ranking-file-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.ranking-file-tools button { font-size: 12px; padding: 0 10px; }
+.ranking-error { padding: 12px 16px; background: #3a2020; color: #ffc1b8; border: 1px solid var(--red); border-radius: 5px; margin-bottom: 15px; }
+.ranking-row:focus-within { outline: 1px solid var(--gold); }
+.tabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tab { flex-shrink: 0; }
+@media (max-width: 1050px) {
+  .ranking-layout { grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; }
+  .ranking-row { grid-template-columns: 22px minmax(0, 1fr) 122px; }
+  .ranking-effect { grid-column: 2 / 4; grid-row: 2; }
+  .ranking-page { padding: 22px 16px; }
+}
+@media (max-width: 760px) {
+  .ranking-layout { display: flex; flex-direction: column; }
+  .ranking-main, .ranking-sidebar { width: 100%; }
+  .ranking-sidebar { position: static; }
+  .ranking-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .ranking-save { width: 100%; justify-content: space-between; }
+  .ranking-tools { flex-wrap: wrap; }
+  .ranking-tools select { max-width: 100px; }
+  .ranking-row { column-gap: 6px; padding: 10px 6px; }
+}
