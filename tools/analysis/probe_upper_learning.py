@@ -223,6 +223,108 @@ def parameter_group(name):
     return 'policy_head'
 
 
+def horizon_advantages(records, bootstrap, gamma, gae_lambda, horizon, original):
+    """Change credit horizon on exactly the same completed macro records."""
+    if horizon is None:
+        # Recomputed BF16 V(s') need not equal the saved next row's V(s).
+        # MC must not inherit that numerical residual through lambda=1 GAE.
+        returns = np.zeros(len(records), np.float32)
+        tails = {}
+        for i in range(len(records)-1, -1, -1):
+            row = records[i]; key = (row['env'], row['episode'])
+            if not row['terminal'] and key not in tails:
+                raise ValueError('Monte Carlo target requires complete terminal episodes')
+            tails[key] = row['reward'] + (0. if row['terminal'] else gamma*tails[key])
+            returns[i] = tails[key]
+        return returns-np.array([r['value'] for r in records], np.float32), returns
+    adv = np.zeros(len(records), np.float32)
+    groups = {}
+    for i, record in enumerate(records):
+        groups.setdefault((record['probe_end']-1)//horizon, []).append(i)
+    for indices in groups.values():
+        adv[indices], _ = original([records[i] for i in indices], bootstrap[indices], gamma, gae_lambda)
+    return adv, adv + np.array([r['value'] for r in records], np.float32)
+
+
+def compare_horizons(model, env, callback, args, panel, report, publish, check):
+    """Fixed complete episodes: isolate label horizon, not sample count or LR."""
+    import rl.algorithms.accumulating_ppo as collector
+    initial_ids = list(model._upper_episode_ids)
+    capture = collector.capture_step
+    tick = 0
+
+    def timed_capture(*a, **kw):
+        nonlocal tick
+        before = len(model._upper_completed)
+        result = capture(*a, **kw)
+        tick += 1
+        for row in model._upper_completed[before:]:
+            row['probe_end'] = tick
+        return result
+
+    collector.capture_step = timed_capture
+    try:
+        callback.on_training_start({}, {})
+        assert model.collect_rollouts(env, callback, model.rollout_buffer, n_rollout_steps=512)
+    finally:
+        collector.capture_step = capture
+    assert tick == 512
+    all_records = model._upper_completed
+    terminal = {(r['env'], r['episode']) for r in all_records if r['terminal']}
+    records = [r for r in all_records if r['episode'] > initial_ids[r['env']] and (r['env'], r['episode']) in terminal]
+    assert records
+    report['collection'] = dict(steps=512, transitions=512*args.envs, all_macros=len(all_records),
+        complete_macros=len(records), complete_episodes=len({(r['env'], r['episode']) for r in records}))
+    base, opt, rng = cpu_copy(model.policy.state_dict()), cpu_copy(model.policy.upper_optimizer.state_dict()), rng_state()
+    cfg = model.policy.core.upper_config
+    original_adv, original_loss, original_step = U.macro_advantages, U.ppo_loss_components, U.optimizer_step
+    arm, horizon = 'n128', 128
+
+    def reset():
+        model.policy.load_state_dict(base)
+        model.policy.upper_optimizer.load_state_dict(copy.deepcopy(opt))
+        model.policy.upper_optimizer.zero_grad(set_to_none=True)
+        model.policy.set_training_mode(False)
+        model._upper_completed = records
+        set_rng(rng)
+
+    def targets(rows, bootstrap, gamma, lam):
+        adv, ret = horizon_advantages(rows, bootstrap, gamma, lam, horizon, original_adv)
+        report.setdefault('horizon_targets', {})[arm] = summarize_targets(model, rows, bootstrap, adv, ret)
+        np.savez_compressed(args.output/f'horizon-{arm}.npz', advantage=adv, returns=ret, bootstrap=bootstrap,
+            reward=[r['reward'] for r in rows], value=[r['value'] for r in rows], end=[r['probe_end'] for r in rows],
+            env=[r['env'] for r in rows], episode=[r['episode'] for r in rows], terminal=[r['terminal'] for r in rows],
+            action=[r['action'] for r in rows], phase=[int(r['observation']['phase'][0]) for r in rows])
+        return adv, ret
+
+    def traced_step(*a, **kw):
+        check()
+        result = original_step(*a, **kw)
+        report['updates'].append(dict(arm=arm, probe=panel_summary(model, panel)))
+        publish()
+        return result
+
+    try:
+        U.macro_advantages, U.optimizer_step = targets, traced_step
+        U.ppo_loss_components = lambda **kw: loss_arm(original_loss(**kw), 'momentum' if arm == 'momentum' else args.horizon_loss)
+        for arm in args.horizon_arms:
+            horizon = {'momentum': 128, 'n128': 128, 'n512': 512, 'mc': None}[arm]
+            check(); reset()
+            model.policy.core.upper_config = replace(cfg, epochs=args.component_epochs)
+            stats = U.update_upper(model)
+            assert all(torch.isfinite(p).all() for p in model.policy.parameters())
+            report['ablations'].append(dict(arm=arm, stats=stats, probe=panel_summary(model, panel)))
+            print('HORIZON', arm, json.dumps(report['ablations'][-1]), flush=True)
+            publish()
+    finally:
+        U.macro_advantages, U.ppo_loss_components, U.optimizer_step = original_adv, original_loss, original_step
+        reset(); model.policy.core.upper_config = cfg
+    report.update(state='complete', stop_reason='horizon_budget', final_probe=panel_summary(model, panel),
+        restored_exact=all(torch.equal(v.cpu(), base[k]) for k, v in model.policy.state_dict().items()),
+        final_adam_steps=sorted({int(s['step']) for s in model.policy.upper_optimizer.state.values()}))
+    publish()
+
+
 def main():
     from stable_baselines3.common.callbacks import BaseCallback
     from stable_baselines3.common.logger import configure
@@ -245,9 +347,15 @@ def main():
     parser.add_argument('--stop-drop', type=float, default=.10)
     parser.add_argument('--components-only', action='store_true', help='fixed first-batch loss comparisons only; restore all updates afterwards')
     parser.add_argument('--component-epochs', type=int, default=1)
+    parser.add_argument('--horizons-only', action='store_true', help='same complete episodes, four bounded policy-gradient label comparisons')
+    parser.add_argument('--horizon-arms', nargs='+', choices=('momentum', 'n128', 'n512', 'mc'),
+                        default=['momentum', 'n128', 'n512', 'mc'])
+    parser.add_argument('--horizon-loss', choices=('policy', 'value'), default='policy')
     args = parser.parse_args()
     if min(args.envs, args.steps, args.rounds, args.micro) <= 0 or not 0 < args.stop_drop < 1 or not 0 < args.max_seconds <= 3600 or not 1 <= args.component_epochs <= 10:
         raise ValueError('invalid bounded experiment configuration')
+    if args.horizons_only and (args.steps != 512 or args.rounds != 1 or args.envs > 96):
+        raise ValueError('horizon comparison requires at most 96 actors, exactly 512 steps and one collection')
     if args.output.exists() or args.output.resolve().is_relative_to(args.bundle.resolve()):
         raise ValueError('new output directory outside protected source required')
     args.output.mkdir(parents=True)
@@ -325,6 +433,15 @@ def main():
     report['source_lower_frozen'] = not model.policy.optimizer.state
     publish()
     print('READY', json.dumps(baseline), flush=True)
+    if args.horizons_only:
+        try:
+            compare_horizons(model, env, callback, args, panel, report, publish, check)
+            report['source_reverified'] = read_bundle(args.bundle, rank=header['rank'], world_size=header['world_size'])['sha256'] == manifest['sha256']
+            assert all(torch.equal(v.cpu(), frozen[k]) for k, v in model.policy.state_dict().items() if k in frozen)
+            publish()
+        finally:
+            env.close()
+        return
     original_loss, original_adv, original_step = U.ppo_loss_components, U.macro_advantages, U.optimizer_step
     arm, round_index, step_in_arm = 'full', 0, 0
     phase = 'online'

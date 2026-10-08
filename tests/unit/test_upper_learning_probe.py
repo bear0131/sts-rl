@@ -7,6 +7,27 @@ from rl.algorithms.ppo import PPOLossComponents
 from tools.analysis.probe_upper_learning import json_scalar, loss_arm, should_stop, subset_learner
 
 
+def test_horizon_comparison_keeps_sample_identity_and_pending_finish_boundary():
+    from tools.analysis.probe_upper_learning import horizon_advantages
+    from rl.algorithms.upper_ppo import macro_advantages
+    records = [dict(env=0, episode=2, terminal=False, reward=0., value=.2, probe_end=127),
+               dict(env=0, episode=2, terminal=True, reward=1., value=.4, probe_end=140)]
+    boot = np.array([.4, 0.])
+    a128, _ = horizon_advantages(records, boot, 1., .95, 128, macro_advantages)
+    a512, _ = horizon_advantages(records, boot, 1., .95, 512, macro_advantages)
+    amc, returns = horizon_advantages(records, boot, 1., .95, None, macro_advantages)
+    np.testing.assert_allclose(a128, [.2, .6])
+    np.testing.assert_allclose(a512, [.77, .6])
+    np.testing.assert_allclose(amc, [.8, .6])
+    np.testing.assert_allclose(returns, [1., 1.])
+    # A recomputed BF16 bootstrap may differ from the following saved value;
+    # direct MC is defined by rewards and must remain exactly unaffected.
+    _, altered = horizon_advantages(records, np.array([123., 456.]), 1., .95, None, macro_advantages)
+    np.testing.assert_array_equal(returns, altered)
+    with pytest.raises(ValueError, match='complete terminal'):
+        horizon_advantages(records[:1], boot[:1], 1., .95, None, macro_advantages)
+
+
 def test_subset_keeps_pending_credit_but_remaps_live_actor_and_does_not_mutate_source():
     source = dict(last_episode_starts=[False, True, False], upper_episode_ids=[7, 8, 9],
         upper_pending=[dict(env=0, episode=7, reward=.3, value=.2), None, dict(env=2, episode=9, reward=.4, value=.1)],
