@@ -8,6 +8,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| TRAIN47 | 进行中：TRAIN46向模型搜索联合训练交接 | 用户授权暂停46并保护完整终点，继承上层/环境/RNG，按TRAIN41恢复Full-Gumbel128/G1/rawQ1/动作合并、优化C++4线程和下层NOSL U40/LR5e-5/batch102400/micro8192/replay524288；当前384×512、upper lambda1/micro4096/10epoch/LR1e-4及2亿预算不变。验收两轮完整生产同步/finite/真实上下层更新与环境重放；至少10%独立胜率为目标，窗口指标单独报告。见worklog/2026-10-09.md#train47-model-search-handoff-intent。 |
 | UPPER05 | 已确认遗物领取策略退化；初始原因待归因 | TRAIN42第496轮384个存续episode真实journal重放90706步末态SHA全匹配；307个完成奖励页面/617决策领取0次，UI480/远端496平均领取概率约0.01%，50M已退化。8例强制领取执行正确，7例对齐map后拿遗物V均更低；未确认PPO数学或codec bug。后续用户授权METRIC03/TRAIN43加指标、4倍采样batch fresh实验。见worklog/2026-10-08.md#upper05-treasure-skip-diagnosis。 |
 | UI10 | 已完成，8765已载入TRAIN42第480轮 | 四rank共同94371840完整恢复包SHA通过，策略/双Adam成员一致；rank0 ZIP f147b3e8…0e4e与冻结卡表已下载到D盘并校验。补齐Watch联合模型+规则下层，复用训练动作映射，AR多选逐token及undo/seek一致，显式legacy-v8。29项聚焦回归及真实模型/浏览器验收通过；当前模型上层+v8回合规划下层、seed0/step0、确定性。排名路径保留，远端仅临时导出硬链接且已清理，训练未改。见 worklog/2026-10-08.md#ui10-train42-frontend-completion。 |
 | RANK01 | 已完成，本地8765已启动 | 75种战士牌+跳过的排序页，拖动/箭头/名次、检索效果、撤销、原子保存及JSON导入导出；共享纯函数按候选索引选最高，普通/升级共用排名，未知卡报错。35项聚焦测试及实际浏览器排序/保存刷新/试选/导入导出通过；文件D:/sts-rl/runs/local/card-ranking/ironclad.json在用户首次保存时生成，尚未替用户排序或接入训练。见 worklog/2026-10-08.md#rank01-completion。 |
