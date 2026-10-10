@@ -26,6 +26,7 @@ from env.core import native_actions as C
 import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
+from bridge.campaign import SeedCampaign
 from env.core import action_space as A
 from env.core import game_actions as ga
 
@@ -96,6 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="If not currently in a run, send START with this game seed.",
     )
     parser.add_argument(
+        "--start-seeds",
+        default=os.environ.get("STS_RL_START_SEEDS"),
+        help="Comma-separated distinct game seeds for a bounded sequential campaign.",
+    )
+    parser.add_argument(
+        "--campaign-results",
+        default=os.environ.get("STS_RL_CAMPAIGN_RESULTS"),
+        help="Append one JSON object per naturally completed campaign game.",
+    )
+    parser.add_argument(
         "--auto-start",
         action="store_true",
         default=os.environ.get("STS_RL_AUTO_START", "").lower() in {"1", "true", "yes"},
@@ -137,6 +148,19 @@ def build_parser() -> argparse.ArgumentParser:
             "but does not reproduce simulator-backed Full-Gumbel search."
         ),
     )
+    parser.add_argument(
+        "--combat-search",
+        action="store_true",
+        default=os.environ.get("STS_RL_COMBAT_SEARCH", "").lower()
+        in {"1", "true", "yes"},
+        help="Use the checkpoint's simulator-backed Full-Gumbel combat search.",
+    )
+    parser.add_argument(
+        "--native-search-threads",
+        type=int,
+        default=int(os.environ.get("STS_RL_NATIVE_SEARCH_THREADS", "4")),
+        help="Persistent native search worker threads for the single real-game mirror.",
+    )
     return parser
 
 
@@ -167,6 +191,7 @@ def _load_model(
     *,
     card_vector_checkpoint: str | None = None,
     allow_direct_combat_policy: bool = False,
+    simulator_combat_search: bool = False,
 ) -> MaskablePPO:
     checkpoint = Path(path)
     if not checkpoint.is_file():
@@ -201,14 +226,14 @@ def _load_model(
     grouped_combat = (
         getattr(model, "nosl_action_group_contract", None) == "equivalent-plays-v1"
     )
-    if grouped_combat and not allow_direct_combat_policy:
+    if grouped_combat and not (allow_direct_combat_policy or simulator_combat_search):
         raise ValueError(
             "equivalent-plays-v1 currently requires simulator-backed PolicyStrategy; "
             "CommunicationMod lacks the per-instance fields needed for identical grouping. "
             "Use --allow-direct-combat-policy only for an explicitly ungrouped "
             "real-game integration diagnostic."
         )
-    if grouped_combat:
+    if grouped_combat and allow_direct_combat_policy and not simulator_combat_search:
         log.warning(
             "direct combat policy explicitly enabled: equivalent-play probability "
             "mass and simulator-backed search are unavailable in CommunicationMod"
@@ -254,6 +279,8 @@ class RealPolicyAgent:
         start_seed: str | None,
         ascension: int,
         character: str,
+        campaign: SeedCampaign | None = None,
+        combat_search=None,
     ) -> None:
         self.model = model
         self.adapter = adapter
@@ -265,9 +292,32 @@ class RealPolicyAgent:
         self.start_seed = start_seed
         self.ascension = int(ascension)
         self.character = character
+        self.campaign = campaign
+        self.combat_search = combat_search
 
     def decide(self, frame: dict[str, Any]) -> RealDecision:
         self.adapter.update(frame)
+        if self.combat_search is not None:
+            self.combat_search.observe_frame(frame)
+        if (self.campaign is not None and self.combat_search is not None
+                and self.adapter.in_game() and self.adapter.screen_type() == "GAME_OVER"
+                and self.combat_search.run_errors):
+            raise RuntimeError(
+                "campaign game is invalid because bridge/search errors occurred: "
+                f"{self.combat_search.run_errors}")
+        campaign_result = (
+            self.campaign.observe(
+                frame,
+                metadata=(self.combat_search.run_summary()
+                          if self.combat_search is not None else None),
+            )
+            if self.campaign is not None else None
+        )
+        if campaign_result is not None:
+            log.info("campaign game complete %s", campaign_result)
+        if (self.campaign is not None and self.adapter.in_game()
+                and self.adapter.screen_type() == "GAME_OVER"):
+            return RealDecision("PROCEED", "campaign_game_over")
 
         # CommunicationMod error frames omit ``in_game`` and ``game_state``.
         # Refresh the state instead of mistaking a rejected command for a run
@@ -278,6 +328,11 @@ class RealPolicyAgent:
             return RealDecision(command, reason)
 
         if not self.adapter.in_game():
+            if self.combat_search is not None:
+                self.combat_search.reset_run()
+            if self.campaign is not None:
+                command = self.campaign.start_command(self.character, self.ascension)
+                return RealDecision(command or "STATE", "campaign_start" if command else "campaign_complete")
             if self.auto_start or self.start_seed is not None:
                 seed_suffix = "" if self.start_seed is None else f" {self.start_seed}"
                 return RealDecision(
@@ -290,6 +345,8 @@ class RealPolicyAgent:
         if (getattr(getattr(getattr(self.model,'policy',None),'core',None),'combat_only',False)
                 and self.adapter.phase() != "combat"):
             return RealDecision("STATE", "combat_only_requires_manual_overworld")
+        if self.adapter.phase() == "combat" and self.combat_search is not None:
+            return self.combat_search.decide()
         trace: list[tuple[int, tuple | None, str]] = []
         for inner in range(max(self.max_inner_decisions, 11 if self.adapter.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT else 1)):
             obs = self.adapter.observation(pending=pending)
@@ -434,9 +491,24 @@ def main() -> None:
         args.device,
         card_vector_checkpoint=args.card_vector_checkpoint,
         allow_direct_combat_policy=args.allow_direct_combat_policy,
+        simulator_combat_search=args.combat_search,
     )
     model.set_random_seed(args.seed)
     adapter = _adapter_for_model(model, args)
+    campaign = None
+    if args.start_seeds:
+        seeds = [part.strip() for part in args.start_seeds.split(",") if part.strip()]
+        campaign = SeedCampaign(seeds, args.campaign_results)
+    combat_search = None
+    if args.combat_search:
+        from bridge.search_bridge import RealCombatSearch
+
+        combat_search = RealCombatSearch(
+            model,
+            adapter,
+            native_search_threads=args.native_search_threads,
+            master_nonce=args.seed,
+        )
     agent = RealPolicyAgent(
         model,
         adapter,
@@ -448,24 +520,31 @@ def main() -> None:
         start_seed=args.start_seed,
         ascension=args.ascension,
         character=args.character,
+        campaign=campaign,
+        combat_search=combat_search,
     )
 
-    send("ready")
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        log.debug("RECV %s", line)
-        try:
-            frame = json.loads(line)
-            decision = agent.decide(frame)
-            _log_decision(frame, decision, adapter)
-            send(decision.command)
-        except Exception:
-            log.error("failed to handle frame:\n%s\n%s", line, traceback.format_exc())
-            send("STATE")
-
-    log.info("stdin EOF; session end")
+    try:
+        send("ready")
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            log.debug("RECV %s", line)
+            try:
+                frame = json.loads(line)
+                decision = agent.decide(frame)
+                _log_decision(frame, decision, adapter)
+                send(decision.command)
+            except Exception:
+                if combat_search is not None:
+                    combat_search.note_error()
+                log.error("failed to handle frame:\n%s\n%s", line, traceback.format_exc())
+                send("STATE")
+    finally:
+        if combat_search is not None:
+            combat_search.close()
+        log.info("stdin EOF; session end")
 
 
 if __name__ == "__main__":

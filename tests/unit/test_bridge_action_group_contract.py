@@ -36,6 +36,19 @@ def test_bridge_allows_explicit_direct_policy_diagnostic(tmp_path, monkeypatch):
     assert actual is expected
 
 
+def test_bridge_allows_grouped_checkpoint_for_simulator_search(tmp_path, monkeypatch):
+    from bridge.client import agent_orchestrator as agent
+    path = tmp_path/'model.zip'
+    path.touch()
+    expected = SimpleNamespace(nosl_action_group_contract='equivalent-plays-v1')
+    monkeypatch.setattr(agent.MaskablePPO, 'load', lambda *_a, **_k: expected)
+
+    actual = agent._load_model(
+        str(path), 'cpu', simulator_combat_search=True)
+
+    assert actual is expected
+
+
 def test_bridge_relocates_frozen_card_vector_checkpoint(tmp_path, monkeypatch):
     from bridge.client import agent_orchestrator as agent
     path = tmp_path/'model.zip'

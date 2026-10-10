@@ -34,12 +34,30 @@ file by an absolute path. Relocate that dependency explicitly:
 $env:STS_RL_CARD_VECTOR_CHECKPOINT = "D:\path\to\card-vectors.pt"
 ```
 
-CommunicationMod can execute the checkpoint's direct combat policy, but it
-cannot reconstruct the simulator state required by Full-Gumbel search or exact
-`equivalent-plays-v1` probability grouping. For transport/alignment diagnostics
-only, opt in with `--allow-direct-combat-policy` (or set
-`STS_RL_ALLOW_DIRECT_COMBAT_POLICY=1`). The overworld policy remains
-deterministic unless `--stochastic` is passed.
+Simulator-backed Full-Gumbel combat can be enabled explicitly. The bridge keeps
+a persistent native battle mirror, checks public state and legal actions against
+each settled CommunicationMod frame, and refuses to fall back to the direct
+combat policy on a mismatch:
+
+```powershell
+$env:STS_RL_COMBAT_SEARCH = "1"
+$env:STS_RL_NATIVE_SEARCH_THREADS = "4"
+```
+
+The native extension must come from the same source/configuration as the
+checkpoint. The direct combat policy remains available only as an explicit
+transport diagnostic through `--allow-direct-combat-policy`; it does not
+reproduce Full-Gumbel search or exact `equivalent-plays-v1` grouping. The
+overworld policy is deterministic unless `--stochastic` is passed.
+
+For bounded real-game campaigns, provide distinct seeds and a JSONL receipt.
+Only the first idle frame sends each `START`, and every natural game-over row
+records the requested and actual seed plus search decision/alignment counts:
+
+```powershell
+$env:STS_RL_START_SEEDS = "310001,310002,310003,310004,310005"
+$env:STS_RL_CAMPAIGN_RESULTS = "D:\sts-rl\runs\local\campaign.jsonl"
+```
 
 CommunicationMod initially represents a post-combat card reward as a `card`
 placeholder. After the other claimable rewards are handled, the bridge opens

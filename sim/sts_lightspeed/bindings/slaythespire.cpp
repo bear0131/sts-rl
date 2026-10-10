@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -53,10 +54,9 @@ using namespace sts;
 namespace {
 namespace py = pybind11;
 
-#ifdef STS_ENABLE_RULE_TRACE
 void setRulePlayerStatusByName(BattleContext &bc, const std::string &name, int amount);
 void setRuleMonsterStatusByName(BattleContext &bc, int target, const std::string &name, int amount);
-#endif
+sts::CardId cardIdFromEnum(const std::string &name);
 
 template <typename Pile>
 py::list cardPileToList(const Pile &pile) {
@@ -553,8 +553,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     };
     if (spec.contains("player")) {
         auto p = spec["player"].cast<py::dict>();
-        bc.player.curHp = std::max(0, getInt(p, "hp", bc.player.curHp));
         bc.player.maxHp = std::max(1, getInt(p, "max_hp", bc.player.maxHp));
+        bc.player.curHp = std::clamp(
+            getInt(p, "hp", bc.player.curHp), 0, bc.player.maxHp);
         bc.player.block = std::max(0, getInt(p, "block", bc.player.block));
         bc.player.energy = std::max(0, getInt(p, "energy", bc.player.energy));
         bc.player.gold = std::max(0, getInt(p, "gold", bc.player.gold));
@@ -572,19 +573,29 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 std::clamp(getInt(c, "nunchaku", bc.player.nunchakuCounter), 0, 255));
             bc.player.penNibCounter = static_cast<std::int8_t>(
                 std::clamp(getInt(c, "pen_nib", bc.player.penNibCounter), 0, 255));
+            bc.player.cardsDiscardedThisTurn = static_cast<std::int16_t>(
+                std::clamp(getInt(c, "cards_discarded", bc.player.cardsDiscardedThisTurn), 0, 32767));
+            bc.player.timesDamagedThisCombat = static_cast<std::int16_t>(
+                std::clamp(getInt(c, "times_damaged", bc.player.timesDamagedThisCombat), 0, 32767));
         }
         if (p.contains("powers")) {
+            static constexpr const char *kStatuses[] = {
+                "STRENGTH", "DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
+                "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
+                "CORRUPTION", "CONFUSED", "HEX", "DRAW_REDUCTION",
+                "BLASPHEMER", "ELECTRO", "SURROUNDED", "MASTER_REALITY",
+                "PEN_NIB", "WRATH_NEXT_TURN", "DOUBLE_TAP", "BRUTALITY",
+                "COMBUST", "DARK_EMBRACE", "DEMON_FORM", "EVOLVE",
+                "FEEL_NO_PAIN", "FIRE_BREATHING", "FLAME_BARRIER",
+                "JUGGERNAUT", "METALLICIZE", "RAGE", "RUPTURE", "THORNS",
+                "VIGOR",
+            };
+            for (const auto *name : kStatuses) setRulePlayerStatusByName(bc, name, 0);
             for (auto item : p["powers"].cast<py::list>()) {
                 auto pair = item.cast<py::tuple>();
                 const auto name = pair[0].cast<std::string>();
-                const int amount = std::max(0, pair[1].cast<int>());
-#ifdef STS_ENABLE_RULE_TRACE
+                const int amount = pair[1].cast<int>();
                 setRulePlayerStatusByName(bc, name, amount);
-#else
-                if (name == "STRENGTH") bc.player.setStatusValueNoChecks<sts::PlayerStatus::STRENGTH>(amount);
-                else if (name == "DEXTERITY") bc.player.setStatusValueNoChecks<sts::PlayerStatus::DEXTERITY>(amount);
-                else if (name == "ARTIFACT") bc.player.artifact = amount;
-#endif
             }
         }
     }
@@ -594,9 +605,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
             auto &monster = bc.monsters.arr[i];
-            monster.curHp = std::clamp(getInt(m, "hp", monster.curHp), 0, monster.maxHp);
             monster.maxHp = std::max(1, getInt(m, "max_hp", monster.maxHp));
-            monster.curHp = std::clamp(monster.curHp, 0, monster.maxHp);
+            monster.curHp = std::clamp(
+                getInt(m, "hp", monster.curHp), 0, monster.maxHp);
             monster.block = std::max(0, getInt(m, "block", monster.block));
             if (m.contains("move")) {
                 const auto move = sts::SimHelpers::getMonsterMoveForString(
@@ -604,17 +615,18 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 if (move != sts::MonsterMoveId::INVALID) monster.moveHistory[0] = move;
             }
             if (m.contains("powers")) {
+                static constexpr const char *kStatuses[] = {
+                    "STRENGTH", "VULNERABLE", "WEAK", "ARTIFACT",
+                    "METALLICIZE", "PLATED_ARMOR", "POISON",
+                };
+                for (const auto *name : kStatuses) {
+                    setRuleMonsterStatusByName(bc, i, name, 0);
+                }
                 for (auto item : m["powers"].cast<py::list>()) {
                     auto pair = item.cast<py::tuple>();
                     const auto name = pair[0].cast<std::string>();
-                    const int amount = std::max(0, pair[1].cast<int>());
-#ifdef STS_ENABLE_RULE_TRACE
+                    const int amount = pair[1].cast<int>();
                     setRuleMonsterStatusByName(bc, i, name, amount);
-#else
-                    if (name == "STRENGTH") monster.setStatus<sts::MonsterStatus::STRENGTH>(amount);
-                    else if (name == "VULNERABLE") monster.vulnerable = amount;
-                    else if (name == "WEAK") monster.weak = amount;
-#endif
                 }
             }
         }
@@ -649,12 +661,23 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         for (auto item : spec["hand"].cast<py::list>()) {
             std::string name;
             int up = 0;
+            std::optional<int> cost;
             if (py::isinstance<py::str>(item)) name = item.cast<std::string>();
-            else { auto pair = item.cast<py::tuple>(); name = pair[0].cast<std::string>(); up = pair.size() > 1 ? pair[1].cast<int>() : 0; }
+            else {
+                auto pair = item.cast<py::tuple>();
+                name = pair[0].cast<std::string>();
+                up = pair.size() > 1 ? pair[1].cast<int>() : 0;
+                if (pair.size() > 2 && !pair[2].is_none()) cost = pair[2].cast<int>();
+            }
             auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
             sts::CardInstance card(id, up > 0);
             for (int k = 1; k < up; ++k) card.upgrade();
+            if (cost.has_value()) {
+                card.costForTurn = static_cast<std::int8_t>(
+                    std::clamp(*cost, -1, 127));
+                card.freeToPlayOnce = false;
+            }
             card.uniqueId = static_cast<std::int16_t>(nextUid++);
             if (bc.cards.cardsInHand >= sts::CardManager::MAX_HAND_SIZE) break;
             bc.cards.hand[bc.cards.cardsInHand++] = card;
@@ -942,7 +965,6 @@ std::vector<sts::search::Action> legalRuleCombatActions(const sts::BattleContext
     return out;
 }
 
-#ifdef STS_ENABLE_RULE_TRACE
 template <PlayerStatus status>
 void setRulePlayerStatus(Player &player, int amount) {
     player.setStatusValueNoChecks<status>(amount);
@@ -966,7 +988,7 @@ void setRulePlayerStatus(Player &player, int amount) {
 void setRulePlayerStatusByName(
     BattleContext &bc, const std::string &name, int amount
 ) {
-    if (amount < 0) {
+    if (amount < 0 && name != "STRENGTH" && name != "DEXTERITY") {
         throw std::invalid_argument("player status amount must be non-negative");
     }
 #define SET_PLAYER_STATUS(value) \
@@ -1030,7 +1052,7 @@ void setRuleMonsterStatusByName(
     if (target < 0 || target >= bc.monsters.monsterCount) {
         throw std::out_of_range("monster target is out of range");
     }
-    if (amount < 0) {
+    if (amount < 0 && name != "STRENGTH") {
         throw std::invalid_argument("monster status amount must be non-negative");
     }
     auto &monster = bc.monsters.arr[target];
@@ -1049,7 +1071,6 @@ void setRuleMonsterStatusByName(
 #undef SET_MONSTER_STATUS
     throw std::invalid_argument("unsupported monster status for rule data: " + name);
 }
-#endif
 
 // the cards offered on a CARD_SELECT (grid) screen, in the sim's order
 py::list selectCards(const sts::GameContext &gc) {
@@ -1432,6 +1453,23 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     }
     d["candidates"] = candidates;
     return d;
+}
+
+void setGeneratedCombatSelectionCards(
+    sts::BattleContext &bc, const std::vector<std::string> &names
+) {
+    if (bc.inputState != sts::InputState::CARD_SELECT ||
+        (bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::CODEX &&
+         bc.cardSelectInfo.cardSelectTask != sts::CardSelectTask::DISCOVERY)) {
+        throw std::invalid_argument(
+            "generated combat choices require a live CODEX or DISCOVERY screen");
+    }
+    if (names.size() != bc.cardSelectInfo.cards.size()) {
+        throw std::invalid_argument("generated combat choices require exactly three cards");
+    }
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        bc.cardSelectInfo.cards[i] = cardIdFromEnum(names[i]);
+    }
 }
 
 std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
@@ -1844,6 +1882,20 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("set_deck", &setDeck, "replace the deck with [(sim_card_enum, upgrade_count), ...]")
         .def("set_relics", &setRelics, "replace the relics with [stable_id_string, ...]")
         .def("set_relic_state", &setRelicState, "replace relics with [{id, counter}, ...]")
+        .def("set_potion_state", [](GameContext &gc, const std::vector<std::string> &names) {
+            if (names.size() > static_cast<std::size_t>(gc.potionCapacity)) {
+                throw std::invalid_argument("custom potions exceed potion capacity");
+            }
+            std::fill(gc.potions.begin(), gc.potions.end(), Potion::EMPTY_POTION_SLOT);
+            gc.potionCount = 0;
+            for (std::size_t slot = 0; slot < names.size(); ++slot) {
+                const auto begin = std::begin(potionNames), end = std::end(potionNames);
+                const auto found = std::find(begin + 1, end, names[slot]);
+                if (found == end) throw std::invalid_argument("unknown custom potion name");
+                gc.potions[slot] = static_cast<Potion>(found - begin);
+                if (gc.potions[slot] != Potion::EMPTY_POTION_SLOT) ++gc.potionCount;
+            }
+        }, "replace persistent held potion slots without advancing the run")
         .def_property_readonly("screen_state_name",
                [](const GameContext &gc) { return std::string(pybind11::str(pybind11::cast(gc.screenState))); })
         .def_property_readonly("cur_event_name",
@@ -3196,6 +3248,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("select_info", &combatSelectInfo,
              "combat card-select sub-screen semantics+progress: {context (CardSelectTask name), "
              "pick_count, can_pick_zero, can_pick_any}")
+        .def("set_generated_selection_cards", &setGeneratedCombatSelectionCards,
+             pybind11::arg("cards"),
+             "replace the three public CODEX/DISCOVERY candidates without advancing the battle")
         .def("execute", [](BattleContext &bc, const search::Action &a) { a.execute(bc); }, "apply an action and pump to the next input state")
 #ifdef STS_ENABLE_RULE_TRACE
         .def("exhaust_hand_card_with_hint", [](BattleContext &bc, int cardIndex, int indexHint) {
