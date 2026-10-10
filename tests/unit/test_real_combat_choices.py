@@ -106,3 +106,57 @@ def test_autoregressive_bridge_keeps_prefix_internal_until_stop():
     assert adapter.auto_command()[0] == 'CHOOSE 0'
     adapter.update(joint_frame(hand[1:2], selected=2, multi=True))
     assert adapter.auto_command()[0] == 'CONFIRM'
+
+
+def test_combat_reward_opens_card_candidates_before_policy_decides():
+    adapter = RealGameAdapter()
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "proceed", "state"],
+        "game_state": {
+            "screen_type": "COMBAT_REWARD",
+            "choice_list": ["card"],
+            "screen_state": {"rewards": [{"reward_type": "CARD"}]},
+        },
+    })
+
+    assert adapter.auto_command() == ("CHOOSE 0", "open_card_reward")
+
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "skip", "state"],
+        "game_state": {
+            "screen_type": "CARD_REWARD",
+            "choice_list": ["Anger", "Shrug It Off", "Cleave"],
+            "screen_state": {"cards": [
+                {"id": "Anger", "upgrades": 0},
+                {"id": "Shrug It Off", "upgrades": 0},
+                {"id": "Cleave", "upgrades": 0},
+            ]},
+        },
+    })
+
+    assert adapter.auto_command() is None
+    assert ga.reward_card(0) in adapter.legal_semantic_actions()
+    assert ga.reward_card(2) in adapter.legal_semantic_actions()
+    assert ga.skip_cards() in adapter.legal_semantic_actions()
+
+
+def test_combat_reward_keeps_policy_control_while_claimable_reward_remains():
+    adapter = RealGameAdapter()
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "proceed", "state"],
+        "game_state": {
+            "screen_type": "COMBAT_REWARD",
+            "choice_list": ["gold", "card"],
+            "screen_state": {"rewards": [
+                {"reward_type": "GOLD"}, {"reward_type": "CARD"},
+            ]},
+        },
+    })
+
+    assert adapter.auto_command() is None

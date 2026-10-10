@@ -12,6 +12,7 @@ Never write diagnostics to stdout.  Everything except commands goes to
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 from env.core import native_actions as C
 import numpy as np
@@ -31,7 +33,9 @@ from env.core import game_actions as ga
 from rl.policies import model as _model  # noqa: F401
 from rl.policies import pointer_policy as _pointer_policy  # noqa: F401
 from rl.policies import split_policy as _split_policy  # noqa: F401
+from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from sb3_contrib import MaskablePPO
+from stable_baselines3.common.save_util import load_from_zip_file
 
 
 try:
@@ -114,6 +118,25 @@ def build_parser() -> argparse.ArgumentParser:
         default=4,
         help="Max policy calls within one frame for autoregressive target picks.",
     )
+    parser.add_argument(
+        "--card-vector-checkpoint",
+        default=os.environ.get("STS_RL_CARD_VECTOR_CHECKPOINT"),
+        help=(
+            "Local replacement for a frozen card-vector checkpoint saved with a "
+            "machine-specific path."
+        ),
+    )
+    parser.add_argument(
+        "--allow-direct-combat-policy",
+        action="store_true",
+        default=os.environ.get("STS_RL_ALLOW_DIRECT_COMBAT_POLICY", "").lower()
+        in {"1", "true", "yes"},
+        help=(
+            "Allow checkpoints trained with equivalent-play grouping to execute "
+            "their direct combat policy. This validates the real-game transport "
+            "but does not reproduce simulator-backed Full-Gumbel search."
+        ),
+    )
     return parser
 
 
@@ -123,16 +146,73 @@ def send(command: str) -> None:
     sys.stdout.flush()
 
 
-def _load_model(path: str, device: str) -> MaskablePPO:
+def _checkpoint_model_class(checkpoint: Path):
+    """Use the algorithm class that owns every optimizer saved in the archive."""
+    try:
+        with ZipFile(checkpoint) as archive:
+            names = set(archive.namelist())
+    except BadZipFile:
+        # Unit-test doubles and very old callers may provide a placeholder path.
+        names = set()
+    return (
+        AccumulatingMaskablePPO
+        if "policy.upper_optimizer.pth" in names
+        else MaskablePPO
+    )
+
+
+def _load_model(
+    path: str,
+    device: str,
+    *,
+    card_vector_checkpoint: str | None = None,
+    allow_direct_combat_policy: bool = False,
+) -> MaskablePPO:
     checkpoint = Path(path)
     if not checkpoint.is_file():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
+    custom_objects = None
+    if card_vector_checkpoint is not None:
+        local_card_vectors = Path(card_vector_checkpoint)
+        if not local_card_vectors.is_file():
+            raise FileNotFoundError(
+                f"card-vector checkpoint not found: {local_card_vectors}"
+            )
+        data, _, _ = load_from_zip_file(checkpoint, device="cpu")
+        policy_kwargs = deepcopy(data.get("policy_kwargs") or {})
+        entity_config = dict(policy_kwargs.get("entity_config") or {})
+        saved_path = entity_config.get("card_vector_checkpoint")
+        entity_config["card_vector_checkpoint"] = str(local_card_vectors.resolve())
+        policy_kwargs["entity_config"] = entity_config
+        custom_objects = {"policy_kwargs": policy_kwargs}
+        log.info(
+            "relocating frozen card vectors saved=%s local=%s",
+            saved_path,
+            local_card_vectors.resolve(),
+        )
     log.info("loading checkpoint=%s device=%s", checkpoint, device)
-    model = MaskablePPO.load(checkpoint, device=device)
-    if getattr(model, 'nosl_action_group_contract', None) == 'equivalent-plays-v1':
+    model_class = _checkpoint_model_class(checkpoint)
+    log.info("checkpoint algorithm class=%s", model_class.__name__)
+    model = model_class.load(
+        checkpoint,
+        device=device,
+        custom_objects=custom_objects,
+    )
+    grouped_combat = (
+        getattr(model, "nosl_action_group_contract", None) == "equivalent-plays-v1"
+    )
+    if grouped_combat and not allow_direct_combat_policy:
         raise ValueError(
-            'equivalent-plays-v1 currently requires simulator-backed PolicyStrategy; '
-            'CommunicationMod lacks the per-instance fields needed for identical grouping')
+            "equivalent-plays-v1 currently requires simulator-backed PolicyStrategy; "
+            "CommunicationMod lacks the per-instance fields needed for identical grouping. "
+            "Use --allow-direct-combat-policy only for an explicitly ungrouped "
+            "real-game integration diagnostic."
+        )
+    if grouped_combat:
+        log.warning(
+            "direct combat policy explicitly enabled: equivalent-play probability "
+            "mass and simulator-backed search are unavailable in CommunicationMod"
+        )
     log.info(
         "loaded checkpoint; obs flags global_map=%s card_language=%s combat_language=%s "
         "deck_size=%s neow=%s event_option=%s",
@@ -189,6 +269,14 @@ class RealPolicyAgent:
     def decide(self, frame: dict[str, Any]) -> RealDecision:
         self.adapter.update(frame)
 
+        # CommunicationMod error frames omit ``in_game`` and ``game_state``.
+        # Refresh the state instead of mistaking a rejected command for a run
+        # ending and repeatedly issuing START while the combat is still live.
+        auto = self.adapter.auto_command(auto_enter_shop=self.auto_enter_shop)
+        if auto is not None:
+            command, reason = auto
+            return RealDecision(command, reason)
+
         if not self.adapter.in_game():
             if self.auto_start or self.start_seed is not None:
                 seed_suffix = "" if self.start_seed is None else f" {self.start_seed}"
@@ -197,11 +285,6 @@ class RealPolicyAgent:
                     "auto_start",
                 )
             return RealDecision("STATE", "not_in_game")
-
-        auto = self.adapter.auto_command(auto_enter_shop=self.auto_enter_shop)
-        if auto is not None:
-            command, reason = auto
-            return RealDecision(command, reason)
 
         pending: tuple | None = None
         if (getattr(getattr(getattr(self.model,'policy',None),'core',None),'combat_only',False)
@@ -346,7 +429,12 @@ def main() -> None:
     if not args.checkpoint:
         raise SystemExit("checkpoint path required or STS_RL_CHECKPOINT must be set")
 
-    model = _load_model(args.checkpoint, args.device)
+    model = _load_model(
+        args.checkpoint,
+        args.device,
+        card_vector_checkpoint=args.card_vector_checkpoint,
+        allow_direct_combat_policy=args.allow_direct_combat_policy,
+    )
     model.set_random_seed(args.seed)
     adapter = _adapter_for_model(model, args)
     agent = RealPolicyAgent(

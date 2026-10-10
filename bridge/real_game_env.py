@@ -505,6 +505,26 @@ class RealGameAdapter:
             if "CHOOSE" in self.commands() and cl:
                 return "CHOOSE 0", "enter_shop_screen"
 
+        # The simulator exposes the actual card candidates before the upper
+        # policy chooses a reward card or skips.  CommunicationMod instead
+        # exposes a placeholder on COMBAT_REWARD and reveals the candidates
+        # only after CHOOSE.  Opening that sub-screen is transport, not a
+        # commitment: CARD_REWARD still offers SKIP.  Once no claimable
+        # non-card reward remains, enter it automatically so the policy sees
+        # the same candidate-bearing state it was trained on.
+        if (st == "COMBAT_REWARD" and not self._skipped_combat_card_reward
+                and "CHOOSE" in self.commands()):
+            normalized = [_norm_label(choice) for choice in cl]
+            card_indices = [i for i, label in enumerate(normalized) if label == "card"]
+            claimable_other = any(
+                label in {"gold", "stolen_gold", "relic"}
+                or (label == "potion" and self._has_empty_potion_slot())
+                for label in normalized
+            )
+            if len(card_indices) == 1 and not claimable_other:
+                self._combat_reward_card_open = True
+                return f"CHOOSE {card_indices[0]}", "open_card_reward"
+
         return None
 
     # ---------------------------------------------------------------- obs/mask
