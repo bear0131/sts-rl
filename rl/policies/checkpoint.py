@@ -56,7 +56,14 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
     return {'policy_kwargs': policy_kwargs}
 
 
-def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None):
+def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None,
+                    inference_only=False):
+    """Load policy/optimizers; inference can omit the saved training buffer geometry.
+
+    SB3 rebuilds a rollout buffer even when only predicting. A production
+    checkpoint's environment count and horizon can allocate tens of GB here.
+    The explicit inference path uses a minimal buffer and is not a resume loader.
+    """
     path = Path(checkpoint)
     if not path.exists() and Path(str(path) + '.zip').is_file():
         path = Path(str(path) + '.zip')
@@ -67,7 +74,9 @@ def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None):
             # both saved state dictionaries; the generic SB3 loader knows one.
             from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
             algorithm = AccumulatingMaskablePPO
-    model = algorithm.load(path, device=device,
-                           custom_objects=custom_objects(path, card_vector_checkpoint))
+    overrides = custom_objects(path, card_vector_checkpoint)
+    if inference_only:
+        overrides.update(n_steps=2, n_envs=1)
+    model = algorithm.load(path, device=device, custom_objects=overrides)
     model.policy.set_training_mode(False)
     return model

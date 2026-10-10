@@ -96,6 +96,8 @@ def test_combat_unchanged_and_optimizers_independent(combat_factory, tmp_path):
     assert not restored.policy.optimizer.state_dict()['state']
     from rl.policies.checkpoint import load_checkpoint
     shared_loaded = load_checkpoint(tmp_path / 'joint', device='cpu')
+    assert shared_loaded.n_steps == joint.n_steps
+    assert shared_loaded.n_envs == joint.n_envs
     assert shared_loaded.policy.upper_optimizer.state_dict()['state']
     for key, value in shared_loaded.policy.state_dict().items():
         torch.testing.assert_close(value, joint.policy.state_dict()[key], rtol=0, atol=0)
@@ -112,6 +114,51 @@ def test_combat_unchanged_and_optimizers_independent(combat_factory, tmp_path):
         joint.policy.optimizer.step()
     for key, value in joint.policy.core.overworld.state_dict().items():
         torch.testing.assert_close(value, upper_before[key], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize('policy', [EntityCombatPolicy, EntityJointPolicy])
+def test_inference_load_bounds_training_buffer_and_preserves_prediction(
+        combat_factory, tmp_path, policy):
+    from rl.policies.checkpoint import load_checkpoint
+    env = combat_factory(['BASH', 'STRIKE_RED', 'DEFEND_RED'], card_language=True,
+                         combat_action_contract='autoregressive-v2')
+    model = make_joint(env, policy)
+    optimizers = [model.policy.optimizer]
+    if policy is EntityJointPolicy:
+        optimizers.append(model.policy.upper_optimizer)
+    for optimizer in optimizers:
+        optimizer.zero_grad()
+        sum(parameter.square().sum() for group in optimizer.param_groups
+            for parameter in group['params'] if parameter.requires_grad).backward()
+        optimizer.step()
+        optimizer.zero_grad()
+    observation = env._obs()
+    mask = env.action_masks()
+    expected, _ = model.predict(observation, deterministic=True, action_masks=mask)
+    # Save production geometry without ever allocating its unused buffer.
+    model.n_steps, model.n_envs = 512, 384
+    model.save(tmp_path / 'large.zip')
+    loaded = load_checkpoint(tmp_path / 'large.zip', device='cpu', inference_only=True)
+    assert loaded.rollout_buffer.buffer_size == 2
+    assert loaded.rollout_buffer.n_envs == 1
+    for key, value in model.policy.state_dict().items():
+        torch.testing.assert_close(loaded.policy.state_dict()[key], value, rtol=0, atol=0)
+    restored_optimizers = [loaded.policy.optimizer]
+    if policy is EntityJointPolicy:
+        restored_optimizers.append(loaded.policy.upper_optimizer)
+    for old, restored in zip(optimizers, restored_optimizers, strict=True):
+        old_state, restored_state = old.state_dict(), restored.state_dict()
+        assert restored_state['param_groups'] == old_state['param_groups']
+        assert restored_state['state'].keys() == old_state['state'].keys()
+        for index, state in old_state['state'].items():
+            for key, value in state.items():
+                torch.testing.assert_close(restored_state['state'][index][key], value,
+                                           rtol=0, atol=0)
+    actual, _ = loaded.predict(observation, deterministic=True, action_masks=mask)
+    np.testing.assert_array_equal(actual, expected)
+    assert mask[int(actual)]
+    next_observation, _, _, _, _ = env.step(int(actual))
+    assert all(np.isfinite(value).all() for value in next_observation.values())
 
 
 def test_actual_wholerun_upper_collection_update_and_bundle(tmp_path):

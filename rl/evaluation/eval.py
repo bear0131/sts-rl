@@ -177,14 +177,17 @@ def main():
         args.solver = 'value'
     if args.leaf_inference != 'eager' and (args.solver != 'native' or args.task != 'wholerun'):
         raise ValueError('--leaf-inference cuda-graph requires --solver native --task wholerun')
-    model = load_checkpoint(args.checkpoint, device=args.device, card_vector_checkpoint=args.card_vector_checkpoint)
+    model = load_checkpoint(args.checkpoint, device=args.device,
+                            card_vector_checkpoint=args.card_vector_checkpoint,
+                            inference_only=True)
     model.set_random_seed(args.seed)
     combat_model = model
     if args.combat_checkpoint:
         if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules', 'turn-planner'):
             raise ValueError('--combat-checkpoint requires a supported wholerun solver')
         combat_model = load_checkpoint(args.combat_checkpoint, device=args.device,
-                                       card_vector_checkpoint=args.card_vector_checkpoint)
+                                       card_vector_checkpoint=args.card_vector_checkpoint,
+                                       inference_only=True)
         combat_model.set_random_seed(args.seed)
     trace_stream = None
     def trace(event):

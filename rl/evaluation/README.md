@@ -47,6 +47,8 @@ python -m rl.evaluation.eval CHECKPOINT --task wholerun --upper-strategy rules \
 
 一次评估复用常驻模型，指定独立 combat checkpoint 时加载上下层各一份；多环境的直接策略和 native 叶子批量前推。num_envs 表示常驻环境数；改变 batch size 可能改变浮点舍入，随机策略的 RNG 消费顺序也可能变化。参数预设在 configs/eval，结果在 runs/local。生成器调用方提前停止消费时应显式 close，以释放环境。
 
+评测加载使用共享 `load_checkpoint(..., inference_only=True)`，将 SB3 为推理重建的未使用训练 buffer 限为2步×1环境，避免按 checkpoint 的大规模训练几何分配内存。权重、双Adam和搜索/上层配置仍从原ZIP加载；真实评测环境数由 `--num-envs` 控制。此加载选项不用于训练resume，普通共享加载默认保持保存的训练几何。
+
 Native whole-run 评估可显式加 `--leaf-inference cuda-graph`，复用已有
 `CombatLeafGraphs`；默认 `eager` 保持原路径。图后端只支持 CUDA、eval 模式、FP32
 的 compact combat 模型，其他组合明确报错。缓存归各个搜索策略独立所有；同一模型上的
