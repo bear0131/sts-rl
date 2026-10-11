@@ -338,6 +338,7 @@ class RealCombatSearch:
         self.env._nosl_cpp_pending = None
         self.env._invalidate_backend_cache()
         self.identity = identity
+        self.sim_to_real_targets = {}
         self.sim_to_real_targets = self._target_mapping(real)
         self.run_encounters += 1
         LOG.info("attached native battle seed=%s floor=%s encounter=%s monsters=%s",
@@ -345,10 +346,23 @@ class RealCombatSearch:
 
     def _target_mapping(self, real: dict[str, Any]) -> dict[int, int]:
         sim = normalize_sim(self.env.thick.bc.to_dict())
-        unused = set(range(len(real["monsters"])))
+        unused = {
+            index for index, monster in enumerate(real["monsters"])
+            if not monster["gone"] and monster["id"] != "PAD"
+        }
         mapping: dict[int, int] = {}
+        for sim_index, real_index in sorted(self.sim_to_real_targets.items()):
+            if sim_index >= len(sim["monsters"]) or real_index not in unused:
+                continue
+            sim_monster = sim["monsters"][sim_index]
+            real_monster = real["monsters"][real_index]
+            if (not sim_monster["gone"] and sim_monster["id"] != "PAD"
+                    and sim_monster["id"] == real_monster["id"]):
+                mapping[sim_index] = real_index
+                unused.remove(real_index)
         for sim_index, monster in enumerate(sim["monsters"]):
-            if monster["gone"] or monster["id"] == "PAD":
+            if (sim_index in mapping or monster["gone"]
+                    or monster["id"] == "PAD"):
                 continue
             matches = [i for i in sorted(unused)
                        if not real["monsters"][i]["gone"]
@@ -357,9 +371,30 @@ class RealCombatSearch:
                 raise RuntimeError(
                     f"cannot map native monster slot {sim_index} {monster['id']} to real slots"
                 )
-            mapping[sim_index] = matches[0]
-            unused.remove(matches[0])
+            real_index = min(
+                matches,
+                key=lambda i: (
+                    real["monsters"][i]["max_hp"] != monster["max_hp"],
+                    real["monsters"][i]["hp"] != monster["hp"],
+                    i,
+                ),
+            )
+            mapping[sim_index] = real_index
+            unused.remove(real_index)
+        if unused:
+            raise RuntimeError(
+                f"cannot map real monster slots {sorted(unused)!r} to native slots")
         return mapping
+
+    def _sim_state_in_real_target_order(self) -> dict[str, Any]:
+        sim = normalize_sim(self.env.thick.bc.to_dict())
+        sim["monsters"] = [
+            sim["monsters"][sim_index]
+            for sim_index, _real_index in sorted(
+                self.sim_to_real_targets.items(), key=lambda item: item[1]
+            )
+        ]
+        return sim
 
     def _state_spec(self, real: dict[str, Any]) -> dict[str, Any]:
         self.sim_to_real_targets = self._target_mapping(real)
@@ -403,7 +438,8 @@ class RealCombatSearch:
         if selection is not None:
             self._reconcile_selection(selection)
             return
-        predicted = normalize_sim(self.env.thick.bc.to_dict())
+        self.sim_to_real_targets = self._target_mapping(real)
+        predicted = self._sim_state_in_real_target_order()
         before = diff(real, predicted)
         if before:
             LOG.warning("native shadow pre-sync differs count=%s sample=%s", len(before), before[:8])
@@ -417,7 +453,7 @@ class RealCombatSearch:
         self.env._multi = None
         self.env._nosl_cpp_pending = None
         self.env._invalidate_backend_cache()
-        after = diff(real, normalize_sim(self.env.thick.bc.to_dict()))
+        after = diff(real, self._sim_state_in_real_target_order())
         if after:
             raise RuntimeError(f"native real-game state alignment failed: {after[:12]!r}")
         self.run_alignment_checks += 1

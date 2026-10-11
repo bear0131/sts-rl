@@ -1,10 +1,12 @@
 """Regression coverage for real-game combat root state injection."""
 
+from copy import deepcopy
+
 import pytest
 
 from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch
-from bridge.schemas.combat_state import _REAL_MONSTER_MOVES
+from bridge.schemas.combat_state import _REAL_MONSTER_MOVES, diff, normalize_sim
 import slaythespire as sts
 
 
@@ -98,6 +100,30 @@ def test_custom_state_syncs_runtime_cost_counters_and_hp_order(combat_factory):
     legal = {action_id for action_id, _bits in battle.autoregressive_policy_actions()}
     assert C.AUTOREGRESSIVE_PLAY in legal
     assert C.AUTOREGRESSIVE_PLAY + 1 not in legal
+
+
+def test_real_search_aligns_state_diff_to_real_monster_slot_order(combat_factory):
+    env = combat_factory(
+        ["STRIKE_RED"] * 5,
+        encounter="Two Louse",
+        seed=1,
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    sim = normalize_sim(env.thick.bc.to_dict())
+    assert [m["id"] for m in sim["monsters"]] == [
+        "FuzzyLouseNormal",
+        "FuzzyLouseDefensive",
+    ]
+    real = deepcopy(sim)
+    real["monsters"].reverse()
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.sim_to_real_targets = {}
+    search.sim_to_real_targets = search._target_mapping(real)
+
+    assert search.sim_to_real_targets == {0: 1, 1: 0}
+    assert diff(real, search._sim_state_in_real_target_order()) == []
 
 
 def test_game_context_potion_state_can_match_real_slots(combat_factory):
