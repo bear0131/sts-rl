@@ -355,6 +355,35 @@ def test_java_generic_strength_up_power_maps_to_native_name(combat_factory):
     assert powers["Generic Strength Up"] == 3
 
 
+def test_time_warp_zero_remains_an_active_native_counter(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Time Warp", "amount": 0},
+    ]) == {"Time Warp": 0}
+
+    env = combat_factory(
+        ["STRIKE_RED", "DEFEND_RED"],
+        encounter="Time Eater",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        "player": {"energy": 3},
+        "hand": ["STRIKE_RED", "DEFEND_RED"],
+        "draw": [],
+        "discard": [],
+        "exhaust": [],
+        "monsters": [{"powers": [("TIME_WARP", 0)]}],
+    })
+
+    before = normalize_sim(battle.to_dict())["monsters"][0]["powers"]
+    assert "Time Warp" in before
+    assert before["Time Warp"] == 0
+
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    after = normalize_sim(battle.to_dict())["monsters"][0]["powers"]
+    assert after["Time Warp"] == 1
+
+
 def test_java_explosive_display_counter_uses_native_move_history(combat_factory):
     assert _monster_powers_real([
         {"id": "Explosive", "amount": 3},
