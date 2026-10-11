@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from bridge.campaign import SeedCampaign
+from bridge.campaign import SeedCampaign, seed_string_to_long
 
 
 def frame(*, in_game, seed=None, game_over=False, victory=False):
@@ -24,14 +24,17 @@ def test_seed_campaign_reuses_pending_seed_then_advances_after_game_exit(tmp_pat
     campaign = SeedCampaign(["310001", "310002"], path)
     assert campaign.start_command("IRONCLAD", 0).endswith(" 310001")
     assert campaign.start_command("IRONCLAD", 0) is None
-    assert campaign.observe(frame(in_game=True, seed=310001)) is None
-    row = campaign.observe(frame(in_game=True, seed=310001, game_over=True))
+    seed_long = seed_string_to_long("310001")
+    assert seed_long == 159066251
+    assert campaign.observe(frame(in_game=True, seed=seed_long)) is None
+    row = campaign.observe(frame(in_game=True, seed=seed_long, game_over=True))
     assert row["requested_seed"] == "310001" and not row["victory"]
-    assert campaign.observe(frame(in_game=True, seed=310001, game_over=True)) is None
+    assert row["requested_seed_long"] == seed_long
+    assert campaign.observe(frame(in_game=True, seed=seed_long, game_over=True)) is None
     campaign.observe(frame(in_game=False))
     assert campaign.start_command("IRONCLAD", 0).endswith(" 310002")
     saved = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert len(saved) == 1 and saved[0]["actual_seed"] == "310001"
+    assert len(saved) == 1 and saved[0]["actual_seed"] == str(seed_long)
 
 
 def test_seed_campaign_persists_search_evidence(tmp_path):
@@ -39,7 +42,7 @@ def test_seed_campaign_persists_search_evidence(tmp_path):
     campaign = SeedCampaign(["7"], path)
     campaign.start_command("IRONCLAD", 0)
     row = campaign.observe(
-        frame(in_game=True, seed=7, game_over=True),
+        frame(in_game=True, seed=seed_string_to_long("7"), game_over=True),
         metadata={"search_decisions": 91, "search_errors": 0},
     )
     assert row["search_decisions"] == 91
@@ -47,6 +50,8 @@ def test_seed_campaign_persists_search_evidence(tmp_path):
 
 
 def test_seed_campaign_rejects_duplicate_or_wrong_actual_seed(tmp_path):
+    with pytest.raises(ValueError, match="must not be empty"):
+        seed_string_to_long("")
     with pytest.raises(ValueError, match="distinct"):
         SeedCampaign(["7", "7"])
     campaign = SeedCampaign(["7"], tmp_path / "campaign.jsonl")

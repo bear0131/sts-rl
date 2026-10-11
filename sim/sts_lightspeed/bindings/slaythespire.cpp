@@ -167,8 +167,11 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         // shifts the previous move to moveHistory[1] and stores the new one in
         // moveHistory[0], so [0] is the *current* intent (the obs MOVE_VOCAB id).
         const auto curMove = m.moveHistory[0];
+        const auto previousMove = m.moveHistory[1];
         md["move_id"] = static_cast<int>(curMove);
         md["move"] = sts::monsterMoveStrings[static_cast<int>(curMove)];
+        md["last_move_id"] = static_cast<int>(previousMove);
+        md["last_move"] = sts::monsterMoveStrings[static_cast<int>(previousMove)];
         const auto dmg = m.getMoveBaseDamage(bc);
         md["base_damage"] = dmg.damage;
         // Use the simulator's actual damage pipeline for the displayed intent.
@@ -609,15 +612,33 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             monster.curHp = std::clamp(
                 getInt(m, "hp", monster.curHp), 0, monster.maxHp);
             monster.block = std::max(0, getInt(m, "block", monster.block));
-            if (m.contains("move")) {
+            if (m.contains("move_history")) {
+                const auto moves = m["move_history"].cast<std::vector<std::string>>();
+                if (moves.size() > 2) {
+                    throw std::invalid_argument("custom monster move history exceeds capacity");
+                }
+                for (std::size_t history = 0; history < moves.size(); ++history) {
+                    monster.moveHistory[history] = sts::SimHelpers::getMonsterMoveForString(
+                        moves[history]);
+                }
+            } else if (m.contains("move")) {
                 const auto move = sts::SimHelpers::getMonsterMoveForString(
                     m["move"].cast<std::string>());
                 if (move != sts::MonsterMoveId::INVALID) monster.moveHistory[0] = move;
             }
             if (m.contains("powers")) {
                 static constexpr const char *kStatuses[] = {
-                    "STRENGTH", "VULNERABLE", "WEAK", "ARTIFACT",
-                    "METALLICIZE", "PLATED_ARMOR", "POISON",
+                    "ARTIFACT", "BLOCK_RETURN", "CHOKED", "CORPSE_EXPLOSION",
+                    "LOCK_ON", "MARK", "METALLICIZE", "PLATED_ARMOR",
+                    "POISON", "REGEN", "SHACKLED", "STRENGTH",
+                    "VULNERABLE", "WEAK", "ANGRY", "BEAT_OF_DEATH",
+                    "CURIOSITY", "CURL_UP", "ENRAGE", "FADING", "FLIGHT",
+                    "GENERIC_STRENGTH_UP", "INTANGIBLE", "MALLEABLE",
+                    "MODE_SHIFT", "RITUAL", "SLOW", "SPORE_CLOUD",
+                    "THIEVERY", "THORNS", "TIME_WARP", "INVINCIBLE",
+                    "REACTIVE", "SHARP_HIDE", "ASLEEP", "BARRICADE",
+                    "MINION", "MINION_LEADER", "PAINFUL_STABS", "REGROW",
+                    "SHIFTING", "STASIS",
                 };
                 for (const auto *name : kStatuses) {
                     setRuleMonsterStatusByName(bc, i, name, 0);
@@ -1041,6 +1062,7 @@ void setRuleMonsterStatus(Monster &monster, int amount) {
     if constexpr (
         status == MonsterStatus::VULNERABLE
         || status == MonsterStatus::WEAK
+        || status == MonsterStatus::RITUAL
     ) {
         monster.setJustApplied<status>(false);
     }
@@ -1068,6 +1090,41 @@ void setRuleMonsterStatusByName(
     SET_MONSTER_STATUS(METALLICIZE)
     SET_MONSTER_STATUS(PLATED_ARMOR)
     SET_MONSTER_STATUS(POISON)
+    SET_MONSTER_STATUS(BLOCK_RETURN)
+    SET_MONSTER_STATUS(CHOKED)
+    SET_MONSTER_STATUS(CORPSE_EXPLOSION)
+    SET_MONSTER_STATUS(LOCK_ON)
+    SET_MONSTER_STATUS(MARK)
+    SET_MONSTER_STATUS(REGEN)
+    SET_MONSTER_STATUS(SHACKLED)
+    SET_MONSTER_STATUS(ANGRY)
+    SET_MONSTER_STATUS(BEAT_OF_DEATH)
+    SET_MONSTER_STATUS(CURIOSITY)
+    SET_MONSTER_STATUS(CURL_UP)
+    SET_MONSTER_STATUS(ENRAGE)
+    SET_MONSTER_STATUS(FADING)
+    SET_MONSTER_STATUS(FLIGHT)
+    SET_MONSTER_STATUS(GENERIC_STRENGTH_UP)
+    SET_MONSTER_STATUS(INTANGIBLE)
+    SET_MONSTER_STATUS(MALLEABLE)
+    SET_MONSTER_STATUS(MODE_SHIFT)
+    SET_MONSTER_STATUS(RITUAL)
+    SET_MONSTER_STATUS(SLOW)
+    SET_MONSTER_STATUS(SPORE_CLOUD)
+    SET_MONSTER_STATUS(THIEVERY)
+    SET_MONSTER_STATUS(THORNS)
+    SET_MONSTER_STATUS(TIME_WARP)
+    SET_MONSTER_STATUS(INVINCIBLE)
+    SET_MONSTER_STATUS(REACTIVE)
+    SET_MONSTER_STATUS(SHARP_HIDE)
+    SET_MONSTER_STATUS(ASLEEP)
+    SET_MONSTER_STATUS(BARRICADE)
+    SET_MONSTER_STATUS(MINION)
+    SET_MONSTER_STATUS(MINION_LEADER)
+    SET_MONSTER_STATUS(PAINFUL_STABS)
+    SET_MONSTER_STATUS(REGROW)
+    SET_MONSTER_STATUS(SHIFTING)
+    SET_MONSTER_STATUS(STASIS)
 #undef SET_MONSTER_STATUS
     throw std::invalid_argument("unsupported monster status for rule data: " + name);
 }

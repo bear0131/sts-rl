@@ -35,6 +35,10 @@ BOOLEAN_PLAYER_POWERS = frozenset({
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
     "Wrath Next Turn",
 })
+BOOLEAN_MONSTER_POWERS = frozenset({
+    "Barricade", "Minion", "Minion Leader", "Painful Stabs", "Regrow",
+    "Shifting", "Stasis",
+})
 
 
 def _powers_real(power_list):
@@ -45,6 +49,11 @@ def _powers_real(power_list):
 def _player_powers_real(power_list):
     # Presence powers commonly use amount=-1 in CommunicationMod.
     return {name: 1 if name in BOOLEAN_PLAYER_POWERS else amount
+            for name, amount in _powers_real(power_list).items()}
+
+
+def _monster_powers_real(power_list):
+    return {name: 1 if name in BOOLEAN_MONSTER_POWERS else amount
             for name, amount in _powers_real(power_list).items()}
 
 
@@ -95,7 +104,7 @@ def _monster_real(m):
         "hits": hits,
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
-        "powers": _powers_real(m["powers"]) if hp > 0 else {},
+        "powers": _monster_powers_real(m["powers"]) if hp > 0 else {},
         # OBS move fields. NOTE: the obs MOVE_VOCAB is keyed on the sim's
         # MonsterMoveId enum; CommunicationMod's move_id is a DIFFERENT id space,
         # so we do NOT pass it as the obs `move_id` (that would index the wrong
@@ -107,6 +116,8 @@ def _monster_real(m):
         "move_id": 0,
         "intent": m.get("intent"),
         "real_move_id": m.get("move_id", -1),
+        "real_last_move_id": m.get("last_move_id", -1),
+        "real_second_last_move_id": m.get("second_last_move_id", -1),
     }
 
 
@@ -186,7 +197,9 @@ _MONSTER_SIM2REAL = {
     "ACID_SLIME_S": "AcidSlime_S", "ACID_SLIME_M": "AcidSlime_M", "ACID_SLIME_L": "AcidSlime_L",
     "SPIKE_SLIME_S": "SpikeSlime_S", "SPIKE_SLIME_M": "SpikeSlime_M", "SPIKE_SLIME_L": "SpikeSlime_L",
     "CULTIST": "Cultist", "JAW_WORM": "JawWorm",
-    "GREEN_LOUSE": "FuzzyLouseNormal", "RED_LOUSE": "FuzzyLouseDefensive",
+    # The Java class names are counter-intuitive: Defensive is the green
+    # weak-applying louse, while Normal is the red strength-gaining louse.
+    "GREEN_LOUSE": "FuzzyLouseDefensive", "RED_LOUSE": "FuzzyLouseNormal",
     "GREMLIN_NOB": "GremlinNob", "HEXAGHOST": "Hexaghost",
     "LOOTER": "Looter", "SENTRY": "Sentry", "LAGAVULIN": "Lagavulin",
     "THE_GUARDIAN": "TheGuardian", "SLIME_BOSS": "SlimeBoss",
@@ -207,7 +220,7 @@ _MONSTER_SIM2REAL = {
     # masked-bandits event (sim names POINTY/ROMEO/BEAR -> real Bandit* ids)
     "POINTY": "BanditChild", "ROMEO": "BanditLeader", "BEAR": "BanditBear",
     # act 3
-    "DARKLING": "Darkling", "ORB_WALKER": "Orb Walker", "SPIRE_GROWTH": "SpireGrowth",
+    "DARKLING": "Darkling", "ORB_WALKER": "Orb Walker", "SPIRE_GROWTH": "Serpent",
     "TRANSIENT": "Transient", "WRITHING_MASS": "WrithingMass", "THE_MAW": "Maw",
     "REPTOMANCER": "Reptomancer", "DAGGER": "Dagger",
     "GIANT_HEAD": "GiantHead", "NEMESIS": "Nemesis",
@@ -217,6 +230,93 @@ _MONSTER_SIM2REAL = {
     "SPIRE_SHIELD": "SpireShield", "SPIRE_SPEAR": "SpireSpear",
     "CORRUPT_HEART": "CorruptHeart",
 }
+
+
+# CommunicationMod exposes the Java monsters' private byte move ids.  They are
+# local to each monster and are unrelated to the global C++ MonsterMoveId enum.
+# This explicit codec was checked against the shipped game class constants; it
+# is data only and lets the real-game bridge synchronize current and historical
+# moves without guessing from damage (several moves share the same damage).
+_REAL_MONSTER_MOVES = {
+    "AcidSlime_L": {1: "ACID_SLIME_L_CORROSIVE_SPIT", 2: "ACID_SLIME_L_TACKLE", 3: "ACID_SLIME_L_SPLIT", 4: "ACID_SLIME_L_LICK"},
+    "AcidSlime_M": {1: "ACID_SLIME_M_CORROSIVE_SPIT", 2: "ACID_SLIME_M_TACKLE", 4: "ACID_SLIME_M_LICK"},
+    "AcidSlime_S": {1: "ACID_SLIME_S_TACKLE", 2: "ACID_SLIME_S_LICK"},
+    "AwakenedOne": {1: "AWAKENED_ONE_SLASH", 2: "AWAKENED_ONE_SOUL_STRIKE", 3: "AWAKENED_ONE_REBIRTH", 5: "AWAKENED_ONE_DARK_ECHO", 6: "AWAKENED_ONE_SLUDGE", 8: "AWAKENED_ONE_TACKLE"},
+    "BanditBear": {1: "BEAR_MAUL", 2: "BEAR_BEAR_HUG", 3: "BEAR_LUNGE"},
+    "BanditChild": {1: "POINTY_ATTACK"},
+    "BanditLeader": {1: "ROMEO_CROSS_SLASH", 2: "ROMEO_MOCK", 3: "ROMEO_AGONIZING_SLASH"},
+    "BookOfStabbing": {1: "BOOK_OF_STABBING_MULTI_STAB", 2: "BOOK_OF_STABBING_SINGLE_STAB"},
+    "BronzeAutomaton": {1: "BRONZE_AUTOMATON_FLAIL", 2: "BRONZE_AUTOMATON_HYPER_BEAM", 3: "BRONZE_AUTOMATON_STUNNED", 4: "BRONZE_AUTOMATON_SPAWN_ORBS", 5: "BRONZE_AUTOMATON_BOOST"},
+    "BronzeOrb": {1: "BRONZE_ORB_BEAM", 2: "BRONZE_ORB_SUPPORT_BEAM", 3: "BRONZE_ORB_STASIS"},
+    "Byrd": {1: "BYRD_PECK", 2: "BYRD_FLY", 3: "BYRD_SWOOP", 4: "BYRD_STUNNED", 5: "BYRD_HEADBUTT", 6: "BYRD_CAW"},
+    "Centurion": {1: "CENTURION_SLASH", 2: "CENTURION_DEFEND", 3: "CENTURION_FURY"},
+    "Champ": {1: "THE_CHAMP_HEAVY_SLASH", 2: "THE_CHAMP_DEFENSIVE_STANCE", 3: "THE_CHAMP_EXECUTE", 4: "THE_CHAMP_FACE_SLAP", 5: "THE_CHAMP_GLOAT", 6: "THE_CHAMP_TAUNT", 7: "THE_CHAMP_ANGER"},
+    "Chosen": {1: "CHOSEN_ZAP", 2: "CHOSEN_DRAIN", 3: "CHOSEN_DEBILITATE", 4: "CHOSEN_HEX", 5: "CHOSEN_POKE"},
+    "CorruptHeart": {1: "CORRUPT_HEART_BLOOD_SHOTS", 2: "CORRUPT_HEART_ECHO", 3: "CORRUPT_HEART_DEBILITATE", 4: "CORRUPT_HEART_BUFF"},
+    "Cultist": {1: "CULTIST_DARK_STRIKE", 3: "CULTIST_INCANTATION"},
+    "Dagger": {1: "DAGGER_STAB", 2: "DAGGER_EXPLODE"},
+    "Darkling": {1: "DARKLING_CHOMP", 2: "DARKLING_HARDEN", 3: "DARKLING_NIP", 4: "DARKLING_REGROW", 5: "DARKLING_REINCARNATE"},
+    "Deca": {0: "DECA_BEAM", 2: "DECA_SQUARE_OF_PROTECTION"},
+    "Donu": {0: "DONU_BEAM", 2: "DONU_CIRCLE_OF_POWER"},
+    "Exploder": {1: "EXPLODER_SLAM", 2: "EXPLODER_EXPLODE"},
+    "FungiBeast": {1: "FUNGI_BEAST_BITE", 2: "FUNGI_BEAST_GROW"},
+    "FuzzyLouseDefensive": {3: "GREEN_LOUSE_BITE", 4: "GREEN_LOUSE_SPIT_WEB"},
+    "FuzzyLouseNormal": {3: "RED_LOUSE_BITE", 4: "RED_LOUSE_GROW"},
+    "GiantHead": {1: "GIANT_HEAD_GLARE", 2: "GIANT_HEAD_IT_IS_TIME", 3: "GIANT_HEAD_COUNT"},
+    "GremlinFat": {2: "FAT_GREMLIN_SMASH"},
+    "GremlinLeader": {2: "GREMLIN_LEADER_RALLY", 3: "GREMLIN_LEADER_ENCOURAGE", 4: "GREMLIN_LEADER_STAB"},
+    "GremlinNob": {1: "GREMLIN_NOB_RUSH", 2: "GREMLIN_NOB_SKULL_BASH", 3: "GREMLIN_NOB_BELLOW"},
+    "GremlinThief": {1: "SNEAKY_GREMLIN_PUNCTURE"},
+    "GremlinTsundere": {1: "SHIELD_GREMLIN_PROTECT", 2: "SHIELD_GREMLIN_SHIELD_BASH"},
+    "GremlinWarrior": {1: "MAD_GREMLIN_SCRATCH"},
+    "GremlinWizard": {1: "GREMLIN_WIZARD_ULTIMATE_BLAST", 2: "GREMLIN_WIZARD_CHARGING"},
+    "Healer": {1: "MYSTIC_ATTACK_DEBUFF", 2: "MYSTIC_HEAL", 3: "MYSTIC_BUFF"},
+    "Hexaghost": {1: "HEXAGHOST_DIVIDER", 2: "HEXAGHOST_TACKLE", 3: "HEXAGHOST_INFLAME", 4: "HEXAGHOST_SEAR", 5: "HEXAGHOST_ACTIVATE", 6: "HEXAGHOST_INFERNO"},
+    "JawWorm": {1: "JAW_WORM_CHOMP", 2: "JAW_WORM_BELLOW", 3: "JAW_WORM_THRASH"},
+    "Lagavulin": {1: "LAGAVULIN_SIPHON_SOUL", 3: "LAGAVULIN_ATTACK", 4: "LAGAVULIN_SLEEP", 5: "LAGAVULIN_SLEEP", 6: "LAGAVULIN_SLEEP"},
+    "Looter": {1: "LOOTER_MUG", 2: "LOOTER_SMOKE_BOMB", 3: "LOOTER_ESCAPE", 4: "LOOTER_LUNGE"},
+    "Maw": {2: "THE_MAW_ROAR", 3: "THE_MAW_SLAM", 4: "THE_MAW_DROOL", 5: "THE_MAW_NOM"},
+    "Mugger": {1: "MUGGER_MUG", 2: "MUGGER_SMOKE_BOMB", 3: "MUGGER_ESCAPE", 4: "MUGGER_LUNGE"},
+    "Nemesis": {2: "NEMESIS_ATTACK", 3: "NEMESIS_SCYTHE", 4: "NEMESIS_DEBUFF"},
+    "Orb Walker": {1: "ORB_WALKER_LASER", 2: "ORB_WALKER_CLAW"},
+    "Reptomancer": {1: "REPTOMANCER_SNAKE_STRIKE", 2: "REPTOMANCER_SUMMON", 3: "REPTOMANCER_BIG_BITE"},
+    "Repulsor": {1: "REPULSOR_REPULSE", 2: "REPULSOR_BASH"},
+    "Sentry": {3: "SENTRY_BOLT", 4: "SENTRY_BEAM"},
+    "Serpent": {1: "SPIRE_GROWTH_QUICK_TACKLE", 2: "SPIRE_GROWTH_CONSTRICT", 3: "SPIRE_GROWTH_SMASH"},
+    "Shelled Parasite": {1: "SHELLED_PARASITE_FELL", 2: "SHELLED_PARASITE_DOUBLE_STRIKE", 3: "SHELLED_PARASITE_SUCK", 4: "SHELLED_PARASITE_STUNNED"},
+    "SlaverBlue": {1: "BLUE_SLAVER_STAB", 4: "BLUE_SLAVER_RAKE"},
+    "SlaverBoss": {2: "TASKMASTER_SCOURING_WHIP"},
+    "SlaverRed": {1: "RED_SLAVER_STAB", 2: "RED_SLAVER_ENTANGLE", 3: "RED_SLAVER_SCRAPE"},
+    "SlimeBoss": {1: "SLIME_BOSS_SLAM", 2: "SLIME_BOSS_PREPARING", 3: "SLIME_BOSS_SPLIT", 4: "SLIME_BOSS_GOOP_SPRAY"},
+    "SnakePlant": {1: "SNAKE_PLANT_CHOMP", 2: "SNAKE_PLANT_ENFEEBLING_SPORES"},
+    "Snecko": {1: "SNECKO_PERPLEXING_GLARE", 2: "SNECKO_BITE", 3: "SNECKO_TAIL_WHIP"},
+    "SphericGuardian": {1: "SPHERIC_GUARDIAN_SLAM", 2: "SPHERIC_GUARDIAN_ACTIVATE", 3: "SPHERIC_GUARDIAN_HARDEN", 4: "SPHERIC_GUARDIAN_ATTACK_DEBUFF"},
+    "SpikeSlime_L": {1: "SPIKE_SLIME_L_FLAME_TACKLE", 3: "SPIKE_SLIME_L_SPLIT", 4: "SPIKE_SLIME_L_LICK"},
+    "SpikeSlime_M": {1: "SPIKE_SLIME_M_FLAME_TACKLE", 4: "SPIKE_SLIME_M_LICK"},
+    "SpikeSlime_S": {1: "SPIKE_SLIME_S_TACKLE"},
+    "Spiker": {1: "SPIKER_CUT", 2: "SPIKER_SPIKE"},
+    "SpireShield": {1: "SPIRE_SHIELD_BASH", 2: "SPIRE_SHIELD_FORTIFY", 3: "SPIRE_SHIELD_SMASH"},
+    "SpireSpear": {1: "SPIRE_SPEAR_BURN_STRIKE", 2: "SPIRE_SPEAR_PIERCER", 3: "SPIRE_SPEAR_SKEWER"},
+    "TheCollector": {1: "THE_COLLECTOR_SPAWN", 2: "THE_COLLECTOR_FIREBALL", 3: "THE_COLLECTOR_BUFF", 4: "THE_COLLECTOR_MEGA_DEBUFF", 5: "THE_COLLECTOR_SPAWN"},
+    "TheGuardian": {1: "THE_GUARDIAN_DEFENSIVE_MODE", 2: "THE_GUARDIAN_FIERCE_BASH", 3: "THE_GUARDIAN_ROLL_ATTACK", 4: "THE_GUARDIAN_TWIN_SLAM", 5: "THE_GUARDIAN_WHIRLWIND", 6: "THE_GUARDIAN_CHARGING_UP", 7: "THE_GUARDIAN_VENT_STEAM"},
+    "TimeEater": {2: "TIME_EATER_REVERBERATE", 3: "TIME_EATER_RIPPLE", 4: "TIME_EATER_HEAD_SLAM", 5: "TIME_EATER_HASTE"},
+    "TorchHead": {1: "TORCH_HEAD_TACKLE"},
+    "Transient": {1: "TRANSIENT_ATTACK"},
+    "WrithingMass": {0: "WRITHING_MASS_STRONG_STRIKE", 1: "WRITHING_MASS_MULTI_STRIKE", 2: "WRITHING_MASS_FLAIL", 3: "WRITHING_MASS_WITHER", 4: "WRITHING_MASS_IMPLANT"},
+}
+
+
+def real_to_sim_monster_move(real_monster_id, real_move_id):
+    """Translate a CommunicationMod per-monster byte into MonsterMoveId name."""
+    move_id = int(real_move_id)
+    if move_id < 0:
+        return "INVALID"
+    try:
+        return _REAL_MONSTER_MOVES[real_monster_id][move_id]
+    except KeyError as exc:
+        raise KeyError(
+            f"unmapped real monster move {real_monster_id!r} id={move_id}"
+        ) from exc
 
 
 def _sim_monster_id(name):

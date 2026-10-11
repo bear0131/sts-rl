@@ -2,6 +2,7 @@
 
 from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch
+from bridge.schemas.combat_state import _REAL_MONSTER_MOVES
 import slaythespire as sts
 
 
@@ -32,6 +33,43 @@ def test_custom_state_replaces_public_powers_and_preserves_signed_stats(combat_f
     assert "Vulnerable" not in player
     assert monster["Strength"] == -4
     assert "Weak" not in monster
+
+
+def test_custom_state_syncs_real_monster_move_history_and_intrinsic_power(combat_factory):
+    env = combat_factory(
+        ["BASH", "STRIKE_RED"],
+        encounter="Cultist",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        "monsters": [{
+            "hp": 5,
+            "max_hp": 49,
+            "move_history": ["CULTIST_DARK_STRIKE", "CULTIST_INCANTATION"],
+            "powers": [("RITUAL", 3), ("STRENGTH", 3)],
+        }],
+    })
+
+    monster = battle.to_dict()["monsters"][0]
+    assert monster["move"] == "CULTIST_DARK_STRIKE"
+    assert monster["last_move"] == "CULTIST_INCANTATION"
+    assert (monster["base_damage"], monster["hits"]) == (6, 1)
+    assert _powers(monster["powers"]) == {"Ritual": 3, "Strength": 3}
+
+
+def test_real_monster_move_codec_uses_only_native_move_names(combat_factory):
+    env = combat_factory(["STRIKE_RED"])
+    battle = env.thick.bc
+    for move in sorted({
+        move
+        for per_monster in _REAL_MONSTER_MOVES.values()
+        for move in per_monster.values()
+    }):
+        battle.apply_custom_state({
+            "monsters": [{"move_history": [move, "INVALID"]}],
+        })
+        assert battle.to_dict()["monsters"][0]["move"] == move
 
 
 def test_custom_state_syncs_runtime_cost_counters_and_hp_order(combat_factory):

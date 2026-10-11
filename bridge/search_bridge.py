@@ -30,6 +30,7 @@ from schemas.combat_state import (
     normalize_real,
     normalize_sim,
     real_to_sim_card_enum,
+    real_to_sim_monster_move,
 )
 
 import slaythespire as sts
@@ -49,11 +50,19 @@ _SUPPORTED_PLAYER_POWERS = frozenset({
     "RAGE", "RUPTURE", "THORNS", "VIGOR",
 })
 _SUPPORTED_MONSTER_POWERS = frozenset({
-    "STRENGTH", "VULNERABLE", "WEAK", "ARTIFACT", "METALLICIZE",
-    "PLATED_ARMOR", "POISON",
+    "ARTIFACT", "BLOCK_RETURN", "CHOKED", "CORPSE_EXPLOSION",
+    "LOCK_ON", "MARK", "METALLICIZE", "PLATED_ARMOR", "POISON",
+    "REGEN", "SHACKLED", "STRENGTH", "VULNERABLE", "WEAK",
+    "ANGRY", "BEAT_OF_DEATH", "CURIOSITY", "CURL_UP", "ENRAGE",
+    "FADING", "FLIGHT", "GENERIC_STRENGTH_UP", "INTANGIBLE",
+    "MALLEABLE", "MODE_SHIFT", "RITUAL", "SLOW", "SPORE_CLOUD",
+    "THIEVERY", "THORNS", "TIME_WARP", "INVINCIBLE", "REACTIVE",
+    "SHARP_HIDE", "ASLEEP", "BARRICADE", "MINION", "MINION_LEADER",
+    "PAINFUL_STABS", "REGROW", "SHIFTING", "STASIS",
 })
 _POWER_ALIASES = {
     "WEAKENED": "WEAK",
+    "ANGER": "ENRAGE",
     "DOUBLE_DAMAGE": "DOUBLE_DAMAGE",
     "DRAW_REDUCTION": "DRAW_REDUCTION",
     "MASTER_REALITY": "MASTER_REALITY",
@@ -138,6 +147,7 @@ class RealCombatSearch:
         )
         self.env.reset(seed=0)
         self.strategy.bind_environments([self.env])
+        self._combat_branch_bound = False
         self.identity: tuple[int, int] | None = None
         self.decision_index = 0
         self.sim_to_real_targets: dict[int, int] = {}
@@ -316,6 +326,13 @@ class RealCombatSearch:
         self.env.thick.gc = gc
         self.env.thick.bc = battle
         self.env.thick._rebuild_map()
+        if not self._combat_branch_bound:
+            # A real-game shadow must stop at combat terminal states.  The
+            # whole-run backend would call BattleContext.exit_battle() and try
+            # to open simulator rewards through a callback that does not exist
+            # for this manually attached battle.
+            self.env.thick = self.env.thick.fork_combat()
+            self._combat_branch_bound = True
         self.env._pending = None
         self.env._multi = None
         self.env._nosl_cpp_pending = None
@@ -350,10 +367,15 @@ class RealCombatSearch:
         monsters: list[dict[str, Any]] = [{} for _ in range(native_count)]
         for sim_index, real_index in self.sim_to_real_targets.items():
             monster = real["monsters"][real_index]
+            move = real_to_sim_monster_move(monster["id"], monster["real_move_id"])
+            last_move = real_to_sim_monster_move(
+                monster["id"], monster["real_last_move_id"]
+            )
             monsters[sim_index] = {
                 "hp": int(monster["hp"]),
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
+                "move_history": [move, last_move],
                 "powers": _power_rows(monster["powers"], _SUPPORTED_MONSTER_POWERS),
             }
         player = real["player"]

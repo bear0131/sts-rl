@@ -8,6 +8,24 @@ from pathlib import Path
 from typing import Any
 
 
+_SEED_ALPHABET = "0123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
+
+
+def seed_string_to_long(seed: str) -> int:
+    """Return the game's integral representation of a displayed seed string."""
+    text = str(seed).strip().upper()
+    if not text:
+        raise ValueError("Slay the Spire seed must not be empty")
+    value = 0
+    for char in text:
+        try:
+            digit = _SEED_ALPHABET.index(char)
+        except ValueError as exc:
+            raise ValueError(f"invalid Slay the Spire seed character {char!r}") from exc
+        value = value * len(_SEED_ALPHABET) + digit
+    return value
+
+
 class SeedCampaign:
     def __init__(self, seeds: list[str], results_path: str | Path | None = None) -> None:
         if not seeds or len(set(seeds)) != len(seeds):
@@ -44,8 +62,12 @@ class SeedCampaign:
             self.active = True
         if in_game and str(gs.get("screen_type") or "") == "GAME_OVER" and not self.recorded:
             ss = gs.get("screen_state") or {}
+            requested_seed = self.current_seed
+            if requested_seed is None:
+                raise RuntimeError("game ended after the configured seed campaign completed")
             row = {
-                "requested_seed": self.current_seed,
+                "requested_seed": requested_seed,
+                "requested_seed_long": seed_string_to_long(requested_seed),
                 "actual_seed": str(gs.get("seed")),
                 "victory": bool(ss.get("victory")),
                 "score": int(ss.get("score", 0) or 0),
@@ -54,11 +76,12 @@ class SeedCampaign:
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             }
             row.update(metadata or {})
-            if row["requested_seed"] is None:
-                raise RuntimeError("game ended after the configured seed campaign completed")
-            if row["actual_seed"] != str(row["requested_seed"]):
+            if row["actual_seed"] != str(row["requested_seed_long"]):
                 raise RuntimeError(
-                    f"game seed mismatch requested={row['requested_seed']} actual={row['actual_seed']}"
+                    "game seed mismatch "
+                    f"requested={row['requested_seed']} "
+                    f"requested_long={row['requested_seed_long']} "
+                    f"actual={row['actual_seed']}"
                 )
             if self.results_path is not None:
                 self.results_path.parent.mkdir(parents=True, exist_ok=True)
