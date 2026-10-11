@@ -494,6 +494,11 @@ def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
     send(decision.command)
 
 
+def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
+    """A PLAY must consume its real hand card before another decision is sent."""
+    return pending is not None and frame.get("game_state") == pending
+
+
 def main() -> None:
     args = build_parser().parse_args()
     log.info("=== agent session start argv=%s cwd=%s ===", sys.argv, Path.cwd())
@@ -540,6 +545,8 @@ def main() -> None:
 
     try:
         send("ready")
+        pending_play_frame = None
+        pending_play_since = 0.0
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -547,9 +554,19 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if stale_combat_play_frame(frame, pending_play_frame):
+                    if time.monotonic() - pending_play_since > 10.0:
+                        raise RuntimeError("game state unchanged for 10 seconds after PLAY")
+                    time.sleep(0.05)
+                    send("STATE")
+                    continue
+                pending_play_frame = None
                 decision = agent.decide(frame)
                 _log_decision(frame, decision, adapter)
                 send_decision(frame, decision)
+                if decision.command.upper().startswith("PLAY "):
+                    pending_play_frame = deepcopy(frame.get("game_state"))
+                    pending_play_since = time.monotonic()
             except Exception:
                 if combat_search is not None:
                     combat_search.note_error()

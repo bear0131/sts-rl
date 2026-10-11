@@ -129,3 +129,18 @@ def test_real_event_reward_command_pacing(monkeypatch, screen, room, command, de
     agent.send_decision({'game_state': {'screen_type': screen, 'room_phase': room}},
                         SimpleNamespace(command=command))
     assert calls == ([('wait', 0.5)] if delayed else []) + [('send', command)]
+
+
+def test_duplicate_frame_after_play_waits_for_actual_hand_transition():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import stale_combat_play_frame
+
+    gs = {"floor": 35, "combat_state": {"hand": [{"uuid": "inflame"}], "turn": 2}}
+    assert stale_combat_play_frame({"game_state": deepcopy(gs)}, gs)
+    # Transport readiness changes do not acknowledge the card action.
+    assert stale_combat_play_frame({"game_state": deepcopy(gs), "ready_for_command": True}, gs)
+    after = deepcopy(gs)
+    after["combat_state"]["hand"] = []
+    assert not stale_combat_play_frame({"game_state": after}, gs)
+    assert not stale_combat_play_frame({"error": "rejected"}, gs)
+    assert not stale_combat_play_frame({"game_state": gs}, None)
