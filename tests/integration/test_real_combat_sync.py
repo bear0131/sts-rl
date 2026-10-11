@@ -909,3 +909,15 @@ def test_real_berserk_syncs_next_turn_energy(combat_factory, room, relics, berse
     assert bc.to_dict()["player"]["energy_per_turn"] == expected
     bc.execute(sts.Action(sts.ActionType.END_TURN))
     assert bc.to_dict()["player"]["energy"] == expected
+
+
+def test_false_reactive_does_not_erase_guardian_sharp_hide(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, encounter="The Guardian",
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    bc.apply_custom_state({"monsters": [{"powers": [("SHARP_HIDE", 3)],
+                                         "reactive": False}]})
+    assert _powers(bc.to_dict()["monsters"][0]["powers"])["Sharp Hide"] == 3
+    hp = bc.to_dict()["player"]["hp"]
+    bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    assert bc.to_dict()["player"]["hp"] == hp - 3

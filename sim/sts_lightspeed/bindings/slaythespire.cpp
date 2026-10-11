@@ -749,8 +749,12 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     throw std::invalid_argument(
                         "reactive root state is only valid for Writhing Mass");
                 }
-                monster.setStatus<sts::MonsterStatus::REACTIVE>(0);
-                monster.setHasStatus<sts::MonsterStatus::REACTIVE>(reactive);
+                // REACTIVE shares uniquePower1 with Sharp Hide/Invincible.
+                // A false generic field must not erase another monster's power.
+                if (monster.id == sts::MonsterId::WRITHING_MASS) {
+                    monster.setStatus<sts::MonsterStatus::REACTIVE>(0);
+                    monster.setHasStatus<sts::MonsterStatus::REACTIVE>(reactive);
+                }
             }
         }
         bc.monsters.monstersAlive = 0;
