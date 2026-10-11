@@ -296,6 +296,20 @@ def test_darkling_chomp_matches_real_two_hit_move(combat_factory):
     assert (monster["base_damage"], monster["hits"]) == (8, 2)
 
 
+def test_java_generic_strength_up_power_maps_to_native_name(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Generic Strength Up Power", "amount": 3},
+    ]) == {"Generic Strength Up": 3}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Orb Walker",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    powers = normalize_sim(env.thick.bc.to_dict())["monsters"][0]["powers"]
+    assert powers["Generic Strength Up"] == 3
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},
