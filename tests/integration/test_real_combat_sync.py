@@ -310,6 +310,26 @@ def test_java_generic_strength_up_power_maps_to_native_name(combat_factory):
     assert powers["Generic Strength Up"] == 3
 
 
+def test_java_explosive_display_counter_uses_native_move_history(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Explosive", "amount": 3},
+    ]) == {}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Three Shapes",
+        seed=4,
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    exploder = next(
+        monster
+        for monster in normalize_sim(env.thick.bc.to_dict())["monsters"]
+        if monster["id"] == "Exploder"
+    )
+    assert exploder["powers"] == {}
+    assert exploder["move"] == "EXPLODER_SLAM"
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},

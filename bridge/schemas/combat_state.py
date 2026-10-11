@@ -26,10 +26,15 @@ localized `name` field, which is GBK-localized and unstable):
 
 # ============================ real-game side ============================
 
-# powers that one side tracks only cosmetically -> drop on both sides so they
-# don't show as spurious diffs. Pen Nib's armed power is observable separately
-# from its relic counter; OBS18 includes it in player_buffs.
-_POWER_DROP = {"Asleep", "Split"}
+# Powers whose semantics the native simulator stores outside its status table
+# are omitted from the public power comparison.  In particular, Exploder's
+# countdown is encoded by its real move history/current move on every synced
+# frame; the native rule uses that same history to select SLAM/EXPLODE and has
+# no separate EXPLOSIVE status slot.  Keeping the Java-only display counter in
+# the canonical power map would therefore reject an otherwise exact root.
+# Pen Nib's armed power remains observable separately from its relic counter;
+# OBS18 includes it in player_buffs.
+_POWER_DROP = {"Asleep", "Split", "Explosive"}
 BOOLEAN_PLAYER_POWERS = frozenset({
     "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
