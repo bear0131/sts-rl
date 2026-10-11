@@ -1161,8 +1161,12 @@ class RealGameAdapter:
             if "Calculated Gamble" in names:
                 return "GAMBLE"
         current_action = str(self.gs.get("current_action") or "")
-        if current_action == "DiscoveryAction":
-            return "DISCOVERY"
+        generated_context = {
+            "CodexAction": "CODEX",
+            "DiscoveryAction": "DISCOVERY",
+        }.get(current_action)
+        if generated_context is not None:
+            return generated_context
         return "PAD"
 
     def _select_signature(self) -> tuple[Any, ...] | None:

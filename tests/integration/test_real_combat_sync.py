@@ -6,6 +6,8 @@ import numpy as np
 import pytest
 
 from env.core import native_actions as C
+from env.core import game_actions as ga
+from bridge.real_game_env import RealGameAdapter
 from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
 from bridge.schemas.combat_state import (
     _REAL_MONSTER_MOVES,
@@ -634,6 +636,52 @@ def test_real_search_reconciles_generated_candidates_before_decision(combat_fact
     ]
     assert actual == ["ANGER", "BASH", "CLEAVE"]
     assert search.run_alignment_checks == 1
+
+
+def test_real_search_recognizes_live_nilry_codex_action_and_skip(combat_factory):
+    adapter = RealGameAdapter()
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "skip", "state"],
+        "game_state": {
+            "screen_type": "CARD_REWARD",
+            "screen_state": {"cards": [
+                {"id": "Body Slam", "upgrades": 0},
+                {"id": "Rage", "upgrades": 0},
+                {"id": "Flex", "upgrades": 0},
+            ]},
+            "choice_list": ["Body Slam", "Rage", "Flex"],
+            "current_action": "CodexAction",
+            "room_phase": "COMBAT",
+            "combat_state": {"turn": 1},
+        },
+    })
+    real_desc = adapter.select_descriptor()
+    assert real_desc is not None
+    assert real_desc["context"] == "CODEX"
+    assert [candidate["card"] for candidate in real_desc["candidates"]] == [
+        {"id": "Body Slam", "up": 0},
+        {"id": "Rage", "up": 0},
+        {"id": "Flex", "up": 0},
+        None,
+    ]
+    assert adapter.command_for_semantic(ga.select(3)) == "SKIP"
+
+    env = combat_factory(["STRIKE_RED"] * 5, relics=("Nilry's Codex",))
+    env.thick.bc.execute(sts.Action(sts.ActionType.END_TURN))
+    env._invalidate_backend_cache()
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.run_alignment_checks = 0
+    search._reconcile_selection(real_desc)
+
+    assert search.run_alignment_checks == 1
+    assert [
+        candidate["card"][0]
+        for candidate in env.thick.bc.select_info()["candidates"]
+        if not candidate["skip"]
+    ] == ["BODY_SLAM", "RAGE", "FLEX"]
 
 
 def test_real_search_still_rejects_single_select_progress_mismatch(combat_factory):
