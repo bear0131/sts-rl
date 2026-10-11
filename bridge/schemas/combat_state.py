@@ -39,11 +39,20 @@ BOOLEAN_MONSTER_POWERS = frozenset({
     "Barricade", "Minion", "Minion Leader", "Painful Stabs", "Regrow",
     "Shifting", "Stasis",
 })
+_REAL_POWER_CANON_ID = {
+    # CommunicationMod uses the Java power ID; the native simulator and its
+    # observation vocabulary use the displayed/stable semantic name.
+    "Confusion": "Confused",
+}
 
 
 def _powers_real(power_list):
     # real game flattens every buff/debuff into a list; key by stable English id
-    return {p["id"]: p["amount"] for p in power_list if p["id"] not in _POWER_DROP}
+    return {
+        _REAL_POWER_CANON_ID.get(p["id"], p["id"]): p["amount"]
+        for p in power_list
+        if _REAL_POWER_CANON_ID.get(p["id"], p["id"]) not in _POWER_DROP
+    }
 
 
 def _player_powers_real(power_list):

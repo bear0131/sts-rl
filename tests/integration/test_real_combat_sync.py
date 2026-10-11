@@ -6,7 +6,12 @@ import pytest
 
 from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
-from bridge.schemas.combat_state import _REAL_MONSTER_MOVES, diff, normalize_sim
+from bridge.schemas.combat_state import (
+    _REAL_MONSTER_MOVES,
+    _player_powers_real,
+    diff,
+    normalize_sim,
+)
 import slaythespire as sts
 
 
@@ -177,6 +182,22 @@ def test_java_unplayable_cost_preserves_native_curse_encoding(combat_factory):
     raw = env.thick.bc.to_dict()
     assert raw["hand"] == [("PAIN", 0, -3)]
     assert normalize_sim(raw)["hand"] == [{"id": "Pain", "up": 0, "cost": -2}]
+
+
+def test_java_confusion_power_maps_to_native_confused_presence(combat_factory):
+    assert _player_powers_real([
+        {"id": "Confusion", "amount": -1},
+    ]) == {"Confused": 1}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Snecko",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "player": {"powers": [("CONFUSED", 1)]},
+    })
+    assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["Confused"] == 1
 
 
 def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
