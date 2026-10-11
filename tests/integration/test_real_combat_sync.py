@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 
+import numpy as np
 import pytest
 
 from env.core import native_actions as C
@@ -561,6 +562,62 @@ def test_real_search_still_rejects_single_select_progress_mismatch(combat_factor
     search.run_alignment_checks = 0
     with pytest.raises(RuntimeError, match="pick_remaining mismatch"):
         search._reconcile_selection(real_desc)
+
+
+def test_real_search_maps_compacted_armaments_selection_handles(combat_factory):
+    env = combat_factory(
+        ["ARMAMENTS", "STRIKE_RED", "REAPER", "RECKLESS_CHARGE",
+         "HEMOKINESIS", "STRIKE_RED"],
+        encounter="The Champ",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "hand": ["STRIKE_RED", "REAPER", "RECKLESS_CHARGE", "ARMAMENTS",
+                 "HEMOKINESIS", "STRIKE_RED"],
+        "player": {"energy": 3},
+    })
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 3))
+    env._invalidate_backend_cache()
+
+    compact_desc = env.thick.select_descriptor()
+    assert compact_desc["context"] == "ARMAMENTS"
+    assert np.flatnonzero(env.action_masks()).tolist() == list(
+        range(C.AUTOREGRESSIVE_PICK, C.AUTOREGRESSIVE_PICK + 5)
+    )
+
+    real_desc = deepcopy(compact_desc)
+    sim_desc = deepcopy(compact_desc)
+    sim_handles = [0, 1, 2, 4, 5]
+    for candidate, native_handle in zip(sim_desc["candidates"], sim_handles):
+        candidate["native_index"] = native_handle
+
+    class _SelectionThick:
+        @staticmethod
+        def select_descriptor():
+            return sim_desc
+
+    class _SelectionEnv:
+        thick = _SelectionThick()
+
+        @staticmethod
+        def _invalidate_backend_cache():
+            return None
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = _SelectionEnv()
+    search.run_alignment_checks = 0
+    search.sim_to_real_selection_handles = {}
+    search._reconcile_selection(real_desc)
+
+    assert search.sim_to_real_selection_handles == {0: 0, 1: 1, 2: 2, 4: 3, 5: 4}
+    pick_three_bits = C.autoregressive_native_bits(
+        C.AUTOREGRESSIVE_PICK + 3, candidate_indices=sim_handles
+    )
+    assert pick_three_bits == 2 << 29 | 4
+    assert C.autoregressive_action_id(
+        pick_three_bits, candidate_indices=sim_handles
+    ) == C.AUTOREGRESSIVE_PICK + 3
+    assert search.run_alignment_checks == 1
 
 
 def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):

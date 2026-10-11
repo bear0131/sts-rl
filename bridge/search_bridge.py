@@ -194,6 +194,7 @@ class RealCombatSearch:
         self.identity: tuple[int, int] | None = None
         self.decision_index = 0
         self.sim_to_real_targets: dict[int, int] = {}
+        self.sim_to_real_selection_handles: dict[int, int] = {}
         self._rollback_bc = None
         self._rollback_thin = None
         self._awaiting_command = False
@@ -232,6 +233,7 @@ class RealCombatSearch:
         self.identity = None
         self.decision_index = 0
         self.sim_to_real_targets = {}
+        self.sim_to_real_selection_handles = {}
         self._rollback_bc = None
         self._rollback_thin = None
         self._awaiting_command = False
@@ -566,6 +568,7 @@ class RealCombatSearch:
         if selection is not None:
             self._reconcile_selection(selection)
             return
+        self.sim_to_real_selection_handles = {}
         self.sim_to_real_targets = self._target_mapping(real)
         predicted = self._sim_state_in_real_target_order()
         before = diff(real, predicted)
@@ -615,10 +618,26 @@ class RealCombatSearch:
             self.env.thick.bc.set_generated_selection_cards(generated)
             sim_desc = self.env.thick.select_descriptor()
         sim_candidates = self._selection_candidates(sim_desc)
-        if real_candidates != sim_candidates:
+        real_handles = tuple(row[0] for row in real_candidates)
+        sim_handles = tuple(row[0] for row in sim_candidates)
+        if len(set(real_handles)) != len(real_handles):
+            raise RuntimeError(
+                f"real combat selection contains duplicate handles: {real_handles!r}")
+        if len(set(sim_handles)) != len(sim_handles):
+            raise RuntimeError(
+                f"native combat selection contains duplicate handles: {sim_handles!r}")
+        real_cards = tuple(row[1:] for row in real_candidates)
+        sim_cards = tuple(row[1:] for row in sim_candidates)
+        if real_cards != sim_cards:
             raise RuntimeError(
                 "combat selection candidates differ: "
                 f"real={real_candidates!r} sim={sim_candidates!r}")
+        # CommunicationMod compacts the visible hand after the played card is
+        # moved to card_in_play.  Native selection keeps the pre-play hand
+        # indices as stable execution handles.  Policy pick IDs use the dense
+        # candidate order on both sides, so retain that order and record the
+        # transport-handle relation instead of renumbering policy actions.
+        self.sim_to_real_selection_handles = dict(zip(sim_handles, real_handles))
         real_multi = bool(real_desc.get("multi"))
         sim_multi = bool(sim_desc.get("multi"))
         if real_multi != sim_multi:
