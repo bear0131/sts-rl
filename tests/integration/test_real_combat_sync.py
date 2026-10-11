@@ -954,3 +954,32 @@ def test_irregular_real_card_ids_roundtrip_native_piles(combat_factory, native, 
     env = combat_factory(["STRIKE_RED"] * 5)
     env.thick.bc.apply_custom_state({"hand": _card_rows([{"id": java, "up": 0}])})
     assert normalize_sim(env.thick.bc.to_dict())["hand"][0]["id"] == _card(java, 0)["id"]
+
+
+def test_exploder_unknown_intent_preserves_native_explosion(combat_factory):
+    from types import SimpleNamespace
+
+    env = combat_factory(["DEFEND_RED"] * 10, encounter="Three Shapes", seed=4,
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    raw = bc.to_dict()
+    idx = next(i for i, m in enumerate(raw["monsters"]) if m["id"] == "EXPLODER")
+    real = normalize_sim(raw)
+    for m in real["monsters"]:
+        m["real_move_id"] = 1
+        m["real_last_move_id"] = 1
+    m = real["monsters"][idx]
+    m.update(real_move_id=2, base_damage=0, hits=0)
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.adapter = SimpleNamespace(_potions=lambda: [])
+    search._target_mapping = lambda state: {idx: idx}
+    spec = search._state_spec(real)
+    assert "base_damage" not in spec["monsters"][idx]
+    bc.apply_custom_state(spec)
+    visible = normalize_sim(bc.to_dict())["monsters"][idx]
+    assert (visible["base_damage"], visible["hits"]) == (0, 0)
+    hp = bc.to_dict()["player"]["hp"]
+    bc.execute(sts.Action(sts.ActionType.END_TURN))
+    assert bc.to_dict()["player"]["hp"] == hp - 30
+    assert bc.to_dict()["monsters"][idx]["hp"] == 0

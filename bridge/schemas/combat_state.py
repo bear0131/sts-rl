@@ -421,6 +421,10 @@ def _norm_sim_monster(m):
                     reactive=False)
     base, hits = _attack(m["base_damage"], m["hits"])
     adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
+    if m.get("move") == "EXPLODER_EXPLODE":
+        # CommunicationMod publishes UNKNOWN, with no visible damage or hits.
+        # This observable projection must not change native explosion damage.
+        base, adjusted, hits = 0, 0, 0
     hp = m["hp"]
     return {
         "id": _sim_monster_id(m["id"]),

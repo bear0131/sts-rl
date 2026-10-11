@@ -547,6 +547,11 @@ class RealCombatSearch:
                 "hits": int(monster["hits"]),
                 "powers": _power_rows(monster["powers"], _SUPPORTED_MONSTER_POWERS),
             }
+            if move == "EXPLODER_EXPLODE":
+                # Java exposes UNKNOWN intent (-1), not the explosion's hidden
+                # 30 damage. Preserve the native move's transition semantics.
+                monsters[sim_index].pop("base_damage")
+                monsters[sim_index].pop("hits")
         player = real["player"]
         return {
             "turn": max(0, int(real["turn"]) - 1),
