@@ -19,6 +19,7 @@ import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
 from env.core import native_actions as C
+from env.core.encounters import ACT_POOLS
 from env.core.run_env import SlayTheSpireEnv
 from rl.evaluation.strategies import DecisionRequest, NativeStrategy
 from rl.policies import model as model_utils
@@ -108,6 +109,26 @@ def _monster_ids(raw: dict[str, Any]) -> tuple[str, ...]:
         monster["id"] for monster in normalize_sim(raw)["monsters"]
         if not monster["gone"] and monster["id"] != "PAD"
     ))
+
+
+def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
+                        *, max_seed_nonces: int = 64):
+    """Find a deterministic native encounter instance with the public roster.
+
+    A few encounter templates choose their concrete monsters from combat RNG.
+    CommunicationMod does not expose that RNG state, so a bounded shadow seed
+    nonce supplies a matching template instance before public state injection.
+    """
+    for seed_nonce in range(max_seed_nonces):
+        for encounter in encounters:
+            gc = make_gc(seed_nonce)
+            try:
+                battle = sts.create_battle(gc, encounter)
+            except Exception:
+                continue
+            if _monster_ids(battle.to_dict()) == wanted:
+                return gc, battle, encounter, seed_nonce
+    raise RuntimeError(f"no native encounter matches real monsters {wanted!r}")
 
 
 class RealCombatSearch:
@@ -282,47 +303,55 @@ class RealCombatSearch:
     def _attach_battle(self, real: dict[str, Any], identity: tuple[int, int]) -> None:
         seed, floor = identity
         global_state = self.adapter.obs_canonical()["global"]
-        gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, self.adapter.ascension)
-        gc.act = max(1, int(global_state.get("act", 1) or 1))
-        gc.floor_num = floor
-        gc.max_hp = max(1, int(global_state["max_hp"]))
-        gc.cur_hp = min(gc.max_hp, max(0, int(global_state["hp"])))
-        gc.gold = max(0, int(global_state.get("gold", 0)))
-        gc.set_deck(_card_rows([
-            {"id": cid, "up": up} for cid, up in global_state.get("deck", [])
-        ]))
-        gc.set_relic_state([
-            {"id": rid, "counter": int(counter)}
-            for rid, counter in zip(
-                global_state.get("relics", []), global_state.get("relic_counters", [])
-            )
-        ])
-        gc.set_potion_state([_empty_potion_name(p) for p in global_state.get("potions", [])])
         room = str(self.adapter.gs.get("room_type", "")).upper()
-        gc.cur_room = (
+        native_room = (
             sts.Room.BOSS if "BOSS" in room else
             sts.Room.ELITE if "ELITE" in room else
             sts.Room.MONSTER
         )
         boss = str(global_state.get("boss") or "")
-        if boss and hasattr(sts.MonsterEncounter, boss):
-            gc.boss = getattr(sts.MonsterEncounter, boss)
+
+        def make_gc(seed_nonce: int):
+            gc = sts.GameContext(
+                sts.CharacterClass.IRONCLAD,
+                seed + int(seed_nonce),
+                self.adapter.ascension,
+            )
+            gc.act = max(1, int(global_state.get("act", 1) or 1))
+            gc.floor_num = floor
+            gc.max_hp = max(1, int(global_state["max_hp"]))
+            gc.cur_hp = min(gc.max_hp, max(0, int(global_state["hp"])))
+            gc.gold = max(0, int(global_state.get("gold", 0)))
+            gc.set_deck(_card_rows([
+                {"id": cid, "up": up} for cid, up in global_state.get("deck", [])
+            ]))
+            gc.set_relic_state([
+                {"id": rid, "counter": int(counter)}
+                for rid, counter in zip(
+                    global_state.get("relics", []),
+                    global_state.get("relic_counters", []),
+                )
+            ])
+            gc.set_potion_state([
+                _empty_potion_name(p) for p in global_state.get("potions", [])
+            ])
+            gc.cur_room = native_room
+            if boss and hasattr(sts.MonsterEncounter, boss):
+                gc.boss = getattr(sts.MonsterEncounter, boss)
+            return gc
 
         wanted = tuple(sorted(m["id"] for m in real["monsters"] if not m["gone"]))
-        candidates = []
-        for encounter in sts.encounter_names():
-            try:
-                battle = sts.create_battle(gc, encounter)
-                if _monster_ids(battle.to_dict()) == wanted:
-                    candidates.append((encounter, battle))
-            except Exception:
-                continue
-        if not candidates:
-            raise RuntimeError(f"no native encounter matches real monsters {wanted!r}")
-        encounter, battle = candidates[0]
-        if len(candidates) > 1:
-            LOG.warning("ambiguous encounter %s candidates=%s; using=%s", wanted,
-                        [name for name, _ in candidates], encounter)
+        act = max(1, int(global_state.get("act", 1) or 1))
+        pool_kind = "boss" if native_room == sts.Room.BOSS else (
+            "elite" if native_room == sts.Room.ELITE else "normal"
+        )
+        preferred = list(ACT_POOLS.get(act, {}).get(pool_kind, ()))
+        encounters = preferred + [
+            name for name in sts.encounter_names() if name not in preferred
+        ]
+        gc, battle, encounter, seed_nonce = _find_shadow_battle(
+            make_gc, wanted, encounters
+        )
         self.env.thick.gc = gc
         self.env.thick.bc = battle
         self.env.thick._rebuild_map()
@@ -341,8 +370,11 @@ class RealCombatSearch:
         self.sim_to_real_targets = {}
         self.sim_to_real_targets = self._target_mapping(real)
         self.run_encounters += 1
-        LOG.info("attached native battle seed=%s floor=%s encounter=%s monsters=%s",
-                 seed, floor, encounter, wanted)
+        LOG.info(
+            "attached native battle seed=%s shadow_seed_nonce=%s floor=%s "
+            "encounter=%s monsters=%s",
+            seed, seed_nonce, floor, encounter, wanted,
+        )
 
     def _target_mapping(self, real: dict[str, Any]) -> dict[int, int]:
         sim = normalize_sim(self.env.thick.bc.to_dict())

@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from env.core import native_actions as C
-from bridge.search_bridge import RealCombatSearch
+from bridge.search_bridge import RealCombatSearch, _find_shadow_battle
 from bridge.schemas.combat_state import _REAL_MONSTER_MOVES, diff, normalize_sim
 import slaythespire as sts
 
@@ -124,6 +124,28 @@ def test_real_search_aligns_state_diff_to_real_monster_slot_order(combat_factory
 
     assert search.sim_to_real_targets == {0: 1, 1: 0}
     assert diff(real, search._sim_state_in_real_target_order()) == []
+
+
+def test_shadow_battle_nonce_recovers_randomized_encounter_roster():
+    def make_gc(seed_nonce):
+        gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 159066251 + seed_nonce, 0)
+        gc.floor_num = 11
+        gc.set_deck([("STRIKE_RED", 0)] * 5)
+        return gc
+
+    gc, battle, encounter, nonce = _find_shadow_battle(
+        make_gc,
+        ("AcidSlime_M", "FungiBeast"),
+        ("Exordium Wildlife",),
+    )
+
+    assert gc is not None
+    assert encounter == "Exordium Wildlife"
+    assert nonce == 7
+    assert sorted(m["id"] for m in normalize_sim(battle.to_dict())["monsters"]) == [
+        "AcidSlime_M",
+        "FungiBeast",
+    ]
 
 
 def test_game_context_potion_state_can_match_real_slots(combat_factory):
