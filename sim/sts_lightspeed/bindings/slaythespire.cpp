@@ -634,6 +634,38 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     m["move"].cast<std::string>());
                 if (move != sts::MonsterMoveId::INVALID) monster.moveHistory[0] = move;
             }
+            if (m.contains("base_damage") || m.contains("hits")) {
+                const auto current = monster.getMoveBaseDamage(bc);
+                const int requestedDamage = getInt(m, "base_damage", current.damage);
+                const int requestedHits = getInt(m, "hits", current.attackCount);
+                // Several monsters roll an encounter-local value that Java keeps
+                // outside the public move id.  CommunicationMod exposes the
+                // realized intent damage/hit count, so restore the equivalent
+                // native hidden field before search.  Fixed-damage moves must
+                // already agree; accepting arbitrary overrides would make the
+                // simulator transition disagree with the displayed root intent.
+                switch (monster.moveHistory[0]) {
+                    case sts::MonsterMoveId::GREEN_LOUSE_BITE:
+                    case sts::MonsterMoveId::RED_LOUSE_BITE:
+                    case sts::MonsterMoveId::HEXAGHOST_DIVIDER:
+                        monster.miscInfo = requestedDamage;
+                        break;
+                    case sts::MonsterMoveId::DARKLING_NIP:
+                        monster.miscInfo = requestedDamage - (bc.ascension >= 2 ? 2 : 0);
+                        break;
+                    case sts::MonsterMoveId::BOOK_OF_STABBING_MULTI_STAB:
+                        monster.miscInfo = requestedHits;
+                        break;
+                    default:
+                        break;
+                }
+                const auto synchronized = monster.getMoveBaseDamage(bc);
+                if (synchronized.damage != requestedDamage
+                    || synchronized.attackCount != requestedHits) {
+                    throw std::invalid_argument(
+                        "custom monster move damage does not match native move semantics");
+                }
+            }
             if (m.contains("powers")) {
                 static constexpr const char *kStatuses[] = {
                     "ARTIFACT", "BLOCK_RETURN", "CHOKED", "CORPSE_EXPLOSION",

@@ -67,6 +67,33 @@ def test_custom_state_syncs_real_monster_move_history_and_intrinsic_power(combat
     assert _powers(monster["powers"]) == {"Ritual": 3, "Strength": 3}
 
 
+def test_custom_state_syncs_real_louse_hidden_bite_damage(combat_factory):
+    env = combat_factory(
+        ["BASH", "STRIKE_RED"],
+        encounter="Two Louse",
+        seed=1,
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        "monsters": [
+            {
+                "move_history": ["RED_LOUSE_BITE", "INVALID"],
+                "base_damage": 5,
+                "hits": 1,
+            },
+            {
+                "move_history": ["GREEN_LOUSE_BITE", "INVALID"],
+                "base_damage": 6,
+                "hits": 1,
+            },
+        ],
+    })
+
+    monsters = battle.to_dict()["monsters"]
+    assert [(m["base_damage"], m["hits"]) for m in monsters] == [(5, 1), (6, 1)]
+
+
 def test_real_monster_move_codec_uses_only_native_move_names(combat_factory):
     env = combat_factory(["STRIKE_RED"])
     battle = env.thick.bc

@@ -449,6 +449,8 @@ class RealCombatSearch:
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
                 "move_history": [move, last_move],
+                "base_damage": int(monster["base_damage"]),
+                "hits": int(monster["hits"]),
                 "powers": _power_rows(monster["powers"], _SUPPORTED_MONSTER_POWERS),
             }
         player = real["player"]
