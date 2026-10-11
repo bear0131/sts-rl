@@ -427,9 +427,18 @@ class RealCombatSearch:
                     and sim_monster["id"] == real_monster["id"]):
                 mapping[sim_index] = real_index
                 unused.remove(real_index)
+        # A confirmed entity may have died in Java while the shadow predicted
+        # survival. Retain its identity across repeated mapping before injection.
+        confirmed_dead = {
+            si for si, ri in self.sim_to_real_targets.items()
+            if si < len(sim["monsters"]) and ri < len(real["monsters"])
+            and real["monsters"][ri]["gone"]
+            and sim["monsters"][si]["id"] == real["monsters"][ri]["id"]
+        }
+        mapping.update({si: self.sim_to_real_targets[si] for si in confirmed_dead})
         unmatched_live_sim: list[int] = []
         for sim_index, monster in enumerate(sim["monsters"]):
-            if (sim_index in mapping or monster["gone"]
+            if (sim_index in mapping or sim_index in confirmed_dead or monster["gone"]
                     or monster["id"] == "PAD"):
                 continue
             matches = [i for i in sorted(unused)
@@ -531,6 +540,9 @@ class RealCombatSearch:
         ]
         for sim_index, real_index in self.sim_to_real_targets.items():
             monster = real["monsters"][real_index]
+            if monster["gone"]:
+                monsters[sim_index] = {"gone": True}
+                continue
             move = real_to_sim_monster_move(monster["id"], monster["real_move_id"])
             last_move = real_to_sim_monster_move(
                 monster["id"], monster["real_last_move_id"]

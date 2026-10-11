@@ -983,3 +983,23 @@ def test_exploder_unknown_intent_preserves_native_explosion(combat_factory):
     bc.execute(sts.Action(sts.ActionType.END_TURN))
     assert bc.to_dict()["player"]["hp"] == hp - 30
     assert bc.to_dict()["monsters"][idx]["hp"] == 0
+
+
+def test_confirmed_real_death_clears_predicted_live_slot(combat_factory):
+    env = combat_factory(["STRIKE_RED"], encounter="Three Shapes", seed=4,
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    real = normalize_sim(env.thick.bc.to_dict())
+    idx = next(i for i, m in enumerate(real["monsters"]) if m["id"] == "Exploder")
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.sim_to_real_targets = {i: i for i in range(len(real["monsters"]))}
+    real["monsters"][idx].update(hp=0, gone=True)
+    mapping = search._target_mapping(real)
+    assert mapping[idx] == idx
+    search.sim_to_real_targets = mapping
+    assert search._target_mapping(real) == mapping
+    assert set(mapping.values()) == set(range(len(real["monsters"])))
+    # Unknown entity mismatches remain errors; only confirmed deaths are trusted.
+    real["monsters"][idx]["id"] = "Repulsor"
+    with pytest.raises(RuntimeError, match="cannot map native monster"):
+        search._target_mapping(real)
