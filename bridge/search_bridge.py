@@ -680,7 +680,9 @@ class RealCombatSearch:
                 if target < 5:
                     if target not in self.sim_to_real_targets:
                         raise RuntimeError(f"searched action targets unmapped native slot {target}")
-                    target = self.sim_to_real_targets[target]
+                    target = self.adapter.policy_target_index(
+                        self.sim_to_real_targets[target]
+                    )
                 return base + source * 6 + target
         return aid
 
@@ -713,9 +715,10 @@ class RealCombatSearch:
                         mapped = base + source * 6 + 5
                         break
                     if target < 5:
-                        if target not in reverse:
+                        real_target = self.adapter.real_target_index(target)
+                        if real_target not in reverse:
                             continue
-                        target = reverse[target]
+                        target = reverse[real_target]
                     mapped = base + source * 6 + target
                     break
             result[mapped] = True

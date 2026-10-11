@@ -164,6 +164,52 @@ def test_joint_bridge_keeps_target_slot_and_executes_complete_play():
     assert adapter.describe_action_id(C.JOINT_PLAY+1)
 
 
+def test_joint_bridge_compacts_overflowed_gremlin_history_and_restores_java_target():
+    from bridge.search_bridge import RealCombatSearch
+    from env.core import native_actions as C
+
+    def monster(monster_id, hp, gone=False):
+        return {
+            "id": monster_id,
+            "current_hp": hp,
+            "max_hp": max(hp, 1),
+            "block": 0,
+            "is_gone": gone,
+            "powers": [],
+        }
+
+    # CommunicationMod retains four dead summons, so the live leader has Java
+    # index 6 even though the policy/native search contract has five targets.
+    monsters = [
+        monster("GremlinFat", 0, True),
+        monster("GremlinFat", 14),
+        monster("GremlinWarrior", 0, True),
+        monster("GremlinWizard", 25),
+        monster("GremlinFat", 0, True),
+        monster("GremlinFat", 0, True),
+        monster("GremlinLeader", 7),
+    ]
+    frame = joint_frame([
+        {"id": "Strike_R", "has_target": True, "is_playable": True},
+    ])
+    frame["game_state"]["combat_state"]["monsters"] = monsters
+    adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    adapter.update(frame)
+
+    assert adapter.combat_target_layout() == (1, 3, 6)
+    assert np.flatnonzero(adapter.action_mask()).tolist() == [0, 1, 2, 3]
+    assert adapter.command_for_joint_action(C.AUTOREGRESSIVE_PLAY + 2) == "PLAY 1 6"
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.adapter = adapter
+    search.sim_to_real_targets = {0: 1, 1: 3, 3: 6}
+    remapped = search._remap_real_mask(adapter.action_mask())
+    assert np.flatnonzero(remapped).tolist() == [0, 1, 2, 4]
+    assert search._map_action_to_real(C.AUTOREGRESSIVE_PLAY + 3) == (
+        C.AUTOREGRESSIVE_PLAY + 2
+    )
+
+
 def test_joint_bridge_expands_subset_without_extra_policy_and_checks_ack():
     from env.core import native_actions as C
     hand = [{"id":cid} for cid in ("Strike_R", "Bash", "Defend_R")]

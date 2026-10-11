@@ -746,6 +746,12 @@ class RealGameAdapter:
         if self.gs.get("combat_state"):
             try:
                 canon = normalize_real(self.gs) or {}
+                real_monsters = canon.get("monsters") or []
+                if len(real_monsters) > actions.MAX_MONSTERS:
+                    canon["monsters"] = [
+                        real_monsters[real_index]
+                        for real_index in self.combat_target_layout()
+                    ]
             except Exception:
                 LOG.exception("normalize_real failed")
                 canon = {}
@@ -1243,7 +1249,9 @@ class RealGameAdapter:
             acts.append(ga.combat(actions.END_TURN))
         monsters = cs.get("monsters") or []
         targets = [
-            i for i, m in enumerate(monsters[:actions.MAX_MONSTERS])
+            policy_index
+            for policy_index, real_index in enumerate(self.combat_target_layout())
+            for m in (monsters[real_index],)
             if isinstance(m, dict) and not m.get("is_gone") and int(m.get("current_hp", 0) or 0) > 0
         ]
         for h, card in enumerate((cs.get("hand") or [])[:actions.HAND_SLOTS]):
@@ -1381,11 +1389,63 @@ class RealGameAdapter:
 
     def _live_monster_indices(self) -> list[int]:
         cs = self.gs.get("combat_state") or {}
-        out = []
-        for i, m in enumerate((cs.get("monsters") or [])[:actions.MAX_MONSTERS]):
+        monsters = cs.get("monsters") or []
+        out: list[int] = []
+        for policy_index, real_index in enumerate(self.combat_target_layout()):
+            m = monsters[real_index]
             if isinstance(m, dict) and not m.get("is_gone") and int(m.get("current_hp", 0) or 0) > 0:
-                out.append(i)
+                out.append(policy_index)
         return out
+
+    def combat_target_layout(self) -> tuple[int, ...]:
+        """Map bounded policy target slots to CommunicationMod monster indices.
+
+        CommunicationMod normally preserves the encounter's positional monster
+        slots, which are also the policy's five target slots.  Gremlin Leader,
+        however, retains every dead summon in its Java list and inserts later
+        summons before the leader.  That transport list can therefore grow past
+        five even though at most five monsters are alive.  Once it overflows,
+        compact the authoritative live entities into the bounded policy slots;
+        commands translate those slots back to the current Java indices.
+        """
+        cs = self.gs.get("combat_state") or {}
+        monsters = cs.get("monsters") or []
+        if not isinstance(monsters, list):
+            return ()
+        if len(monsters) <= actions.MAX_MONSTERS:
+            return tuple(range(len(monsters)))
+        live = tuple(
+            index
+            for index, monster in enumerate(monsters)
+            if isinstance(monster, dict)
+            and not monster.get("is_gone")
+            and int(monster.get("current_hp", 0) or 0) > 0
+        )
+        if len(live) > actions.MAX_MONSTERS:
+            raise ValueError(
+                "real combat exposes more live monsters than the policy target capacity: "
+                f"{len(live)} > {actions.MAX_MONSTERS}"
+            )
+        return live
+
+    def real_target_index(self, policy_target: int) -> int:
+        layout = self.combat_target_layout()
+        target = int(policy_target)
+        if not 0 <= target < len(layout):
+            raise ValueError(
+                f"policy target slot {target} is absent from real layout {layout!r}"
+            )
+        return int(layout[target])
+
+    def policy_target_index(self, real_target: int) -> int:
+        layout = self.combat_target_layout()
+        target = int(real_target)
+        try:
+            return layout.index(target)
+        except ValueError as exc:
+            raise ValueError(
+                f"real target index {target} is absent from policy layout {layout!r}"
+            ) from exc
 
     def _has_empty_potion_slot(self) -> bool:
         return any(pid == "PAD" for pid in self._potions()) or len(self._potions()) < A.P_MAX
@@ -1399,7 +1459,11 @@ class RealGameAdapter:
                 return "END"
             if kind[0] == actions.KIND_PLAY:
                 _, hand_idx, target = kind
-                return f"PLAY {hand_idx + 1}" if target is None else f"PLAY {hand_idx + 1} {target}"
+                return (
+                    f"PLAY {hand_idx + 1}"
+                    if target is None
+                    else f"PLAY {hand_idx + 1} {self.real_target_index(target)}"
+                )
             if kind[0] == actions.KIND_SELECT:
                 return f"CHOOSE {kind[1]}"
         if verb == ga.NEOW:
@@ -1460,7 +1524,11 @@ class RealGameAdapter:
             return f"CHOOSE {idx}"
         if verb == ga.USE_POTION:
             slot, target = action[1], action[2]
-            return f"POTION use {slot}" if target is None else f"POTION use {slot} {target}"
+            return (
+                f"POTION use {slot}"
+                if target is None
+                else f"POTION use {slot} {self.real_target_index(target)}"
+            )
         raise ValueError(f"cannot map semantic action to real command: {action!r}")
 
     def command_for_multi_action(self, action_id: int) -> str:
