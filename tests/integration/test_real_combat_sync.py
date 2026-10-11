@@ -8,6 +8,7 @@ from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
 from bridge.schemas.combat_state import (
     _REAL_MONSTER_MOVES,
+    _monster_powers_real,
     _player_powers_real,
     diff,
     normalize_sim,
@@ -225,6 +226,22 @@ def test_java_confusion_power_maps_to_native_confused_presence(combat_factory):
         "player": {"powers": [("CONFUSED", 1)]},
     })
     assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["Confused"] == 1
+
+
+def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Regenerate", "amount": 3},
+    ]) == {"Regen": 3}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Lagavulin",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "monsters": [{"powers": [("REGEN", 3)]}],
+    })
+    assert normalize_sim(env.thick.bc.to_dict())["monsters"][0]["powers"]["Regen"] == 3
 
 
 def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
