@@ -537,11 +537,17 @@ class RealCombatSearch:
         if real_multi != sim_multi:
             raise RuntimeError(
                 f"combat selection multi mismatch real={real_multi!r} sim={sim_multi!r}")
+        def semantic_pick_max(desc: dict[str, Any]) -> int:
+            raw = int(desc.get("pick_max", 0))
+            if bool(desc.get("multi")):
+                return min(raw, len(desc.get("candidates") or ()))
+            return raw
+
         def semantic_pick_remaining(desc: dict[str, Any]) -> int:
             if bool(desc.get("multi")):
                 return max(
                     0,
-                    int(desc.get("pick_max", 0))
+                    semantic_pick_max(desc)
                     - len(desc.get("selected") or ()),
                 )
             return int(desc.get("pick_remaining", 0))
@@ -552,11 +558,18 @@ class RealCombatSearch:
                 f"real={real_desc.get('pick_remaining')!r} "
                 f"sim={sim_desc.get('pick_remaining')!r}")
         if real_multi:
-            for key in ("pick_max", "cards_in_hand"):
-                if int(real_desc.get(key, 0)) != int(sim_desc.get(key, 0)):
-                    raise RuntimeError(
-                        f"combat selection {key} mismatch real={real_desc.get(key)!r} "
-                        f"sim={sim_desc.get(key)!r}")
+            if semantic_pick_max(real_desc) != semantic_pick_max(sim_desc):
+                raise RuntimeError(
+                    "combat selection pick_max mismatch "
+                    f"real={real_desc.get('pick_max')!r} "
+                    f"sim={sim_desc.get('pick_max')!r}")
+            if int(real_desc.get("cards_in_hand", 0)) != int(
+                sim_desc.get("cards_in_hand", 0)
+            ):
+                raise RuntimeError(
+                    "combat selection cards_in_hand mismatch "
+                    f"real={real_desc.get('cards_in_hand')!r} "
+                    f"sim={sim_desc.get('cards_in_hand')!r}")
         self.env._invalidate_backend_cache()
         self.run_alignment_checks += 1
 

@@ -359,7 +359,7 @@ def test_real_search_still_rejects_single_select_progress_mismatch(combat_factor
         search._reconcile_selection(real_desc)
 
 
-def test_real_search_normalizes_gamblers_brew_unbounded_sentinel(combat_factory):
+def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
     from bridge.real_game_env import RealGameAdapter
 
     env = combat_factory(
@@ -369,14 +369,15 @@ def test_real_search_normalizes_gamblers_brew_unbounded_sentinel(combat_factory)
     )
     env.thick.bc.apply_custom_state({
         "hand": ["STRIKE_RED"] * 5,
-        "potions": ["Gamblers Brew"],
+        "potions": ["Elixir Potion"],
     })
     env.thick.bc.execute(sts.Action(sts.ActionType.POTION, 0))
     env._invalidate_backend_cache()
     sim_desc = env.thick.select_descriptor()
-    assert sim_desc["context"] == "GAMBLE"
-    assert sim_desc["pick_remaining"] != 5
-    assert sim_desc["pick_max"] == 5
+    assert sim_desc["context"] == "EXHAUST_MANY"
+    assert sim_desc["pick_remaining"] == 10
+    assert sim_desc["pick_max"] == 10
+    assert sim_desc["cards_in_hand"] == 5
 
     adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
     adapter.update({
