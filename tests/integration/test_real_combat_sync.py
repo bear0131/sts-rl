@@ -244,6 +244,22 @@ def test_java_no_draw_power_maps_to_native_presence(combat_factory):
     assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["No Draw"] == 1
 
 
+def test_java_duplication_power_maps_to_native_duplication(combat_factory):
+    assert _player_powers_real([
+        {"id": "DuplicationPower", "amount": 1},
+    ]) == {"Duplication": 1}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="The Maw",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "player": {"powers": [("DUPLICATION", 1)]},
+    })
+    assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["Duplication"] == 1
+
+
 def test_java_flex_power_maps_to_native_lose_strength_amount(combat_factory):
     assert _player_powers_real([
         {"id": "Flex", "amount": 3},
