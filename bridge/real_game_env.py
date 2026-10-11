@@ -1452,7 +1452,9 @@ class RealGameAdapter:
             ) from exc
 
     def _has_empty_potion_slot(self) -> bool:
-        return any(pid == "PAD" for pid in self._potions()) or len(self._potions()) < A.P_MAX
+        # CommunicationMod includes every actual slot, including empty slots.
+        # The policy reserves five indices; it does not grant five game slots.
+        return any(pid == "PAD" for pid in self._potions())
 
     # ---------------------------------------------------------- command mapping
     def command_for_semantic(self, action: tuple) -> str:

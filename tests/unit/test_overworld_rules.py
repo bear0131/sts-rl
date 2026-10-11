@@ -465,3 +465,25 @@ def test_unavailable_campfire_actions_do_not_attract_route_to_dead_rest():
     s['global']['relics'] = ['Coffee Dripper', 'Fusion Hammer']
     scores = route_scores(s, [(0, 0), (1, 1)], Map(), 8)
     assert scores[0] < scores[1]
+
+
+@pytest.mark.parametrize("slots", [2, 3, 5])
+def test_real_reward_claim_requires_an_actual_empty_potion_slot(slots):
+    from env.core import game_actions as ga
+
+    adapter = RealGameAdapter()
+    frame = {
+        "in_game": True,
+        "available_commands": ["choose", "proceed"],
+        "game_state": {
+            "screen_type": "COMBAT_REWARD",
+            "choice_list": ["potion"],
+            "screen_state": {},
+            "potions": [{"id": "Fire Potion"} for _ in range(slots)],
+        },
+    }
+    adapter.update(frame)
+    assert adapter._legal_reward_actions() == [ga.proceed()]
+    frame["game_state"]["potions"][-1] = {"id": "Potion Slot"}
+    adapter.update(frame)
+    assert ga.claim(ga.CLAIM_POTION, 0) in adapter._legal_reward_actions()
