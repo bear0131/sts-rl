@@ -662,7 +662,7 @@ def test_real_search_reconciles_generated_candidates_before_decision(combat_fact
     real_desc = env.thick.select_descriptor()
     for candidate, card_id in zip(
         [c for c in real_desc["candidates"] if c["card"] is not None],
-        ["Anger", "Bash", "Cleave"],
+        ["HandOfGreed", "PanicButton", "Ghostly"],
     ):
         candidate["card"] = {"id": card_id, "up": 0, "cost": 0}
 
@@ -682,7 +682,7 @@ def test_real_search_reconciles_generated_candidates_before_decision(combat_fact
         for c in env.thick.bc.select_info()["candidates"]
         if not c["skip"]
     ]
-    assert actual == ["ANGER", "BASH", "CLEAVE"]
+    assert actual == ["HAND_OF_GREED", "PANIC_BUTTON", "APPARITION"]
     assert search.run_alignment_checks == 1
 
 
@@ -939,3 +939,18 @@ def test_real_speed_potion_dexterity_expires_at_turn_end(combat_factory):
     bc.apply_custom_state({"player": {"powers": [("LOSE_DEXTERITY", 5)]}})
     bc.apply_custom_state({"player": {"powers": []}})
     assert "Lose Dexterity" not in _powers(bc.to_dict()["player"]["powers"])
+
+
+@pytest.mark.parametrize("native,java", [
+    ("APPARITION", "Ghostly"), ("BLOOD_FOR_BLOOD", "Blood for Blood"),
+    ("FLASH_OF_STEEL", "Flash of Steel"), ("HAND_OF_GREED", "HandOfGreed"),
+    ("JAX", "J.A.X."), ("MASTER_OF_STRATEGY", "Master of Strategy"),
+    ("PANIC_BUTTON", "PanicButton"), ("RITUAL_DAGGER", "RitualDagger"),
+])
+def test_irregular_real_card_ids_roundtrip_native_piles(combat_factory, native, java):
+    from bridge.schemas.combat_state import _card, _sim_card_id, real_to_sim_card_enum
+    assert real_to_sim_card_enum(java) == native
+    assert _sim_card_id(native) == java
+    env = combat_factory(["STRIKE_RED"] * 5)
+    env.thick.bc.apply_custom_state({"hand": _card_rows([{"id": java, "up": 0}])})
+    assert normalize_sim(env.thick.bc.to_dict())["hand"][0]["id"] == _card(java, 0)["id"]

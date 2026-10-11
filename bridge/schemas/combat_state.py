@@ -229,6 +229,15 @@ _CARD_OVERRIDE = {
     "STRIKE_PURPLE": "Strike_P", "DEFEND_PURPLE": "Defend_P",
     "ASCENDERS_BANE": "AscendersBane",
     "CURSE_OF_THE_BELL": "CurseOfTheBell",
+    # Ironclad/neutral/event cards: Java IDs are not display-name title case.
+    "APPARITION": "Ghostly",
+    "BLOOD_FOR_BLOOD": "Blood for Blood",
+    "FLASH_OF_STEEL": "Flash of Steel",
+    "HAND_OF_GREED": "HandOfGreed",
+    "JAX": "J.A.X.",
+    "MASTER_OF_STRATEGY": "Master of Strategy",
+    "PANIC_BUTTON": "PanicButton",
+    "RITUAL_DAGGER": "RitualDagger",
 }
 
 
