@@ -1,5 +1,7 @@
 """Regression coverage for real-game combat root state injection."""
 
+import pytest
+
 from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch
 from bridge.schemas.combat_state import _REAL_MONSTER_MOVES
@@ -144,6 +146,12 @@ def test_real_search_reconciles_generated_candidates_before_decision(combat_fact
     search = RealCombatSearch.__new__(RealCombatSearch)
     search.env = env
     search.run_alignment_checks = 0
+    # CommunicationMod describes a single generated-card choice with a
+    # one-card maximum and three visible cards.  Native select_info reserves
+    # pick_max/cards_in_hand for MULTI hand selections, so those two fields
+    # deliberately differ while the actual single-choice contract agrees.
+    real_desc["pick_max"] = 1
+    real_desc["cards_in_hand"] = 3
     search._reconcile_selection(real_desc)
 
     actual = [
@@ -153,3 +161,17 @@ def test_real_search_reconciles_generated_candidates_before_decision(combat_fact
     ]
     assert actual == ["ANGER", "BASH", "CLEAVE"]
     assert search.run_alignment_checks == 1
+
+
+def test_real_search_still_rejects_single_select_progress_mismatch(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, relics=("Nilry's Codex",))
+    env.thick.bc.execute(sts.Action(sts.ActionType.END_TURN))
+    env._invalidate_backend_cache()
+    real_desc = env.thick.select_descriptor()
+    real_desc["pick_remaining"] = 2
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.run_alignment_checks = 0
+    with pytest.raises(RuntimeError, match="pick_remaining mismatch"):
+        search._reconcile_selection(real_desc)

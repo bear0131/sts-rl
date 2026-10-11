@@ -455,11 +455,24 @@ class RealCombatSearch:
             raise RuntimeError(
                 "combat selection candidates differ: "
                 f"real={real_candidates!r} sim={sim_candidates!r}")
-        for key in ("multi", "pick_max", "cards_in_hand"):
-            if int(real_desc.get(key, 0)) != int(sim_desc.get(key, 0)):
-                raise RuntimeError(
-                    f"combat selection {key} mismatch real={real_desc.get(key)!r} "
-                    f"sim={sim_desc.get(key)!r}")
+        real_multi = bool(real_desc.get("multi"))
+        sim_multi = bool(sim_desc.get("multi"))
+        if real_multi != sim_multi:
+            raise RuntimeError(
+                f"combat selection multi mismatch real={real_multi!r} sim={sim_multi!r}")
+        if int(real_desc.get("pick_remaining", 0)) != int(
+            sim_desc.get("pick_remaining", 0)
+        ):
+            raise RuntimeError(
+                "combat selection pick_remaining mismatch "
+                f"real={real_desc.get('pick_remaining')!r} "
+                f"sim={sim_desc.get('pick_remaining')!r}")
+        if real_multi:
+            for key in ("pick_max", "cards_in_hand"):
+                if int(real_desc.get(key, 0)) != int(sim_desc.get(key, 0)):
+                    raise RuntimeError(
+                        f"combat selection {key} mismatch real={real_desc.get(key)!r} "
+                        f"sim={sim_desc.get(key)!r}")
         self.env._invalidate_backend_cache()
         self.run_alignment_checks += 1
 
