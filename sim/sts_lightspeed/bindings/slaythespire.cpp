@@ -110,12 +110,12 @@ py::list monsterPowersToList(const sts::Monster &m) {
     for (int s = 0; s < static_cast<int>(sts::MonsterStatus::INVALID); ++s) {
         const auto status = static_cast<sts::MonsterStatus>(s);
         const int v = m.getStatusInternal(status);
-        // Time Eater's Time Warp is a presence-bearing counter.  It is active
+        // Time Warp and Slow are presence-bearing counters. They are active
         // at zero before the first card, and dropping that zero removes the
         // trigger that advances the counter after cards are played.
-        const bool zeroTimeWarp = status == sts::MonsterStatus::TIME_WARP
-            && m.hasStatusInternal(status);
-        if (v != 0 || zeroTimeWarp) {
+        const bool zeroCounter = (status == sts::MonsterStatus::TIME_WARP
+            || status == sts::MonsterStatus::SLOW) && m.hasStatusInternal(status);
+        if (v != 0 || zeroCounter) {
             out.append(py::make_tuple(sts::enemyStatusStrings[s], v));
         }
     }
@@ -722,17 +722,19 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     "VULNERABLE", "WEAK", "ANGRY", "BEAT_OF_DEATH",
                     "CURIOSITY", "CURL_UP", "ENRAGE", "FADING", "FLIGHT",
                     "GENERIC_STRENGTH_UP", "INTANGIBLE", "MALLEABLE",
-                    "MODE_SHIFT", "RITUAL", "SLOW", "SPORE_CLOUD",
+                    "MODE_SHIFT", "RITUAL", "SPORE_CLOUD",
                     "THIEVERY", "THORNS", "INVINCIBLE",
                     "REACTIVE", "SHARP_HIDE", "ASLEEP", "BARRICADE",
                     "MINION", "MINION_LEADER", "PAINFUL_STABS", "REGROW",
                     "SHIFTING", "STASIS",
                 };
-                // The ordinary setter deliberately treats TIME_WARP=0 as an
+                // The ordinary setter deliberately treats TIME_WARP/SLOW=0 as an
                 // active counter.  Clear its presence explicitly before the
                 // incoming real-game power list is applied.
                 monster.setStatus<sts::MonsterStatus::TIME_WARP>(0);
                 monster.setHasStatus<sts::MonsterStatus::TIME_WARP>(false);
+                monster.setStatus<sts::MonsterStatus::SLOW>(0);
+                monster.setHasStatus<sts::MonsterStatus::SLOW>(false);
                 for (const auto *name : kStatuses) {
                     setRuleMonsterStatusByName(bc, i, name, 0);
                 }
@@ -1171,7 +1173,7 @@ void setRulePlayerStatusByName(
 template <MonsterStatus status>
 void setRuleMonsterStatus(Monster &monster, int amount) {
     monster.setStatus<status>(amount);
-    if constexpr (status == MonsterStatus::TIME_WARP) {
+    if constexpr (status == MonsterStatus::TIME_WARP || status == MonsterStatus::SLOW) {
         // Zero is the initial public clock value, not absence of the power.
         monster.setHasStatus<status>(true);
     } else {
