@@ -164,6 +164,60 @@ def test_game_context_potion_state_can_match_real_slots(combat_factory):
     ]
 
 
+def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
+    env = combat_factory(
+        ["STRIKE_RED"] * 5,
+        encounter="Jaw Worm",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.gc.set_potion_state(["SmokeBomb", "EMPTY_POTION_SLOT"])
+    env.thick.bc.apply_custom_state({
+        "potions": ["SmokeBomb", "EMPTY_POTION_SLOT"],
+    })
+    env._invalidate_backend_cache()
+
+    from bridge.real_game_env import RealGameAdapter
+    adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    raw = env.thick.bc.to_dict()
+    monster = raw["monsters"][0]
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["play", "end", "potion", "state"],
+        "game_state": {
+            "room_phase": "COMBAT",
+            "screen_type": "NONE",
+            "floor": 1,
+            "potions": [{
+                "id": "SmokeBomb", "requires_target": True, "can_use": True,
+            }],
+            "combat_state": {
+                "turn": 1,
+                "hand": [],
+                "monsters": [{
+                    "id": "JawWorm",
+                    "current_hp": monster["hp"],
+                    "max_hp": monster["max_hp"],
+                    "is_gone": False,
+                }],
+            },
+        },
+    })
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.adapter = adapter
+    search.sim_to_real_targets = {0: 0}
+    real_mask = adapter.action_mask()
+    assert real_mask[C.AUTOREGRESSIVE_POTION]
+    assert not real_mask[C.AUTOREGRESSIVE_POTION + 5]
+    remapped = search._remap_real_mask(real_mask)
+    assert remapped[C.AUTOREGRESSIVE_POTION + 5]
+    assert not remapped[C.AUTOREGRESSIVE_POTION]
+    assert search._map_action_to_real(C.AUTOREGRESSIVE_POTION + 5) == C.AUTOREGRESSIVE_POTION
+    assert adapter.command_for_joint_action(C.AUTOREGRESSIVE_POTION) == "POTION use 0 0"
+
+
 def test_generated_combat_choices_can_match_real_screen(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, relics=("Nilry's Codex",))
     battle = env.thick.bc

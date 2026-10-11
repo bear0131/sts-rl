@@ -551,12 +551,38 @@ class RealCombatSearch:
         for base, limit in zip(bases, limits):
             if base <= aid < limit:
                 source, target = divmod(aid - base, 6)
+                if (base == C.AUTOREGRESSIVE_POTION and target == 5
+                        and self._potion_uses_dummy_real_target(source)):
+                    real_mask = np.asarray(self.adapter.action_mask(), dtype=bool)
+                    real_targets = [
+                        index for index in range(5)
+                        if real_mask[base + source * 6 + index]
+                    ]
+                    if not real_targets:
+                        raise RuntimeError(
+                            f"real-game dummy-target potion slot {source} has no live target")
+                    return base + source * 6 + real_targets[0]
                 if target < 5:
                     if target not in self.sim_to_real_targets:
                         raise RuntimeError(f"searched action targets unmapped native slot {target}")
                     target = self.sim_to_real_targets[target]
                 return base + source * 6 + target
         return aid
+
+    def _potion_uses_dummy_real_target(self, slot: int) -> bool:
+        records = self.adapter._potion_records()
+        if not 0 <= int(slot) < len(records):
+            return False
+        potion = records[int(slot)]
+        if not isinstance(potion, dict) or not bool(potion.get("requires_target")):
+            return False
+        potion_id = str(potion.get("id") or potion.get("name") or "")
+        key = "".join(char for char in potion_id.lower() if char.isalnum())
+        # CommunicationMod exposes SmokeBomb.targetRequired=true and requires a
+        # target argument even though the potion's effect is target-independent.
+        # Keep the real command contract while collapsing only this known dummy
+        # UI target to the simulator's untargeted potion action.
+        return key == "smokebomb"
 
     def _remap_real_mask(self, real_mask: np.ndarray) -> np.ndarray:
         result = np.zeros_like(real_mask, dtype=bool)
@@ -567,6 +593,10 @@ class RealCombatSearch:
                                 (C.AUTOREGRESSIVE_POTION, C.AUTOREGRESSIVE_PICK)):
                 if base <= aid < limit:
                     source, target = divmod(int(aid) - base, 6)
+                    if (base == C.AUTOREGRESSIVE_POTION
+                            and self._potion_uses_dummy_real_target(source)):
+                        mapped = base + source * 6 + 5
+                        break
                     if target < 5:
                         if target not in reverse:
                             continue
