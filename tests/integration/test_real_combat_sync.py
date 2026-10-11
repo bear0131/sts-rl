@@ -260,6 +260,22 @@ def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert normalize_sim(env.thick.bc.to_dict())["monsters"][0]["powers"]["Regen"] == 3
 
 
+def test_java_player_regeneration_power_maps_to_native_regen_amount(combat_factory):
+    assert _player_powers_real([
+        {"id": "Regeneration", "amount": 5},
+    ]) == {"Regen": 5}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Lagavulin",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "player": {"powers": [("REGEN", 5)]},
+    })
+    assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["Regen"] == 5
+
+
 def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
     env = combat_factory(
         ["STRIKE_RED"] * 5,
