@@ -58,6 +58,17 @@ void setRulePlayerStatusByName(BattleContext &bc, const std::string &name, int a
 void setRuleMonsterStatusByName(BattleContext &bc, int target, const std::string &name, int amount);
 sts::CardId cardIdFromEnum(const std::string &name);
 
+Potion potionFromNameOrId(const std::string &value) {
+    const auto count = sizeof(potionNames) / sizeof(potionNames[0]);
+    static_assert(count == sizeof(potionIds) / sizeof(potionIds[0]));
+    for (std::size_t i = 1; i < count; ++i) {
+        if (value == potionNames[i] || value == potionIds[i]) {
+            return static_cast<Potion>(i);
+        }
+    }
+    throw std::invalid_argument("unknown custom potion name or id: " + value);
+}
+
 template <typename Pile>
 py::list cardPileToList(const Pile &pile) {
     py::list out;
@@ -542,10 +553,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         std::fill(potions.begin(), potions.end(), Potion::EMPTY_POTION_SLOT);
         int count = 0;
         for (std::size_t slot = 0; slot < names.size(); ++slot) {
-            const auto begin = std::begin(potionNames), end = std::end(potionNames);
-            const auto found = std::find(begin + 1, end, names[slot]);
-            if (found == end) throw std::invalid_argument("unknown custom potion name");
-            potions[slot] = static_cast<Potion>(found - begin);
+            potions[slot] = potionFromNameOrId(names[slot]);
             if (potions[slot] != Potion::EMPTY_POTION_SLOT) ++count;
         }
         bc.potions = potions;
@@ -1946,13 +1954,10 @@ PYBIND11_MODULE(slaythespire, m) {
             std::fill(gc.potions.begin(), gc.potions.end(), Potion::EMPTY_POTION_SLOT);
             gc.potionCount = 0;
             for (std::size_t slot = 0; slot < names.size(); ++slot) {
-                const auto begin = std::begin(potionNames), end = std::end(potionNames);
-                const auto found = std::find(begin + 1, end, names[slot]);
-                if (found == end) throw std::invalid_argument("unknown custom potion name");
-                gc.potions[slot] = static_cast<Potion>(found - begin);
+                gc.potions[slot] = potionFromNameOrId(names[slot]);
                 if (gc.potions[slot] != Potion::EMPTY_POTION_SLOT) ++gc.potionCount;
             }
-        }, "replace persistent held potion slots without advancing the run")
+        }, "replace held potion slots by simulator name or stable game id without advancing the run")
         .def_property_readonly("screen_state_name",
                [](const GameContext &gc) { return std::string(pybind11::str(pybind11::cast(gc.screenState))); })
         .def_property_readonly("cur_event_name",

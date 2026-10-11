@@ -100,9 +100,16 @@ def test_custom_state_syncs_runtime_cost_counters_and_hp_order(combat_factory):
 
 def test_game_context_potion_state_can_match_real_slots(combat_factory):
     env = combat_factory(["STRIKE_RED"])
-    env.thick.gc.set_potion_state(["Fire Potion", "EMPTY_POTION_SLOT"])
+    env.thick.gc.set_potion_state(["AttackPotion", "EMPTY_POTION_SLOT"])
     assert list(env.thick.gc.overworld_potions)[:2] == [
-        "Fire Potion",
+        "Attack Potion",
+        "EMPTY_POTION_SLOT",
+    ]
+    env.thick.bc.apply_custom_state({
+        "potions": ["AttackPotion", "EMPTY_POTION_SLOT"],
+    })
+    assert env.thick.bc.to_dict()["potions"][:2] == [
+        "Attack Potion",
         "EMPTY_POTION_SLOT",
     ]
 
