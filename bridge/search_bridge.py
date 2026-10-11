@@ -420,7 +420,10 @@ class RealCombatSearch:
                 continue
             sim_monster = sim["monsters"][sim_index]
             real_monster = real["monsters"][real_index]
-            if (not sim_monster["gone"] and sim_monster["id"] != "PAD"
+            # A predicted kill (or a user reload) must not erase a confirmed
+            # entity mapping. The incoming live HP is authoritative and will
+            # restore this slot during root injection.
+            if (sim_monster["id"] != "PAD"
                     and sim_monster["id"] == real_monster["id"]):
                 mapping[sim_index] = real_index
                 unused.remove(real_index)

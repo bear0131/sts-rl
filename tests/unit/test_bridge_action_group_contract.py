@@ -109,3 +109,23 @@ def test_mod_error_refreshes_state_instead_of_restarting_run():
 
     assert decision.command == "STATE"
     assert decision.reason == "mod_error_state_refresh"
+
+@pytest.mark.parametrize('screen,room,command,delayed', [
+    ('EVENT', 'EVENT', 'CHOOSE 0', True),
+    ('EVENT', 'EVENT', 'PROCEED', True),
+    ('CARD_REWARD', 'COMPLETE', 'CHOOSE 1', True),
+    ('CARD_REWARD', 'COMPLETE', 'SKIP', True),
+    ('COMBAT_REWARD', 'COMPLETE', 'CHOOSE card', True),
+    ('GRID', 'EVENT', 'CHOOSE 0', True),
+    ('CARD_REWARD', 'COMBAT', 'CHOOSE 0', False),
+    ('NONE', 'COMBAT', 'PLAY 1 0', False),
+    ('EVENT', 'EVENT', 'STATE', False),
+])
+def test_real_event_reward_command_pacing(monkeypatch, screen, room, command, delayed):
+    from bridge.client import agent_orchestrator as agent
+    calls = []
+    monkeypatch.setattr(agent.time, 'sleep', lambda seconds: calls.append(('wait', seconds)))
+    monkeypatch.setattr(agent, 'send', lambda value: calls.append(('send', value)))
+    agent.send_decision({'game_state': {'screen_type': screen, 'room_phase': room}},
+                        SimpleNamespace(command=command))
+    assert calls == ([('wait', 0.5)] if delayed else []) + [('send', command)]

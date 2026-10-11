@@ -188,6 +188,25 @@ def test_real_search_aligns_state_diff_to_real_monster_slot_order(combat_factory
     assert diff(real, search._sim_state_in_real_target_order()) == []
 
 
+def test_confirmed_target_mapping_survives_shadow_kill(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, encounter="Three Darklings",
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    real = normalize_sim(env.thick.bc.to_dict())
+    env.thick.bc.apply_custom_state({"monsters": [{"gone": True}, {}, {}]})
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.sim_to_real_targets = {0: 0, 1: 1, 2: 2}
+
+    # All three share an ID: matching only live shadow slots would either
+    # lose the first entity or shift one of its siblings into its place.
+    assert search._target_mapping(real) == {0: 0, 1: 1, 2: 2}
+    env.thick.bc.apply_custom_state({"monsters": [
+        {"hp": m["hp"], "max_hp": m["max_hp"]} for m in real["monsters"]
+    ]})
+    assert [m["hp"] for m in normalize_sim(env.thick.bc.to_dict())["monsters"]] == [
+        m["hp"] for m in real["monsters"]]
+
+
 def test_shadow_battle_nonce_recovers_randomized_encounter_roster():
     def make_gc(seed_nonce):
         gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 159066251 + seed_nonce, 0)

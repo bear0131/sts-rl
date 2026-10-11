@@ -65,6 +65,10 @@ that placeholder automatically. The upper policy then receives the actual
 three candidates on `CARD_REWARD` and chooses a card or `SKIP` there, matching
 the simulator's candidate-bearing decision point.
 
+Event choices and overworld reward/card-selection commands wait 0.5 seconds
+before being sent. Combat card generation (such as Nilry's Codex) and ordinary
+combat commands keep their existing timing.
+
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
 

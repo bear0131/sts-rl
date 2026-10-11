@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -480,6 +481,19 @@ def _log_decision(frame: dict[str, Any], decision: RealDecision, adapter: RealGa
     )
 
 
+def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
+    gs = frame.get("game_state") or {}
+    screen = str(gs.get("screen_type") or "").upper()
+    verb = decision.command.split()[0].upper()
+    outside_combat = str(gs.get("room_phase") or "").upper() != "COMBAT"
+    if verb not in {"STATE", "WAIT"} and (
+        screen == "EVENT"
+        or (outside_combat and screen in {"GRID", "CARD_REWARD", "COMBAT_REWARD"})
+    ):
+        time.sleep(0.5)
+    send(decision.command)
+
+
 def main() -> None:
     args = build_parser().parse_args()
     log.info("=== agent session start argv=%s cwd=%s ===", sys.argv, Path.cwd())
@@ -535,7 +549,7 @@ def main() -> None:
                 frame = json.loads(line)
                 decision = agent.decide(frame)
                 _log_decision(frame, decision, adapter)
-                send(decision.command)
+                send_decision(frame, decision)
             except Exception:
                 if combat_search is not None:
                     combat_search.note_error()
