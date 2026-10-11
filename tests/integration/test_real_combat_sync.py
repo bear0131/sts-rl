@@ -411,6 +411,26 @@ def test_java_compulsive_power_syncs_writhing_mass_reactive_presence(combat_fact
     assert "Reactive" not in _powers(restored["powers"])
 
 
+def test_writhing_mass_wither_reports_real_intent_damage(combat_factory):
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Writhing Mass",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "monsters": [{
+            "move_history": ["WRITHING_MASS_WITHER", "WRITHING_MASS_FLAIL"],
+            "base_damage": 10,
+            "hits": 1,
+            "powers": [("MALLEABLE", 4)],
+            "reactive": True,
+        }],
+    })
+    monster = normalize_sim(env.thick.bc.to_dict())["monsters"][0]
+    assert (monster["base_damage"], monster["hits"]) == (10, 1)
+    assert monster["reactive"] is True
+
+
 def test_gremlin_leader_dynamic_minion_species_reuses_native_slots(combat_factory):
     env = combat_factory(
         ["STRIKE_RED"],
