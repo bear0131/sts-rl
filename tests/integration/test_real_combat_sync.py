@@ -264,6 +264,20 @@ def test_java_flex_power_maps_to_native_lose_strength_amount(combat_factory):
     }
 
 
+def test_java_life_link_power_maps_to_native_regrow_presence(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Life Link", "amount": -1},
+    ]) == {"Regrow": 1}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Three Darklings",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    powers = normalize_sim(env.thick.bc.to_dict())["monsters"][0]["powers"]
+    assert powers["Regrow"] == 1
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},
