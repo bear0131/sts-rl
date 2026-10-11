@@ -706,6 +706,41 @@ def test_real_search_maps_compacted_armaments_selection_handles(combat_factory):
     assert search.run_alignment_checks == 1
 
 
+def test_real_search_reconciles_warcry_single_pick_remaining(combat_factory):
+    env = combat_factory(
+        ["WARCRY", "STRIKE_RED", "DEFEND_RED"],
+        encounter="The Maw",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "hand": ["WARCRY", "STRIKE_RED"],
+        "draw": ["DEFEND_RED"],
+        "player": {"energy": 3},
+    })
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+
+    sim_desc = env.thick.select_descriptor()
+    assert sim_desc["context"] == "WARCRY"
+    assert sim_desc["multi"] is False
+    assert sim_desc["pick_remaining"] == 1
+
+    # CommunicationMod reports max_cards=1 and the compacted visible hand.
+    # pick_max/cards_in_hand are transport details for SINGLE selections; the
+    # semantic one-pick progress and candidates must align.
+    real_desc = deepcopy(sim_desc)
+    real_desc["pick_remaining"] = 1
+    real_desc["pick_max"] = 1
+    real_desc["cards_in_hand"] = len(real_desc["candidates"])
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.run_alignment_checks = 0
+    search.sim_to_real_selection_handles = {}
+    search._reconcile_selection(real_desc)
+    assert search.run_alignment_checks == 1
+
+
 def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
     from bridge.real_game_env import RealGameAdapter
 

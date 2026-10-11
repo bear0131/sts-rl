@@ -614,8 +614,14 @@ def combat_select_options(select_info):
     Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any
     from pick_max being the whole hand (Gamble) vs a fixed cap (Exhaust Many)."""
     multi = bool(select_info.get("multi"))
+    # CardSelectInfo::pickCount is only populated for MULTI tasks.  Every live
+    # SINGLE task still requires exactly one pick, but the native field remains
+    # zero (Warcry/Armaments/Headbutt and the generated-card screens included).
+    # Surface the semantic count here so the observation and the real-game
+    # reconciliation agree with CommunicationMod's max_cards=1 contract.
+    pick_count = int(select_info["pick_count"]) if multi else 1
     result = _select_options(
-        select_info["context"], select_info["pick_count"], 0, [],
+        select_info["context"], pick_count, 0, [],
         can_pick_zero=select_info["can_pick_zero"] or multi,
         can_pick_any=select_info["can_pick_any"],
         multi=multi,
