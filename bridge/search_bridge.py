@@ -610,11 +610,11 @@ class RealCombatSearch:
             return False
         potion_id = str(potion.get("id") or potion.get("name") or "")
         key = "".join(char for char in potion_id.lower() if char.isalnum())
-        # CommunicationMod exposes SmokeBomb.targetRequired=true and requires a
-        # target argument even though the potion's effect is target-independent.
-        # Keep the real command contract while collapsing only this known dummy
-        # UI target to the simulator's untargeted potion action.
-        return key == "smokebomb"
+        # CommunicationMod exposes these target-independent potions with
+        # targetRequired=true and requires a target argument.  Keep the real
+        # command contract while collapsing only the observed dummy UI target
+        # to the simulator's untargeted potion action.
+        return key in {"smokebomb", "explosivepotion"}
 
     def _remap_real_mask(self, real_mask: np.ndarray) -> np.ndarray:
         result = np.zeros_like(real_mask, dtype=bool)

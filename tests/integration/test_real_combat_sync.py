@@ -385,15 +385,19 @@ def test_java_player_regeneration_power_maps_to_native_regen_amount(combat_facto
     assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["Regen"] == 5
 
 
-def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
+@pytest.mark.parametrize("potion_id", ["SmokeBomb", "Explosive Potion"])
+def test_real_dummy_target_potion_maps_to_native_untargeted_action(
+    combat_factory,
+    potion_id,
+):
     env = combat_factory(
         ["STRIKE_RED"] * 5,
         encounter="Jaw Worm",
         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
     )
-    env.thick.gc.set_potion_state(["SmokeBomb", "EMPTY_POTION_SLOT"])
+    env.thick.gc.set_potion_state([potion_id, "EMPTY_POTION_SLOT"])
     env.thick.bc.apply_custom_state({
-        "potions": ["SmokeBomb", "EMPTY_POTION_SLOT"],
+        "potions": [potion_id, "EMPTY_POTION_SLOT"],
     })
     env._invalidate_backend_cache()
 
@@ -410,7 +414,7 @@ def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_fa
             "screen_type": "NONE",
             "floor": 1,
             "potions": [{
-                "id": "SmokeBomb", "requires_target": True, "can_use": True,
+                "id": potion_id, "requires_target": True, "can_use": True,
             }],
             "combat_state": {
                 "turn": 1,
