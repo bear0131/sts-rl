@@ -181,6 +181,13 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         // monster status.
         md["unawakened"] =
             m.id == sts::MonsterId::AWAKENED_ONE && !m.miscInfo;
+        // Java's CompulsivePower is the persistent presence marker for
+        // Writhing Mass's Reactive behavior. The numeric REACTIVE storage is
+        // also a transient queued-hit counter, so expose presence separately
+        // instead of converting a settled root into a pending reroll.
+        md["reactive"] =
+            m.id == sts::MonsterId::WRITHING_MASS
+            && m.hasStatus<sts::MonsterStatus::REACTIVE>();
         // current intent: the move the monster has rolled for this turn. setMove
         // shifts the previous move to moveHistory[1] and stores the new one in
         // moveHistory[0], so [0] is the *current* intent (the obs MOVE_VOCAB id).
@@ -721,6 +728,15 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     const int amount = pair[1].cast<int>();
                     setRuleMonsterStatusByName(bc, i, name, amount);
                 }
+            }
+            if (m.contains("reactive")) {
+                const bool reactive = m["reactive"].cast<bool>();
+                if (reactive && monster.id != sts::MonsterId::WRITHING_MASS) {
+                    throw std::invalid_argument(
+                        "reactive root state is only valid for Writhing Mass");
+                }
+                monster.setStatus<sts::MonsterStatus::REACTIVE>(0);
+                monster.setHasStatus<sts::MonsterStatus::REACTIVE>(reactive);
             }
         }
         bc.monsters.monstersAlive = 0;

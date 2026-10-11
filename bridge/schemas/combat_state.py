@@ -34,7 +34,7 @@ localized `name` field, which is GBK-localized and unstable):
 # the canonical power map would therefore reject an otherwise exact root.
 # Pen Nib's armed power remains observable separately from its relic counter;
 # OBS18 includes it in player_buffs.
-_POWER_DROP = {"Asleep", "Split", "Explosive", "Unawakened"}
+_POWER_DROP = {"Asleep", "Split", "Explosive", "Unawakened", "Compulsive"}
 BOOLEAN_PLAYER_POWERS = frozenset({
     "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
@@ -134,6 +134,16 @@ def _monster_real(m):
             hp > 0
             and m["id"] == "AwakenedOne"
             and any(p["id"] == "Unawakened" for p in m["powers"])
+        ),
+        # Java exposes Writhing Mass's attack-triggered intent reroll as the
+        # presence power Compulsive. The native simulator stores the same
+        # mechanism in the REACTIVE status bit while reusing its numeric slot
+        # as a transient queued-hit counter. Carry presence separately so a
+        # settled root does not inject a fake pending reroll count of one.
+        "reactive": (
+            hp > 0
+            and m["id"] == "WrithingMass"
+            and any(p["id"] == "Compulsive" for p in m["powers"])
         ),
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
@@ -379,7 +389,8 @@ def _norm_sim_monster(m):
     if m["id"] == _SIM_MONSTER_INVALID:
         return dict(id="PAD", hp=0, max_hp=0, block=0, gone=True,
                     base_damage=0, adjusted_damage=0, hits=0, powers={},
-                    move="INVALID", move_id=0)
+                    move="INVALID", move_id=0, unawakened=False,
+                    reactive=False)
     base, hits = _attack(m["base_damage"], m["hits"])
     adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
     hp = m["hp"]
@@ -393,6 +404,7 @@ def _norm_sim_monster(m):
         "adjusted_damage": adjusted,
         "hits": hits,
         "unawakened": bool(m.get("unawakened", False)),
+        "reactive": bool(m.get("reactive", False)),
         "powers": _powers_sim(m["powers"]) if hp > 0 else {},
         # current intent: the sim now exports the rolled MonsterMoveId as an
         # enum-name string + int (see bindings to_dict). Carried for the obs
@@ -706,7 +718,7 @@ def diff_overworld(real, sim):
 
 _MONSTER_CMP_FIELDS = (
     "id", "hp", "max_hp", "block", "gone", "base_damage", "hits",
-    "unawakened", "powers",
+    "unawakened", "reactive", "powers",
 )
 
 

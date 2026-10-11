@@ -62,7 +62,7 @@ _SUPPORTED_MONSTER_POWERS = frozenset({
     "ANGRY", "BEAT_OF_DEATH", "CURIOSITY", "CURL_UP", "ENRAGE",
     "FADING", "FLIGHT", "GENERIC_STRENGTH_UP", "INTANGIBLE",
     "MALLEABLE", "MODE_SHIFT", "RITUAL", "SLOW", "SPORE_CLOUD",
-    "THIEVERY", "THORNS", "TIME_WARP", "INVINCIBLE", "REACTIVE",
+    "THIEVERY", "THORNS", "TIME_WARP", "INVINCIBLE",
     "SHARP_HIDE", "ASLEEP", "BARRICADE", "MINION", "MINION_LEADER",
     "PAINFUL_STABS", "REGROW", "SHIFTING", "STASIS",
 })
@@ -538,6 +538,7 @@ class RealCombatSearch:
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
                 "unawakened": bool(monster.get("unawakened", False)),
+                "reactive": bool(monster.get("reactive", False)),
                 "move_history": [move, last_move],
                 "base_damage": int(monster["base_damage"]),
                 "hits": int(monster["hits"]),

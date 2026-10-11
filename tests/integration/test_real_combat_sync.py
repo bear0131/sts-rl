@@ -9,6 +9,7 @@ from env.core import native_actions as C
 from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
 from bridge.schemas.combat_state import (
     _REAL_MONSTER_MOVES,
+    _monster_real,
     _monster_powers_real,
     _player_powers_real,
     diff,
@@ -368,6 +369,46 @@ def test_java_unawakened_power_syncs_native_boss_phase(combat_factory):
         "monsters": [{}, {}, {"unawakened": False}],
     })
     assert env.thick.bc.to_dict()["monsters"][2]["unawakened"] is False
+
+
+def test_java_compulsive_power_syncs_writhing_mass_reactive_presence(combat_factory):
+    real = _monster_real({
+        "id": "WrithingMass",
+        "current_hp": 160,
+        "max_hp": 160,
+        "block": 0,
+        "is_gone": False,
+        "move_base_damage": 15,
+        "move_adjusted_damage": 15,
+        "move_hits": 1,
+        "move_id": 2,
+        "powers": [
+            {"id": "Malleable", "amount": 3},
+            {"id": "Compulsive", "amount": -1},
+        ],
+    })
+    assert real["reactive"] is True
+    assert real["powers"] == {"Malleable": 3}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Writhing Mass",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    raw = env.thick.bc.to_dict()
+    assert raw["monsters"][0]["reactive"] is True
+    assert normalize_sim(raw)["monsters"][0]["reactive"] is True
+
+    env.thick.bc.apply_custom_state({
+        "monsters": [{"reactive": False}],
+    })
+    assert env.thick.bc.to_dict()["monsters"][0]["reactive"] is False
+    env.thick.bc.apply_custom_state({
+        "monsters": [{"reactive": True}],
+    })
+    restored = env.thick.bc.to_dict()["monsters"][0]
+    assert restored["reactive"] is True
+    assert "Reactive" not in _powers(restored["powers"])
 
 
 def test_gremlin_leader_dynamic_minion_species_reuses_native_slots(combat_factory):
