@@ -884,3 +884,28 @@ def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
     search.run_alignment_checks = 0
     search._reconcile_selection(real_desc)
     assert search.run_alignment_checks == 1
+
+
+@pytest.mark.parametrize("room,relics,berserk,expected", [
+    ("MonsterRoom", [], 1, 4),
+    ("MonsterRoom", ["Cursed Key", "SlaversCollar"], 2, 6),
+    ("MonsterRoomElite", ["Cursed Key", "SlaversCollar"], 2, 7),
+    ("MonsterRoomBoss", ["SlaversCollar"], 0, 4),
+])
+def test_real_berserk_syncs_next_turn_energy(combat_factory, room, relics, berserk, expected):
+    from bridge.schemas.combat_state import _real_energy_per_turn
+
+    real = {"room_type": room, "relics": [{"id": r} for r in relics],
+            "combat_state": {"player": {"energy": 0,
+                "powers": [{"id": "Berserk", "amount": berserk}]}}}
+    energy = _real_energy_per_turn(real)
+    assert energy == expected
+    env = combat_factory(["DEFEND_RED"] * 10, encounter="Jaw Worm",
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    # Repeated state synchronization must not add Berserk a second time.
+    for _ in range(2):
+        bc.apply_custom_state({"player": {"energy": 0, "energy_per_turn": energy}})
+    assert bc.to_dict()["player"]["energy_per_turn"] == expected
+    bc.execute(sts.Action(sts.ActionType.END_TURN))
+    assert bc.to_dict()["player"]["energy"] == expected

@@ -164,6 +164,22 @@ def _monster_real(m):
     }
 
 
+def _real_energy_per_turn(game_state):
+    # Native Berserk is folded into energyPerTurn rather than a power slot.
+    # Rebuild from the authoritative relics/power, never current (spent) energy.
+    energy_relics = {
+        "Busted Crown", "Coffee Dripper", "Cursed Key", "Ectoplasm",
+        "Fusion Hammer", "Mark of Pain", "Philosopher's Stone",
+        "Runic Dome", "Sozu", "Velvet Choker",
+    }
+    relics = {r["id"] for r in game_state.get("relics", [])}
+    collar = "SlaversCollar" in relics and game_state.get("room_type") in {
+        "MonsterRoomElite", "MonsterRoomBoss",
+    }
+    powers = _powers_real(game_state["combat_state"]["player"]["powers"])
+    return 3 + len(relics & energy_relics) + int(collar) + int(powers.get("Berserk", 0))
+
+
 def normalize_real(game_state):
     """`game_state` is the dict under the top-level 'game_state' key of a
     CommunicationMod frame. Returns the canonical combat state, or None if the
@@ -188,7 +204,9 @@ def normalize_real(game_state):
             "energy": p["energy"],
             "gold": game_state.get("gold", 0),
             "combat_counters": combat_counters,
-            "powers": _player_powers_real(p["powers"]),
+            "powers": {k: v for k, v in _player_powers_real(p["powers"]).items()
+                       if k != "Berserk"},
+            "energy_per_turn": _real_energy_per_turn(game_state),
         },
         "monsters": [_monster_real(m) for m in cs["monsters"]],
         "hand": _cards_real(cs["hand"], include_cost=True),
@@ -435,6 +453,7 @@ def normalize_sim(raw):
             "gold": p.get("gold", 0),
             "combat_counters": p.get("combat_counters", {}),
             "powers": _powers_sim(p["powers"]),
+            "energy_per_turn": p.get("energy_per_turn", 3),
         },
         "monsters": [
             # Preserve native target slots, including reserved empty positions.
@@ -744,6 +763,9 @@ def diff(real, sim, pile_mode="auto"):
     cmp("turn", real["turn"], sim["turn"])
     for k in ("hp", "max_hp", "block", "energy"):
         cmp(f"player.{k}", real["player"][k], sim["player"][k])
+    if "energy_per_turn" in real["player"]:
+        cmp("player.energy_per_turn", real["player"]["energy_per_turn"],
+            sim["player"].get("energy_per_turn"))
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
 
     # Drop monsters that have left combat (gone=True): when a slime splits, the

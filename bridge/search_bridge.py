@@ -555,6 +555,7 @@ class RealCombatSearch:
                 "max_hp": int(player["max_hp"]),
                 "block": int(player["block"]),
                 "energy": int(player["energy"]),
+                "energy_per_turn": int(player.get("energy_per_turn", 3)),
                 "gold": int(player.get("gold", 0)),
                 "counters": dict(player.get("combat_counters", {})),
                 "powers": _power_rows(player["powers"], _SUPPORTED_PLAYER_POWERS),

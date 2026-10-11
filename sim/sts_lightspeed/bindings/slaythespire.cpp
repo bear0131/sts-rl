@@ -168,6 +168,7 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     counters["last_attack_unblocked_damage"] = bc.player.lastAttackUnblockedDamage;
     player["combat_counters"] = counters;
     player["powers"] = playerPowersToList(bc.player);
+    player["energy_per_turn"] = static_cast<int>(bc.player.energyPerTurn);
     d["player"] = player;
 
     py::list monsters;
@@ -589,6 +590,8 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             getInt(p, "hp", bc.player.curHp), 0, bc.player.maxHp);
         bc.player.block = std::max(0, getInt(p, "block", bc.player.block));
         bc.player.energy = std::max(0, getInt(p, "energy", bc.player.energy));
+        bc.player.energyPerTurn = static_cast<std::int8_t>(
+            std::clamp(getInt(p, "energy_per_turn", bc.player.energyPerTurn), 0, 127));
         bc.player.gold = std::max(0, getInt(p, "gold", bc.player.gold));
         if (p.contains("counters")) {
             auto c = p["counters"].cast<py::dict>();
