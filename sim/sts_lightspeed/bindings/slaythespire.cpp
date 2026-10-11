@@ -174,6 +174,13 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         md["block"] = m.block;
         md["gone"] = m.isDeadOrEscaped();
         md["half_dead"] = m.halfDead;
+        // Java represents Awakened One phase one with UnawakenedPower.  The
+        // simulator already stores the same phase in miscInfo (false for phase
+        // one, true after rebirth); expose it so a real settled frame can
+        // strictly synchronize the hidden rule state without adding a fake
+        // monster status.
+        md["unawakened"] =
+            m.id == sts::MonsterId::AWAKENED_ONE && !m.miscInfo;
         // current intent: the move the monster has rolled for this turn. setMove
         // shifts the previous move to moveHistory[1] and stores the new one in
         // moveHistory[0], so [0] is the *current* intent (the obs MOVE_VOCAB id).
@@ -620,6 +627,16 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             monster.curHp = std::clamp(
                 getInt(m, "hp", monster.curHp), 0, monster.maxHp);
             monster.block = std::max(0, getInt(m, "block", monster.block));
+            if (m.contains("unawakened")) {
+                if (monster.id != sts::MonsterId::AWAKENED_ONE
+                    && m["unawakened"].cast<bool>()) {
+                    throw std::invalid_argument(
+                        "unawakened phase is only valid for Awakened One");
+                }
+                if (monster.id == sts::MonsterId::AWAKENED_ONE) {
+                    monster.miscInfo = m["unawakened"].cast<bool>() ? 0 : 1;
+                }
+            }
             if (m.contains("move_history")) {
                 const auto moves = m["move_history"].cast<std::vector<std::string>>();
                 if (moves.size() > 2) {

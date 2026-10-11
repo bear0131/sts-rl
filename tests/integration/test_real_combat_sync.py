@@ -330,6 +330,29 @@ def test_java_explosive_display_counter_uses_native_move_history(combat_factory)
     assert exploder["move"] == "EXPLODER_SLAM"
 
 
+def test_java_unawakened_power_syncs_native_boss_phase(combat_factory):
+    assert _monster_powers_real([
+        {"id": "Regenerate", "amount": 10},
+        {"id": "Curiosity", "amount": 1},
+        {"id": "Unawakened", "amount": -1},
+    ]) == {"Regen": 10, "Curiosity": 1}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Awakened One",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    raw = env.thick.bc.to_dict()
+    assert raw["monsters"][2]["id"] == "AWAKENED_ONE"
+    assert raw["monsters"][2]["unawakened"] is True
+    assert normalize_sim(raw)["monsters"][2]["unawakened"] is True
+
+    env.thick.bc.apply_custom_state({
+        "monsters": [{}, {}, {"unawakened": False}],
+    })
+    assert env.thick.bc.to_dict()["monsters"][2]["unawakened"] is False
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},

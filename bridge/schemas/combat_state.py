@@ -34,7 +34,7 @@ localized `name` field, which is GBK-localized and unstable):
 # the canonical power map would therefore reject an otherwise exact root.
 # Pen Nib's armed power remains observable separately from its relic counter;
 # OBS18 includes it in player_buffs.
-_POWER_DROP = {"Asleep", "Split", "Explosive"}
+_POWER_DROP = {"Asleep", "Split", "Explosive", "Unawakened"}
 BOOLEAN_PLAYER_POWERS = frozenset({
     "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
@@ -125,6 +125,15 @@ def _monster_real(m):
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
+        # Java exposes the first Awakened One phase as a presence power.  The
+        # native simulator stores the same phase in Monster.miscInfo, so carry
+        # it as an explicit root-state field instead of pretending it is an
+        # ordinary status-vector entry.
+        "unawakened": (
+            hp > 0
+            and m["id"] == "AwakenedOne"
+            and any(p["id"] == "Unawakened" for p in m["powers"])
+        ),
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
         "powers": _monster_powers_real(m["powers"]) if hp > 0 else {},
@@ -382,6 +391,7 @@ def _norm_sim_monster(m):
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
+        "unawakened": bool(m.get("unawakened", False)),
         "powers": _powers_sim(m["powers"]) if hp > 0 else {},
         # current intent: the sim now exports the rolled MonsterMoveId as an
         # enum-name string + int (see bindings to_dict). Carried for the obs
@@ -693,7 +703,10 @@ def diff_overworld(real, sim):
 
 # ================================ diff =================================
 
-_MONSTER_CMP_FIELDS = ("id", "hp", "max_hp", "block", "gone", "base_damage", "hits", "powers")
+_MONSTER_CMP_FIELDS = (
+    "id", "hp", "max_hp", "block", "gone", "base_damage", "hits",
+    "unawakened", "powers",
+)
 
 
 def diff(real, sim, pile_mode="auto"):

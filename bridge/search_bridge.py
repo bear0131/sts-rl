@@ -451,6 +451,7 @@ class RealCombatSearch:
                 "hp": int(monster["hp"]),
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
+                "unawakened": bool(monster.get("unawakened", False)),
                 "move_history": [move, last_move],
                 "base_damage": int(monster["base_damage"]),
                 "hits": int(monster["hits"]),
