@@ -457,6 +457,14 @@ class RealGameAdapter:
             return False
         if self._combat_card_choice_screen():
             return True
+        # CommunicationMod can expose an actionable hand-selection screen
+        # while AbstractDungeon.actionManager is still EXECUTING_ACTIONS.
+        # The settled screen and its advertised commands are the command
+        # contract; waiting for action_phase to change deadlocks selections
+        # opened by effects such as Gambler's Brew.
+        if (self.screen_type() == "HAND_SELECT"
+                and ({"CHOOSE", "CONFIRM"} & self.commands())):
+            return True
         action_phase = str(self.gs.get("action_phase") or "").upper()
         if action_phase and action_phase != "WAITING_ON_USER":
             return False

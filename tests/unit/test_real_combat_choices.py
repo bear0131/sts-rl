@@ -71,6 +71,26 @@ def test_joint_bridge_expands_subset_without_extra_policy_and_checks_ack():
     assert adapter.command_for_joint_action(C.JOINT_MULTI) == "CONFIRM"
 
 
+def test_actionable_hand_select_overrides_executing_action_phase():
+    from env.core import native_actions as C
+
+    hand = [{"id": cid} for cid in ("Thunderclap", "Carnage", "Strike_R", "Pain", "Defend_R")]
+    frame = joint_frame(hand, multi=True)
+    frame["game_state"]["action_phase"] = "EXECUTING_ACTIONS"
+    frame["game_state"]["current_action"] = "ExhaustAction"
+    frame["game_state"]["screen_state"].update({
+        "max_cards": 99,
+        "can_pick_zero": True,
+    })
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update(frame)
+
+    assert adapter.auto_command() is None
+    assert adapter.select_descriptor()["multi"] is True
+    assert adapter.action_mask()[C.JOINT_MULTI]
+    assert adapter.action_mask()[C.JOINT_MULTI + 1]
+
+
 def test_joint_bridge_handles_stable_hand_and_discards_plan_on_screen_change():
     from env.core import native_actions as C
     hand = [{"id":cid} for cid in ("Strike_R", "Bash", "Defend_R")]
