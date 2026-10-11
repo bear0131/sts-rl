@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -503,6 +504,13 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         cl = self.choices()
 
+        # Simulator overworld grids settle immediately after the required last
+        # pick.  The real UI exposes an extra CONFIRM transport step; execute it
+        # automatically so the upper policy sees the same sequence of states.
+        if (st == "GRID" and "CONFIRM" in self.commands()
+                and self._grid_required_selection_complete()):
+            return "CONFIRM", "complete_grid_selection"
+
         if st == "EVENT" and _normalize_event(ss.get("event_id")) == "NEOW" and len(cl) == 1:
             return "CHOOSE 0", "neow_intro"
 
@@ -792,8 +800,18 @@ class RealGameAdapter:
                     opts["event_choices"] = details
         elif phase == "card_select":
             cards = _screen_cards(ss)
-            opts["cards"] = cards
-            opts["select"] = self._select_block(cards=cards, overworld=True)
+            select = self._select_block(cards=cards, overworld=True)
+            # The simulator removes already-selected grid cards from its public
+            # candidate list.  BaseMod keeps every card in ``cards`` and reports
+            # progress separately in ``selected_cards``.  Encode the real frame
+            # in the simulator's public shape while preserving each remaining
+            # card's original UI index in the descriptor below.
+            opts["cards"] = [
+                (candidate["card"]["id"], candidate["card"]["up"])
+                for candidate in select["candidates"]
+                if candidate["card"] is not None
+            ]
+            opts["select"] = select
         elif phase == "map":
             opts["nodes"] = self._map_nodes()
             if self.global_map_view:
@@ -939,6 +957,11 @@ class RealGameAdapter:
 
     # --------------------------------------------------------------- selectors
     def select_descriptor(self) -> dict[str, Any] | None:
+        if self.screen_type() == "GRID":
+            return self._select_block(
+                cards=_screen_cards(_screen_state(self.gs)),
+                overworld=not bool(self.gs.get("combat_state")),
+            )
         if not self.gs.get("combat_state"):
             return None
         if self._combat_card_choice_screen():
@@ -958,7 +981,18 @@ class RealGameAdapter:
             or _int_or_none(ss.get("max_cards"))
             or 1
         )
-        have_selected = _int_or_none(ss.get("have_selected")) or 0
+        selected_raw = ss.get("selected_cards") or ss.get("selectedCards") or []
+        if not isinstance(selected_raw, list):
+            selected_raw = []
+        selected_cards = [
+            _real_card_tuple(card) for card in selected_raw if isinstance(card, dict)
+        ]
+        explicit_have_selected = _int_or_none(ss.get("have_selected"))
+        have_selected = (
+            explicit_have_selected
+            if explicit_have_selected is not None
+            else len(selected_cards)
+        )
         can_pick_zero = bool(ss.get("can_pick_zero", ss.get("canPickZero", False)))
         can_pick_any = bool(ss.get("can_pick_any", ss.get("canPickAny", False)))
         multi = bool(ss.get("multi", False))
@@ -981,11 +1015,30 @@ class RealGameAdapter:
         if pick_max is None:
             pick_max = len(cards) if multi and can_pick_any else pick_count
         raw_cards = ss.get("cards") or (self.gs.get("combat_state") or {}).get("hand") or []
+        selected_uuids = {
+            str(card["uuid"])
+            for card in selected_raw
+            if isinstance(card, dict) and card.get("uuid")
+        }
+        selected_without_uuid = Counter(
+            _real_card_tuple(card)
+            for card in selected_raw
+            if isinstance(card, dict) and not card.get("uuid")
+        )
         candidates = []
         for i, (cid, up) in enumerate(cards):
+            raw_card = raw_cards[i] if i < len(raw_cards) and isinstance(raw_cards[i], dict) else {}
+            if overworld:
+                raw_uuid = str(raw_card.get("uuid") or "")
+                selected = bool(raw_uuid and raw_uuid in selected_uuids)
+                if not raw_uuid and selected_without_uuid[(cid, up)] > 0:
+                    selected_without_uuid[(cid, up)] -= 1
+                    selected = True
+                if selected:
+                    continue
             card = {"id": cid, "up": up}
-            if i < len(raw_cards) and isinstance(raw_cards[i], dict) and "cost" in raw_cards[i]:
-                card["cost"] = raw_cards[i]["cost"]
+            if "cost" in raw_card:
+                card["cost"] = raw_card["cost"]
             candidates.append({"native_index": i, "card": card})
         if not overworld and context == "CODEX" and "SKIP" in self.commands():
             candidates.append({"native_index": len(cards), "card": None})
@@ -998,7 +1051,7 @@ class RealGameAdapter:
             "pick_remaining": max(0, pick_count - have_selected),
             "can_pick_zero": can_pick_zero or multi,
             "can_pick_any": can_pick_any,
-            "selected": [],
+            "selected": selected_cards if overworld else [],
             "multi": multi,
             "pick_max": int(pick_max),
             "cards_in_hand": len(cards) if not overworld else 0,
@@ -1144,7 +1197,8 @@ class RealGameAdapter:
             return [ga.proceed()]
         if "CHOOSE" not in cmds:
             return [ga.proceed()] if "CONFIRM" in cmds else []
-        acts = [ga.select(i) for i, _ in enumerate(_screen_cards(_screen_state(self.gs))[:A.G_MAX])]
+        desc = self.select_descriptor() or {}
+        acts = [ga.select(i) for i, _ in enumerate((desc.get("candidates") or [])[:A.G_MAX])]
         if "CONFIRM" in cmds and self._grid_can_confirm_without_more_picks():
             acts.append(ga.proceed())
         return acts
@@ -1153,6 +1207,18 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         if bool(ss.get("any_number") or ss.get("can_pick_any") or ss.get("canPickAny")):
             return True
+        selected = ss.get("selected_cards") or ss.get("selectedCards") or []
+        selected_count = len(selected) if isinstance(selected, list) else 0
+        required = (
+            _int_or_none(ss.get("num_cards"))
+            or _int_or_none(ss.get("pick_count"))
+            or _int_or_none(ss.get("max_cards"))
+            or 1
+        )
+        return selected_count >= required
+
+    def _grid_required_selection_complete(self) -> bool:
+        ss = _screen_state(self.gs)
         selected = ss.get("selected_cards") or ss.get("selectedCards") or []
         selected_count = len(selected) if isinstance(selected, list) else 0
         required = (

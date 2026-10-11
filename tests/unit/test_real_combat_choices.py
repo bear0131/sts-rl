@@ -23,6 +23,55 @@ def test_real_grid_candidates_and_command_preserve_indices():
     assert obs["select_native_indices"][12] == 13
 
 
+def test_real_grid_uses_selected_cards_as_authoritative_progress():
+    adapter = RealGameAdapter()
+    cards = [
+        {"id": "Strike_R", "upgrades": 0, "uuid": f"strike-{i}"}
+        for i in range(5)
+    ] + [
+        {"id": "Defend_R", "upgrades": 0, "uuid": f"defend-{i}"}
+        for i in range(4)
+    ] + [
+        {"id": "Bash", "upgrades": 0, "uuid": "bash-0"}
+    ]
+    frame = {
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "state"],
+        "game_state": {
+            "floor": 0,
+            "room_phase": "INCOMPLETE",
+            "screen_type": "GRID",
+            "screen_state": {
+                "cards": cards,
+                "selected_cards": [cards[5]],
+                "num_cards": 3,
+                "any_number": False,
+            },
+        },
+    }
+    adapter.update(frame)
+
+    desc = adapter.select_descriptor()
+    assert desc["pick_remaining"] == 2
+    assert desc["selected"] == [("Defend_R", 0)]
+    assert [candidate["native_index"] for candidate in desc["candidates"]] == [
+        0, 1, 2, 3, 4, 6, 7, 8, 9
+    ]
+    assert adapter.legal_semantic_actions() == [ga.select(i) for i in range(9)]
+    assert adapter.command_for_semantic(ga.select(5)) == "CHOOSE 6"
+
+    obs = adapter.observation()
+    assert np.flatnonzero(obs["select_native_indices"]).tolist() == list(range(9))
+    assert obs["select_native_indices"][:9].tolist() == [1, 2, 3, 4, 5, 7, 8, 9, 10]
+    assert obs["selected_card_ids"][0] == encode.CARD_INDEX["Defend_R"]
+
+    frame["available_commands"] = ["choose", "confirm", "state"]
+    frame["game_state"]["screen_state"]["selected_cards"] = cards[5:8]
+    adapter.update(frame)
+    assert adapter.auto_command() == ("CONFIRM", "complete_grid_selection")
+
+
 def test_real_pending_sources_are_always_encoded(monkeypatch):
     adapter = RealGameAdapter()
     monkeypatch.setattr(adapter, "_base_canonical", lambda: {"phase": "combat"})
