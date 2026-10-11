@@ -50,6 +50,7 @@ _REAL_POWER_CANON_ID = {
     "Confusion": "Confused",
     "DuplicationPower": "Duplication",
     "Flex": "Lose Strength",
+    "DexLoss": "Lose Dexterity",
     "Generic Strength Up Power": "Generic Strength Up",
     "Life Link": "Regrow",
     "Regenerate": "Regen",

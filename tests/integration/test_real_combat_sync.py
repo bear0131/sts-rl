@@ -921,3 +921,21 @@ def test_false_reactive_does_not_erase_guardian_sharp_hide(combat_factory):
     hp = bc.to_dict()["player"]["hp"]
     bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     assert bc.to_dict()["player"]["hp"] == hp - 3
+
+
+def test_real_speed_potion_dexterity_expires_at_turn_end(combat_factory):
+    assert _player_powers_real([
+        {"id": "DexLoss", "amount": 5}, {"id": "Dexterity", "amount": 5},
+    ]) == {"Lose Dexterity": 5, "Dexterity": 5}
+    env = combat_factory(["DEFEND_RED"] * 10, encounter="Jaw Worm",
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    bc.apply_custom_state({"player": {"powers": [("DEXTERITY", 5), ("LOSE_DEXTERITY", 5)]}})
+    assert _powers(bc.to_dict()["player"]["powers"])["Lose Dexterity"] == 5
+    bc.execute(sts.Action(sts.ActionType.END_TURN))
+    powers = _powers(bc.to_dict()["player"]["powers"])
+    assert powers.get("Dexterity", 0) == 0
+    assert powers.get("Lose Dexterity", 0) == 0
+    bc.apply_custom_state({"player": {"powers": [("LOSE_DEXTERITY", 5)]}})
+    bc.apply_custom_state({"player": {"powers": []}})
+    assert "Lose Dexterity" not in _powers(bc.to_dict()["player"]["powers"])

@@ -614,7 +614,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         }
         if (p.contains("powers")) {
             static constexpr const char *kStatuses[] = {
-                "STRENGTH", "DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
+                "STRENGTH", "DEXTERITY", "LOSE_DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
                 "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
                 "CORRUPTION", "CONFUSED", "HEX", "DRAW_REDUCTION",
                 "BLASPHEMER", "ELECTRO", "SURROUNDED", "MASTER_REALITY",
@@ -1145,6 +1145,7 @@ void setRulePlayerStatusByName(
     SET_PLAYER_STATUS(PEN_NIB)
     SET_PLAYER_STATUS(WRATH_NEXT_TURN)
     SET_PLAYER_STATUS(NO_DRAW)
+    SET_PLAYER_STATUS(LOSE_DEXTERITY)
     SET_PLAYER_STATUS(LOSE_STRENGTH)
     SET_PLAYER_STATUS(DOUBLE_TAP)
     SET_PLAYER_STATUS(DUPLICATION)
