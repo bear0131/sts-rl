@@ -137,6 +137,31 @@ def test_custom_state_syncs_runtime_cost_counters_and_hp_order(combat_factory):
     assert C.AUTOREGRESSIVE_PLAY + 1 not in legal
 
 
+def test_custom_state_recomputes_card_pile_caches_before_damage(combat_factory):
+    env = combat_factory(
+        ["BLOOD_FOR_BLOOD"] * 6,
+        encounter="Jaw Worm",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    battle = env.thick.bc
+    battle.apply_custom_state({
+        "player": {"hp": 80, "max_hp": 80, "energy": 0},
+        "monsters": [{
+            "move_history": ["JAW_WORM_CHOMP", "INVALID"],
+            "base_damage": 11,
+            "hits": 1,
+        }],
+        "hand": ["DEFEND_RED"],
+        "draw": ["STRIKE_RED"],
+        "discard": [],
+        "exhaust": [],
+    })
+
+    result = battle.preview_end_turn_result(4 << 29)
+
+    assert result["player"]["hp"] == 69
+
+
 def test_real_search_aligns_state_diff_to_real_monster_slot_order(combat_factory):
     env = combat_factory(
         ["STRIKE_RED"] * 5,

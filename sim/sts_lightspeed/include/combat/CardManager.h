@@ -89,6 +89,7 @@ namespace sts {
         void eraseAtIdxInHand(int idx); // does not call notifyRemoveFromHand
         int getRandomCardIdxInHand(Random &rng);
         void resetAttributesAtEndOfTurn();
+        void recomputeDerivedState();
 
         // special helpers
         void draw(BattleContext &bc, int amount);

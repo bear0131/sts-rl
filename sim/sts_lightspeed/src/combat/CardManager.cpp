@@ -392,6 +392,31 @@ void CardManager::resetAttributesAtEndOfTurn() {
     }
 }
 
+void CardManager::recomputeDerivedState() {
+    handNormalityCount = 0;
+    handPainCount = 0;
+    strikeCount = 0;
+    handBloodCardCount = 0;
+    drawPileBloodCardCount = 0;
+    discardPileBloodCardCount = 0;
+
+    for (int i = 0; i < cardsInHand; ++i) {
+        const auto &card = hand[i];
+        handNormalityCount += card.getId() == CardId::NORMALITY;
+        handPainCount += card.getId() == CardId::PAIN;
+        handBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+    for (const auto &card : drawPile) {
+        drawPileBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+    for (const auto &card : discardPile) {
+        discardPileBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+}
+
 // **************** BEGIN SPECIAL HELPERS ****************
 
 void CardManager::draw(BattleContext &bc, int amount) {
@@ -447,40 +472,29 @@ void CardManager::draw(BattleContext &bc, int amount) {
 }
 
 void CardManager::onTookDamage() {
-    // this method will fail catastrophically if the bloodCardCounts are not correct
+    // Search and real-game root injection can replace whole card groups.  Keep
+    // the cached counts from turning a stale value into an out-of-bounds scan,
+    // and repair any drift from unusual generated-card/exhaust sequences.
+    recomputeDerivedState();
     const bool hasAnyBloodCards = handBloodCardCount | drawPileBloodCardCount | discardPileBloodCardCount;
     if (!hasAnyBloodCards) {
         return;
     }
 
-    int i = 0;
-    int foundBloodCards = 0;
-    while (foundBloodCards < handBloodCardCount) {
+    for (int i = 0; i < cardsInHand; ++i) {
         if (hand[i].isBloodCard()) {
             hand[i].tookDamage();
-            ++foundBloodCards;
         }
-        ++i;
     }
-
-    i = 0;
-    foundBloodCards = 0;
-    while (foundBloodCards < drawPileBloodCardCount) {
-        if (drawPile[i].isBloodCard()) {
-            drawPile[i].tookDamage();
-            ++foundBloodCards;
+    for (auto &card : drawPile) {
+        if (card.isBloodCard()) {
+            card.tookDamage();
         }
-        ++i;
     }
-
-    i = 0;
-    foundBloodCards = 0;
-    while (foundBloodCards < discardPileBloodCardCount) {
-        if (discardPile[i].isBloodCard()) {
-            discardPile[i].tookDamage();
-            ++foundBloodCards;
+    for (auto &card : discardPile) {
+        if (card.isBloodCard()) {
+            card.tookDamage();
         }
-        ++i;
     }
 }
 

@@ -798,6 +798,8 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     else applyVectorPile("discard_pile", bc.cards.discardPile);
     if (spec.contains("exhaust")) applyVectorPile("exhaust", bc.cards.exhaustPile);
     else applyVectorPile("exhaust_pile", bc.cards.exhaustPile);
+    bc.cards.recomputeDerivedState();
+    bc.cards.nextUniqueCardId = std::max(bc.cards.nextUniqueCardId, nextUid);
     if (spec.contains("turn")) bc.turn = std::max(0, spec["turn"].cast<int>());
     bc.inputState = sts::InputState::PLAYER_NORMAL;
     bc.outcome = sts::Outcome::UNDECIDED;
