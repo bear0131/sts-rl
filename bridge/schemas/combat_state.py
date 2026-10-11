@@ -33,7 +33,7 @@ _POWER_DROP = {"Asleep", "Split"}
 BOOLEAN_PLAYER_POWERS = frozenset({
     "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
-    "Wrath Next Turn",
+    "Wrath Next Turn", "No Draw",
 })
 BOOLEAN_MONSTER_POWERS = frozenset({
     "Barricade", "Minion", "Minion Leader", "Painful Stabs", "Regrow",
