@@ -43,6 +43,7 @@ _REAL_POWER_CANON_ID = {
     # CommunicationMod uses the Java power ID; the native simulator and its
     # observation vocabulary use the displayed/stable semantic name.
     "Confusion": "Confused",
+    "Flex": "Lose Strength",
     "Regenerate": "Regen",
     "Regeneration": "Regen",
 }

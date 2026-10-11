@@ -244,6 +244,26 @@ def test_java_no_draw_power_maps_to_native_presence(combat_factory):
     assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"]["No Draw"] == 1
 
 
+def test_java_flex_power_maps_to_native_lose_strength_amount(combat_factory):
+    assert _player_powers_real([
+        {"id": "Flex", "amount": 3},
+        {"id": "Strength", "amount": 3},
+    ]) == {"Lose Strength": 3, "Strength": 3}
+
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Lagavulin",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "player": {"powers": [("LOSE_STRENGTH", 3), ("STRENGTH", 3)]},
+    })
+    assert normalize_sim(env.thick.bc.to_dict())["player"]["powers"] == {
+        "Lose Strength": 3,
+        "Strength": 3,
+    }
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},
