@@ -86,7 +86,12 @@ def _card_rows(cards: list[dict[str, Any]], *, costs: bool = False) -> list[tupl
     for card in cards:
         row = (real_to_sim_card_enum(card["id"]), int(card["up"]))
         if costs:
-            row += (int(card.get("cost", 0)),)
+            cost = int(card.get("cost", 0))
+            # Java uses -2 for every unplayable card.  The simulator keeps its
+            # own internal distinction (-2 statuses, -3 curses), which is part
+            # of the checkpoint's training distribution.  Preserve that native
+            # base value while the canonical diff treats both as UNPLAYABLE.
+            row += (None if cost <= -2 else cost,)
         result.append(row)
     return result
 

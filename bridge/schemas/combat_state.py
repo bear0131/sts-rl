@@ -71,7 +71,11 @@ def _card(card_id, up, cost=None):
     card_id = _CARD_CANON_ID.get(card_id, card_id)
     card = {"id": card_id, "up": 0 if card_id in _NO_UPGRADE else up}
     if cost is not None:
-        card["cost"] = cost
+        value = int(cost)
+        # CommunicationMod follows AbstractCard.COST_UNPLAYABLE (-2), while
+        # the native simulator distinguishes unplayable statuses (-2) from
+        # unplayable curses (-3).  They have one public/action meaning here.
+        card["cost"] = -2 if value <= -2 else value
     return card
 
 

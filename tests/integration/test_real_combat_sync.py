@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from env.core import native_actions as C
-from bridge.search_bridge import RealCombatSearch, _find_shadow_battle
+from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
 from bridge.schemas.combat_state import _REAL_MONSTER_MOVES, diff, normalize_sim
 import slaythespire as sts
 
@@ -162,6 +162,21 @@ def test_game_context_potion_state_can_match_real_slots(combat_factory):
         "Attack Potion",
         "EMPTY_POTION_SLOT",
     ]
+
+
+def test_java_unplayable_cost_preserves_native_curse_encoding(combat_factory):
+    env = combat_factory(
+        ["PAIN", "STRIKE_RED"],
+        encounter="Jaw Worm",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    rows = _card_rows([{"id": "Pain", "up": 0, "cost": -2}], costs=True)
+    assert rows == [("PAIN", 0, None)]
+
+    env.thick.bc.apply_custom_state({"hand": rows})
+    raw = env.thick.bc.to_dict()
+    assert raw["hand"] == [("PAIN", 0, -3)]
+    assert normalize_sim(raw)["hand"] == [{"id": "Pain", "up": 0, "cost": -2}]
 
 
 def test_smoke_bomb_real_dummy_target_maps_to_native_untargeted_action(combat_factory):
