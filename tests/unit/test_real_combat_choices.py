@@ -78,6 +78,8 @@ def test_actionable_hand_select_overrides_executing_action_phase():
     frame = joint_frame(hand, multi=True)
     frame["game_state"]["action_phase"] = "EXECUTING_ACTIONS"
     frame["game_state"]["current_action"] = "ExhaustAction"
+    frame["game_state"]["screen_state"].pop("context")
+    frame["game_state"]["screen_state"].pop("pick_max")
     frame["game_state"]["screen_state"].update({
         "max_cards": 99,
         "can_pick_zero": True,
@@ -87,6 +89,9 @@ def test_actionable_hand_select_overrides_executing_action_phase():
 
     assert adapter.auto_command() is None
     assert adapter.select_descriptor()["multi"] is True
+    assert adapter.select_descriptor()["can_pick_any"] is True
+    assert adapter.select_descriptor()["pick_max"] == len(hand)
+    assert adapter.select_descriptor()["pick_remaining"] == len(hand)
     assert adapter.action_mask()[C.JOINT_MULTI]
     assert adapter.action_mask()[C.JOINT_MULTI + 1]
 

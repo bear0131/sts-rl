@@ -971,6 +971,13 @@ class RealGameAdapter:
         if context == "GAMBLE":
             can_pick_any = True
         pick_max = _int_or_none(ss.get("pick_max")) or _int_or_none(ss.get("max_cards"))
+        # BaseMod uses 99 as the unbounded hand-selection sentinel (notably
+        # Gambler's Brew).  Normalize that transport value to the actual
+        # selectable hand so it matches the simulator's public contract.
+        if multi and not overworld and pick_max is not None and pick_max >= 99:
+            can_pick_any = True
+            pick_count = len(cards)
+            pick_max = len(cards)
         if pick_max is None:
             pick_max = len(cards) if multi and can_pick_any else pick_count
         raw_cards = ss.get("cards") or (self.gs.get("combat_state") or {}).get("hand") or []

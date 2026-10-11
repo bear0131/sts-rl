@@ -537,9 +537,16 @@ class RealCombatSearch:
         if real_multi != sim_multi:
             raise RuntimeError(
                 f"combat selection multi mismatch real={real_multi!r} sim={sim_multi!r}")
-        if int(real_desc.get("pick_remaining", 0)) != int(
-            sim_desc.get("pick_remaining", 0)
-        ):
+        def semantic_pick_remaining(desc: dict[str, Any]) -> int:
+            if bool(desc.get("multi")):
+                return max(
+                    0,
+                    int(desc.get("pick_max", 0))
+                    - len(desc.get("selected") or ()),
+                )
+            return int(desc.get("pick_remaining", 0))
+
+        if semantic_pick_remaining(real_desc) != semantic_pick_remaining(sim_desc):
             raise RuntimeError(
                 "combat selection pick_remaining mismatch "
                 f"real={real_desc.get('pick_remaining')!r} "

@@ -357,3 +357,51 @@ def test_real_search_still_rejects_single_select_progress_mismatch(combat_factor
     search.run_alignment_checks = 0
     with pytest.raises(RuntimeError, match="pick_remaining mismatch"):
         search._reconcile_selection(real_desc)
+
+
+def test_real_search_normalizes_gamblers_brew_unbounded_sentinel(combat_factory):
+    from bridge.real_game_env import RealGameAdapter
+
+    env = combat_factory(
+        ["STRIKE_RED"] * 5,
+        encounter="Jaw Worm",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "hand": ["STRIKE_RED"] * 5,
+        "potions": ["Gamblers Brew"],
+    })
+    env.thick.bc.execute(sts.Action(sts.ActionType.POTION, 0))
+    env._invalidate_backend_cache()
+    sim_desc = env.thick.select_descriptor()
+    assert sim_desc["context"] == "GAMBLE"
+    assert sim_desc["pick_remaining"] != 5
+    assert sim_desc["pick_max"] == 5
+
+    adapter = RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "confirm", "state"],
+        "game_state": {
+            "room_phase": "COMBAT",
+            "screen_type": "HAND_SELECT",
+            "action_phase": "EXECUTING_ACTIONS",
+            "current_action": "ExhaustAction",
+            "screen_state": {"max_cards": 99, "can_pick_zero": True},
+            "combat_state": {
+                "hand": [{"id": "Strike_R", "upgrades": 0}] * 5,
+                "monsters": [],
+            },
+        },
+    })
+    real_desc = adapter.select_descriptor()
+    assert real_desc["pick_remaining"] == 5
+    assert real_desc["pick_max"] == 5
+    assert real_desc["can_pick_any"] is True
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.run_alignment_checks = 0
+    search._reconcile_selection(real_desc)
+    assert search.run_alignment_checks == 1
