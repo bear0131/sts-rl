@@ -353,6 +353,49 @@ def test_java_unawakened_power_syncs_native_boss_phase(combat_factory):
     assert env.thick.bc.to_dict()["monsters"][2]["unawakened"] is False
 
 
+def test_gremlin_leader_dynamic_minion_species_reuses_native_slots(combat_factory):
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Gremlin Leader",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    native = normalize_sim(env.thick.bc.to_dict())
+    live = [deepcopy(monster) for monster in native["monsters"] if not monster["gone"]]
+    leader = next(monster for monster in live if monster["id"] == "GremlinLeader")
+    minions = [monster for monster in live if monster["id"] != "GremlinLeader"]
+    summoned = deepcopy(minions[0])
+    summoned.update({"id": "GremlinFat", "hp": 16, "max_hp": 16})
+    real = deepcopy(native)
+    real["monsters"] = minions + [summoned, leader]
+
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.sim_to_real_targets = {
+        index: index - 1
+        for index, monster in enumerate(native["monsters"])
+        if index > 0 and not monster["gone"]
+    }
+    mapping = search._target_mapping(real)
+    assert set(mapping.values()) == set(range(4))
+    summoned_native_slot = next(
+        index for index, real_index in mapping.items() if real_index == 2
+    )
+
+    monsters = [{"gone": True} for _ in env.thick.bc.to_dict()["monsters"]]
+    monsters[summoned_native_slot] = {
+        "id": "FAT_GREMLIN",
+        "hp": 16,
+        "max_hp": 16,
+        "block": 0,
+        "powers": [("MINION", 1)],
+    }
+    env.thick.bc.apply_custom_state({"monsters": monsters})
+    rebuilt = env.thick.bc.to_dict()["monsters"][summoned_native_slot]
+    assert rebuilt["id"] == "FAT_GREMLIN"
+    assert rebuilt["hp"] == 16
+    assert _powers(rebuilt["powers"])["Minion"] == 1
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},

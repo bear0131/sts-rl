@@ -40,6 +40,10 @@ import slaythespire as sts
 LOG = logging.getLogger(__name__)
 
 _REAL_TO_SIM_MONSTER = {real: sim for sim, real in _MONSTER_SIM2REAL.items()}
+_GREMLIN_LEADER_MINIONS = frozenset({
+    "GremlinFat", "GremlinWarrior", "GremlinTsundere", "GremlinThief",
+    "GremlinWizard",
+})
 _SUPPORTED_PLAYER_POWERS = frozenset({
     "STRENGTH", "DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
     "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
@@ -121,7 +125,8 @@ def _monster_ids(raw: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
-                        *, max_seed_nonces: int = 64):
+                        *, max_seed_nonces: int = 64,
+                        allow_gremlin_leader_dynamic: bool = False):
     """Find a deterministic native encounter instance with the public roster.
 
     A few encounter templates choose their concrete monsters from combat RNG.
@@ -135,7 +140,14 @@ def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
                 battle = sts.create_battle(gc, encounter)
             except Exception:
                 continue
-            if _monster_ids(battle.to_dict()) == wanted:
+            found = _monster_ids(battle.to_dict())
+            if found == wanted or (
+                allow_gremlin_leader_dynamic
+                and found.count("GremlinLeader") == 1
+                and all(monster == "GremlinLeader"
+                        or monster in _GREMLIN_LEADER_MINIONS
+                        for monster in found)
+            ):
                 return gc, battle, encounter, seed_nonce
     raise RuntimeError(f"no native encounter matches real monsters {wanted!r}")
 
@@ -359,7 +371,15 @@ class RealCombatSearch:
             name for name in sts.encounter_names() if name not in preferred
         ]
         gc, battle, encounter, seed_nonce = _find_shadow_battle(
-            make_gc, wanted, encounters
+            make_gc,
+            wanted,
+            encounters,
+            allow_gremlin_leader_dynamic=(
+                wanted.count("GremlinLeader") == 1
+                and all(monster == "GremlinLeader"
+                        or monster in _GREMLIN_LEADER_MINIONS
+                        for monster in wanted)
+            ),
         )
         self.env.thick.gc = gc
         self.env.thick.bc = battle
@@ -401,6 +421,7 @@ class RealCombatSearch:
                     and sim_monster["id"] == real_monster["id"]):
                 mapping[sim_index] = real_index
                 unused.remove(real_index)
+        unmatched_live_sim: list[int] = []
         for sim_index, monster in enumerate(sim["monsters"]):
             if (sim_index in mapping or monster["gone"]
                     or monster["id"] == "PAD"):
@@ -409,9 +430,8 @@ class RealCombatSearch:
                        if not real["monsters"][i]["gone"]
                        and real["monsters"][i]["id"] == monster["id"]]
             if not matches:
-                raise RuntimeError(
-                    f"cannot map native monster slot {sim_index} {monster['id']} to real slots"
-                )
+                unmatched_live_sim.append(sim_index)
+                continue
             real_index = min(
                 matches,
                 key=lambda i: (
@@ -422,6 +442,64 @@ class RealCombatSearch:
             )
             mapping[sim_index] = real_index
             unused.remove(real_index)
+
+        # Gremlin Leader chooses summoned minion species through engine-private
+        # RNG.  The real game is authoritative when that draw differs from the
+        # native shadow.  Reuse the leader's three native minion slots, map the
+        # public live entities onto them, and let root-state injection rebuild
+        # any species that changed.  Other encounters still require exact IDs.
+        real_leaders = [
+            i for i, monster in enumerate(real["monsters"])
+            if not monster["gone"] and monster["id"] == "GremlinLeader"
+        ]
+        sim_leaders = [
+            i for i, monster in enumerate(sim["monsters"])
+            if not monster["gone"] and monster["id"] == "GremlinLeader"
+        ]
+        dynamic_gremlins = (
+            len(real_leaders) == 1
+            and len(sim_leaders) == 1
+            and all(real["monsters"][i]["id"] in _GREMLIN_LEADER_MINIONS
+                    for i in unused)
+            and all(sim["monsters"][i]["id"] in _GREMLIN_LEADER_MINIONS
+                    for i in unmatched_live_sim)
+        )
+        if dynamic_gremlins and unused:
+            available = [
+                i for i, monster in enumerate(sim["monsters"])
+                if i not in mapping and monster["id"] != "GremlinLeader"
+            ]
+            previous = dict(self.sim_to_real_targets)
+            for sim_index, real_index in sorted(previous.items()):
+                if (sim_index in available and real_index in unused
+                        and real["monsters"][real_index]["id"]
+                        in _GREMLIN_LEADER_MINIONS):
+                    mapping[sim_index] = real_index
+                    available.remove(sim_index)
+                    unused.remove(real_index)
+            for real_index in sorted(tuple(unused)):
+                exact = [
+                    i for i in available
+                    if sim["monsters"][i]["id"]
+                    == real["monsters"][real_index]["id"]
+                ]
+                if exact:
+                    sim_index = exact[0]
+                    mapping[sim_index] = real_index
+                    available.remove(sim_index)
+                    unused.remove(real_index)
+            for real_index, sim_index in zip(
+                sorted(tuple(unused)),
+                sorted(available, key=lambda i: (sim["monsters"][i]["gone"], i)),
+            ):
+                mapping[sim_index] = real_index
+                unused.remove(real_index)
+        if unmatched_live_sim and not dynamic_gremlins:
+            sim_index = unmatched_live_sim[0]
+            monster = sim["monsters"][sim_index]
+            raise RuntimeError(
+                f"cannot map native monster slot {sim_index} {monster['id']} to real slots"
+            )
         if unused:
             raise RuntimeError(
                 f"cannot map real monster slots {sorted(unused)!r} to native slots")
@@ -440,7 +518,11 @@ class RealCombatSearch:
     def _state_spec(self, real: dict[str, Any]) -> dict[str, Any]:
         self.sim_to_real_targets = self._target_mapping(real)
         native_count = len(self.env.thick.bc.to_dict()["monsters"])
-        monsters: list[dict[str, Any]] = [{} for _ in range(native_count)]
+        # Any unpaired native slot is absent from the authoritative real frame.
+        # Mark it gone so a divergent summon cannot remain targetable.
+        monsters: list[dict[str, Any]] = [
+            {"gone": True} for _ in range(native_count)
+        ]
         for sim_index, real_index in self.sim_to_real_targets.items():
             monster = real["monsters"][real_index]
             move = real_to_sim_monster_move(monster["id"], monster["real_move_id"])
@@ -448,6 +530,7 @@ class RealCombatSearch:
                 monster["id"], monster["real_last_move_id"]
             )
             monsters[sim_index] = {
+                "id": _REAL_TO_SIM_MONSTER[monster["id"]],
                 "hp": int(monster["hp"]),
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),

@@ -623,6 +623,21 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
             auto &monster = bc.monsters.arr[i];
+            if (m.contains("gone") && m["gone"].cast<bool>()) {
+                monster.curHp = 0;
+                monster.block = 0;
+                continue;
+            }
+            if (m.contains("id")) {
+                const auto requestedId = sts::SimHelpers::getMonsterIdForString(
+                    m["id"].cast<std::string>());
+                if (requestedId == sts::MonsterId::INVALID) {
+                    throw std::invalid_argument("unknown custom monster id");
+                }
+                if (monster.id != requestedId) {
+                    monster.construct(bc, requestedId, i);
+                }
+            }
             monster.maxHp = std::max(1, getInt(m, "max_hp", monster.maxHp));
             monster.curHp = std::clamp(
                 getInt(m, "hp", monster.curHp), 0, monster.maxHp);
