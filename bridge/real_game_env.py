@@ -420,10 +420,47 @@ class RealGameAdapter:
         # non-card rewards or proceed.
         self._combat_reward_card_open = False
         self._skipped_combat_card_reward = False
+        # CommunicationMod publishes the first post-GRID frame before some
+        # vanilla relic callbacks have consumed ``selectedCards``.  Sending the
+        # next event/map command in that frame can clear the selection before
+        # the callback runs.  Astrolabe then removes three cards without ever
+        # adding their transformed replacements.  Hold one real render interval
+        # after every overworld grid closes, and keep the exact Astrolabe deck
+        # cardinality invariant until the game's own callback has settled.
+        self._post_overworld_grid_wait = False
+        self._astrolabe_expected_deck_size: int | None = None
+        self._last_relic_ids: set[str] = set()
+        self._seen_game_frame = False
 
     def update(self, frame: dict[str, Any]) -> None:
+        previous_overworld_grid = (
+            self.screen_type() == "GRID" and not bool(self.gs.get("combat_state"))
+        )
+        previous_relic_ids = self._last_relic_ids
         self.frame = frame
         self.gs = frame.get("game_state") or {}
+        current_relic_ids = {
+            str(relic.get("id"))
+            for relic in self.gs.get("relics") or []
+            if isinstance(relic, dict) and relic.get("id")
+        }
+        current_overworld_grid = (
+            self.screen_type() == "GRID" and not bool(self.gs.get("combat_state"))
+        )
+        if current_overworld_grid and "Astrolabe" in current_relic_ids:
+            astrolabe_just_appeared = (
+                self._seen_game_frame and "Astrolabe" not in previous_relic_ids
+            )
+            attaching_to_opening_astrolabe = (
+                not self._seen_game_frame
+                and _int_or_none(self.gs.get("floor")) == 0
+            )
+            if astrolabe_just_appeared or attaching_to_opening_astrolabe:
+                self._astrolabe_expected_deck_size = len(self.gs.get("deck") or [])
+        if previous_overworld_grid and not current_overworld_grid:
+            self._post_overworld_grid_wait = True
+        self._last_relic_ids = current_relic_ids
+        self._seen_game_frame = self._seen_game_frame or bool(frame.get("in_game"))
         self._reconcile_multi()
         if self.screen_type() == "SHOP_SCREEN":
             self._leaving_shop = False
@@ -503,6 +540,30 @@ class RealGameAdapter:
         st = self.screen_type()
         ss = _screen_state(self.gs)
         cl = self.choices()
+
+        if self._post_overworld_grid_wait:
+            self._post_overworld_grid_wait = False
+            return (
+                "WAIT 1" if "WAIT" in self.commands() else self._refresh_command(),
+                "settle_overworld_grid",
+            )
+
+        if self._astrolabe_expected_deck_size is not None and st != "GRID":
+            current_deck_size = len(self.gs.get("deck") or [])
+            if current_deck_size != self._astrolabe_expected_deck_size:
+                return (
+                    "WAIT 1" if "WAIT" in self.commands() else self._refresh_command(),
+                    "await_astrolabe_transform",
+                )
+            self._astrolabe_expected_deck_size = None
+
+        # CommunicationMod moves a chosen combat card from ``hand`` to
+        # ``selected`` and then advertises only CONFIRM.  That is an
+        # acknowledgement step, not a fresh policy decision over the shortened
+        # hand.  Confirm it before constructing another action mask.
+        if (st == "HAND_SELECT" and "CONFIRM" in self.commands()
+                and "CHOOSE" not in self.commands()):
+            return "CONFIRM", "complete_hand_selection"
 
         # Simulator overworld grids settle immediately after the required last
         # pick.  The real UI exposes an extra CONFIRM transport step; execute it
@@ -652,7 +713,14 @@ class RealGameAdapter:
             self._joint_multi_plan = None
             return None
         hand = tuple(self._combat_hand_cards())
-        count = int(_screen_state(self.gs).get("have_selected", 0))
+        screen_state = _screen_state(self.gs)
+        selected = (
+            screen_state.get("selected_cards") or screen_state.get("selectedCards")
+            or screen_state.get("selected") or []
+        )
+        count = int(screen_state.get(
+            "have_selected", len(selected) if isinstance(selected, list) else 0
+        ))
         if plan["sent"] is not None:
             previous, index = plan["previous"], plan["sent"]
             removed = previous[:index] + previous[index + 1:]
@@ -981,7 +1049,10 @@ class RealGameAdapter:
             or _int_or_none(ss.get("max_cards"))
             or 1
         )
-        selected_raw = ss.get("selected_cards") or ss.get("selectedCards") or []
+        selected_raw = (
+            ss.get("selected_cards") or ss.get("selectedCards")
+            or ss.get("selected") or []
+        )
         if not isinstance(selected_raw, list):
             selected_raw = []
         selected_cards = [
@@ -1161,6 +1232,8 @@ class RealGameAdapter:
         if self.screen_type() == "HAND_SELECT":
             if A.is_multi_select(self.select_descriptor()):
                 return []
+            if "CHOOSE" not in self.commands():
+                return []
             n = len(self._combat_hand_cards())
             return [ga.select(i) for i in range(n)]
 
@@ -1207,7 +1280,10 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         if bool(ss.get("any_number") or ss.get("can_pick_any") or ss.get("canPickAny")):
             return True
-        selected = ss.get("selected_cards") or ss.get("selectedCards") or []
+        selected = (
+            ss.get("selected_cards") or ss.get("selectedCards")
+            or ss.get("selected") or []
+        )
         selected_count = len(selected) if isinstance(selected, list) else 0
         required = (
             _int_or_none(ss.get("num_cards"))
@@ -1219,7 +1295,10 @@ class RealGameAdapter:
 
     def _grid_required_selection_complete(self) -> bool:
         ss = _screen_state(self.gs)
-        selected = ss.get("selected_cards") or ss.get("selectedCards") or []
+        selected = (
+            ss.get("selected_cards") or ss.get("selectedCards")
+            or ss.get("selected") or []
+        )
         selected_count = len(selected) if isinstance(selected, list) else 0
         required = (
             _int_or_none(ss.get("num_cards"))

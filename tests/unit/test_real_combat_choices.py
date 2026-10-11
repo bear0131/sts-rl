@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 
 from bridge.real_game_env import RealGameAdapter
@@ -72,6 +74,65 @@ def test_real_grid_uses_selected_cards_as_authoritative_progress():
     assert adapter.auto_command() == ("CONFIRM", "complete_grid_selection")
 
 
+def test_real_astrolabe_waits_for_transformed_cards_before_leaving_neow():
+    adapter = RealGameAdapter()
+    starter = [
+        {"id": "Strike_R", "upgrades": 0, "uuid": f"strike-{i}"}
+        for i in range(5)
+    ] + [
+        {"id": "Defend_R", "upgrades": 0, "uuid": f"defend-{i}"}
+        for i in range(4)
+    ] + [{"id": "Bash", "upgrades": 0, "uuid": "bash-0"}]
+    base = {
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "wait", "state"],
+        "game_state": {
+            "floor": 0,
+            "room_phase": "EVENT",
+            "screen_type": "EVENT",
+            "choice_list": ["leave"],
+            "screen_state": {"event_id": "Neow"},
+            "deck": starter,
+            "relics": [{"id": "Burning Blood"}],
+        },
+    }
+    adapter.update(base)
+
+    grid = deepcopy(base)
+    grid["game_state"].update({
+        "screen_type": "GRID",
+        "choice_list": [],
+        "screen_state": {
+            "cards": starter,
+            "selected_cards": [],
+            "num_cards": 3,
+        },
+        "relics": [{"id": "Astrolabe"}],
+    })
+    adapter.update(grid)
+
+    missing_transforms = deepcopy(base)
+    missing_transforms["game_state"].update({
+        "deck": starter[:5] + starter[8:],
+        "relics": [{"id": "Astrolabe"}],
+    })
+    adapter.update(missing_transforms)
+    assert adapter.auto_command() == ("WAIT 1", "settle_overworld_grid")
+
+    adapter.update(missing_transforms)
+    assert adapter.auto_command() == ("WAIT 1", "await_astrolabe_transform")
+
+    settled = deepcopy(missing_transforms)
+    settled["game_state"]["deck"] += [
+        {"id": "Uppercut", "upgrades": 1},
+        {"id": "Twin Strike", "upgrades": 1},
+        {"id": "Inflame", "upgrades": 1},
+    ]
+    adapter.update(settled)
+    assert adapter.auto_command() == ("CHOOSE 0", "neow_intro")
+
+
 def test_real_pending_sources_are_always_encoded(monkeypatch):
     adapter = RealGameAdapter()
     monkeypatch.setattr(adapter, "_base_canonical", lambda: {"phase": "combat"})
@@ -143,6 +204,42 @@ def test_actionable_hand_select_overrides_executing_action_phase():
     assert adapter.select_descriptor()["pick_remaining"] == len(hand)
     assert adapter.action_mask()[C.JOINT_MULTI]
     assert adapter.action_mask()[C.JOINT_MULTI + 1]
+
+
+def test_single_hand_select_confirms_selected_alias_without_second_policy_call():
+    from env.core import native_actions as C
+
+    hand = [
+        {"id": "Bash"}, {"id": "Strike_R"},
+        {"id": "Strike_R"}, {"id": "Strike_R"},
+    ]
+    frame = joint_frame(hand, multi=False)
+    frame["available_commands"] = ["choose", "state"]
+    frame["game_state"].update({
+        "screen_type": "HAND_SELECT",
+        "action_phase": "EXECUTING_ACTIONS",
+        "current_action": "ExhaustAction",
+    })
+    frame["game_state"]["screen_state"] = {
+        "hand": [dict(upgrades=0, **card) for card in hand],
+        "selected": [],
+        "max_cards": 1,
+        "can_pick_zero": False,
+    }
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update(frame)
+    assert adapter.auto_command() is None
+    assert adapter.command_for_joint_action(C.JOINT_PICK) == "CHOOSE 0"
+
+    acknowledged = deepcopy(frame)
+    acknowledged["available_commands"] = ["confirm", "state"]
+    acknowledged["game_state"]["screen_state"].update({
+        "hand": [dict(upgrades=0, **card) for card in hand[1:]],
+        "selected": [dict(upgrades=0, **hand[0])],
+    })
+    adapter.update(acknowledged)
+    assert adapter.select_descriptor()["pick_remaining"] == 0
+    assert adapter.auto_command() == ("CONFIRM", "complete_hand_selection")
 
 
 def test_joint_bridge_handles_stable_hand_and_discards_plan_on_screen_change():
