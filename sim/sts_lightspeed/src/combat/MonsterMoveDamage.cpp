@@ -60,7 +60,7 @@ DamageInfo Monster::getMoveBaseDamage(const BattleContext &bc) const {
         case MonsterMoveId::DAGGER_EXPLODE:                 return {25};
 
         case MonsterMoveId::DARKLING_NIP:                   return {miscInfo + (asc2 ? 2 : 0)};
-        case MonsterMoveId::DARKLING_CHOMP:                 return {asc2 ? 9 : 8};
+        case MonsterMoveId::DARKLING_CHOMP:                 return {asc2 ? 9 : 8, 2};
 
         case MonsterMoveId::DECA_BEAM:                      return {asc4 ? 12 : 10, 2};
         case MonsterMoveId::DONU_BEAM:                      return {asc4 ? 12 : 10, 2};

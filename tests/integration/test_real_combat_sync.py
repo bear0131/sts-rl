@@ -278,6 +278,24 @@ def test_java_life_link_power_maps_to_native_regrow_presence(combat_factory):
     assert powers["Regrow"] == 1
 
 
+def test_darkling_chomp_matches_real_two_hit_move(combat_factory):
+    env = combat_factory(
+        ["STRIKE_RED"],
+        encounter="Three Darklings",
+        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+    )
+    env.thick.bc.apply_custom_state({
+        "monsters": [{
+            "move_history": ["DARKLING_CHOMP", "DARKLING_HARDEN"],
+            "base_damage": 8,
+            "hits": 2,
+            "powers": [("REGROW", 1)],
+        }, {}, {}],
+    })
+    monster = normalize_sim(env.thick.bc.to_dict())["monsters"][0]
+    assert (monster["base_damage"], monster["hits"]) == (8, 2)
+
+
 def test_java_regenerate_power_maps_to_native_regen_amount(combat_factory):
     assert _monster_powers_real([
         {"id": "Regenerate", "amount": 3},

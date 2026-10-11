@@ -1438,7 +1438,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         // ************ DARKLING ************
 
         case MMID::DARKLING_CHOMP:
-            attackPlayerHelper(bc, asc2 ? 9 : 8);
+            attackPlayerHelper(bc, asc2 ? 9 : 8, 2);
             bc.addToBot( Actions::RollMove(idx) );
             break;
 
