@@ -1003,3 +1003,28 @@ def test_confirmed_real_death_clears_predicted_live_slot(combat_factory):
     real["monsters"][idx]["id"] = "Repulsor"
     with pytest.raises(RuntimeError, match="cannot map native monster"):
         search._target_mapping(real)
+
+
+def test_collector_resummons_replace_confirmed_dead_transport_slots(combat_factory):
+    env = combat_factory(["DEFEND_RED"] * 10, encounter="Collector",
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    bc.execute(sts.Action(sts.ActionType.END_TURN))
+    native = normalize_sim(bc.to_dict())
+    heads = [deepcopy(m) for m in native["monsters"] if m["id"] == "TorchHead"]
+    leader = next(deepcopy(m) for m in native["monsters"] if m["id"] == "TheCollector")
+    assert len(heads) == 2
+    dead = deepcopy(heads)
+    for m in dead: m.update(hp=0, gone=True)
+    real = deepcopy(native)
+    real["monsters"] = [heads[0], dead[0], heads[1], dead[1], leader]
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    head_indices = [i for i,m in enumerate(native["monsters"]) if m["id"] == "TorchHead"]
+    leader_index = next(i for i,m in enumerate(native["monsters"]) if m["id"] == "TheCollector")
+    search.sim_to_real_targets = {head_indices[0]: 1, head_indices[1]: 3, leader_index: 4}
+    mapping = search._target_mapping(real)
+    assert set(mapping.values()) == {0, 2, 4}
+    assert mapping[leader_index] == 4
+    search.sim_to_real_targets = mapping
+    assert search._target_mapping(real) == mapping

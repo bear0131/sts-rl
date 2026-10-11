@@ -463,32 +463,42 @@ class RealCombatSearch:
         # native shadow.  Reuse the leader's three native minion slots, map the
         # public live entities onto them, and let root-state injection rebuild
         # any species that changed.  Other encounters still require exact IDs.
+        leader_id = ("TheCollector" if any(
+            m["id"] == "TheCollector" and not m["gone"]
+            for m in real["monsters"]) else "GremlinLeader")
+        minion_ids = ({"TorchHead"} if leader_id == "TheCollector"
+                      else _GREMLIN_LEADER_MINIONS)
         real_leaders = [
             i for i, monster in enumerate(real["monsters"])
-            if not monster["gone"] and monster["id"] == "GremlinLeader"
+            if not monster["gone"] and monster["id"] == leader_id
         ]
         sim_leaders = [
             i for i, monster in enumerate(sim["monsters"])
-            if not monster["gone"] and monster["id"] == "GremlinLeader"
+            if not monster["gone"] and monster["id"] == leader_id
         ]
-        dynamic_gremlins = (
+        dynamic_minions = (
             len(real_leaders) == 1
             and len(sim_leaders) == 1
-            and all(real["monsters"][i]["id"] in _GREMLIN_LEADER_MINIONS
+            and all(real["monsters"][i]["id"] in minion_ids
                     for i in unused)
-            and all(sim["monsters"][i]["id"] in _GREMLIN_LEADER_MINIONS
+            and all(sim["monsters"][i]["id"] in minion_ids
                     for i in unmatched_live_sim)
         )
-        if dynamic_gremlins and unused:
+        if dynamic_minions and unused:
+            # Dead Java summon slots remain in the transport list, while native
+            # summon slots are reused. Release only confirmed minion corpses.
+            for si in confirmed_dead:
+                if sim["monsters"][si]["id"] in minion_ids:
+                    mapping.pop(si, None)
             available = [
                 i for i, monster in enumerate(sim["monsters"])
-                if i not in mapping and monster["id"] != "GremlinLeader"
+                if i not in mapping and monster["id"] != leader_id
             ]
             previous = dict(self.sim_to_real_targets)
             for sim_index, real_index in sorted(previous.items()):
                 if (sim_index in available and real_index in unused
                         and real["monsters"][real_index]["id"]
-                        in _GREMLIN_LEADER_MINIONS):
+                        in minion_ids):
                     mapping[sim_index] = real_index
                     available.remove(sim_index)
                     unused.remove(real_index)
@@ -509,7 +519,7 @@ class RealCombatSearch:
             ):
                 mapping[sim_index] = real_index
                 unused.remove(real_index)
-        if unmatched_live_sim and not dynamic_gremlins:
+        if unmatched_live_sim and not dynamic_minions:
             sim_index = unmatched_live_sim[0]
             monster = sim["monsters"][sim_index]
             raise RuntimeError(
