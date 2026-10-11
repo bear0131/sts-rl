@@ -1244,6 +1244,8 @@ py::dict rewardInfo(const sts::GameContext &gc) {
     d["relics"] = relics;
     d["potions"] = potions;
     d["card_count"] = r.cardRewardCount;
+    d["sapphire_key"] = r.sapphireKey;
+    d["emerald_key"] = r.emeraldKey;
     return d;
 }
 
@@ -1580,6 +1582,13 @@ PYBIND11_MODULE(slaythespire, m) {
              "name), pick_count, have_selected, selected:[card ids already picked this screen]}")
         // combat-reward screen
         .def("get_reward_info", &rewardInfo, "claimable items on the current REWARDS screen")
+        .def("claim_key_reward", [](GameContext &gc) {
+            const search::GameAction action(search::GameAction::RewardsActionType::KEY);
+            if (gc.screenState != ScreenState::REWARDS || !action.isValidAction(gc)) {
+                throw pybind11::value_error("no claimable key reward");
+            }
+            action.execute(gc);
+        }, "Claim the offered key, forfeiting its linked chest relic for sapphire")
         .def("claim_gold", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainGold(r.gold[idx]); r.removeGoldReward(idx); })
         .def("claim_relic", [](GameContext &gc, int idx) {
             auto &r = gc.info.rewardsContainer;

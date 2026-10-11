@@ -41,9 +41,8 @@ class RunMap:
     """Reachability/room queries for one act's map, rebuilt from the seed.
 
     Construct to match the gc: same seed + ascension + act. `burning` controls
-    whether a burning (emerald-key) elite is assigned; the gc's own map uses the
-    save's setting — for act 1 the default is False and the elite buff is applied
-    via node coordinates instead (see SimGameEnv / replay._sync_gc)."""
+    whether a burning (emerald-key) elite is assigned; SimGameEnv matches the
+    live green-key flag. Act 4 uses the fixed rest/shop/elite/boss map."""
 
     def __init__(self, seed, ascension, act, burning=False):
         self.seed = seed

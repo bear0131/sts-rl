@@ -244,8 +244,10 @@ Action Actions::MakeTempCardInDrawPile(const CardInstance &c, int amount, bool s
             if (shuffleInto) {
                 const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
                 bc.cards.createTempCardInDrawPile(idx, c);
+            } else {
+                // Draws pop from the back: A18+ Spire Spear places Burns on top.
+                bc.cards.createTempCardInDrawPile(static_cast<int>(bc.cards.drawPile.size()), c);
             }
-            // todo else
         }
     }};
 }

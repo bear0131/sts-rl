@@ -396,6 +396,8 @@ class SlayTheSpireEnv(gym.Env):
                 result = self._step_impl(int(record["action"]))
             elif kind == "native":
                 result = self._step_native_combat_impl(int(record["action_bits"]))
+            elif kind == "key":
+                result = self._step_key_reward_impl(record["key"])
             else:
                 raise ValueError(f"invalid environment journal record at {position}")
             if result[2] or result[3]:
@@ -745,6 +747,24 @@ class SlayTheSpireEnv(gym.Env):
             "kind": "native",
             "action_bits": int(action_bits),
         })
+        return result
+
+    def _step_key_reward_impl(self, key):
+        if self._pending is not None:
+            raise RuntimeError("finish the pending action before claiming a key")
+        _, reward, terminated, info = self.thick.claim_key_reward(key)
+        self._invalidate_backend_cache()
+        return self._post_step(reward, terminated, info)
+
+    def step_key_reward(self, key):
+        """Claim a visible key reward through the native side interface.
+
+        This does not change ACTION_VERSION=6 or the checkpoint output shape.
+        Fixed-codec policies cannot select keys; script/native callers can.
+        Use a SimGameEnv(stop_after_act=4) backend to play through the Heart.
+        """
+        result = self._step_key_reward_impl(key)
+        self._episode_action_journal.append({"kind": "key", "key": key})
         return result
 
     def _truncate_dead(self):

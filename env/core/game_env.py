@@ -15,7 +15,7 @@ NOT a gym.Env yet (actions are variable-length semantic tuples, not a fixed
 Discrete space). The thin layer adds the gym surface + fixed-length id/mask. See
 doc/plan_simgameenv.md.
 
-Scope: drives acts 1-3 end to end (stops before the act-4 heart). Events, campfires and
+Scope: defaults to acts 1-3; stop_after_act=4 permits the keyed Heart route. Events, campfires and
 shops enumerate their real legal options via the sim's own action enumerator
 (gc.legal_event_options / legal_campfire_options / legal_shop_options), so
 multi-phase events (Golden Idol, Cursed Tome) resolve instead of looping and the
@@ -102,7 +102,10 @@ class SimGameEnv:
 
     def __init__(self, character=None, ascension=0, global_map_view=False,
                  interactive_reasoning=False,
-                 nosl_is_az_boss_transition_target=False):
+                 nosl_is_az_boss_transition_target=False, stop_after_act=3):
+        if stop_after_act not in (3, 4):
+            raise ValueError("stop_after_act must be 3 or 4")
+        self._stop_after_act = stop_after_act
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
@@ -147,7 +150,7 @@ class SimGameEnv:
 
     def _rebuild_map(self):
         self.rmap = spiremap.RunMap(self.gc.seed, self._ascension, self.gc.act,
-                                    burning=False)
+                                    burning=not self.gc.green_key)
 
     # ------------------------------------------------------------ observation
     def phase(self):
@@ -236,11 +239,25 @@ class SimGameEnv:
     # --------------------------------------------------------------- terminal
     @property
     def is_over(self):
-        """Run ended: player died, or we cleared the act-3 boss into act 4 (we
-        stop at the end of act 3, before the act-4 heart)."""
+        """Terminal outcome or the configured act boundary (default: Act 3)."""
         if self.gc.outcome != _GC_UNDECIDED:
             return True
-        return self.gc.act > 3
+        return self.gc.act > self._stop_after_act
+
+    def legal_key_rewards(self):
+        """Native side interface; frozen 181-id policy codec has no key slots."""
+        if self.is_over or self.phase() != "combat_reward":
+            return []
+        rewards = self.gc.get_reward_info()
+        return [key for key in ("sapphire", "emerald")
+                if rewards.get(key + "_key", False)]
+
+    def claim_key_reward(self, key):
+        if key not in self.legal_key_rewards():
+            raise ValueError(f"key reward is unavailable: {key}")
+        self.gc.claim_key_reward()
+        self._settle()
+        return self._canonical(), 0.0, self.is_over, self._info()
 
     def run_stats(self):
         """Ground-truth run-level diagnostics for logging (NOT obs/reward): the

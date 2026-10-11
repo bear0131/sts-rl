@@ -48,3 +48,16 @@ Dark Embrace 等效果可能读到真实未来。native_index 是执行句柄，
 回归入口：`tests/integration/test_native_action_contract.py`。legacy 的 F03 strict
 xfail 保留以记录兼容边界；新增契约的长候选、分支隔离和 71/181 checkpoint 接入
 测试均为正常断言，不能用旧 xfail 掩盖新模式失败。
+
+### Native Heart runs
+
+The fixed policy codec remains ACTION_VERSION=6 (181 ids). To play Act 4, use
+`SlayTheSpireEnv(backend_factory=lambda: SimGameEnv(ascension=20, stop_after_act=4), combat_action_contract="native-v1")`.
+The default backend still stops after Act 3. Keys must be obtained naturally:
+`env.thick.legal_key_rewards()` lists offered `sapphire`/`emerald` keys and
+`env.step_key_reward(key)` claims one through the native side interface, recorded
+in the environment replay journal. Sapphire forfeits its linked chest relic;
+claiming that relic instead removes the key offer. Ruby uses the existing recall
+campfire action. Fixed-codec policies have no key slots and cannot choose these
+side-interface actions; checkpoint shapes and observations are unchanged. This
+requires a native extension with key-reward bindings and the Act 4 map fix.

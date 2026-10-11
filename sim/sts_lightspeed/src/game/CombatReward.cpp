@@ -42,6 +42,8 @@ void Rewards::removeCardReward(int removeIdx) {
 }
 
 void Rewards::removeRelicReward(int removeIdx) {
+    // The sapphire key is linked to the last chest relic, not a free extra reward.
+    if (removeIdx == relicCount - 1) sapphireKey = false;
     for (int i = removeIdx; i < relicCount-1; ++i) {
         relics[i] = relics[i+1];
     }
