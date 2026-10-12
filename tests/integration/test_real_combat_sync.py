@@ -1072,3 +1072,26 @@ def test_real_plated_armor_replaces_and_clears_predicted_amount(combat_factory):
         assert normalize_sim(battle.to_dict())["player"]["powers"]["Plated Armor"] == amount
     battle.apply_custom_state({"player": {"powers": []}})
     assert "Plated Armor" not in normalize_sim(battle.to_dict())["player"]["powers"]
+
+
+def test_real_buffer_consumption_clears_shadow_power(combat_factory):
+    from bridge.search_bridge import _power_rows, _SUPPORTED_PLAYER_POWERS
+    env = combat_factory(["STRIKE_RED", "DEFEND_RED"])
+    battle = env.thick.bc
+    for amount in (2, 1):
+        rows = _power_rows({"Buffer": amount}, _SUPPORTED_PLAYER_POWERS)
+        assert rows == [("BUFFER", amount)]
+        battle.apply_custom_state({"player": {"powers": rows}})
+        assert normalize_sim(battle.to_dict())["player"]["powers"]["Buffer"] == amount
+    battle.apply_custom_state({"player": {"powers": [("STRENGTH", 3), ("DEMON_FORM", 2)]}})
+    assert normalize_sim(battle.to_dict())["player"]["powers"] == {"Strength": 3, "Demon Form": 2}
+
+
+def test_all_supported_player_powers_clear_on_authoritative_replacement(combat_factory):
+    from bridge.search_bridge import _SUPPORTED_PLAYER_POWERS
+    env = combat_factory(["STRIKE_RED", "DEFEND_RED"])
+    battle = env.thick.bc
+    for power in sorted(_SUPPORTED_PLAYER_POWERS):
+        battle.apply_custom_state({"player": {"powers": [(power, 1)]}})
+        battle.apply_custom_state({"player": {"powers": []}})
+        assert normalize_sim(battle.to_dict())["player"]["powers"] == {}, power

@@ -614,11 +614,11 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         }
         if (p.contains("powers")) {
             static constexpr const char *kStatuses[] = {
-                "STRENGTH", "DEXTERITY", "LOSE_DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
+                "STRENGTH", "DEXTERITY", "LOSE_STRENGTH", "LOSE_DEXTERITY", "NO_DRAW", "REGEN", "WEAK", "FRAIL", "VULNERABLE",
                 "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
                 "CORRUPTION", "CONFUSED", "HEX", "DRAW_REDUCTION",
                 "BLASPHEMER", "ELECTRO", "SURROUNDED", "MASTER_REALITY",
-                "PEN_NIB", "WRATH_NEXT_TURN", "DOUBLE_TAP", "DUPLICATION", "BRUTALITY",
+                "PEN_NIB", "WRATH_NEXT_TURN", "BUFFER", "DOUBLE_TAP", "DUPLICATION", "BRUTALITY",
                 "COMBUST", "DARK_EMBRACE", "DEMON_FORM", "EVOLVE",
                 "FEEL_NO_PAIN", "FIRE_BREATHING", "FLAME_BARRIER",
                 "JUGGERNAUT", "METALLICIZE", "PLATED_ARMOR", "RAGE", "RUPTURE", "THORNS",
@@ -1151,6 +1151,7 @@ void setRulePlayerStatusByName(
     SET_PLAYER_STATUS(LOSE_STRENGTH)
     SET_PLAYER_STATUS(DOUBLE_TAP)
     SET_PLAYER_STATUS(DUPLICATION)
+    SET_PLAYER_STATUS(BUFFER)
     SET_PLAYER_STATUS(BRUTALITY)
     SET_PLAYER_STATUS(COMBUST)
     SET_PLAYER_STATUS(DARK_EMBRACE)
