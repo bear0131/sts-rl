@@ -621,7 +621,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 "PEN_NIB", "WRATH_NEXT_TURN", "DOUBLE_TAP", "DUPLICATION", "BRUTALITY",
                 "COMBUST", "DARK_EMBRACE", "DEMON_FORM", "EVOLVE",
                 "FEEL_NO_PAIN", "FIRE_BREATHING", "FLAME_BARRIER",
-                "JUGGERNAUT", "METALLICIZE", "RAGE", "RUPTURE", "THORNS",
+                "JUGGERNAUT", "METALLICIZE", "PLATED_ARMOR", "RAGE", "RUPTURE", "THORNS",
                 "VIGOR",
             };
             for (const auto *name : kStatuses) setRulePlayerStatusByName(bc, name, 0);
@@ -1161,6 +1161,7 @@ void setRulePlayerStatusByName(
     SET_PLAYER_STATUS(FLAME_BARRIER)
     SET_PLAYER_STATUS(JUGGERNAUT)
     SET_PLAYER_STATUS(METALLICIZE)
+    SET_PLAYER_STATUS(PLATED_ARMOR)
     SET_PLAYER_STATUS(RAGE)
     SET_PLAYER_STATUS(REGEN)
     SET_PLAYER_STATUS(RUPTURE)

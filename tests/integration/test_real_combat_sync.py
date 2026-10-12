@@ -1059,3 +1059,16 @@ def test_collector_resummons_replace_confirmed_dead_transport_slots(combat_facto
     assert mapping[leader_index] == 4
     search.sim_to_real_targets = mapping
     assert search._target_mapping(real) == mapping
+
+
+def test_real_plated_armor_replaces_and_clears_predicted_amount(combat_factory):
+    from bridge.search_bridge import _power_rows, _SUPPORTED_PLAYER_POWERS
+    env = combat_factory(["STRIKE_RED", "DEFEND_RED"])
+    battle = env.thick.bc
+    for amount in (4, 3, 1):
+        rows = _power_rows({"Plated Armor": amount}, _SUPPORTED_PLAYER_POWERS)
+        assert rows == [("PLATED_ARMOR", amount)]
+        battle.apply_custom_state({"player": {"powers": rows}})
+        assert normalize_sim(battle.to_dict())["player"]["powers"]["Plated Armor"] == amount
+    battle.apply_custom_state({"player": {"powers": []}})
+    assert "Plated Armor" not in normalize_sim(battle.to_dict())["player"]["powers"]
