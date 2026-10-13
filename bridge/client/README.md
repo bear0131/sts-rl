@@ -72,6 +72,10 @@ Event choices and overworld reward/card-selection commands wait 0.5 seconds
 before being sent. Combat card generation (such as Nilry's Codex) and ordinary
 combat commands keep their existing timing.
 
+Shop potion offers remain visible in the observation, but buying them is masked
+when the player has Sozu or no empty potion slot, matching both the simulator's
+legal-action contract and the real game's accepted commands.
+
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
 

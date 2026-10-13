@@ -350,8 +350,9 @@ class SimGameEnv:
             return [ga.boss_relic(i) for i in range(3)] + pots
         if phase == "shop":
             # The sim enumerates the affordable, in-stock shop actions as
-            # (kind, idx) pairs (gold/sold-out gated). kind maps 1:1 to the
-            # semantic shop verbs; "skip" is leaving the shop.
+            # (kind, idx) pairs (gold/sold-out/Sozu/potion-capacity gated).
+            # kind maps 1:1 to the semantic shop verbs; "skip" is leaving the
+            # shop.
             acts = []
             for kind, idx in self.gc.legal_shop_options():
                 if kind == "skip":

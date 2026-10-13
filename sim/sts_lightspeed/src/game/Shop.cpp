@@ -140,9 +140,12 @@ void Shop::buyRelic(GameContext &gc, int idx) {
 }
 
 void Shop::buyPotion(GameContext &gc, int idx) {
-//    if (gc.hasRelic(RelicId::SOZU)) { // just dont call this with sozu or without enough slots
-//        return;
-//    }
+    // Keep the mutator safe even if a stale UI/action bypasses the legal-action
+    // enumerator.  The real game neither obtains the potion nor spends gold in
+    // these states.
+    if (gc.hasRelic(RelicId::SOZU) || gc.potionCount >= gc.potionCapacity) {
+        return;
+    }
     gc.obtainPotion(potions[idx]);
     gc.loseGold(potionPrice(idx), true);
     if (gc.hasRelic(RelicId::THE_COURIER)) {

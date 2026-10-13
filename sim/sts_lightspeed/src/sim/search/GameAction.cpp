@@ -513,10 +513,12 @@ std::vector<search::GameAction> getAllShopActions(const sts::GameContext &gc) {
         }
     }
 
-    for (int i = 0; i < 3; ++i) {
-        auto price = s.potionPrice(i);
-        if (price != -1 && gc.gold >= price) {
-            actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+    if (!gc.relics.has(RelicId::SOZU) && gc.potionCount < gc.potionCapacity) {
+        for (int i = 0; i < 3; ++i) {
+            auto price = s.potionPrice(i);
+            if (price != -1 && gc.gold >= price) {
+                actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+            }
         }
     }
 

@@ -490,3 +490,38 @@ def test_real_reward_claim_requires_an_actual_empty_potion_slot(slots):
     frame["game_state"]["potions"][-1] = {"id": "Potion Slot"}
     adapter.update(frame)
     assert ga.claim(ga.CLAIM_POTION, 0) in adapter._legal_reward_actions()
+
+
+@pytest.mark.parametrize("relics,potions,can_buy", [
+    ([{"id": "Sozu"}], [{"id": "Potion Slot"}] * 3, False),
+    ([], [{"id": "Fire Potion"}] * 3, False),
+    ([], [{"id": "Potion Slot"}] * 3, True),
+])
+def test_real_shop_potions_require_capacity_and_no_sozu(relics, potions, can_buy):
+    from env.core import game_actions as ga
+
+    adapter = RealGameAdapter()
+    adapter.update({
+        "in_game": True,
+        "available_commands": ["choose", "leave"],
+        "game_state": {
+            "screen_type": "SHOP_SCREEN",
+            "choice_list": ["potion"],
+            "screen_state": {
+                "cards": [],
+                "relics": [],
+                "potions": [{"id": "PowerPotion", "price": 50}],
+                "purge_cost": -1,
+            },
+            "gold": 100,
+            "relics": relics,
+            "potions": potions,
+        },
+    })
+
+    buy = ga.shop_buy(ga.SHOP_POTION, 0)
+    legal = adapter.legal_semantic_actions()
+    assert (buy in legal) is can_buy
+    assert ga.shop_proceed() in legal
+    if can_buy:
+        assert adapter.command_for_semantic(buy) == "CHOOSE 0"

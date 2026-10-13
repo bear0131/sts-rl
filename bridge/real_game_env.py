@@ -1686,6 +1686,10 @@ class RealGameAdapter:
         cl = self.choices()
         ss = _screen_state(self.gs)
         gold = int(self.gs.get("gold", 0) or 0)
+        can_buy_potion = (
+            "Sozu" not in self._relics()
+            and self._has_empty_potion_slot()
+        )
 
         affordable: list[tuple[str, int]] = []
         for kind, key in (
@@ -1693,6 +1697,8 @@ class RealGameAdapter:
             (ga.SHOP_RELIC, "relics"),
             (ga.SHOP_POTION, "potions"),
         ):
+            if kind == ga.SHOP_POTION and not can_buy_potion:
+                continue
             for i, item in enumerate(ss.get(key) or []):
                 price = _price(item)
                 if 0 <= price <= gold:
