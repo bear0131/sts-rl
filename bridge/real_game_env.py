@@ -530,6 +530,17 @@ class RealGameAdapter:
             return None
         if not self.frame.get("ready_for_command", True):
             return self._refresh_command(), "not_ready"
+        # The in-combat map is an inspect-only overlay.  CommunicationMod still
+        # publishes the underlying combat state and room phase, but replaces
+        # PLAY/END with CHOOSE/RETURN while the overlay is open.  Sending that
+        # frame into native combat search makes the real and simulated legal
+        # masks disagree; close the overlay before making another decision.
+        if (self.gs.get("combat_state")
+                and str(self.gs.get("room_phase") or "").upper() == "COMBAT"
+                and self.screen_type() == "MAP"):
+            if "RETURN" in self.commands():
+                return "RETURN", "close_combat_map_overlay"
+            return self._refresh_command(), "await_combat_map_overlay_close"
         if self.gs.get("combat_state") and not self._combat_ready_for_policy():
             return self._refresh_command(), "combat_not_waiting"
         if self._joint_multi_plan is not None:

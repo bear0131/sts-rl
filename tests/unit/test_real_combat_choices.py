@@ -252,6 +252,56 @@ def test_actionable_hand_select_overrides_executing_action_phase():
     assert adapter.action_mask()[C.JOINT_MULTI + 1]
 
 
+def test_combat_map_overlay_returns_before_native_search():
+    from env.core import native_actions as C
+
+    adapter = RealGameAdapter(combat_action_contract=C.JOINT_CONTRACT)
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "return", "wait", "state"],
+        "game_state": {
+            "room_phase": "COMBAT",
+            "screen_type": "MAP",
+            "screen_name": "MAP",
+            "is_screen_up": True,
+            "action_phase": "WAITING_ON_USER",
+            "choice_list": ["x=0"],
+            "screen_state": {"next_nodes": [{"symbol": "?", "x": 0, "y": 10}]},
+            "combat_state": {
+                "turn": 2,
+                "hand": [{"id": "Strike_R", "is_playable": True}],
+                "player": {"energy": 1},
+                "monsters": [{
+                    "id": "JawWorm",
+                    "current_hp": 32,
+                    "is_gone": False,
+                }],
+            },
+        },
+    })
+
+    assert adapter.phase() == "combat"
+    assert adapter.auto_command() == ("RETURN", "close_combat_map_overlay")
+
+
+def test_combat_map_overlay_refreshes_until_return_is_available():
+    adapter = RealGameAdapter()
+    adapter.update({
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["wait", "state"],
+        "game_state": {
+            "room_phase": "COMBAT",
+            "screen_type": "MAP",
+            "combat_state": {"turn": 2, "monsters": []},
+        },
+    })
+
+    assert adapter.auto_command() == (
+        "STATE", "await_combat_map_overlay_close")
+
+
 def test_single_hand_select_confirms_selected_alias_without_second_policy_call():
     from env.core import native_actions as C
 
