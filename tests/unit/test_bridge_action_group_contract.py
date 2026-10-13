@@ -110,6 +110,70 @@ def test_mod_error_refreshes_state_instead_of_restarting_run():
     assert decision.command == "STATE"
     assert decision.reason == "mod_error_state_refresh"
 
+
+def test_reward_preview_transport_does_not_call_policy_between_commands():
+    from bridge.client import agent_orchestrator as agent
+    from bridge.real_game_env import RealGameAdapter
+    from env.core import action_space as A, game_actions as ga
+
+    driver = agent.RealPolicyAgent(
+        object(),
+        RealGameAdapter(),
+        stochastic=False,
+        topk=0,
+        max_inner_decisions=1,
+        auto_enter_shop=True,
+        auto_start=False,
+        start_seed=None,
+        ascension=0,
+        character="IRONCLAD",
+    )
+    policy_calls = []
+    driver._predict = lambda *_args, **_kwargs: (
+        policy_calls.append("predict") or A._RGOLD, ())
+    outer = {
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "proceed", "state"],
+        "game_state": {
+            "screen_type": "COMBAT_REWARD",
+            "choice_list": ["gold", "card"],
+            "screen_state": {"rewards": [
+                {"reward_type": "GOLD", "gold": 27},
+                {"reward_type": "CARD"},
+            ]},
+            "potions": [{"id": "Potion Slot"}] * 3,
+        },
+    }
+    card_page = {
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "skip", "state"],
+        "game_state": {
+            "screen_type": "CARD_REWARD",
+            "choice_list": ["Anger", "Searing Blow", "Whirlwind"],
+            "screen_state": {"cards": [
+                {"id": "Anger", "upgrades": 0},
+                {"id": "Searing Blow", "upgrades": 0},
+                {"id": "Whirlwind", "upgrades": 0},
+            ]},
+            "potions": [{"id": "Potion Slot"}] * 3,
+        },
+    }
+
+    open_page = driver.decide(outer)
+    choose_outer = driver.decide(card_page)
+    complete_outer = driver.decide(outer)
+
+    assert (open_page.command, open_page.reason) == (
+        "CHOOSE 1", "open_card_reward")
+    assert choose_outer.command == "SKIP"
+    assert choose_outer.semantic == ga.claim(ga.CLAIM_GOLD, 0)
+    assert (complete_outer.command, complete_outer.reason) == (
+        "CHOOSE 0", "complete_deferred_reward_action")
+    assert policy_calls == ["predict"]
+
+
 @pytest.mark.parametrize('screen,room,command,delayed', [
     ('EVENT', 'EVENT', 'CHOOSE 0', True),
     ('EVENT', 'EVENT', 'PROCEED', True),

@@ -478,7 +478,10 @@ def test_real_reward_claim_requires_an_actual_empty_potion_slot(slots):
         "game_state": {
             "screen_type": "COMBAT_REWARD",
             "choice_list": ["potion"],
-            "screen_state": {},
+            "screen_state": {"rewards": [{
+                "reward_type": "POTION",
+                "potion": {"id": "Fire Potion"},
+            }]},
             "potions": [{"id": "Fire Potion"} for _ in range(slots)],
         },
     }

@@ -247,10 +247,39 @@ def _screen_cards(ss: dict[str, Any]) -> list[tuple[str, int]]:
     return out
 
 
+def _reward_records(ss: dict[str, Any]) -> list[dict[str, Any]]:
+    rewards = ss.get("rewards") or []
+    if not isinstance(rewards, list):
+        return []
+    return [reward for reward in rewards if isinstance(reward, dict)]
+
+
+def _reward_type(reward: dict[str, Any]) -> str:
+    return str(reward.get("reward_type") or reward.get("type") or "").upper()
+
+
+def _screen_reward_gold(ss: dict[str, Any]) -> list[int]:
+    gold = []
+    for reward in _reward_records(ss):
+        if _reward_type(reward) not in {"GOLD", "STOLEN_GOLD"}:
+            continue
+        amount = _int_or_none(reward.get("gold"))
+        if amount is not None:
+            gold.append(amount)
+    return gold
+
+
 def _screen_relics(ss: dict[str, Any]) -> list[str]:
     relics = ss.get("relics") or ss.get("boss_relics") or []
     if not isinstance(relics, list):
         return []
+    if not relics:
+        relics = [
+            reward["relic"]
+            for reward in _reward_records(ss)
+            if _reward_type(reward) == "RELIC"
+            and isinstance(reward.get("relic"), dict)
+        ]
     return [_relic_id(r) for r in relics]
 
 
@@ -258,6 +287,13 @@ def _screen_potions(ss: dict[str, Any]) -> list[tuple[str, int]]:
     potions = ss.get("potions") or []
     if not isinstance(potions, list):
         return []
+    if not potions:
+        potions = [
+            reward["potion"]
+            for reward in _reward_records(ss)
+            if _reward_type(reward) == "POTION"
+            and isinstance(reward.get("potion"), dict)
+        ]
     return [(_potion_id(p), _price(p)) for p in potions]
 
 
@@ -420,6 +456,10 @@ class RealGameAdapter:
         # non-card rewards or proceed.
         self._combat_reward_card_open = False
         self._skipped_combat_card_reward = False
+        self._combat_reward_outer_choices: tuple[Any, ...] = ()
+        self._combat_reward_outer_commands: frozenset[str] = frozenset()
+        self._combat_reward_outer_options: dict[str, list[Any]] = {}
+        self._deferred_combat_reward_action: tuple | None = None
         # CommunicationMod publishes the first post-GRID frame before some
         # vanilla relic callbacks have consumed ``selectedCards``.  Sending the
         # next event/map command in that frame can clear the selection before
@@ -464,9 +504,17 @@ class RealGameAdapter:
         self._reconcile_multi()
         if self.screen_type() == "SHOP_SCREEN":
             self._leaving_shop = False
-        if self.screen_type() not in {"COMBAT_REWARD", "CARD_REWARD"}:
+        if self.screen_type() == "COMBAT_REWARD":
+            self._combat_reward_outer_choices = tuple(self.choices())
+            self._combat_reward_outer_commands = frozenset(self.commands())
+            self._combat_reward_outer_options = self._current_outer_reward_options()
+        elif self.screen_type() not in {"COMBAT_REWARD", "CARD_REWARD"}:
             self._combat_reward_card_open = False
             self._skipped_combat_card_reward = False
+            self._combat_reward_outer_choices = ()
+            self._combat_reward_outer_commands = frozenset()
+            self._combat_reward_outer_options = {}
+            self._deferred_combat_reward_action = None
 
     def screen_type(self) -> str:
         return str(self.gs.get("screen_type") or "NONE")
@@ -552,6 +600,13 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         cl = self.choices()
 
+        if self._deferred_combat_reward_action is not None:
+            if st == "COMBAT_REWARD":
+                action = self._deferred_combat_reward_action
+                self._deferred_combat_reward_action = None
+                return self.command_for_semantic(action), "complete_deferred_reward_action"
+            return self._refresh_command(), "await_combat_reward_return"
+
         if self._post_overworld_grid_wait:
             self._post_overworld_grid_wait = False
             return (
@@ -594,22 +649,16 @@ class RealGameAdapter:
                 return "CHOOSE 0", "enter_shop_screen"
 
         # The simulator exposes the actual card candidates before the upper
-        # policy chooses a reward card or skips.  CommunicationMod instead
-        # exposes a placeholder on COMBAT_REWARD and reveals the candidates
-        # only after CHOOSE.  Opening that sub-screen is transport, not a
-        # commitment: CARD_REWARD still offers SKIP.  Once no claimable
-        # non-card reward remains, enter it automatically so the policy sees
-        # the same candidate-bearing state it was trained on.
+        # policy chooses any reward action.  CommunicationMod instead exposes a
+        # placeholder on COMBAT_REWARD and reveals candidates only after CHOOSE.
+        # Open that reversible sub-screen before every policy decision.  While
+        # it is open, the adapter merges these cards with the cached outer
+        # rewards and defers outer commands through a transport-only SKIP.
         if (st == "COMBAT_REWARD" and not self._skipped_combat_card_reward
                 and "CHOOSE" in self.commands()):
             normalized = [_norm_label(choice) for choice in cl]
             card_indices = [i for i, label in enumerate(normalized) if label == "card"]
-            claimable_other = any(
-                label in {"gold", "stolen_gold", "relic"}
-                or (label == "potion" and self._has_empty_potion_slot())
-                for label in normalized
-            )
-            if len(card_indices) == 1 and not claimable_other:
+            if len(card_indices) == 1:
                 self._combat_reward_card_open = True
                 return f"CHOOSE {card_indices[0]}", "open_card_reward"
 
@@ -862,13 +911,16 @@ class RealGameAdapter:
 
         if phase == "combat_reward":
             cards = _screen_cards(ss)
-            relics = _screen_relics(ss)
-            potions = [pid for pid, _price_ in _screen_potions(ss)]
             has_card = not self._skipped_combat_card_reward
+            outer = (
+                self._combat_reward_outer_options
+                if st == "CARD_REWARD" and self._combat_reward_card_open
+                else self._current_outer_reward_options()
+            )
             opts.update({
-                "gold": [0] * sum(_norm_label(c) in {"gold", "stolen_gold"} for c in cl),
-                "relics": relics,
-                "potions": potions,
+                "gold": list(outer.get("gold", [])),
+                "relics": list(outer.get("relics", [])),
+                "potions": list(outer.get("potions", [])),
                 "card_count": (len(cards) if cards else int("card" in {_norm_label(c) for c in cl}))
                               if has_card else 0,
                 "cards": cards if has_card else [],
@@ -904,6 +956,28 @@ class RealGameAdapter:
         elif phase == "shop":
             opts.update(self._shop_options(ss))
         return opts
+
+    def _current_outer_reward_options(self) -> dict[str, list[Any]]:
+        ss = _screen_state(self.gs)
+        labels = [_norm_label(choice) for choice in self.choices()]
+        expected = {
+            "gold": sum(label in {"gold", "stolen_gold"} for label in labels),
+            "relics": labels.count("relic"),
+            "potions": labels.count("potion"),
+        }
+        actual: dict[str, list[Any]] = {
+            "gold": _screen_reward_gold(ss),
+            "relics": _screen_relics(ss),
+            "potions": [pid for pid, _price_ in _screen_potions(ss)],
+        }
+        for kind, count in expected.items():
+            if len(actual[kind]) != count:
+                raise ValueError(
+                    "CommunicationMod reward details do not match choices: "
+                    f"kind={kind} expected={count} actual={actual[kind]!r} "
+                    f"choices={self.choices()!r}"
+                )
+        return actual
 
     def _neow_options(self, ss: dict[str, Any]) -> list[dict[str, int]]:
         raw = ss.get("options") or ss.get("rewards") or []
@@ -1338,14 +1412,34 @@ class RealGameAdapter:
         if st == "CARD_REWARD":
             cards = _screen_cards(ss)
             n = len(cards) or len(cl)
-            acts = [ga.reward_card(i) for i in range(min(n, A.REWARD_CARD))]
+            acts = []
+            if self._combat_reward_card_open:
+                acts.extend(self._outer_reward_claim_actions())
+            acts.extend(ga.reward_card(i) for i in range(min(n, A.REWARD_CARD)))
             if "SKIP" in self.commands():
                 acts.append(ga.skip_cards())
+            if (self._combat_reward_card_open
+                    and "PROCEED" in self._combat_reward_outer_commands):
+                acts.append(ga.proceed())
             return acts
 
+        acts = self._outer_reward_claim_actions()
+        if not self._skipped_combat_card_reward and any(
+                _norm_label(label) == "card" for label in cl):
+            acts.append(ga.reward_card(0))
+        if "PROCEED" in self.commands():
+            acts.append(ga.proceed())
+        return acts
+
+    def _outer_reward_claim_actions(self) -> list[tuple]:
+        labels = (
+            self._combat_reward_outer_choices
+            if self.screen_type() == "CARD_REWARD" and self._combat_reward_card_open
+            else tuple(self.choices())
+        )
         acts = []
         counts = {ga.CLAIM_GOLD: 0, ga.CLAIM_RELIC: 0, ga.CLAIM_POTION: 0}
-        for label in cl:
+        for label in labels:
             norm = _norm_label(label)
             if norm in {"gold", "stolen_gold"}:
                 acts.append(ga.claim(ga.CLAIM_GOLD, counts[ga.CLAIM_GOLD]))
@@ -1357,10 +1451,6 @@ class RealGameAdapter:
                 if self._has_empty_potion_slot():
                     acts.append(ga.claim(ga.CLAIM_POTION, counts[ga.CLAIM_POTION]))
                 counts[ga.CLAIM_POTION] += 1
-            elif norm == "card" and not self._skipped_combat_card_reward:
-                acts.append(ga.reward_card(0))
-        if "PROCEED" in self.commands():
-            acts.append(ga.proceed())
         return acts
 
     def _legal_rest_actions(self) -> list[tuple]:
@@ -1382,7 +1472,11 @@ class RealGameAdapter:
         return acts
 
     def _legal_potion_actions(self, *, combat: bool) -> list[tuple]:
-        if "POTION" not in self.commands():
+        commands = self.commands()
+        if (not combat and self.screen_type() == "CARD_REWARD"
+                and self._combat_reward_card_open):
+            commands |= set(self._combat_reward_outer_commands)
+        if "POTION" not in commands:
             return []
         if combat and not self.gs.get("combat_state"):
             return []
@@ -1470,6 +1564,14 @@ class RealGameAdapter:
     # ---------------------------------------------------------- command mapping
     def command_for_semantic(self, action: tuple) -> str:
         verb = action[0]
+        if (self.screen_type() == "CARD_REWARD"
+                and self._combat_reward_card_open
+                and verb in {ga.CLAIM, ga.PROCEED, ga.USE_POTION}):
+            if self._deferred_combat_reward_action is not None:
+                raise RuntimeError("combat reward action is already deferred")
+            self._deferred_combat_reward_action = action
+            self._combat_reward_card_open = False
+            return "SKIP"
         if verb == ga.COMBAT:
             kind = actions.decode(action[1])
             if kind[0] == actions.KIND_END:

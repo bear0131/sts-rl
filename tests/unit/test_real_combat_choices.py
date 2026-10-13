@@ -411,19 +411,118 @@ def test_combat_reward_opens_card_candidates_before_policy_decides():
     assert ga.skip_cards() in adapter.legal_semantic_actions()
 
 
-def test_combat_reward_keeps_policy_control_while_claimable_reward_remains():
-    adapter = RealGameAdapter()
-    adapter.update({
+def _reward_outer_frame(*choices):
+    rewards = {
+        "gold": {"reward_type": "GOLD", "gold": 27},
+        "relic": {
+            "reward_type": "RELIC",
+            "relic": {"id": "Matryoshka", "counter": 2},
+        },
+        "potion": {
+            "reward_type": "POTION",
+            "potion": {"id": "Regen Potion", "can_discard": True},
+        },
+        "card": {"reward_type": "CARD"},
+    }
+    return {
         "in_game": True,
         "ready_for_command": True,
-        "available_commands": ["choose", "proceed", "state"],
+        "available_commands": ["choose", "potion", "proceed", "state"],
         "game_state": {
             "screen_type": "COMBAT_REWARD",
-            "choice_list": ["gold", "card"],
-            "screen_state": {"rewards": [
-                {"reward_type": "GOLD"}, {"reward_type": "CARD"},
-            ]},
+            "choice_list": list(choices),
+            "screen_state": {"rewards": [rewards[choice] for choice in choices]},
+            "potions": [{"id": "Potion Slot"}] * 3,
         },
-    })
+    }
+
+
+def _reward_card_frame():
+    cards = [
+        {"id": "Anger", "upgrades": 0},
+        {"id": "Searing Blow", "upgrades": 0},
+        {"id": "Whirlwind", "upgrades": 0},
+    ]
+    return {
+        "in_game": True,
+        "ready_for_command": True,
+        "available_commands": ["choose", "skip", "state"],
+        "game_state": {
+            "screen_type": "CARD_REWARD",
+            "choice_list": [card["id"] for card in cards],
+            "screen_state": {"cards": cards, "skip_available": True},
+            "potions": [{"id": "Potion Slot"}] * 3,
+        },
+    }
+
+
+def test_combat_reward_preview_matches_training_candidates_and_outer_rewards():
+    adapter = RealGameAdapter()
+    adapter.update(_reward_outer_frame("gold", "relic", "potion", "card"))
+    assert adapter.auto_command() == ("CHOOSE 3", "open_card_reward")
+
+    adapter.update(_reward_card_frame())
+
+    assert adapter.obs_canonical()["options"] == {
+        "gold": [27],
+        "relics": ["Matryoshka"],
+        "potions": ["Regen Potion"],
+        "card_count": 3,
+        "cards": [("Anger", 0), ("Searing Blow", 0), ("Whirlwind", 0)],
+    }
+    assert adapter.legal_semantic_actions() == [
+        ga.claim(ga.CLAIM_GOLD, 0),
+        ga.claim(ga.CLAIM_RELIC, 0),
+        ga.claim(ga.CLAIM_POTION, 0),
+        ga.reward_card(0),
+        ga.reward_card(1),
+        ga.reward_card(2),
+        ga.skip_cards(),
+        ga.proceed(),
+    ]
+    observation = adapter.observation()
+    assert np.isclose(observation["reward_gold"][0], 27 / encode.GOLD_SCALE)
+    assert observation["offer_card_ids"][0] == encode.CARD_INDEX["Anger"]
+    assert adapter.command_for_semantic(ga.reward_card(2)) == "CHOOSE 2"
+    assert adapter._deferred_combat_reward_action is None
+
+
+def test_combat_reward_preview_defers_outer_actions_without_second_policy_call():
+    for action, expected in [
+        (ga.claim(ga.CLAIM_GOLD, 0), "CHOOSE 0"),
+        (ga.proceed(), "PROCEED"),
+    ]:
+        adapter = RealGameAdapter()
+        outer = _reward_outer_frame("gold", "card")
+        adapter.update(outer)
+        assert adapter.auto_command() == ("CHOOSE 1", "open_card_reward")
+        adapter.update(_reward_card_frame())
+
+        assert adapter.command_for_semantic(action) == "SKIP"
+        assert adapter._skipped_combat_card_reward is False
+        adapter.update(deepcopy(outer))
+        assert adapter.auto_command() == (
+            expected, "complete_deferred_reward_action")
+        assert adapter._deferred_combat_reward_action is None
+
+
+def test_combat_reward_semantic_skip_masks_cancelled_real_placeholder():
+    adapter = RealGameAdapter()
+    outer = _reward_outer_frame("gold", "card")
+    adapter.update(outer)
+    assert adapter.auto_command() == ("CHOOSE 1", "open_card_reward")
+    adapter.update(_reward_card_frame())
+
+    assert adapter.command_for_semantic(ga.skip_cards()) == "SKIP"
+    adapter.update(deepcopy(outer))
 
     assert adapter.auto_command() is None
+    assert adapter.obs_canonical()["options"] == {
+        "gold": [27],
+        "relics": [],
+        "potions": [],
+        "card_count": 0,
+        "cards": [],
+    }
+    assert adapter.legal_semantic_actions() == [
+        ga.claim(ga.CLAIM_GOLD, 0), ga.proceed()]

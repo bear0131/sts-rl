@@ -60,10 +60,13 @@ $env:STS_RL_CAMPAIGN_RESULTS = "D:\sts-rl\runs\local\campaign.jsonl"
 ```
 
 CommunicationMod initially represents a post-combat card reward as a `card`
-placeholder. After the other claimable rewards are handled, the bridge opens
-that placeholder automatically. The upper policy then receives the actual
-three candidates on `CARD_REWARD` and chooses a card or `SKIP` there, matching
-the simulator's candidate-bearing decision point.
+placeholder. Before asking the upper policy for an action, the bridge opens
+that reversible sub-screen and merges its actual candidates with the cached
+gold, relic, and potion rewards. The policy therefore sees the same combined
+`combat_reward` decision as it does in the simulator. If it chooses an outer
+reward or `PROCEED`, the bridge returns from the card page and completes that
+semantic action without another policy call; a policy `SKIP` masks the still
+physical card placeholder for the remainder of that reward screen.
 
 Event choices and overworld reward/card-selection commands wait 0.5 seconds
 before being sent. Combat card generation (such as Nilry's Codex) and ordinary
