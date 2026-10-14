@@ -10,7 +10,7 @@ from rl.search.native import NativeSearchConfig
 pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
 
 
-@pytest.mark.parametrize('threads', [1, 4])
+@pytest.mark.parametrize('threads', [1, 2, 4, 8, 12, 16])
 @pytest.mark.parametrize('fixed_worldline,end_turn_as_leaf', [(True, True), (True, False), (False, False)])
 @pytest.mark.parametrize('contract,language,selection', [
     ('legacy', False, False), ('joint-v2', True, False), ('autoregressive-v2', True, False),
