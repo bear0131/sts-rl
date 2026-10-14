@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| OPS06 | 已定位宿主机写盘阻塞；已备份并清系统盘，待重启 | TRAIN47 rank2/21653在旧checkpoint轮转卡inode_wait_for_writeback；独立fsync卡md_write_start，md0=write-pending。尚不能归因具体宿主机硬件/驱动；其余rank超时是连锁结果。完整379846656恢复点和1805文件运行包已本地SHA验收，按用户授权清可再下载VS Code缓存后系统盘free4.54GiB。重启后须实际fsync通过、恢复两轮checkpoint及同run/W&B到1e9。见worklog/2026-10-15.md#train47-storage-stall-backup-and-system-cleanup。 |
 | BASE05 | 已暂停，待用户恢复：Time Eater时钟候选验证 | 候选源码为`3f509ea`，原交接为`18dbf32`，均在`origin/codex/rollout-native-20261001`历史中；当前根工作区仍为较旧源码，不能直接用其评测入口冒充候选。正式基线中断于56/128、25胜且无逐局完整结果；恢复后从头以seeds200464--200591跑legacy-v8与time-clock-v9各128局，固定A0/v3上层/8192×2预算，核对身份、自然终局、配对胜率、Boss前状态与耗时后决定保留或恢复旧默认。根目录完整交接见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
 | BASE06 | 已暂停：觉醒者与高风险战斗的跨回合估值 | BASE05结束后再单独实验；从相同战斗初态检查转阶段、能力触发、耗竭/牌序和下一回合生存，分别比较模型value边界估值与Boss/高风险精英两回合扩展，不以增加全局节点预算代替修正估值。已淘汰的全局能力权重组合不直接恢复；须用新的独立seeds报告整体、Boss、小怪掉血及时间，并保留甜圈八体等反例。入口与证据见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
 | TEST01 | 待复核：Runic Dome延迟抽牌mask | 候选源码下`tests/integration/test_turn_planner_strategy.py::test_runic_dome_late_draw_choice_works_without_planner_or_legacy_mask`在明确eval11扩展中已有失败；先固定源码/构建身份核实真实合同，再修实现或fixture，不用skip掩盖支持路径。见 [worklog](worklog/2026-10-02.md#rulebase-root-handoff)。 |
