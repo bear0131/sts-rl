@@ -1,0 +1,4 @@
+@configs/train/entity_joint_horizon512_n384_lambda1_runtime.args
+@configs/train/total_steps_1b.args
+--native-search-threads
+16
