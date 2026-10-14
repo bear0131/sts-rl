@@ -48,6 +48,10 @@ param(
     [ValidateRange(1, 1000000)]
     [int]$SaveEveryUpdates = 1,
     [int[]]$Ports = @(22324, 50418, 25377, 17011),
+    [string[]]$Hosts = @(
+        "connect.bjb2.seetacloud.com", "connect.bjb2.seetacloud.com",
+        "connect.bjb2.seetacloud.com", "connect.bjb2.seetacloud.com"
+    ),
     # The accepted native build lives under the repository's runs directory.
     # Keep this explicit so a fresh launch cannot silently select a mutable
     # or unvalidated build-gumbel-* directory.
@@ -61,11 +65,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$HostName = "connect.bjb2.seetacloud.com"
 $WorldSize = 4
 
 if ($Ports.Count -ne $WorldSize) {
     throw "Ports must contain exactly $WorldSize entries."
+}
+if ($Hosts.Count -ne $WorldSize -or ($Hosts | Where-Object { $_ -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*$' })) {
+    throw "Hosts must contain exactly $WorldSize valid host names or IPv4 addresses."
 }
 if ($BuildDirs.Count -ne $WorldSize) {
     throw "BuildDirs must contain exactly $WorldSize entries."
@@ -100,6 +106,7 @@ $Peers = for ($rank = 0; $rank -lt $WorldSize; $rank++) {
     [pscustomobject]@{
         Rank = $rank
         Port = $Ports[$rank]
+        Host = $Hosts[$rank]
         BuildDir = $BuildDirs[$rank]
     }
 }
@@ -133,7 +140,7 @@ function Invoke-Remote {
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "ConnectTimeout=15",
         "-p", [string]$Peer.Port,
-        "root@$HostName",
+        "root@$($Peer.Host)",
         $remoteCommand
     )
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
@@ -240,6 +247,7 @@ function Get-LaunchCommand($Peer) {
     $checkpoint = ConvertTo-BashQuote (Resolve-RemotePath $Checkpoint)
     $build = ConvertTo-BashQuote "$RemoteRepo/sim/sts_lightspeed/$($Peer.BuildDir)"
     $ports = ConvertTo-BashQuote ($Ports -join " ")
+    $hosts = ConvertTo-BashQuote ($Hosts -join " ")
     $resumeLine = "unset NOSL_RESUME_STEP"
     if ($ResumeStep -gt 0) {
         $resumeLine = "export NOSL_RESUME_STEP=$ResumeStep"
@@ -271,6 +279,7 @@ export NOSL_RUN_NAME=$(ConvertTo-BashQuote $WandbName)
 export NOSL_ARGS_FILE=$args
 export NOSL_CHECKPOINT=$checkpoint
 export NOSL_PEER_PORTS=$ports
+export NOSL_PEER_HOSTS=$hosts
 export NOSL_RING_PORT=$RingPort
 export NOSL_FLOAT32_MATMUL_PRECISION=$(ConvertTo-BashQuote $Float32MatmulPrecision)
 export NOSL_MAX_CHECKPOINTS=$MaxCheckpoints
@@ -320,7 +329,7 @@ tail -n 24 "`$run_dir/rank$($Peer.Rank).log" 2>/dev/null | grep -Ev '^\{.*\}$' |
 
 function Show-Status {
     foreach ($peer in $Peers) {
-        Write-Host "===== rank $($peer.Rank) $HostName`:$($peer.Port) ====="
+        Write-Host "===== rank $($peer.Rank) $($peer.Host):$($peer.Port) ====="
         Write-Host (Invoke-Remote $peer (Get-StatusCommand $peer))
     }
 }
@@ -368,7 +377,7 @@ echo "running=`$running latest=`${latest:-none}"
 if ($Action -eq "plan") {
     Write-Host "run=$RunId wandb=$WandbId resume=$ResumeStep fork=$ForkResume preserve_fork_environments=$PreserveForkEnvironments resume_root=$ResumeRoot source_run=$ResumeSourceRunId source_wandb=$ResumeSourceWandbId target=$TargetStep args=$ArgsFile overrides=$OverridesFile max_checkpoints=$MaxCheckpoints save_every_updates=$SaveEveryUpdates"
     foreach ($peer in $Peers) {
-        Write-Host "rank=$($peer.Rank) endpoint=$HostName`:$($peer.Port) build=$($peer.BuildDir)"
+        Write-Host "rank=$($peer.Rank) endpoint=$($peer.Host):$($peer.Port) build=$($peer.BuildDir)"
     }
     exit 0
 }

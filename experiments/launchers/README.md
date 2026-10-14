@@ -4,6 +4,12 @@ This is the visible, authoritative startup record for the four-machine NOSL
 trainer. The manager is the only supported production entry point:
 `manage_nosl_replay_4way.ps1`.
 
+For machines reached through different SSH gateways, pass four `-Hosts`
+and four `-Ports` entries in rank order (0, 1, 2, 3). The manager uses each
+host for SSH and passes the same ordered hosts to the rank launchers for
+peer connections. `-Action plan` shows the mapping without connecting;
+the default hosts remain `connect.bjb2.seetacloud.com` for all four ranks.
+
 ## Required Sequence
 
 1. Stop and verify the previous run. Every rank must have no live
