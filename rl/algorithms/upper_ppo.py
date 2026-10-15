@@ -117,6 +117,20 @@ def macro_advantages(records, bootstraps, gamma, gae_lambda):
     return advantages, returns
 
 
+def _training_batches(records, micro_batch_size):
+    """Own immutable CPU inputs once; keep device memory bounded by one batch."""
+    for start in range(0, len(records), micro_batch_size):
+        batch = records[start:start + micro_batch_size]
+        yield dict(
+            observations={k: np.stack([r['observation'][k] for r in batch])
+                          for k in batch[0]['observation']},
+            actions=np.asarray([r['action'] for r in batch], dtype=np.int64),
+            masks=np.stack([r['mask'] for r in batch]),
+            old_values=np.asarray([r['value'] for r in batch], dtype=np.float32),
+            old_log_prob=np.asarray([r['log_prob'] for r in batch], dtype=np.float32),
+        )
+
+
 def update_upper(model, *, world_size=1, average=lambda values: values, synchronize=None):
     """Four full-batch PPO epochs by default, weighted by actual global row count.
 
@@ -150,25 +164,25 @@ def update_upper(model, *, world_size=1, average=lambda values: values, synchron
     mean = stats['advantage_sum'] / mean_count
     std = max(0., stats['advantage_square_sum'] / mean_count - mean * mean) ** .5
     advantages = (advantages - mean) / (std + 1e-8)
+    batches = list(_training_batches(records, cfg.micro_batch_size))
     model.policy.set_training_mode(True)
     with train_phase(model, upper=True):
         for epoch in range(cfg.epochs):
             model.policy.upper_optimizer.zero_grad(set_to_none=True)
             totals = dict(kl=0., policy_loss=0., value_loss=0., entropy=0.)
-            for start in range(0, count, cfg.micro_batch_size):
-                batch = records[start:start + cfg.micro_batch_size]
-                n = len(batch)
-                observations = observation_as_tensor({k: np.stack([r['observation'][k] for r in batch])
-                    for k in batch[0]['observation']}, model.device)
+            for batch_index, batch in enumerate(batches):
+                start = batch_index * cfg.micro_batch_size
+                n = len(batch['actions'])
+                observations = observation_as_tensor(batch['observations'], model.device)
                 tensor = lambda x: torch.as_tensor(x, device=model.device, dtype=torch.float32)
                 with model.autocast_context():
                     values, log_prob, entropy = model.policy.evaluate_actions(observations,
-                        torch.tensor([r['action'] for r in batch], device=model.device),
-                        action_masks=np.stack([r['mask'] for r in batch]))
+                        torch.as_tensor(batch['actions'], device=model.device),
+                        action_masks=batch['masks'])
                 components = ppo_loss_components(hierarchical=True, normalize_advantage=False,
                     observations=observations, advantages=tensor(advantages[start:start+n]),
-                    returns=tensor(returns[start:start+n]), old_values=tensor([r['value'] for r in batch]),
-                    old_log_prob=tensor([r['log_prob'] for r in batch]), values=values.flatten(),
+                    returns=tensor(returns[start:start+n]), old_values=tensor(batch['old_values']),
+                    old_log_prob=tensor(batch['old_log_prob']), values=values.flatten(),
                     log_prob=log_prob, entropy=entropy, clip_range=cfg.clip, clip_range_vf=None,
                     skip_combat=True)
                 loss = components.policy_loss + cfg.value_coef * components.value_loss + cfg.entropy_coef * components.entropy_loss

@@ -195,6 +195,83 @@ def test_actual_wholerun_upper_collection_update_and_bundle(tmp_path):
     env.close()
 
 
+@pytest.mark.parametrize('early_stop', [False, True])
+def test_upper_epochs_reuse_ordered_inputs_without_mutating_records(tmp_path, monkeypatch, early_stop):
+    from dataclasses import replace
+    env = DummyVecEnv([lambda: TrainingStateWrapper(SlayTheSpireEnv(
+        card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2'))])
+    model = make_joint(env)
+    model.configure_nosl_is_az_inner_only()
+    model.set_logger(configure(str(tmp_path), []))
+    _, callback = model._setup_learn(8)
+    callback.on_training_start({}, {})
+    assert model.collect_rollouts(env, callback, model.rollout_buffer, n_rollout_steps=8)
+    records = model._upper_completed
+    assert records
+    # Include a tail smaller than the configured microbatch.
+    records.append(copy.deepcopy(records[-1]))
+    count = len(records)
+    micro = count - 1
+    model.policy.core.upper_config = replace(model.policy.core.upper_config,
+        epochs=3, micro_batch_size=micro, target_kl=.02 if early_stop else 1e6)
+    saved = copy.deepcopy(records)
+    calls = []
+    original = model.policy.evaluate_actions
+
+    def evaluate(obs, actions, action_masks=None):
+        calls.append(({k: v.detach().cpu().numpy().copy() for k, v in obs.items()},
+                      actions.detach().cpu().numpy().copy(), np.array(action_masks, copy=True)))
+        values, log_prob, entropy = original(obs, actions, action_masks=action_masks)
+        return values, log_prob + (2 if early_stop else 0), entropy
+
+    monkeypatch.setattr(model.policy, 'evaluate_actions', evaluate)
+    before = copy.deepcopy(model.policy.state_dict())
+    syncs = []
+    stats = update_upper(model, synchronize=syncs.append)
+    epochs = 1 if early_stop else 3
+    assert stats['updates'] == (0 if early_stop else 3)
+    assert syncs == ([] if early_stop else [0, 1, 2])
+    assert len(calls) == 2 * epochs
+    for epoch in range(epochs):
+        for batch_index, start in enumerate((0, micro)):
+            obs, actions, masks = calls[2 * epoch + batch_index]
+            expected = saved[start:start + micro]
+            for key in obs:
+                np.testing.assert_array_equal(obs[key], np.stack([r['observation'][key] for r in expected]))
+            np.testing.assert_array_equal(actions, [r['action'] for r in expected])
+            np.testing.assert_array_equal(masks, np.stack([r['mask'] for r in expected]))
+    for a, b in zip(records, saved, strict=True):
+        for key in a['observation']:
+            np.testing.assert_array_equal(a['observation'][key], b['observation'][key])
+        np.testing.assert_array_equal(a['mask'], b['mask'])
+        assert (a['value'], a['log_prob']) == (b['value'], b['log_prob'])
+    assert model._upper_completed == []
+    for key, value in model.policy.state_dict().items():
+        if early_stop or key.startswith('core.combat.'):
+            torch.testing.assert_close(value, before[key], rtol=0, atol=0)
+    env.close()
+
+
+def test_empty_upper_rank_keeps_collective_sequence(tmp_path):
+    env = DummyVecEnv([lambda: TrainingStateWrapper(SlayTheSpireEnv(
+        card_language=True, global_map_view=True, combat_action_contract='autoregressive-v2'))])
+    model = make_joint(env)
+    model.set_logger(configure(str(tmp_path), []))
+    model._upper_completed = []
+    model._upper_pending = [None]
+    averages, syncs = [], []
+
+    def average(values):
+        averages.append(values.copy())
+        return dict(values, count=2.) if 'count' in values else values
+
+    result = update_upper(model, world_size=2, average=average, synchronize=syncs.append)
+    assert result['samples'] == 4 and result['updates'] == 2
+    assert len(averages) == 3 and syncs == [0, 1]
+    assert model._upper_completed == []
+    env.close()
+
+
 def test_rulebase_lower_collects_no_combat_replay_and_never_updates_combat(
         combat_factory, tmp_path, monkeypatch):
     combat = combat_factory(
