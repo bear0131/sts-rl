@@ -26,6 +26,8 @@ localized `name` field, which is GBK-localized and unstable):
 
 # ============================ real-game side ============================
 
+from functools import lru_cache
+
 # Powers whose semantics the native simulator stores outside its status table
 # are omitted from the public power comparison.  In particular, Exploder's
 # countdown is encoded by its real move history/current move on every synced
@@ -241,6 +243,7 @@ _CARD_OVERRIDE = {
 }
 
 
+@lru_cache(maxsize=1024)
 def _sim_card_id(name):
     if name in _CARD_OVERRIDE:
         return _CARD_OVERRIDE[name]
@@ -673,7 +676,7 @@ def combat_select_options(select_info):
 
 def _card_reward_entry(card):
     """A Card object from get_card_reward() -> (canonical id, upgrade_count)."""
-    enum_name = str(card.id).split(".")[-1]
+    enum_name = _enum_tail(card.id)
     return (_sim_card_id(enum_name), card.upgrade_count)
 
 
@@ -699,8 +702,17 @@ def normalize_sim_overworld(gc):
 # (which is the differential-testing snapshot) so the obs contract can evolve
 # without touching the diff path. Ids are canonical (cards/relics/potions/boss).
 
+@lru_cache(maxsize=512, typed=True)
+def _fixed_enum_tail(v):
+    return str(v).split(".")[-1]
+
+
 def _enum_tail(v):
     """'MonsterEncounter.HEXAGHOST' / 'CharacterClass.IRONCLAD' -> bare tail."""
+    kind = type(v)
+    if kind is str or (kind.__module__ == 'slaythespire' and kind.__name__ in
+                            ('CardId', 'MonsterEncounter', 'CharacterClass', 'Room')):
+        return _fixed_enum_tail(v)
     return str(v).split(".")[-1]
 
 
