@@ -97,6 +97,30 @@ def test_boss_transition_is_dag_choice(seed=0):
     print("[ok] test_boss_transition_is_dag_choice")
 
 
+def test_native_room_names_and_map_views_remain_independent():
+    names = ('SHOP', 'REST', 'EVENT', 'ELITE', 'MONSTER', 'TREASURE',
+             'BOSS', 'BOSS_TREASURE', 'NONE', 'INVALID')
+    for _ in range(2):
+        for name in names:
+            room = getattr(sts.Room, name)
+            assert spiremap._room_name(room) == name
+            assert spiremap._room_name(sts.Room(int(room))) == name
+
+    rmap = spiremap.RunMap(42, 0, 1)
+    x = rmap.reachable(-1, -1)[0]
+    before = rmap.full_view(-1, -1)
+    after = rmap.full_view(x, 0)
+    assert not any(node['current'] for node in before)
+    assert [(node['x'], node['y']) for node in after if node['current']] == [(x, 0)]
+    assert {(node['x'], node['y']) for node in after if node['choice']} == {
+        (child, 1) for child in rmap.reachable(x, 0)}
+    after[0]['room'] = 'CORRUPTED'
+    after[0]['children'].append(999)
+    fresh = rmap.full_view(x, 0)
+    assert all(node['room'] != 'CORRUPTED' and 999 not in node['children'] for node in fresh)
+    assert rmap.full_view(-1, -1) == before
+
+
 def _run_episode(seed, max_steps=2000, verbose=False):
     """Drive one whole run with a random legal policy. Returns a summary dict.
     Asserts the invariants that must hold at every decision point."""

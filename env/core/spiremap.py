@@ -21,6 +21,8 @@ node x2 exist" — exactly the first-move case where the gc's current node is
 first move and every later move uniformly.
 """
 
+from functools import lru_cache
+
 from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
 
@@ -32,6 +34,7 @@ MAX_Y = 14
 N_COLS = 7
 
 
+@lru_cache(maxsize=32)
 def _room_name(room):
     """sts.Room enum -> bare name string ('MONSTER', 'SHOP', 'NONE', ...)."""
     return str(room).split(".")[-1]
