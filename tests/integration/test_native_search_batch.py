@@ -199,3 +199,67 @@ def test_native_decoder_rejects_invalid_destination(combat_factory, invalid):
             pool.write_observations(target)
     finally:
         pool.close()
+
+
+@pytest.mark.parametrize('language', [False, True])
+def test_native_large_batch_conversion_matches_serial_and_recovers(combat_factory, language):
+    """Large ordered batches preserve bytes, padding and decoder recovery."""
+    def environments():
+        return [combat_factory(['STRIKE_RED'] * 5 + ['DEFEND_RED'] * 4 + ['BASH'],
+                    ('Jaw Worm', 'Two Louse')[i % 2], seed=300+i,
+                    relics=['Anchor'] if i % 2 else [],
+                    combat_action_contract='autoregressive-v2', card_language=language)
+                for i in range(65)]
+    native, serial = environments(), environments()
+    pool = NativeSearchBatch(native, 16)
+    calls = {i: ((np.linspace(-.3, .7, env.action_space.n),), dict(
+        simulations=8+i % 3, leaf_batch_size=1, state_nonce=900+i,
+        compact_observation=True, root_value=.5)) for i, env in enumerate(native)}
+    try:
+        pool.begin(calls)
+        responses = {i: env.nosl_is_az_cpp_begin(*calls[i][0], **calls[i][1])
+                     for i, env in enumerate(serial)}
+        assert pool.rows == 65
+        target = None
+        while not pool.done:
+            owners = pool.payload['owners']
+            assert owners == [i for i, response in responses.items() if not response['done']]
+            observed = pool.observations()
+            if target is None:
+                # An invalid row must not poison subsequent decoder calls.
+                for field, message in [('owners', 'owner out of range'),
+                                       ('categorical', 'selection card outside vocabulary')]:
+                    invalid = dict(pool.payload)
+                    value = np.asarray(invalid[field]).copy()
+                    if field == 'owners': value[-1] = 65
+                    else: value[-1, 31] = -1
+                    invalid[field] = value
+                    with pytest.raises(ValueError, match=message):
+                        pool.decoder.decode(invalid, pool.global_fields)
+                target = {key: np.full((67, *value.shape[1:]), 1, dtype=value.dtype)
+                          for key, value in observed.items()}
+            padding = {key: value[len(owners):].tobytes() for key, value in target.items()}
+            pool.write_observations(target)
+            for key, value in observed.items():
+                assert target[key][:len(owners)].tobytes() == value.tobytes(), key
+                assert target[key][len(owners):].tobytes() == padding[key], key
+                for row, owner in enumerate(owners):
+                    reference = responses[owner]['observation_batch'][key][0]
+                    assert value.dtype == reference.dtype
+                    assert value[row].tobytes() == reference.tobytes(), (owner, key)
+            values = np.asarray(.2 + .6 * observed['player_scalars'][:, 0], np.float32)
+            logits = np.broadcast_to(np.linspace(-.2, .8, native[0].action_space.n, dtype=np.float32),
+                                     (len(owners), native[0].action_space.n)).copy()
+            for row, owner in enumerate(owners):
+                leaf = responses[owner]['leaf_meta'][0]
+                responses[owner] = serial[owner].nosl_is_az_cpp_backprop_and_leaf_batch(
+                    [(leaf['request_id'], float(values[row]), logits[row] if leaf['needs_policy'] else np.empty(0))],
+                    max_leaves=1)
+            pool.advance(logits, values)
+        results = pool.results()
+        for owner in calls:
+            for key in ('action', 'native_action_bits', 'root_value', 'simulations',
+                        'visit_policy', 'root_visit_policy', 'root_visits'):
+                np.testing.assert_array_equal(results[owner][key], responses[owner]['result'][key])
+    finally:
+        pool.close()
