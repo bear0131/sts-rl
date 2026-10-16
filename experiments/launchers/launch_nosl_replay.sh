@@ -115,6 +115,7 @@ cd "$repo"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 export STS_LIGHTSPEED_BUILD_DIR="$build" PYTHONPATH="$build:$repo"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTHONFAULTHANDLER=1
 printf '\n=== NOSL launch utc=%s rank=%s resume_step=%s ===\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$rank" "${NOSL_RESUME_STEP:-fresh}" \
   >> "$run_dir/rank$rank.log"
@@ -127,9 +128,33 @@ if [ -f "$run_dir/rank$rank.log" ]; then
     mv -f -- "$run_dir/.rank$rank.log.trim" "$run_dir/rank$rank.log"
   fi
 fi
-nohup "${cmd[@]}" >> "$run_dir/rank$rank.log" 2>&1 < /dev/null &
-pid=$!
-printf '%s\n' "$pid" > "$run_dir/rank$rank.pid"
+pid_file="$run_dir/rank$rank.pid"
+exit_file="$run_dir/rank$rank.exit.json"
+rm -f -- "$pid_file" "$exit_file"
+# Keep a small parent to reap the trainer and retain its exit status even when
+# a fatal native signal or SIGKILL prevents Python from writing a traceback.
+# The public PID remains the actual trainer, not this waiting shell.
+nohup bash -c '
+  pid_file=$1; exit_file=$2; shift 2
+  "$@" &
+  child=$!
+  printf "%s\n" "$child" > "$pid_file.tmp"
+  mv -f -- "$pid_file.tmp" "$pid_file"
+  wait "$child"
+  code=$?
+  printf "{\"pid\":%s,\"exit_code\":%s,\"utc\":\"%s\"}\n" \
+    "$child" "$code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$exit_file.tmp"
+  mv -f -- "$exit_file.tmp" "$exit_file"
+  printf "TRAINER_EXIT pid=%s exit_code=%s\n" "$child" "$code"
+  exit "$code"
+' sts-trainer-supervisor "$pid_file" "$exit_file" "${cmd[@]}" \
+  >> "$run_dir/rank$rank.log" 2>&1 < /dev/null &
+for attempt in {1..50}; do
+  [ -s "$pid_file" ] && break
+  sleep 0.1
+done
+test -s "$pid_file" || { echo 'trainer PID was not published' >&2; exit 4; }
+pid=$(cat "$pid_file")
 sleep 1
 if ! kill -0 "$pid" 2>/dev/null; then
   echo "rank=$rank exited during startup; inspect $run_dir/rank$rank.log" >&2

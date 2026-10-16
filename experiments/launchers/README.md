@@ -30,6 +30,14 @@ The cleanup and skip behavior is implemented in
 `launch_nosl_replay.sh` and `manage_nosl_replay_4way.ps1`. A run is not
 considered started merely because a PID file or parent process exists.
 
+The launcher enables Python fatal-signal tracebacks and retains the actual
+trainer PID in `rankN.pid`. A waiting shell records its termination in
+`rankN.exit.json` and a `TRAINER_EXIT` log line, including nonzero exits and
+signal termination. The exit record is cleared at each new launch; archive
+the previous logs and record before restarting an incident. An absent exit
+record alone does not prove the trainer is alive (the whole container or its
+supervisor may also have been terminated).
+
 For a full FP32 run, use `configs/train/entity_combat_fp32_runtime.args`
 and pass `-Float32MatmulPrecision highest` to the manager. This disables
 BF16 autocast and TF32 matmuls; the launcher otherwise retains its historical
