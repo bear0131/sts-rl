@@ -35,9 +35,13 @@ N_COLS = 7
 
 
 @lru_cache(maxsize=32)
+def _room_name_value(value):
+    return str(sts.Room(value)).split(".")[-1]
+
+
 def _room_name(room):
-    """sts.Room enum -> bare name string ('MONSTER', 'SHOP', 'NONE', ...)."""
-    return str(room).split(".")[-1]
+    """Cache an owned integer, never a possibly borrowed mutable enum."""
+    return _room_name_value(int(room))
 
 
 class RunMap:

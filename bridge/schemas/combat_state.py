@@ -709,9 +709,10 @@ def _fixed_enum_tail(v):
 
 def _enum_tail(v):
     """'MonsterEncounter.HEXAGHOST' / 'CharacterClass.IRONCLAD' -> bare tail."""
-    kind = type(v)
-    if kind is str or (kind.__module__ == 'slaythespire' and kind.__name__ in
-                            ('CardId', 'MonsterEncounter', 'CharacterClass', 'Room')):
+    # Native enum properties can reference mutable C++ fields. Their hash
+    # changes in place: retaining them as LRU keys can corrupt eviction,
+    # return unrelated names, and crash CPython. Only cache owned strings.
+    if type(v) is str:
         return _fixed_enum_tail(v)
     return str(v).split(".")[-1]
 

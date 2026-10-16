@@ -58,3 +58,26 @@ def test_native_enum_cache_keeps_types_names_and_live_upgrades():
     reward.upgrade_count = 3
     assert schema._card_reward_entry(reward) == ('Strike_R', 3)
     assert schema._fixed_enum_tail.cache_info().currsize <= 512
+
+
+@pytest.mark.native
+def test_borrowed_native_enum_mutation_with_cache_eviction():
+    """OPS08: GameContext fields are live references, not immutable enums."""
+    import random
+    import slaythespire as sts
+    from env.core.spiremap import _room_name
+
+    schema._fixed_enum_tail.cache_clear()
+    rng = random.Random(678)
+    contexts = [sts.GameContext(sts.CharacterClass.IRONCLAD, i, 0) for i in range(384)]
+    rooms = list(sts.Room.__members__.values())
+    for _ in range(3000):
+        for _ in range(4):
+            text = 'FILLER_' + str(rng.randrange(2048))
+            assert schema._enum_tail(text) == text
+        context = contexts[rng.randrange(len(contexts))]
+        room = rng.choice(rooms)
+        context.cur_room = room
+        expected = str(room).split('.')[-1]
+        assert schema._enum_tail(context.cur_room) == expected
+        assert _room_name(context.cur_room) == expected
