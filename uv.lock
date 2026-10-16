@@ -5,10 +5,10 @@ resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and sys_platform == 'emscripten'",
     "python_full_version >= '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.12' and sys_platform == 'darwin'",
     "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform == 'emscripten'",
     "python_full_version < '3.12' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version >= '3.12' and sys_platform == 'darwin'",
     "python_full_version < '3.12' and sys_platform == 'darwin'",
 ]
 conflicts = [[
@@ -1205,6 +1205,7 @@ test = [
     { name = "ninja" },
     { name = "pytest" },
     { name = "pytest-timeout" },
+    { name = "wandb" },
 ]
 
 [package.metadata]
@@ -1234,6 +1235,7 @@ test = [
     { name = "ninja" },
     { name = "pytest", specifier = "==9.1.1" },
     { name = "pytest-timeout", specifier = "==2.4.0" },
+    { name = "wandb", specifier = "==0.28.1" },
 ]
 
 [[package]]

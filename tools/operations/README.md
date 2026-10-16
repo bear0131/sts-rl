@@ -83,3 +83,42 @@ HP ordering 坏事件统计的权威全局比例为
 无回血条件概率。与胜率和固定 HP corpus 共同观察，固定探针入口见
 `rl/evaluation/README.md`。旧搜索回退序列仅适用于原实验配置，换 run/基线必须
 重新定义干预协议，不能对已是 strict 的新 run 机械复用。
+
+## 长 collection 的 W&B 存活记录（OPS02）
+
+`wandb_heartbeat.py` 用于 **Linux + W&B 0.28.1**，训练已在线运行、只在轮末上报且
+W&B 在轮间误报 crashed 的场景。它通过现有 core 的 Unix socket 调用 `wandb.attach`，
+由同一个 core 排序每分钟一条隐藏的 `ops/heartbeat_unix` 记录。不会新建 run、调用
+`finish`、修改模型/配置/checkpoint 或强制覆盖服务端状态。启动文件已被 SDK 删除时，
+从指定 core 的 fd inode 精确找到监听 socket；不猜路径或连接其他 run。
+
+**日志语义**：W&B `_step` 和 history 行数包括健康记录，因此会增加；它们不是训练步数。
+原有 `global_step`、`legacy_step`、训练指标值和以这些字段为横轴的图表不变。健康记录
+不复制这些字段，也不写训练 summary；健康指标不自动生成图表。只支持训练调用
+`wandb.log(payload)`、不传显式 `step` 的配置。使用显式 step 的训练不能直接使用本工具。
+
+核对 rank0 的 PID、其 W&B core PID、run 身份和最近完整轮次后启动，例如：
+
+```bash
+python -m tools.operations.wandb_heartbeat \
+  --pid TRAINER_PID --core-pid WANDB_CORE_PID \
+  --run ENTITY/PROJECT/RUN_ID --log /absolute/path/rank0.log \
+  --max-seconds 604800
+```
+
+工具复用当前用户的 `api.wandb.ai` netrc 登录，不接受命令行密钥。一次只启动一个实例；
+启动/重启后的 PID 变化需要重新核验并显式启动，不自动跟随新的训练。使用当前训练的
+Python 环境，可把这个单文件放在独立运维目录运行，无需覆盖正在训练的代码。
+
+默认每 60 秒验证进程的启动标识、存活/暂停状态、CPU 进展、日志中的完整训练步数，
+并查询服务端状态。进程退出/暂停/换代、步数回退、非有限指标、5 分钟 CPU 无进展、
+25 分钟无新完整轮次、服务端终止、查询失败或总时限到达时停止。没有停止/重启训练
+的权限逻辑，也不自动恢复辅助进程；网络错误后需核实状态再重启辅助进程。
+25 分钟用于约 11 分钟一轮的当前训练；它是卡住检测的上界，不是立即检测所有 rank
+故障的保证。首次启动依据日志 mtime 估计已有进展的年龄，后续只凭真实步数增长续期。
+
+该工具专门补充存活记录；既有 `monitor_nosl` 的参数干预建议不是此功能的合适入口。
+本地验证：明确原生构建运行 `tests/unit/test_wandb_heartbeat.py`；使用安装了 W&B
+0.28.1 的 Python 直接运行 `tests/integration/test_wandb_heartbeat_lifecycle.py`，
+后者是离线 unittest：父进程的两次训练记录、中间三次附加健康记录、辅助进程退出后
+父进程继续写入及最终 finish 均通过真实 SDK/core 验证，不训练模型、不访问线上 run。

@@ -28,6 +28,8 @@ dev = [
 test = [
     "pytest==9.1.1",
     "pytest-timeout==2.4.0",
+    # OPS02 verifies actual shared-core lifecycle, including attached-client exit.
+    "wandb==0.28.1",
     # Bundled nlohmann/json declares CMake 3.1 policies, removed by CMake 4.
     "cmake>=3.19,<4",
     "ninja",
