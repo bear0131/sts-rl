@@ -4,6 +4,8 @@ import pytest
 from gymnasium.wrappers import TimeLimit
 
 from env.core.run_env import SlayTheSpireEnv
+from env.core.game_env import SimGameEnv
+from env.core import action_space as A
 from rl.training.environments import (
     CheckpointObservationCompat,
     StartupOccupancyWrapper,
@@ -35,6 +37,79 @@ def _advance_to_combat(env):
 def _first_action(env):
     mask = env.get_wrapper_attr("action_masks")()
     return int(np.flatnonzero(mask)[0])
+
+
+def test_backend_step_observation_remains_opt_in_to_omission():
+    regular = SimGameEnv()
+    transition_only = SimGameEnv(emit_step_observation=False)
+    np.testing.assert_equal(regular.reset(seed=123), transition_only.reset(seed=123))
+    for _ in range(64):
+        action = regular.legal_semantic_actions()[0]
+        expected = regular.step(action)
+        actual = transition_only.step(action)
+        assert isinstance(expected[0], dict)
+        assert actual[0] is None
+        np.testing.assert_equal(expected[1:], actual[1:])
+        np.testing.assert_equal(regular.obs_canonical(), transition_only.obs_canonical())
+        if regular.bc is not None:
+            break
+    assert regular.bc is not None
+
+
+@pytest.mark.parametrize('native', [False, True])
+@pytest.mark.parametrize('branch', [False, True])
+def test_omitted_backend_observation_preserves_terminal_and_boundary(
+        short_combat_env_type, native, branch):
+    # A custom backend retains the public canonical-returning contract. The
+    # built-in Gym backend omits only that return, including in search forks.
+    contract = 'native-v1' if native else 'legacy'
+    expected_parent = short_combat_env_type(
+        backend_factory=SimGameEnv, combat_action_contract=contract)
+    actual_parent = short_combat_env_type(combat_action_contract=contract)
+    expected = actual = None
+    try:
+        np.testing.assert_equal(expected_parent.reset(seed=123), actual_parent.reset(seed=123))
+        expected = expected_parent.fork_combat() if branch else expected_parent
+        actual = actual_parent.fork_combat() if branch else actual_parent
+        parent_state = actual_parent.thick.bc.to_dict()
+        saw_boundary = saw_terminal = False
+        for index in range(64):
+            if native:
+                legal = expected.native_combat_actions()
+                non_end = [int(a) for a in legal if int(a) != (4 << 29)]
+                action = (4 << 29) if index == 0 else (non_end or legal)[0]
+                assert action in legal
+                first = expected.step_native_combat(action)
+                second = actual.step_native_combat(action)
+            else:
+                expected._nosl_value_capture_pending = True
+                actual._nosl_value_capture_pending = True
+                legal = np.flatnonzero(expected.action_masks())
+                non_end = [int(a) for a in legal if int(a) != A.END_TURN]
+                action = A.END_TURN if index == 0 else int((non_end or legal)[0])
+                first = expected.step(action)
+                second = actual.step(action)
+            np.testing.assert_equal(first, second)
+            saw_boundary |= 'nosl_value_boundary_observation' in first[4]
+            saw_terminal |= 'nosl_value_terminal_target' in first[4]
+            if saw_terminal:
+                assert 'nosl_value_terminal_outcome' in first[4]
+                if native or not branch:
+                    assert 'nosl_value_terminal_observation' in first[4]
+                break
+        assert saw_terminal
+        if native:
+            assert saw_boundary
+        if branch:
+            np.testing.assert_equal(actual_parent.thick.bc.to_dict(), parent_state)
+    finally:
+        if branch:
+            if expected is not None:
+                expected.close()
+            if actual is not None:
+                actual.close()
+        expected_parent.close()
+        actual_parent.close()
 
 
 def test_action_journal_restores_native_action_and_pending_target():

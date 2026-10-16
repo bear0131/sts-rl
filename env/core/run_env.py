@@ -272,6 +272,7 @@ class SlayTheSpireEnv(gym.Env):
                 nosl_is_az_boss_transition_target=(
                     self._nosl_is_az_boss_transition_target
                 ),
+                emit_step_observation=False,
             )
         )
         self._global_map_view = global_map_view

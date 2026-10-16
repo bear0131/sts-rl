@@ -99,17 +99,23 @@ class SimGameEnv:
     reset(seed) -> drive to the first decision point.
     legal_semantic_actions() -> list of game_actions tuples currently legal.
     step(action) -> (canonical, reward, terminated, info).
+
+    The Gym adapter builds its own observation after the transition. It opts
+    out of the redundant canonical return with ``emit_step_observation=False``;
+    terminal snapshots and transition metadata are still produced normally.
     """
 
     def __init__(self, character=None, ascension=0, global_map_view=False,
                  interactive_reasoning=False,
-                 nosl_is_az_boss_transition_target=False):
+                 nosl_is_az_boss_transition_target=False,
+                 emit_step_observation=True):
         if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 3:
             raise RuntimeError("observation v18 requires native layout v3; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
         self._interactive_reasoning = bool(interactive_reasoning)
+        self._emit_step_observation = bool(emit_step_observation)
         self._nosl_is_az_boss_transition_target = bool(
             nosl_is_az_boss_transition_target
         )
@@ -425,7 +431,8 @@ class SimGameEnv:
             info["nosl_value_terminal_outcome"] = terminal_combat_outcome
         if self._last_reasoning_trace is not None:
             info["reasoning_trace"] = self._last_reasoning_trace
-        return self._canonical(), reward, terminated, info
+        observation = self._canonical() if self._emit_step_observation else None
+        return observation, reward, terminated, info
 
     def step_native_combat(self, action_bits: int):
         """Apply one complete bit-packed native combat Action.
@@ -457,7 +464,8 @@ class SimGameEnv:
         if terminal_combat_target is not None:
             info["nosl_value_terminal_target"] = terminal_combat_target
             info["nosl_value_terminal_outcome"] = terminal_combat_outcome
-        return self._canonical(), reward, terminated, info
+        observation = self._canonical() if self._emit_step_observation else None
+        return observation, reward, terminated, info
 
     def preview_native_end_turn_boundary(self, action_bits: int):
         """Return the stable value boundary for a native End Turn action.
@@ -757,7 +765,8 @@ class _CombatBranchGameEnv(SimGameEnv):
         if target is not None:
             info["nosl_value_terminal_target"] = target
             info["nosl_value_terminal_outcome"] = self._nosl_value_terminal_outcome()
-        return self._canonical(), 0.0, terminated, info
+        observation = self._canonical() if self._emit_step_observation else None
+        return observation, 0.0, terminated, info
 
     def step_native_combat(self, action_bits: int):
         """Finish native actions inside this branch without settling the run.
@@ -777,7 +786,8 @@ class _CombatBranchGameEnv(SimGameEnv):
         if target is not None:
             info["nosl_value_terminal_target"] = target
             info["nosl_value_terminal_outcome"] = self._nosl_value_terminal_outcome()
-        return self._canonical(), 0.0, self.bc.is_battle_over, info
+        observation = self._canonical() if self._emit_step_observation else None
+        return observation, 0.0, self.bc.is_battle_over, info
 
     def step_fast(self, action):
         """Apply a combat semantic action without rebuilding observations.
