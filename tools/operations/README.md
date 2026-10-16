@@ -97,7 +97,18 @@ W&B 在轮间误报 crashed 的场景。它通过现有 core 的 Unix socket 调
 不复制这些字段，也不写训练 summary；健康指标不自动生成图表。只支持训练调用
 `wandb.log(payload)`、不传显式 `step` 的配置。使用显式 step 的训练不能直接使用本工具。
 
-核对 rank0 的 PID、其 W&B core PID、run 身份和最近完整轮次后启动，例如：
+`launch_nosl_replay.sh` 现在默认在 rank0 启动后自动挂接，无需手填 PID 或 entity。
+启动脚本先验证辅助文件和 SDK 版本，再启动训练；辅助进程等待本次 trainer 的 core
+及 W&B 初始化（最多 10 分钟），从实际 run 获取 entity。日志输出为
+`rank0.heartbeat.log`，辅助 PID 写入 `rank0.heartbeat.pid`；其余 rank 不启动心跳。
+
+每次启动记录训练日志的字节边界，只读边界后的完整轮次，恢复时不会用旧日志续命。
+首轮完成前也可发送健康记录，但 25 分钟进展期限从本次启动开始计算；本地日志中的
+step=-1 仅表示尚无本次完整轮次，不会作为训练步数上传。自动模式跟随本次训练的
+生命周期，没有原手动模式的 7 天到期限制。训练退出后约 1 秒内退出，不调用finish；
+新一次启动会创建绑定新 PID 的辅助进程，PID与启动标识锁防止重复挂接。
+
+以下手动模式仅用于诊断或临时挂接；常规启动/恢复不需要执行：
 
 ```bash
 python -m tools.operations.wandb_heartbeat \
@@ -106,19 +117,26 @@ python -m tools.operations.wandb_heartbeat \
   --max-seconds 604800
 ```
 
-工具复用当前用户的 `api.wandb.ai` netrc 登录，不接受命令行密钥。一次只启动一个实例；
-启动/重启后的 PID 变化需要重新核验并显式启动，不自动跟随新的训练。使用当前训练的
-Python 环境，可把这个单文件放在独立运维目录运行，无需覆盖正在训练的代码。
+工具复用当前用户的 `api.wandb.ai` netrc 登录，不接受命令行密钥。使用当前训练的
+Python 环境。自动启动只由 launcher 负责；单个辅助进程不会自行接管其他训练PID。
 
 默认每 60 秒验证进程的启动标识、存活/暂停状态、CPU 进展、日志中的完整训练步数，
 并查询服务端状态。进程退出/暂停/换代、步数回退、非有限指标、5 分钟 CPU 无进展、
-25 分钟无新完整轮次、服务端终止、查询失败或总时限到达时停止。没有停止/重启训练
-的权限逻辑，也不自动恢复辅助进程；网络错误后需核实状态再重启辅助进程。
+25 分钟无新完整轮次、服务端终止或手动模式总时限到达时停止。没有停止/重启训练
+的权限逻辑。临时HTTP/网络错误在下一周期重试，失败期间不发心跳、不重置进展期限；
+其他异常失败关闭并记录原因。
 25 分钟用于约 11 分钟一轮的当前训练；它是卡住检测的上界，不是立即检测所有 rank
-故障的保证。首次启动依据日志 mtime 估计已有进展的年龄，后续只凭真实步数增长续期。
+故障的保证。手动挂接首次依据日志 mtime 估计已有进展的年龄，自动启动按本次启动
+时间计时；后续只凭真实步数增长续期。
 
 该工具专门补充存活记录；既有 `monitor_nosl` 的参数干预建议不是此功能的合适入口。
 本地验证：明确原生构建运行 `tests/unit/test_wandb_heartbeat.py`；使用安装了 W&B
 0.28.1 的 Python 直接运行 `tests/integration/test_wandb_heartbeat_lifecycle.py`，
 后者是离线 unittest：父进程的两次训练记录、中间三次附加健康记录、辅助进程退出后
 父进程继续写入及最终 finish 均通过真实 SDK/core 验证，不训练模型、不访问线上 run。
+
+`tests/integration/test_wandb_heartbeat_autostart.py` 在Linux用真实/proc和离线SDK验证
+延迟初始化、首轮前挂接、相同run的两次启动、忽略旧日志和随trainer退出；仅替换云端
+状态查询与认证，不训练模型。非Linux明确标记不支持此发现路径，Linux CI必须执行。
+`tests/unit/test_nosl_launcher_runtime.py` 用有界进程替身实际执行launcher，验证只有
+rank0创建辅助进程、传递真实新PID和本次日志边界；不执行实际训练入口。

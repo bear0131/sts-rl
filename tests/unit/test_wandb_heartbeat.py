@@ -146,3 +146,89 @@ def test_discover_only_listener_owned_by_expected_core(tmp_path):
     table.write_text('header\n0: 2 0 00010000 0001 01 999 /tmp/wandb-1-2-0/socket\n')
     with pytest.raises(ValueError, match='exactly one'):
         core_socket(1, 2, tmp_path)
+
+
+def test_resume_ignores_old_log_and_partial_new_record(tmp_path):
+    log = tmp_path / 'rank0.log'
+    old = b'{"global_timesteps":9000}\n'
+    log.write_bytes(old + b'initializing\n{"global_timesteps":100')
+    assert read_progress(log, len(old), -1) == -1
+    with log.open('ab') as stream:
+        stream.write(b'0}\n')
+    assert read_progress(log, len(old), -1) == 1000
+    log.write_text('truncated')
+    with pytest.raises(ValueError, match='truncated'):
+        read_progress(log, len(old), -1)
+
+
+def test_startup_can_heartbeat_before_first_completed_round(tmp_path):
+    from unittest.mock import Mock
+    from tools.operations.wandb_heartbeat import pulse
+    log = tmp_path / 'rank0.log'
+    log.write_text('initializing\n')
+    g = Guard(process(), process(start=200), -1, 0, 0, 1500, 300)
+    client = Mock()
+    client.status.return_value = {'state': 'running'}
+    with patch('tools.operations.wandb_heartbeat.read_process',
+               side_effect=[process(cpu=20), process(start=200)] * 2), \
+         patch('tools.operations.wandb_heartbeat.time.monotonic', return_value=60):
+        result = pulse(client, g, 1, 2, log, log_start=0, initial_step=-1)
+    assert result['event'] == 'heartbeat' and result['step'] == -1
+    client.heartbeat.assert_called_once()
+
+
+def test_core_discovery_is_limited_to_trainer_children(tmp_path):
+    from tools.operations.wandb_heartbeat import find_core
+    (tmp_path / '1' / 'task' / '1').mkdir(parents=True)
+    (tmp_path / '1' / 'task' / '1' / 'children').write_text('2 3 4')
+    for pid, command in [(2, b'python\0worker\0'), (3, b'/bin/wandb-core\0--pid\099\0'),
+                         (4, b'/bin/wandb-core\0--pid\x001\0')]:
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / 'cmdline').write_bytes(command)
+    assert find_core(1, tmp_path) == 4
+
+
+def test_auto_waits_for_initialization_then_attaches_once():
+    from tools.operations.wandb_heartbeat import wait_for_client
+    with patch('tools.operations.wandb_heartbeat.read_process', return_value=process()), \
+         patch('tools.operations.wandb_heartbeat.find_core', side_effect=[None, 2, 2]), \
+         patch('tools.operations.wandb_heartbeat.core_socket'), \
+         patch('tools.operations.wandb_heartbeat.time.monotonic', side_effect=[0, 2, 4]), \
+         patch('tools.operations.wandb_heartbeat.time.sleep'), \
+         patch('tools.operations.wandb_heartbeat.Client', side_effect=[RuntimeError('not initialized'), 'client']) as client:
+        assert wait_for_client(1, 100, 'run', 'project', 10) == ('client', 2)
+    assert client.call_count == 2
+    assert all(call.kwargs == {'wandb_id': 'run', 'project': 'project'} for call in client.call_args_list)
+
+
+def test_auto_stops_when_trainer_exits_before_wandb():
+    from tools.operations.wandb_heartbeat import wait_for_client
+    with patch('tools.operations.wandb_heartbeat.read_process', return_value=process(state='Z')), \
+         patch('tools.operations.wandb_heartbeat.time.monotonic', return_value=0), \
+         patch('tools.operations.wandb_heartbeat.Client') as client:
+        with pytest.raises(ValueError, match='exited or changed'):
+            wait_for_client(1, 100, 'run', 'project', 10)
+    client.assert_not_called()
+
+
+def test_auto_wait_has_a_deadline():
+    from tools.operations.wandb_heartbeat import wait_for_client
+    with patch('tools.operations.wandb_heartbeat.time.monotonic', return_value=11), \
+         patch('tools.operations.wandb_heartbeat.Client') as client:
+        with pytest.raises(ValueError, match='deadline'):
+            wait_for_client(1, 100, 'run', 'project', 10)
+    client.assert_not_called()
+
+
+def test_duplicate_helper_lock_releases_on_exit_and_new_launch_is_independent(tmp_path):
+    from tools.operations.wandb_heartbeat import acquire_lock
+    log = tmp_path / 'rank0.log'
+    first = acquire_lock(log, 1, 100)
+    try:
+        with pytest.raises(ValueError, match='already owns'):
+            acquire_lock(log, 1, 100)
+        # Same PID reused by a new trainer must not inherit the old lock.
+        acquire_lock(log, 1, 200).close()
+    finally:
+        first.close()
+    acquire_lock(log, 1, 100).close()

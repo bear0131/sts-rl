@@ -41,6 +41,10 @@ test ! -e "$stop_file" || { echo 'clear the completed stop request before resumi
 test -x "$python"
 test -f "$checkpoint"
 test -f "$args_file"
+if [ "$rank" = 0 ]; then
+  test -f "$repo/tools/operations/wandb_heartbeat.py"
+  "$python" -c 'from importlib.metadata import version; assert version("wandb") == "0.28.1", "heartbeat requires tested W&B 0.28.1"'
+fi
 mkdir -p "$run_dir" /tmp/sts-launch
 # The transport root is shared by all four ranks through SCP. It must be
 # cleaned exactly once before any rank starts; deleting it here from every
@@ -117,6 +121,7 @@ if [ -f "$run_dir/rank$rank.log" ]; then
     mv -f -- "$run_dir/.rank$rank.log.trim" "$run_dir/rank$rank.log"
   fi
 fi
+heartbeat_log_start=$(stat -c '%s' "$run_dir/rank$rank.log")
 nohup "${cmd[@]}" >> "$run_dir/rank$rank.log" 2>&1 < /dev/null &
 pid=$!
 printf '%s\n' "$pid" > "$run_dir/rank$rank.pid"
@@ -125,5 +130,17 @@ if ! kill -0 "$pid" 2>/dev/null; then
   echo "rank=$rank exited during startup; inspect $run_dir/rank$rank.log" >&2
   tail -n 20 "$run_dir/rank$rank.log" >&2
   exit 4
+fi
+# Only rank0 owns W&B. The helper waits for this trainer's core/initialization,
+# ignores earlier launches' log records, and exits when this trainer ends.
+if [ "$rank" = 0 ]; then
+  nohup "$python" -u "$repo/tools/operations/wandb_heartbeat.py" \
+    --auto --pid "$pid" --wandb-id "$wandb_id" --project sts-rl \
+    --log "$run_dir/rank0.log" --log-start "$heartbeat_log_start" \
+    >> "$run_dir/rank0.heartbeat.log" 2>&1 < /dev/null &
+  heartbeat_pid=$!
+  printf '%s\n' "$heartbeat_pid" > "$run_dir/rank0.heartbeat.pid.tmp"
+  mv -f -- "$run_dir/rank0.heartbeat.pid.tmp" "$run_dir/rank0.heartbeat.pid"
+  echo "heartbeat pending trainer_pid=$pid helper_pid=$heartbeat_pid log=$run_dir/rank0.heartbeat.log"
 fi
 echo "started rank=$rank pid=$pid run=$run_id wandb=$wandb_id log=$run_dir/rank$rank.log"
