@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| EVAL31 | 远端运行中 | 按周五 EVAL30 参数，固定 TRAIN47 step652738560（830轮）、200种子200200..200399、A0、确定性上层/Full-Gumbel128/G0/fixed worldline，32env/BF16 Graph/native4。rank0独立目录 `/root/sts-eval31-20261018`；四机policy/双Adam成员SHA一致，318个源码文件与e0b5491快照一致、权重finite。验收200自然终局、逐局搜索128倍及result/CSV/轨迹一致，3小时内部预算/11100秒监督上限。详情 `worklog/2026-10-18.md#eval31-远端最新-train47-固定种子评估`；未完成前不报告最终胜率。 |
 | EVAL08 | 已完成（模拟器） | 同 EVAL07 固定种子 A20，自然三钥匙进入心脏；第5回合0费剑柄+飞踢在狂怒下连续600张，费用1/HP22不变、格挡56→656，壁垒留盾跨伤害上限，第8回合获胜、结算HP28。1466合法动作完整重放与循环资源恢复通过；Act4入口、钥匙互斥、长矛置顶灼伤已修。fixture `tests/fixtures/a20_heart_infinite_seed4214060967.json`，见 `worklog/2026-10-11.md`。 |
 | EVAL07 | 已完成（模拟器） | 固定 reset seed `4214060967` / game seed `3144949568458209293`，Ironclad A20，第5个策略尝试以0费飞踢+0费剑柄打击无限击杀第二个Act3 Boss甜圈/八体；第7回合连续20张循环牌、费用1→11、HP恒10，结算PLAYER_VICTORY/floor52/HP16。806个合法动作从自然开局重放通过，循环资源恢复断言通过；fixture `tests/fixtures/a20_infinite_seed4214060967.json`、验收 `tests/integration/test_a20_infinite_replay.py`。不含心脏，不是客户端成绩；详情 `worklog/2026-10-11.md`。 |
 | EVAL04 | 已完成 | 固定 step18137088 checkpoint，规则上层 + checkpoint value leaf，depth16/beam8/top-k8/node budget512，NOSL 根节点单次重采样后沿分支保持同一 future；GPU 四机按 13/12/13/12 完成唯一 seeds 60000--60049，全部 complete、无 step_limit/other_truncation/非法动作。结果 6/50 胜，平均/中位楼层 32.28/33，Act2/Act3 到达率 78%/32%；同 seed 旧 T=1 基线为 0/50、平均楼层25.56，配对平均差+6.72层、楼层胜/负/平29/8/13。旧基线同时更换了 checkpoint 和搜索算法，不能视为单变量。合并结果位于 `runs/local/eval-value512-rootstable-step18137088-seeds60000-20260925-13121312/`；记录见 `worklog/2026-09-25.md#eval04-stable-512-node-value-beam-campaign`。 |
