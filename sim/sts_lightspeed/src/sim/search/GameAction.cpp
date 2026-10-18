@@ -47,13 +47,13 @@ std::ostream &search::GameAction::printDesc(std::ostream &os, const GameContext 
 }
 
 bool isValidMatchAndKeepEventAction(const GameContext &gc, const search::GameAction a) {
-//    const auto &m = matchAndKeepCardMap;
-//    const int idx1 = option / m.size();
-//    int idx2 = option % m.size();
-//    if (idx2 == idx1) {
-//        idx2 = idx1+1;
-//    }
-    return true;
+    const auto available = [&gc](int i) {
+        return i >= 0 && i < gc.info.toSelectCards.size()
+            && gc.info.toSelectCards[i].card.id != CardId::INVALID
+            && gc.info.toSelectCards[i].deckIdx != 0;
+    };
+    return gc.info.eventData > 0 && a.getIdx1() != a.getIdx2()
+        && available(a.getIdx1()) && available(a.getIdx2());
 }
 
 bool isValidDesignerInSpireEventAction(const GameContext &gc, const search::GameAction a) {

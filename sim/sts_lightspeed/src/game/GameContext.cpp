@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 
 #include "constants/RelicPools.h"
 #include "constants/CardPools.h"
@@ -2449,10 +2450,15 @@ void GameContext::chooseBossRelic(int idx) {
 
 
 void GameContext::chooseMatchAndKeepCards(int idx1, int idx2) {
-    if (idx1 < 0 || idx1 >= 12 || info.toSelectCards[idx1].card.id == CardId::INVALID
-        || idx2 == idx1 || idx2 < 0 || idx2 >= 12 || info.toSelectCards[idx2].card.id == CardId::INVALID
-            ) {
-        assert(false);}
+    const auto available = [this](int i) {
+        return i >= 0 && i < info.toSelectCards.size()
+            && info.toSelectCards[i].card.id != CardId::INVALID
+            && info.toSelectCards[i].deckIdx != 0;
+    };
+    if (curEvent != Event::MATCH_AND_KEEP || screenState != ScreenState::EVENT_SCREEN
+        || info.eventData <= 0 || idx1 == idx2 || !available(idx1) || !available(idx2)) {
+        throw std::invalid_argument("Match and Keep requires two distinct remaining cards");
+    }
 
     auto &s1 = info.toSelectCards[idx1].card;
     auto &s2 = info.toSelectCards[idx2].card;

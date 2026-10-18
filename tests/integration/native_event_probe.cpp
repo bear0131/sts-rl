@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <deque>
 #include <utility>
+#include <stdexcept>
 
 int main(int argc, char **argv) {
     using namespace sts;
@@ -23,6 +24,31 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 4 && root.curEvent == Event::MATCH_AND_KEEP) {
+        // Isolate the dormant transition; this does NOT enable the event in
+        // production or claim that the frozen policy can play the minigame.
+        root.screenState = ScreenState::EVENT_SCREEN;
+        root.info.toSelectCards.clear();
+        for (int i = 0; i < 12; ++i)
+            root.info.toSelectCards.push_back({Card(CardId::STRIKE_RED), -1});
+        root.info.eventData = 5;
+        const int before = root.deck.size();
+        if (!search::GameAction(0, 1).isValidAction(root)) return 10;
+        root.chooseMatchAndKeepCards(0, 1);
+        if (root.deck.size() != before + 1 || root.info.eventData != 4) return 10;
+        if (search::GameAction(0, 1).isValidAction(root)
+            || search::GameAction(2, 2).isValidAction(root)
+            || search::GameAction(12, 2).isValidAction(root)) return 10;
+        try { root.chooseMatchAndKeepCards(0, 1); return 10; }
+        catch (const std::invalid_argument &) {}
+        if (root.deck.size() != before + 1 || root.info.eventData != 4) return 10;
+        root.info.toSelectCards.clear();
+        if (search::GameAction(0, 1).isValidAction(root)) return 10;
+        try { root.chooseMatchAndKeepCards(0, 1); return 10; }
+        catch (const std::invalid_argument &) {}
+        std::cout << "matched_slots_not_reusable; invalid_pairs_atomic" << std::endl;
+        return 0;
+    }
     // Returning directly to the map is not event coverage. In particular the
     // frozen build disables Match and Keep: its map actions previously made
     // this probe report a misleading successful event traversal.
