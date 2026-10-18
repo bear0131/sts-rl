@@ -819,6 +819,55 @@ def test_secret_portal_requires_confirmation_and_boss(event_adapter, enter, leav
     assert ack.pending is None
 
 
+@pytest.mark.parametrize('label', ['质朴', 'Simplicity'])
+@pytest.mark.parametrize('empty', [False, True])
+def test_back_to_basics_exact_starter_upgrades(event_adapter, label, empty):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Back to Basics', [(f'[{label}]', False)])
+    a.gs['deck'] = [{'id': 'Pommel Strike', 'upgrades': 0}, {'id': 'Strike_R', 'upgrades': 1}]
+    if not empty:
+        a.gs['deck'] += [{'id': 'Strike_R', 'upgrades': 0}, {'id': 'Defend_R', 'upgrades': 0}]
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 1)), 0)
+    assert ack.waiting(a.frame, 1)
+    after = deepcopy(a.frame)
+    after['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0, disabled=False)]
+    bad = deepcopy(after)
+    bad['game_state']['deck'][0]['upgrades'] = 1
+    with pytest.raises(RuntimeError, match='wrong cards'):
+        ack.waiting(bad, 2)
+    if not empty:
+        after['game_state']['deck'][2]['upgrades'] = 1
+        assert ack.waiting(after, 2)
+        after['game_state']['deck'][3]['upgrades'] = 1
+    assert not ack.waiting(after, 3)
+
+
+@pytest.mark.parametrize('label', ['简约', 'Elegance'])
+def test_back_to_basics_remove_waits_for_grid_and_result(event_adapter, label):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Back to Basics', [(f'[{label}]', False)])
+    a.gs['deck'] = [{'id': 'Strike_R', 'upgrades': 0}, {'id': 'CurseOfTheBell', 'upgrades': 0}]
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    grid = deepcopy(a.frame)
+    grid['game_state']['screen_type'] = 'GRID'
+    assert not ack.waiting(grid, 1)
+    assert ack.pending is not None
+    after = deepcopy(a.frame)
+    after['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0, disabled=False)]
+    bad = deepcopy(after)
+    bad['game_state']['deck'].pop()
+    with pytest.raises(RuntimeError, match='invalid removal'):
+        ack.waiting(bad, 2)
+    after['game_state']['deck'].pop(0)
+    assert not ack.waiting(after, 3)
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

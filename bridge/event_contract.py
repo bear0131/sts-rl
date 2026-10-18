@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Back to Basics": [(0, '简约|Elegance', 'basics_remove'),
+                       (1, '质朴|Simplicity', 'basics_upgrade')],
     "SecretPortal": [(0, '进入传送门|Enter the Portal', 'portal_boss'),
                      (1, '离开|Leave', 'leave')],
     "Fountain of Cleansing": [(0, '喝水|Drink', 'remove_curses'),
@@ -335,6 +337,31 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect in {'basics_remove', 'basics_upgrade'}:
+            complete = (g.get('screen_state', {}).get('event_id') == 'Back to Basics'
+                        and transport_only(g) is not None)
+            if relic_changed or potion_changed or delta('gold'):
+                raise RuntimeError('Back to Basics unexpected resource effect')
+            if effect == 'basics_remove':
+                permanent = {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
+                if gained or sum(lost.values()) > 1 or any(cid in permanent for cid, _ in lost):
+                    raise RuntimeError('Back to Basics invalid removal')
+                if sum(lost.values()) == 1 and complete:
+                    self.pending = None
+                    return False
+                return g.get('screen_type') != 'GRID'
+            # Java uses STARTER_STRIKE/STARTER_DEFEND, not substring "Strike".
+            basic = {'Strike_R', 'Strike_G', 'Strike_B', 'Strike_P',
+                     'Defend_R', 'Defend_G', 'Defend_B', 'Defend_P'}
+            expected = Counter((c['id'], 1 if c['id'] in basic and not c.get('upgrades', 0)
+                                else c.get('upgrades', 0)) for c in old.get('deck', []))
+            if (lost - (deck(old) - expected) or gained - (expected - deck(old))
+                    or delta('current_hp') or delta('max_hp')):
+                raise RuntimeError('Back to Basics upgraded wrong cards')
+            if deck(g) == expected and complete:
+                self.pending = None
+                return False
+            return True
         if effect == 'remove_curses':
             permanent = {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
             expected = Counter((c['id'], c.get('upgrades', 0)) for c in old.get('deck', [])
