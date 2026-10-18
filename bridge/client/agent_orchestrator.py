@@ -680,6 +680,22 @@ def restore_attached_search_index(args, search, gs) -> None:
     log.info('restored save search index=%s seed=%s floor=%s', index, gs['seed'], gs['floor'])
 
 
+def rebuild_save_attachment(agent, model, args):
+    """Discard all prior battle/multi-selection state when reloading a fixed save."""
+    from bridge.search_bridge import RealCombatSearch
+    old_search = agent.combat_search
+    if old_search is not None:
+        old_search.close()
+    model.set_random_seed(args.seed)
+    adapter = _adapter_for_model(model, args)
+    search = (RealCombatSearch(model, adapter, native_search_threads=args.native_search_threads,
+                              master_nonce=args.seed, gumbel_scale=args.gumbel_scale)
+              if args.combat_search else None)
+    agent.adapter = adapter
+    agent.combat_search = search
+    return adapter, search
+
+
 def main() -> None:
     args = build_parser().parse_args()
     if args.attach_search_index is not None and (
@@ -741,6 +757,8 @@ def main() -> None:
         unsent_search = None
         pause_clock = UiPauseClock()
         attach_pending = args.attach_existing_seed is not None
+        attached_live = False
+        rebuild_pending = False
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -748,6 +766,23 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if frame.get('in_game') is False and args.attach_existing_seed is not None:
+                    if attached_live:
+                        # Menu round-trip is a save-load boundary, not an overlay.
+                        # Never carry a prepared command or ACK across that boundary.
+                        rebuild_pending = True
+                        attach_pending = True
+                        attached_live = False
+                        pending_play_frame = pending_end_frame = unsent_search = None
+                        pending_play_since = pending_end_since = 0.0
+                        combat_stability = CombatFrameStability()
+                        reward_ack = RewardCommandAck()
+                        event_ack = EventEffectAck()
+                        pause_clock = UiPauseClock()
+                        log.info('save reload boundary: discarded pending commands and acknowledgements')
+                    time.sleep(0.1)
+                    send('STATE')
+                    continue
                 if frame.get('in_game') is False and not (args.auto_start and args.continuous_test):
                     time.sleep(0.1)
                     send('STATE')
@@ -763,8 +798,12 @@ def main() -> None:
                                 and gs.get('floor') != args.attach_existing_floor)):
                         raise RuntimeError('loaded save seed/floor mismatch')
                     if attach_pending:
+                        if rebuild_pending:
+                            adapter, combat_search = rebuild_save_attachment(agent, model, args)
+                            rebuild_pending = False
                         restore_attached_search_index(args, combat_search, gs)
                         attach_pending = False
+                        attached_live = True
                         log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
                 now, paused = pause_clock.update(frame, time.monotonic())
                 if paused:

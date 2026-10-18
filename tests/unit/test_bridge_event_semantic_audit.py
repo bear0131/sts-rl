@@ -216,6 +216,50 @@ def test_saved_search_index_restore_is_scoped():
         restore_attached_search_index(args, search, {'seed': 200205, 'floor': 23})
 
 
+def test_repeated_sl_rebuilds_search_and_adapter_without_start(monkeypatch):
+    import io, json
+    from types import SimpleNamespace
+    from bridge.client import agent_orchestrator as o
+    from bridge import search_bridge
+    searches, adapters, observed, sent = [], [], [], []
+    class Search:
+        def __init__(self, *a, **kw):
+            self.decision_index = 0
+            self.closed = False
+            searches.append(self)
+        def close(self): self.closed = True
+        def note_error(self): pytest.fail('unexpected error in save reload')
+    class Agent:
+        def __init__(self, model, adapter, **kw):
+            self.adapter, self.combat_search = adapter, kw['combat_search']
+        def decide(self, frame):
+            observed.append((self.adapter, self.combat_search, self.combat_search.decision_index))
+            self.combat_search.decision_index += 20
+            return o.RealDecision('STATE', 'test')
+    def adapter_factory(*a):
+        adapter = SimpleNamespace()
+        adapters.append(adapter)
+        return adapter
+    monkeypatch.setattr(o, '_load_model', lambda *a, **kw: SimpleNamespace(set_random_seed=lambda s: None))
+    monkeypatch.setattr(o, '_adapter_for_model', adapter_factory)
+    monkeypatch.setattr(search_bridge, 'RealCombatSearch', Search)
+    monkeypatch.setattr(o, 'RealPolicyAgent', Agent)
+    monkeypatch.setattr(o, '_log_decision', lambda *a: None)
+    monkeypatch.setattr(o, 'send', sent.append)
+    monkeypatch.setattr(o, 'send_decision', lambda f, d: sent.append(d.command))
+    monkeypatch.setattr(o.time, 'sleep', lambda s: None)
+    monkeypatch.setattr(o.sys, 'argv', ['agent', 'model.zip', '--combat-search',
+        '--attach-existing-seed', '200205', '--attach-existing-floor', '29', '--attach-search-index', '255'])
+    menu = {'in_game': False}
+    live = {'in_game': True, 'game_state': {'seed': 200205, 'floor': 29, 'screen_type': 'NONE'}}
+    monkeypatch.setattr(o.sys, 'stdin', io.StringIO('\n'.join(json.dumps(f) for f in [menu,live,menu,menu,live,menu,live])))
+    o.main()
+    assert [r[2] for r in observed] == [255,255,255]
+    assert len(searches) == len(adapters) == 3
+    assert all(s.closed for s in searches)
+    assert all(cmd in ['ready','STATE'] for cmd in sent)
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])
