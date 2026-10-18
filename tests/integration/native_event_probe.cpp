@@ -33,6 +33,13 @@ int main(int argc, char **argv) {
         std::cout << "scrap_damage=" << before - root.curHp << " expected=" << expected << std::endl;
         return before - root.curHp == expected ? 0 : 7;
     }
+    if (variant == 3 && root.curEvent == Event::MYSTERIOUS_SPHERE) {
+        // Java's Leave branch changes dialogue only, never grants gold.
+        const int gold = root.gold, hp = root.curHp;
+        root.chooseEventOption(1);
+        std::cout << "sphere_leave_gold=" << root.gold - gold << " expected=0" << std::endl;
+        return root.gold == gold && root.curHp == hp ? 0 : 8;
+    }
     const auto actions = search::GameAction::getAllActionsInState(root);
     std::cout << "event=" << eventIdStrings[event] << " asc=" << ascension
               << " variant=" << variant << " actions=" << actions.size() << std::endl;

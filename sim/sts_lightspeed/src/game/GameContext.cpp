@@ -3154,7 +3154,6 @@ void GameContext::chooseEventOption(int idx) {
                 enterBattle(MonsterEncounter::MYSTERIOUS_SPHERE_EVENT);
 
             } else if (idx == 1) {
-                obtainGold(unfavorable ? 50 : 99);
                 regainControl();
 
             } else {
