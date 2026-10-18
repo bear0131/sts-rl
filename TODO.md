@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE07 | 已定位，待修复验证 | bridge/search_bridge.py取消未发送动作不恢复decision_index，rl/evaluation/strategies.py以该计数生成NOSL nonce，使UI时序影响后续假设未来。200205 F4原始状态去name/uuid一致但index39/40、首动作与战损不同。验收：取消/拒绝回滚随机身份、实际搜索账本不回退、含自动回归选择前缀测试和真实帧受控重放；不能把G0等同完全确定性。见worklog/2026-10-18.md BRIDGE07。 |
+
 | BRIDGE06 | 有限支持门禁已部署，实机验证中 | 5051087显式映射17类事件，未知/歧义事件失败关闭，效果类型确认30秒超时；169实现/139隔离回归、四真实帧固定checkpoint一步预测通过。51事件尚未全部支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计。验收要求预期语义到UI和实际效果均核验；不能把有限支持称为全部等价。200202旧结果受事件影响；200205按用户要求重测，旧记录归档诊断。见worklog/2026-10-18.md的BRIDGE06记录。 |
 
 | BRIDGE05 | attempt16从200205重测，保留5条历史记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；隔离runtime c73eda8+5051087，native-searing-build SHA850d196e，圆顶导出当前真值，未来仍假设。按用户要求中止attempt15的200206（170.8秒无终局），日志/status/6条旧receipt归档attempt15；只从活动receipt移出旧200205 F33死亡，200200..204保留，200202仍已知事件影响、200200旧圆顶协议例外，不能混称同协议胜率。prior20702.5，7覆盖文件/2新增文件/model/native身份核验通过，从200205重新验证事件选择与奖励效果，再续后续种子。每新自然终局报告；未知事件停机收证后自主修复，不放宽门禁。完整历史及验收边界见worklog/2026-10-18.md；证据runs/local/real-game-train47-final-step688914432-20seeds-20261018。 |
