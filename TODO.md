@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE09 | 6defce0菜单等待修复已部署，用户手动继续存档 | SETTINGS/is_screen_up明确菜单期间仅STATE并冻结END/PLAY/奖励/事件确认计时，保留事务，关闭后恢复；196实现/166隔离回归。按用户最新要求不自动暂停、不重开seed，attempt20等待手动Continue接入200205 F23三奴隶自动存档。SL终局仅写sl-200205-f23-diagnostic.jsonl，不混正式campaign；禁止旧心跳按START覆盖存档。实际Esc复验尚待；见worklog/2026-10-19.md“Esc菜单暂停与用户指定SL续局”。 |
+
 | BRIDGE08 | 1d9e0c7修复部署，实机验收中；审计未全部完成 | 显式实体别名保持checkpoint词表顺序，370卡牌来源/42药水覆盖，未知卡药和normalize异常失败关闭；shop身份/完整性校验，资源领取按对应类型确认，Skull满槽/Sozu契约。187实现/157隔离回归、57商店帧及最终模型类固醇token23/领取129回放通过，重搜6次一致。仍需其余事件及全输入确定性审计，不声称全部问题排除；详见worklog/2026-10-18.md BRIDGE08。 |
 
 | BRIDGE07 | 5a03a8a已部署，attempt17实机验证中 | bridge/search_bridge.py按完整UI命令事务回滚native/thin/自回归前缀和decision_index，取消重搜不消耗逻辑NOSL身份，实际搜索账本仍累计。171实现回归；200205 F4最终模型CUDA/指定native六次128搜索含撤销及拒绝均PLAY2目标0。141隔离回归及六次真实帧重放通过，隔离身份核验通过；还需实机；游戏本体药水帧时序单列，不能以有限测试声称任意干扰全部确定。见worklog/2026-10-18.md BRIDGE07。 |
