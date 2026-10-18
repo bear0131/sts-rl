@@ -6,6 +6,43 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['[放手吧] #r失去 #r0 #r金币。', '[Leave It] #rLose #r0 #rGold.'])
+def test_goop_zero_gold_loss_requires_result_dialogue(event_adapter, label):
+    from bridge.event_contract import EventEffectAck
+    from types import SimpleNamespace
+    from copy import deepcopy
+    a = event_adapter('World of Goop', [('[Gather Gold]', False), (label, False)])
+    a.gs.update(gold=0, current_hp=40, max_hp=80, deck=[], relics=[], potions=[])
+    assert a.command_for_semantic(('event', 1)) == 'CHOOSE 1'
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 1)), 0)
+    assert ack.waiting(a.frame, 1)
+    after = deepcopy(a.frame)
+    after['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0)]
+    assert not ack.waiting(after, 2)
+
+
+@pytest.mark.parametrize('blocked', [False, True])
+def test_goop_gold_ack_rejects_wrong_reward_and_waits_for_dialogue(event_adapter, blocked):
+    from bridge.event_contract import EventEffectAck
+    from types import SimpleNamespace
+    from copy import deepcopy
+    a = event_adapter('World of Goop', [('[收集金币]', False), ('[放手吧] 失去20金币。', False)])
+    a.gs.update(gold=100, current_hp=40, max_hp=80, deck=[], potions=[],
+                relics=[dict(id='Ectoplasm')] if blocked else [])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    after = deepcopy(a.frame)
+    after['game_state'].update(gold=100 if blocked else 175, current_hp=29)
+    assert ack.waiting(after, 1)
+    bad = deepcopy(after)
+    bad['game_state']['gold'] += 1
+    with pytest.raises(RuntimeError, match='amount mismatch'):
+        ack.waiting(bad, 2)
+    after['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0)]
+    assert not ack.waiting(after, 3)
+
+
 @pytest.mark.parametrize('bad_index', [None, -1, True, 0.5, '0'])
 def test_event_wire_index_must_be_nonnegative_integer(event_adapter, bad_index):
     from bridge.event_contract import options, transport_only

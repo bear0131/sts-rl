@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "World of Goop": [(0, '收集金币|Gather Gold', 'goop_gold'),
+                      (1, '放手吧|Leave It', 'goop_loss')],
     "FaceTrader": [(0, '触碰|Touch', 'face_touch'), (1, '交易|Trade', 'face_trade'),
                    (2, '离开|Leave', 'leave')],
     "Scrap Ooze": [(0, '伸手进去|接着往里伸|Reach Inside|Deeper', 'scrap_search'),
@@ -218,6 +220,14 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect == 'goop_loss':
+            ui, _ = options(gs)[1]
+            text = next(_text(o['text']) for o in gs['screen_state']['options']
+                        if not o.get('disabled') and o['choice_index'] == ui)
+            match = re.fullmatch(r'\[(?:放手吧|leaveit)\](?:失去|lose)(\d+)(?:金币。|gold\.)', text)
+            if not match or int(match[1]) > gs.get('gold', 0):
+                raise ValueError('World of Goop public gold loss missing/invalid')
+            self.goop_loss = int(match[1])
         if effect == 'nloth_trade':
             self.nloth_target = next(d['relic']['id'] for d in nloth_choices(gs) if d['index'] == decision.semantic[1])
             if any(r['id'] == "Nloth's Gift" for r in gs.get('relics', [])):
@@ -283,6 +293,24 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect in {'goop_gold', 'goop_loss'}:
+            if effect == 'goop_gold' and g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
+                self.pending = None
+                return False
+            reward = 0 if any(r['id'] == 'Ectoplasm' for r in old.get('relics', [])) else 75
+            expected = reward if effect == 'goop_gold' else -self.goop_loss
+            if gained or lost or relic_changed or potion_changed or delta('max_hp') != 0 or delta('gold') not in (0, expected):
+                raise RuntimeError('World of Goop effect type/amount mismatch')
+            complete = (g.get('screen_state', {}).get('event_id') == 'World of Goop'
+                        and transport_only(g) is not None)
+            # Loss can be zero; gaining gold may heal through Bloody Idol.
+            # Require the result dialogue, not just a resource delta.
+            if complete and delta('gold') == expected:
+                if effect == 'goop_loss' and delta('current_hp') != 0:
+                    raise RuntimeError('World of Goop leave unexpectedly changed HP')
+                self.pending = None
+                return False
+            return True
         if effect == 'nloth_trade':
             before = Counter(r['id'] for r in old.get('relics', []))
             after = Counter(r['id'] for r in g.get('relics', []))
