@@ -303,3 +303,29 @@ def test_combat_stability_does_not_deadlock_executing_selection():
     frame = {'game_state': {'room_phase': 'COMBAT', 'screen_type': 'HAND_SELECT',
                            'action_phase': 'EXECUTING_ACTIONS', 'combat_state': {'turn': 1}}}
     assert not gate.waiting(frame, 0)
+
+
+def test_opening_guard_allows_spent_first_turn_and_resets_next_battle():
+    from copy import deepcopy
+    from bridge.real_game_env import RealGameAdapter
+    adapter = RealGameAdapter()
+    frame = {'in_game': True, 'ready_for_command': True,
+             'available_commands': ['end', 'state'], 'game_state': {
+                 'seed': 200200, 'floor': 14, 'screen_type': 'NONE',
+                 'room_phase': 'COMBAT', 'action_phase': 'WAITING_ON_USER',
+                 'combat_state': {'turn': 1, 'hand': [],
+                                  'draw_pile': [{'id': 'Strike_R'}],
+                                  'player': {'energy': 0}}}}
+    adapter.update(deepcopy(frame))
+    assert not adapter._combat_ready_for_policy()
+    ready = deepcopy(frame)
+    ready['game_state']['combat_state']['hand'] = [{'id': 'Strike_R'}]
+    ready['game_state']['combat_state']['player']['energy'] = 4
+    adapter.update(ready)
+    assert adapter._combat_ready_for_policy()
+    adapter.update({'error': 'transient rejection'})
+    adapter.update(deepcopy(frame))  # all cards/energy spent on the same turn
+    assert adapter._combat_ready_for_policy()
+    frame['game_state']['floor'] = 15
+    adapter.update(frame)
+    assert not adapter._combat_ready_for_policy()

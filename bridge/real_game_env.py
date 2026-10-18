@@ -517,6 +517,8 @@ class RealGameAdapter:
         self._astrolabe_expected_deck_size: int | None = None
         self._last_relic_ids: set[str] = set()
         self._seen_game_frame = False
+        self._combat_identity = None
+        self._combat_initialized = False
 
     def update(self, frame: dict[str, Any]) -> None:
         previous_overworld_grid = (
@@ -525,6 +527,17 @@ class RealGameAdapter:
         previous_relic_ids = self._last_relic_ids
         self.frame = frame
         self.gs = frame.get("game_state") or {}
+        if "error" not in frame:
+            combat = self.gs.get("combat_state")
+            identity = ((self.gs.get("seed"), self.gs.get("floor"))
+                        if combat else None)
+            if identity != self._combat_identity or not combat:
+                self._combat_initialized = False
+            self._combat_identity = identity
+            if combat and (combat.get("hand")
+                           or combat.get("player", {}).get("energy", 0) > 0
+                           or combat.get("turn", 0) > 1):
+                self._combat_initialized = True
         current_relic_ids = {
             str(relic.get("id"))
             for relic in self.gs.get("relics") or []
@@ -606,7 +619,8 @@ class RealGameAdapter:
             combat = self.gs["combat_state"]
             # The mod can advertise END before opening draw/energy actions.
             # An empty, unenergized opening is not a policy decision point.
-            if (combat.get("turn") == 1 and not combat.get("hand")
+            if (not self._combat_initialized
+                    and combat.get("turn") == 1 and not combat.get("hand")
                     and combat.get("player", {}).get("energy") == 0
                     and combat.get("draw_pile")):
                 return False
