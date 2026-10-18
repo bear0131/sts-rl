@@ -6,6 +6,22 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+def test_complete_screen_is_transport_not_terminal_receipt():
+    from bridge.campaign import SeedCampaign
+    a = RealGameAdapter()
+    frame = {'in_game': True, 'ready_for_command': True, 'available_commands': ['proceed', 'state'],
+             'game_state': {'screen_type': 'COMPLETE', 'seed': 200205, 'floor': 51,
+                            'screen_state': {}, 'choice_list': []}}
+    a.update(frame)
+    assert a.auto_command() == ('PROCEED', 'complete_run_transition')
+    campaign = SeedCampaign(['4NF5'])
+    assert campaign.observe(frame) is None
+    assert not campaign.completed
+    frame['available_commands'] = ['state']
+    a.update(frame)
+    assert a.auto_command() == ('STATE', 'await_complete_run_transition')
+
+
 @pytest.mark.parametrize('failure', ['empty_mask', 'inner_limit'])
 def test_policy_failures_never_choose_transport_fallback(monkeypatch, failure):
     import numpy as np

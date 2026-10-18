@@ -681,6 +681,13 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         cl = self.choices()
 
+        # Completion animation is a transport page, not a policy choice or a
+        # GAME_OVER receipt. Wait for the actual terminal frame to record it.
+        if st == "COMPLETE" and not self.gs.get("combat_state") and not cl:
+            if "PROCEED" in self.commands():
+                return "PROCEED", "complete_run_transition"
+            return self._refresh_command(), "await_complete_run_transition"
+
         if self._deferred_combat_reward_action is not None:
             if st == "COMBAT_REWARD":
                 action = self._deferred_combat_reward_action
