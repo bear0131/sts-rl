@@ -134,6 +134,11 @@ _BOSS_ALIASES = {
 }
 
 _EVENT_ALIASES = {
+    "FaceTrader": "Face Trader",
+    "SecretPortal": "Secret Portal",
+    "Match and Keep!": "Match and Keep",
+    "N'loth": "Nloth",
+    "NoteForYourself": "Note For Yourself",
     "MindBloom": "Mindbloom",
     "SensoryStone": "Sensory Stone",
     "Neow Event": "NEOW",

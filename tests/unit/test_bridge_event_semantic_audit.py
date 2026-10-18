@@ -549,6 +549,40 @@ def test_scrap_success_requires_relic_and_dialogue(event_adapter):
     assert not ack.waiting(after, 2)
 
 
+@pytest.mark.parametrize('labels', [('[触碰] 失去8生命，获得75金币。','[交易] 50%：获得好脸。50%：获得坏脸。','[离开]'),
+                                   ('[Touch] Lose 8 HP, gain 75 Gold.','[Trade] 50%: Good Face. 50%: Bad Face.','[Leave]')])
+def test_face_trader_real_identity_and_choices(event_adapter, labels):
+    a = event_adapter('FaceTrader', [(s, False) for s in labels])
+    assert a._options('event')['event'] == 'Face Trader'
+    assert a._options('event')['event_options'] == [0, 1, 2]
+
+
+@pytest.mark.parametrize('trade', [False, True])
+def test_face_trader_ack_waits_for_completed_dialogue(event_adapter, trade):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('FaceTrader', [('[Touch]', False), ('[Trade]', False), ('[Leave]', False)])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', int(trade))), 0)
+    after = deepcopy(a.frame)
+    if trade:
+        after['game_state'].setdefault('relics', []).append({'id': 'CultistMask'})
+    else:
+        after['game_state']['gold'] += 75
+        after['game_state']['current_hp'] -= 8
+    assert ack.waiting(after, 1)
+    after['game_state']['screen_state']['options'] = [{'text':'[Leave]', 'choice_index':0}]
+    assert not ack.waiting(after, 2)
+
+
+@pytest.mark.parametrize('real,canonical', [('FaceTrader','Face Trader'), ('SecretPortal','Secret Portal'),
+    ('Match and Keep!','Match and Keep'), ("N'loth",'Nloth'), ('NoteForYourself','Note For Yourself')])
+def test_game_jar_event_ids_match_frozen_vocabulary(real, canonical):
+    from bridge.real_game_env import _normalize_event
+    assert _normalize_event(real) == canonical
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

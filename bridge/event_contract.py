@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "FaceTrader": [(0, '触碰|Touch', 'face_touch'), (1, '交易|Trade', 'face_trade'),
+                   (2, '离开|Leave', 'leave')],
     "Scrap Ooze": [(0, '伸手进去|接着往里伸|Reach Inside|Deeper', 'scrap_search'),
                    (1, '离开|Leave', 'leave')],
     "Forgotten Altar": [(0, '献上|Offer', 'altar_idol'), (1, '献祭|Sacrifice', 'altar_sacrifice'),
@@ -238,6 +240,31 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect in {'face_touch', 'face_trade'}:
+            if g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
+                self.pending = None
+                return False
+            before = Counter(r['id'] for r in old.get('relics', []))
+            after = Counter(r['id'] for r in g.get('relics', []))
+            complete = (g.get('screen_state', {}).get('event_id') == 'FaceTrader'
+                        and transport_only(g) is not None)
+            if effect == 'face_trade':
+                faces = {'CultistMask', 'FaceOfCleric', 'GremlinMask', 'NlothsMask', 'SsserpentHead'}
+                added = after - before
+                if before - after or any(r not in faces for r in added) or sum(added.values()) > 1:
+                    raise RuntimeError('FaceTrader relic identity/count mismatch')
+                done = complete and sum(added.values()) == 1
+            else:
+                reward = 0 if 'Ectoplasm' in before else (50 if old.get('ascension_level', 0) >= 15 else 75)
+                if gained or lost or relic_changed or delta('gold') not in (0, reward):
+                    raise RuntimeError('FaceTrader touch effect mismatch')
+                # Gold-triggered healing can offset damage; don't require net HP
+                # loss. The resolved dialogue is required in addition to gold.
+                done = complete and delta('gold') == reward and g != old
+            if done:
+                self.pending = None
+                return False
+            return True
         if effect == 'scrap_search':
             if g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
                 self.pending = None
