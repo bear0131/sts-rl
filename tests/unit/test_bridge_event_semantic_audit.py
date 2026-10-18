@@ -6,6 +6,32 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['给金币', 'Offer Gold'])
+def test_beggar_paid_removal_two_dialogues(event_adapter, label):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('Beggar', [('[Leave]', False), (f'[{label}] 75 Gold', False)])
+    assert a.command_for_semantic(('event', 0)) == 'CHOOSE 1'
+    a.gs.update(gold=100, deck=[dict(id='Strike_R', upgrades=0)])
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 1', 'policy', semantic=('event', 0)), 0)
+    assert ack.waiting(a.frame, 1)
+    paid = deepcopy(a.frame)
+    paid['game_state'].update(gold=25, screen_state={'event_id':'Beggar', 'options':[dict(choice_index=0,text='[Continue]')]})
+    assert not ack.waiting(paid, 2) and ack.pending
+    ack.arm(paid, RealDecision('CHOOSE 0','event_dialogue_transport'), 2)
+    assert ack.waiting(paid, 3)  # Cannot repeat the second dialogue.
+    paid['game_state']['screen_type']='GRID'
+    assert not ack.waiting(paid, 4) and ack.pending
+    bad=deepcopy(paid)
+    bad['game_state']['gold']=0
+    with pytest.raises(RuntimeError,match='mismatch'):
+        ack.waiting(bad,5)
+    paid['game_state']['deck']=[]
+    assert not ack.waiting(paid,6) and ack.pending is None
+
+
 @pytest.mark.parametrize('label', ['治疗', 'Heal'])
 def test_cleric_heal_requires_payment_and_healing(event_adapter, label):
     from bridge.event_contract import EventEffectAck

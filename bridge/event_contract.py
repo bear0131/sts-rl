@@ -10,6 +10,7 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Beggar": [(0, '给金币|Offer Gold', 'beggar_remove'), (1, '离开|Leave', 'leave')],
     "The Cleric": [(0, '治疗|Heal', 'cleric_heal'), (1, '净化|Purify', 'cleric_remove'),
                    (2, '离开|Leave', 'leave')],
     "Mushrooms": [(0, '踩扁|Stomp', 'mushroom_combat'), (1, '吃下|Eat', 'mushroom_eat')],
@@ -131,6 +132,13 @@ class EventEffectAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if (self.pending and self.pending[1] == 'beggar_remove'
+                and gs.get('screen_state', {}).get('event_id') == 'Beggar'
+                and transport_only(gs) is not None
+                and decision.command == f'CHOOSE {transport_only(gs)}'):
+            old, _, started = self.pending
+            self.pending = (old, 'beggar_remove_confirmed', started)
+            return
         if (self.pending and self.pending[1] == 'mushroom_combat'
                 and gs.get('screen_state', {}).get('event_id') == 'Mushrooms'
                 and transport_only(gs) is not None
@@ -203,10 +211,11 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
-        if effect in {'cleric_heal', 'cleric_remove'}:
-            cost = 35 if effect == 'cleric_heal' else (75 if old.get('ascension_level', 0) >= 15 else 50)
-            if delta('gold') not in (0, -cost) or gained or sum(lost.values()) > (effect == 'cleric_remove'):
-                raise RuntimeError('Cleric payment/card effect mismatch')
+        if effect in {'cleric_heal', 'cleric_remove', 'beggar_remove', 'beggar_remove_confirmed'}:
+            cost = (75 if effect.startswith('beggar_') else
+                    35 if effect == 'cleric_heal' else (75 if old.get('ascension_level', 0) >= 15 else 50))
+            if delta('gold') not in (0, -cost) or gained or sum(lost.values()) > (effect != 'cleric_heal'):
+                raise RuntimeError('Paid event payment/card effect mismatch')
             if effect == 'cleric_heal':
                 blocked = any(r['id'] == 'Mark of the Bloom' for r in old.get('relics', []))
                 heal = 0 if blocked else min(old['max_hp'] // 4, old['max_hp'] - old['current_hp'])
@@ -216,8 +225,14 @@ class EventEffectAck:
             if done:
                 self.pending = None
                 return False
-            if effect == 'cleric_remove' and g.get('screen_type') == 'GRID' and delta('gold') == -cost:
+            if effect != 'cleric_heal' and g.get('screen_type') == 'GRID' and delta('gold') == -cost:
                 return False  # Selection is required, payment alone is not completion.
+            if (effect == 'beggar_remove' and delta('gold') == -cost
+                    and g.get('screen_state', {}).get('event_id') == 'Beggar'
+                    and transport_only(g) is not None
+                    and any(_text(o.get('text', '')).strip('[]') in {'继续', 'continue'}
+                            for o in g['screen_state'].get('options', []) if not o.get('disabled'))):
+                return False  # One explicit confirmation before the removal grid.
             return True
         if effect == 'mushroom_eat':
             relics = {r['id']: r for r in old.get('relics', [])}
