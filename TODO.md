@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE12 | 正式1/14；200207 F38断点已续行 | a9f17b1部署309实现/279隔离回归，原F38/index390，prior31558.1，实机已到F39。Lab奖励已实机通过；Sphere固定模型离开。诊断自然结束后从头正式验收200207，保留原14seed/模型/native/128预算。30/52事件有路径、22缺失；源码ScrapOoze/Sphere规则修复未替换冻结pyd，正式验收前需兼容评估。见worklog/2026-10-19.md“神秘圆球离开错误金币”。 |
+| BRIDGE12 | 正式1/14；200207修正规则从头验收 | 200207诊断F55/821自然胜利已报告不计分，原件diagnostic-200207-completed。prior32263.1；正式200207起native-eventfix-compat SHA ff65950b，两规则修复已309实现/279隔离/模型一步验证并显式记入protocol。旧正式200206/native850d196e与旧模拟结果保留版本差异，不抹成绩。原14seed/模型/128预算不变，30/52路径、22缺失，见worklog/2026-10-19.md“200207诊断自然胜利与修正规则正式重测”。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 真机jar提取52个ID，修5处别名；除专用Spire Heart transport外不再PAD。26/52原生入口有桥接合同、26缺失。208场景多阶段4200 transitions无基础异常，Skull两场景封顶未穷尽，不能当真机一致验收。ScrapOoze递增伤害源码已修，独立原生构建A0/A15反例旧失败新通过，208场景新构建通过；未替换冻结生产pyd，需独立版本兼容/模型一步验证再部署。原始java-event-identity-audit.json及event-probe-*-results.json在runs/local/real-game-train47-final-step688914432-20seeds-20261018。验收仍须全部分支结果oracle、编码、动作、ACK、遗物副作用，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
 
