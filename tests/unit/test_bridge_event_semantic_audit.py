@@ -217,11 +217,16 @@ def test_empty_event_load_wait_is_bounded(monkeypatch):
         a.auto_command()
 
 
-def test_mushrooms_reordered_options_and_two_stage_combat(event_adapter):
+@pytest.mark.parametrize('event,labels', [
+    ('Mushrooms', ('[吃下] 回复21点生命。被诅咒——寄生。', '[踩扁] 激怒蘑菇们。')),
+    ('Mysterious Sphere', ('[Leave]', '[Open Sphere] Fight. Reward: Rare Relic.')),
+    ('Mysterious Sphere', ('[离开]', '[打开圆球] 战斗。奖励：稀有遗物。')),
+])
+def test_mushrooms_reordered_options_and_two_stage_combat(event_adapter, event, labels):
     from bridge.event_contract import EventEffectAck
     from bridge.real_game_env import RealDecision
     from copy import deepcopy
-    a = event_adapter('Mushrooms', [('[吃下] 回复21点生命。被诅咒——寄生。', False), ('[踩扁] 激怒蘑菇们。', False)])
+    a = event_adapter(event, [(label, False) for label in labels])
     assert a.command_for_semantic(('event', 0)) == 'CHOOSE 1'
     ack = EventEffectAck()
     ack.arm(a.frame, RealDecision('CHOOSE 1', 'policy', semantic=('event', 0)), 0)

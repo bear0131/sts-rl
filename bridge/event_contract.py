@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Mysterious Sphere": [(0, '打开圆球|Open Sphere', 'sphere_combat'),
+                         (1, '离开|Leave', 'leave')],
     "World of Goop": [(0, '收集金币|Gather Gold', 'goop_gold'),
                       (1, '放手吧|Leave It', 'goop_loss')],
     "FaceTrader": [(0, '触碰|Touch', 'face_touch'), (1, '交易|Trade', 'face_trade'),
@@ -98,7 +100,7 @@ def transport_only(gs):
     if ((gs.get('screen_state') or {}).get('event_id') == 'SensoryStone'
             and text in {'交互', 'interact'}):
         return o.get('choice_index')
-    if ((gs.get('screen_state') or {}).get('event_id') == 'Mushrooms'
+    if ((gs.get('screen_state') or {}).get('event_id') in {'Mushrooms', 'Mysterious Sphere'}
             and text in {'战斗', 'fight'}):
         return o.get('choice_index')
     if text in {'继续', '离开', 'continue', 'leave', 'proceed'}:
@@ -219,12 +221,12 @@ class EventEffectAck:
             old, _, started = self.pending
             self.pending = (old, 'beggar_remove_confirmed', started)
             return
-        if (self.pending and self.pending[1] == 'mushroom_combat'
-                and gs.get('screen_state', {}).get('event_id') == 'Mushrooms'
+        if (self.pending and self.pending[1] in {'mushroom_combat', 'sphere_combat'}
+                and gs.get('screen_state', {}).get('event_id') == self.pending[0].get('screen_state', {}).get('event_id')
                 and transport_only(gs) is not None
                 and decision.command == f'CHOOSE {transport_only(gs)}'):
-            old, _, started = self.pending
-            self.pending = (old, 'mushroom_combat_confirmed', started)
+            old, effect, started = self.pending
+            self.pending = (old, effect + '_confirmed', started)
             return
         if not decision.semantic or decision.semantic[0] != 'event':
             return
@@ -278,11 +280,12 @@ class EventEffectAck:
                 raise RuntimeError('Lab reward type/count mismatch')
             self.pending = None
             return False
-        if effect in {'mushroom_combat', 'mushroom_combat_confirmed'}:
+        if effect in {'mushroom_combat', 'mushroom_combat_confirmed', 'sphere_combat', 'sphere_combat_confirmed'}:
             if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
                 self.pending = None
                 return False
-            if (effect == 'mushroom_combat' and g.get('screen_state', {}).get('event_id') == 'Mushrooms'
+            if (effect in {'mushroom_combat', 'sphere_combat'}
+                    and g.get('screen_state', {}).get('event_id') == old.get('screen_state', {}).get('event_id')
                     and transport_only(g) is not None
                     and any(_text(o.get('text', '')).strip('[]') in {'战斗', 'fight'}
                             for o in g['screen_state'].get('options', []) if not o.get('disabled'))):
