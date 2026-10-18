@@ -545,3 +545,17 @@ def test_combat_mutations_wait_for_real_ack(command):
     after['potions'] = [{'id': 'Potion Slot'}]
     after['screen_type'] = 'HAND_SELECT'
     assert not stale_combat_play_frame({'game_state': after}, gs)
+
+
+def test_rest_smith_cannot_be_resent_on_identical_reply():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import combat_command_needs_ack, stale_combat_play_frame
+    gs = {'seed': 200206, 'floor': 15, 'screen_type': 'REST',
+          'screen_state': {'has_rested': False, 'rest_options': ['rest', 'smith', 'recall']}}
+    assert combat_command_needs_ack({'game_state': gs}, 'CHOOSE 1')
+    assert not combat_command_needs_ack({'game_state': gs}, 'STATE')
+    for _ in range(4):
+        assert stale_combat_play_frame({'game_state': deepcopy(gs)}, gs)
+    after = deepcopy(gs)
+    after['screen_type'] = 'GRID'
+    assert not stale_combat_play_frame({'game_state': after}, gs)

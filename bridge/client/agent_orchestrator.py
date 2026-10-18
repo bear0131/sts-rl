@@ -519,7 +519,10 @@ def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | Non
 
 def combat_command_needs_ack(frame: dict[str, Any], command: str) -> bool:
     gs = frame.get("game_state") or {}
-    return bool(gs.get("combat_state")) and command.split()[0].upper() in {
+    # Rest choices also enqueue effects: a stale REST reply must not enqueue a
+    # second smith screen. Reuse the same in-flight barrier before re-deciding.
+    guarded = bool(gs.get("combat_state")) or gs.get('screen_type') == 'REST'
+    return guarded and command.split()[0].upper() in {
         "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN",
     }
 
