@@ -10,6 +10,7 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Mushrooms": [(0, '踩扁|Stomp', 'mushroom_combat'), (1, '吃下|Eat', 'mushroom_eat')],
     "Knowing Skull": [(0, '财富？|Riches?', 'gold'), (1, '成功？|Success?', 'card'),
                       (2, '来点喝的？|A Pick Me Up?', 'potion'), (3, '我要怎么离开？|How do I leave?', 'hp_loss')],
     "Vampires": [(0, '失去鲜血药瓶|Lose Blood Vial', 'vial_bites'),
@@ -46,6 +47,9 @@ def transport_only(gs):
     text = _text(o.get('text', '')).strip('[]')
     if ((gs.get('screen_state') or {}).get('event_id') == 'SensoryStone'
             and text in {'交互', 'interact'}):
+        return o.get('choice_index')
+    if ((gs.get('screen_state') or {}).get('event_id') == 'Mushrooms'
+            and text in {'战斗', 'fight'}):
         return o.get('choice_index')
     if text in {'继续', '离开', 'continue', 'leave', 'proceed'}:
         return o.get('choice_index')
@@ -124,6 +128,14 @@ class EventEffectAck:
         self.pending = None
 
     def arm(self, frame, decision, now):
+        gs = frame.get('game_state') or {}
+        if (self.pending and self.pending[1] == 'mushroom_combat'
+                and gs.get('screen_state', {}).get('event_id') == 'Mushrooms'
+                and transport_only(gs) is not None
+                and decision.command == f'CHOOSE {transport_only(gs)}'):
+            old, _, started = self.pending
+            self.pending = (old, 'mushroom_combat_confirmed', started)
+            return
         if not decision.semantic or decision.semantic[0] != 'event':
             return
         if self.pending:
@@ -153,6 +165,16 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect in {'mushroom_combat', 'mushroom_combat_confirmed'}:
+            if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
+                self.pending = None
+                return False
+            if (effect == 'mushroom_combat' and g.get('screen_state', {}).get('event_id') == 'Mushrooms'
+                    and transport_only(g) is not None
+                    and any(_text(o.get('text', '')).strip('[]') in {'战斗', 'fight'}
+                            for o in g['screen_state'].get('options', []) if not o.get('disabled'))):
+                return False  # Explicit second dialogue; arm prevents repeating it.
+            return True
         if effect.startswith('colorless_rewards_'):
             if g.get('screen_type') != 'COMBAT_REWARD':
                 return True
@@ -179,6 +201,20 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect == 'mushroom_eat':
+            relics = {r['id']: r for r in old.get('relics', [])}
+            after_relics = {r['id']: r for r in g.get('relics', [])}
+            blocked = relics.get('Omamori', {}).get('counter', 0) > 0
+            expected = Counter() if blocked else Counter({('Parasite', 0): 1})
+            heal = 0 if 'Mark of the Bloom' in relics else min(old['max_hp'] // 4, old['max_hp'] - old['current_hp'])
+            if gained and gained != expected or lost:
+                raise RuntimeError('Mushrooms curse identity/count mismatch')
+            curse_done = (after_relics.get('Omamori', {}).get('counter') == relics['Omamori']['counter'] - 1
+                          if blocked else gained == expected)
+            if curse_done and delta('current_hp') == heal:
+                self.pending = None
+                return False
+            return True
         if old.get('screen_state', {}).get('event_id') == 'Knowing Skull':
             # A card-vs-potion mismatch must never pass merely because HP fell.
             if (effect != 'card' and gained) or (effect != 'potion' and potion_changed) or (effect != 'gold' and delta('gold') > 0):

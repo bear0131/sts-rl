@@ -6,6 +6,44 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+def test_mushrooms_reordered_options_and_two_stage_combat(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('Mushrooms', [('[吃下] 回复21点生命。被诅咒——寄生。', False), ('[踩扁] 激怒蘑菇们。', False)])
+    assert a.command_for_semantic(('event', 0)) == 'CHOOSE 1'
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 1', 'policy', semantic=('event', 0)), 0)
+    assert ack.waiting(a.frame, 1)
+    fight = deepcopy(a.frame)
+    fight['game_state']['screen_state']['options'] = [dict(choice_index=0, text='[战斗]')]
+    assert not ack.waiting(fight, 2)
+    ack.arm(fight, RealDecision('CHOOSE 0', 'event_dialogue_transport'), 2)
+    assert ack.waiting(fight, 3)  # No duplicate confirmation.
+    fight['game_state']['room_phase'] = 'COMBAT'
+    assert not ack.waiting(fight, 4)
+
+
+@pytest.mark.parametrize('blocked', [False, True])
+def test_mushrooms_heal_and_curse_both_required(event_adapter, blocked):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('Mushrooms', [('[Eat] Heal 20 HP. Become Cursed - Parasite.', False)])
+    if blocked:
+        a.gs['relics'] = [dict(id='Omamori', counter=2)]
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 0', 'policy', semantic=('event', 1)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['current_hp'] = 80
+    assert ack.waiting(after, 1)
+    if blocked:
+        after['game_state']['relics'][0]['counter'] = 1
+    else:
+        after['game_state']['deck'] = [dict(id='Parasite', upgrades=0)]
+    assert not ack.waiting(after, 2)
+
+
 def test_complete_screen_is_transport_not_terminal_receipt():
     from bridge.campaign import SeedCampaign
     a = RealGameAdapter()
