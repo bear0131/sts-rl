@@ -6,6 +6,35 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['[搜索] #g找到一些药水！', '[Search] #gFind #gsome #gPotions!'])
+@pytest.mark.parametrize('ascension,count', [(0, 3), (15, 2)])
+def test_lab_is_reward_transport_with_exact_type_and_count(event_adapter, label, ascension, count):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('Lab', [(label, False)])
+    a.gs['ascension_level'] = ascension
+    assert a.auto_command() == ('CHOOSE 0', 'event_dialogue_transport')
+    ack = EventEffectAck()
+    decision = RealDecision('CHOOSE 0', 'event_dialogue_transport')
+    ack.arm(a.frame, decision, 0)
+    assert ack.waiting(a.frame, 1)
+    with pytest.raises(RuntimeError, match='still unverified'):
+        ack.arm(a.frame, decision, 1)
+    after = deepcopy(a.frame)
+    after['game_state'].update(screen_type='COMBAT_REWARD', screen_state={
+        'rewards': [dict(reward_type='POTION', potion=dict(id='Dexterity Potion')) for _ in range(count)]})
+    bad = deepcopy(after)
+    bad['game_state']['screen_state']['rewards'][0]['reward_type'] = 'CARD'
+    with pytest.raises(RuntimeError, match='type/count'):
+        ack.waiting(bad, 2)
+    bad = deepcopy(after)
+    bad['game_state']['screen_state']['rewards'].pop()
+    with pytest.raises(RuntimeError, match='type/count'):
+        ack.waiting(bad, 2)
+    assert not ack.waiting(after, 3)
+
+
 @pytest.mark.parametrize('label', ['[放手吧] #r失去 #r0 #r金币。', '[Leave It] #rLose #r0 #rGold.'])
 def test_goop_zero_gold_loss_requires_result_dialogue(event_adapter, label):
     from bridge.event_contract import EventEffectAck

@@ -82,6 +82,11 @@ def transport_only(gs):
         return None
     o = opts[0]
     text = _text(o.get('text', '')).strip('[]')
+    if ((gs.get('screen_state') or {}).get('event_id') == 'Lab'
+            and not gs.get('combat_state')
+            and text in {'搜索]找到一些药水！', 'search]findsomepotions!'}):
+        # Native enters rewards directly; this is not a policy event action.
+        return o.get('choice_index')
     if ((gs.get('screen_state') or {}).get('event_id') == 'Spire Heart'
             and not gs.get('combat_state')
             and text in {'攻击]???', 'attack]???', '睡眠', 'sleep', '走向门前', 'approachdoor'}):
@@ -200,6 +205,13 @@ class EventEffectAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if (gs.get('screen_type') == 'EVENT' and gs.get('screen_state', {}).get('event_id') == 'Lab'
+                and transport_only(gs) is not None
+                and decision.command == f'CHOOSE {transport_only(gs)}'):
+            if self.pending:
+                raise RuntimeError('Lab reward transition still unverified')
+            self.pending = (deepcopy(gs), 'lab_rewards', now)
+            return
         if (self.pending and self.pending[1] == 'beggar_remove'
                 and gs.get('screen_state', {}).get('event_id') == 'Beggar'
                 and transport_only(gs) is not None
@@ -257,6 +269,15 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect == 'lab_rewards':
+            if g.get('screen_type') != 'COMBAT_REWARD':
+                return True
+            rewards = (g.get('screen_state') or {}).get('rewards', [])
+            count = 2 if old.get('ascension_level', 0) >= 15 else 3
+            if len(rewards) != count or any(r.get('reward_type') != 'POTION' for r in rewards):
+                raise RuntimeError('Lab reward type/count mismatch')
+            self.pending = None
+            return False
         if effect in {'mushroom_combat', 'mushroom_combat_confirmed'}:
             if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
                 self.pending = None
