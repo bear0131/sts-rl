@@ -8,6 +8,44 @@ permissions:
   contents: read
 
 jobs:
+  sts2-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      STS2_BACKEND_MANIFEST: ${{ github.workspace }}/runs/local/sts2-backend/manifest.json
+      GIT_LFS_SKIP_SMUDGE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU runtime and pinned Rust
+        run: |
+          python -m pip install uv==0.11.8
+          uv sync --locked --extra cpu --group test --no-dev --python 3.11
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.96.0 --profile minimal
+      - name: Fetch and build frozen STS2 source
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/tfriedel/spire-mentor.git runs/local/spire-mentor
+          git -C runs/local/spire-mentor sparse-checkout set sts2-rs
+          git -C runs/local/spire-mentor checkout "$(python -c 'from env.sts2.backend import PIN; print(PIN["commit"])')"
+          python -m tools.validation.sts2 build --source runs/local/spire-mentor --output runs/local/sts2-backend --timeout 1200 --jobs 2
+      - name: Real engine, PPO and recovery (no STS1 binary installed)
+        run: |
+          python -m pytest -q tests/unit/test_sts2_*.py tests/integration/test_sts2_*.py --junitxml=runs/local/sts2.xml
+          python -m rl.training.sts2 --output runs/local/sts2-ci-train --iterations 2 --num-envs 2 --rollout-steps 32 --minibatch 32 --timeout 120
+          python -m rl.evaluation.sts2 --checkpoint runs/local/sts2-ci-train/iteration-2.pt --output runs/local/sts2-ci-eval.json --episodes 4 --timeout 120
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sts2-correctness-evidence
+          path: |
+            runs/local/sts2.xml
+            runs/local/sts2-backend/build.log
+            runs/local/sts2-backend/manifest.json
+            runs/local/sts2-ci-train/metrics.jsonl
+            runs/local/sts2-ci-eval.json
   cpu-contracts:
     runs-on: ubuntu-24.04
     timeout-minutes: 25

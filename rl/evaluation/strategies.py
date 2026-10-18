@@ -5,8 +5,7 @@ hold their own models/search state and return diagnostics with each decision.
 PhaseStrategy composes them without adding solver branches to the runner/UI.
 """
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Protocol
+from dataclasses import asdict
 import time
 
 import numpy as np
@@ -17,31 +16,7 @@ from rl.search.native import MODEL_LEAF_BACKEND, NativeSearchConfig, complete_se
 from rl.search.inference import CombatLeafGraphs
 
 
-@dataclass(frozen=True)
-class DecisionRequest:
-    env: Any
-    observation: dict
-    info: dict
-    seed: int
-    step: int
-
-
-@dataclass(frozen=True)
-class Decision:
-    action: int | None
-    source: str
-    diagnostics: dict = field(default_factory=dict)
-    native_action: int | None = None
-
-    def __post_init__(self):
-        if (self.action is None) == (self.native_action is None):
-            raise ValueError('Decision requires exactly one thin or complete native action')
-
-
-class DecisionStrategy(Protocol):
-    name: str
-
-    def decide(self, requests: list[DecisionRequest], *, check: Callable[[], None]) -> list[Decision]: ...
+from rl.evaluation.contracts import Decision, DecisionRequest, DecisionStrategy
 
 
 def strategy_manifest(strategy):

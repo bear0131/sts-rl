@@ -55,3 +55,39 @@ def test_real_combat_has_natural_outcome():
     assert reward == (1 if info['outcome'] == 'win' else -1)
     assert not env.action_masks().any()
     env.close()
+
+
+def test_choice_executes_selected_card_not_first_and_replays(sts2_choice_env):
+    env = sts2_choice_env
+    pending = env.rm.combat_state().pending_choice()
+    assert pending['cards'][0]['id'] != 'BASH'
+    index = next(i for i, (_, desc) in enumerate(env.candidates)
+                 if desc['selected'][0]['id'] == 'BASH')
+    snapshot = env.snapshot()
+    twin = env.clone()
+    env.step(index)
+    assert [card['id'] for card in env.visible['combat']['deck']['exhaust_pile']] == ['BASH']
+    assert all(card['id'] != 'BASH' for card in env.visible['combat']['deck']['hand'])
+    twin.restore(snapshot)
+    twin.step(index)
+    assert twin.fingerprint() == env.fingerprint()
+    twin.close()
+
+
+@pytest.mark.parametrize('sts2_choice_env', [('Purity', 'PURITY')], indirect=True)
+def test_multipick_covers_all_subsets_and_executes_nonprefix(sts2_choice_env):
+    env = sts2_choice_env
+    # Four hand candidates, choose zero through three: 1 + 4 + 6 + 4.
+    assert len(env.candidates) == 15
+    assert len({tuple(a['selection']) for a, _ in env.candidates}) == 15
+    wanted = {'BASH', 'STRIKE_IRONCLAD'}
+    index = next(i for i, (_, d) in enumerate(env.candidates)
+                 if {c['id'] for c in d['selected']} == wanted)
+    twin = env.clone()
+    twin.restore(env.snapshot())
+    env.step(index)
+    twin.step(index)
+    assert env.fingerprint() == twin.fingerprint()
+    assert {c['id'] for c in env.visible['combat']['deck']['exhaust_pile']} == wanted | {'PURITY'}
+    assert {c['id'] for c in env.visible['combat']['deck']['hand']} == {'DEFEND_IRONCLAD', 'BURNING_PACT'}
+    twin.close()

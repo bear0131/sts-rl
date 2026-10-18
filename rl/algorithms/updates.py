@@ -5,7 +5,6 @@ import numpy as np
 import torch as th
 from gymnasium import spaces
 from rl.algorithms.ppo import ppo_loss_components
-from rl.search.native import observation_as_tensor
 
 
 def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_forward=None):
@@ -49,6 +48,7 @@ def optimizer_step(model, micro_batches=1):
 
 def reasoning_tensors(model, samples):
     """Pad on CPU, then transfer two token matrices instead of two copies per row."""
+    from rl.search.native import observation_as_tensor
     from rl.policies.wholerun_reasoning import IGNORE_INDEX, VOCAB
     length = max(len(sample['inputs']) for sample in samples)
     inputs = np.full((len(samples), length), VOCAB.pad_id, dtype=np.int64)

@@ -9,6 +9,7 @@
 | core/factories.py、encounters.py、spiremap.py | 初始场景、遭遇与地图构造 |
 | core/run_env.py | reset/step、缓存、fork、native begin/backprop/packed leaf |
 | [search](search/README.md) | 无模型的 Python NOSL session/nonce，供 worker 与学习侧共同使用 |
+| [sts2](sts2/README.md) | 固定 Spire Mentor Rust 后端的二代 Gym 环境、公开观测、精确候选动作与重放恢复 |
 | scripts/ | 人工 play、binding 探针与接口文档生成；不是 pytest 目录 |
 
 纯 encode/vocab/action 模块不加载 simulator；原生环境与工厂加载 simulator。env 不依赖 rl/apps/tools/tests，依赖方向由 tests/unit/test_repository_layout.py 检查。

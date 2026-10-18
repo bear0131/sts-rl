@@ -60,3 +60,22 @@ def short_combat_env_type():
             self._invalidate_backend_cache()
             return self._obs(), self._info()
     return ShortCombatEnv
+
+
+@pytest.fixture
+def sts2_choice_env(request):
+    from env.sts2.game import Sts2Env
+    card, wire_id = getattr(request, 'param', ('BurningPact', 'BURNING_PACT'))
+
+    class ChoiceEnv(Sts2Env):
+        def _new_run(self, seed):
+            return self.native.RunManager(seed=seed, neow_start=False,
+                deck=[card, 'BurningPact', 'StrikeIronclad', 'DefendIronclad', 'Bash'])
+
+    env = ChoiceEnv()
+    env.reset(seed=42)
+    index = next(i for i, (_, desc) in enumerate(env.candidates)
+                 if desc.get('card', {}).get('id') == wire_id)
+    env.step(index)
+    yield env
+    env.close()

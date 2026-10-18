@@ -53,3 +53,33 @@ runs/local/sts2-venv/Scripts/python.exe -m pytest tests/unit/test_sts2_encoding.
 
 原生测试验证真实动作、clone 隔离、重放、自然终局与截断；独立编码测试验证隐藏信息边界。
 完整多幕通关、所有卡牌/遗物/事件、正版差分和 GPU 性能不是这些检查的覆盖范围。
+
+## 训练、恢复与评估
+
+```bash
+# CPU：4 个顺序推进的环境，批量策略推理；20 轮共 5120 次原子环境动作。
+runs/local/sts2-venv/Scripts/python.exe -m rl.training.sts2 --task run --output runs/local/sts2-train --iterations 20 --timeout 180
+# 恢复必须使用相同配置；iterations 是绝对目标。新输出目录避免混合训练谱系。
+runs/local/sts2-venv/Scripts/python.exe -m rl.training.sts2 --task run --resume runs/local/sts2-train/iteration-20.pt --output runs/local/sts2-resume --iterations 22 --timeout 180
+# 独立留出种子，输出逐局结果与 Wilson 胜率区间。
+runs/local/sts2-venv/Scripts/python.exe -m rl.evaluation.sts2 --checkpoint runs/local/sts2-resume/iteration-22.pt --output runs/local/sts2-eval.json --episodes 20 --seed 10000 --timeout 180
+```
+
+不传 `--task run` 时训练第一场战斗；评估从 checkpoint 继承 task。
+不传 checkpoint 时评估随机合法策略。评估策略实现共用 `DecisionStrategy`，通过既有
+`evaluation.runner` 执行；新增入口是因为一代 CLI 的观测/模型加载契约不能加载二代候选模型。
+
+PPO 使用候选打分网络，复用 `algorithms.ppo` loss 与 `algorithms.updates` optimizer 原语。
+训练保存每轮模型、Adam、Torch RNG、minibatch RNG、下一环境 seed、全部环境重放状态；
+`metrics.jsonl` 记录损失、参数变化、动作数、optimizer update 数、各阶段/终局计数与耗时/内存。
+当前采样在一个进程内顺序执行，没有接入一代的多机传输、NOSL 或 CUDA graph。
+`--device cuda` 尚未在本机验收；CPU 恢复逐位一致仅限相同设备、依赖、二进制与配置。
+
+```bash
+runs/local/sts2-venv/Scripts/python.exe -m pytest tests/unit/test_sts2_encoding.py tests/unit/test_sts2_gae.py tests/integration/test_sts2_environment.py tests/integration/test_sts2_training.py tests/integration/test_sts2_evaluation.py -q
+```
+
+这些检查实际执行两轮 PPO、保存恢复后继续更新，比较模型、Adam、环境指纹与损失；
+也覆盖真实选牌、选牌中断恢复和共享评估入口。CI `sts2-contracts` 从固定源码重新编译，
+不安装一代扩展。CLI 超时在动作/更新边界检查；需要强制中止挂起的原生调用时，应由外层进程监督。
+少量训练仅证明系统能训练，不构成收敛或通关能力验收。

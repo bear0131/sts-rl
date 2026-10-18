@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from rl.evaluation.strategies import DecisionRequest, DecisionStrategy
+from rl.evaluation.contracts import DecisionRequest, DecisionStrategy
 
 
 class EvaluationCancelled(Exception):
