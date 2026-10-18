@@ -6,6 +6,50 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('failure', ['empty_mask', 'inner_limit'])
+def test_policy_failures_never_choose_transport_fallback(monkeypatch, failure):
+    import numpy as np
+    from bridge.client import agent_orchestrator as o
+    a = RealGameAdapter()
+    monkeypatch.setattr(a, 'auto_command', lambda **kw: None)
+    monkeypatch.setattr(a, 'observation', lambda **kw: {})
+    monkeypatch.setattr(a, 'action_mask', lambda **kw: np.array([failure != 'empty_mask']))
+    monkeypatch.setattr(a, 'legal_semantic_actions', lambda: [('event', 0)])
+    monkeypatch.setattr(a, 'select_descriptor', lambda: None)
+    monkeypatch.setattr(a, 'describe_action_id', lambda *args: 'prefix')
+    monkeypatch.setattr(a, 'fallback_command', lambda: pytest.fail('unsafe fallback invoked'))
+    monkeypatch.setattr(o.A, 'resolve', lambda *args: (None, ('prefix', 0)))
+    agent = o.RealPolicyAgent(None, a, stochastic=False, topk=0, max_inner_decisions=1,
+        auto_enter_shop=False, auto_start=False, start_seed=None, ascension=0, character='IRONCLAD')
+    monkeypatch.setattr(agent, '_predict', lambda *args, **kw: (0, ()))
+    with pytest.raises(RuntimeError, match='refusing fallback'):
+        agent.decide({'in_game': True, 'available_commands': ['choose', 'end', 'proceed'],
+            'game_state': {'screen_type': 'EVENT', 'choice_list': ['first']}})
+
+
+def test_unknown_event_cannot_be_encoded_as_padding(event_adapter):
+    a = event_adapter('Unknown Mod Event', [('[祈祷]', False)])
+    with pytest.raises(ValueError, match='unknown event identity'):
+        a._options('event')
+
+
+def test_supported_event_contracts_have_checkpoint_identity():
+    from bridge.event_contract import CONTRACTS
+    from bridge.real_game_env import _normalize_event
+    for event in [*CONTRACTS, 'SensoryStone', 'Falling']:
+        assert _normalize_event(event) != 'PAD', event
+    assert _normalize_event('MindBloom') == 'Mindbloom'
+
+
+def test_mindbloom_real_rich_label_and_reordered_semantics(event_adapter):
+    from bridge.event_contract import options
+    a = event_adapter('MindBloom', [('[我必凯旋] 与第一阶段Boss战斗。', False),
+        ('[我已觉醒] 升级所有牌。你无法再回复生命。', False),
+        ('[我将富有] 获得999金币。被诅咒——2张凡庸。', False)])
+    assert options(a.gs) == {0:(0,'combat'),1:(1,'relic'),2:(2,'gold')}
+    assert a._options('event')['event'] == 'Mindbloom'
+
+
 def test_falling_maps_by_type_label_not_ui_order_and_checks_exact_loss():
     from copy import deepcopy
     from types import SimpleNamespace

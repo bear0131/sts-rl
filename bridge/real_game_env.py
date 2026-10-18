@@ -134,6 +134,7 @@ _BOSS_ALIASES = {
 }
 
 _EVENT_ALIASES = {
+    "MindBloom": "Mindbloom",
     "SensoryStone": "Sensory Stone",
     "Neow Event": "NEOW",
     "Neow": "NEOW",
@@ -1014,6 +1015,8 @@ class RealGameAdapter:
             })
         elif phase == "event":
             event = _normalize_event(ss.get("event_id") or ss.get("event_name"))
+            if event == "PAD":
+                raise ValueError(f"unknown event identity: {ss.get('event_id')!r}")
             opts["event"] = event
             if event == "NEOW" and self.neow_observation:
                 opts["neow"] = self._neow_options(ss)

@@ -16,7 +16,7 @@ CONTRACTS = {
                  (1, '失去.*最大生命|Lose.*Max HP', 'maxhp_loss'), (2, '拒绝|Refuse', 'leave')],
     "Tomb of Lord Red Mask": [(0, '戴上|Don', 'gold'), (1, '献上|Offer', 'relic'), (2, '离开|Leave', 'leave')],
     "MindBloom": [(0, '我必凯旋|I am War', 'combat'), (1, '我已觉醒|I am Awake', 'relic'),
-                  (2, '我很富有|I am Rich', 'gold'), (3, '我无伤痛|I am Healthy', 'card')],
+                  (2, '我将富有|我很富有|I am Rich', 'gold'), (3, '我无伤痛|I am Healthy', 'card')],
     "Big Fish": [(0, '香蕉|Banana', 'heal'), (1, '甜甜圈|Donut', 'maxhp_gain'), (2, '盒子|Box', 'relic')],
     "Living Wall": [(0, '遗忘|Forget', 'remove'), (1, '改变|Change', 'transform'), (2, '成长|Grow', 'upgrade')],
     "Transmorgrifier": [(0, '祈祷|Pray', 'transform'), (1, '离开|Leave', 'leave')],

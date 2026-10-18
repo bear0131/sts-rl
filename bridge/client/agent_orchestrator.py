@@ -372,15 +372,11 @@ class RealPolicyAgent:
             mask = self.adapter.action_mask(pending=pending)
             legal_ids = tuple(int(i) for i in np.flatnonzero(mask))
             if not legal_ids:
-                fallback = self.adapter.fallback_command()
-                log.warning(
-                    "no legal policy actions; fallback=%s screen=%s phase=%s choices=%s",
-                    fallback,
-                    self.adapter.screen_type(),
-                    self.adapter.phase(),
-                    self.adapter.choices(),
+                raise RuntimeError(
+                    "no legal policy actions; refusing fallback: "
+                    f"screen={self.adapter.screen_type()} phase={self.adapter.phase()} "
+                    f"choices={self.adapter.choices()!r} pending={pending!r}"
                 )
-                return RealDecision(fallback, "fallback_no_legal")
 
             if (self.adapter.combat_action_contract in C.NEURAL_CONTRACTS
                     and legal_ids == (C.policy_offset(self.adapter.combat_action_contract),)):
@@ -423,9 +419,7 @@ class RealPolicyAgent:
                 top=top,
             )
 
-        fallback = self.adapter.fallback_command()
-        log.warning("inner decision limit reached; trace=%s fallback=%s", trace, fallback)
-        return RealDecision(fallback, "fallback_inner_limit")
+        raise RuntimeError(f"inner decision limit reached; refusing fallback: trace={trace!r}")
 
     def _predict(
         self, obs: dict[str, np.ndarray], mask: np.ndarray, *, pending: tuple | None

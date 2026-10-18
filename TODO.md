@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE11 | 全桥接契约审计进行中；首批缺陷已修待部署 | 不信任既有实现，沿真实帧→身份/观测→合法动作→命令→结果确认→SL恢复核查。已修MindBloom PAD身份/中文选项、未知事件PAD拒绝、空mask及内部步超限危险自动fallback；206指定native回归通过。52原生入口含Neow仅20有显式桥接路径、32缺失；已有多效果事件ACK也未完整。验收必须分别记录静态覆盖、反例、真实帧模型重放、隔离部署和实机，不把fail-closed或短测试当全支持。清单及证据见worklog/2026-10-19.md“BRIDGE11 不信任桥接实现的契约复查第一阶段”。 |
+
 | BRIDGE09 | 主菜单默认等待修复；用户自行启动游戏 | 自动START必须显式同时启用continuous-test与auto-start；seed/campaign不可绕过。手动attach守卫在每次SL返回主菜单仍生效。198实现回归通过；用户自行启动/继续，不允许旧心跳自动启动。SL结果单独诊断，不混正式receipt；实际Esc/SL复验待用户继续。见worklog/2026-10-19.md“主菜单显式授权”。 |
 | BRIDGE10 | 已复现：SL重启改变搜索随机身份，尚未修复 | bridge/search_bridge.py的全程decision_index重启归零，经rl/evaluation/strategies.py进入state_nonce；同seed/公开状态不足以保证同动作。200205 F23旧index204/205与读档0/1第二步分歧；固定首帧连续两步离线改变index可稳定改变第二动作，但未精确复现原日志全部动作。需恢复搜索上下文或定义重启稳定身份并验证相同输入、完整搜索配置、前缀和隐状态；不修改正在运行的游戏。见worklog/2026-10-19.md“三奴隶SL轨迹分歧”。 |
 
