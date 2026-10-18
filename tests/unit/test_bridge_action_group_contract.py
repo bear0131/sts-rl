@@ -350,6 +350,65 @@ def test_opening_empty_frame_and_inflight_draw_are_not_policy_ready():
     assert adapter._combat_ready_for_policy()  # a legitimate empty hand remains legal
 
 
+def test_reward_open_waits_for_card_screen_not_stale_or_overlay_frames():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    gate = RewardCommandAck()
+    frame = {'game_state': {'seed': 1, 'floor': 25, 'screen_type': 'COMBAT_REWARD',
+                            'deck': [], 'choice_list': ['gold', 'potion', 'card']}}
+    gate.arm(frame, RealDecision('CHOOSE 2', 'open_card_reward'), 0)
+    assert gate.waiting(frame, 0.5)
+    assert gate.waiting(frame, 1.0)
+    overlay = deepcopy(frame)
+    overlay['game_state']['is_screen_up'] = True
+    assert gate.waiting(overlay, 1.5)
+    with pytest.raises(RuntimeError, match='not resending'):
+        gate.waiting(frame, 11)
+    frame['game_state']['screen_type'] = 'CARD_REWARD'
+    assert not gate.waiting(frame, 12)
+
+
+def test_reward_pick_requires_intended_card_to_enter_deck():
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    gate = RewardCommandAck()
+    frame = {'game_state': {'seed': 1, 'floor': 25, 'screen_type': 'CARD_REWARD',
+                            'deck': [], 'screen_state': {'cards': [{'id': 'Searing Blow'}]}}}
+    gate.arm(frame, RealDecision('CHOOSE 0', 'policy', semantic=('reward_card', 0)), 0)
+    frame['game_state']['screen_type'] = 'COMBAT_REWARD'
+    frame['game_state']['deck'] = [{'id': 'Feel No Pain'}]
+    assert gate.waiting(frame, 1)
+    with pytest.raises(RuntimeError, match='not resending'):
+        gate.waiting(frame, 11)
+    frame['game_state']['deck'] = [{'id': 'Searing Blow', 'upgrades': 2}]
+    assert not gate.waiting(frame, 12)
+
+
+def test_reward_rejection_is_not_silently_retried():
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    gate = RewardCommandAck()
+    gate.arm({'game_state': {'screen_type': 'COMBAT_REWARD'}},
+             RealDecision('PROCEED', 'policy'), 0)
+    with pytest.raises(RuntimeError, match='reward command rejected'):
+        gate.waiting({'error': 'Invalid command'}, 1)
+
+
+@pytest.mark.parametrize('command', ['CHOOSE 0', 'PROCEED', 'SKIP'])
+def test_reward_mutation_waits_for_state_change(command):
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    gate = RewardCommandAck()
+    frame = {'game_state': {'screen_type': 'COMBAT_REWARD', 'gold': 10}}
+    gate.arm(frame, RealDecision(command, 'policy'), 0)
+    assert gate.waiting({}, .1)
+    assert gate.waiting(deepcopy(frame), .5)
+    frame['game_state']['gold'] = 25
+    assert not gate.waiting(frame, 1)
+
+
 def test_combat_stability_requires_fresh_unchanged_frame_after_animation():
     from copy import deepcopy
     from bridge.client.agent_orchestrator import CombatFrameStability

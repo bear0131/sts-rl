@@ -529,6 +529,55 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
     return int(combat.get("turn", 0)) <= int(pending["combat_state"]["turn"])
 
 
+class RewardCommandAck:
+    """One in-flight reward mutation; UI retries must never become card picks."""
+
+    def __init__(self):
+        self.pending = None
+
+    @staticmethod
+    def snapshot(gs):
+        return {k: deepcopy(gs.get(k)) for k in (
+            "seed", "floor", "screen_type", "screen_state", "choice_list",
+            "deck", "gold", "relics", "potions",
+        )}
+
+    def arm(self, frame, decision, now):
+        gs = frame.get("game_state") or {}
+        if gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD"}:
+            return
+        if decision.command.split()[0].upper() not in {"CHOOSE", "SKIP", "PROCEED", "RETURN"}:
+            return
+        expected = None
+        if decision.semantic and decision.semantic[0] == "reward_card":
+            index = int(decision.semantic[1])
+            cards = (gs.get("screen_state") or {}).get("cards", [])
+            if gs.get("screen_type") == "CARD_REWARD":
+                expected = cards[index]["id"]
+        self.pending = (self.snapshot(gs), decision.reason, expected, now)
+
+    def waiting(self, frame, now):
+        if self.pending is None:
+            return False
+        if "error" in frame:
+            raise RuntimeError(f"reward command rejected before acknowledgement: {frame['error']}")
+        before, reason, expected, since = self.pending
+        gs = frame.get("game_state") or {}
+        after = self.snapshot(gs)
+        acknowledged = bool(gs) and after != before
+        if reason == "open_card_reward":
+            acknowledged = gs.get("screen_type") == "CARD_REWARD"
+        elif expected is not None:
+            count = lambda deck: sum(c.get("id") == expected for c in (deck or []))
+            acknowledged = count(gs.get("deck")) == count(before["deck"]) + 1
+        if acknowledged:
+            self.pending = None
+            return False
+        if now - since > 10.0:
+            raise RuntimeError("reward command not acknowledged for 10 seconds; not resending")
+        return True
+
+
 class CombatFrameStability:
     """Require a fresh, unchanged settled frame before ordinary combat actions."""
 
@@ -607,6 +656,7 @@ def main() -> None:
         pending_end_frame = None
         pending_end_since = 0.0
         combat_stability = CombatFrameStability()
+        reward_ack = RewardCommandAck()
         unsent_search = None
         for line in sys.stdin:
             line = line.strip()
@@ -615,11 +665,16 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if reward_ack.waiting(frame, time.monotonic()):
+                    time.sleep(0.1)
+                    send("STATE")
+                    continue
                 if unsent_search is not None:
                     original, prepared = unsent_search
                     unsent_search = None
                     if searched_command_still_current(frame, original, prepared.command):
                         send_decision(frame, prepared)
+                        reward_ack.arm(frame, prepared, time.monotonic())
                         if combat_command_needs_ack(frame, prepared.command):
                             pending_play_frame = deepcopy(frame.get("game_state"))
                             pending_play_since = time.monotonic()
@@ -654,6 +709,7 @@ def main() -> None:
                     send("STATE")
                     continue
                 send_decision(frame, decision)
+                reward_ack.arm(frame, decision, time.monotonic())
                 if combat_command_needs_ack(frame, decision.command):
                     pending_play_frame = deepcopy(frame.get("game_state"))
                     pending_play_since = time.monotonic()
