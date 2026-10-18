@@ -1286,6 +1286,16 @@ class RealGameAdapter:
             return "TRANSFORM"
         if ss.get("for_purge") or ss.get("forPurge"):
             return "REMOVE"
+        # Grid actions carry their source on game_state, not screen_state.
+        # Identify draw-pile searches before the generic GRID/PAD fallback so
+        # candidates use native CardId order while retaining UI handles.
+        action_context = {
+            "SkillFromDeckToHandAction": "SECRET_TECHNIQUE",
+            "AttackFromDeckToHandAction": "SECRET_WEAPON",
+            "SeekAction": "SEEK",
+        }.get(str(self.gs.get("current_action") or ""))
+        if action_context is not None and self.gs.get("combat_state"):
+            return action_context
         if self.screen_type() == "GRID":
             return "REMOVE" if any(_norm_label(c) == "purge" for c in self.choices()) else "PAD"
         if self.screen_type() == "HAND_SELECT":

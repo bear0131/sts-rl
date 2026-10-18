@@ -1124,3 +1124,34 @@ def test_no_block_duration_expires_naturally(combat_factory):
     assert normalize_sim(battle.to_dict())['player']['powers']['No Block'] == 1
     battle.execute(sts.Action(sts.ActionType.END_TURN))
     assert 'No Block' not in normalize_sim(battle.to_dict())['player']['powers']
+
+
+def test_secret_technique_real_grid_sorts_native_candidates_and_keeps_ui_handles(combat_factory):
+    env = combat_factory(['SECRET_TECHNIQUE', 'ARMAMENTS', 'DEFEND_RED', 'SPOT_WEAKNESS', 'SHRUG_IT_OFF'])
+    env.thick.bc.apply_custom_state({'hand':['SECRET_TECHNIQUE'],
+        'draw':['ARMAMENTS','DEFEND_RED','SPOT_WEAKNESS','SHRUG_IT_OFF',('DEFEND_RED',1),('DEFEND_RED',1)],
+        'player':{'energy':3}})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD,0))
+    env._invalidate_backend_cache()
+    cards = [{'id':c,'upgrades':u} for c,u in [('Armaments',0),('Defend_R',0),
+             ('Spot Weakness',0),('Shrug It Off',0),('Defend_R',1),('Defend_R',1)]]
+    adapter=RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    adapter.update({'in_game':True,'ready_for_command':True,'available_commands':['choose','state'],
+        'game_state':{'current_action':'SkillFromDeckToHandAction','screen_type':'GRID',
+            'room_phase':'COMBAT','combat_state':{'turn':1},
+            'choice_list':[c['id'] for c in cards],
+            'screen_state':{'cards':cards,'num_cards':1,'selected_cards':[]}}})
+    desc=adapter.select_descriptor()
+    assert desc['context']=='SECRET_TECHNIQUE'
+    assert desc['zone']=='draw'
+    search=RealCombatSearch.__new__(RealCombatSearch)
+    search.env=env
+    search.run_alignment_checks=0
+    search._reconcile_selection(desc)
+    assert [c['native_index'] for c in desc['candidates']]==[0,1,4,5,3,2]
+    assert adapter.command_for_semantic(ga.select(2))=='CHOOSE 4'
+    assert adapter.command_for_semantic(ga.select(5))=='CHOOSE 2'
+    native_handle=env.thick.select_descriptor()['candidates'][2]['native_index']
+    env.thick.bc.execute(sts.Action(2 << 29 | native_handle))
+    assert normalize_sim(env.thick.bc.to_dict())['hand'][0]['id']=='Defend_R'
+    assert normalize_sim(env.thick.bc.to_dict())['hand'][0]['up']==1
