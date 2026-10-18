@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "The Cleric": [(0, '治疗|Heal', 'cleric_heal'), (1, '净化|Purify', 'cleric_remove'),
+                   (2, '离开|Leave', 'leave')],
     "Mushrooms": [(0, '踩扁|Stomp', 'mushroom_combat'), (1, '吃下|Eat', 'mushroom_eat')],
     "Knowing Skull": [(0, '财富？|Riches?', 'gold'), (1, '成功？|Success?', 'card'),
                       (2, '来点喝的？|A Pick Me Up?', 'potion'), (3, '我要怎么离开？|How do I leave?', 'hp_loss')],
@@ -201,6 +203,22 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect in {'cleric_heal', 'cleric_remove'}:
+            cost = 35 if effect == 'cleric_heal' else (75 if old.get('ascension_level', 0) >= 15 else 50)
+            if delta('gold') not in (0, -cost) or gained or sum(lost.values()) > (effect == 'cleric_remove'):
+                raise RuntimeError('Cleric payment/card effect mismatch')
+            if effect == 'cleric_heal':
+                blocked = any(r['id'] == 'Mark of the Bloom' for r in old.get('relics', []))
+                heal = 0 if blocked else min(old['max_hp'] // 4, old['max_hp'] - old['current_hp'])
+                done = delta('gold') == -cost and delta('current_hp') == heal
+            else:
+                done = delta('gold') == -cost and sum(lost.values()) == 1
+            if done:
+                self.pending = None
+                return False
+            if effect == 'cleric_remove' and g.get('screen_type') == 'GRID' and delta('gold') == -cost:
+                return False  # Selection is required, payment alone is not completion.
+            return True
         if effect == 'mushroom_eat':
             relics = {r['id']: r for r in old.get('relics', [])}
             after_relics = {r['id']: r for r in g.get('relics', [])}

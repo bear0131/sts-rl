@@ -6,6 +6,43 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['治疗', 'Heal'])
+def test_cleric_heal_requires_payment_and_healing(event_adapter, label):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('The Cleric', [(f'[{label}]', False), ('[Leave]', False)])
+    a.gs.update(gold=100, current_hp=40, max_hp=86)
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 0', 'policy', semantic=('event', 0)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['gold'] = 65
+    assert ack.waiting(after, 1)
+    after['game_state']['current_hp'] = 61
+    assert not ack.waiting(after, 2)
+
+
+@pytest.mark.parametrize('ascension,cost', [(0,50), (15,75)])
+def test_cleric_removal_checks_cost_and_count(event_adapter, ascension, cost):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('The Cleric', [('[离开]', False), ('[净化]', False), ('[治疗]', True)])
+    assert a.command_for_semantic(('event', 1)) == 'CHOOSE 1'
+    a.gs.update(gold=100, ascension_level=ascension, deck=[dict(id='Strike_R', upgrades=0)] * 2)
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 1', 'policy', semantic=('event', 1)), 0)
+    after = deepcopy(a.frame)
+    after['game_state'].update(gold=100-cost, screen_type='GRID')
+    assert not ack.waiting(after, 1) and ack.pending
+    bad = deepcopy(after)
+    bad['game_state']['deck'] = []
+    with pytest.raises(RuntimeError, match='mismatch'):
+        ack.waiting(bad, 2)
+    after['game_state']['deck'].pop()
+    assert not ack.waiting(after, 3) and ack.pending is None
+
+
 def test_empty_event_load_wait_is_bounded(monkeypatch):
     import time
     a = RealGameAdapter()
