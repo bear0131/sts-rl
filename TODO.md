@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | attempt7实机运行；已修首回合耗尽状态误拦截 | 最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4不变。ad373dd修F14第一回合打完手牌能量被误当未初始化；按战斗记录初始化完成。保留稳定帧0.5秒/商店0.5秒/圆顶原生意图/END确认。实现129及部署99回归、原帧重放、7文件身份通过。18:10:16从200200重启，F1实际PLAY及END确认。旧attempt1..6仅诊断，0有效局；prior7476.4。后续核验F14/F18并逐局报告、隐性对齐及最终20自然终局验收。监控不能仅凭日志增长判断推进，STATE循环语义停滞需检查。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，worklog/2026-10-18.md。 |
+| BRIDGE05 | attempt8实机运行；已补药水/选牌命令确认 | 最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4不变。04bec31扩展同帧确认到战斗POTION/CHOOSE/CONFIRM/RETURN，避免重复药水及迟到错误破坏选牌。实现134及部署104回归、真实帧拦4次旧回包、7文件身份通过；保留初始化记忆/稳定帧0.5秒/商店0.5秒/圆顶/END修复。18:17:44从200200重启，prior7627.2。旧attempt1..7仅诊断，0有效局。继续核验F6/F14/F18并逐局报告、隐性对齐及最终20自然终局验收。监控不能仅凭日志增长判断推进，STATE循环语义停滞需检查。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，worklog/2026-10-18.md。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
