@@ -991,7 +991,7 @@ def test_real_speed_potion_dexterity_expires_at_turn_end(combat_factory):
 def test_irregular_real_card_ids_roundtrip_native_piles(combat_factory, native, java):
     from bridge.schemas.combat_state import _card, _sim_card_id, real_to_sim_card_enum
     assert real_to_sim_card_enum(java) == native
-    assert _sim_card_id(native) == java
+    assert _sim_card_id(native) == _card(java, 0)["id"]
     env = combat_factory(["STRIKE_RED"] * 5)
     env.thick.bc.apply_custom_state({"hand": _card_rows([{"id": java, "up": 0}])})
     assert normalize_sim(env.thick.bc.to_dict())["hand"][0]["id"] == _card(java, 0)["id"]

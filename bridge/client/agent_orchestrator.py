@@ -555,14 +555,25 @@ class RewardCommandAck:
             cards = (gs.get("screen_state") or {}).get("cards", [])
             if gs.get("screen_type") == "CARD_REWARD":
                 expected = cards[index]["id"]
-        self.pending = (self.snapshot(gs), decision.reason, expected, now)
+        claim = None
+        if (gs.get("screen_type") == "COMBAT_REWARD" and decision.command.upper().startswith("CHOOSE ")
+                and decision.semantic and decision.semantic[0] == "claim"):
+            kind, index = decision.semantic[1:3]
+            rewards = [r for r in (gs.get("screen_state") or {}).get("rewards", [])
+                       if r.get("reward_type", "").lower() in
+                       ({"gold", "stolen_gold"} if kind == "gold" else {kind})]
+            if index >= len(rewards):
+                raise ValueError(f"reward claim identity missing: {kind}/{index}")
+            reward = rewards[index]
+            claim = (kind, reward.get(kind), reward.get("gold"))
+        self.pending = (self.snapshot(gs), decision.reason, expected, now, claim)
 
     def waiting(self, frame, now):
         if self.pending is None:
             return False
         if "error" in frame:
             raise RuntimeError(f"reward command rejected before acknowledgement: {frame['error']}")
-        before, reason, expected, since = self.pending
+        before, reason, expected, since, claim = self.pending
         gs = frame.get("game_state") or {}
         after = self.snapshot(gs)
         acknowledged = bool(gs) and after != before
@@ -571,6 +582,19 @@ class RewardCommandAck:
         elif expected is not None:
             count = lambda deck: sum(c.get("id") == expected for c in (deck or []))
             acknowledged = count(gs.get("deck")) == count(before["deck"]) + 1
+        elif claim is not None:
+            kind, entity, amount = claim
+            if kind == "gold":
+                acknowledged = gs.get("gold", 0) > (before.get("gold") or 0)
+            elif kind in {"potion", "relic"}:
+                entity_id = entity.get("id") if isinstance(entity, dict) else entity
+                if not entity_id:
+                    raise ValueError(f"reward {kind} missing stable identity")
+                key = "potions" if kind == "potion" else "relics"
+                count = lambda items: sum(x.get("id") == entity_id for x in (items or []))
+                acknowledged = count(gs.get(key)) == count(before.get(key)) + 1
+            else:
+                raise ValueError(f"unsupported reward claim acknowledgement: {kind}")
         if acknowledged:
             self.pending = None
             return False

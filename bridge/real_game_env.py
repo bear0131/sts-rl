@@ -29,6 +29,7 @@ from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 from bridge import event_contract
+from bridge.schemas.entity_ids import POTION_ALIASES
 
 LOG = logging.getLogger(__name__)
 
@@ -238,7 +239,12 @@ def _potion_id(potion: Any) -> str:
         pid = str(potion.get("id") or potion.get("name") or "PAD")
     else:
         pid = str(potion or "PAD")
-    return "PAD" if pid in {"Potion Slot", "EMPTY", "None", ""} else pid
+    if pid in {"Potion Slot", "EMPTY", "None", "", "PAD"}:
+        return "PAD"
+    canonical = POTION_ALIASES.get(pid, pid)
+    if canonical not in V.POTION_VOCAB_INDEX:
+        raise ValueError(f"unknown real potion ID: {pid}")
+    return canonical
 
 
 def _potion_requires_target(potion: Any, pid: str) -> bool:
@@ -890,7 +896,7 @@ class RealGameAdapter:
                     ]
             except Exception:
                 LOG.exception("normalize_real failed")
-                canon = {}
+                raise
             canon["phase"] = "combat"
             desc = self.select_descriptor()
             if desc is not None:
@@ -1780,7 +1786,7 @@ class RealGameAdapter:
             and self._has_empty_potion_slot()
         )
 
-        affordable: list[tuple[str, int]] = []
+        affordable = []
         for kind, key in (
             (ga.SHOP_CARD, "cards"),
             (ga.SHOP_RELIC, "relics"),
@@ -1791,21 +1797,33 @@ class RealGameAdapter:
             for i, item in enumerate(ss.get(key) or []):
                 price = _price(item)
                 if 0 <= price <= gold:
-                    affordable.append((kind, i))
+                    affordable.append((kind, i, {_norm_label(item.get("name", "")),
+                                                  _norm_label(item.get("id", ""))} - {""}))
 
         out: list[tuple[tuple, int]] = []
-        non_purge_pos = 0
+        used = set()
         for choice_idx, label in enumerate(cl):
             norm = _norm_label(label)
             if norm in {"purge", "remove"}:
                 out.append((ga.shop_remove(), choice_idx))
                 continue
-            if non_purge_pos < len(affordable):
-                kind, shelf_idx = affordable[non_purge_pos]
-                out.append((ga.shop_buy(kind, shelf_idx), choice_idx))
-                non_purge_pos += 1
-        if not out and affordable:
-            out = [(ga.shop_buy(kind, shelf_idx), i) for i, (kind, shelf_idx) in enumerate(affordable)]
+            matches = [(kind, i) for kind, i, names in affordable
+                       if norm in names and (kind, i) not in used]
+            if len(matches) > 1:
+                # Stock shops may offer the same potion twice at different
+                # prices. CommunicationMod preserves shelf order for these
+                # indistinguishable labels; never use this for different IDs.
+                keys = {ga.SHOP_CARD: "cards", ga.SHOP_RELIC: "relics", ga.SHOP_POTION: "potions"}
+                identities = {(kind, ss[keys[kind]][i].get("id")) for kind, i in matches}
+                if len(identities) == 1:
+                    matches = matches[:1]
+            if len(matches) != 1:
+                raise ValueError(f"shop choice identity mismatch/ambiguity: {label!r}")
+            kind, shelf_idx = matches[0]
+            used.add((kind, shelf_idx))
+            out.append((ga.shop_buy(kind, shelf_idx), choice_idx))
+        if len(used) != len(affordable):
+            raise ValueError("shop affordable inventory/choice coverage mismatch")
         return out
 
     def _shop_command_index(self, action: tuple) -> int:

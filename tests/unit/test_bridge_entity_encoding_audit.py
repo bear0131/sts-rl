@@ -7,12 +7,11 @@ from env.core.cards_vocab import CARD_INDEX
 from env.core.vocab import POTION_VOCAB_INDEX
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE08: real potion IDs silently encode as padding")
 @pytest.mark.parametrize("real_id,canonical", [
     ("SteroidPotion", "Flex Potion"),
     ("ColorlessPotion", "Colorless Potion"),
     ("SpeedPotion", "Speed Potion"),
-    ("GamblersBrew", "Gambler's Brew"),
+    ("GamblersBrew", "Gamblers Brew"),
 ])
 def test_real_potion_identity_matches_checkpoint_token(real_id, canonical):
     expected = POTION_VOCAB_INDEX[canonical]
@@ -20,7 +19,6 @@ def test_real_potion_identity_matches_checkpoint_token(real_id, canonical):
     assert POTION_VOCAB_INDEX.get(_potion_id(real_id), 0) == expected
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE08: observed colorless card IDs silently encode as padding")
 @pytest.mark.parametrize("real_id,canonical", [
     ("HandOfGreed", "Hand Of Greed"),
     ("PanicButton", "Panic Button"),
@@ -31,3 +29,75 @@ def test_real_colorless_identity_matches_checkpoint_token(real_id, canonical):
     expected = CARD_INDEX[canonical]
     assert expected > 0
     assert CARD_INDEX.get(_card(real_id, 0)["id"], 0) == expected
+
+
+def test_unknown_ids_fail_before_policy_instead_of_padding():
+    with pytest.raises(ValueError, match="unknown real potion"):
+        _potion_id("UnrecognizedPotion")
+    with pytest.raises(ValueError, match="unknown card"):
+        _card("UnrecognizedCard", 0)
+
+
+def test_all_declared_aliases_preserve_nonzero_tokens():
+    from bridge.schemas.entity_ids import CARD_ALIASES, POTION_ALIASES
+    for real_id, canonical in CARD_ALIASES.items():
+        assert CARD_INDEX[_card(real_id, 0)["id"]] == CARD_INDEX[canonical] > 0
+    for real_id, canonical in POTION_ALIASES.items():
+        assert POTION_VOCAB_INDEX[_potion_id(real_id)] == POTION_VOCAB_INDEX[canonical] > 0
+
+
+def test_native_card_names_match_real_card_names():
+    from bridge.schemas.combat_state import _sim_card_id, real_to_sim_card_enum
+    for enum, raw in [('PANIC_BUTTON', 'PanicButton'), ('APPARITION', 'Ghostly'),
+                      ('HAND_OF_GREED', 'HandOfGreed'), ('FLASH_OF_STEEL', 'Flash of Steel')]:
+        canonical = _card(raw, 0)['id']
+        assert _sim_card_id(enum) == canonical
+        assert real_to_sim_card_enum(raw) == enum
+        assert real_to_sim_card_enum(canonical) == enum
+
+
+def test_entire_source_id_catalog_has_non_padding_identity():
+    import re
+    from pathlib import Path
+    from env.core._gen_vocab import _string_table
+    root = Path(__file__).resolve().parents[2] / 'sim/sts_lightspeed/include/constants'
+    pairs = re.findall(r'\{CardId::(\w+), "([^"]+)"\}', (root/'SaveFileMappings.h').read_text())
+    assert len(pairs) >= 370
+    for enum, raw in pairs:
+        if enum != 'INVALID':
+            assert CARD_INDEX[_card(raw, 0)['id']] > 0, raw
+    ids = _string_table((root/'Potions.h').read_text(), 'potionIds')[2:]
+    assert len(ids) == 42
+    assert all(POTION_VOCAB_INDEX[_potion_id(raw)] > 0 for raw in ids)
+
+
+def test_shop_choices_resolve_identity_not_position():
+    from bridge.real_game_env import RealGameAdapter
+    from env.core import game_actions as ga
+    a = RealGameAdapter()
+    a.update({'game_state': {'screen_type': 'SHOP_SCREEN', 'gold': 100,
+        'choice_list': ['防御', '打击'], 'screen_state': {'cards': [
+            {'id': 'Strike_R', 'name': '打击', 'price': 20},
+            {'id': 'Defend_R', 'name': '防御', 'price': 20}]}}})
+    assert a._shop_choice_actions() == [(ga.shop_buy(ga.SHOP_CARD, 1), 0),
+                                       (ga.shop_buy(ga.SHOP_CARD, 0), 1)]
+    a.gs['choice_list'] = ['打击']
+    with pytest.raises(ValueError, match='coverage mismatch'):
+        a._shop_choice_actions()
+
+
+def test_reward_claim_not_acknowledged_by_unrelated_screen_change():
+    from copy import deepcopy
+    from bridge.real_game_env import RealDecision
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    frame = {'game_state': {'screen_type': 'COMBAT_REWARD', 'gold': 10,
+        'potions': [{'id': 'Potion Slot'}], 'screen_state': {'rewards': [
+            {'reward_type': 'POTION', 'potion': {'id': 'SteroidPotion'}}]}}}
+    ack = RewardCommandAck()
+    ack.arm(frame, RealDecision('CHOOSE 0', 'policy', semantic=('claim', 'potion', 0)), 0)
+    changed = deepcopy(frame)
+    changed['game_state']['screen_type'] = 'MAP'
+    changed['game_state']['gold'] = 100
+    assert ack.waiting(changed, 1)
+    changed['game_state']['potions'] = [{'id': 'SteroidPotion'}]
+    assert not ack.waiting(changed, 2)

@@ -86,13 +86,17 @@ def _monster_powers_real(power_list):
 # The cards behave identically either way, so canonicalize the upgrade to 0.
 _NO_UPGRADE = {"Dazed", "Wound", "Slimed", "Void"}  # Burn excluded (Burn+ exists)
 
-# The generated model vocabulary title-cases enum words. Normalize the one
-# CommunicationMod id whose preposition casing differs from that convention.
-_CARD_CANON_ID = {"Blood for Blood": "Blood For Blood"}
+# Explicit Java ID aliases preserve the generated checkpoint vocabulary.
+from .entity_ids import CARD_ALIASES
+
+_CARD_CANON_ID = CARD_ALIASES
 
 
 def _card(card_id, up, cost=None):
     card_id = _CARD_CANON_ID.get(card_id, card_id)
+    from env.core.cards_vocab import CARD_INDEX
+    if card_id not in CARD_INDEX:
+        raise ValueError(f"unknown card ID: {card_id}")
     card = {"id": card_id, "up": 0 if card_id in _NO_UPGRADE else up}
     if cost is not None:
         value = int(cost)
@@ -245,6 +249,7 @@ _CARD_OVERRIDE = {
     "PANIC_BUTTON": "PanicButton",
     "RITUAL_DAGGER": "RitualDagger",
 }
+_CARD_OVERRIDE = {key: CARD_ALIASES.get(value, value) for key, value in _CARD_OVERRIDE.items()}
 
 
 @lru_cache(maxsize=1024)
@@ -261,6 +266,7 @@ def real_to_sim_card_enum(real_id):
     """Inverse of _sim_card_id: real CommunicationMod id -> sim enum name, for
     force-syncing the sim deck (e.g. 'Strike_R'->'STRIKE_RED', 'Searing Blow'->
     'SEARING_BLOW')."""
+    real_id = CARD_ALIASES.get(real_id, real_id)
     if real_id in _CARD_OVERRIDE_INV:
         return _CARD_OVERRIDE_INV[real_id]
     return real_id.upper().replace(" ", "_")

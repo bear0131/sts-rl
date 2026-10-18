@@ -112,3 +112,21 @@ def test_event_effect_timeout_and_grid_wait(event_adapter):
     assert ack.pending is not None
     with pytest.raises(RuntimeError, match="timeout"):
         ack.waiting(a.frame, 31)
+
+
+@pytest.mark.parametrize('sozu', [False, True])
+def test_skull_blocked_potion_requires_no_gain_and_completed_effect(event_adapter, sozu):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Knowing Skull', [('[来点喝的？] 获得一瓶药水。失去 9 生命。', False)])
+    a.gs['potions'] = [{'id': 'Potion Slot' if sozu else 'Strength Potion'}]
+    a.gs['relics'] = [{'id': 'Sozu'}] if sozu else []
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 2)), 0)
+    assert ack.waiting(a.frame, 1)
+    after = deepcopy(a.frame)
+    after['game_state']['current_hp'] -= 9
+    assert ack.waiting(after, 2)  # HP-only intermediate frame is not completion.
+    after['game_state']['screen_state']['options'][0]['text'] = '[来点喝的？] 失去 10 生命。'
+    assert not ack.waiting(after, 3)

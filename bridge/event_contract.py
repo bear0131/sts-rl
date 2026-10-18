@@ -85,8 +85,13 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
-        if effect == 'potion' and not any(p.get('id') == 'Potion Slot' for p in gs.get('potions', [])):
-            raise RuntimeError('event potion reward cannot be verified with full slots')
+        if effect == 'potion' and (not any(p.get('id') == 'Potion Slot' for p in gs.get('potions', []))
+                                   or any(r.get('id') == 'Sozu' for r in gs.get('relics', []))):
+            # Skull pays HP even when obtainPotion cannot insert into inventory.
+            # Keep the simulator's legal action; verify this precise no-gain case.
+            if gs.get('screen_state', {}).get('event_id') != 'Knowing Skull':
+                raise RuntimeError('unsupported blocked event potion reward')
+            effect = 'blocked_skull_potion'
         self.pending = (deepcopy(gs), effect, now)
 
     def waiting(self, frame, now):
@@ -115,6 +120,10 @@ class EventEffectAck:
             'transform': bool(gained) and bool(lost),
             'upgrade': bool(gained) and bool(lost) and Counter(c['id'] for c in g.get('deck', [])) == Counter(c['id'] for c in old.get('deck', [])),
             'potion': potion_changed, 'relic': relic_changed,
+            'blocked_skull_potion': (delta('current_hp') < 0 and not potion_changed
+                                     and not gained and not lost and not relic_changed
+                                     and delta('gold') == 0 and delta('max_hp') == 0
+                                     and g.get('screen_state') != old.get('screen_state')),
             'heal': delta('current_hp') > 0 or (old.get('current_hp') == old.get('max_hp') and g.get('screen_state') != old.get('screen_state')),
             'maxhp_gain': delta('max_hp') > 0, 'maxhp_loss': delta('max_hp') < 0,
             'vial_bites': relic_changed and bool(gained), 'hp_loss': delta('current_hp') < 0,
