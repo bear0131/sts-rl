@@ -32,6 +32,52 @@ from schemas.combat_state import _card, normalize_real
 LOG = logging.getLogger(__name__)
 
 
+def _neow_option_from_text(text: str) -> dict[str, int]:
+    """Decode stock English/zh-CN Neow labels into the native enum contract.
+
+    CommunicationMod exports text, not the simulator's bonus/drawback IDs.
+    Unknown translations must fail rather than become a valid all-zero offer.
+    """
+    s = re.sub(r'\s+', '', re.sub(r'#[a-zA-Z]', '', text)).lower()
+    if any(x in s for x in ('loseyourstartingrelic', 'loseyourstarterrelic', '失去你的初始遗物')):
+        drawback = 6
+    elif 'loseallgold' in s or '失去所有金币' in s:
+        drawback = 3
+    elif 'obtainacurse' in s or '得到一张诅咒' in s:
+        drawback = 4
+    elif re.search(r'lose\d+maxhp|失去\d+最大生命', s):
+        drawback = 2
+    elif re.search(r'take\d+damage|受到\d+点伤害', s):
+        drawback = 5
+    else:
+        drawback = 1
+    patterns = (
+        (18, r'bossrelic|boss遗物'),
+        (11, r'rarecolorlesscard|稀有无色牌'),
+        (5, r'colorlesscard|无色牌'),
+        (12, r'remove(?:2|two)cards|去除2张牌'),
+        (16, r'transform(?:2|two)cards|变化2张牌'),
+        (14, r'chooseararecard|选择并获得一张稀有牌'),
+        (1, r'randomrarecard|随机获得一张稀有牌'),
+        (13, r'rarerelic|稀有遗物'),
+        (7, r'commonrelic|普通遗物'),
+        (6, r'(?:3|three)(?:random)?potions|3瓶药水'),
+        (9, r'nextthreecombats|neow.s lament|接下来3场战斗'),
+        (15, r'(?:obtain|gain)250gold|获得250金币'),
+        (10, r'(?:obtain|gain)100gold|获得100金币'),
+        (2, r'removeacard|从牌组中移除一张牌'),
+        (3, r'upgradeacard|升级一张牌'),
+        (4, r'transformacard|变化一张牌'),
+        (0, r'chooseacard|选择并获得一张牌'),
+    )
+    bonus = next((value for value, pattern in patterns if re.search(pattern, s)), None)
+    if bonus is None and re.search(r'maxhp\+|最大生命(?:值)?\+', s):
+        bonus = 8 if drawback == 1 else 17
+    if bonus is None or (bonus == 18) != (drawback == 6):
+        raise ValueError(f'unsupported Neow option text: {text!r}')
+    return {'bonus_id': bonus, 'drawback_id': drawback}
+
+
 _SCREEN_PHASE = {
     "EVENT": "event",
     "CARD_REWARD": "combat_reward",
@@ -985,10 +1031,11 @@ class RealGameAdapter:
         if isinstance(raw, list):
             for item in raw[:A.NEOW_W]:
                 if isinstance(item, dict):
-                    out.append({
-                        "bonus_id": int(item.get("bonus_id", 0) or 0),
-                        "drawback_id": int(item.get("drawback_id", 0) or 0),
-                    })
+                    if "bonus_id" in item and "drawback_id" in item:
+                        out.append({"bonus_id": int(item["bonus_id"]),
+                                    "drawback_id": int(item["drawback_id"])})
+                    else:
+                        out.append(_neow_option_from_text(str(item.get("text") or item.get("label") or "")))
         while len(out) < A.NEOW_W:
             out.append({"bonus_id": 0, "drawback_id": 0})
         return out
