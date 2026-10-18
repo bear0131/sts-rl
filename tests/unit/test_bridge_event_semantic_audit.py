@@ -155,6 +155,36 @@ def test_deferred_reward_preserves_claim_for_ack():
     assert d.semantic == ga.claim('gold', 0)
 
 
+def test_settings_pause_excludes_only_explicit_menu_duration():
+    from bridge.client.agent_orchestrator import UiPauseClock
+    clock = UiPauseClock()
+    active = {'game_state': {'screen_name': 'NONE', 'is_screen_up': False}}
+    menu = {'game_state': {'screen_name': 'SETTINGS', 'is_screen_up': True}}
+    assert clock.update(active, 100) == (100, False)
+    assert clock.update(menu, 104) == (104, True)
+    assert clock.update(menu, 125) == (104, True)
+    assert clock.update(active, 130) == (104, False)
+    assert clock.update(active, 137) == (111, False)  # real timeout still works
+
+
+def test_settings_pause_keeps_reward_ack_and_does_not_acknowledge_it():
+    from bridge.client.agent_orchestrator import UiPauseClock, RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    clock, ack = UiPauseClock(), RewardCommandAck()
+    f = {'game_state': {'screen_type': 'COMBAT_REWARD', 'screen_name': 'NONE',
+         'screen_state': {}, 'is_screen_up': False}}
+    now, _ = clock.update(f, 0)
+    ack.arm(f, RealDecision('PROCEED', 'policy'), now)
+    clock.update({'game_state': {'screen_name': 'SETTINGS', 'is_screen_up': True}}, 3)
+    now, paused = clock.update({'game_state': {'screen_name': 'SETTINGS', 'is_screen_up': True}}, 63)
+    assert paused and now == 3 and ack.pending is not None
+    now, paused = clock.update(f, 65)
+    assert not paused and ack.waiting(f, now)
+    now, _ = clock.update(f, 73)
+    with pytest.raises(RuntimeError, match='not acknowledged'):
+        ack.waiting(f, now)
+
+
 def test_dialogue_bypasses_policy_without_claiming_resource_effect(event_adapter):
     a = event_adapter("Knowing Skull", [("[继续]", False)])
     assert a.auto_command() == ("CHOOSE 0", "event_dialogue_transport")

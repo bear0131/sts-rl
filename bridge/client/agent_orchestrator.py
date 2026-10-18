@@ -167,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--gumbel-scale", type=float, default=None,
         help="Override combat-search Gumbel noise; 0 disables it, omitted inherits checkpoint.",
     )
+    parser.add_argument('--attach-existing-seed', type=int, default=None,
+                        help='Wait for user/UI save resume, never START; verify this internal seed.')
+    parser.add_argument('--attach-existing-floor', type=int, default=None,
+                        help='Verify the first loaded floor when attaching to an existing save.')
     return parser
 
 
@@ -614,6 +618,22 @@ class RewardCommandAck:
         return True
 
 
+class UiPauseClock:
+    """Suspend acknowledgement time only for an explicitly exported settings UI."""
+    def __init__(self):
+        self.last = None
+        self.paused = False
+        self.excluded = 0.0
+
+    def update(self, frame, now):
+        gs = frame.get('game_state') or {}
+        paused = bool(gs.get('is_screen_up')) and gs.get('screen_name') == 'SETTINGS'
+        if self.last is not None and self.paused:
+            self.excluded += now - self.last
+        self.last, self.paused = now, paused
+        return now - self.excluded, paused
+
+
 class CombatFrameStability:
     """Require a fresh, unchanged settled frame before ordinary combat actions."""
 
@@ -695,6 +715,8 @@ def main() -> None:
         reward_ack = RewardCommandAck()
         event_ack = EventEffectAck()
         unsent_search = None
+        pause_clock = UiPauseClock()
+        attach_pending = args.attach_existing_seed is not None
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -702,11 +724,28 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
-                if event_ack.waiting(frame, time.monotonic()):
+                if attach_pending:
+                    gs = frame.get('game_state') or {}
+                    if not frame.get('in_game'):
+                        time.sleep(0.1)
+                        send('STATE')
+                        continue
+                    if (int(gs.get('seed', -1)) != args.attach_existing_seed
+                            or (args.attach_existing_floor is not None
+                                and gs.get('floor') != args.attach_existing_floor)):
+                        raise RuntimeError('loaded save seed/floor mismatch')
+                    attach_pending = False
+                    log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
+                now, paused = pause_clock.update(frame, time.monotonic())
+                if paused:
+                    time.sleep(0.1)
+                    send('STATE')
+                    continue
+                if event_ack.waiting(frame, now):
                     time.sleep(0.1)
                     send("STATE")
                     continue
-                if reward_ack.waiting(frame, time.monotonic()):
+                if reward_ack.waiting(frame, now):
                     time.sleep(0.1)
                     send("STATE")
                     continue
@@ -715,31 +754,31 @@ def main() -> None:
                     unsent_search = None
                     if searched_command_still_current(frame, original, prepared.command):
                         send_decision(frame, prepared)
-                        reward_ack.arm(frame, prepared, time.monotonic())
+                        reward_ack.arm(frame, prepared, now)
                         if combat_command_needs_ack(frame, prepared.command):
                             pending_play_frame = deepcopy(frame.get("game_state"))
-                            pending_play_since = time.monotonic()
+                            pending_play_since = now
                         if prepared.command.upper() == "END":
                             pending_end_frame = deepcopy(frame.get("game_state"))
-                            pending_end_since = time.monotonic()
+                            pending_end_since = now
                         continue
                     combat_search.cancel_unsent_command()
                     log.info("discarded unsent search command after fresh state changed")
                 if stale_combat_end_frame(frame, pending_end_frame):
-                    if time.monotonic() - pending_end_since > 10.0:
+                    if now - pending_end_since > 10.0:
                         raise RuntimeError("game turn did not advance for 10 seconds after END")
                     time.sleep(0.05)
                     send("STATE")
                     continue
                 pending_end_frame = None
                 if stale_combat_play_frame(frame, pending_play_frame):
-                    if time.monotonic() - pending_play_since > 10.0:
+                    if now - pending_play_since > 10.0:
                         raise RuntimeError("game state unchanged for 10 seconds after combat command")
                     time.sleep(0.05)
                     send("STATE")
                     continue
                 pending_play_frame = None
-                if combat_stability.waiting(frame, time.monotonic()):
+                if combat_stability.waiting(frame, now):
                     time.sleep(0.1)
                     send("STATE")
                     continue
@@ -749,15 +788,15 @@ def main() -> None:
                     unsent_search = (deepcopy(frame), decision)
                     send("STATE")
                     continue
-                event_ack.arm(frame, decision, time.monotonic())
+                event_ack.arm(frame, decision, now)
                 send_decision(frame, decision)
-                reward_ack.arm(frame, decision, time.monotonic())
+                reward_ack.arm(frame, decision, now)
                 if combat_command_needs_ack(frame, decision.command):
                     pending_play_frame = deepcopy(frame.get("game_state"))
-                    pending_play_since = time.monotonic()
+                    pending_play_since = now
                 if decision.command.upper() == "END":
                     pending_end_frame = deepcopy(frame.get("game_state"))
-                    pending_end_since = time.monotonic()
+                    pending_end_since = now
             except Exception:
                 if combat_search is not None:
                     combat_search.note_error()
