@@ -24,6 +24,16 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 6 && root.curEvent == Event::THE_MAUSOLEUM) {
+        auto leave = root;
+        leave.chooseEventOption(1);
+        if (leave.relics.size() != root.relics.size() || leave.deck.size() != root.deck.size()) return 12;
+        auto opened = root;
+        opened.chooseEventOption(0);
+        std::cout << "mausoleum_relic_gain=" << opened.relics.size() - root.relics.size()
+                  << " expected=1" << std::endl;
+        return opened.relics.size() == root.relics.size() + 1 ? 0 : 12;
+    }
     if (variant == 5 && root.curEvent == Event::THE_WOMAN_IN_BLUE) {
         for (int option = 0; option < 3; ++option) {
             auto child = root;

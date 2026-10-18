@@ -3386,6 +3386,7 @@ void GameContext::chooseEventOption(int idx) {
                 if (result || unfavorable) {
                     deck.obtain(*this, CardId::WRITHE);
                 }
+                obtainRelic(returnRandomScreenlessRelic(returnRandomRelicTier(relicRng, act), false));
                 regainControl();
 
             } else if (idx == 1) {
