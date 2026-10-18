@@ -134,6 +134,7 @@ _BOSS_ALIASES = {
 }
 
 _EVENT_ALIASES = {
+    "SensoryStone": "Sensory Stone",
     "Neow Event": "NEOW",
     "Neow": "NEOW",
     "We Meet Again": "WeMeetAgain",
@@ -509,6 +510,7 @@ class RealGameAdapter:
         # non-card rewards or proceed.
         self._combat_reward_card_open = False
         self._skipped_combat_card_reward = False
+        self._skipped_reward_card_count = 0
         self._combat_reward_outer_choices: tuple[Any, ...] = ()
         self._combat_reward_outer_commands: frozenset[str] = frozenset()
         self._combat_reward_outer_options: dict[str, list[Any]] = {}
@@ -577,6 +579,7 @@ class RealGameAdapter:
         elif self.screen_type() not in {"COMBAT_REWARD", "CARD_REWARD"}:
             self._combat_reward_card_open = False
             self._skipped_combat_card_reward = False
+            self._skipped_reward_card_count = 0
             self._combat_reward_outer_choices = ()
             self._combat_reward_outer_commands = frozenset()
             self._combat_reward_outer_options = {}
@@ -740,9 +743,11 @@ class RealGameAdapter:
                 and "CHOOSE" in self.commands()):
             normalized = [_norm_label(choice) for choice in cl]
             card_indices = [i for i, label in enumerate(normalized) if label == "card"]
-            if len(card_indices) == 1:
+            if len(card_indices) > self._skipped_reward_card_count:
                 self._combat_reward_card_open = True
-                return f"CHOOSE {card_indices[0]}", "open_card_reward"
+                # Native consumes the last remaining reward, not the first.
+                index = card_indices[-1 - self._skipped_reward_card_count]
+                return f"CHOOSE {index}", "open_card_reward"
 
         return None
 
@@ -1699,7 +1704,12 @@ class RealGameAdapter:
         if verb == ga.SKIP_CARDS:
             if self.screen_type() == "CARD_REWARD" and self._combat_reward_card_open:
                 self._combat_reward_card_open = False
-                self._skipped_combat_card_reward = True
+                bowl = _choice_index(self.choices(), {"bowl"})
+                if bowl is not None:
+                    return f"CHOOSE {bowl}"
+                self._skipped_reward_card_count += 1
+                total = sum(_norm_label(x) == "card" for x in self._combat_reward_outer_choices)
+                self._skipped_combat_card_reward = self._skipped_reward_card_count >= total
             return "SKIP"
         if verb == ga.SELECT:
             desc = self.select_descriptor()

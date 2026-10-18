@@ -4,7 +4,7 @@
 
 | BRIDGE07 | 5a03a8a已部署，attempt17实机验证中 | bridge/search_bridge.py按完整UI命令事务回滚native/thin/自回归前缀和decision_index，取消重搜不消耗逻辑NOSL身份，实际搜索账本仍累计。171实现回归；200205 F4最终模型CUDA/指定native六次128搜索含撤销及拒绝均PLAY2目标0。141隔离回归及六次真实帧重放通过，隔离身份核验通过；还需实机；游戏本体药水帧时序单列，不能以有限测试声称任意干扰全部确定。见worklog/2026-10-18.md BRIDGE07。 |
 
-| BRIDGE06 | 有限支持门禁已部署，实机验证中 | 5051087显式映射17类事件，未知/歧义事件失败关闭，效果类型确认30秒超时；169实现/139隔离回归、四真实帧固定checkpoint一步预测通过。51事件尚未全部支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计。验收要求预期语义到UI和实际效果均核验；不能把有限支持称为全部等价。200202旧结果受事件影响；200205按用户要求重测，旧记录归档诊断。见worklog/2026-10-18.md的BRIDGE06记录。 |
+| BRIDGE06 | 感知石及关联多组奖励修复，待隔离部署 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
 | BRIDGE05 | attempt18从200205续测，保留5条历史诊断记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；runtime c73eda8+1d9e0c7，native850d196e、模型不变。attempt17 F19满槽误拦停机773.4秒无终局，完整证据归档attempt17，prior22118.9；7覆盖/4新增文件及model/native身份核验通过。旧记录存在已知编码/事件/意图协议差异，禁止当同协议胜率；继续实际验证并每新自然终局报告，不计中断。未支持事件失败收证后自主修复，不放宽门禁。 |
 

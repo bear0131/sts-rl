@@ -66,6 +66,95 @@ def test_unknown_event_does_not_fall_back_to_number(event_adapter):
         a._legal_event_actions()
 
 
+def test_sensory_intro_is_transport_not_reward(event_adapter):
+    a = event_adapter('SensoryStone', [('[交互]', False)])
+    assert a.auto_command() == ('CHOOSE 0', 'event_dialogue_transport')
+
+
+@pytest.mark.parametrize('english', [False, True])
+def test_sensory_cost_and_count_map_to_native(event_adapter, english):
+    labels = ([f'[Recall] Add {n} Colorless cards to your deck.' +
+               (f' Lose {(n-1)*5} HP.' if n > 1 else '') for n in (1, 2, 3)]
+              if english else [f'[回忆] 在你的牌组中加入 {n} 张无色牌。' +
+               (f' 失去 {(n-1)*5} 点生命。' if n > 1 else '') for n in (1, 2, 3)])
+    a = event_adapter('SensoryStone', [(s, False) for s in reversed(labels)])
+    assert a._options('event')['event'] == 'Sensory Stone'
+    assert a.command_for_semantic(ga.event(0)) == 'CHOOSE 2'
+    assert a.command_for_semantic(ga.event(2)) == 'CHOOSE 0'
+
+
+def test_sensory_ack_checks_offered_rewards_not_card_gain(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('SensoryStone', [(f'[回忆] 在你的牌组中加入 {n} 张无色牌。' +
+        (f' 失去 {(n-1)*5} 点生命。' if n > 1 else ''), False) for n in (1, 2, 3)])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 2)), 0)
+    assert ack.waiting(a.frame, 1)
+    reward = deepcopy(a.frame)
+    reward['game_state'].update(screen_type='COMBAT_REWARD', screen_state={
+        'rewards': [{'reward_type': 'CARD'}] * 3})
+    assert not ack.waiting(reward, 2)
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 2)), 3)
+    reward['game_state']['screen_state']['rewards'].pop()
+    with pytest.raises(RuntimeError, match='type/count mismatch'):
+        ack.waiting(reward, 4)
+
+
+def test_multiple_reward_skip_advances_without_reopening_same_group():
+    from copy import deepcopy
+    a = RealGameAdapter()
+    outer = {'in_game': True, 'ready_for_command': True, 'available_commands': ['choose', 'proceed', 'state'],
+             'game_state': {'screen_type': 'COMBAT_REWARD', 'choice_list': ['card', 'card', 'card'],
+                            'screen_state': {'rewards': [{'reward_type': 'CARD'}] * 3}}}
+    inner = deepcopy(outer)
+    inner['available_commands'] = ['choose', 'skip', 'state']
+    inner['game_state'].update(screen_type='CARD_REWARD', choice_list=['Strike'])
+    for index in (2, 1, 0):
+        a.update(outer)
+        assert a.auto_command() == (f'CHOOSE {index}', 'open_card_reward')
+        a.update(inner)
+        assert a.command_for_semantic(ga.skip_cards()) == 'SKIP'
+    a.update(outer)
+    assert a.auto_command() is None
+    assert ga.reward_card(0) not in a._legal_reward_actions()
+
+
+def test_singing_bowl_skip_uses_bowl_and_requires_hp_ack():
+    from bridge.real_game_env import RealDecision
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from copy import deepcopy
+    a = RealGameAdapter()
+    frame = {'game_state': {'screen_type': 'CARD_REWARD', 'choice_list': ['Strike', 'bowl'], 'max_hp': 80}}
+    a.update(frame)
+    a._combat_reward_card_open = True
+    command = a.command_for_semantic(ga.skip_cards())
+    assert command == 'CHOOSE 1'
+    assert a._skipped_reward_card_count == 0  # Bowl really consumes the reward.
+    ack = RewardCommandAck()
+    ack.arm(frame, RealDecision(command, 'policy', semantic=ga.skip_cards()), 0)
+    after = deepcopy(frame)
+    after['game_state']['screen_type'] = 'COMBAT_REWARD'
+    assert ack.waiting(after, 1)
+    after['game_state']['max_hp'] = 82
+    assert not ack.waiting(after, 2)
+
+
+def test_deferred_reward_preserves_claim_for_ack():
+    from bridge.client.agent_orchestrator import RealPolicyAgent
+    a = RealGameAdapter()
+    a._deferred_combat_reward_action = ga.claim('gold', 0)
+    agent = RealPolicyAgent(None, a, stochastic=False, topk=0, max_inner_decisions=1,
+        auto_enter_shop=False, auto_start=False, start_seed=None, ascension=0, character='IRONCLAD')
+    d = agent.decide({'in_game': True, 'ready_for_command': True,
+        'available_commands': ['choose', 'state'], 'game_state': {
+            'screen_type': 'COMBAT_REWARD', 'choice_list': ['gold'],
+            'screen_state': {'rewards': [{'reward_type': 'GOLD', 'gold': 30}]}}})
+    assert d.command == 'CHOOSE 0'
+    assert d.semantic == ga.claim('gold', 0)
+
+
 def test_dialogue_bypasses_policy_without_claiming_resource_effect(event_adapter):
     a = event_adapter("Knowing Skull", [("[继续]", False)])
     assert a.auto_command() == ("CHOOSE 0", "event_dialogue_transport")

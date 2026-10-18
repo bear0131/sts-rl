@@ -328,10 +328,11 @@ class RealPolicyAgent:
         # CommunicationMod error frames omit ``in_game`` and ``game_state``.
         # Refresh the state instead of mistaking a rejected command for a run
         # ending and repeatedly issuing START while the combat is still live.
+        deferred = self.adapter._deferred_combat_reward_action
         auto = self.adapter.auto_command(auto_enter_shop=self.auto_enter_shop)
         if auto is not None:
             command, reason = auto
-            return RealDecision(command, reason)
+            return RealDecision(command, reason, semantic=(deferred if reason == "complete_deferred_reward_action" else None))
 
         if not self.adapter.in_game():
             if self.combat_search is not None:
@@ -540,7 +541,7 @@ class RewardCommandAck:
     def snapshot(gs):
         return {k: deepcopy(gs.get(k)) for k in (
             "seed", "floor", "screen_type", "screen_state", "choice_list",
-            "deck", "gold", "relics", "potions",
+            "deck", "gold", "relics", "potions", "max_hp",
         )}
 
     def arm(self, frame, decision, now):
@@ -556,6 +557,13 @@ class RewardCommandAck:
             if gs.get("screen_type") == "CARD_REWARD":
                 expected = cards[index]["id"]
         claim = None
+        if (gs.get("screen_type") == "CARD_REWARD" and decision.semantic
+                and decision.semantic[0] == "skip_cards"
+                and decision.command.upper().startswith("CHOOSE ")):
+            index = int(decision.command.split()[1])
+            if gs.get("choice_list", [])[index] != "bowl":
+                raise ValueError("skip_cards CHOOSE must target Singing Bowl")
+            claim = ("bowl", None, None)
         if (gs.get("screen_type") == "COMBAT_REWARD" and decision.command.upper().startswith("CHOOSE ")
                 and decision.semantic and decision.semantic[0] == "claim"):
             kind, index = decision.semantic[1:3]
@@ -584,7 +592,10 @@ class RewardCommandAck:
             acknowledged = count(gs.get("deck")) == count(before["deck"]) + 1
         elif claim is not None:
             kind, entity, amount = claim
-            if kind == "gold":
+            if kind == "bowl":
+                acknowledged = (gs.get("max_hp", 0) == (before.get("max_hp") or 0) + 2
+                                and gs.get("screen_type") != "CARD_REWARD")
+            elif kind == "gold":
                 acknowledged = gs.get("gold", 0) > (before.get("gold") or 0)
             elif kind in {"potion", "relic"}:
                 entity_id = entity.get("id") if isinstance(entity, dict) else entity

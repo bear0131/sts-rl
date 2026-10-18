@@ -44,6 +44,9 @@ def transport_only(gs):
         return None
     o = opts[0]
     text = _text(o.get('text', '')).strip('[]')
+    if ((gs.get('screen_state') or {}).get('event_id') == 'SensoryStone'
+            and text in {'交互', 'interact'}):
+        return o.get('choice_index')
     if text in {'继续', '离开', 'continue', 'leave', 'proceed'}:
         return o.get('choice_index')
     return None
@@ -52,6 +55,24 @@ def transport_only(gs):
 def options(gs):
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'SensoryStone':
+        result = {}
+        for o in ss.get('options', []):
+            if o.get('disabled'):
+                continue
+            text = _text(o.get('text', ''))
+            match = re.fullmatch(r'\[回忆\]在你的牌组中加入([123])张无色牌。(?:失去(5|10)点生命。)?', text)
+            if match is None:
+                match = re.fullmatch(r'\[recall\]add([123])colorlesscards?toyourdeck\.(?:lose(5|10)hp\.)?', text)
+            if not match or o.get('choice_index') is None:
+                raise ValueError(f'unrecognized SensoryStone option: {text}')
+            count, cost = int(match[1]), int(match[2] or 0)
+            if cost != (count - 1) * 5 or count - 1 in result:
+                raise ValueError('SensoryStone count/cost mismatch')
+            result[count - 1] = (int(o['choice_index']), f'colorless_rewards_{count}')
+        if set(result) != {0, 1, 2}:
+            raise ValueError('SensoryStone incomplete choices')
+        return result
     rules = CONTRACTS.get(event)
     if rules is None:
         raise ValueError(f'unsupported event contract: {event}')
@@ -105,6 +126,16 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect.startswith('colorless_rewards_'):
+            if g.get('screen_type') != 'COMBAT_REWARD':
+                return True
+            count = int(effect.rsplit('_', 1)[1])
+            rewards = (g.get('screen_state') or {}).get('rewards', [])
+            if len(rewards) != count or any(r.get('reward_type') != 'CARD' for r in rewards):
+                raise RuntimeError('SensoryStone reward type/count mismatch')
+            # Cards are optional rewards, not guaranteed permanent deck gains.
+            self.pending = None
+            return False
         deck = lambda s: Counter((c['id'], c.get('upgrades', 0)) for c in s.get('deck', []))
         gained, lost = deck(g) - deck(old), deck(old) - deck(g)
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
