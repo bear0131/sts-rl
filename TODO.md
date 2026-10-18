@@ -4,9 +4,9 @@
 
 | BRIDGE07 | 5a03a8a已部署，attempt17实机验证中 | bridge/search_bridge.py按完整UI命令事务回滚native/thin/自回归前缀和decision_index，取消重搜不消耗逻辑NOSL身份，实际搜索账本仍累计。171实现回归；200205 F4最终模型CUDA/指定native六次128搜索含撤销及拒绝均PLAY2目标0。141隔离回归及六次真实帧重放通过，隔离身份核验通过；还需实机；游戏本体药水帧时序单列，不能以有限测试声称任意干扰全部确定。见worklog/2026-10-18.md BRIDGE07。 |
 
-| BRIDGE06 | 感知石及关联多组奖励修复，待隔离部署 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
+| BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | attempt18从200205续测，保留5条历史诊断记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；runtime c73eda8+1d9e0c7，native850d196e、模型不变。attempt17 F19满槽误拦停机773.4秒无终局，完整证据归档attempt17，prior22118.9；7覆盖/4新增文件及model/native身份核验通过。旧记录存在已知编码/事件/意图协议差异，禁止当同协议胜率；继续实际验证并每新自然终局报告，不计中断。未支持事件失败收证后自主修复，不放宽门禁。 |
+| BRIDGE05 | attempt19从200205续测，保留5条历史诊断记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；runtime c73eda8+e873561，native850d196e、模型不变。attempt18 F36感知石保护停机1381.3秒无终局，证据归档attempt18，prior23500.2；7覆盖/4新增文件及model/native身份核验通过。00:14:34启动，00:15:33确认F2实际PLAY。旧记录存在编码/事件/意图/颂钵协议差异，禁止当同协议胜率；每新自然终局报告，不计中断。未支持事件失败收证后自主修复，不放宽门禁。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
