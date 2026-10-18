@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE07 | 已定位，待修复验证 | bridge/search_bridge.py取消未发送动作不恢复decision_index，rl/evaluation/strategies.py以该计数生成NOSL nonce，使UI时序影响后续假设未来。200205 F4原始状态去name/uuid一致但index39/40、首动作与战损不同。验收：取消/拒绝回滚随机身份、实际搜索账本不回退、含自动回归选择前缀测试和真实帧受控重放；不能把G0等同完全确定性。见worklog/2026-10-18.md BRIDGE07。 |
+| BRIDGE07 | 修复回归/真实帧通过，待部署实机验证 | bridge/search_bridge.py按完整UI命令事务回滚native/thin/自回归前缀和decision_index，取消重搜不消耗逻辑NOSL身份，实际搜索账本仍累计。171实现回归；200205 F4最终模型CUDA/指定native六次128搜索含撤销及拒绝均PLAY2目标0。验收还需隔离部署及实机；游戏本体药水帧时序单列，不能以有限测试声称任意干扰全部确定。见worklog/2026-10-18.md BRIDGE07。 |
 
 | BRIDGE06 | 有限支持门禁已部署，实机验证中 | 5051087显式映射17类事件，未知/歧义事件失败关闭，效果类型确认30秒超时；169实现/139隔离回归、四真实帧固定checkpoint一步预测通过。51事件尚未全部支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计。验收要求预期语义到UI和实际效果均核验；不能把有限支持称为全部等价。200202旧结果受事件影响；200205按用户要求重测，旧记录归档诊断。见worklog/2026-10-18.md的BRIDGE06记录。 |
 

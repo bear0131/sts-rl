@@ -220,6 +220,7 @@ class RealCombatSearch:
                 raise RuntimeError("rejected real-game command has no native rollback state")
             self.env.thick.bc = self._rollback_bc
             thin = self._rollback_thin or {}
+            self.decision_index = thin["decision_index"]
             self.env._pending = deepcopy(thin.get("pending"))
             self.env._multi = deepcopy(thin.get("multi"))
             self.env._nosl_cpp_pending = deepcopy(thin.get("nosl_cpp_pending"))
@@ -302,6 +303,18 @@ class RealCombatSearch:
             self._attach_battle(real, identity)
 
         self._reconcile_and_sync(real)
+        # One UI command is a transaction, including any unsent autoregressive
+        # prefixes. Transport retries must reuse its NOSL random identity, while
+        # run_decisions continues to account for all actual search work.
+        rollback = self.env.thick.bc.clone()
+        rollback_thin = {
+            "decision_index": self.decision_index,
+            "pending": deepcopy(self.env._pending),
+            "multi": deepcopy(self.env._multi),
+            "nosl_cpp_pending": deepcopy(self.env._nosl_cpp_pending),
+            "real_multi_selected": set(self.adapter.multi_selected),
+            "real_joint_multi_plan": deepcopy(self.adapter._joint_multi_plan),
+        }
         last_diagnostics: dict[str, Any] = {}
         for _ in range(12):
             self._assert_mask_alignment()
@@ -318,14 +331,6 @@ class RealCombatSearch:
             action = int(result.action)
             self.run_decisions += 1
             last_diagnostics = dict(result.diagnostics)
-            rollback = self.env.thick.bc.clone()
-            rollback_thin = {
-                "pending": deepcopy(self.env._pending),
-                "multi": deepcopy(self.env._multi),
-                "nosl_cpp_pending": deepcopy(self.env._nosl_cpp_pending),
-                "real_multi_selected": set(self.adapter.multi_selected),
-                "real_joint_multi_plan": deepcopy(self.adapter._joint_multi_plan),
-            }
             real_action = self._map_action_to_real(action)
             command = self.adapter.command_for_joint_action(real_action)
 

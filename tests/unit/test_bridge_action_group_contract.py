@@ -257,6 +257,48 @@ def test_search_send_requires_fresh_unchanged_state_and_command_permission():
     assert not searched_command_still_current(changed, original, "PLAY 2 0")
 
 
+@pytest.mark.parametrize("prefixes", [0, 2])
+def test_transport_retry_reuses_entire_autoregressive_nonce_transaction(monkeypatch, prefixes):
+    from bridge import search_bridge as module
+    bridge = module.RealCombatSearch.__new__(module.RealCombatSearch)
+    battle = MagicMock()
+    battle.is_battle_over = False
+    battle.clone.return_value = battle
+    bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=battle), _pending=None,
+        _multi=None, _nosl_cpp_pending=None, _obs=lambda: {}, _info=lambda: {},
+        _invalidate_backend_cache=lambda: None)
+    bridge.adapter = SimpleNamespace(gs={"seed": 200205, "floor": 4},
+        multi_selected=set(), _joint_multi_plan=None, action_mask=lambda: [True])
+    bridge.identity = (200205, 4)
+    bridge.decision_index = 39
+    bridge.run_decisions = bridge.run_commands = 0
+    bridge._reconcile_and_sync = lambda _: None
+    bridge._assert_mask_alignment = lambda: None
+    bridge._map_action_to_real = lambda a: a
+    monkeypatch.setattr(module, 'normalize_real', lambda _: {})
+    steps = []
+    def search(requests, check):
+        steps.append(requests[0].step)
+        return [SimpleNamespace(action=6, diagnostics={})]
+    bridge.strategy = SimpleNamespace(decide=search)
+    def step(action):
+        bridge.env._multi = {"prefix": bridge.decision_index}
+        bridge.adapter.multi_selected.add(bridge.decision_index)
+        return None, 0, False, False, {}
+    bridge.env.step = step
+    for _ in range(4):
+        commands = iter([None] * prefixes + ["PLAY 1"])
+        bridge.adapter.command_for_joint_action = lambda _: next(commands)
+        assert bridge.decide().command == "PLAY 1"
+        bridge.cancel_unsent_command()
+        assert bridge.decision_index == 39
+        assert bridge.env._multi is None
+        assert bridge.adapter.multi_selected == set()
+    assert steps == list(range(39, 40 + prefixes)) * 4
+    assert bridge.run_decisions == 4 * (prefixes + 1)
+    assert bridge.run_commands == 4
+
+
 def test_cancel_unsent_search_restores_native_and_selection_state():
     from types import SimpleNamespace
     from bridge.search_bridge import RealCombatSearch
@@ -264,13 +306,17 @@ def test_cancel_unsent_search_restores_native_and_selection_state():
     saved = object()
     bridge._awaiting_command = True
     bridge._rollback_bc = saved
-    bridge._rollback_thin = {"pending": {"source": "deck"}, "multi": None,
+    bridge.decision_index = 43
+    bridge.run_decisions = 55
+    bridge._rollback_thin = {"decision_index": 39, "pending": {"source": "deck"}, "multi": None,
                              "real_multi_selected": {2}, "real_joint_multi_plan": [2]}
     bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=object()),
                                  _invalidate_backend_cache=lambda: None)
     bridge.adapter = SimpleNamespace(multi_selected={3}, _joint_multi_plan=[3])
     bridge.cancel_unsent_command()
     assert bridge.env.thick.bc is saved
+    assert bridge.decision_index == 39
+    assert bridge.run_decisions == 55  # retries remain real work, not erased
     assert bridge.env._pending == {"source": "deck"}
     assert bridge.adapter.multi_selected == {2}
     assert bridge.adapter._joint_multi_plan == [2]
@@ -293,7 +339,8 @@ def test_predispatch_end_rejection_is_audited_and_rolled_back(command, error, re
     bridge._awaiting_command = True
     bridge._awaiting_command_text = command
     bridge._rollback_bc = saved
-    bridge._rollback_thin = {}
+    bridge.decision_index = 40
+    bridge._rollback_thin = {"decision_index": 39}
     bridge.run_rejected_commands = 0
     bridge._consecutive_rejected_commands = 0
     bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=object()),
@@ -301,6 +348,7 @@ def test_predispatch_end_rejection_is_audited_and_rolled_back(command, error, re
     bridge.adapter = SimpleNamespace(multi_selected=set(), _joint_multi_plan=None)
     bridge.observe_frame({"error": error})
     assert bridge.env.thick.bc is saved
+    assert bridge.decision_index == 39
     assert not bridge._awaiting_command
     assert bridge.run_rejected_commands == int(recover)
     assert ("ERROR" not in caplog.text) == recover
@@ -309,6 +357,7 @@ def test_predispatch_end_rejection_is_audited_and_rolled_back(command, error, re
         bridge._consecutive_rejected_commands = 3
         bridge._awaiting_command = True
         bridge._rollback_bc = saved
+        bridge._rollback_thin = {"decision_index": 39}
         with pytest.raises(RuntimeError, match="exceeded 3"):
             bridge.observe_frame({"error": error})
         assert not bridge._awaiting_command
