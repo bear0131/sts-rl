@@ -516,7 +516,7 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
         return False
     gs = frame.get("game_state") or {}
     combat = gs.get("combat_state")
-    if not combat or gs.get("room_phase") != "COMBAT":
+    if gs.get("screen_type") == "GAME_OVER" or not combat or gs.get("room_phase") != "COMBAT":
         return False
     if any(gs.get(k) != pending.get(k) for k in ("seed", "floor")):
         return False

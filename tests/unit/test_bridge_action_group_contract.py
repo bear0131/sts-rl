@@ -252,6 +252,8 @@ def test_end_requires_turn_ack_not_changed_commands_or_player_state():
     assert not stale_combat_end_frame({"game_state": after}, gs)
     assert not stale_combat_end_frame({"error": "rejected"}, gs)
     assert not stale_combat_end_frame({"game_state": {"room_phase": "COMPLETE"}}, gs)
+    terminal = dict(gs, screen_type="GAME_OVER", screen_state={"victory": False})
+    assert not stale_combat_end_frame({"game_state": terminal}, gs)
 
 
 def test_opening_empty_frame_and_inflight_draw_are_not_policy_ready():
