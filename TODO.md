@@ -1,6 +1,7 @@
 # 仓库总 TODO
 
 | BRIDGE09 | 主菜单默认等待修复；用户自行启动游戏 | 自动START必须显式同时启用continuous-test与auto-start；seed/campaign不可绕过。手动attach守卫在每次SL返回主菜单仍生效。198实现回归通过；用户自行启动/继续，不允许旧心跳自动启动。SL结果单独诊断，不混正式receipt；实际Esc/SL复验待用户继续。见worklog/2026-10-19.md“主菜单显式授权”。 |
+| BRIDGE10 | 已复现：SL重启改变搜索随机身份，尚未修复 | bridge/search_bridge.py的全程decision_index重启归零，经rl/evaluation/strategies.py进入state_nonce；同seed/公开状态不足以保证同动作。200205 F23旧index204/205与读档0/1第二步分歧；固定首帧连续两步离线改变index可稳定改变第二动作，但未精确复现原日志全部动作。需恢复搜索上下文或定义重启稳定身份并验证相同输入、完整搜索配置、前缀和隐状态；不修改正在运行的游戏。见worklog/2026-10-19.md“三奴隶SL轨迹分歧”。 |
 
 | BRIDGE08 | 1d9e0c7修复部署，实机验收中；审计未全部完成 | 显式实体别名保持checkpoint词表顺序，370卡牌来源/42药水覆盖，未知卡药和normalize异常失败关闭；shop身份/完整性校验，资源领取按对应类型确认，Skull满槽/Sozu契约。187实现/157隔离回归、57商店帧及最终模型类固醇token23/领取129回放通过，重搜6次一致。仍需其余事件及全输入确定性审计，不声称全部问题排除；详见worklog/2026-10-18.md BRIDGE08。 |
 
