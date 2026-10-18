@@ -868,6 +868,49 @@ def test_back_to_basics_remove_waits_for_grid_and_result(event_adapter, label):
     assert not ack.waiting(after, 3)
 
 
+@pytest.mark.parametrize('count', [1, 2, 3])
+@pytest.mark.parametrize('chinese', [False, True])
+def test_woman_in_blue_payment_and_reward_count(event_adapter, count, chinese):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    cost = 10 + 10 * count
+    text = f'[买 {count} 瓶药水] {cost} 金币。' if chinese else f'[Buy {count} Potions] {cost} Gold.'
+    a = event_adapter('The Woman in Blue', [(text, False)])
+    a.gs['gold'] = 100
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', count - 1)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['gold'] -= cost
+    assert ack.waiting(after, 1)  # Payment alone is not the promised reward.
+    after['game_state'].update(screen_type='COMBAT_REWARD', screen_state={
+        'rewards': [{'reward_type': 'POTION'} for _ in range(count)]})
+    bad = deepcopy(after)
+    bad['game_state']['screen_state']['rewards'][0]['reward_type'] = 'CARD'
+    with pytest.raises(RuntimeError, match='reward type/count'):
+        ack.waiting(bad, 2)
+    bad = deepcopy(after)
+    bad['game_state']['screen_state']['rewards'].append({'reward_type': 'POTION'})
+    with pytest.raises(RuntimeError, match='reward type/count'):
+        ack.waiting(bad, 2)
+    bad = deepcopy(after)
+    bad['game_state']['gold'] = 100
+    assert ack.waiting(bad, 2)
+    assert not ack.waiting(after, 3)
+
+
+def test_woman_in_blue_rejects_wrong_price_and_unaudited_leave(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from types import SimpleNamespace
+    a = event_adapter('The Woman in Blue', [('[Buy 1 Potion] 99 Gold.', False)])
+    with pytest.raises(ValueError, match='price mismatch'):
+        EventEffectAck().arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    a = event_adapter('The Woman in Blue', [('[Leave]', False)])
+    a.gs['ascension_level'] = 15
+    with pytest.raises(ValueError, match='not yet audited'):
+        EventEffectAck().arm(a.frame, SimpleNamespace(semantic=('event', 3)), 0)
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

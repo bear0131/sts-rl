@@ -10,6 +10,10 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "The Woman in Blue": [(0, '买1瓶药水|Buy 1 Potion', 'woman_potions_1'),
+                          (1, '买2瓶药水|Buy 2 Potions', 'woman_potions_2'),
+                          (2, '买3瓶药水|Buy 3 Potions', 'woman_potions_3'),
+                          (3, '离开|Leave', 'woman_leave')],
     "Back to Basics": [(0, '简约|Elegance', 'basics_remove'),
                        (1, '质朴|Simplicity', 'basics_upgrade')],
     "SecretPortal": [(0, '进入传送门|Enter the Portal', 'portal_boss'),
@@ -240,6 +244,16 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect == 'woman_leave' and gs.get('ascension_level', 0) >= 15:
+            raise ValueError('Woman in Blue A15 leave damage variants not yet audited')
+        if effect.startswith('woman_potions_'):
+            count = int(effect.rsplit('_', 1)[1])
+            ui, _ = options(gs)[decision.semantic[1]]
+            text = next(_text(o['text']) for o in gs['screen_state']['options']
+                        if not o.get('disabled') and o['choice_index'] == ui)
+            match = re.fullmatch(r'\[(?:买\d瓶药水|buy\dpotions?)\](\d+)(?:金币。|gold\.)', text)
+            if not match or int(match[1]) != 10 + 10 * count:
+                raise ValueError('Woman in Blue displayed price mismatch')
         if effect == 'goop_loss':
             ui, _ = options(gs)[1]
             text = next(_text(o['text']) for o in gs['screen_state']['options']
@@ -337,6 +351,25 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect.startswith('woman_potions_') or effect == 'woman_leave':
+            count = 0 if effect == 'woman_leave' else int(effect.rsplit('_', 1)[1])
+            cost = min(old.get('gold', 0), 10 + 10 * count) if count else 0
+            if (gained or lost or relic_changed or potion_changed or delta('current_hp')
+                    or delta('max_hp') or delta('gold') not in (0, -cost)):
+                raise RuntimeError('Woman in Blue payment/resource mismatch')
+            if count and g.get('screen_type') == 'COMBAT_REWARD':
+                rewards = g.get('screen_state', {}).get('rewards', [])
+                if len(rewards) != count or any(r.get('reward_type') != 'POTION' for r in rewards):
+                    raise RuntimeError('Woman in Blue reward type/count mismatch')
+                if delta('gold') != -cost:
+                    return True
+                self.pending = None
+                return False
+            if (not count and g.get('screen_state', {}).get('event_id') == 'The Woman in Blue'
+                    and transport_only(g) is not None):
+                self.pending = None
+                return False
+            return True
         if effect in {'basics_remove', 'basics_upgrade'}:
             complete = (g.get('screen_state', {}).get('event_id') == 'Back to Basics'
                         and transport_only(g) is not None)
