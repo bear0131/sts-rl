@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE12 | 断点诊断→同seed完整验收进行中 | 200206 F24 Forgotten Altar缺契约拦截；补显式选项与效果类型确认，220回归及真实帧模型预测通过。恢复F24/index222，诊断不计正式胜率，跑通后同seed从头验收。神像重复变体/遗物数值交互未全验；见worklog/2026-10-19.md“Forgotten Altar断点修复”。 |
+| BRIDGE12 | 200206诊断自然结束，转完整验收 | 82849ab结局传输修复228实现/198隔离回归通过；200206 F51/838分自然胜利仅诊断。已转原14seed连续正式段，从头200206，独立receipt，不混旧协议/SL记录。事件/遗物审计仍不完整；见worklog/2026-10-19.md“Spire Heart结局传输”。 |
 
 | BRIDGE11 | 全桥接契约审计进行中；新增事件已隔离部署 | 不信任既有实现，沿真实帧→身份/观测→合法动作→命令→结果确认→SL恢复核查。已修MindBloom、未知身份/空mask危险fallback，新增Mushrooms/Cleric/Beggar/Forgotten Altar；b72a35c为220实现/190隔离回归。静态52入口含Neow有24显式路径、28缺失，无PAD身份；已有路径仍非全变体/副作用通过。清单runs/local/real-game-train47-final-step688914432-20seeds-20261018/event-coverage-static.json；验收须分静态覆盖、反例、真实帧重放、部署和实机，不把fail-closed当支持。见worklog/2026-10-19.md BRIDGE11及各事件修复。 |
 
