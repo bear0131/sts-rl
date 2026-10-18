@@ -204,6 +204,8 @@ class RealCombatSearch:
         self.run_commands = 0
         self.run_alignment_checks = 0
         self.run_errors = 0
+        self.run_rejected_commands = 0
+        self._consecutive_rejected_commands = 0
         self.run_encounters = 0
         LOG.info("native search configured %s threads=%s", asdict(self.config), native_search_threads)
 
@@ -231,10 +233,30 @@ class RealCombatSearch:
     def observe_frame(self, frame: dict[str, Any]) -> None:
         """Rollback an optimistically mirrored action when the mod rejects it."""
         if "error" in frame and self._awaiting_command:
+            # CommandExecutor checks availability before dispatch. This exact
+            # rejection guarantees the command never ran; refresh and search again,
+            # rather than replaying the stale command across an overlay.
+            verb = getattr(self, "_awaiting_command_text", "").split(" ", 1)[0].upper()
+            rejected_overlay_command = (
+                verb in {"END", "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN"}
+                and frame["error"] == f"Invalid command: {verb.lower()}. "
+                "Possible commands: [key, click, wait, state]"
+            )
             self.cancel_unsent_command()
+            if rejected_overlay_command:
+                self.run_rejected_commands += 1
+                self._consecutive_rejected_commands += 1
+                if self._consecutive_rejected_commands > 3:
+                    raise RuntimeError("command availability race exceeded 3 consecutive rejections")
+                LOG.warning("combat command rejected before dispatch; native rollback, fresh-state recovery; "
+                            "transport_rejected_commands=%s error=%s",
+                            self.run_rejected_commands, frame["error"])
+                return
             LOG.error("CommunicationMod rejected the mirrored search action; native state rolled back: %s",
                       frame.get("error"))
         if "error" not in frame:
+            if self._awaiting_command:
+                self._consecutive_rejected_commands = 0
             self._rollback_bc = None
             self._rollback_thin = None
             self._awaiting_command = False
@@ -251,6 +273,8 @@ class RealCombatSearch:
         self.run_commands = 0
         self.run_alignment_checks = 0
         self.run_errors = 0
+        self.run_rejected_commands = 0
+        self._consecutive_rejected_commands = 0
         self.run_encounters = 0
 
     def note_error(self) -> None:
@@ -263,6 +287,7 @@ class RealCombatSearch:
             "search_simulations": self.run_decisions * int(self.config.simulations),
             "search_alignment_checks": self.run_alignment_checks,
             "search_errors": self.run_errors,
+            "transport_rejected_commands": self.run_rejected_commands,
             "search_encounters": self.run_encounters,
         }
 
@@ -315,6 +340,7 @@ class RealCombatSearch:
             self._rollback_bc = rollback
             self._rollback_thin = rollback_thin
             self._awaiting_command = True
+            self._awaiting_command_text = command
             self.run_commands += 1
             LOG.info(
                 "full-gumbel decision index=%s sim_action=%s real_action=%s command=%s "

@@ -278,6 +278,41 @@ def test_cancel_unsent_search_restores_native_and_selection_state():
     bridge.cancel_unsent_command()  # idempotent, no command has been sent
 
 
+@pytest.mark.parametrize("command,error,recover", [
+    ("END", "Invalid command: end. Possible commands: [key, click, wait, state]", True),
+    ("PLAY 1", "Invalid command: end. Possible commands: [key, click, wait, state]", False),
+    ("PLAY 1", "Invalid command: play. Possible commands: [key, click, wait, state]", True),
+    ("END", "Invalid argument: end", False),
+])
+def test_predispatch_end_rejection_is_audited_and_rolled_back(command, error, recover, caplog):
+    from types import SimpleNamespace
+    from bridge.search_bridge import RealCombatSearch
+    bridge = RealCombatSearch.__new__(RealCombatSearch)
+    saved = object()
+    bridge._awaiting_command = True
+    bridge._awaiting_command_text = command
+    bridge._rollback_bc = saved
+    bridge._rollback_thin = {}
+    bridge.run_rejected_commands = 0
+    bridge._consecutive_rejected_commands = 0
+    bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=object()),
+                                 _invalidate_backend_cache=lambda: None)
+    bridge.adapter = SimpleNamespace(multi_selected=set(), _joint_multi_plan=None)
+    bridge.observe_frame({"error": error})
+    assert bridge.env.thick.bc is saved
+    assert not bridge._awaiting_command
+    assert bridge.run_rejected_commands == int(recover)
+    assert ("ERROR" not in caplog.text) == recover
+    if recover:
+        assert "transport_rejected_commands=1" in caplog.text
+        bridge._consecutive_rejected_commands = 3
+        bridge._awaiting_command = True
+        bridge._rollback_bc = saved
+        with pytest.raises(RuntimeError, match="exceeded 3"):
+            bridge.observe_frame({"error": error})
+        assert not bridge._awaiting_command
+
+
 def test_end_requires_turn_ack_not_changed_commands_or_player_state():
     from copy import deepcopy
     from bridge.client.agent_orchestrator import stale_combat_end_frame
@@ -343,6 +378,20 @@ def test_combat_stability_does_not_deadlock_executing_selection():
     frame = {'game_state': {'room_phase': 'COMBAT', 'screen_type': 'HAND_SELECT',
                            'action_phase': 'EXECUTING_ACTIONS', 'combat_state': {'turn': 1}}}
     assert not gate.waiting(frame, 0)
+
+
+def test_deck_overlay_waits_until_closed_then_requires_fresh_stability():
+    from bridge.client.agent_orchestrator import CombatFrameStability
+    gate = CombatFrameStability()
+    frame = {'ready_for_command': True, 'game_state': {
+        'room_phase': 'COMBAT', 'screen_type': 'NONE', 'is_screen_up': True,
+        'combat_state': {'turn': 3, 'hand': [], 'player': {'energy': 0}}}}
+    assert gate.waiting(frame, 0)
+    assert gate.waiting(frame, 60)
+    frame['game_state']['is_screen_up'] = False
+    assert gate.waiting(frame, 61)
+    assert gate.waiting(frame, 61.4)
+    assert not gate.waiting(frame, 61.51)
 
 
 def test_opening_guard_allows_spent_first_turn_and_resets_next_battle():
