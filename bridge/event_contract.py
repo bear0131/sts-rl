@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Fountain of Cleansing": [(0, '喝水|Drink', 'remove_curses'),
+                             (1, '离开|Leave', 'leave')],
     "Mysterious Sphere": [(0, '打开圆球|Open Sphere', 'sphere_combat'),
                          (1, '离开|Leave', 'leave')],
     "World of Goop": [(0, '收集金币|Gather Gold', 'goop_gold'),
@@ -317,6 +319,20 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect == 'remove_curses':
+            permanent = {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
+            expected = Counter((c['id'], c.get('upgrades', 0)) for c in old.get('deck', [])
+                               if c.get('type') == 'CURSE' and c['id'] not in permanent)
+            if gained or lost - expected or relic_changed or potion_changed or delta('gold') != 0:
+                raise RuntimeError('Fountain removed wrong card or changed reward type')
+            complete = (g.get('screen_state', {}).get('event_id') == 'Fountain of Cleansing'
+                        and transport_only(g) is not None)
+            # Multiple purges may be observed separately, including Parasite's
+            # max-HP loss. An empty eligible set still requires result dialogue.
+            if lost == expected and complete:
+                self.pending = None
+                return False
+            return True
         if effect in {'goop_gold', 'goop_loss'}:
             if effect == 'goop_gold' and g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
                 self.pending = None

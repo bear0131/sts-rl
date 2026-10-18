@@ -6,6 +6,37 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['[喝水] 移除所有诅咒牌。', '[Drink] Remove all Curses from your deck.'])
+@pytest.mark.parametrize('empty', [False, True])
+def test_fountain_removes_exact_eligible_curses(event_adapter, label, empty):
+    from bridge.event_contract import EventEffectAck
+    from bridge.real_game_env import RealDecision
+    from copy import deepcopy
+    a = event_adapter('Fountain of Cleansing', [(label, False), ('[Leave]', False)])
+    fixed = [dict(id=i, type='CURSE', upgrades=0) for i in ('AscendersBane', 'CurseOfTheBell', 'Necronomicurse')]
+    fixed += [dict(id='Strike_R', type='ATTACK', upgrades=0)]
+    curses = [] if empty else [dict(id=i, type='CURSE', upgrades=0) for i in ('Regret', 'Regret', 'Parasite')]
+    a.gs.update(deck=fixed + curses, relics=[], potions=[], gold=50, max_hp=80, current_hp=70)
+    assert a.command_for_semantic(('event', 0)) == 'CHOOSE 0'
+    ack = EventEffectAck()
+    ack.arm(a.frame, RealDecision('CHOOSE 0', 'policy', semantic=('event', 0)), 0)
+    assert ack.waiting(a.frame, 1)
+    after = deepcopy(a.frame)
+    after['game_state']['deck'] = fixed
+    assert ack.waiting(after, 2)  # Card deltas alone do not complete the command.
+    after['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0)]
+    bad = deepcopy(after)
+    bad['game_state']['deck'] = fixed[1:]
+    with pytest.raises(RuntimeError, match='wrong card'):
+        ack.waiting(bad, 3)
+    if not empty:
+        partial = deepcopy(after)
+        partial['game_state']['deck'] = fixed + curses[:1]
+        assert ack.waiting(partial, 3)
+        after['game_state']['max_hp'] = 77  # Parasite removal side effect.
+    assert not ack.waiting(after, 4)
+
+
 @pytest.mark.parametrize('label', ['[搜索] #g找到一些药水！', '[Search] #gFind #gsome #gPotions!'])
 @pytest.mark.parametrize('ascension,count', [(0, 3), (15, 2)])
 def test_lab_is_reward_transport_with_exact_type_and_count(event_adapter, label, ascension, count):
