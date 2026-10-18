@@ -33,7 +33,6 @@ def event_adapter():
     return make
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE06: Knowing Skull native potion action2 incorrectly emits UI2/card")
 def test_skull_potion_semantic_targets_potion_button(event_adapter):
     a = event_adapter("Knowing Skull", [("[来点喝的？] 获得一瓶药水。", False),
         ("[财富？] 获得90金币。", False), ("[成功？] 获得一张无色牌。", False),
@@ -41,14 +40,12 @@ def test_skull_potion_semantic_targets_potion_button(event_adapter):
     assert a.command_for_semantic(ga.event(2)) == "CHOOSE 0"
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE06: absent Blood Vial must mask native action0, not renumber accept/refuse")
 def test_vampires_without_vial_has_accept_and_refuse_native_ids(event_adapter):
     a = event_adapter("Vampires", [("[接受] 失去24最大生命。", False), ("[拒绝]", False)])
     assert a._legal_event_actions() == [ga.event(1), ga.event(2)]
     assert a.command_for_semantic(ga.event(1)) == "CHOOSE 0"
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE06: disabled Red Mask option compresses transport indices, not native semantics")
 def test_red_mask_disabled_option_keeps_native_ids(event_adapter):
     a = event_adapter("Tomb of Lord Red Mask", [("[锁定] 需要红面具。", True),
         ("[献上14金币] 获得遗物。", False), ("[离开]", False)])
@@ -56,9 +53,62 @@ def test_red_mask_disabled_option_keeps_native_ids(event_adapter):
     assert a.command_for_semantic(ga.event(2)) == "CHOOSE 1"
 
 
-@pytest.mark.xfail(strict=True, reason="BRIDGE06: late Mind Bloom heal is native action3, not wealth action2")
 def test_late_mind_bloom_heal_is_not_wealth(event_adapter):
     a = event_adapter("MindBloom", [("[我必凯旋] 战斗。", False),
         ("[我已觉醒] 升级所有牌。", False), ("[我无伤痛] 回复所有生命。", False)], floor=45)
     assert a._legal_event_actions() == [ga.event(0), ga.event(1), ga.event(3)]
     assert a.command_for_semantic(ga.event(3)) == "CHOOSE 2"
+
+
+def test_unknown_event_does_not_fall_back_to_number(event_adapter):
+    a = event_adapter("Cursed Tome", [("[继续阅读]", False)])
+    with pytest.raises(ValueError, match="unsupported event"):
+        a._legal_event_actions()
+
+
+def test_dialogue_bypasses_policy_without_claiming_resource_effect(event_adapter):
+    a = event_adapter("Knowing Skull", [("[继续]", False)])
+    assert a.auto_command() == ("CHOOSE 0", "event_dialogue_transport")
+
+
+def test_unknown_label_is_not_guessed(event_adapter):
+    a = event_adapter("Knowing Skull", [("[未知选项]", False)])
+    with pytest.raises(ValueError, match="unrecognized"):
+        a._legal_event_actions()
+
+
+def test_event_potion_effect_rejects_card_gain(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter("Knowing Skull", [("[来点喝的？] 获得一瓶药水。", False)])
+    a.gs['potions'] = [{'id': 'Potion Slot'}]
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 2)), 0)
+    assert ack.waiting(a.frame, 1)
+    bad = deepcopy(a.frame)
+    bad['game_state']['deck'] = [{'id': 'Mind Blast', 'upgrades': 0}]
+    bad['game_state']['current_hp'] -= 6
+    with pytest.raises(RuntimeError, match="effect type mismatch"):
+        ack.waiting(bad, 2)
+    good = deepcopy(a.frame)
+    good['game_state']['potions'] = [{'id': 'Strength Potion'}]
+    good['game_state']['current_hp'] -= 6
+    assert not ack.waiting(good, 2)
+    assert ack.pending is None
+
+
+def test_event_effect_timeout_and_grid_wait(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter("Purifier", [("[祈祷]", False)])
+    a.gs['deck'] = [{'id': 'Strike_R', 'upgrades': 0}]
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    grid = deepcopy(a.frame)
+    grid['game_state']['screen_type'] = 'GRID'
+    assert not ack.waiting(grid, 1)
+    assert ack.pending is not None
+    with pytest.raises(RuntimeError, match="timeout"):
+        ack.waiting(a.frame, 31)

@@ -28,6 +28,7 @@ import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
 from bridge.campaign import SeedCampaign
+from bridge.event_contract import EventEffectAck
 from env.core import action_space as A
 from env.core import game_actions as ga
 
@@ -657,6 +658,7 @@ def main() -> None:
         pending_end_since = 0.0
         combat_stability = CombatFrameStability()
         reward_ack = RewardCommandAck()
+        event_ack = EventEffectAck()
         unsent_search = None
         for line in sys.stdin:
             line = line.strip()
@@ -665,6 +667,10 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if event_ack.waiting(frame, time.monotonic()):
+                    time.sleep(0.1)
+                    send("STATE")
+                    continue
                 if reward_ack.waiting(frame, time.monotonic()):
                     time.sleep(0.1)
                     send("STATE")
@@ -708,6 +714,7 @@ def main() -> None:
                     unsent_search = (deepcopy(frame), decision)
                     send("STATE")
                     continue
+                event_ack.arm(frame, decision, time.monotonic())
                 send_decision(frame, decision)
                 reward_ack.arm(frame, decision, time.monotonic())
                 if combat_command_needs_ack(frame, decision.command):

@@ -28,6 +28,7 @@ from env.core import game_actions as ga
 from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
+from bridge import event_contract
 
 LOG = logging.getLogger(__name__)
 
@@ -711,6 +712,11 @@ class RealGameAdapter:
         if st == "EVENT" and _normalize_event(ss.get("event_id")) == "NEOW" and len(cl) == 1:
             return "CHOOSE 0", "neow_intro"
 
+        if st == "EVENT":
+            dialogue = event_contract.transport_only(self.gs)
+            if dialogue is not None:
+                return f"CHOOSE {dialogue}", "event_dialogue_transport"
+
         if auto_enter_shop and st == "SHOP_ROOM":
             if self._leaving_shop:
                 self._leaving_shop = False
@@ -1001,10 +1007,12 @@ class RealGameAdapter:
             if event == "NEOW" and self.neow_observation:
                 opts["neow"] = self._neow_options(ss)
             elif event != "NEOW":
-                opts["event_options"] = list(range(min(len(cl), A.EVENT_OPT_W)))
+                mapping = event_contract.options(self.gs)
+                opts["event_options"] = sorted(mapping)
                 details = _structured_event_choices(ss, len(cl))
                 if details:
-                    opts["event_choices"] = details
+                    reverse = {ui: native for native, (ui, _) in mapping.items()}
+                    opts["event_choices"] = [dict(d, index=reverse[d["index"]]) for d in details]
         elif phase == "card_select":
             cards = _screen_cards(ss)
             select = self._select_block(cards=cards, overworld=True)
@@ -1440,7 +1448,7 @@ class RealGameAdapter:
         n = len(self.choices())
         if event == "NEOW" and n >= A.NEOW_W:
             return [ga.neow(i) for i in range(A.NEOW_W)]
-        return [ga.event(i) for i in range(min(n, A.EVENT_OPT_W))]
+        return [ga.event(i) for i in sorted(event_contract.options(self.gs))]
 
     def _legal_card_select_actions(self) -> list[tuple]:
         cmds = self.commands()
@@ -1699,7 +1707,7 @@ class RealGameAdapter:
             idx = self._campfire_command_index(action[1])
             return f"CHOOSE {idx}"
         if verb == ga.EVENT:
-            return f"CHOOSE {action[1]}"
+            return f"CHOOSE {event_contract.options(self.gs)[action[1]][0]}"
         if verb == ga.CHEST:
             return "CHOOSE 0" if action[1] else "PROCEED"
         if verb == ga.BOSS_RELIC:

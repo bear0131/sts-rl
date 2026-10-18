@@ -280,6 +280,7 @@ def test_cancel_unsent_search_restores_native_and_selection_state():
 
 @pytest.mark.parametrize("command,error,recover", [
     ("END", "Invalid command: end. Possible commands: [key, click, wait, state]", True),
+    ("END", "Invalid command: end. Possible commands: [choose, return, key, click, wait, state]", True),
     ("PLAY 1", "Invalid command: end. Possible commands: [key, click, wait, state]", False),
     ("PLAY 1", "Invalid command: play. Possible commands: [key, click, wait, state]", True),
     ("END", "Invalid argument: end", False),

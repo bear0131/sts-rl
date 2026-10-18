@@ -239,8 +239,10 @@ class RealCombatSearch:
             verb = getattr(self, "_awaiting_command_text", "").split(" ", 1)[0].upper()
             rejected_overlay_command = (
                 verb in {"END", "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN"}
-                and frame["error"] == f"Invalid command: {verb.lower()}. "
-                "Possible commands: [key, click, wait, state]"
+                and frame["error"] in {
+                    f"Invalid command: {verb.lower()}. Possible commands: [key, click, wait, state]",
+                    f"Invalid command: {verb.lower()}. Possible commands: [choose, return, key, click, wait, state]",
+                }
             )
             self.cancel_unsent_command()
             if rejected_overlay_command:
