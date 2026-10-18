@@ -210,6 +210,10 @@ def test_reward_preview_transport_does_not_call_policy_between_commands():
     ('CARD_REWARD', 'COMBAT', 'CHOOSE 0', False),
     ('NONE', 'COMBAT', 'PLAY 1 0', False),
     ('EVENT', 'EVENT', 'STATE', False),
+    ('SHOP_SCREEN', 'INCOMPLETE', 'CHOOSE 0', True),
+    ('SHOP_SCREEN', 'INCOMPLETE', 'PROCEED', True),
+    ('SHOP_ROOM', 'INCOMPLETE', 'CHOOSE shop', True),
+    ('SHOP_SCREEN', 'INCOMPLETE', 'STATE', False),
 ])
 def test_real_event_reward_command_pacing(monkeypatch, screen, room, command, delayed):
     from bridge.client import agent_orchestrator as agent
@@ -269,3 +273,33 @@ def test_opening_empty_frame_and_inflight_draw_are_not_policy_ready():
     frame["game_state"]["combat_state"]["turn"] = 2
     adapter.update(frame)
     assert adapter._combat_ready_for_policy()  # a legitimate empty hand remains legal
+
+
+def test_combat_stability_requires_fresh_unchanged_frame_after_animation():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import CombatFrameStability
+    gate = CombatFrameStability()
+    frame = {'ready_for_command': True, 'game_state': {
+        'room_phase': 'COMBAT', 'screen_type': 'NONE', 'action_phase': 'WAITING_ON_USER',
+        'combat_state': {'turn': 1, 'hand': [], 'player': {'energy': 0}}}}
+    assert gate.waiting(frame, 0)
+    assert gate.waiting(frame, 0.4)
+    frame['game_state']['combat_state']['player']['energy'] = 5
+    assert gate.waiting(frame, 0.45)
+    frame['game_state']['combat_state']['hand'] = [{'id': 'Strike_R'}]
+    assert gate.waiting(frame, 0.6)
+    assert gate.waiting(frame, 1.0)
+    assert not gate.waiting(deepcopy(frame), 1.11)
+    frame['game_state']['current_action'] = 'DrawCardAction'
+    assert gate.waiting(frame, 2)
+    frame['game_state'].pop('current_action')
+    assert gate.waiting(frame, 3)
+    assert not gate.waiting(frame, 3.51)
+
+
+def test_combat_stability_does_not_deadlock_executing_selection():
+    from bridge.client.agent_orchestrator import CombatFrameStability
+    gate = CombatFrameStability()
+    frame = {'game_state': {'room_phase': 'COMBAT', 'screen_type': 'HAND_SELECT',
+                           'action_phase': 'EXECUTING_ACTIONS', 'combat_state': {'turn': 1}}}
+    assert not gate.waiting(frame, 0)

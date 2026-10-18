@@ -491,7 +491,7 @@ def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
     verb = decision.command.split()[0].upper()
     outside_combat = str(gs.get("room_phase") or "").upper() != "COMBAT"
     if verb not in {"STATE", "WAIT"} and (
-        screen == "EVENT"
+        screen in {"EVENT", "SHOP_SCREEN", "SHOP_ROOM"}
         or (outside_combat and screen in {"GRID", "CARD_REWARD", "COMBAT_REWARD"})
     ):
         time.sleep(0.5)
@@ -514,6 +514,32 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
     if any(gs.get(k) != pending.get(k) for k in ("seed", "floor")):
         return False
     return int(combat.get("turn", 0)) <= int(pending["combat_state"]["turn"])
+
+
+class CombatFrameStability:
+    """Require a fresh, unchanged settled frame before ordinary combat actions."""
+
+    def __init__(self, seconds: float = 0.5):
+        self.seconds = seconds
+        self.state = None
+        self.since = 0.0
+
+    def waiting(self, frame: dict[str, Any], now: float) -> bool:
+        gs = frame.get("game_state") or {}
+        if (not gs.get("combat_state") or gs.get("room_phase") != "COMBAT"
+                or gs.get("screen_type") != "NONE" or "error" in frame):
+            self.state = None
+            return False  # Selection screens have their own readiness contract.
+        if (not frame.get("ready_for_command", True) or gs.get("current_action")
+                or gs.get("action_phase") not in (None, "WAITING_ON_USER")
+                or gs.get("is_screen_up")):
+            self.state = None
+            return True
+        if self.state != gs:
+            self.state = deepcopy(gs)
+            self.since = now
+            return True
+        return now - self.since < self.seconds
 
 
 def main() -> None:
@@ -567,6 +593,7 @@ def main() -> None:
         pending_play_since = 0.0
         pending_end_frame = None
         pending_end_since = 0.0
+        combat_stability = CombatFrameStability()
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -588,6 +615,10 @@ def main() -> None:
                     send("STATE")
                     continue
                 pending_play_frame = None
+                if combat_stability.waiting(frame, time.monotonic()):
+                    time.sleep(0.1)
+                    send("STATE")
+                    continue
                 decision = agent.decide(frame)
                 _log_decision(frame, decision, adapter)
                 send_decision(frame, decision)
