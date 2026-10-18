@@ -6,6 +6,30 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('bad_index', [None, -1, True, 0.5, '0'])
+def test_event_wire_index_must_be_nonnegative_integer(event_adapter, bad_index):
+    from bridge.event_contract import options, transport_only
+    a = event_adapter('Big Fish', [('[Banana]', False)])
+    a.gs['screen_state']['options'][0]['choice_index'] = bad_index
+    with pytest.raises(ValueError, match='choice_index'):
+        options(a.gs)
+    a.gs['screen_state']['options'][0]['text'] = '[Continue]'
+    with pytest.raises(ValueError, match='choice_index'):
+        transport_only(a.gs)
+
+
+def test_distinct_event_semantics_cannot_share_wire_index(event_adapter):
+    from bridge.event_contract import options, transport_only
+    a = event_adapter('Big Fish', [('[Banana]', False), ('[Donut]', False)])
+    a.gs['screen_state']['options'][1]['choice_index'] = 0
+    for decode in (options, transport_only):
+        with pytest.raises(ValueError, match='duplicate'):
+            decode(a.gs)
+    # Disabled source options do not have a selectable wire index.
+    a.gs['screen_state']['options'][1]['disabled'] = True
+    assert options(a.gs) == {0: (0, 'heal')}
+
+
 @pytest.mark.parametrize('label', ['[攻击] #b???', '[Attack] #b???', '[睡眠]', '[Sleep]', '[走向门前]', '[Approach Door]'])
 def test_heart_ending_transport_is_not_terminal(event_adapter, label):
     a = event_adapter('Spire Heart', [(label, False)])

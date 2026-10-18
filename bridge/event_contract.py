@@ -60,8 +60,21 @@ def scrap_offer(gs):
     raise ValueError('Scrap Ooze search option missing')
 
 
+def _validate_choice_indices(gs):
+    """Reject malformed wire indices before policy or transport can send CHOOSE."""
+    seen = set()
+    for option in (gs.get('screen_state') or {}).get('options', []):
+        if option.get('disabled'):
+            continue
+        index = option.get('choice_index')
+        if type(index) is not int or index < 0 or index in seen:
+            raise ValueError('invalid/duplicate event choice_index')
+        seen.add(index)
+
+
 def transport_only(gs):
     """An exact one-button dialogue, not a resource-bearing policy option."""
+    _validate_choice_indices(gs)
     opts = [o for o in (gs.get('screen_state') or {}).get('options', []) if not o.get('disabled')]
     if len(opts) != 1:
         return None
@@ -131,6 +144,7 @@ def nloth_choices(gs):
 
 
 def options(gs):
+    _validate_choice_indices(gs)
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
     if event == "N'loth":
