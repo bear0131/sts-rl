@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | attempt10续跑200201；已完成1局0胜1负 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4。855919d增加搜索后发送前STATE核验，状态变动撤销未发送镜像；136实现/106部署回归及真实F2帧重放、7文件身份通过。保留GAME_OVER门控修复。200200原始自然F33死亡receipt恢复，349决策/346指令/15战斗，search_errors0；alignment_checks不可恢复null，一次非搜索PROCEED拒绝保留待审。18:46:22 --resume启动，prior8857.6；attempt9 F2遮挡导致PLAY拒绝已归档，不计终局。旧attempt1..7诊断；attempt8自然死亡有效，不重打。继续逐局报告及20自然终局/身份/预算/隐性对齐验收，日志增长不代替语义进展。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，worklog/2026-10-18.md。 |
+| BRIDGE05 | attempt11续跑200201；圆顶改真实当前意图导出 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4。08b13c6修改CommunicationMod单一序列化方法，圆顶仍导出真实当前move；缺失即报错，不猜测。136实现/106部署回归，jar单class/其它方法不变及7文件/model/native核验通过。18:53:21监督44124/Java47392 --resume启动，F1真实回包含simulator-parity-v1及move_id；实机持圆顶分支待后续验证。prior9008.2。200200旧协议F33死亡保留0胜1负（alignment_checks为null，一次PROCEED拒绝），不得混称20同协议。attempt9故障及attempt10有意部署中断已归档。继续逐局报告/语义进展检查/当前意图与奖励审计及最终自然终局验收。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，worklog/2026-10-18.md。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
