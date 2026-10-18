@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Scrap Ooze": [(0, '伸手进去|接着往里伸|Reach Inside|Deeper', 'scrap_search'),
+                   (1, '离开|Leave', 'leave')],
     "Forgotten Altar": [(0, '献上|Offer', 'altar_idol'), (1, '献祭|Sacrifice', 'altar_sacrifice'),
                         (2, '亵渎|Desecrate', 'altar_decay')],
     "Beggar": [(0, '给金币|Offer Gold', 'beggar_remove'), (1, '离开|Leave', 'leave')],
@@ -41,6 +43,19 @@ CONTRACTS = {
 
 def _text(text):
     return re.sub(r'\s+|#[a-zA-Z]', '', str(text)).casefold()
+
+
+def scrap_offer(gs):
+    """Public damage/chance, not a prediction of the hidden random roll."""
+    for o in (gs.get('screen_state') or {}).get('options', []):
+        text = _text(o.get('text', ''))
+        if o.get('disabled') or not re.match(r'\[(伸手进去|接着往里伸|reachinside|deeper)\]', text):
+            continue
+        m = re.search(r'(?:失去|lose)(\d+)(?:生命。|hp\.)(\d+)%', text)
+        if not m:
+            raise ValueError('Scrap Ooze public damage/chance missing')
+        return int(m[1]), int(m[2])
+    raise ValueError('Scrap Ooze search option missing')
 
 
 def transport_only(gs):
@@ -162,6 +177,8 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect == 'scrap_search':
+            scrap_offer(gs)  # Refuse unparsed variants before sending anything.
         if effect == 'falling_remove':
             card = next(d['card'] for d in falling_choices(gs) if d['index'] == decision.semantic[1])
             self.falling_target = (card['id'], card.get('upgrades', 0))
@@ -221,6 +238,32 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect == 'scrap_search':
+            if g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
+                self.pending = None
+                return False
+            if g.get('screen_state', {}).get('event_id') != 'Scrap Ooze':
+                raise RuntimeError('Scrap Ooze unexpected result screen')
+            # Relic acquisition can heal or otherwise change resources. Require
+            # the acquired relic AND completed dialogue, not HP loss alone.
+            if transport_only(g) is not None:
+                before = Counter(r['id'] for r in old.get('relics', []))
+                after = Counter(r['id'] for r in g.get('relics', []))
+                if sum((after - before).values()) == 1 and not before - after:
+                    self.pending = None
+                    return False
+                return True
+            previous, current = scrap_offer(old), scrap_offer(g)
+            if current == previous:
+                return True  # Includes HP-only animation/intermediate frames.
+            if current != (previous[0] + 1, previous[1] + 10):
+                raise RuntimeError('Scrap Ooze failure cost/chance mismatch')
+            if relic_changed or gained or lost or potion_changed or delta('gold'):
+                raise RuntimeError('Scrap Ooze failure effect type mismatch')
+            if delta('current_hp') >= 0:
+                return True
+            self.pending = None
+            return False
         if effect.startswith('altar_'):
             before = {r['id']: r for r in old.get('relics', [])}
             after = {r['id']: r for r in g.get('relics', [])}

@@ -504,6 +504,51 @@ def test_repeated_sl_rebuilds_search_and_adapter_without_start(monkeypatch):
     assert all(cmd in ['ready','STATE'] for cmd in sent)
 
 
+@pytest.mark.parametrize('label', ['[伸手进去] 失去3生命。25%:找到一件遗物。',
+                                  '[Reach Inside] #rLose #r3 #rHP. #g25%: #gFind #ga #gRelic.'])
+def test_scrap_failure_waits_for_updated_offer(event_adapter, label):
+    from bridge.event_contract import EventEffectAck, options
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Scrap Ooze', [(label, False), ('[离开]', False)])
+    assert options(a.gs) == {0: (0, 'scrap_search'), 1: (1, 'leave')}
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['current_hp'] -= 3
+    assert ack.waiting(after, 1)
+    after['game_state']['screen_state']['options'][0]['text'] = '[接着往里伸] 失去4生命。35%:找到一件遗物。'
+    assert not ack.waiting(after, 2)
+
+
+def test_scrap_rejects_wrong_failure_increment(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Scrap Ooze', [('[Reach Inside] Lose 3 HP. 25%: Find a Relic.', False), ('[Leave]', False)])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['current_hp'] -= 3
+    after['game_state']['screen_state']['options'][0]['text'] = '[Deeper] Lose 3 HP. 35%: Find a Relic.'
+    with pytest.raises(RuntimeError, match='cost/chance mismatch'):
+        ack.waiting(after, 1)
+
+
+def test_scrap_success_requires_relic_and_dialogue(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('Scrap Ooze', [('[Deeper] Lose 4 HP. 35%: Find a Relic.', False), ('[Leave]', False)])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    after = deepcopy(a.frame)
+    after['game_state']['screen_state']['options'] = [{'text': '[Leave]', 'choice_index': 0}]
+    assert ack.waiting(after, 1)
+    after['game_state'].setdefault('relics', []).append({'id': 'Blood Vial'})
+    assert not ack.waiting(after, 2)
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])
