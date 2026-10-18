@@ -83,6 +83,26 @@ legal-action contract and the real game's accepted commands.
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
 
+### Simulator-parity current intents
+
+Neural simulation exposes the current native monster move even with Runic Dome.
+For the same current-state information in real-game evaluation, use
+`ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
+It changes only `GameStateConverter.convertMonsterToJson`: the Dome-specific
+export mask is bypassed, and each monster receives
+`current_intent_export: simulator-parity-v1`. Gameplay, UI and RNG are untouched.
+The bridge fails on a live Dome monster whose current move is still missing;
+it no longer substitutes a shadow-world guess. Future search outcomes remain
+hypothetical, not the real game's hidden future.
+
+Compile with Java 8 target and ModTheSpire.jar on the classpath; run the class
+with arguments `original.jar patched.jar desktop-1.0.jar BaseMod.jar ModTheSpire.jar`.
+The output must not exist. The patcher checks exactly one target call and checks
+that other converter methods retain identical bytecode. Keep originals and
+SHA256s outside Git, stop the game before deployment, and verify that only the
+converter class differs between jars. This is an explicit evaluation protocol
+change, not a claim of complete game/simulator equivalence.
+
 When the checkpoint expects `--global-map-view`, the agent reads
 CommunicationMod's `game_state.map` plus the map screen's
 `screen_state.current_node`, `screen_state.next_nodes`, and
