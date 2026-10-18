@@ -200,6 +200,22 @@ def test_manual_campaign_never_starts_after_returning_to_menu():
         assert not campaign.start_sent
 
 
+def test_saved_search_index_restore_is_scoped():
+    from types import SimpleNamespace
+    from bridge.client.agent_orchestrator import restore_attached_search_index
+    args = SimpleNamespace(attach_search_index=204, attach_existing_seed=200205, attach_existing_floor=23)
+    search = SimpleNamespace(decision_index=0, run_decisions=0)
+    restore_attached_search_index(args, search, {'seed': 200205, 'floor': 23})
+    assert search.decision_index == 204
+    assert search.run_decisions == 0  # identity restoration is not actual search work
+    for gs in [{'seed': 200206, 'floor': 23}, {'seed': 200205, 'floor': 24}]:
+        with pytest.raises(RuntimeError, match='matching save'):
+            restore_attached_search_index(args, search, gs)
+    args.attach_search_index = -1
+    with pytest.raises(RuntimeError, match='matching save'):
+        restore_attached_search_index(args, search, {'seed': 200205, 'floor': 23})
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

@@ -173,6 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Wait for user/UI save resume, never START; verify this internal seed.')
     parser.add_argument('--attach-existing-floor', type=int, default=None,
                         help='Verify the first loaded floor when attaching to an existing save.')
+    parser.add_argument('--attach-search-index', type=int, default=None,
+                        help='Restore logical search index on first validated seed/floor attachment only.')
     return parser
 
 
@@ -666,8 +668,24 @@ class CombatFrameStability:
         return now - self.since < self.seconds
 
 
+def restore_attached_search_index(args, search, gs) -> None:
+    index = args.attach_search_index
+    if index is None:
+        return
+    if (index < 0 or args.attach_existing_seed is None or args.attach_existing_floor is None
+            or search is None or gs.get('seed') != args.attach_existing_seed
+            or gs.get('floor') != args.attach_existing_floor):
+        raise RuntimeError('search index restore requires matching save seed/floor and combat search')
+    search.decision_index = index
+    log.info('restored save search index=%s seed=%s floor=%s', index, gs['seed'], gs['floor'])
+
+
 def main() -> None:
     args = build_parser().parse_args()
+    if args.attach_search_index is not None and (
+            args.attach_search_index < 0 or args.attach_existing_seed is None
+            or args.attach_existing_floor is None or not args.combat_search):
+        raise SystemExit('--attach-search-index requires nonnegative index, seed, floor and combat search')
     log.info("=== agent session start argv=%s cwd=%s ===", sys.argv, Path.cwd())
     if not args.checkpoint:
         raise SystemExit("checkpoint path required or STS_RL_CHECKPOINT must be set")
@@ -745,6 +763,7 @@ def main() -> None:
                                 and gs.get('floor') != args.attach_existing_floor)):
                         raise RuntimeError('loaded save seed/floor mismatch')
                     if attach_pending:
+                        restore_attached_search_index(args, combat_search, gs)
                         attach_pending = False
                         log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
                 now, paused = pause_clock.update(frame, time.monotonic())
