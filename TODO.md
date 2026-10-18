@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | Neow隐性观测已修，原20seed从头重测 | 最终TRAIN47 step688914432、200200..200219、A0铁甲/确定性upper/G0/Full-Gumbel预算128/native4。374454f修NoBlock；2502df6修真实Neow缺枚举字段默默归零，112回归及3真实帧重放通过，换四概率99.4–99.5%。此前2个死亡因开局错误作废仅留attempt2诊断，16:20:48重跑200200起全部20局，首局实机已确认换四。隔离runtime基线c73eda8叠加5文件，native ee0a0925。心跳20自主修复推进；验收自然终局/0错误/身份/根batch恢复，实际simulation需剔除单合法动作root_forward_skipped（旧summary是预算数）。对照同seed18/20、整体93%，继续隐性观测/动作/状态审计。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018；worklog/2026-10-18.md#bridge05-neow-silent-observation-mismatch。 |
+| BRIDGE05 | 第四attempt从200200全新实机运行；持续隐性对齐审计 | 最终TRAIN47 step688914432、200200..200219、A0/确定性upper/G0/Full-Gumbel预算128/native4不变。374454f修NoBlock、2502df6修Neow、bc16b6f修秘密技法GRID上下文排序，113回归及真实F23重放通过。按用户要求旧三自然死亡仅存attempt3诊断，17:36:09从200200重启，首层已实际搜索出牌；新campaign唯一有效成绩。每个新终局报告，自主修复验证续测不等待催促。对照模拟同20seed18胜及总体93%，持续查观测/动作/奖励/遗物/搜索隐性差异；声明128倍预算不等于强制动作实际搜索量。验收20唯一自然终局/0错误/身份/日志及根batch恢复。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，见worklog/2026-10-18.md。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
