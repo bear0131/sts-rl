@@ -6,6 +6,31 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('labels', [('献祭', '亵渎'), ('Sacrifice', 'Desecrate')])
+def test_altar_disabled_idol_preserves_native_id_and_both_effects(event_adapter, labels):
+    from bridge.event_contract import EventEffectAck
+    from types import SimpleNamespace
+    from copy import deepcopy
+    a = event_adapter('Forgotten Altar', [('[Locked]', True), (f'[{labels[0]}]', False), (f'[{labels[1]}]', False)])
+    assert a.command_for_semantic(('event', 1)) == 'CHOOSE 0'
+    assert a.command_for_semantic(('event', 2)) == 'CHOOSE 1'
+    a.gs.update(max_hp=92, current_hp=89, deck=[], relics=[])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 1)), 0)
+    after = deepcopy(a.frame)
+    after['game_state'].update(max_hp=97, current_hp=94)
+    assert ack.waiting(after, 1)  # Max HP alone is not the complete effect.
+    after['game_state']['current_hp'] = 71
+    assert not ack.waiting(after, 2)
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 2)), 3)
+    after = deepcopy(a.frame)
+    after['game_state']['deck'] = [dict(id='Regret', upgrades=0)]
+    with pytest.raises(RuntimeError, match='curse identity'):
+        ack.waiting(after, 4)
+    after['game_state']['deck'] = [dict(id='Decay', upgrades=0)]
+    assert not ack.waiting(after, 5)
+
+
 @pytest.mark.parametrize('label', ['给金币', 'Offer Gold'])
 def test_beggar_paid_removal_two_dialogues(event_adapter, label):
     from bridge.event_contract import EventEffectAck

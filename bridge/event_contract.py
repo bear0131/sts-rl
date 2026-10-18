@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "Forgotten Altar": [(0, '献上|Offer', 'altar_idol'), (1, '献祭|Sacrifice', 'altar_sacrifice'),
+                        (2, '亵渎|Desecrate', 'altar_decay')],
     "Beggar": [(0, '给金币|Offer Gold', 'beggar_remove'), (1, '离开|Leave', 'leave')],
     "The Cleric": [(0, '治疗|Heal', 'cleric_heal'), (1, '净化|Purify', 'cleric_remove'),
                    (2, '离开|Leave', 'leave')],
@@ -211,6 +213,30 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect.startswith('altar_'):
+            before = {r['id']: r for r in old.get('relics', [])}
+            after = {r['id']: r for r in g.get('relics', [])}
+            if effect == 'altar_sacrifice':
+                # Verify both effect types, not max-HP gain alone. Damage relic
+                # interactions are not claimed to have exact numeric coverage.
+                if gained or lost or delta('max_hp') not in (0, 5):
+                    raise RuntimeError('Altar sacrifice effect mismatch')
+                done = delta('max_hp') == 5 and delta('current_hp') < 0
+            elif effect == 'altar_decay':
+                blocked = before.get('Omamori', {}).get('counter', 0) > 0
+                expected = Counter() if blocked else Counter({('Decay', 0): 1})
+                if gained and gained != expected or lost:
+                    raise RuntimeError('Altar curse identity/count mismatch')
+                done = (after.get('Omamori', {}).get('counter') == before['Omamori']['counter'] - 1
+                        if blocked else gained == expected)
+            else:
+                if 'Golden Idol' not in before or 'Bloody Idol' in before:
+                    raise RuntimeError('Altar idol variant not verified')
+                done = set(before) - set(after) == {'Golden Idol'} and set(after) - set(before) == {'Bloody Idol'}
+            if done:
+                self.pending = None
+                return False
+            return True
         if effect in {'cleric_heal', 'cleric_remove', 'beggar_remove', 'beggar_remove_confirmed'}:
             cost = (75 if effect.startswith('beggar_') else
                     35 if effect == 'cleric_heal' else (75 if old.get('ascension_level', 0) >= 15 else 50))
