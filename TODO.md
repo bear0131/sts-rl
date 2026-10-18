@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | 第四attempt从200200全新实机运行；持续隐性对齐审计 | 最终TRAIN47 step688914432、200200..200219、A0/确定性upper/G0/Full-Gumbel预算128/native4不变。374454f修NoBlock、2502df6修Neow、bc16b6f修秘密技法GRID上下文排序，113回归及真实F23重放通过。按用户要求旧三自然死亡仅存attempt3诊断，17:36:09从200200重启，首层已实际搜索出牌；新campaign唯一有效成绩。每个新终局报告，自主修复验证续测不等待催促。对照模拟同20seed18胜及总体93%，持续查观测/动作/奖励/遗物/搜索隐性差异；声明128倍预算不等于强制动作实际搜索量。验收20唯一自然终局/0错误/身份/日志及根batch恢复。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，见worklog/2026-10-18.md。 |
+| BRIDGE05 | SL暂停实机；END/圆顶离线修复验证通过，待恢复部署 | 最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4不变。原attempt1..3仅诊断；attempt4/200200人工SL不计成绩。新增开局空帧/执行中动作门控、END跨回合确认；圆顶缺失真实意图保留原生假设，匹配神经模拟器不额外遮蔽。122回归通过，真实F18回合2离线重放：旧零意图空过预测40血、新假设20血，128搜索改出PLAY1防御、0错误。未部署隔离runtime、未恢复用户暂停实机；后续需部署身份核验、从200200无干预重测20局及隐性差异审计。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018/dome-hold-replay.json；worklog/2026-10-18.md。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 

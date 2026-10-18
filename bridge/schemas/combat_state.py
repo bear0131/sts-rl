@@ -117,7 +117,7 @@ def _attack(base, hits):
     return base, (hits if base > 0 else 0)
 
 
-def _monster_real(m):
+def _monster_real(m, *, intents_hidden=False):
     base, hits = _attack(m.get("move_base_damage", -1), m.get("move_hits", 1))
     adjusted, _ = _attack(m.get("move_adjusted_damage", base), hits)
     hp = m["current_hp"]
@@ -162,6 +162,7 @@ def _monster_real(m):
         "move": "INVALID",
         "move_id": 0,
         "intent": m.get("intent"),
+        "intent_hidden": bool(intents_hidden and "move_id" not in m),
         "real_move_id": m.get("move_id", -1),
         "real_last_move_id": m.get("last_move_id", -1),
         "real_second_last_move_id": m.get("second_last_move_id", -1),
@@ -212,7 +213,9 @@ def normalize_real(game_state):
                        if k != "Berserk"},
             "energy_per_turn": _real_energy_per_turn(game_state),
         },
-        "monsters": [_monster_real(m) for m in cs["monsters"]],
+        "monsters": [_monster_real(m, intents_hidden=any(
+            r["id"] == "Runic Dome" for r in game_state.get("relics", [])
+        )) for m in cs["monsters"]],
         "hand": _cards_real(cs["hand"], include_cost=True),
         "draw": _cards_real(cs["draw_pile"]),
         "discard": _cards_real(cs["discard_pile"]),
@@ -806,6 +809,10 @@ def diff(real, sim, pile_mode="auto"):
         out.append(("monsters.len", len(rms), len(sms)))
     for i, (rm, sm) in enumerate(zip(rms, sms)):
         for k in _MONSTER_CMP_FIELDS:
+            # Hidden intent is unknown, not an observed zero-damage attack.
+            # Other public fields must still agree exactly.
+            if rm.get("intent_hidden") and k in {"base_damage", "hits"}:
+                continue
             cmp(f"monsters[{i}].{k}", rm[k], sm[k])
 
     for pile in ("hand", "draw", "discard", "exhaust"):

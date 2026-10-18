@@ -600,6 +600,16 @@ class RealGameAdapter:
         action_phase = str(self.gs.get("action_phase") or "").upper()
         if action_phase and action_phase != "WAITING_ON_USER":
             return False
+        if self.screen_type() == "NONE":
+            if self.gs.get("current_action"):
+                return False
+            combat = self.gs["combat_state"]
+            # The mod can advertise END before opening draw/energy actions.
+            # An empty, unenergized opening is not a policy decision point.
+            if (combat.get("turn") == 1 and not combat.get("hand")
+                    and combat.get("player", {}).get("energy") == 0
+                    and combat.get("draw_pile")):
+                return False
         if self.screen_type() == "NONE" and bool(self.gs.get("is_screen_up")):
             screen_name = str(self.gs.get("screen_name") or "").upper()
             if screen_name and screen_name != "NONE":

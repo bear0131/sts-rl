@@ -234,3 +234,38 @@ def test_duplicate_frame_after_play_waits_for_actual_hand_transition():
     assert not stale_combat_play_frame({"game_state": after}, gs)
     assert not stale_combat_play_frame({"error": "rejected"}, gs)
     assert not stale_combat_play_frame({"game_state": gs}, None)
+
+
+def test_end_requires_turn_ack_not_changed_commands_or_player_state():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import stale_combat_end_frame
+    gs = {"seed": 200200, "floor": 18, "room_phase": "COMBAT",
+          "combat_state": {"turn": 1, "hand": [], "player": {"energy": 1}}}
+    after = deepcopy(gs)
+    after["combat_state"]["player"]["energy"] = 5
+    assert stale_combat_end_frame({"game_state": after, "available_commands": ["end"]}, gs)
+    after["combat_state"]["turn"] = 2
+    assert not stale_combat_end_frame({"game_state": after}, gs)
+    assert not stale_combat_end_frame({"error": "rejected"}, gs)
+    assert not stale_combat_end_frame({"game_state": {"room_phase": "COMPLETE"}}, gs)
+
+
+def test_opening_empty_frame_and_inflight_draw_are_not_policy_ready():
+    from bridge.real_game_env import RealGameAdapter
+    adapter = RealGameAdapter()
+    frame = {"in_game": True, "ready_for_command": True,
+             "available_commands": ["end", "state"], "game_state": {
+                 "screen_type": "NONE", "room_phase": "COMBAT",
+                 "action_phase": "WAITING_ON_USER", "combat_state": {
+                     "turn": 1, "hand": [], "draw_pile": [{"id": "Strike_R"}],
+                     "player": {"energy": 0}}}}
+    adapter.update(frame)
+    assert adapter.auto_command() == ("STATE", "combat_not_waiting")
+    frame["game_state"]["combat_state"]["player"]["energy"] = 5
+    frame["game_state"]["current_action"] = "DrawCardAction"
+    adapter.update(frame)
+    assert adapter.auto_command() == ("STATE", "combat_not_waiting")
+    frame["game_state"].pop("current_action")
+    frame["game_state"]["combat_state"]["turn"] = 2
+    adapter.update(frame)
+    assert adapter._combat_ready_for_policy()  # a legitimate empty hand remains legal

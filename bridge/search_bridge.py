@@ -576,6 +576,12 @@ class RealCombatSearch:
                 # 30 damage. Preserve the native move's transition semantics.
                 monsters[sim_index].pop("base_damage")
                 monsters[sim_index].pop("hits")
+            if monster.get("intent_hidden"):
+                # Match the neural simulator: search and its encoder retain
+                # native intents. The real move is unavailable with Dome, so
+                # retain the shadow world's hypothesis, never inject INVALID/0.
+                for key in ("move_history", "base_damage", "hits"):
+                    monsters[sim_index].pop(key, None)
         player = real["player"]
         return {
             "turn": max(0, int(real["turn"]) - 1),

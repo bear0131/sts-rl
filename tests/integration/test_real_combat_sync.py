@@ -1155,3 +1155,31 @@ def test_secret_technique_real_grid_sorts_native_candidates_and_keeps_ui_handles
     env.thick.bc.execute(sts.Action(2 << 29 | native_handle))
     assert normalize_sim(env.thick.bc.to_dict())['hand'][0]['id']=='Defend_R'
     assert normalize_sim(env.thick.bc.to_dict())['hand'][0]['up']==1
+
+
+def test_dome_unknown_intent_preserves_native_attack_not_zero(combat_factory):
+    from types import SimpleNamespace
+    env = combat_factory(['DEFEND_RED'] * 10, encounter='Jaw Worm',
+                         combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
+    bc = env.thick.bc
+    bc.apply_custom_state({'monsters': [{'move_history': ['JAW_WORM_CHOMP', 'INVALID'],
+                                       'base_damage': 11, 'hits': 1}],
+                           'player': {'block': 0}})
+    real = normalize_sim(bc.to_dict())
+    m = real['monsters'][0]
+    m.update(intent_hidden=True, real_move_id=-1, real_last_move_id=-1,
+             base_damage=0, hits=0)
+    search = RealCombatSearch.__new__(RealCombatSearch)
+    search.env = env
+    search.adapter = SimpleNamespace(_potions=lambda: [])
+    search._target_mapping = lambda state: {0: 0}
+    spec = search._state_spec(real)
+    assert not {'move_history', 'base_damage', 'hits'} & spec['monsters'][0].keys()
+    bc.apply_custom_state(spec)
+    assert bc.to_dict()['monsters'][0]['move'] == 'JAW_WORM_CHOMP'
+    assert diff(real, normalize_sim(bc.to_dict())) == []
+    hp = bc.to_dict()['player']['hp']
+    assert bc.preview_end_turn_result(4 << 29)['player']['hp'] == hp - 11
+    # Public differences are never hidden by the unknown-intent exemption.
+    real['monsters'][0]['hp'] -= 1
+    assert any(path.endswith('.hp') for path, _, _ in diff(real, normalize_sim(bc.to_dict())))

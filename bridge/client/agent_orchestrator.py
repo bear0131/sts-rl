@@ -503,6 +503,19 @@ def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | Non
     return pending is not None and frame.get("game_state") == pending
 
 
+def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
+    """END is acknowledged by a new turn/room, not changed transport flags."""
+    if pending is None or "error" in frame:
+        return False
+    gs = frame.get("game_state") or {}
+    combat = gs.get("combat_state")
+    if not combat or gs.get("room_phase") != "COMBAT":
+        return False
+    if any(gs.get(k) != pending.get(k) for k in ("seed", "floor")):
+        return False
+    return int(combat.get("turn", 0)) <= int(pending["combat_state"]["turn"])
+
+
 def main() -> None:
     args = build_parser().parse_args()
     log.info("=== agent session start argv=%s cwd=%s ===", sys.argv, Path.cwd())
@@ -552,6 +565,8 @@ def main() -> None:
         send("ready")
         pending_play_frame = None
         pending_play_since = 0.0
+        pending_end_frame = None
+        pending_end_since = 0.0
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -559,6 +574,13 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if stale_combat_end_frame(frame, pending_end_frame):
+                    if time.monotonic() - pending_end_since > 10.0:
+                        raise RuntimeError("game turn did not advance for 10 seconds after END")
+                    time.sleep(0.05)
+                    send("STATE")
+                    continue
+                pending_end_frame = None
                 if stale_combat_play_frame(frame, pending_play_frame):
                     if time.monotonic() - pending_play_since > 10.0:
                         raise RuntimeError("game state unchanged for 10 seconds after PLAY")
@@ -572,6 +594,9 @@ def main() -> None:
                 if decision.command.upper().startswith("PLAY "):
                     pending_play_frame = deepcopy(frame.get("game_state"))
                     pending_play_since = time.monotonic()
+                if decision.command.upper() == "END":
+                    pending_end_frame = deepcopy(frame.get("game_state"))
+                    pending_end_since = time.monotonic()
             except Exception:
                 if combat_search is not None:
                     combat_search.note_error()
