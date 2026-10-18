@@ -1,8 +1,8 @@
 # 仓库总 TODO
 
-| BRIDGE12 | 正式1/14；200207断点诊断 | 200206正式从头F51胜利已报告，与旧诊断分开。200207 F10 Scrap Ooze缺合同中断，047634a修复后232实现/202隔离回归，已从F10/index86继续至F13；诊断自然结束后从头正式验收200207。保留原14seed/模型/native/128预算，见worklog/2026-10-19.md“200207 F10 Scrap Ooze断点与失败递增确认”。 |
+| BRIDGE12 | 正式1/14；200207 F20断点已续行 | 200206正式F51胜利已报告。200207 FaceTrader缺身份/合同中断，96c44c6已部署241实现/211隔离回归，从F20/index203继续至F21，prior30776.1；诊断自然结束后从头正式验收200207。保留原14seed/模型/native/128预算，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
 
-| BRIDGE11 | 全52事件逐分支对照进行中 | 用户要求所有事件检查模拟。25/52显式桥接路径、27缺失；208场景首层合法选项原生执行无异常，只是可运行检查而非真机一致验收。tests/integration/native_event_probe.cpp链接冻结对象，不改运行中native。已确认GameContext.cpp SCRAP_OOZE固定伤害与真机失败递增不符，待独立兼容修复；多阶段/随机结果/遗物副作用和27缺失合同仍未完成。原始清单及event-probe-results.json在runs/local/real-game-train47-final-step688914432-20seeds-20261018；验收必须逐分支真机oracle、编码、动作、结果ACK、回归、部署核验，见worklog/2026-10-19.md“全事件批量执行首轮”。 |
+| BRIDGE11 | 真机52身份已核对；全分支未完成 | 真机jar提取52个ID，修5处别名；除专用Spire Heart transport外不再PAD。26/52原生入口有桥接合同、26缺失。208场景多阶段4200 transitions无基础异常，Skull两场景封顶未穷尽，不能当真机一致验收。ScrapOoze递增伤害源码已修，独立原生构建A0/A15反例旧失败新通过，208场景新构建通过；未替换冻结生产pyd，需独立版本兼容/模型一步验证再部署。原始java-event-identity-audit.json及event-probe-*-results.json在runs/local/real-game-train47-final-step688914432-20seeds-20261018。验收仍须全部分支结果oracle、编码、动作、ACK、遗物副作用，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
 
 | BRIDGE09 | 主菜单默认等待修复；用户自行启动游戏 | 自动START必须显式同时启用continuous-test与auto-start；seed/campaign不可绕过。手动attach守卫在每次SL返回主菜单仍生效。198实现回归通过；用户自行启动/继续，不允许旧心跳自动启动。SL结果单独诊断，不混正式receipt；实际Esc/SL复验待用户继续。见worklog/2026-10-19.md“主菜单显式授权”。 |
 | BRIDGE10 | 已复现：SL重启改变搜索随机身份，尚未修复 | bridge/search_bridge.py的全程decision_index重启归零，经rl/evaluation/strategies.py进入state_nonce；同seed/公开状态不足以保证同动作。200205 F23旧index204/205与读档0/1第二步分歧；固定首帧连续两步离线改变index可稳定改变第二动作，但未精确复现原日志全部动作。需恢复搜索上下文或定义重启稳定身份并验证相同输入、完整搜索配置、前缀和隐状态；不修改正在运行的游戏。见worklog/2026-10-19.md“三奴隶SL轨迹分歧”。 |

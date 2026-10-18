@@ -4,6 +4,8 @@
 #include "sim/search/GameAction.h"
 #include <iostream>
 #include <cstdlib>
+#include <deque>
+#include <utility>
 
 int main(int argc, char **argv) {
     using namespace sts;
@@ -16,21 +18,37 @@ int main(int argc, char **argv) {
     GameContext root(CharacterClass::IRONCLAD, 200207, ascension);
     root.act = event == static_cast<int>(Event::MINDBLOOM) ? 3 : 2;
     root.floorNum = root.act == 3 ? 40 : 20;
-    root.curHp = variant ? 1 : 60;
-    root.gold = variant ? 0 : 500;
+    root.curHp = variant == 1 ? 1 : 60;
+    root.gold = variant == 1 ? 0 : 500;
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 2 && root.curEvent == Event::SCRAP_OOZE) {
+        // Real Java increments damage after each failure. Public event state
+        // after two failures must charge base + 2, independent of the next roll.
+        root.info.eventData = 2;
+        const int before = root.curHp;
+        root.chooseEventOption(0);
+        const int expected = (ascension >= 15 ? 5 : 3) + 2;
+        std::cout << "scrap_damage=" << before - root.curHp << " expected=" << expected << std::endl;
+        return before - root.curHp == expected ? 0 : 7;
+    }
     const auto actions = search::GameAction::getAllActionsInState(root);
     std::cout << "event=" << eventIdStrings[event] << " asc=" << ascension
               << " variant=" << variant << " actions=" << actions.size() << std::endl;
     if (actions.empty()) return 3;
-    int count = 0;
-    for (const auto &action : actions) {
-        if (++count > 128) return 4;
-        auto child = root;
+    std::deque<std::pair<GameContext, int>> pending;
+    pending.emplace_back(root, 0);
+    int count = 0, capped = 0;
+    while (!pending.empty()) {
+        auto node = std::move(pending.front());
+        pending.pop_front();
+        for (const auto &action : search::GameAction::getAllActionsInState(node.first)) {
+        if (count >= 512) { ++capped; pending.clear(); break; }
+        ++count;
+        auto child = node.first;
         if (!action.isValidAction(child)) return 5;
-        std::cout << "before action=" << action.bits << " hp=" << child.curHp
+        std::cout << "before depth=" << node.second << " action=" << action.bits << " hp=" << child.curHp
                   << " gold=" << child.gold << " cards=" << child.deck.size() << std::endl;
         action.execute(child);
         std::cout << "after screen=" << static_cast<int>(child.screenState)
@@ -38,6 +56,16 @@ int main(int argc, char **argv) {
                   << " gold=" << child.gold << " cards=" << child.deck.size()
                   << " outcome=" << static_cast<int>(child.outcome) << std::endl;
         if (child.maxHp <= 0 || child.curHp > child.maxHp || child.gold < 0) return 6;
+        // Stop at external map/combat boundaries. Follow event-owned reward
+        // and card-selection screens; caps are reported, never called coverage.
+        if (child.outcome == GameOutcome::UNDECIDED &&
+            child.screenState != ScreenState::MAP_SCREEN &&
+            child.screenState != ScreenState::BATTLE) {
+            if (node.second < 7) pending.emplace_back(std::move(child), node.second + 1);
+            else ++capped;
+        }
+        }
     }
+    std::cout << "transitions=" << count << " capped=" << capped << std::endl;
     return 0;
 }
