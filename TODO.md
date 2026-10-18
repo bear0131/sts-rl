@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | 准备启动 | 最终TRAIN47 step688914432接入实机；内部种子200200..200219，A0铁甲、确定性upper/Full-Gumbel128/G0/native4。验收20唯一自然终局、search_errors=0、128倍账本、模型/原生身份；每局45分钟/总16小时，异常保留证据不计完成，根batch原样恢复。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018；worklog/2026-10-18.md#bridge05-final-model-20-intent。 |
+| BRIDGE05 | 实机20局已启动，待自然终局验收 | 最终TRAIN47 step688914432接入实机；内部种子200200..200219（显示4NF0..4NFJ），A0铁甲、确定性upper/Full-Gumbel128/G0/native4。c73eda8独立源码快照，archive native b9eb3613；83回归通过，已核对真实首局seed200200并推进。验收20唯一自然终局、search_errors=0、128倍账本、模型/原生身份；每局45分钟/总16小时/无日志5分钟，异常保留证据不计完成，supervisor停本次进程并原样恢复根batch。心跳20每10分钟巡检，健康静默。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018；worklog/2026-10-18.md#bridge05-final-model-20-started。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
