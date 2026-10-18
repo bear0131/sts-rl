@@ -185,6 +185,29 @@ def test_settings_pause_keeps_reward_ack_and_does_not_acknowledge_it():
         ack.waiting(f, now)
 
 
+def test_manual_campaign_never_starts_after_returning_to_menu():
+    from bridge.client.agent_orchestrator import RealPolicyAgent
+    from bridge.campaign import SeedCampaign
+    a = RealGameAdapter()
+    campaign = SeedCampaign(['4NF5'])
+    agent = RealPolicyAgent(None, a, stochastic=False, topk=0, max_inner_decisions=1,
+        auto_enter_shop=False, auto_start=False, start_seed=None, ascension=0,
+        character='IRONCLAD', campaign=campaign)
+    menu = {'in_game': False, 'ready_for_command': True, 'available_commands': ['start', 'state']}
+    for _ in range(3):
+        campaign.observe({'in_game': True, 'game_state': {'seed': 200205, 'floor': 23}})
+        assert agent.decide(menu).command == 'STATE'
+        assert not campaign.start_sent
+
+
+def test_continuous_testing_requires_explicit_flag():
+    from bridge.client.agent_orchestrator import build_parser
+    args = build_parser().parse_args(['model.zip', '--auto-start'])
+    assert args.auto_start and not args.continuous_test
+    args = build_parser().parse_args(['model.zip', '--auto-start', '--continuous-test'])
+    assert args.auto_start and args.continuous_test
+
+
 def test_dialogue_bypasses_policy_without_claiming_resource_effect(event_adapter):
     a = event_adapter("Knowing Skull", [("[继续]", False)])
     assert a.auto_command() == ("CHOOSE 0", "event_dialogue_transport")

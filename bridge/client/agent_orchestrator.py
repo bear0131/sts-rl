@@ -167,6 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--gumbel-scale", type=float, default=None,
         help="Override combat-search Gumbel noise; 0 disables it, omitted inherits checkpoint.",
     )
+    parser.add_argument('--continuous-test', action='store_true',
+                        help='Explicit authorization for automated main-menu starts; also requires --auto-start.')
     parser.add_argument('--attach-existing-seed', type=int, default=None,
                         help='Wait for user/UI save resume, never START; verify this internal seed.')
     parser.add_argument('--attach-existing-floor', type=int, default=None,
@@ -307,6 +309,8 @@ class RealPolicyAgent:
 
     def decide(self, frame: dict[str, Any]) -> RealDecision:
         self.adapter.update(frame)
+        if frame.get("in_game") is False and not self.auto_start:
+            return RealDecision("STATE", "await_manual_continue")
         if self.combat_search is not None:
             self.combat_search.observe_frame(frame)
         if (self.campaign is not None and self.combat_search is not None
@@ -339,6 +343,8 @@ class RealPolicyAgent:
             return RealDecision(command, reason, semantic=(deferred if reason == "complete_deferred_reward_action" else None))
 
         if not self.adapter.in_game():
+            if not self.auto_start:
+                return RealDecision("STATE", "await_manual_continue")
             if self.combat_search is not None:
                 self.combat_search.reset_run()
             if self.campaign is not None:
@@ -697,7 +703,7 @@ def main() -> None:
         topk=args.topk,
         max_inner_decisions=args.max_inner_decisions,
         auto_enter_shop=not args.no_auto_enter_shop,
-        auto_start=args.auto_start,
+        auto_start=args.auto_start and args.continuous_test,
         start_seed=args.start_seed,
         ascension=args.ascension,
         character=args.character,
@@ -724,18 +730,23 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
-                if attach_pending:
+                if frame.get('in_game') is False and not (args.auto_start and args.continuous_test):
+                    time.sleep(0.1)
+                    send('STATE')
+                    continue
+                if args.attach_existing_seed is not None:
                     gs = frame.get('game_state') or {}
                     if not frame.get('in_game'):
                         time.sleep(0.1)
                         send('STATE')
                         continue
                     if (int(gs.get('seed', -1)) != args.attach_existing_seed
-                            or (args.attach_existing_floor is not None
+                            or (attach_pending and args.attach_existing_floor is not None
                                 and gs.get('floor') != args.attach_existing_floor)):
                         raise RuntimeError('loaded save seed/floor mismatch')
-                    attach_pending = False
-                    log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
+                    if attach_pending:
+                        attach_pending = False
+                        log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
                 now, paused = pause_clock.update(frame, time.monotonic())
                 if paused:
                     time.sleep(0.1)
