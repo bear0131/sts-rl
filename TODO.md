@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE12 | 正式1/14；200207修正规则从头验收 | 200207诊断F55/821自然胜利已报告不计分，原件diagnostic-200207-completed。prior32263.1；正式200207起native-eventfix-compat SHA ff65950b，两规则修复已309实现/279隔离/模型一步验证并显式记入protocol。旧正式200206/native850d196e与旧模拟结果保留版本差异，不抹成绩。原14seed/模型/128预算不变，30/52路径、22缺失，见worklog/2026-10-19.md“200207诊断自然胜利与修正规则正式重测”。 |
+| BRIDGE12 | 正式2/14：1胜1负；200208 F2断点待修 | 200207正式F50/567自然死亡已报告，errors/rejections均0；旧200206胜利保留协议差异。200208 F2 Match and Keep缺小游戏支持保护退出，checkpoint-200208-f2-match存档/日志已保全，恢复search13、prior33963.1，不从头重开或跳过。生产native ff65950b、bridge a9f17b1；实现净化之泉/秘密传送门待部署。见worklog/2026-10-19.md“对对碰被模拟器跳过与探针覆盖修正”。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |
 

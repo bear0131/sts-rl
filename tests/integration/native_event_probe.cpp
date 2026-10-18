@@ -23,6 +23,14 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    // Returning directly to the map is not event coverage. In particular the
+    // frozen build disables Match and Keep: its map actions previously made
+    // this probe report a misleading successful event traversal.
+    if (root.screenState == ScreenState::MAP_SCREEN) {
+        std::cerr << "unsupported_or_bypassed_event=" << eventIdStrings[event]
+                  << " setup_returned_to_map" << std::endl;
+        return 9;
+    }
     if (variant == 2 && root.curEvent == Event::SCRAP_OOZE) {
         // Real Java increments damage after each failure. Public event state
         // after two failures must charge base + 2, independent of the next roll.
