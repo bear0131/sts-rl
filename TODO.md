@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE12 | 正式1/14；200207 F20断点已续行 | 200206正式F51胜利已报告。200207 FaceTrader缺身份/合同中断，96c44c6已部署241实现/211隔离回归，从F20/index203继续至F21，prior30776.1；诊断自然结束后从头正式验收200207。保留原14seed/模型/native/128预算，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
+| BRIDGE12 | 正式1/14；200207 F22断点已续行 | 200206正式F51胜利已报告。200207 N'loth合同缺失，d0fb3dd部署242实现/212隔离回归，从F22/index225继续至F24，prior30899.1。诊断自然结束后从头正式验收200207，保留原14seed/模型/native/128预算。27/52合同有路径，Nloth重复Gift变体仍明确未验收。见worklog/2026-10-19.md“F22恩洛斯指定遗物观测与交换确认”。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 真机jar提取52个ID，修5处别名；除专用Spire Heart transport外不再PAD。26/52原生入口有桥接合同、26缺失。208场景多阶段4200 transitions无基础异常，Skull两场景封顶未穷尽，不能当真机一致验收。ScrapOoze递增伤害源码已修，独立原生构建A0/A15反例旧失败新通过，208场景新构建通过；未替换冻结生产pyd，需独立版本兼容/模型一步验证再部署。原始java-event-identity-audit.json及event-probe-*-results.json在runs/local/real-game-train47-final-step688914432-20seeds-20261018。验收仍须全部分支结果oracle、编码、动作、ACK、遗物副作用，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
 

@@ -606,6 +606,64 @@ def test_nloth_encodes_exact_displayed_relics_and_ack(event_adapter):
     assert not ack.waiting(good, 3)
 
 
+@pytest.mark.parametrize('real_id', '''Falling
+MindBloom
+The Moai Head
+Mysterious Sphere
+SecretPortal
+SensoryStone
+Tomb of Lord Red Mask
+Winding Halls
+Addict
+Back to Basics
+Beggar
+Colosseum
+Cursed Tome
+Drug Dealer
+Forgotten Altar
+Ghosts
+Knowing Skull
+Masked Bandits
+Nest
+The Joust
+The Library
+The Mausoleum
+Vampires
+Big Fish
+The Cleric
+Dead Adventurer
+Golden Idol
+Golden Wing
+World of Goop
+Living Wall
+Mushrooms
+Scrap Ooze
+Shining Light
+Liars Game
+Accursed Blacksmith
+Bonfire Elementals
+Designer
+Duplicator
+FaceTrader
+Fountain of Cleansing
+Golden Shrine
+Match and Keep!
+Wheel of Change
+Lab
+N'loth
+NoteForYourself
+Purifier
+Transmorgrifier
+Upgrade Shrine
+WeMeetAgain
+The Woman in Blue'''.splitlines())
+def test_all_game_jar_policy_event_ids_are_known(real_id):
+    # Public ID constants extracted from local desktop-1.0.jar, not native enum
+    # names. Spire Heart is intentionally covered by ending transport tests.
+    from bridge.real_game_env import _normalize_event
+    assert _normalize_event(real_id) != 'PAD'
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])
