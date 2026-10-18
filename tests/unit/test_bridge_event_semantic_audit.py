@@ -6,6 +6,20 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+def test_empty_event_load_wait_is_bounded(monkeypatch):
+    import time
+    a = RealGameAdapter()
+    f = {'in_game': True, 'ready_for_command': True, 'available_commands': ['state'],
+         'game_state': {'seed': 200206, 'floor': 11, 'screen_type': 'EVENT',
+                        'screen_state': {'event_id': 'Mushrooms', 'options': []}}}
+    monkeypatch.setattr(time, 'monotonic', lambda: 0)
+    a.update(f)
+    assert a.auto_command() == ('STATE', 'await_event_options')
+    monkeypatch.setattr(time, 'monotonic', lambda: 11)
+    with pytest.raises(RuntimeError, match='did not load'):
+        a.auto_command()
+
+
 def test_mushrooms_reordered_options_and_two_stage_combat(event_adapter):
     from bridge.event_contract import EventEffectAck
     from bridge.real_game_env import RealDecision

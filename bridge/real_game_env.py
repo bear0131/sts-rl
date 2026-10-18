@@ -681,6 +681,17 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         cl = self.choices()
 
+        if st == "EVENT" and not ss.get('options') and not cl:
+            import time
+            identity = (self.gs.get('seed'), self.gs.get('floor'), ss.get('event_id'))
+            pending = getattr(self, '_empty_event_wait', None)
+            if pending is None or pending[0] != identity:
+                self._empty_event_wait = (identity, time.monotonic())
+            elif time.monotonic() - pending[1] > 10:
+                raise RuntimeError('event options did not load within 10 seconds')
+            return self._refresh_command(), 'await_event_options'
+        self._empty_event_wait = None
+
         # Completion animation is a transport page, not a policy choice or a
         # GAME_OVER receipt. Wait for the actual terminal frame to record it.
         if st == "COMPLETE" and not self.gs.get("combat_state") and not cl:
