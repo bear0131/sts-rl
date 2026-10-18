@@ -5,6 +5,31 @@ No live game or checkpoint is needed for this static adapter audit.
 """
 import pytest
 
+
+def test_falling_maps_by_type_label_not_ui_order_and_checks_exact_loss():
+    from copy import deepcopy
+    from types import SimpleNamespace
+    from bridge.event_contract import options, EventEffectAck, falling_choices
+    deck = [dict(id='Defend_R', name='防御', type='SKILL', upgrades=0),
+            dict(id='Demon Form', name='恶魔形态', type='POWER', upgrades=0),
+            dict(id='Iron Wave', name='铁斩波+', type='ATTACK', upgrades=1)]
+    gs = dict(deck=deck, screen_type='EVENT', screen_state=dict(event_id='Falling', options=[
+        dict(choice_index=0,text='[猛击] 失去 铁斩波+'),
+        dict(choice_index=1,text='[落地] 失去 防御'),
+        dict(choice_index=2,text='[释放] 失去 恶魔形态')]))
+    assert options(gs) == {2:(0,'falling_remove'),0:(1,'falling_remove'),1:(2,'falling_remove')}
+    assert falling_choices(gs)[0]['card']['upgrades'] == 1
+    ack=EventEffectAck();ack.arm({'game_state':gs},SimpleNamespace(semantic=('event',2)),0)
+    assert ack.waiting({'game_state':gs},1)
+    bad=deepcopy(gs);bad['deck']=bad['deck'][1:]
+    with pytest.raises(RuntimeError,match='identity/count'):
+        ack.waiting({'game_state':bad},2)
+    good=deepcopy(gs);good['deck']=good['deck'][:2]
+    assert not ack.waiting({'game_state':good},3)
+    bad=deepcopy(gs);bad['deck'][2]['name']='铁斩波'
+    with pytest.raises(ValueError,match='identity'):
+        options(bad)
+
 from bridge.real_game_env import RealGameAdapter
 from env.core import game_actions as ga
 

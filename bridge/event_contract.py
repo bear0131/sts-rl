@@ -52,9 +52,33 @@ def transport_only(gs):
     return None
 
 
+def falling_choices(gs):
+    result = []
+    rules = [('落地|land', 0, 'SKILL'), ('释放|channel', 1, 'POWER'), ('猛击|strike', 2, 'ATTACK')]
+    for o in gs.get('screen_state', {}).get('options', []):
+        if o.get('disabled'):
+            continue
+        text = _text(o.get('text', ''))
+        matches = [(i, typ, re.fullmatch(r'\[(?:'+labels+r')\](?:失去|lose)(.+)', text)) for labels,i,typ in rules]
+        matches = [(i,typ,m[1]) for i,typ,m in matches if m]
+        if len(matches) != 1 or o.get('choice_index') is None:
+            raise ValueError(f'unrecognized Falling option: {text}')
+        i,typ,name = matches[0]
+        cards = {(c['id'], c.get('upgrades', 0)): c for c in gs.get('deck', [])
+                 if c.get('type') == typ and _text(c.get('name', '')) == name}
+        if len(cards) != 1:
+            raise ValueError(f'Falling displayed card identity ambiguous/missing: {name}')
+        result.append(dict(index=i, ui=int(o['choice_index']), kind='lose_card', card=next(iter(cards.values()))))
+    if not result or len({d['index'] for d in result}) != len(result):
+        raise ValueError('invalid Falling option set')
+    return result
+
+
 def options(gs):
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'Falling':
+        return {d['index']: (d['ui'], 'falling_remove') for d in falling_choices(gs)}
     if event == 'SensoryStone':
         result = {}
         for o in ss.get('options', []):
@@ -106,6 +130,9 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect == 'falling_remove':
+            card = next(d['card'] for d in falling_choices(gs) if d['index'] == decision.semantic[1])
+            self.falling_target = (card['id'], card.get('upgrades', 0))
         if effect == 'potion' and (not any(p.get('id') == 'Potion Slot' for p in gs.get('potions', []))
                                    or any(r.get('id') == 'Sozu' for r in gs.get('relics', []))):
             # Skull pays HP even when obtainPotion cannot insert into inventory.
@@ -134,6 +161,17 @@ class EventEffectAck:
             if len(rewards) != count or any(r.get('reward_type') != 'CARD' for r in rewards):
                 raise RuntimeError('SensoryStone reward type/count mismatch')
             # Cards are optional rewards, not guaranteed permanent deck gains.
+            self.pending = None
+            return False
+        if effect == 'falling_remove':
+            # arm stores the exact selected card; do not accept any deck loss.
+            target = self.falling_target
+            count = lambda s: Counter((c['id'], c.get('upgrades', 0)) for c in s.get('deck', []))
+            before, after = count(old), count(g)
+            if before == after:
+                return True
+            if before - after != Counter({target: 1}) or after - before:
+                raise RuntimeError('Falling removed card identity/count mismatch')
             self.pending = None
             return False
         deck = lambda s: Counter((c['id'], c.get('upgrades', 0)) for c in s.get('deck', []))

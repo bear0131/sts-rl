@@ -1021,6 +1021,10 @@ class RealGameAdapter:
                 mapping = event_contract.options(self.gs)
                 opts["event_options"] = sorted(mapping)
                 details = _structured_event_choices(ss, len(cl))
+                if ss.get('event_id') == 'Falling':
+                    opts['event_choices'] = [dict(index=d['index'], kind='lose_card', card=_real_card_tuple(d['card']))
+                                             for d in event_contract.falling_choices(self.gs)]
+                    details = []
                 if details:
                     reverse = {ui: native for native, (ui, _) in mapping.items()}
                     opts["event_choices"] = [dict(d, index=reverse[d["index"]]) for d in details]
