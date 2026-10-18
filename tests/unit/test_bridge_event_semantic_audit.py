@@ -583,6 +583,29 @@ def test_game_jar_event_ids_match_frozen_vocabulary(real, canonical):
     assert _normalize_event(real) == canonical
 
 
+def test_nloth_encodes_exact_displayed_relics_and_ack(event_adapter):
+    from bridge.event_contract import EventEffectAck
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter("N'loth", [('[交出： 冰淇淋] 失去这件遗物。', False),
+                                  ('[Offer: Anchor] Lose this relic.', False), ('[Leave]', False)])
+    a.gs['relics'] = [{'id':'Ice Cream','name':'冰淇淋'}, {'id':'Anchor','name':'Anchor'}]
+    assert a._options('event')['event_choices'] == [
+        {'index':0,'kind':'lose_relic','relic':'Ice Cream'},
+        {'index':1,'kind':'lose_relic','relic':'Anchor'}, {'index':2,'kind':'leave'}]
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    bad = deepcopy(a.frame)
+    bad['game_state']['relics'] = [a.gs['relics'][0], {'id':"Nloth's Gift"}]
+    with pytest.raises(RuntimeError, match='identity/count'):
+        ack.waiting(bad, 1)
+    good = deepcopy(a.frame)
+    good['game_state']['relics'] = [a.gs['relics'][1], {'id':"Nloth's Gift"}]
+    assert ack.waiting(good, 2)
+    good['game_state']['screen_state']['options'] = [{'text':'[Leave]', 'choice_index':0}]
+    assert not ack.waiting(good, 3)
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

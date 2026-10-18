@@ -1051,6 +1051,12 @@ class RealGameAdapter:
                     opts['event_choices'] = [dict(index=d['index'], kind='lose_card', card=_real_card_tuple(d['card']))
                                              for d in event_contract.falling_choices(self.gs)]
                     details = []
+                if ss.get('event_id') == "N'loth":
+                    opts['event_choices'] = [
+                        dict(index=d['index'], kind=d['kind'], **({'relic': _relic_id(d['relic'])}
+                             if d['kind'] == 'lose_relic' else {}))
+                        for d in event_contract.nloth_choices(self.gs)]
+                    details = []
                 if details:
                     reverse = {ui: native for native, (ui, _) in mapping.items()}
                     opts["event_choices"] = [dict(d, index=reverse[d["index"]]) for d in details]

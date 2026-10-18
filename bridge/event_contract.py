@@ -108,9 +108,34 @@ def falling_choices(gs):
     return result
 
 
+def nloth_choices(gs):
+    result = []
+    for o in (gs.get('screen_state') or {}).get('options', []):
+        if o.get('disabled'):
+            continue
+        text = _text(o.get('text', ''))
+        index = o.get('choice_index')
+        if text in {'[离开]', '[leave]'} and index == 2:
+            result.append(dict(index=2, ui=2, kind='leave'))
+            continue
+        match = re.match(r'\[(?:交出：|offer:)([^\]]+)\]', text)
+        if not match or index not in (0, 1):
+            raise ValueError('Nloth option identity/position mismatch')
+        relics = [r for r in gs.get('relics', []) if _text(r.get('name', '')) == match[1]]
+        if len(relics) != 1:
+            raise ValueError('Nloth displayed relic ambiguous/missing')
+        result.append(dict(index=index, ui=index, kind='lose_relic', relic=relics[0]))
+    if sorted(d['index'] for d in result) != [0, 1, 2]:
+        raise ValueError('Nloth incomplete choices')
+    return result
+
+
 def options(gs):
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == "N'loth":
+        return {d['index']: (d['ui'], 'nloth_trade' if d['kind'] == 'lose_relic' else 'leave')
+                for d in nloth_choices(gs)}
     if event == 'Falling':
         return {d['index']: (d['ui'], 'falling_remove') for d in falling_choices(gs)}
     if event == 'SensoryStone':
@@ -179,6 +204,10 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect == 'nloth_trade':
+            self.nloth_target = next(d['relic']['id'] for d in nloth_choices(gs) if d['index'] == decision.semantic[1])
+            if any(r['id'] == "Nloth's Gift" for r in gs.get('relics', [])):
+                raise RuntimeError('Nloth duplicate gift variant not yet verified')
         if effect == 'scrap_search':
             scrap_offer(gs)  # Refuse unparsed variants before sending anything.
         if effect == 'falling_remove':
@@ -240,6 +269,17 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        if effect == 'nloth_trade':
+            before = Counter(r['id'] for r in old.get('relics', []))
+            after = Counter(r['id'] for r in g.get('relics', []))
+            removed, added = before - after, after - before
+            if (removed and removed != Counter({self.nloth_target: 1})
+                    or added and added != Counter({"Nloth's Gift": 1})):
+                raise RuntimeError('Nloth relic exchange identity/count mismatch')
+            if removed and added and transport_only(g) is not None:
+                self.pending = None
+                return False
+            return True
         if effect in {'face_touch', 'face_trade'}:
             if g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
                 self.pending = None
