@@ -139,6 +139,16 @@ def test_custom_state_syncs_runtime_cost_counters_and_hp_order(combat_factory):
     assert C.AUTOREGRESSIVE_PLAY + 1 not in legal
 
 
+@pytest.mark.parametrize("zone", ["hand", "draw", "discard", "exhaust"])
+@pytest.mark.parametrize("upgrades", [0, 1, 3])
+def test_custom_state_preserves_searing_blow_upgrade_count(combat_factory, zone, upgrades):
+    env = combat_factory(["STRIKE_RED"] * 5)
+    battle = env.thick.bc
+    battle.apply_custom_state({zone: [("SEARING_BLOW", upgrades)]})
+    cards = battle.to_dict()[zone]
+    assert [(card[0], card[1]) for card in cards] == [("SEARING_BLOW", upgrades)]
+
+
 def test_custom_state_recomputes_card_pile_caches_before_damage(combat_factory):
     env = combat_factory(
         ["BLOOD_FOR_BLOOD"] * 6,

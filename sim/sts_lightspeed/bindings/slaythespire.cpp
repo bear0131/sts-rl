@@ -779,8 +779,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             }
             const auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
-            sts::CardInstance card(id, up > 0);
-            for (int k = 1; k < up; ++k) card.upgrade();
+            sts::Card source(id);
+            for (int k = 0; k < up; ++k) source.upgrade();
+            sts::CardInstance card(source); // Carries Searing Blow's count, not just its bit.
             card.uniqueId = static_cast<std::int16_t>(nextUid++);
             pile.push_back(card);
         }
@@ -800,8 +801,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             }
             auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
-            sts::CardInstance card(id, up > 0);
-            for (int k = 1; k < up; ++k) card.upgrade();
+            sts::Card source(id);
+            for (int k = 0; k < up; ++k) source.upgrade();
+            sts::CardInstance card(source);
             if (cost.has_value()) {
                 card.costForTurn = static_cast<std::int8_t>(
                     std::clamp(*cost, -1, 127));
