@@ -329,3 +329,21 @@ def test_opening_guard_allows_spent_first_turn_and_resets_next_battle():
     frame['game_state']['floor'] = 15
     adapter.update(frame)
     assert not adapter._combat_ready_for_policy()
+
+
+@pytest.mark.parametrize('command', ['POTION use 0', 'CHOOSE 4', 'CONFIRM', 'RETURN', 'PLAY 1'])
+def test_combat_mutations_wait_for_real_ack(command):
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import combat_command_needs_ack, stale_combat_play_frame
+    gs = {'combat_state': {'turn': 1, 'hand': [{'id': 'Armaments'}]},
+          'potions': [{'id': 'GamblersBrew'}], 'screen_type': 'NONE'}
+    frame = {'game_state': gs}
+    assert combat_command_needs_ack(frame, command)
+    assert not combat_command_needs_ack(frame, 'STATE')
+    assert not combat_command_needs_ack({'game_state': {}}, command)
+    for _ in range(4):
+        assert stale_combat_play_frame({'game_state': deepcopy(gs), 'ready_for_command': True}, gs)
+    after = deepcopy(gs)
+    after['potions'] = [{'id': 'Potion Slot'}]
+    after['screen_type'] = 'HAND_SELECT'
+    assert not stale_combat_play_frame({'game_state': after}, gs)

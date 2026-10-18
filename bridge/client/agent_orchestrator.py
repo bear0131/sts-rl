@@ -499,8 +499,15 @@ def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
 
 
 def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
-    """A PLAY must consume its real hand card before another decision is sent."""
+    """A combat command must change its real frame before another decision."""
     return pending is not None and frame.get("game_state") == pending
+
+
+def combat_command_needs_ack(frame: dict[str, Any], command: str) -> bool:
+    gs = frame.get("game_state") or {}
+    return bool(gs.get("combat_state")) and command.split()[0].upper() in {
+        "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN",
+    }
 
 
 def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
@@ -610,7 +617,7 @@ def main() -> None:
                 pending_end_frame = None
                 if stale_combat_play_frame(frame, pending_play_frame):
                     if time.monotonic() - pending_play_since > 10.0:
-                        raise RuntimeError("game state unchanged for 10 seconds after PLAY")
+                        raise RuntimeError("game state unchanged for 10 seconds after combat command")
                     time.sleep(0.05)
                     send("STATE")
                     continue
@@ -622,7 +629,7 @@ def main() -> None:
                 decision = agent.decide(frame)
                 _log_decision(frame, decision, adapter)
                 send_decision(frame, decision)
-                if decision.command.upper().startswith("PLAY "):
+                if combat_command_needs_ack(frame, decision.command):
                     pending_play_frame = deepcopy(frame.get("game_state"))
                     pending_play_since = time.monotonic()
                 if decision.command.upper() == "END":
