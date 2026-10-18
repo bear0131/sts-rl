@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | SL暂停实机；END/圆顶离线修复验证通过，待恢复部署 | 最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4不变。原attempt1..3仅诊断；attempt4/200200人工SL不计成绩。新增开局空帧/执行中动作门控、END跨回合确认；圆顶缺失真实意图保留原生假设，匹配神经模拟器不额外遮蔽。122回归通过，真实F18回合2离线重放：旧零意图空过预测40血、新假设20血，128搜索改出PLAY1防御、0错误。未部署隔离runtime、未恢复用户暂停实机；后续需部署身份核验、从200200无干预重测20局及隐性差异审计。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018/dome-hold-replay.json；worklog/2026-10-18.md。 |
+| BRIDGE05 | 延时/圆顶/END修复已部署，attempt6实机20局运行中 | 最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4不变。用户解除SL暂停并授权自主处理；attempt1..5仅诊断不计当前成绩。e6ce42a修END确认/空开局/圆顶未知意图保留原生假设；c535f12加战斗帧稳定0.5秒重新读取、商店操作前0.5秒。实现128回归、隔离部署98回归、7文件及身份核验通过，17:57:38重启200200，F1已实际出牌。累计prior6788秒；逐局报告，自主修复续测，重点核验F18回合初始化。20自然唯一终局及隐性审计/账本/根batch恢复尚待完成，不能以0错误声称完全对齐。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018，worklog/2026-10-18.md。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
