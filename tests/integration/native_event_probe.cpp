@@ -24,6 +24,17 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 5 && root.curEvent == Event::THE_WOMAN_IN_BLUE) {
+        for (int option = 0; option < 3; ++option) {
+            auto child = root;
+            child.chooseEventOption(option);
+            const int expected = 20 + 10 * option;
+            std::cout << "woman_option=" << option << " gold_spent=" << root.gold - child.gold
+                      << " expected=" << expected << std::endl;
+            if (root.gold - child.gold != expected) return 11;
+        }
+        return 0;
+    }
     if (variant == 4 && root.curEvent == Event::MATCH_AND_KEEP) {
         // Isolate the dormant transition; this does NOT enable the event in
         // production or claim that the frozen policy can play the minigame.

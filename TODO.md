@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE13 | 蓝衣女子购药漏扣金币：源码已修，未部署 | GameContext THE_WOMAN_IN_BLUE补20/30/40扣款；独立A0/A15三选项反例旧exit11新0，208场景204通过/对对碰4未支持。生产ff65950b仍含旧规则；部署前需独立Python扩展兼容/固定模型验证和协议标注，真机奖励数量/扣款ACK合同尚待补齐。见worklog/2026-10-19.md“蓝衣女子购药漏扣金币”。 |
+
 | BRIDGE12 | 正式2/14：1胜1负；200208 F2断点待修 | 200207正式F50/567自然死亡已报告，errors/rejections均0；旧200206胜利保留协议差异。200208 F2 Match and Keep缺小游戏支持保护退出，checkpoint-200208-f2-match存档/日志已保全，恢复search13、prior33963.1，不从头重开或跳过。生产native ff65950b、bridge a9f17b1；实现净化之泉/秘密传送门待部署。见worklog/2026-10-19.md“对对碰被模拟器跳过与探针覆盖修正”。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |

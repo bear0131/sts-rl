@@ -3432,17 +3432,20 @@ void GameContext::chooseEventOption(int idx) {
             Potion pArr[3];
             switch (idx) {
                 case 0: {
+                    loseGold(20);
                     pArr[0] = getRandomPotion(potionRng, cc);
                     openCombatRewardScreen(Rewards(pArr, 1));
                     break;
                 }
                 case 1: {
+                    loseGold(30);
                     pArr[0] = getRandomPotion(potionRng, cc);
                     pArr[1] = getRandomPotion(potionRng, cc);
                     openCombatRewardScreen(Rewards(pArr, 2));
                     break;
                 }
                 case 2: {
+                    loseGold(40);
                     pArr[0] = getRandomPotion(potionRng, cc);
                     pArr[1] = getRandomPotion(potionRng, cc);
                     pArr[2] = getRandomPotion(potionRng, cc);
