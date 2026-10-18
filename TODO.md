@@ -1,12 +1,12 @@
 # 仓库总 TODO
 
-| BRIDGE08 | P1；系统编码审计发现确定缺陷，未部署修复 | bridge/real_game_env.py、bridge/schemas/combat_state.py 与 env/core/encode.py：42有效药水中29实机ID不匹配冻结词表，实际轨迹4种无色卡同样落入padding。类固醇原帧单字段纠正使领取概率48.0%→66.6%，确定性动作翻转。新增8项严格xfail固化预期身份（不是通过）。继续全实体目录、观测、合法动作、事件、商店及确认/回滚检查；修复不得重排checkpoint词表，需加载/预测/真实帧回放和未知ID拒绝验证。attempt17 F19满药槽事件保护停机，未新增终局；未完成整仓审计，不声称全部排除。见worklog/2026-10-18.md BRIDGE08。 |
+| BRIDGE08 | 1d9e0c7修复部署，实机验收中；审计未全部完成 | 显式实体别名保持checkpoint词表顺序，370卡牌来源/42药水覆盖，未知卡药和normalize异常失败关闭；shop身份/完整性校验，资源领取按对应类型确认，Skull满槽/Sozu契约。187实现/157隔离回归、57商店帧及最终模型类固醇token23/领取129回放通过，重搜6次一致。仍需其余事件及全输入确定性审计，不声称全部问题排除；详见worklog/2026-10-18.md BRIDGE08。 |
 
 | BRIDGE07 | 5a03a8a已部署，attempt17实机验证中 | bridge/search_bridge.py按完整UI命令事务回滚native/thin/自回归前缀和decision_index，取消重搜不消耗逻辑NOSL身份，实际搜索账本仍累计。171实现回归；200205 F4最终模型CUDA/指定native六次128搜索含撤销及拒绝均PLAY2目标0。141隔离回归及六次真实帧重放通过，隔离身份核验通过；还需实机；游戏本体药水帧时序单列，不能以有限测试声称任意干扰全部确定。见worklog/2026-10-18.md BRIDGE07。 |
 
 | BRIDGE06 | 有限支持门禁已部署，实机验证中 | 5051087显式映射17类事件，未知/歧义事件失败关闭，效果类型确认30秒超时；169实现/139隔离回归、四真实帧固定checkpoint一步预测通过。51事件尚未全部支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计。验收要求预期语义到UI和实际效果均核验；不能把有限支持称为全部等价。200202旧结果受事件影响；200205按用户要求重测，旧记录归档诊断。见worklog/2026-10-18.md的BRIDGE06记录。 |
 
-| BRIDGE05 | attempt17从200205重测，保留5条历史记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；隔离runtime c73eda8+5a03a8a，native-searing-build SHA850d196e，圆顶导出当前真值，未来仍假设。按用户要求中止attempt15的200206（170.8秒无终局），日志/status/6条旧receipt归档attempt15；只从活动receipt移出旧200205 F33死亡，200200..204保留，200202仍已知事件影响、200200旧圆顶协议例外，不能混称同协议胜率。prior21345.5，7覆盖文件/2新增文件/model/native身份核验通过，attempt16为修复随机身份有意停止643秒并归档，无终局；从200205重新验证抗干扰、事件选择与奖励效果，再续后续种子。每新自然终局报告；未知事件停机收证后自主修复，不放宽门禁。完整历史及验收边界见worklog/2026-10-18.md；证据runs/local/real-game-train47-final-step688914432-20seeds-20261018。 |
+| BRIDGE05 | attempt18从200205续测，保留5条历史诊断记录 | 固定最终TRAIN47 step688914432/200200..200219/A0/确定性upper/G0/128/native4；runtime c73eda8+1d9e0c7，native850d196e、模型不变。attempt17 F19满槽误拦停机773.4秒无终局，完整证据归档attempt17，prior22118.9；7覆盖/4新增文件及model/native身份核验通过。旧记录存在已知编码/事件/意图协议差异，禁止当同协议胜率；继续实际验证并每新自然终局报告，不计中断。未支持事件失败收证后自主修复，不放宽门禁。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
