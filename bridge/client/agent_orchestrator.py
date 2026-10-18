@@ -162,6 +162,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=int(os.environ.get("STS_RL_NATIVE_SEARCH_THREADS", "4")),
         help="Persistent native search worker threads for the single real-game mirror.",
     )
+    parser.add_argument(
+        "--gumbel-scale", type=float, default=None,
+        help="Override combat-search Gumbel noise; 0 disables it, omitted inherits checkpoint.",
+    )
     return parser
 
 
@@ -527,6 +531,7 @@ def main() -> None:
             adapter,
             native_search_threads=args.native_search_threads,
             master_nonce=args.seed,
+            gumbel_scale=args.gumbel_scale,
         )
     agent = RealPolicyAgent(
         model,

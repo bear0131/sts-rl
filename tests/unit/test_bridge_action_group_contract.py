@@ -1,7 +1,33 @@
 from types import SimpleNamespace
 from zipfile import ZipFile
+from unittest.mock import MagicMock
 
 import pytest
+
+
+@pytest.mark.parametrize('override, expected', [(None, 1.0), (0.0, 0.0)])
+def test_real_search_gumbel_override_reaches_strategy(monkeypatch, override, expected):
+    from bridge import search_bridge as bridge
+    model = SimpleNamespace(observation_space=object(), device='cpu',
+        nosl_is_az_gumbel_scale=1.0, nosl_is_az_root_search_mode=2,
+        nosl_is_az_paper_full_gumbel=True)
+    monkeypatch.setattr(bridge.C, 'policy_contract', lambda _: next(iter(bridge.C.NEURAL_CONTRACTS)))
+    for name in ('uses_global_map_observation', 'uses_card_language', 'uses_combat_language',
+                 'uses_deck_size_observation', 'uses_neow_observation', 'uses_event_option_observation'):
+        monkeypatch.setattr(bridge.model_utils, name, lambda _: False)
+    strategy = MagicMock()
+    monkeypatch.setattr(bridge, 'NativeStrategy', strategy)
+    monkeypatch.setattr(bridge, 'SlayTheSpireEnv', MagicMock())
+    search = bridge.RealCombatSearch(model, SimpleNamespace(ascension=0), gumbel_scale=override)
+    assert search.config.gumbel_scale == expected
+    assert strategy.call_args.args[1].gumbel_scale == expected
+    search.close()
+
+
+def test_bridge_gumbel_cli_defaults_to_checkpoint():
+    from bridge.client.agent_orchestrator import build_parser
+    assert build_parser().parse_args(['model.zip']).gumbel_scale is None
+    assert build_parser().parse_args(['model.zip', '--gumbel-scale', '0']).gumbel_scale == 0.0
 
 
 def test_bridge_selects_accumulating_algorithm_for_upper_optimizer(tmp_path):

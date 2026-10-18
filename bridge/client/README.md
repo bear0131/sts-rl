@@ -1,5 +1,9 @@
 # CommunicationMod Agent
 
+With `--combat-search`, `--gumbel-scale 0` disables search Gumbel noise.
+Omitting it preserves the checkpoint's setting. Upper decisions remain
+deterministic unless `--stochastic` is explicitly requested.
+
 Automatic real-game runner:
 
 ```powershell

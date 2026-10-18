@@ -157,13 +157,15 @@ class RealCombatSearch:
     """One persistent native combat mirror bound to a Full-Gumbel strategy."""
 
     def __init__(self, model, adapter: RealGameAdapter, *, native_search_threads: int = 4,
-                 master_nonce: int = 0) -> None:
+                 master_nonce: int = 0, gumbel_scale: float | None = None) -> None:
         self.model = model
         self.adapter = adapter
         self.contract = C.policy_contract(model.observation_space)
         if self.contract not in C.NEURAL_CONTRACTS:
             raise ValueError("real-game native search requires a complete neural combat contract")
-        self.config = NativeSearchConfig.from_model(model)
+        if gumbel_scale is not None and (not np.isfinite(gumbel_scale) or gumbel_scale < 0):
+            raise ValueError("gumbel_scale must be finite and nonnegative")
+        self.config = NativeSearchConfig.from_model(model, gumbel_scale=gumbel_scale)
         if self.config.root_search_mode != 2 or not self.config.paper_full_gumbel:
             raise ValueError("real-game combat search requires the checkpoint's strict Full-Gumbel mode")
         autocast = (
