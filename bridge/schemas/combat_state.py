@@ -51,6 +51,7 @@ _REAL_POWER_CANON_ID = {
     # observation vocabulary use the displayed/stable semantic name.
     "Confusion": "Confused",
     "DuplicationPower": "Duplication",
+    "NoBlockPower": "No Block",
     "Flex": "Lose Strength",
     "DexLoss": "Lose Dexterity",
     "Generic Strength Up Power": "Generic Strength Up",

@@ -1095,3 +1095,32 @@ def test_all_supported_player_powers_clear_on_authoritative_replacement(combat_f
         battle.apply_custom_state({"player": {"powers": [(power, 1)]}})
         battle.apply_custom_state({"player": {"powers": []}})
         assert normalize_sim(battle.to_dict())["player"]["powers"] == {}, power
+
+
+@pytest.mark.parametrize('amount', [2, 1])
+def test_real_no_block_preserves_duration_and_blocks_defend(combat_factory, amount):
+    from bridge.search_bridge import _power_rows, _SUPPORTED_PLAYER_POWERS
+    battle = combat_factory(["DEFEND_RED"] * 10).thick.bc
+    real = _player_powers_real([{'id': 'NoBlockPower', 'amount': amount},
+                               {'id': 'Thorns', 'amount': 3}])
+    assert real == {'No Block': amount, 'Thorns': 3}
+    rows = _power_rows(real, _SUPPORTED_PLAYER_POWERS)
+    assert ('NO_BLOCK', amount) in rows
+    battle.apply_custom_state({'player': {'powers': rows, 'block': 0, 'energy': 3},
+                               'hand': ['DEFEND_RED', 'DEFEND_RED']})
+    assert normalize_sim(battle.to_dict())['player']['powers'] == real
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    assert battle.to_dict()['player']['block'] == 0
+    battle.apply_custom_state({'player': {'powers': [('THORNS', 3)], 'energy': 3}})
+    assert 'No Block' not in normalize_sim(battle.to_dict())['player']['powers']
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    assert battle.to_dict()['player']['block'] == 5
+
+
+def test_no_block_duration_expires_naturally(combat_factory):
+    battle = combat_factory(['DEFEND_RED'] * 10, encounter='Cultist').thick.bc
+    battle.apply_custom_state({'player': {'powers': [('NO_BLOCK', 2)]}})
+    battle.execute(sts.Action(sts.ActionType.END_TURN))
+    assert normalize_sim(battle.to_dict())['player']['powers']['No Block'] == 1
+    battle.execute(sts.Action(sts.ActionType.END_TURN))
+    assert 'No Block' not in normalize_sim(battle.to_dict())['player']['powers']
