@@ -8,8 +8,7 @@ import pytest
 import torch
 import numpy as np
 
-from env.core.run_env import SlayTheSpireEnv
-import slaythespire as sts
+from env import core  # Preserve STS1 path setup without requiring its binary.
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -22,6 +21,8 @@ def bounded_torch_threads():
 
 @pytest.fixture
 def combat_factory():
+    from env.core.run_env import SlayTheSpireEnv
+    import slaythespire as sts
     created = []
 
     def make(deck, encounter="Jaw Worm", *, seed=42, relics=(),
@@ -45,6 +46,7 @@ def combat_factory():
 
 @pytest.fixture
 def short_combat_env_type():
+    from env.core.run_env import SlayTheSpireEnv
     class ShortCombatEnv(SlayTheSpireEnv):
         def reset(self, **kwargs):
             super().reset(**kwargs)

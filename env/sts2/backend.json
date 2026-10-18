@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/tfriedel/spire-mentor.git",
+  "commit": "32742bfc11130f5ac9f1bff6c5122a3e0784d87b",
+  "game_version": "0.107.1",
+  "rust_version": "1.96.0",
+  "crate": "sts2-py"
+}
