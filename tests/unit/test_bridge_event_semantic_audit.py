@@ -6,6 +6,16 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['[攻击] #b???', '[Attack] #b???', '[睡眠]', '[Sleep]', '[走向门前]', '[Approach Door]'])
+def test_heart_ending_transport_is_not_terminal(event_adapter, label):
+    a = event_adapter('Spire Heart', [(label, False)])
+    assert a.auto_command() == ('CHOOSE 0', 'event_dialogue_transport')
+    assert a.gs['screen_type'] == 'EVENT'
+    from bridge.event_contract import transport_only
+    a.gs['combat_state'] = {'turn': 1}
+    assert transport_only(a.gs) is None
+
+
 @pytest.mark.parametrize('label', ['……', '...'])
 def test_winding_intro_is_transport_only(event_adapter, label):
     a = event_adapter('Winding Halls', [(label, False)])

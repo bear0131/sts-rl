@@ -50,6 +50,11 @@ def transport_only(gs):
         return None
     o = opts[0]
     text = _text(o.get('text', '')).strip('[]')
+    if ((gs.get('screen_state') or {}).get('event_id') == 'Spire Heart'
+            and not gs.get('combat_state')
+            and text in {'攻击]???', 'attack]???', '睡眠', 'sleep', '走向门前', 'approachdoor'}):
+        # Act-three ending dialogue, not a combat action or victory receipt.
+        return o.get('choice_index')
     if ((gs.get('screen_state') or {}).get('event_id') == 'Winding Halls'
             and text in {'……', '...'}):
         return o.get('choice_index')
