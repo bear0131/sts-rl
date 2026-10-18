@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE05 | 故障停止：2/20自然终局，待用户决定修复续跑 | 最终TRAIN47 step688914432，内部200200..200219，A0铁甲/确定性upper/Full-Gumbel128/G0/native4；c73eda8隔离源码/native b9eb3613。200200 F36、200201 F39死亡均0搜索错误；200202 F18出现NoBlockPower:2与No Block:2名称对齐错误，未计终局，余17未跑。监督已停进程并SHA验证恢复根batch，心跳20暂停；未改模型/代码或重试。待名称映射与同步契约回归后用户授权续跑；最终验收仍需20唯一自然终局、0错误/128倍账本。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018/failure-200202-logs.zip；worklog/2026-10-18.md#bridge05-noblock-alignment-stop。 |
+| BRIDGE05 | NoBlock已修，剩余18局续跑；纳入隐性一致性审计 | 最终TRAIN47 step688914432、内部200200..200219，A0铁甲/确定性upper/Full-Gumbel128/G0/native4。首2局F36/F39自然死亡有效；200202中断无效。374454f补齐NoBlock归一及native导入/清除，87回归和真实故障帧128搜索重放通过；c73eda8隔离快照叠加4文件，新native ee0a0925，16:09从200202重启。用户授权同类故障自主修复续跑；心跳20 ACTIVE。验收20唯一自然终局、0错误/128倍账本及身份/根batch恢复；对照EVAL31整体186/200及同20seed18/20，明显偏低时查观测/动作/奖励/状态/精度隐性不一致，不将零报错当等价证明。证据runs/local/real-game-train47-final-step688914432-20seeds-20261018；worklog/2026-10-18.md#bridge05-noblock-resume-and-audit。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
