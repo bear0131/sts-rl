@@ -6,6 +6,15 @@ No live game or checkpoint is needed for this static adapter audit.
 import pytest
 
 
+@pytest.mark.parametrize('label', ['……', '...'])
+def test_winding_intro_is_transport_only(event_adapter, label):
+    a = event_adapter('Winding Halls', [(label, False)])
+    assert a.auto_command() == ('CHOOSE 0', 'event_dialogue_transport')
+    a = event_adapter('Knowing Skull', [(label, False)])
+    with pytest.raises(ValueError, match='unrecognized'):
+        a._legal_event_actions()
+
+
 @pytest.mark.parametrize('labels', [('献祭', '亵渎'), ('Sacrifice', 'Desecrate')])
 def test_altar_disabled_idol_preserves_native_id_and_both_effects(event_adapter, labels):
     from bridge.event_contract import EventEffectAck

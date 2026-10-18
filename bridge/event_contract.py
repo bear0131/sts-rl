@@ -50,6 +50,9 @@ def transport_only(gs):
         return None
     o = opts[0]
     text = _text(o.get('text', '')).strip('[]')
+    if ((gs.get('screen_state') or {}).get('event_id') == 'Winding Halls'
+            and text in {'……', '...'}):
+        return o.get('choice_index')
     if ((gs.get('screen_state') or {}).get('event_id') == 'SensoryStone'
             and text in {'交互', 'interact'}):
         return o.get('choice_index')
