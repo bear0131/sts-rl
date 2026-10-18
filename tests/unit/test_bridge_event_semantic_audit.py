@@ -790,6 +790,35 @@ def test_all_game_jar_policy_event_ids_are_known(real_id):
     assert _normalize_event(real_id) != 'PAD'
 
 
+@pytest.mark.parametrize('enter,leave', [('进入传送门', '离开'), ('Enter the Portal', 'Leave')])
+def test_secret_portal_requires_confirmation_and_boss(event_adapter, enter, leave):
+    from bridge.event_contract import EventEffectAck, options
+    from copy import deepcopy
+    from types import SimpleNamespace
+    a = event_adapter('SecretPortal', [(f'[{enter}]', False), (f'[{leave}]', False)])
+    assert options(a.gs) == {0: (0, 'portal_boss'), 1: (1, 'leave')}
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    assert ack.waiting(a.frame, 1)
+    confirm = deepcopy(a.frame)
+    confirm['game_state']['screen_state']['options'] = [dict(text=f'[{leave}]', choice_index=0, disabled=False)]
+    bad = deepcopy(confirm)
+    bad['game_state']['gold'] += 99
+    with pytest.raises(RuntimeError, match='resource effect'):
+        ack.waiting(bad, 2)
+    assert not ack.waiting(confirm, 2)
+    assert ack.pending is not None
+    ack.arm(confirm, SimpleNamespace(semantic=None, command='CHOOSE 0'), 2)
+    assert ack.waiting(confirm, 3)  # No repeated confirmation on a stale frame.
+    boss = deepcopy(confirm)
+    boss['game_state'].update(screen_type='NONE', room_phase='COMBAT', room_type='MonsterRoom')
+    with pytest.raises(RuntimeError, match='boss combat'):
+        ack.waiting(boss, 4)
+    boss['game_state']['room_type'] = 'MonsterRoomBoss'
+    assert not ack.waiting(boss, 4)
+    assert ack.pending is None
+
+
 def test_continuous_testing_requires_explicit_flag():
     from bridge.client.agent_orchestrator import build_parser
     args = build_parser().parse_args(['model.zip', '--auto-start'])

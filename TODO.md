@@ -2,7 +2,7 @@
 
 | BRIDGE12 | 正式1/14；200207修正规则从头验收 | 200207诊断F55/821自然胜利已报告不计分，原件diagnostic-200207-completed。prior32263.1；正式200207起native-eventfix-compat SHA ff65950b，两规则修复已309实现/279隔离/模型一步验证并显式记入protocol。旧正式200206/native850d196e与旧模拟结果保留版本差异，不抹成绩。原14seed/模型/128预算不变，30/52路径、22缺失，见worklog/2026-10-19.md“200207诊断自然胜利与修正规则正式重测”。 |
 
-| BRIDGE11 | 真机52身份已核对；全分支未完成 | 真机jar提取52个ID，修5处别名；除专用Spire Heart transport外不再PAD。26/52原生入口有桥接合同、26缺失。208场景多阶段4200 transitions无基础异常，Skull两场景封顶未穷尽，不能当真机一致验收。ScrapOoze递增伤害源码已修，独立原生构建A0/A15反例旧失败新通过，208场景新构建通过；未替换冻结生产pyd，需独立版本兼容/模型一步验证再部署。原始java-event-identity-audit.json及event-probe-*-results.json在runs/local/real-game-train47-final-step688914432-20seeds-20261018。验收仍须全部分支结果oracle、编码、动作、ACK、遗物副作用，见worklog/2026-10-19.md“真机身份批量检查与FaceTrader”。 |
+| BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |
 
 | BRIDGE09 | 主菜单默认等待修复；用户自行启动游戏 | 自动START必须显式同时启用continuous-test与auto-start；seed/campaign不可绕过。手动attach守卫在每次SL返回主菜单仍生效。198实现回归通过；用户自行启动/继续，不允许旧心跳自动启动。SL结果单独诊断，不混正式receipt；实际Esc/SL复验待用户继续。见worklog/2026-10-19.md“主菜单显式授权”。 |
 | BRIDGE10 | 已复现：SL重启改变搜索随机身份，尚未修复 | bridge/search_bridge.py的全程decision_index重启归零，经rl/evaluation/strategies.py进入state_nonce；同seed/公开状态不足以保证同动作。200205 F23旧index204/205与读档0/1第二步分歧；固定首帧连续两步离线改变index可稳定改变第二动作，但未精确复现原日志全部动作。需恢复搜索上下文或定义重启稳定身份并验证相同输入、完整搜索配置、前缀和隐状态；不修改正在运行的游戏。见worklog/2026-10-19.md“三奴隶SL轨迹分歧”。 |

@@ -10,6 +10,8 @@ from copy import deepcopy
 
 # native semantic ID, public label aliases, expected effect type
 CONTRACTS = {
+    "SecretPortal": [(0, '进入传送门|Enter the Portal', 'portal_boss'),
+                     (1, '离开|Leave', 'leave')],
     "Fountain of Cleansing": [(0, '喝水|Drink', 'remove_curses'),
                              (1, '离开|Leave', 'leave')],
     "Mysterious Sphere": [(0, '打开圆球|Open Sphere', 'sphere_combat'),
@@ -223,7 +225,7 @@ class EventEffectAck:
             old, _, started = self.pending
             self.pending = (old, 'beggar_remove_confirmed', started)
             return
-        if (self.pending and self.pending[1] in {'mushroom_combat', 'sphere_combat'}
+        if (self.pending and self.pending[1] in {'mushroom_combat', 'sphere_combat', 'portal_boss'}
                 and gs.get('screen_state', {}).get('event_id') == self.pending[0].get('screen_state', {}).get('event_id')
                 and transport_only(gs) is not None
                 and decision.command == f'CHOOSE {transport_only(gs)}'):
@@ -272,6 +274,20 @@ class EventEffectAck:
         if now - started > 30:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
+            return True
+        if effect in {'portal_boss', 'portal_boss_confirmed'}:
+            if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
+                if g.get('room_type') != 'MonsterRoomBoss':
+                    raise RuntimeError('SecretPortal expected boss combat')
+                self.pending = None
+                return False
+            if any(g.get(k) != old.get(k) for k in ('gold', 'current_hp', 'max_hp', 'deck', 'relics', 'potions')):
+                raise RuntimeError('SecretPortal unexpected pre-combat resource effect')
+            if (effect == 'portal_boss'
+                    and g.get('screen_type') == 'EVENT'
+                    and g.get('screen_state', {}).get('event_id') == 'SecretPortal'
+                    and transport_only(g) is not None):
+                return False  # One explicit confirmation; not completion.
             return True
         if effect == 'lab_rewards':
             if g.get('screen_type') != 'COMBAT_REWARD':
