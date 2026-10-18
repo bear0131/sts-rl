@@ -498,6 +498,12 @@ def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
     send(decision.command)
 
 
+def searched_command_still_current(frame, original, command):
+    return ("error" not in frame and frame.get("ready_for_command", False)
+            and frame.get("game_state") == original.get("game_state")
+            and command.split()[0].lower() in frame.get("available_commands", []))
+
+
 def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
     """A combat command must change its real frame before another decision."""
     return pending is not None and frame.get("game_state") == pending
@@ -601,6 +607,7 @@ def main() -> None:
         pending_end_frame = None
         pending_end_since = 0.0
         combat_stability = CombatFrameStability()
+        unsent_search = None
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -608,6 +615,20 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                if unsent_search is not None:
+                    original, prepared = unsent_search
+                    unsent_search = None
+                    if searched_command_still_current(frame, original, prepared.command):
+                        send_decision(frame, prepared)
+                        if combat_command_needs_ack(frame, prepared.command):
+                            pending_play_frame = deepcopy(frame.get("game_state"))
+                            pending_play_since = time.monotonic()
+                        if prepared.command.upper() == "END":
+                            pending_end_frame = deepcopy(frame.get("game_state"))
+                            pending_end_since = time.monotonic()
+                        continue
+                    combat_search.cancel_unsent_command()
+                    log.info("discarded unsent search command after fresh state changed")
                 if stale_combat_end_frame(frame, pending_end_frame):
                     if time.monotonic() - pending_end_since > 10.0:
                         raise RuntimeError("game turn did not advance for 10 seconds after END")
@@ -628,6 +649,10 @@ def main() -> None:
                     continue
                 decision = agent.decide(frame)
                 _log_decision(frame, decision, adapter)
+                if decision.reason == "native_full_gumbel":
+                    unsent_search = (deepcopy(frame), decision)
+                    send("STATE")
+                    continue
                 send_decision(frame, decision)
                 if combat_command_needs_ack(frame, decision.command):
                     pending_play_frame = deepcopy(frame.get("game_state"))

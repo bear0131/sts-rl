@@ -211,9 +211,9 @@ class RealCombatSearch:
         self.strategy.unbind_environments()
         self.env.close()
 
-    def observe_frame(self, frame: dict[str, Any]) -> None:
-        """Rollback an optimistically mirrored action when the mod rejects it."""
-        if "error" in frame and self._awaiting_command:
+    def cancel_unsent_command(self) -> None:
+        """Undo a speculative command when a fresh pre-send frame invalidates it."""
+        if self._awaiting_command:
             if self._rollback_bc is None:
                 raise RuntimeError("rejected real-game command has no native rollback state")
             self.env.thick.bc = self._rollback_bc
@@ -224,6 +224,14 @@ class RealCombatSearch:
             self.adapter.multi_selected = set(thin.get("real_multi_selected", ()))
             self.adapter._joint_multi_plan = deepcopy(thin.get("real_joint_multi_plan"))
             self.env._invalidate_backend_cache()
+        self._rollback_bc = None
+        self._rollback_thin = None
+        self._awaiting_command = False
+
+    def observe_frame(self, frame: dict[str, Any]) -> None:
+        """Rollback an optimistically mirrored action when the mod rejects it."""
+        if "error" in frame and self._awaiting_command:
+            self.cancel_unsent_command()
             LOG.error("CommunicationMod rejected the mirrored search action; native state rolled back: %s",
                       frame.get("error"))
         if "error" not in frame:

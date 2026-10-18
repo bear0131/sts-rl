@@ -240,6 +240,44 @@ def test_duplicate_frame_after_play_waits_for_actual_hand_transition():
     assert not stale_combat_play_frame({"game_state": gs}, None)
 
 
+def test_search_send_requires_fresh_unchanged_state_and_command_permission():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import searched_command_still_current
+    original = {"ready_for_command": True, "available_commands": ["play", "end"],
+                "game_state": {"screen_type": "NONE", "is_screen_up": False}}
+    assert searched_command_still_current(deepcopy(original), original, "PLAY 2 0")
+    changed = deepcopy(original)
+    changed["game_state"]["is_screen_up"] = True
+    assert not searched_command_still_current(changed, original, "PLAY 2 0")
+    changed = deepcopy(original)
+    changed["available_commands"] = ["state"]
+    assert not searched_command_still_current(changed, original, "PLAY 2 0")
+    changed = deepcopy(original)
+    changed["ready_for_command"] = False
+    assert not searched_command_still_current(changed, original, "PLAY 2 0")
+
+
+def test_cancel_unsent_search_restores_native_and_selection_state():
+    from types import SimpleNamespace
+    from bridge.search_bridge import RealCombatSearch
+    bridge = RealCombatSearch.__new__(RealCombatSearch)
+    saved = object()
+    bridge._awaiting_command = True
+    bridge._rollback_bc = saved
+    bridge._rollback_thin = {"pending": {"source": "deck"}, "multi": None,
+                             "real_multi_selected": {2}, "real_joint_multi_plan": [2]}
+    bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=object()),
+                                 _invalidate_backend_cache=lambda: None)
+    bridge.adapter = SimpleNamespace(multi_selected={3}, _joint_multi_plan=[3])
+    bridge.cancel_unsent_command()
+    assert bridge.env.thick.bc is saved
+    assert bridge.env._pending == {"source": "deck"}
+    assert bridge.adapter.multi_selected == {2}
+    assert bridge.adapter._joint_multi_plan == [2]
+    assert not bridge._awaiting_command and bridge._rollback_bc is None
+    bridge.cancel_unsent_command()  # idempotent, no command has been sent
+
+
 def test_end_requires_turn_ack_not_changed_commands_or_player_state():
     from copy import deepcopy
     from bridge.client.agent_orchestrator import stale_combat_end_frame
