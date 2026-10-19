@@ -6,7 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE57 | Cursed Tome阶段/书籍奖励回执已接通源码，待F24实机 | EventEffectAck按0..6原生语义核对UI命令、同局同层与明确下一页，take确认单本未持有书籍/Circlet奖励后交还领取策略，非自动获得或领取。同步HP_LOSS后的真实资源帧进入原编码，不以净扣血判断阶段，保留减伤/复活。源码及游戏中英选项核对，无离线测试；优先保全F24档/index184续测，禁止重开。 |
+| BRIDGE58 | END后选牌被等待屏障误拦，源码已修待F25续测 | bd79d2b实机F25尼利宝典CODEX在turn1 ready选牌时，stale_combat_end_frame只认回合增加而10秒误超时。让ready的CARD_REWARD/HAND_SELECT/GRID交回既有严格选择与搜索合同，不按画面猜动作、不自动选/跳，不放行普通帧flag变化。包括回合结束保留牌等同类选择入口；无离线测试，继续从F25入口存档。 |
+| BRIDGE57 | F24阅读/三次继续/拿书奖励/领取/离开已实机通过 | bd79d2b/v16续档真实84→83→81→78→68，单本Nilry's Codex奖励经模型claim取得、PROCEED再Leave回MAP进入F25，无旧指令重发。EventEffectAck按0..6语义核对UI命令/同局层/下一页，take仅确认未持有书籍/Circlet奖励，不自动领取；stop、致死/复活及全书Circlet分支仅源码核对、未实机覆盖。 |
 | BRIDGE56 | 红头骨治疗后力量符号/魔法花取整源码已修，待必要构建实机 | Player::heal越过半血改为debuff<STRENGTH>(-3)，原+3会凭空增加攻击伤害；MagicFlower用Java float×1.5后正数四舍五入，非整数3/2截断，修复奇数治疗少1。按用户效果标准做小范围规则修复，不扩展全部动画/私有时序，不改权重张量或策略选择。源对照RedSkull.onNotBloodied、MagicFlower.onPlayerHeal、原生debuff消费者；无离线行为测试。 |
 | BRIDGE54 | 匿名身份/主要排队/盗贼私有根已修；细粒度捕获与时序后置 | 原游戏8个/BaseMod3个匿名动作逐项登记。Mayhem执行时RNG二阶段排队；盗贼分开记账/DAMAGE，v15实际stolenGold/slashCount/goldAmt到canonical/根/dict/key；计数不猜总回合，变招/格挡保留即时或排队区别，补Mugger死亡aiRng。turnHasEnded/怪物游标延后。按用户效果范围，RedSkull私有isActive/完整时序、盗贼die奖励捕获时点和完整pending后置，不能声称全等价；红头骨明确力量符号错另BRIDGE56已修。7个stock不等于全部行为验收，废弃/自定义4项明确不支持；允许已修主要链路有限续档验证，不以细节全清零阻塞。 |
 | BRIDGE55 | 磁力空实现/战内血药反倍率源码已修，未构建或行为验证 | Magnetism在atStartOfTurn逐层用cardRandomRng抽非治疗无色牌，构造时捕获MasterReality，逐张入队并复用满手入弃牌堆；有别于Mayhem的延迟随机。BloodPotion恢复无树皮20%/有树皮40%，使用Java float(maxHP)*ratio截断顺序，战外路径原已正确。共享词表记录两种回合开始时机和血药治疗来源；权重/观察形状不变。仅源码/diff二次核对，无测试/实机；完整power顺序/pending仍BRIDGE28，不据此称全对齐。 |

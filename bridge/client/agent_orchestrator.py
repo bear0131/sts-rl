@@ -550,7 +550,7 @@ def combat_command_needs_ack(frame: dict[str, Any], command: str) -> bool:
 
 
 def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
-    """END is acknowledged by a new turn/room, not changed transport flags."""
+    """END advances to another turn/room or a required in-combat selection."""
     if pending is None or "error" in frame:
         return False
     gs = frame.get("game_state") or {}
@@ -561,6 +561,13 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
         return False
     if "turn" not in combat or type(combat["turn"]) is not int:
         raise ValueError("combat END acknowledgement is missing an integer turn")
+    if (frame.get("ready_for_command") is True
+            and gs.get("screen_type") in {"CARD_REWARD", "HAND_SELECT", "GRID"}):
+        # Codex/retain and other queued selections must resolve before the
+        # turn can advance. Release only this wait barrier; the normal adapter
+        # and search still validate source, context, candidates and legal picks.
+        # No command is chosen here and ordinary changed flags remain stale.
+        return False
     return combat["turn"] <= pending["combat_state"]["turn"]
 
 
