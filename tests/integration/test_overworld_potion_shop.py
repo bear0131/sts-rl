@@ -84,6 +84,30 @@ def test_native_courier_restock_does_not_create_second_reserve(shop_factory):
     assert rank_potion_shop(after,[action,A._PROCEED]) is None
 
 
+@pytest.mark.parametrize('ascension', [15, 16, 20])
+@pytest.mark.parametrize('relics,low_price,high_price', [
+    ([], 50, 55), (['The Courier'], 40, 44),
+    (['Membership Card'], 25, 28), (['The Courier', 'Membership Card'], 20, 22),
+])
+def test_shop_price_reaches_observation_mask_and_purchase(shop_factory, ascension, relics,
+                                                        low_price, high_price):
+    env = shop_factory(relics, ascension=ascension)
+    price = high_price if ascension >= 16 else low_price
+    before = env.thick.obs_canonical()
+    assert before['options']['shop_potions'][2] == ('Strength Potion', price)
+    action = A._SHOP_POTION + 2
+    env.thick.gc.gold = price - 1
+    env._invalidate_backend_cache()
+    assert not env.action_masks()[action]
+    env.thick.gc.gold = price
+    env._invalidate_backend_cache()
+    assert env.action_masks()[action]
+    env.step(action)
+    after = env.thick.obs_canonical()
+    assert after['global']['gold'] == 0
+    assert after['global']['potions'][0] == 'Strength Potion'
+
+
 @pytest.mark.parametrize('blocked_by',['Sozu','full'])
 def test_native_and_supplement_reject_unobtainable_potion(shop_factory,blocked_by):
     env=shop_factory(['Sozu'] if blocked_by=='Sozu' else ['The Courier'])

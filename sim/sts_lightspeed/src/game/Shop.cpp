@@ -15,7 +15,8 @@ void Shop::setup(GameContext &gc) {
     setupPotions(gc);
 
     if (gc.ascension >= 16) {
-        applyDiscount(0.80f);
+        // A16 inflation applies to the initial stock, not Courier restocks.
+        applyDiscount(1.10f);
     }
     if (gc.hasRelic(RelicId::THE_COURIER)) {
         applyDiscount(0.80f);
@@ -122,12 +123,14 @@ void Shop::buyRelic(GameContext &gc, int idx) {
 
     if (r == RelicId::MEMBERSHIP_CARD) {
         applyDiscount(MEMBERSHIP_CARD_FACTOR);
-        removeCost = static_cast<int>(std::round(static_cast<float>(removeCost) * MEMBERSHIP_CARD_FACTOR));
+        if (removeCost >= 0) {
+            removeCost = getRemoveCost(gc);
+        }
     }
 
     if (gc.hasRelic(RelicId::THE_COURIER)) {
         relics[idx] = gc.returnRandomRelic(rollRelicTier(gc.merchantRng), true, false);
-        getNewPrice(gc, getRelicBasePrice(relics[idx]));
+        relicPrice(idx) = getNewPrice(gc, getRelicBasePrice(relics[idx]));
     } else {
         relicPrice(idx) = -1;
     }
@@ -201,7 +204,7 @@ int Shop::getNewCardPrice(GameContext &gc, CardRarity rarity, bool colorless) {
     if (gc.hasRelic(RelicId::THE_COURIER)) {
         price *= 0.8f;
     }
-    if (gc.hasRelic(RelicId::THE_COURIER)) {
+    if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
         price *= 0.5f;
     }
     return static_cast<int>(price);
@@ -225,21 +228,17 @@ int Shop::getNewPrice(GameContext &gc, int basePrice) {
 }
 
 int Shop::getRemoveCost(const GameContext &gc) {
-    int cost;
     if (gc.hasRelic(RelicId::SMILING_MASK)) {
-        cost = SMILING_MASK_PRICE;
-    } else {
-        cost = BASE_REMOVE_PRICE+(REMOVE_PRICE_INCREASE*gc.shopRemoveCount);
+        return SMILING_MASK_PRICE;
     }
+    int cost = BASE_REMOVE_PRICE+(REMOVE_PRICE_INCREASE*gc.shopRemoveCount);
 
-    if (gc.hasRelic(RelicId::THE_COURIER) && gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
-        cost = std::round(static_cast<float>(cost) * COURIER_FACTOR * MEMBERSHIP_CARD_FACTOR);
-
+    // ShopScreen.applyDiscount recalculates removal from the undiscounted base
+    // each time. Membership is applied last, unlike the cumulative item prices.
+    if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
+        cost = std::round(static_cast<float>(cost) * MEMBERSHIP_CARD_FACTOR);
     } else if (gc.hasRelic(RelicId::THE_COURIER)) {
         cost = std::round(static_cast<float>(cost) * COURIER_FACTOR);
-
-    } else if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
-        cost = std::round(static_cast<float>(cost) * MEMBERSHIP_CARD_FACTOR);
     }
     return cost;
 }

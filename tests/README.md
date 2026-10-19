@@ -51,10 +51,12 @@ require the native extension: a missing native build is an error, not a skipped
 success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
 
-`tests/integration/test_relic_pool.py` and `test_event_callbacks.py` use the shared
+`tests/integration/test_relic_pool.py`, `test_event_callbacks.py`,
+`test_reward_transactions.py` and `test_shop_prices.py` use the shared
 fixture to build the test-only CMake target `game-context-contract` inside the
 explicit build directory. This gives isolated subprocess coverage of private pool
-boundaries and copied event callbacks without adding debug APIs to the Python runtime. The first case allows up to 180 seconds for compilation; each
+boundaries, copied event callbacks, reward transactions and shop pricing without
+adding debug APIs to the Python runtime. The first case allows up to 180 seconds for compilation; each
 native case has a 10-second limit. Missing CMake, a build from another checkout,
 or a failed native child is a test failure, not a skip. A separate 200-purchase,
 20-second Courier case exercises the loaded Python extension itself.

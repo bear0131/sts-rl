@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <cmath>
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
@@ -233,6 +234,100 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkShopPrice(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.gold = 10000;
+    gc.screenState = ScreenState::SHOP_ROOM;
+    auto &shop = gc.info.shop;
+    if (variant < 4) {
+        if (variant & 1) gc.obtainRelic(RelicId::THE_COURIER);
+        if (variant & 2) gc.obtainRelic(RelicId::MEMBERSHIP_CARD);
+        auto raw = gc;
+        raw.info.shop.setupCards(raw);
+        raw.info.shop.setupRelics(raw);
+        raw.info.shop.setupPotions(raw);
+        shop.setup(gc);
+        for (int i = 0; i < 13; ++i) {
+            int expected = raw.info.shop.prices[i];
+            if (ascension >= 16) expected = std::lround(expected * 1.1f);
+            if (variant & 1) expected = std::lround(expected * 0.8f);
+            if (variant & 2) expected = std::lround(expected * 0.5f);
+            require(shop.prices[i] == expected, "initial shelf price violates A16/discount order");
+        }
+        require(sameRng(raw.merchantRng, gc.merchantRng), "price modifiers consumed RNG");
+    } else if (variant == 4) {
+        for (int discounts = 0; discounts < 4; ++discounts) {
+            auto child = gc;
+            if (discounts & 1) child.obtainRelic(RelicId::THE_COURIER);
+            if (discounts & 2) child.obtainRelic(RelicId::MEMBERSHIP_CARD);
+            for (bool colorless : {false, true}) {
+                auto fullPrice = gc;
+                child.merchantRng = fullPrice.merchantRng;
+                const int p = Shop::getNewCardPrice(child, CardRarity::RARE, colorless);
+                // A rare card is 150 +/-10%, colorless adds 20%; restocks ignore A16.
+                const float discount = (discounts & 1 ? 0.8f : 1.f) * (discounts & 2 ? 0.5f : 1.f);
+                const float color = colorless ? 1.2f : 1.f;
+                require(p >= static_cast<int>(135 * color * discount) &&
+                        p <= static_cast<int>(165 * color * discount), "restocked card discount/range wrong");
+            }
+        }
+    } else if (variant == 5) {
+        gc.obtainRelic(RelicId::THE_COURIER);
+        for (bool membership : {false, true}) {
+            auto child = gc;
+            if (membership) child.obtainRelic(RelicId::MEMBERSHIP_CARD);
+            child.commonRelicPool = {RelicId::ANCHOR};
+            child.uncommonRelicPool = {RelicId::KUNAI};
+            child.rareRelicPool = {RelicId::GINGER};
+            auto &s = child.info.shop;
+            s.relics[0] = RelicId::STRAWBERRY;
+            s.relicPrice(0) = 1; // Deliberately distinguish old shelf price from the replacement.
+            s.buyRelic(child, 0);
+            require(child.gold == 9999 && child.hasRelic(RelicId::STRAWBERRY), "relic purchase charged wrong item");
+            const int base = getRelicBasePrice(s.relics[0]);
+            int low = std::lround(std::lround(base * 0.95f) * 0.8f);
+            int high = std::lround(std::lround(base * 1.05f) * 0.8f);
+            if (membership) { low = std::lround(low * 0.5f); high = std::lround(high * 0.5f); }
+            require(s.relicPrice(0) >= low && s.relicPrice(0) <= high, "restocked relic retained previous price");
+        }
+    } else if (variant == 6) {
+        gc.obtainRelic(RelicId::SMILING_MASK);
+        for (int discounts = 0; discounts < 4; ++discounts) {
+            auto child = gc;
+            if (discounts & 1) child.obtainRelic(RelicId::THE_COURIER);
+            if (discounts & 2) child.obtainRelic(RelicId::MEMBERSHIP_CARD);
+            for (int removed : {0, 3}) {
+                child.shopRemoveCount = removed;
+                require(Shop::getRemoveCost(child) == 50, "Smiling Mask removal price must remain 50");
+            }
+        }
+    } else if (variant == 7 || variant == 8) {
+        gc.obtainRelic(RelicId::SMILING_MASK);
+        shop.setup(gc);
+        shop.removeCost = variant == 7 ? 50 : -1;
+        shop.relics[0] = RelicId::MEMBERSHIP_CARD;
+        const int cost = shop.relicPrice(0);
+        shop.buyRelic(gc, 0);
+        require(gc.gold == 10000 - cost, "membership purchase used discounted purchase price");
+        require(shop.removeCost == (variant == 7 ? 50 : -1), "membership changed fixed/used removal price");
+    } else if (variant == 9) {
+        // ShopScreen.init applies each removal discount to the base purge cost;
+        // Membership is last. Item prices still stack both reductions.
+        gc.obtainRelic(RelicId::THE_COURIER);
+        for (int removed : {0, 1, 3}) {
+            auto child = gc;
+            child.shopRemoveCount = removed;
+            auto &s = child.info.shop;
+            s.setup(child);
+            s.relics[0] = RelicId::MEMBERSHIP_CARD;
+            const int expected = std::lround((75 + removed * 25) * 0.5f);
+            s.buyRelic(child, 0);
+            require(s.removeCost == expected, "buying membership stacked removal discounts");
+            require(Shop::getRemoveCost(child) == expected, "entering shop stacked removal discounts");
+        }
+    } else { throw std::invalid_argument("unknown shop-price fixture"); }
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -241,9 +336,10 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;
