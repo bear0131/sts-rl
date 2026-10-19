@@ -97,6 +97,25 @@ legal-action contract and the real game's accepted commands.
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
 
+### Diagnostic continuation from saves
+
+For ongoing bridge debugging, resume the latest applicable fault/room-entry
+save instead of replaying a run from floor 1. Preserve the user's current save,
+preferences, mod and configuration before installing an archived diagnostic
+save; preserve the new result before restoring those originals on exit.
+Inspect the archived save's actual seed, floor and pre/post-combat state first.
+A game autosave resumes a room boundary, not necessarily the exact failing turn.
+
+Use `--attach-existing-seed <internal-seed> --attach-existing-floor <floor>`
+without `--auto-start` or `--start-seeds`, then use the game's **Continue**
+button. If the corresponding original log establishes the logical search index
+at that saved boundary, also pass `--attach-search-index <index>`; do not infer
+it merely by counting logged commands (cancellations and multi-pick prefixes
+can differ). The first attached frame must match the requested seed/floor.
+Record this as an SL diagnostic, not a new complete run or formal win-rate
+sample. A new full run requires a reason such as an unusable save or an explicit
+whole-run evaluation; do not silently fall back to START if attachment fails.
+
 ### Simulator-parity state exporter
 
 Neural simulation exposes the current native monster move even with Runic Dome.

@@ -4,7 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE48 | F10红虱虫尸体9→6意图差异已实机复现；源码已修/构建成功，待实机 | Java intentDmg缓存与当前powers分开，死亡清力量后仍保持9，原生重算为6导致严格同步失败。新增不可行动实体显示缓存，严格恢复显式adjusted_damage，dict/packed/key一致，活怪仍用真实攻击公式；不删尸体/伪造力量/忽略diff。按用户要求必要构建后直接实机，无离线测试；需验证同seed越过F10，死亡/逃跑/变招/复活完整生命周期仍待验收。 |
+| BRIDGE48 | 原F10尸体意图阻断已从存档实机越过，进入F11；完整生命周期未验收 | Java intentDmg缓存与当前powers分开，死亡清力量后仍保持9，原生重算为6导致严格同步失败。新增不可行动实体显示缓存，严格恢复显式adjusted_damage，dict/packed/key一致，活怪仍用真实攻击公式；不删尸体/伪造力量/忽略diff。d503692/2ad49d53构建后直接从seed200210 F10入口续档、恢复index61，胜利回图并进F11；无离线测试、不计整局成绩。死亡/逃跑/变招/复活完整生命周期仍待验收，后续优先续存档而非从头重开。 |
 | REWARD02 | 宝箱饥饿面具/套娃/蓝钥匙顺序源码已修；未行为验证/部署 | GameContext::openTreasureRoomChest按真实onChestOpen→基础遗物/钥匙→onChestOpenAfter顺序，面具移除第一遗物而非无条件吞基础遗物；仅移除关联遗物时连蓝钥匙一起移除。codec_contract的chest_reward_link_contracts记录来源/关联。按用户要求不做离线测试；需必要构建及后续实机核对无/有套娃、面具未用/用尽、蓝钥匙有/无和实际关联遗物，不将静态修复称完整验收。 |
 | BRIDGE46 | v13已构建并实机；200209到F6无错误，200210打赢F7精英后因BRIDGE47停止 | 实际Gson默认省略Map null导致simulator_stasis_card缺字段；两个JSON出口统一serializeNulls，保留显式null而非Python默认。current_action/choice_list显式导出；普通/错误帧分开校验，画面/牌组/遗物/药水/地图/动作phase缺失不可当空/稳定态。列表别名与reward明细冲突（含空vs非空）拒绝，删除Boss/战斗候选按按钮数兜底。json_presence_contracts记录来源/缺失/空值。按用户要求只做必要构建后直接实机，无本批离线回归；两段均用最终TRAIN47，原jar/config/存档已核验还原。不是完整游戏或正式胜率，BRIDGE28/37与同步12失败未解决。 |
 | BRIDGE47 | 显式协议已实机越过F7绿钥匙与F9蓝钥匙；整局未完成 | 200210的F7绿钥匙使最终TRAIN47（无reward_keys/run_keys）触发严格检查。用户确认后加入checkpoint-v7-act3：共享rl.policies.model.action_mask_for_policy供模拟器PolicyStrategy/真实agent，仅策略mask排除后加CLAIM_KEY，不改真实状态/合法动作全集/红钥匙原有选项，不自动领取；协议进入启动日志、排除动作日志及评测记录，Act4动作拒绝。默认native继续严格拒绝不兼容决策，不假PAD/填零/换模型。66c35cd实际到F10后因BRIDGE48停止；本项未回退，完整奖励/终局协议仍待后续实机。无离线测试。 |
