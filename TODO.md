@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE85 | 源码已修并构建，特殊分支待实机 | Actions::LimitBreakAction执行时捕获当前力量，正值TOP BuffPlayer、负值TOP DebuffPlayer；负力量翻倍不再绕过Artifact，零值无新状态。战士普通/升级牌共用，不改ID/升级消耗/观察动作/权重；源码/消费者已复读，待自然负力量+Artifact组合，按用户要求无离线测试。 |
 | BRIDGE84 | 源码已修并构建，特殊分支待实机 | initRelics将MutagenicStrength纳入开战队列，按Java两次TOP入队；Clockwork改TOP，实际遗物顺序决定Artifact能否挡Flex。GremlinMask改BOTTOM玩家虚弱false，RedMask敌方虚弱false，不再多留一轮；列表容量8→9，Snecko preBattle阶段不动。适用原生初始化/桥接shadow构造与未来搜索，无观察动作布局变化或离线测试；源码/消费者已复读，需自然组合覆盖。 |
 | BRIDGE83 | 源码已修并复读，特殊分支待自然覆盖 | EventEffectAck的Goop金币和A15蓝衣女子离开允许实际第一瓶Fairy原位消耗；蓝衣女子不再直接拒绝A15，核对公开伤害文案/语义命令并等最终Leave或真实死亡。共享有序候选复用于Scrap/Skull，Bloom禁止、不得换槽或吞任意药水变化；购药/A0无伤离开约束保留。无原生/Java/布局变更或离线测试，特殊实机分支未覆盖。 |
 | BRIDGE82 | 源码已修并构建，特殊分支待自然覆盖 | BattleContext.h的排队BuffEnemy/debuffEnemy在实际执行时拒绝dying/halfDead/escaping/INVALID，早于Artifact/Sadistic/ChampionBelt；修复Bash/Uppercut击倒黑暗虫/觉醒者后重加debuff污染复活预测。低层初始化/还原不改，Darkling清halfDead后的正常Regrow/Philo增力保留。验收为源码复读、构建及自然实机组合，不以当前a2a6102运行替代；无离线测试/权重布局改变。 |

@@ -325,6 +325,7 @@ def complete_word_tables():
             "audit": "BRIDGE76 real F46 same-save attachment and Four Shapes win passed after fix; continued to F50 natural loss with zero bridge errors; Neow/burning-elite combinations still uncovered",
         },
         "card_use_and_empty_pile_contracts": {
+            "Limit Break": "LimitBreakAction captures current Strength at execution and queues TOP ApplyPower; positive adds normally, negative uses DEBUFF/Artifact gate, zero creates no new status (BRIDGE85)",
             "empty_piles": "no automatic loss when hand/draw/discard are empty; potions, passive effects and generated cards remain available until actual terminal or existing budget",
             "Anger": "Java AngerPower -> native ENRAGE; every occupied monster slot, skill use, queued TOP Strength, dead/escaped owner rejected when executed",
             "Curiosity": "Java CuriosityPower -> native CURIOSITY; every occupied monster slot, power use, queued BOTTOM Strength; dead/halfDead/escaping owner rejected after any earlier Panache form transition",

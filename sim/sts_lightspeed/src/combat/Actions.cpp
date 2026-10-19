@@ -1159,7 +1159,14 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
 
 Action Actions::LimitBreakAction() {
     return {[] (BattleContext &bc) {
-        bc.player.buff<PS::STRENGTH>(bc.player.getStatus<PS::STRENGTH>());
+        const int strength = bc.player.getStatus<PS::STRENGTH>();
+        // Java captures the current amount here, then prepends ApplyPower.
+        // Negative Strength is a DEBUFF and can consume/be blocked by Artifact.
+        if (strength > 0) {
+            bc.addToTop(Actions::BuffPlayer<PS::STRENGTH>(strength));
+        } else if (strength < 0) {
+            bc.addToTop(Actions::DebuffPlayer<PS::STRENGTH>(strength, false));
+        }
     }};
 }
 
