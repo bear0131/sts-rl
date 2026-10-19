@@ -322,23 +322,6 @@ def _choice_index(labels: list[Any], aliases: set[str], occurrence: int = 0) -> 
     return None
 
 
-def _map_choice(label: Any, fallback_x: int) -> tuple[int, str]:
-    text = str(label)
-    lower = text.strip().lower()
-    if lower == "boss":
-        return fallback_x, "BOSS"
-    x = fallback_x
-    match = re.search(r"x\s*=\s*(-?\d+)", text)
-    if match:
-        x = int(match.group(1))
-    room = "NONE"
-    for token, mapped in _ROOM_LABELS.items():
-        if token and re.search(rf"(^|[^a-z]){re.escape(token)}([^a-z]|$)", lower):
-            room = mapped
-            break
-    return x, room
-
-
 def _map_room(value: Any) -> str:
     text = str(value or "NONE")
     return _ROOM_LABELS.get(_norm_label(text), text)
@@ -347,29 +330,32 @@ def _map_room(value: Any) -> str:
 def _node_xy(node: Any) -> tuple[int, int] | None:
     if not isinstance(node, dict):
         return None
-    x = _int_or_none(node.get("x"))
-    y = _int_or_none(node.get("y"))
-    if x is None or y is None:
+    x, y = node.get("x"), node.get("y")
+    if type(x) is not int or type(y) is not int:
         return None
     return x, y
 
 
 def _node_room(node: dict[str, Any]) -> str:
-    return _map_room(node.get("room") or node.get("room_type") or node.get("symbol"))
+    room = _map_room(node.get("room") or node.get("room_type") or node.get("symbol"))
+    if room not in V.ROOM_VOCAB_INDEX or room in {"NONE", "INVALID"}:
+        raise ValueError(f"map node has no supported room: {node!r}")
+    return room
 
 
 def _node_children(node: dict[str, Any]) -> list[tuple[int, int]]:
     out = []
-    for child in node.get("children") or []:
+    children = node.get("children")
+    if not isinstance(children, list):
+        raise ValueError("map children must be an explicit list")
+    for child in children:
         if isinstance(child, dict):
             xy = _node_xy(child)
-            if xy is not None:
-                out.append(xy)
         else:
-            x = _int_or_none(child)
-            y = _int_or_none(node.get("y"))
-            if x is not None and y is not None:
-                out.append((x, y + 1))
+            xy = (child, node["y"] + 1) if type(child) is int else None
+        if xy is None or xy in out:
+            raise ValueError("map children contain invalid or duplicate coordinates")
+        out.append(xy)
     return out
 
 
@@ -688,108 +674,83 @@ class RealGameAdapter:
 
     def _map_nodes(self) -> list[tuple[int, str]]:
         ss = _screen_state(self.gs)
-        next_nodes = ss.get("next_nodes") or []
-        if isinstance(next_nodes, list) and next_nodes:
-            nodes = []
-            for node in next_nodes:
-                xy = _node_xy(node)
-                if xy is None:
-                    continue
-                x, _y = xy
-                if 0 <= x < A.N_COLS:
-                    nodes.append((x, _node_room(node)))
-            return nodes[:encode.MAP_EDGES]
-
         if ss.get("boss_available"):
             current = _node_xy(ss.get("current_node"))
-            if current is not None:
-                return [(current[0], "BOSS")]
+            if current is None or not (0 <= current[0] < A.N_COLS and current[1] == _MAP_MAX_Y):
+                raise ValueError("boss map choice requires the current final-row node")
+            if ss.get("next_nodes"):
+                raise ValueError("boss map choice cannot also offer next_nodes")
+            return [(current[0], "BOSS")]
 
-        nodes = []
-        fallback = int(self.gs.get("current_x", self.gs.get("map_node_x", 0)) or 0)
-        for i, choice in enumerate(self.choices()):
-            x, room = _map_choice(choice, fallback + i)
-            if 0 <= x < A.N_COLS:
-                nodes.append((x, room))
-        return nodes[:encode.MAP_EDGES]
+        next_nodes = ss.get("next_nodes")
+        if not isinstance(next_nodes, list) or not next_nodes:
+            raise ValueError("actionable map screen requires structured next_nodes")
+        if len(next_nodes) > A.N_COLS:
+            raise ValueError(f"map column capacity {A.N_COLS} exceeded: {len(next_nodes)}")
+        nodes, rows = [], set()
+        for node in next_nodes:
+            xy = _node_xy(node)
+            if xy is None or not (0 <= xy[0] < A.N_COLS and 0 <= xy[1] <= _MAP_MAX_Y):
+                raise ValueError(f"map choice has invalid coordinates: {node!r}")
+            x, y = xy
+            rows.add(y)
+            nodes.append((x, _node_room(node)))
+        if len(rows) != 1 or len({x for x, _ in nodes}) != len(nodes):
+            raise ValueError("map choices have mixed rows or duplicate columns")
+        # The order is the client's CHOOSE order, not physical x order.
+        return nodes
 
     def _full_map_nodes(self, ss: dict[str, Any]) -> list[dict[str, Any]]:
-        raw = self.gs.get("map") or ss.get("map") or ss.get("nodes") or ss.get("full_map") or []
-        if not isinstance(raw, list):
-            return []
-
-        raw_nodes: dict[tuple[int, int], dict[str, Any]] = {}
+        raw = self.gs.get("map") or ss.get("map") or ss.get("nodes") or ss.get("full_map")
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("full-map observation requires structured map records")
+        raw_nodes = {}
         for node in raw:
             xy = _node_xy(node)
-            if xy is None:
-                continue
-            x, y = xy
-            if not (0 <= x < A.N_COLS and 0 <= y <= _MAP_MAX_Y):
-                continue
-            if isinstance(node, dict):
-                raw_nodes[(x, y)] = node
+            if xy is None or not (0 <= xy[0] < A.N_COLS and 0 <= xy[1] <= _MAP_MAX_Y):
+                raise ValueError(f"invalid full-map coordinate: {node!r}")
+            if xy in raw_nodes:
+                raise ValueError(f"duplicate full-map coordinate: {xy!r}")
+            _node_room(node)
+            raw_nodes[xy] = node
+
+        edges = {}
+        for xy, node in raw_nodes.items():
+            # Boss lies outside the frozen 15-row DAG, as in the native schema.
+            edges[xy] = _node_children(node) if xy[1] < _MAP_MAX_Y else []
+            for child in edges[xy]:
+                if child[1] != xy[1] + 1 or child not in raw_nodes:
+                    raise ValueError(f"map edge has absent or nonadjacent target: {xy!r} -> {child!r}")
 
         current = _node_xy(ss.get("current_node"))
-        if current is None:
-            current = (
-                _int_or_none(self.gs.get("current_x")),
-                _int_or_none(self.gs.get("current_y")),
-            )
-            if current[0] is None or current[1] is None:
-                current = None
-
         if current is None and ss.get("first_node_chosen") is False:
             current = (-1, -1)
-
-        choices: set[tuple[int, int]] = set()
-        if ss.get("boss_available") and current is not None and current[1] >= _MAP_MAX_Y:
-            choices.add(current)
-        else:
-            next_nodes = ss.get("next_nodes") or []
-            if isinstance(next_nodes, list):
-                for node in next_nodes:
-                    xy = _node_xy(node)
-                    if xy is not None:
-                        choices.add(xy)
-
-        if not choices:
-            for x, _room in self._map_nodes():
-                if current is not None and current[1] is not None and current[1] >= 0:
-                    choices.add((x, int(current[1]) + 1))
-                else:
-                    choices.add((x, 0))
+        if current is None or (current != (-1, -1) and current not in raw_nodes):
+            raise ValueError("map current_node is missing or absent from the graph")
+        self._map_nodes()  # Validate every UI candidate before building flags.
+        choices = {current} if ss.get("boss_available") else {
+            _node_xy(node) for node in ss["next_nodes"]
+        }
+        for xy in choices:
+            if xy not in raw_nodes:
+                raise ValueError(f"map choice is absent from the graph: {xy!r}")
+        if not ss.get("boss_available"):
+            for node in ss["next_nodes"]:
+                if _node_room(node) != _node_room(raw_nodes[_node_xy(node)]):
+                    raise ValueError("map candidate room differs from full-map room")
 
         downstream = set(choices)
         frontier = list(choices)
         while frontier:
-            xy = frontier.pop()
-            node = raw_nodes.get(xy)
-            if node is None:
-                continue
-            for child in _node_children(node):
+            for child in edges[frontier.pop()]:
                 if child not in downstream:
                     downstream.add(child)
                     frontier.append(child)
-
-        out = []
-        for (x, y), node in sorted(raw_nodes.items(), key=lambda item: (item[0][1], item[0][0])):
-            children = []
-            if y < _MAP_MAX_Y:
-                children = [
-                    child_x
-                    for child_x, child_y in _node_children(node)
-                    if child_y == y + 1 and 0 <= child_x < A.N_COLS
-                ]
-            out.append({
-                "x": x,
-                "y": y,
-                "room": _node_room(node),
-                "current": current == (x, y),
-                "choice": (x, y) in choices,
-                "reachable": (x, y) in downstream,
-                "children": children,
-            })
-        return out
+        return [dict(x=x, y=y, room=_node_room(node),
+                     current=current == (x, y), choice=(x, y) in choices,
+                     reachable=(x, y) in downstream,
+                     children=[child[0] for child in edges[(x, y)]])
+                for (x, y), node in sorted(raw_nodes.items(), key=lambda item: (item[0][1], item[0][0]))]
 
     def _shop_options(self, ss: dict[str, Any]) -> dict[str, Any]:
         cards = []

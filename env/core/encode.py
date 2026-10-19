@@ -85,7 +85,7 @@ SELECT_PICK_SLOTS = 3     # overworld grid's max simultaneous picks (sim's
                           # haveSelectedCards is fixed_list<3>: Astrolabe=3 max)
 OFFER_SLOTS = 5           # aligns with the reserved REWARD_CARD action segment
 BOSS_RELIC_SLOTS = 3
-MAP_EDGES = 3             # reachable next-row nodes (<=3 edges out of a node)
+MAP_EDGES = 3             # frozen local preview; full-map choices span up to 7 columns
 MAP_ROWS = 15
 MAP_COLS = 7
 MAP_FULL_SLOTS = MAP_ROWS * MAP_COLS
@@ -806,29 +806,75 @@ def _encode_options(o, canon):
             o["select_card_ids"][k] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
             o["select_card_upgrades"][k] = up / UPGRADE_SCALE
     elif phase == "map":
-        for j, (x, room) in enumerate(opts.get("nodes", [])[:MAP_EDGES]):
-            o["map_node_rooms"][j] = V.ROOM_VOCAB_INDEX.get(room, 0)
-            o["map_node_x"][j] = x / MAP_X_SCALE
+        nodes = opts.get("nodes", [])
+        _require_capacity("options.nodes", nodes, MAP_COLS)
+        choices = {}
+        for x, room in nodes:
+            if type(x) is not int or not 0 <= x < MAP_COLS or x in choices:
+                raise ValueError(f"invalid/duplicate map choice column: {x!r}")
+            if room not in V.ROOM_VOCAB_INDEX or room in {"PAD", "NONE", "INVALID"}:
+                raise ValueError(f"map choice has no actual room: {room!r}")
+            choices[x] = _idx(V.ROOM_VOCAB_INDEX, room)
         if "map_full_rooms" in o:
-            for node in opts.get("full_map", []):
-                x, y = int(node["x"]), int(node["y"])
-                if not (0 <= x < MAP_COLS and 0 <= y < MAP_ROWS):
-                    continue
+            full_map = opts.get("full_map")
+            if not isinstance(full_map, list) or not full_map:
+                raise ValueError("map observation requires an explicit complete full_map")
+            seen, full_choices = set(), {}
+            for node in full_map:
+                x, y = node["x"], node["y"]
+                if (type(x) is not int or type(y) is not int
+                        or not (0 <= x < MAP_COLS and 0 <= y < MAP_ROWS)):
+                    raise ValueError(f"map node outside observation grid: {(x, y)!r}")
+                if (x, y) in seen:
+                    raise ValueError(f"duplicate full-map coordinate: {(x, y)!r}")
+                seen.add((x, y))
+                if node["room"] not in V.ROOM_VOCAB_INDEX or node["room"] in {"PAD", "NONE", "INVALID"}:
+                    raise ValueError("full-map record cannot disguise a node as absent")
+                if any(type(node.get(key)) is not bool for key in
+                       ("current", "choice", "reachable")):
+                    raise ValueError("full-map current/choice/reachable flags must be explicit")
+                if node["choice"]:
+                    if x in full_choices or not node["reachable"]:
+                        raise ValueError("full-map choice is duplicated or unreachable")
+                    full_choices[x] = node
                 slot = y * MAP_COLS + x
-                o["map_full_rooms"][slot] = V.ROOM_VOCAB_INDEX.get(
-                    node["room"], 0
+                o["map_full_rooms"][slot] = _idx(
+                    V.ROOM_VOCAB_INDEX, node["room"]
                 )
                 features = o["map_full_features"][slot]
                 features[:5] = (
                     x / MAP_X_SCALE,
                     y / (MAP_ROWS - 1),
-                    float(bool(node.get("current"))),
-                    float(bool(node.get("choice"))),
-                    float(bool(node.get("reachable"))),
+                    float(node["current"]),
+                    float(node["choice"]),
+                    float(node["reachable"]),
                 )
-                for child_x in node.get("children", []):
-                    if 0 <= child_x < MAP_COLS:
-                        features[5 + child_x] = 1.0
+                children = node.get("children")
+                if not isinstance(children, list) or len(set(children)) != len(children):
+                    raise ValueError("full-map children must be an explicit unique list")
+                for child_x in children:
+                    if type(child_x) is not int or not 0 <= child_x < MAP_COLS:
+                        raise ValueError(f"map child outside observation grid: {child_x!r}")
+                    features[5 + child_x] = 1.0
+            if set(full_choices) != set(choices) or len({n["y"] for n in full_choices.values()}) > 1:
+                raise ValueError("full-map choices do not cover the complete action candidates")
+            for x, room in nodes:
+                node = full_choices[x]
+                # The boss has no slot in the 15-row DAG. Its sole action uses
+                # the actual current final-row room, as in the frozen schema.
+                boss = (room == "BOSS" and len(nodes) == 1
+                        and node["y"] == MAP_ROWS - 1 and node["current"])
+                if not boss and node["room"] != room:
+                    raise ValueError("map candidate room differs from full-map room")
+            for node in full_map:
+                if any((x, node["y"] + 1) not in seen for x in node["children"]):
+                    raise ValueError("full-map edge points to an absent node")
+        # Keep the frozen three-token preview unchanged. It is not the action
+        # list: above, the full DAG must preserve EVERY choice when there are
+        # more than three. The legacy local-only schema remains a partial preview.
+        for j, (x, room) in enumerate(nodes[:MAP_EDGES]):
+            o["map_node_rooms"][j] = choices[x]
+            o["map_node_x"][j] = x / MAP_X_SCALE
     elif phase == "event":
         g = canon.get("global") or {}
         # event id lives in the options (env reads gc.cur_event_name into it)

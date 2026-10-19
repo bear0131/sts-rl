@@ -89,9 +89,13 @@ def _fake_map():
         "options": {
             "nodes": [(2, "MONSTER"), (3, "EVENT"), (4, "REST")],
             "full_map": [
-                {"x": 2, "y": 0, "room": "MONSTER", "children": [2, 3],
+                {"x": 2, "y": 0, "room": "MONSTER", "children": [3],
                  "current": False, "choice": True, "reachable": True},
-                {"x": 3, "y": 1, "room": "REST", "children": [3],
+                {"x": 3, "y": 0, "room": "EVENT", "children": [3],
+                 "current": False, "choice": True, "reachable": True},
+                {"x": 4, "y": 0, "room": "REST", "children": [3],
+                 "current": False, "choice": True, "reachable": True},
+                {"x": 3, "y": 1, "room": "REST", "children": [],
                  "current": False, "choice": False, "reachable": True},
             ],
         },

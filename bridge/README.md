@@ -31,3 +31,7 @@ canonical怪物列表保留来源后端的位置：模拟器的INVALID槽成为P
 真实主牌组帧接入：`schemas/card_state.py` 接受同事分支 `fbfdf21` 起导出的逐卡 `simulator_card_state.version=1`（与原生战斗快照version=2是两个合同）。`replay._sync_gc` 使用其中的当前misc和三种瓶装标记恢复主牌组，Java灼热的misc=0转换为原生完整升级次数。主牌组必须提供唯一、规范拼写的UUID；卡牌ID、升级数、misc、当前费用、exhausts、ethereal及完整sidecar均需显式提供。缺项、未知字段、类型错误或不支持的版本会报错，旧日志不能通过补默认值用于精确回放。普通策略观测仍支持其原有帧格式。
 
 逐卡sidecar字段为 `version/base_cost/base_damage/base_block/free_to_play_once/retain/self_retain/innate/bottled_flame/bottled_lightning/bottled_tornado`；字段读取对应 `AbstractCard` 当前实例，不用卡名重建。现有模型词表顺序不变；战士/无色卡的Java特殊ID通过 `_card` 统一映射，主牌组、战斗牌堆、商店/奖励/选择共享该入口。回归 `tests/integration/test_real_master_deck.py` 与 `tests/unit/test_bridge_card_state.py` 验证输入帧到实际原生伤害/首抽及现有观测token。此阶段没有接入完整战斗UUID映射、待选牌队列、遗物计数恢复；`_sync_gc` 也不是完整真实战斗根状态恢复。兼容的Java导出器仍在远端同事分支，本机未编译、部署或连接实机，不把合成帧回归当成客户端验收。
+
+地图候选要求显式`screen_state.next_nodes`，各项提供整数x/y和支持的房型（room/room_type/symbol），最多七列且同一行、不重复；按客户端原始顺序映射`CHOOSE`，不把列号当UI索引，不跳过坏记录，不从标签猜坐标。Boss入口要求`boss_available`和第14行的`current_node`，沿当前列映射唯一`CHOOSE 0`。模拟器对应入口也导出BOSS房型。
+
+`global_map_view=True`要求结构化全图及当前位置（初始可用`first_node_chosen=False`）；每个实际节点提供坐标、房型和children列表，拒绝重复/越界节点、缺失/非相邻边、缺失或房型不一致的候选。编码保留105格物理槽和全部候选标记。已有三槽`map_node_rooms/map_node_x`是局部前缀预览，不能作为完整动作候选列表。main历史`global_map_view=False`继续保持该有限观察以兼容既有模型，动作仍保留全部合法候选；需要完整房型/路线观察时必须使用支持全图的checkpoint，不能只给旧模型打开额外字段后声称它会使用。字段形状、词表与缩放不变。回归见`tests/unit/test_bridge_map_contract.py`和`tests/integration/test_map_choice_contract.py`；合成帧与受控原生转移不等于实机或飞靴跨路规则验收。
