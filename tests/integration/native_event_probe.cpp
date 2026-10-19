@@ -24,6 +24,43 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 7 && root.curEvent == Event::DESIGNER_IN_SPIRE) {
+        for (int option = 0; option < 6; ++option) {
+            auto child = root;
+            child.chooseEventOption(option);
+            const int cost = option < 2 ? (ascension >= 15 ? 50 : 40)
+                           : option < 4 ? (ascension >= 15 ? 75 : 60)
+                           : option == 4 ? (ascension >= 15 ? 110 : 90) : 0;
+            const int hpLoss = option == 5 ? (ascension >= 15 ? 5 : 3) : 0;
+            std::cout << "designer_option=" << option << " cost=" << root.gold - child.gold
+                      << " hp_loss=" << root.curHp - child.curHp << std::endl;
+            if (root.gold - child.gold != cost || root.curHp - child.curHp != hpLoss) return 13;
+            if (option == 3) {
+                if (child.info.selectScreenType != CardSelectScreenType::TRANSFORM
+                    || child.info.toSelectCount != 2
+                    || child.screenState != ScreenState::CARD_SELECT) return 13;
+                if (child.deck.size() != root.deck.size()) return 13;
+                child.chooseSelectCardScreenOption(0);
+                child.chooseSelectCardScreenOption(0);
+                if (child.deck.size() != root.deck.size()
+                    || child.screenState != ScreenState::MAP_SCREEN) return 13;
+            }
+            if (option == 4) {
+                if (child.info.selectScreenType != CardSelectScreenType::REMOVE
+                    || child.screenState != ScreenState::CARD_SELECT) return 13;
+                // Copy the pending transaction as search does. Its callback
+                // must use the copy's RNG, never the captured original this.
+                auto replay = child;
+                const auto parentRng = child.miscRng;
+                replay.chooseSelectCardScreenOption(0);
+                if (child.miscRng.counter != parentRng.counter
+                    || replay.miscRng.counter == parentRng.counter
+                    || replay.deck.size() != root.deck.size() - 1
+                    || replay.screenState != ScreenState::MAP_SCREEN) return 13;
+            }
+        }
+        return 0;
+    }
     if (variant == 6 && root.curEvent == Event::THE_MAUSOLEUM) {
         auto leave = root;
         leave.chooseEventOption(1);
