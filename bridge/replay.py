@@ -10,30 +10,22 @@ The screen_type -> sim API mapping follows doc/0623_game_flow.md; this file does
 not re-derive the game's structure, it only reads each frame for the player's
 actual choice (which node, which card, which option) as replay input.
 
-Usage: python replay.py <orchestrator.log>
+Usage: python -m bridge.replay <orchestrator.log> (explicit native build on PYTHONPATH)
 """
 
 import json
-import os
 import re
 import sys
 
-# ---- load the sim module (built .so/.pyd lives in the build dir) ----
-_BUILD = os.path.join(os.path.dirname(__file__), "..", "sim", "sts_lightspeed", "build")
-# add_dll_directory is Windows-only (needed there to find the mingw runtime dlls
-# sitting next to the .pyd); on Linux/mac the .so resolves its deps normally.
-if hasattr(os, "add_dll_directory") and os.path.isdir(_BUILD):
-    os.add_dll_directory(os.path.abspath(_BUILD))
-sys.path.insert(0, os.path.abspath(_BUILD))
-sys.path.insert(0, os.path.dirname(__file__))  # for `schemas`
-import slaythespire as sts  # noqa: E402
+import slaythespire as sts
 
-from schemas.combat_state import (  # noqa: E402
+from bridge.schemas.combat_state import (
     normalize_real, normalize_sim, diff,
     normalize_real_overworld, normalize_sim_overworld, diff_overworld,
     real_to_sim_card_enum, _sim_monster_id,
 )
-from bridge.schemas.entity_ids import native_relic_counter
+from bridge.native_state import make_native_combat_root
+from bridge.real_game_env import RealGameAdapter
 
 # sim InputState enum (combat): 1 = PLAYER_NORMAL, 2 = CARD_SELECT
 _CARD_SELECT = 2
@@ -333,16 +325,9 @@ def build_encounter_map(tmpgc):
 
 
 def _sync_gc(seed, asc, init):
-    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, asc)
-    gc.floor_num = init["floor"]
-    gc.cur_hp = init["current_hp"]
-    gc.max_hp = init["max_hp"]
-    gc.gold = init["gold"]
-    gc.set_deck([(real_to_sim_card_enum(c["id"]), c["upgrades"]) for c in init["deck"]])
-    gc.set_relic_state([
-        {"id": relic["id"], "counter": native_relic_counter(relic["id"], relic["counter"])}
-        for relic in init["relics"]
-    ])
+    adapter = RealGameAdapter(ascension=asc)
+    adapter.gs = init
+    gc = make_native_combat_root(adapter._global_block(), seed=seed, room_type=init['room_type'])
     # if this combat is the seed's burning (emerald-key) elite, sit the gc on
     # that map node (floor == burningEliteY+1) so create_battle applies the
     # elite buff (e.g. +Strength) -- otherwise the forced battle is un-buffed.

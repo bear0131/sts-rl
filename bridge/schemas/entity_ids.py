@@ -346,6 +346,34 @@ RUN_KEY_FIELDS = {
     "sapphire": {"real": "has_sapphire_key", "sim": "blue_key"},
 }
 
+# Concrete stock room classes in desktop-1.0.jar. AbstractRoom and CampfireUI
+# are not concrete rooms. Victory pages have no native combat equivalent.
+REAL_ROOM_CLASS_IDS = {
+    "EmptyRoom": "NONE", "EventRoom": "EVENT", "MonsterRoom": "MONSTER",
+    "MonsterRoomBoss": "BOSS", "MonsterRoomElite": "ELITE", "RestRoom": "REST",
+    "ShopRoom": "SHOP", "TreasureRoom": "TREASURE", "TreasureRoomBoss": "BOSS_TREASURE",
+    "TrueVictoryRoom": None, "VictoryRoom": None,
+}
+NATIVE_COMBAT_ROOM_IDS = frozenset({"MONSTER", "ELITE", "BOSS", "EVENT"})
+POTION_CAPACITY_RULES = {"ascension_0_to_10": 3, "ascension_11_to_20": 2, "Potion Belt": 2, "native_max": 5}
+NATIVE_GLOBAL_FIELDS = {
+    "character": {"real": "class", "native": "cc", "support": "IRONCLAD only"},
+    "ascension": {"real": "ascension_level", "native": "ascension", "domain": "integer 0..20"},
+    "act": {"real": "act", "native": "act", "domain": "integer 1..4"},
+    "floor": {"real": "floor", "native": "floor_num", "domain": "nonnegative signed int32"},
+    "hp": {"real": "current_hp", "native": "cur_hp", "domain": "0..max_hp, no clamping"},
+    "max_hp": {"real": "max_hp", "native": "max_hp", "domain": "positive signed int32"},
+    "gold": {"real": "gold", "native": "gold / BattleContext.player.gold", "domain": "0..32767 (native combat int16); reject overflow"},
+    "boss": {"real": "act_boss", "native": "boss", "codec": "boss identity"},
+    "deck": {"real": "deck", "native": "set_deck", "codec": "card identity + upgrades; extra card state audited separately"},
+    "relics": {"real": "relics[*].id", "native": "set_relic_state[*].id", "codec": "relic identity"},
+    "relic_counters": {"real": "relics[*].counter", "native": "set_relic_state[*].counter", "codec": "relic_counter_contracts"},
+    "potions": {"real": "potions (including empty slots)", "native": "potion_capacity + set_potion_state", "codec": "potion identity; slot count must equal capacity rule"},
+    "keys": {"real": "has_*_key", "native": "red_key / green_key / blue_key", "codec": "run_keys; explicit booleans"},
+    "combat_is_boss": {"real": "room_type", "native": "cur_room", "codec": "real_room_classes; no substring matching"},
+    "boss_relics": {"real": "BOSS_REWARD screen", "native": "not a combat-root field", "support": "must be empty at combat entry"},
+}
+
 # Non-card identity codecs are kept here as data so every bridge consumer and
 # the contract audit use exactly the same spelling table.  Identity entries are
 # expanded from the frozen vocabularies by codec_contract.py; only transport

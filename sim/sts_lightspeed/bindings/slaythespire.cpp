@@ -2475,13 +2475,25 @@ PYBIND11_MODULE(slaythespire, m) {
             if (names.size() > static_cast<std::size_t>(gc.potionCapacity)) {
                 throw std::invalid_argument("custom potions exceed potion capacity");
             }
-            std::fill(gc.potions.begin(), gc.potions.end(), Potion::EMPTY_POTION_SLOT);
-            gc.potionCount = 0;
+            std::array<Potion, 5> replacement;
+            replacement.fill(Potion::EMPTY_POTION_SLOT);
+            int count = 0;
             for (std::size_t slot = 0; slot < names.size(); ++slot) {
-                gc.potions[slot] = potionFromNameOrId(names[slot]);
-                if (gc.potions[slot] != Potion::EMPTY_POTION_SLOT) ++gc.potionCount;
+                replacement[slot] = potionFromNameOrId(names[slot]);
+                if (replacement[slot] != Potion::EMPTY_POTION_SLOT) ++count;
             }
+            gc.potions = replacement;
+            gc.potionCount = count;
         }, "replace held potion slots by simulator name or stable game id without advancing the run")
+        .def_property("potion_capacity", [](const GameContext &gc) { return gc.potionCapacity; },
+            [](GameContext &gc, int capacity) {
+                if (capacity < 2 || capacity > static_cast<int>(gc.potions.size()))
+                    throw std::invalid_argument("native potion capacity must be in 2..5");
+                for (int slot = capacity; slot < gc.potionCapacity; ++slot)
+                    if (gc.potions[slot] != Potion::EMPTY_POTION_SLOT)
+                        throw std::invalid_argument("cannot shrink potion capacity over a held potion");
+                gc.potionCapacity = capacity;
+            })
         .def_property_readonly("screen_state_name",
                [](const GameContext &gc) { return std::string(pybind11::str(pybind11::cast(gc.screenState))); })
         .def_property_readonly("cur_event_name",

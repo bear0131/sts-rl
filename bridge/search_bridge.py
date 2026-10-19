@@ -18,6 +18,7 @@ from typing import Any
 import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
+from bridge.native_state import make_native_combat_root, native_combat_room
 from env.core import native_actions as C
 from env.core.encounters import ACT_POOLS
 from env.core.run_env import SlayTheSpireEnv
@@ -367,58 +368,14 @@ class RealCombatSearch:
                 "this checkpoint/native search bridge supports IRONCLAD only; "
                 f"refusing to mirror {character!r} as Ironclad"
             )
-        room = str(self.adapter.gs["room_type"]).upper()
-        if "BOSS" in room:
-            native_room = sts.Room.BOSS
-        elif "ELITE" in room:
-            native_room = sts.Room.ELITE
-        elif "MONSTER" in room:
-            native_room = sts.Room.MONSTER
-        else:
-            raise ValueError(f"combat frame has unsupported room_type {room!r}")
-        boss = str(global_state["boss"])
-        relics = list(global_state["relics"])
-        relic_counters = list(global_state["relic_counters"])
-        if len(relics) != len(relic_counters):
-            raise ValueError("real relic identities and counters have different lengths")
-        if "PrismaticShard" in relics:
-            raise ValueError(
-                "PrismaticShard can generate foreign-color cards whose native "
-                "combat transitions are not fully implemented; refusing an "
-                "apparently aligned shadow battle"
-            )
+        room_type = self.adapter.gs["room_type"]
+        native_room = native_combat_room(room_type)
+        if global_state['floor'] != floor:
+            raise ValueError("combat identity floor differs from canonical global floor")
 
         def make_gc(seed_nonce: int):
-            gc = sts.GameContext(
-                sts.CharacterClass.IRONCLAD,
-                seed + int(seed_nonce),
-                self.adapter.ascension,
-            )
-            gc.act = int(global_state["act"])
-            if gc.act < 1:
-                raise ValueError(f"invalid real-game act {gc.act}")
-            gc.floor_num = floor
-            gc.max_hp = max(1, int(global_state["max_hp"]))
-            gc.cur_hp = min(gc.max_hp, max(0, int(global_state["hp"])))
-            gc.gold = max(0, int(global_state["gold"]))
-            gc.set_deck(_card_rows([
-                {"id": cid, "up": up} for cid, up in global_state["deck"]
-            ]))
-            gc.set_relic_state([
-                {"id": rid, "counter": int(counter)}
-                for rid, counter in zip(
-                    relics,
-                    relic_counters,
-                )
-            ])
-            gc.set_potion_state([
-                _empty_potion_name(p) for p in global_state["potions"]
-            ])
-            gc.cur_room = native_room
-            if not hasattr(sts.MonsterEncounter, boss):
-                raise ValueError(f"real act boss is absent from native enum: {boss!r}")
-            gc.boss = getattr(sts.MonsterEncounter, boss)
-            return gc
+            return make_native_combat_root(global_state, seed=seed,
+                                           room_type=room_type, seed_nonce=seed_nonce)
 
         wanted = tuple(sorted(m["id"] for m in real["monsters"] if not m["gone"]))
         act = int(global_state["act"])

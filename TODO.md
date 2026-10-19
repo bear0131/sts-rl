@@ -2,7 +2,9 @@
 
 | BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |
 
-| BRIDGE26 | 源码确认待修：搜索根全局恢复遗漏 | `bridge/search_bridge.py::_attach_battle.make_gc`未复制Act4钥匙，以adapter配置替代真机ascension，HP/金币静默夹取；PotionBelt恢复不重放onEquip且未设置容量，5/4槽不能正确注入；房型子串匹配拒绝事件战。验收：显式全局字段对接表、逐字段验证，保持真实值或明确拒绝，搜索/replay共享严格恢复，含钥匙/容量/事件战和非法输入原生回归。replay其他部分恢复/跳过假成功问题另须审查，不能把BRIDGE25最小修复称完整replay对齐。 |
+| BRIDGE26 | 全局恢复与字段/房型词表已修，未部署 | `bridge/native_state.py`为搜索/replay共用严格根恢复，按15全局字段和11具体房型词表处理，复制真机asc/keys和2/3/4/5药水槽，去掉HP/金币夹取/额外未知字段忽略，支持EVENT战房型；不重放onEquip。原生药水替换原子化，容量收缩不能丢持有药水。replay不再覆盖明确扩展路径。565桥接/同步/根状态/注入检查通过。尚未解决replay隐藏RNG/入战后→入战前时序、异常跳过假成功；原生gold int16超32767明确拒绝而非截断。 |
+
+| BRIDGE27 | 源码确认待修：搜索叶金币；卡牌附加状态继续审查 | compact scalar[5]已有BattleContext.player.gold，但Python/native两个decoder未消费，直接复制根gold，HandOfGreed分支可错。验收：字段位置词表、逐分支当前金币覆盖，canonical/Python/native三者一致且与根不同反例。另`_deck_cards/_card_rows`对misc、永久/回合费用、瓶装等信息的保留需对照实际Java导出和原生存储逐项证明，不把尚未核实者称已修。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 
