@@ -39,7 +39,7 @@ bool Deck::isCardBottled(int idx) const {
 }
 
 bool Deck::anyCardBottled() const {
-    return bottleIdxs[0] == -1 || bottleIdxs[1] == -1 || bottleIdxs[2] == -1;
+    return bottleIdxs[0] != -1 || bottleIdxs[1] != -1 || bottleIdxs[2] != -1;
 }
 
 int Deck::getUpgradeableCount() const {
@@ -191,8 +191,6 @@ void Deck::obtain(GameContext &gc, Card card, int count) {
 
 void Deck::obtainRaw(Card card) {
     cards.push_back(card);
-    ++transformableCount;
-    ++cardTypeCounts[static_cast<int>(card.getType())];
 
     switch (card.getType()) {
         case CardType::ATTACK:
@@ -241,14 +239,12 @@ void Deck::remove(GameContext &gc, int idx) {
         if (c.getId() == CardId::PARASITE) {
             gc.loseMaxHp(3);
         }
-        cards.remove(idx);
-        return;
-    }
-
-    --transformableCount;
-    --cardTypeCounts[static_cast<int>(c.getType())];
-    if (c.canUpgrade()) {
-        --upgradeableCount;
+    } else {
+        --transformableCount;
+        --cardTypeCounts[static_cast<int>(c.getType())];
+        if (c.canUpgrade()) {
+            --upgradeableCount;
+        }
     }
 
     if (!anyCardBottled()) { // if no bottled cards, can do simple remove
@@ -294,7 +290,7 @@ void Deck::removeSelected(GameContext &gc, const fixed_list<SelectScreenCard, 3>
     std::sort(removeIdx, removeIdx+selectList.size());
 
     for (int i = selectList.size() - 1; i >= 0; --i) {
-        remove(gc, selectList[i].deckIdx);
+        remove(gc, removeIdx[i]);
     }
 }
 
@@ -315,7 +311,7 @@ void Deck::removeAllMatching(GameContext &gc, const std::function<bool(const Car
 //    }
 //    cards.resize(x);
 
-    for (int i = cards.size(); i >= 0; --i) {
+    for (int i = cards.size() - 1; i >= 0; --i) {
         if (p(cards[i])) {
             remove(gc, i);
         }

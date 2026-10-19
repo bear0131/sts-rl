@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE17 | 事件底层Deck计数/删除/瓶装：源码已修，未部署 | obtainRaw重复计数；removeSelected排序未使用；removeAllMatching访问size槽；anyCardBottled反向；删诅咒未移动瓶装索引。四类旧反例exit16..19，新A0/A15全0；影响存档/桥接set_deck与事件删除消费者，须独立扩展兼容，不替换生产。 |
+
 | BRIDGE15 | 设计师分支与搜索复制回调：源码修复中，未部署 | 逐行发现随机升级漏扣款、变牌空函数/两处switch落入后续分支、全套服务回调捕获原this；修正付款、玩家选两张变牌、分支出口及gc.miscRng。A0/A15六选项成本/HP/选牌/复制隔离反例旧exit13新0；继续检查其他捕获this的事件奖励回调，生产不变。 |
 
 | BRIDGE16 | 摔落类型计数越界/瓶装候选：源码已修，未部署 | setupEvent用counts[3]索引CURSE/STATUS越界，且计数和抽选都包含瓶装牌；依据Java CardHelper排除瓶装并仅统计攻击/技能/能力。A0/A15全瓶装与含诅咒单候选旧exit15新0，生产未替换；还需整体候选/瓶装索引消费者审查。 |

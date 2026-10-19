@@ -24,6 +24,54 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant >= 10 && variant <= 13) {
+        root.deck = Deck();
+        if (variant == 10) {
+            root.deck.obtainRaw(Card(CardId::STRIKE_RED));
+            root.deck.obtainRaw(Card(CardId::DEFEND_RED));
+            root.deck.obtainRaw(Card(CardId::REGRET));
+            if (root.deck.getTransformableCount() != 3
+                || root.deck.cardTypeCounts[0] != 1 || root.deck.cardTypeCounts[1] != 1
+                || root.deck.cardTypeCounts[3] != 1 || root.deck.getUpgradeableCount() != 2) return 16;
+        } else if (variant == 11) {
+            root.deck.obtain(root, CardId::STRIKE_RED);
+            root.deck.obtain(root, CardId::DEFEND_RED);
+            root.deck.obtain(root, CardId::BASH);
+            root.deck.obtain(root, CardId::INFLAME);
+            fixed_list<SelectScreenCard, 3> selected;
+            selected.push_back({root.deck.cards[2], 2});
+            selected.push_back({root.deck.cards[0], 0});
+            root.deck.removeSelected(root, selected);
+            if (root.deck.size() != 2 || root.deck.cards[0].id != CardId::DEFEND_RED
+                || root.deck.cards[1].id != CardId::INFLAME) return 17;
+        } else if (variant == 12) {
+            if (root.deck.anyCardBottled()) return 18;
+            root.deck.obtain(root, CardId::REGRET);
+            root.deck.obtain(root, CardId::STRIKE_RED);
+            root.deck.obtain(root, CardId::DEFEND_RED);
+            root.deck.obtain(root, CardId::INFLAME);
+            root.deck.bottleCard(1, CardType::ATTACK);
+            root.deck.bottleCard(2, CardType::SKILL);
+            root.deck.bottleCard(3, CardType::POWER);
+            if (!root.deck.anyCardBottled()) return 18;
+            root.deck.remove(root, 0);
+            if (root.deck.bottleIdxs != std::array<int,3>{0,1,2}
+                || root.deck.getTransformableCount() != 0) return 18;
+        } else {
+            root.deck.obtain(root, CardId::STRIKE_RED);
+            root.deck.obtain(root, CardId::DEFEND_RED);
+            root.deck.obtain(root, CardId::STRIKE_RED);
+            root.deck.remove(root, 2); // leave a stale matching card outside logical size
+            root.deck.removeAllMatching(root, [](const Card &c) { return c.isStarterStrike(); });
+            if (root.deck.size() != 1 || root.deck.cards[0].id != CardId::DEFEND_RED
+                || root.deck.cardTypeCounts[0] != 0) return 19;
+            root.deck.removeAllMatching(root, [](const Card &) { return true; });
+            root.deck.removeAllMatching(root, [](const Card &) { return true; });
+            if (root.deck.size() != 0) return 19;
+        }
+        std::cout << "deck_invariant_variant=" << variant << std::endl;
+        return 0;
+    }
     if (variant == 9 && root.curEvent == Event::FALLING) {
         root.deck = Deck();
         root.deck.obtain(root, CardId::STRIKE_RED);
