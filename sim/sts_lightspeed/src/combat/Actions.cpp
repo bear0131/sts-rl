@@ -903,8 +903,21 @@ Action Actions::EscapeAction(int monsterIdx) {
     }};
 }
 
-Action Actions::PoisonLoseHpAction() {
-    return sts::Action();
+Action Actions::PoisonLoseHpAction(int target, int amount) {
+    return {[target, amount](BattleContext &bc) {
+        auto &monster = bc.monsters.arr[target];
+        // HP_LOSS bypasses block and NORMAL-attack callbacks. The amount was
+        // captured by PoisonPower atStartOfTurn, before earlier deaths can
+        // transfer more poison to this target through The Specimen.
+        if (monster.curHp > 0 && !monster.isDying() && !monster.isEscaping()) {
+            const int damage = monster.hasStatus<MS::INTANGIBLE>()
+                ? std::min(amount, 1) : amount;
+            monster.damageUnblockedHelper(bc, std::max(0, damage));
+        }
+        // Subclass death may already have removed Poison (Darkling/Awakened).
+        if (monster.hasStatus<MS::POISON>()) monster.decrementStatus<MS::POISON>();
+        bc.checkCombat();
+    }, false}; // Java PoisonLoseHpAction is DAMAGE, not a discardable callback.
 }
 
 Action Actions::RemovePlayerDebuffs() {

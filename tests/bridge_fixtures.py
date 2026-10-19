@@ -41,6 +41,8 @@ def real_combat_state(*, deck=(), hand=(), draw=(), discard=(), exhaust=(), mons
         monsters = [{
             'id': 'Cultist', 'current_hp': 100, 'max_hp': 100, 'block': 0,
             'is_gone': False, 'half_dead': False, 'powers': [], 'intent': 'BUFF',
+            'is_dying': False, 'is_dead': False, 'is_escaping': False,
+            'escape_next': False, 'unawakened': False,
             'move_base_damage': -1, 'move_adjusted_damage': -1, 'move_hits': 0,
             'move_id': 3, 'last_move_id': -1, 'second_last_move_id': -1,
             'current_intent_export': SIMULATOR_PARITY_EXPORT_VERSION,

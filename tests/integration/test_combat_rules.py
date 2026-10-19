@@ -15,6 +15,32 @@ def request(env):
     return DecisionRequest(env, env._obs(), env._info(), 42, 0)
 
 
+@pytest.mark.parametrize('hp,expected_hp,expected_outcome', [(20, 14, 0), (5, 0, 1)])
+def test_shared_poison_ticks_bypass_block_and_decrement_after_death(
+        combat_factory, hp, expected_hp, expected_outcome):
+    import slaythespire as sts
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    battle.apply_custom_state({'monsters': [{
+        'max_hp': 20, 'hp': hp, 'block': 80,
+        'powers': [('BARRICADE', 1), ('POISON', 6)],
+    }]})
+    battle.execute(sts.Action(sts.ActionType.END_TURN))
+    monster = battle.to_dict()['monsters'][0]
+    assert monster['hp'] == expected_hp
+    assert dict(monster['powers'])['Poison'] == 5
+    assert monster['block'] == (80 if expected_hp else 0)
+    assert battle.outcome == expected_outcome
+
+
+def test_incomplete_monster_restore_cannot_partially_mutate_player(combat_factory):
+    battle = combat_factory(['STRIKE_RED'] * 5).thick.bc
+    before = battle.to_dict()
+    with pytest.raises(ValueError, match='gone disagrees'):
+        battle.apply_custom_state({'player': {'hp': 1}, 'monsters': [{'gone': True}]})
+    assert battle.to_dict() == before
+
+
 def test_native_decision_does_not_mutate_or_advance_game(combat_factory):
     env = combat_factory(['STRIKE_RED', 'DEFEND_RED', 'BASH', 'STRIKE_RED', 'DEFEND_RED'])
     before = json.dumps(env.thick.bc.to_dict(), sort_keys=True)

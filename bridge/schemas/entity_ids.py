@@ -657,6 +657,7 @@ CARD_DAMAGE_TIMING_CONTRACTS = {
 # action-name or general BLOCK rule. This is the source-audited BRIDGE36 batch;
 # the full Java action-queue transport is still incomplete (BRIDGE28).
 COMBAT_VICTORY_ACTION_CONTRACTS = {
+    'PoisonLoseHpAction': {'native': 'PoisonLoseHpAction(target, amount)', 'keep': True, 'reason': 'DAMAGE; capture poison at turn start, HP_LOSS bypasses block, decrement surviving power after death callbacks'},
     'DamageAction': {'native': 'AttackEnemy/DamageEnemy/AttackPlayer/DamagePlayer', 'keep': True, 'reason': 'ActionType.DAMAGE'},
     'DamageAllEnemiesAction': {'native': 'AttackAllEnemy/DamageAllEnemy/AttackAllMonsterRecursive', 'keep': True, 'reason': 'ActionType.DAMAGE; recursive helper represents already-enqueued waves'},
     'DamageRandomEnemyAction': {'native': 'DamageRandomEnemy', 'keep': True, 'reason': 'ActionType.DAMAGE; select target then queue DamageEnemy at top'},

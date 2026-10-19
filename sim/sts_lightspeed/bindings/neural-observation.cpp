@@ -80,16 +80,18 @@ public:
              *intents=i("monster_intent_cat"), *potions=i("potions"),
              *context=i("select_context"), *selectIds=i("select_card_ids"),
              *selectIndices=i("select_native_indices"), *zone=i("select_zone"), *relics=i("relics"),
-             *selectedIds=i("selected_card_ids");
+             *selectedIds=arrays.count("selected_card_ids") ? i("selected_card_ids") : nullptr;
         auto *player=f("player_scalars"), *pb=f("player_buffs"), *cb=f("combat_counters"),
              *boundary=f("post_enemy_turn_boundary"), *mon=f("monster_scalars"), *mb=f("monster_buffs"),
              *hu=f("hand_upgrades"), *hc=f("hand_costs"), *hd=f("hand_damage"), *hb=f("hand_block"),
              *draw=f("draw_counts"), *discard=f("discard_counts"), *exhaust=f("exhaust_counts"),
              *pick=f("pick_remaining"), *zero=f("can_pick_zero"), *any=f("can_pick_any"),
              *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
-             *relicCounters=f("relic_counters"), *gold=f("gold"), *selectedUpgrades=f("selected_card_upgrades");
-        const auto selectedWidth=arrays.at("selected_card_ids").shape(1);
-        if (selectedWidth<2 || arrays.at("selected_card_upgrades").shape(1)!=selectedWidth)
+             *relicCounters=f("relic_counters"), *gold=f("gold"),
+             *selectedUpgrades=arrays.count("selected_card_upgrades") ? f("selected_card_upgrades") : nullptr;
+        const auto selectedWidth=selectedIds ? arrays.at("selected_card_ids").shape(1) : 0;
+        if ((selectedIds == nullptr) != (selectedUpgrades == nullptr) ||
+            (selectedIds && (selectedWidth<2 || arrays.at("selected_card_upgrades").shape(1)!=selectedWidth)))
             throw std::invalid_argument("native selected GRID observation capacity mismatch");
         const auto relicWidth=arrays.at("relics").shape(1);
         const auto pbWidth=arrays.at("player_buffs").shape(1), mbWidth=arrays.at("monster_buffs").shape(2);
@@ -209,11 +211,16 @@ public:
                 throw std::invalid_argument("native selection zone is outside its word table");
             zone[r]=c[223];
             for (int k=0; k<2; ++k) {
-                selectedIds[r*selectedWidth+k]=lookup(cardMap,c[224+k],"selected GRID card");
+                const auto selectedId=lookup(cardMap,c[224+k],"selected GRID card");
+                if (selectedIds) selectedIds[r*selectedWidth+k]=selectedId;
+                else if (selectedId != 0) throw std::invalid_argument(
+                    "observation contract cannot represent selected GRID cards");
                 const float up=s[selectStart+196+k];
                 if (!std::isfinite(up) || up<0 || up!=std::nearbyint(up) || (c[224+k]==0 && up!=0))
                     throw std::invalid_argument("native selected GRID upgrades are invalid");
-                selectedUpgrades[r*selectedWidth+k]=up/upgradeScale;
+                if (selectedUpgrades) selectedUpgrades[r*selectedWidth+k]=up/upgradeScale;
+                else if (up != 0) throw std::invalid_argument(
+                    "observation contract cannot represent selected GRID upgrades");
             }
             for (int k=0; k<96; ++k) {
                 selectIds[r*96+k]=lookup(cardMap,c[31+k],"selection card");

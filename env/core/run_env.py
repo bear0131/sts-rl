@@ -1452,6 +1452,7 @@ class SlayTheSpireEnv(gym.Env):
         # from the live run, while combat HP/potions come from this branch.
         global_state["hp"] = int(raw_state["player"]["hp"])
         global_state["max_hp"] = int(raw_state["player"]["max_hp"])
+        global_state["gold"] = int(raw_state["player"]["gold"])
         if "potions" in raw_state:
             global_state["potions"] = [
                 canonical_sim_potion(potion)
@@ -1609,8 +1610,11 @@ class SlayTheSpireEnv(gym.Env):
             raise RuntimeError("native packed selection zone is out of range")
         out["select_native_indices"][:] = native_indices
         out["select_zone"][:, 0] = zones
-        out["selected_card_ids"][:, :2] = checked_lookup(
-            "selected GRID card", card_lut, c[:, 224:226])
+        grid_selected = checked_lookup("selected GRID card", card_lut, c[:, 224:226])
+        if "selected_card_ids" in out:
+            out["selected_card_ids"][:, :2] = grid_selected
+        elif np.any(grid_selected):
+            raise RuntimeError("observation contract cannot represent selected GRID cards")
 
         f = scalars
         gold = f[:, 5]
@@ -1737,7 +1741,10 @@ class SlayTheSpireEnv(gym.Env):
                 or np.any(grid_upgrades != np.rint(grid_upgrades))
                 or np.any((c[:, 224:226] == 0) & (grid_upgrades != 0))):
             raise RuntimeError("native packed selected GRID upgrades are invalid")
-        out["selected_card_upgrades"][:, :2] = grid_upgrades / encode.UPGRADE_SCALE
+        if "selected_card_upgrades" in out:
+            out["selected_card_upgrades"][:, :2] = grid_upgrades / encode.UPGRADE_SCALE
+        elif np.any(grid_upgrades):
+            raise RuntimeError("observation contract cannot represent selected GRID upgrades")
         # C++ stores the multi-select marker; it is represented by the hand
         # mask only when the thin layer has a pending selection, so no extra
         # model field is needed here.

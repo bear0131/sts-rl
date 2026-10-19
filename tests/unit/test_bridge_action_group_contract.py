@@ -3,6 +3,7 @@ from zipfile import ZipFile
 from unittest.mock import MagicMock
 
 import pytest
+from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
 
 
 @pytest.mark.parametrize('override, expected', [(None, 1.0), (0.0, 0.0)])
@@ -158,7 +159,7 @@ def test_reward_preview_transport_does_not_call_policy_between_commands():
     driver._predict = lambda *_args, **_kwargs: (
         policy_calls.append("predict") or A._RGOLD, ())
     common_state = {
-        "simulator_parity_export": "simulator-parity-v8",
+        "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
         "floor": 1,
         "current_hp": 80,
         "max_hp": 80,
@@ -320,7 +321,8 @@ def test_transport_retry_reuses_entire_autoregressive_nonce_transaction(monkeypa
         _multi=None, _nosl_cpp_pending=None, _obs=lambda: {}, _info=lambda: {},
         _invalidate_backend_cache=lambda: None)
     bridge.adapter = SimpleNamespace(gs={"seed": 200205, "floor": 4},
-        multi_selected=set(), _joint_multi_plan=None, action_mask=lambda: [True])
+        multi_selected=set(), _joint_multi_plan=None, _combat_grid_receipt=None,
+        action_mask=lambda: [True])
     bridge.identity = (200205, 4)
     bridge.decision_index = 39
     bridge.run_decisions = bridge.run_commands = 0

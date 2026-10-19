@@ -117,8 +117,11 @@ def _materialize_grouped_packed_leaves(envs, responses):
         if payload is None:
             continue
         env = envs[index].unwrapped
+        global_fields = env._native_packed_global_fields()
         key = (env._card_language, env._joint_actions,
-               env._autoregressive_actions, env.action_space.n)
+               env._autoregressive_actions, env.action_space.n,
+               global_fields['relics'].tobytes(),
+               global_fields['relic_counters'].tobytes())
         groups[key].append((index, env, response, payload))
     for group in groups.values():
         first_env = group[0][1]
@@ -168,6 +171,11 @@ def _materialize_grouped_packed_leaves(envs, responses):
             end = cursor + length
             if env is not first_env:
                 for key, value in env._native_packed_global_fields().items():
+                    if key in ('gold', 'relic_counters'):
+                        # These were decoded from each hypothetical branch.
+                        # Shared relic geometry/counter baselines are part of
+                        # the group key; never overwrite leaf state with root.
+                        continue
                     observations[key][cursor:end] = value
             masks = [env._leaf_policy_mask(row[row >= 0])
                      for row in legal[cursor:end]]

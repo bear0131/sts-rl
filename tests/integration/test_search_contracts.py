@@ -25,6 +25,7 @@ def test_grouped_packed_leaf_encoding_preserves_each_root(
     responses, expected = {}, {}
     for i, env in enumerate(envs):
         env.thick.gc.gold = 37 + 11 * i
+        env.thick.bc.apply_custom_state({'player': {'gold': 37 + 11 * i}})
         response = env.nosl_is_az_cpp_begin(
             np.zeros(env.action_space.n), state_nonce=700 + i,
             simulations=16, depth=0, leaf_batch_size=leaf_batch_size,
@@ -306,7 +307,10 @@ def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_
     env.thick.bc.apply_custom_state({
         "player": {"powers": [("STRENGTH", 3), ("ARTIFACT", 2)],
                    "counters": {"happy_flower": 2, "pen_nib": 3}},
-        "monsters": [{"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}],
+        "monsters": [
+            {"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}
+            if m['id'] != 'INVALID = 0' else {}
+            for m in env.thick.bc.to_dict()['monsters']],
         "draw": [("STRIKE_RED", 1), ("DEFEND_RED", 0),
                  ("STRIKE_RED", 2), ("BASH", 0)],
         "discard": [("BASH", 1), ("DEFEND_RED", 2),
@@ -354,6 +358,7 @@ def test_packed_leaf_global_cache_is_root_scoped(combat_factory, monkeypatch):
 
     def begin(gold):
         env.thick.gc.gold = gold
+        env.thick.bc.apply_custom_state({'player': {'gold': gold}})
         response = env.nosl_is_az_cpp_begin(
             np.zeros(181), state_nonce=123, simulations=3, depth=1,
             leaf_batch_size=1, compact_observation=True)

@@ -80,6 +80,8 @@ def test_real_normalizer_preserves_public_move_history():
         "move_adjusted_damage": 9, "move_hits": 1,
         "move_id": 1, "last_move_id": 1, "second_last_move_id": 3,
         "intent": "ATTACK", "half_dead": False,
+        "is_dying": False, "is_dead": False, "is_escaping": False,
+        "escape_next": False, "unawakened": False,
         "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
         "simulator_stasis_card": None,
         "powers": [
@@ -105,6 +107,8 @@ def test_live_real_monster_move_cannot_be_fabricated_as_padding():
         "intent": "ATTACK",
         "last_move_id": -1, "second_last_move_id": -1,
         "half_dead": False,
+        "is_dying": False, "is_dead": False, "is_escaping": False,
+        "escape_next": False, "unawakened": False,
         "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
         "simulator_stasis_card": None,
     }
@@ -113,7 +117,7 @@ def test_live_real_monster_move_cannot_be_fabricated_as_padding():
         normalize_real(game_state)
 
     monster.update(
-        current_hp=0, is_gone=True, move_id=-1,
+        current_hp=0, is_gone=True, is_dying=True, move_id=-1,
         last_move_id=-1, second_last_move_id=-1,
     )
     normalized = normalize_real(game_state)["monsters"][0]
