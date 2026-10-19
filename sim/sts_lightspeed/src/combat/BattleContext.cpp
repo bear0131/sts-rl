@@ -115,7 +115,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     player.relicBits1 = gc.relics.relicBits1;
 
     fixed_list<RelicId, 4> atBattleStartPreDraw;
-    fixed_list<RelicId, 8> atBattleStart;
+    fixed_list<RelicId, 9> atBattleStart;
     fixed_list<RelicId, 2> atTurnStartPostDraw;
 
     auto room = gc.curRoom;
@@ -141,6 +141,7 @@ void BattleContext::initRelics(const GameContext &gc) {
             case R::BAG_OF_PREPARATION:
             case R::CLOCKWORK_SOUVENIR:
             case R::GREMLIN_VISAGE:
+            case R::MUTAGENIC_STRENGTH:
             case R::RED_MASK:
             case R::RING_OF_THE_SNAKE:
             case R::TWISTED_FUNNEL:
@@ -325,11 +326,6 @@ void BattleContext::initRelics(const GameContext &gc) {
                 p.gainEnergy(1);
                 break;
 
-            case R::MUTAGENIC_STRENGTH: // this appears to be applied before clockwork if it was acquired first
-                p.buff<PS::STRENGTH>(3);
-                p.debuff<PS::LOSE_STRENGTH>(3);
-                break;
-
             case R::NEOWS_LAMENT:
                 p.neowLamentRemaining = std::max(0, r.data - 1);
                 if (r.data > 0) {
@@ -444,19 +440,26 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::CLOCKWORK_SOUVENIR:
-                addToBot( Actions::BuffPlayer<PS::ARTIFACT>(1) );
+                // Both this and Mutagenic Strength prepend their actions.
+                // The later relic's TOP actions therefore resolve first.
+                addToTop( Actions::BuffPlayer<PS::ARTIFACT>(1) );
                 break;
 
             case R::GREMLIN_VISAGE:
-                p.debuff<PS::WEAK>(1);
+                addToBot( Actions::DebuffPlayer<PS::WEAK>(1, false) );
                 break;
 
             case R::MARK_OF_PAIN:
                 addToBot( Actions::MakeTempCardInDrawPile( {CardId::WOUND}, 2, true) );
                 break;
 
+            case R::MUTAGENIC_STRENGTH:
+                addToTop( Actions::BuffPlayer<PS::STRENGTH>(3) );
+                addToTop( Actions::DebuffPlayer<PS::LOSE_STRENGTH>(3, false) );
+                break;
+
             case R::RED_MASK:
-                addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1) );
+                addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1, false) );
                 break;
 
             case R::RING_OF_THE_SNAKE:
