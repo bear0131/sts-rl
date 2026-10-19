@@ -1027,7 +1027,7 @@ class RealGameAdapter:
                 acts.append(ga.claim(ga.CLAIM_RELIC, counts[ga.CLAIM_RELIC]))
                 counts[ga.CLAIM_RELIC] += 1
             elif norm == "potion":
-                if self._has_empty_potion_slot():
+                if "Sozu" not in self._relics() and self._has_empty_potion_slot():
                     acts.append(ga.claim(ga.CLAIM_POTION, counts[ga.CLAIM_POTION]))
                 counts[ga.CLAIM_POTION] += 1
             elif norm == "card" and not self._skipped_combat_card_reward:
@@ -1106,6 +1106,8 @@ class RealGameAdapter:
             idx = self._map_command_index(action[1])
             return f"CHOOSE {idx}"
         if verb == ga.CLAIM:
+            if self.screen_type() != "COMBAT_REWARD" or action not in self._legal_reward_actions():
+                raise ValueError(f"claim is unavailable on the current reward screen: {action!r}")
             idx = self._claim_command_index(action[1], action[2])
             return f"CHOOSE {idx}"
         if verb == ga.REWARD_CARD:

@@ -198,7 +198,8 @@ bool isValidRewardsAction(const GameContext &gc, const search::GameAction a) {
             return r.sapphireKey || r.emeraldKey;
 
         case search::GameAction::RewardsActionType::POTION:
-            return a.getIdx1() < r.potionCount;
+            return a.getIdx1() < r.potionCount && !gc.hasRelic(RelicId::SOZU)
+                && gc.potionCount < gc.potionCapacity;
 
         case search::GameAction::RewardsActionType::GOLD:
             return a.getIdx1() < r.goldRewardCount;
@@ -364,10 +365,23 @@ void executeRewardsAction(GameContext &gc, const search::GameAction a) {
             r.removePotionReward(a.getIdx1());
             break;
 
-        case search::GameAction::RewardsActionType::RELIC:
-            gc.obtainRelic(r.relics[a.getIdx1()]);
+        case search::GameAction::RewardsActionType::RELIC: {
+            // Remove from the original offer before a relic can replace it
+            // with a nested reward screen. Preserve both the remaining offer
+            // and continuation by value, so copied contexts stay independent.
+            const auto relic = r.relics[a.getIdx1()];
             r.removeRelicReward(a.getIdx1());
+            const auto remaining = r;
+            const auto saved = gc.regainControlAction;
+            gc.regainControlAction = [remaining, saved](GameContext &g) {
+                g.info.rewardsContainer = remaining;
+                g.screenState = ScreenState::REWARDS;
+                g.regainControlAction = saved;
+            };
+            const bool opened = gc.obtainRelic(relic);
+            if (!opened) gc.regainControlAction = saved;
             break;
+        }
 
         case search::GameAction::RewardsActionType::SKIP:
             gc.regainControl();
@@ -425,6 +439,7 @@ void search::GameAction::execute(GameContext &gc) const {
         } else {
             gc.drinkPotionAtIdx(getIdx1());
         }
+        return;
     }
 
     switch (gc.screenState) {
@@ -566,13 +581,14 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
 
     const auto &r = gc.info.rewardsContainer;
     for (int i = 0; i < r.goldRewardCount; ++i) {
-        actions.emplace_back(search::GameAction::RewardsActionType::GOLD);
+        actions.emplace_back(search::GameAction::RewardsActionType::GOLD, i);
     }
 
     for (int i = 0; i < r.cardRewardCount; ++i) {
         for (int x = 0; x < r.cardRewards[i].size(); ++x) {
             actions.emplace_back(search::GameAction::RewardsActionType::CARD, i, x);
         }
+        actions.emplace_back(search::GameAction::RewardsActionType::CARD, i, 5);
     }
 
     for (int i = 0; i < r.relicCount; ++i) {
@@ -583,8 +599,10 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
         actions.emplace_back(search::GameAction::RewardsActionType::KEY);
     }
 
-    for (int i = 0; i < r.potionCount; ++i) {
-        actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+    if (!gc.hasRelic(RelicId::SOZU) && gc.potionCount < gc.potionCapacity) {
+        for (int i = 0; i < r.potionCount; ++i) {
+            actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+        }
     }
     actions.emplace_back(search::GameAction::RewardsActionType::SKIP);
 

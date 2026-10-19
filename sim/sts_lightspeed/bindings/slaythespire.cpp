@@ -1251,6 +1251,40 @@ py::dict rewardInfo(const sts::GameContext &gc) {
     return d;
 }
 
+// Bindings must reject stale screens and raw indices before the 8-bit codec
+// can alias them to a different valid action.
+void executeRewardClaim(sts::GameContext &gc, sts::search::GameAction::RewardsActionType type,
+                        int idx, const char *operation) {
+    if (gc.screenState != sts::ScreenState::REWARDS || idx < 0 || idx > 0xff) {
+        throw std::invalid_argument(std::string(operation) + " requires a valid reward index on the REWARDS screen");
+    }
+    const sts::search::GameAction action(type, idx);
+    if (!action.isValidAction(gc)) {
+        throw std::invalid_argument(std::string(operation) + " is not a legal reward action");
+    }
+    action.execute(gc);
+}
+
+py::list legalRewardOptions(const sts::GameContext &gc) {
+    using RAT = sts::search::GameAction::RewardsActionType;
+    py::list out;
+    if (gc.screenState != sts::ScreenState::REWARDS) return out;
+    for (const auto &action : sts::search::GameAction::getAllActionsInState(gc)) {
+        const char *kind;
+        switch (action.getRewardsActionType()) {
+            case RAT::CARD: kind = action.getIdx2() == 5 ? "skip_card" : "card"; break;
+            case RAT::GOLD: kind = "gold"; break;
+            case RAT::KEY: kind = "key"; break;
+            case RAT::POTION: kind = "potion"; break;
+            case RAT::RELIC: kind = "relic"; break;
+            case RAT::SKIP: kind = "skip"; break;
+            default: continue;
+        }
+        out.append(py::make_tuple(kind, action.getIdx1(), action.getIdx2()));
+    }
+    return out;
+}
+
 // The current shop's shelf, read POSITIONALLY (slot index is the buy key the
 // shop_buy_* methods expect): cards[7], relics[3], potions[3]. A price of -1
 // marks a sold/empty slot (Shop::cardPrice etc. return -1 after a purchase).
@@ -1592,26 +1626,17 @@ PYBIND11_MODULE(slaythespire, m) {
             }
             action.execute(gc);
         }, "Claim the offered key, forfeiting its linked chest relic for sapphire")
-        .def("claim_gold", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainGold(r.gold[idx]); r.removeGoldReward(idx); })
-        .def("claim_relic", [](GameContext &gc, int idx) {
-            auto &r = gc.info.rewardsContainer;
-            // Some relics open a screen when obtained (e.g. Bottled Tornado's
-            // "pick a Power to bottle"). That screen's confirm calls
-            // regainControl(), which would otherwise run -- and consume -- the
-            // combat's return-to-map action, leaving it null and crashing the
-            // later PROCEED. Redirect the screen's regainControl back to the
-            // REWARDS screen (more rewards may remain) and restore the original
-            // action so the final PROCEED still returns to the map.
-            auto saved = gc.regainControlAction;
-            gc.regainControlAction = [saved](GameContext &g) {
-                g.screenState = ScreenState::REWARDS;
-                g.regainControlAction = saved;
-            };
-            bool opened = gc.obtainRelic(r.relics[idx]);
-            r.removeRelicReward(idx);
-            if (!opened) gc.regainControlAction = saved;
+        .def("legal_reward_options", &legalRewardOptions,
+             "legal REWARDS actions as (kind, reward_group_index, item_index); empty on other screens")
+        .def("claim_gold", [](GameContext &gc, int idx) {
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::GOLD, idx, "claim_gold");
         })
-        .def("claim_potion", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainPotion(r.potions[idx]); r.removePotionReward(idx); })
+        .def("claim_relic", [](GameContext &gc, int idx) {
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::RELIC, idx, "claim_relic");
+        })
+        .def("claim_potion", [](GameContext &gc, int idx) {
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::POTION, idx, "claim_potion");
+        })
         .def("discard_potion", [](GameContext &gc, int slot) {
             if (slot >= 0 && slot < gc.potionCapacity && gc.potions[slot] != sts::Potion::EMPTY_POTION_SLOT) {
                 gc.potions[slot] = sts::Potion::EMPTY_POTION_SLOT;
@@ -1631,7 +1656,9 @@ PYBIND11_MODULE(slaythespire, m) {
             for (int i = 0; i < gc.potionCapacity; ++i) lst.append(std::string(sts::getPotionName(gc.potions[i])));
             return lst;
         }, "held potion slots out of combat")
-        .def("reward_proceed", [](GameContext &gc) { gc.regainControl(); })
+        .def("reward_proceed", [](GameContext &gc) {
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::SKIP, 0, "reward_proceed");
+        })
         // shop
         .def("shop_buy_card", [](GameContext &gc, int idx) { gc.info.shop.buyCard(gc, idx); })
         .def("shop_buy_relic", [](GameContext &gc, int idx) { gc.info.shop.buyRelic(gc, idx); })

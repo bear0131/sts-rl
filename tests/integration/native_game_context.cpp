@@ -1,5 +1,6 @@
 // Internal GameContext contracts, isolated by pytest so native faults are reported.
 #include "game/GameContext.h"
+#include "sim/search/GameAction.h"
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -124,6 +125,114 @@ static void checkBossCallback(int act, int ascension) {
     require(sameRng(detached.miscRng, child.miscRng), "detached act transition differs");
 }
 
+
+static void checkReward(int variant, int ascension) {
+    using A = search::GameAction;
+    using T = A::RewardsActionType;
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+    Rewards r;
+    if (variant == 0) {
+        r.addGold(13); r.addGold(29); gc.openCombatRewardScreen(r);
+        std::vector<int> indices;
+        for (const auto a : A::getAllActionsInState(gc))
+            if (a.getRewardsActionType() == T::GOLD) indices.push_back(a.getIdx1());
+        require(indices == std::vector<int>{0, 1}, "gold rewards lost their indices");
+        const int before = gc.gold;
+        A(T::GOLD, 1).execute(gc); A(T::GOLD, 0).execute(gc);
+        require(gc.gold == before + 42 && gc.info.rewardsContainer.goldRewardCount == 0,
+                "gold reward consumed wrong entry");
+    } else if (variant == 1) {
+        gc.obtainRelic(RelicId::SINGING_BOWL);
+        for (auto id : {CardId::ANGER, CardId::BASH}) {
+            CardReward cards; cards.push_back(Card(id)); r.addCardReward(cards);
+        }
+        r.addGold(19); gc.openCombatRewardScreen(r);
+        std::vector<int> skips;
+        for (const auto a : A::getAllActionsInState(gc))
+            if (a.getRewardsActionType() == T::CARD && a.getIdx2() == 5) skips.push_back(a.getIdx1());
+        require(skips == std::vector<int>{0, 1}, "per-group card skip missing");
+        const auto hp = gc.maxHp; const auto size = gc.deck.size();
+        A(T::CARD, 1, 5).execute(gc);
+        require(gc.maxHp == hp + 2 && gc.deck.size() == size, "bowl skip effect wrong");
+        require(gc.info.rewardsContainer.cardRewardCount == 1 &&
+                gc.info.rewardsContainer.cardRewards[0][0].id == CardId::ANGER &&
+                gc.info.rewardsContainer.gold[0] == 19, "skip consumed unrelated rewards");
+    } else if (variant == 2) {
+        for (int mode = 0; mode < 3; ++mode) {
+            auto child = gc;
+            if (mode == 1) child.obtainRelic(RelicId::SOZU);
+            if (mode == 2) for (int i = 0; i < child.potionCapacity; ++i) child.obtainPotion(Potion::BLOOD_POTION);
+            Rewards offer; offer.addPotion(Potion::FIRE_POTION); child.openCombatRewardScreen(offer);
+            const bool expected = mode == 0;
+            require(A(T::POTION, 0).isValidAction(child) == expected, "potion validator ignores capacity/Sozu");
+            bool listed = false;
+            for (const auto a : A::getAllActionsInState(child)) {
+                require(a.isValidAction(child), "reward enumerator emitted invalid action");
+                if (a.getRewardsActionType() == T::POTION) listed = true;
+            }
+            require(listed == expected, "potion enumeration disagrees with capacity/Sozu");
+        }
+    } else if (variant == 3) {
+        gc.curEvent = Event::BIG_FISH; gc.setupEvent(); gc.maxHp = 80; gc.curHp = 20;
+        for (bool discard : {false, true}) {
+            auto child = gc;
+            child.obtainPotion(Potion::BLOOD_POTION);
+            A action(static_cast<std::uint32_t>(discard ? 0xc0000000U : 0x80000000U));
+            require(action.isValidAction(child), "invalid potion fixture");
+            action.execute(child);
+            require(child.screenState == ScreenState::EVENT_SCREEN &&
+                    child.curHp == (discard ? 20 : 36) && child.potionCount == 0,
+                    "potion action also executed event option");
+        }
+    } else if (variant == 4) {
+        const CardId ids[] = {CardId::ANGER, CardId::BASH, CardId::CLEAVE, CardId::POMMEL_STRIKE, CardId::INFLAME};
+        for (auto id : ids) { CardReward cards; cards.push_back(Card(id)); r.addCardReward(cards); }
+        r.removeCardReward(2);
+        require(r.cardRewardCount == 4, "card reward count not reduced");
+        for (int i = 0; i < 4; ++i) require(r.cardRewards[i][0].id == ids[i < 2 ? i : i + 1], "card group shift wrong");
+        while (r.cardRewardCount) r.removeCardReward(r.cardRewardCount - 1);
+        require(r.cardRewardCount == 0, "last card group not removed");
+    } else if (variant == 5) {
+        gc.deck = Deck(); gc.deck.obtainRaw(Card(CardId::ANGER));
+        r.addGold(19); r.addRelic(RelicId::BOTTLED_FLAME); r.sapphireKey = true;
+        gc.openCombatRewardScreen(r);
+        A(T::RELIC, 0).execute(gc);
+        require(gc.screenState == ScreenState::CARD_SELECT, "bottle did not open selection");
+        auto child = gc;
+        child.chooseSelectCardScreenOption(0);
+        require(child.screenState == ScreenState::REWARDS, "bottle selection skipped remaining rewards");
+        require(gc.screenState == ScreenState::CARD_SELECT, "bottle selection mutated origin");
+        require(!child.info.rewardsContainer.sapphireKey && child.info.rewardsContainer.gold[0] == 19,
+                "bottle lost gold or retained linked sapphire key");
+        A(T::GOLD, 0).execute(child); A(T::SKIP).execute(child);
+        require(child.screenState == ScreenState::MAP_SCREEN, "original proceed callback was lost");
+    } else if (variant == 6) {
+        r.addRelic(RelicId::ANCHOR);
+        require(r.getTotalCount() == 1, "relic-only reward counted as empty");
+    } else if (variant == 7) {
+        r.addGold(19); r.addRelic(RelicId::CAULDRON); r.addRelic(RelicId::ANCHOR);
+        r.sapphireKey = true;
+        gc.openCombatRewardScreen(r);
+        A(T::RELIC, 0).execute(gc);
+        require(gc.info.rewardsContainer.relicCount == 0 && gc.info.rewardsContainer.potionCount == 5,
+                "nested relic reward corrupted replacement reward container");
+        const int capacity = gc.potionCapacity;
+        for (int i = 0; i < capacity; ++i) {
+            require(A(T::POTION, 0).isValidAction(gc), "nested potion missing");
+            A(T::POTION, 0).execute(gc);
+        }
+        A(T::SKIP).execute(gc);
+        require(gc.screenState == ScreenState::REWARDS && gc.info.rewardsContainer.gold[0] == 19 &&
+                gc.info.rewardsContainer.relicCount == 1 && gc.info.rewardsContainer.relics[0] == RelicId::ANCHOR &&
+                gc.info.rewardsContainer.sapphireKey, "nested screen lost parent rewards");
+        A(T::RELIC, 0).execute(gc);
+        require(!gc.info.rewardsContainer.sapphireKey, "parent sapphire link was lost");
+        A(T::SKIP).execute(gc);
+        require(gc.screenState == ScreenState::MAP_SCREEN, "nested reward return lost continuation");
+    } else { throw std::invalid_argument("unknown reward fixture"); }
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -132,8 +241,9 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss") {
+        if (mode == "event" || mode == "boss" || mode == "reward") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;
