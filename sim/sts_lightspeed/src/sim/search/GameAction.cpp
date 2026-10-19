@@ -230,7 +230,9 @@ bool isValidShopAction(const GameContext &gc, const search::GameAction a) {
             if (select > 2) {
                 return false;
             }
-            return s.potionPrice(select) != -1 && gc.gold >= s.potionPrice(select);
+            return !gc.relics.has(RelicId::SOZU)
+                && gc.potionCount < gc.potionCapacity
+                && s.potionPrice(select) != -1 && gc.gold >= s.potionPrice(select);
 
 
         case search::GameAction::RewardsActionType::RELIC:

@@ -234,6 +234,38 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkShopLegality(int variant, int ascension) {
+    using RAT = search::GameAction::RewardsActionType;
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.screenState = ScreenState::SHOP_ROOM;
+    gc.gold = 10000;
+    gc.info.shop.setup(gc);
+    if (variant == 1) gc.obtainRelic(RelicId::SOZU);
+    else if (variant == 2) {
+        while (gc.potionCount < gc.potionCapacity) gc.obtainPotion(Potion::BLOCK_POTION);
+    } else if (variant == 3) gc.gold = 0;
+    else if (variant == 4) {
+        for (auto &price : gc.info.shop.prices) price = -1;
+        gc.info.shop.removeCost = -1;
+    }
+    const auto actions = search::GameAction::getAllActionsInState(gc);
+    for (const auto &action : actions) require(action.isValidAction(gc), "enumerated illegal shop action");
+    for (int slot = 0; slot < 8; ++slot) {
+        for (auto type : {RAT::CARD, RAT::RELIC, RAT::POTION}) {
+            const search::GameAction action(type, slot);
+            bool listed = false;
+            for (const auto &candidate : actions) {
+                if (candidate.getRewardsActionType() == type && candidate.getIdx1() == slot) listed = true;
+            }
+            require(action.isValidAction(gc) == listed, "shop validator disagrees with enumeration");
+            if (type == RAT::POTION) {
+                require(action.isValidAction(gc) == (variant == 0 && slot < 3),
+                        "potion validator ignores capacity/Sozu/gold/stock");
+            }
+        }
+    }
+}
+
 static void checkShopPrice(int variant, int ascension) {
     GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
     gc.gold = 10000;
@@ -336,10 +368,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "shop-legality") checkShopLegality(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;

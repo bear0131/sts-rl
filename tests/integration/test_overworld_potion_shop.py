@@ -191,3 +191,77 @@ def test_shop_never_charges_without_obtaining_a_potion(shop_factory, blocked_by,
     # Both native enumeration and the policy-facing mask must reject the buy.
     assert not any(kind == 'potion' for kind, _ in gc.legal_shop_options())
     assert not any(env.action_masks()[A._SHOP_POTION:A._SHOP_POTION + 3])
+
+
+def _shop_snapshot(gc):
+    return (gc.gold, gc.cur_hp, gc.max_hp, gc.deck_ids(), gc.relic_state(),
+            list(gc.overworld_potions), gc.shop_contents(), gc.shop_remove_count,
+            gc.screen_state)
+
+
+@pytest.mark.parametrize('kind', ['card', 'relic', 'potion', 'remove'])
+def test_shop_rejects_unaffordable_transaction(shop_factory, kind):
+    gc = shop_factory().thick.gc
+    gc.gold = 0
+    before = _shop_snapshot(gc)
+    method = gc.shop_remove if kind == 'remove' else getattr(gc, 'shop_buy_' + kind)
+    with pytest.raises(ValueError, match='shop'):
+        method(*(() if kind == 'remove' else (0,)))
+    assert _shop_snapshot(gc) == before
+
+
+@pytest.mark.parametrize('kind', ['card', 'relic', 'potion'])
+def test_shop_rejects_sold_slot(shop_factory, kind):
+    gc = shop_factory().thick.gc
+    gc.gold = 1000
+    method = getattr(gc, 'shop_buy_' + kind)
+    price = gc.shop_contents()[kind + 's'][0]['price']
+    method(0)
+    assert gc.gold == 1000 - price
+    assert gc.shop_contents()[kind + 's'][0]['price'] == -1
+    before = _shop_snapshot(gc)
+    with pytest.raises(ValueError, match='shop'):
+        method(0)
+    assert _shop_snapshot(gc) == before
+
+
+@pytest.mark.parametrize('kind,limit', [('card', 7), ('relic', 3), ('potion', 3)])
+@pytest.mark.parametrize('index', [-1, 'limit', 255, 256, 257])
+@pytest.mark.parametrize('relics', [[], ['Sozu']])
+def test_shop_rejects_raw_invalid_indices(shop_factory, kind, limit, index, relics):
+    gc = shop_factory(relics).thick.gc
+    before = _shop_snapshot(gc)
+    with pytest.raises(ValueError, match='shop'):
+        getattr(gc, 'shop_buy_' + kind)(limit if index == 'limit' else index)
+    assert _shop_snapshot(gc) == before
+
+
+@pytest.mark.parametrize('screen', ['REWARDS', 'EVENT_SCREEN', 'MAP_SCREEN', 'CARD_SELECT'])
+@pytest.mark.parametrize('kind', ['card', 'relic', 'potion', 'remove', 'proceed'])
+def test_shop_rejects_other_screens(shop_factory, screen, kind):
+    import slaythespire as sts
+    gc = shop_factory().thick.gc
+    gc.screen_state = getattr(sts.ScreenState, screen)
+    before = _shop_snapshot(gc)
+    assert gc.legal_shop_options() == []
+    method = getattr(gc, 'shop_' + (kind if kind in ('remove', 'proceed') else 'buy_' + kind))
+    with pytest.raises(ValueError, match='shop'):
+        method(*(() if kind in ('remove', 'proceed') else (0,)))
+    assert _shop_snapshot(gc) == before
+
+
+def test_shop_remove_is_single_use_and_returns_to_shop(shop_factory):
+    gc = shop_factory().thick.gc
+    gold = gc.gold
+    cost = gc.shop_contents()['remove_cost']
+    gc.shop_remove()
+    assert gc.gold == gold - cost
+    gc.choose_select_card_option(0)
+    assert ('remove', 0) not in gc.legal_shop_options()
+    assert gc.shop_contents()['remove_cost'] == -1
+    before = _shop_snapshot(gc)
+    with pytest.raises(ValueError, match='shop'):
+        gc.shop_remove()
+    assert _shop_snapshot(gc) == before
+    gc.shop_proceed()
+    assert str(gc.screen_state) == 'ScreenState.MAP_SCREEN'

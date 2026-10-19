@@ -1319,6 +1319,26 @@ py::dict shopContents(const sts::GameContext &gc) {
     return d;
 }
 
+// Validate the public operation before encoding its index or accessing shop data.
+void executeShopPurchase(sts::GameContext &gc, sts::search::GameAction::RewardsActionType type,
+                         int idx, const char *operation) {
+    using RAT = sts::search::GameAction::RewardsActionType;
+    const int count = type == RAT::CARD ? 7 : (type == RAT::RELIC || type == RAT::POTION ? 3 : 1);
+    if (gc.screenState != sts::ScreenState::SHOP_ROOM || idx < 0 || idx >= count) {
+        throw std::invalid_argument(std::string(operation) + " requires a valid shop index on the SHOP_ROOM screen");
+    }
+    const sts::search::GameAction action(type, idx);
+    if (!action.isValidAction(gc)) {
+        // Preserve SHOP01's public no-op for an otherwise affordable, in-stock
+        // potion blocked only by Sozu/capacity. Invalid slots/screens still fail.
+        if (gc.outcome == sts::GameOutcome::UNDECIDED && type == RAT::POTION &&
+            gc.info.shop.potionPrice(idx) >= 0 && gc.gold >= gc.info.shop.potionPrice(idx) &&
+            (gc.hasRelic(sts::RelicId::SOZU) || gc.potionCount >= gc.potionCapacity)) return;
+        throw std::invalid_argument(std::string(operation) + " is not a legal shop action");
+    }
+    action.execute(gc);
+}
+
 // Authoritative legal shop options, from the sim's own getAllShopActions (gold,
 // sold-out, Sozu, and potion-capacity gated). Unlike legalEventOptions, idx1
 // COLLIDES across kinds
@@ -1328,6 +1348,7 @@ py::dict shopContents(const sts::GameContext &gc) {
 py::list legalShopOptions(const sts::GameContext &gc) {
     using RAT = sts::search::GameAction::RewardsActionType;
     py::list out;
+    if (gc.screenState != sts::ScreenState::SHOP_ROOM) return out;
     for (const auto &a : sts::search::GameAction::getAllActionsInState(gc)) {
         const char *kind;
         switch (a.getRewardsActionType()) {
@@ -1660,11 +1681,21 @@ PYBIND11_MODULE(slaythespire, m) {
             executeRewardClaim(gc, search::GameAction::RewardsActionType::SKIP, 0, "reward_proceed");
         })
         // shop
-        .def("shop_buy_card", [](GameContext &gc, int idx) { gc.info.shop.buyCard(gc, idx); })
-        .def("shop_buy_relic", [](GameContext &gc, int idx) { gc.info.shop.buyRelic(gc, idx); })
-        .def("shop_buy_potion", [](GameContext &gc, int idx) { gc.info.shop.buyPotion(gc, idx); })
-        .def("shop_remove", [](GameContext &gc) { gc.info.shop.buyCardRemove(gc); })
-        .def("shop_proceed", [](GameContext &gc) { gc.screenState = ScreenState::MAP_SCREEN; })
+        .def("shop_buy_card", [](GameContext &gc, int idx) {
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::CARD, idx, "shop_buy_card");
+        })
+        .def("shop_buy_relic", [](GameContext &gc, int idx) {
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::RELIC, idx, "shop_buy_relic");
+        })
+        .def("shop_buy_potion", [](GameContext &gc, int idx) {
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::POTION, idx, "shop_buy_potion");
+        })
+        .def("shop_remove", [](GameContext &gc) {
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::CARD_REMOVE, 0, "shop_remove");
+        })
+        .def("shop_proceed", [](GameContext &gc) {
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::SKIP, 0, "shop_proceed");
+        })
         .def("shop_contents", &shopContents,
              "the current shop shelf, positional: {cards:[{id,upgrades,price}x7], "
              "relics:[{id,price}x3], potions:[{id,price}x3], remove_cost}. price -1 == sold/empty")
