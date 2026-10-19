@@ -589,6 +589,7 @@ void MonsterGroup::applyPreTurnLogic(BattleContext &bc) {
 void MonsterGroup::applyEmeraldEliteBuff(BattleContext &bc, const int buffType, const int act) {
     for (int i = 0; i < monsterCount; ++i) {
         Monster &m = arr[i];
+        if (m.id == MonsterId::INVALID) continue;
 
         switch (buffType) {
             case 0:

@@ -87,7 +87,8 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
     player.gold = gc.gold;
 
     monsters.init(*this, encounterToInit);
-    if (gc.map->burningEliteX == gc.curMapNodeX && gc.map->burningEliteY == gc.curMapNodeY) {
+    if (gc.curRoom == Room::ELITE && gc.map->burningEliteX == gc.curMapNodeX &&
+            gc.map->burningEliteY == gc.curMapNodeY) {
         monsters.applyEmeraldEliteBuff(*this, gc.map->burningEliteBuff, gc.act);
     }
 
@@ -235,6 +236,8 @@ void BattleContext::initRelics(const GameContext &gc) {
             case R::PHILOSOPHERS_STONE:
                 for (int i = 0; i < monsters.monsterCount; ++i) {
                     auto &m = monsters.arr[i];
+                    // Native summon reserves are not Java monster objects.
+                    if (m.id == MonsterId::INVALID) continue;
                     m.buff<MS::STRENGTH>(1);
                 }
                 p.energyPerTurn++;
@@ -332,6 +335,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 if (r.data > 0) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
+                        if (m.id == MonsterId::INVALID) continue;
                         m.curHp = 1;
                     }
                 }
@@ -355,6 +359,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 if (eliteTrigger) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
+                        if (m.id == MonsterId::INVALID) continue;
                         m.curHp = std::min(m.curHp, static_cast<int>(m.maxHp * .75f));
                     }
                 }

@@ -317,6 +317,13 @@ def complete_word_tables():
             },
             "audit": "BRIDGE74/75 source reviewed and native built; specific real branches not yet covered; no new checkpoint/OBS/ACTION/Java fields",
         },
+        "native_reserved_monster_slot_contract": {
+            "java": "PhilosopherStone/NeowsLament/PreservedInsect and MonsterRoomElite iterate actual monster objects, not summon reservations",
+            "native": "BattleContext.init/initRelics + MonsterGroup.applyEmeraldEliteBuff skip id=INVALID before writing stats; burning buff requires ELITE room",
+            "mapping": "keep all physical target slots; actual summons initialize their slot and receive onSpawn effects; never clear a corrupt slot merely to normalize as PAD",
+            "validation": "_norm_sim_monster still rejects INVALID carrying HP/block/powers/history/lifecycle; _find_shadow_battle adds failing encounter/nonce context and raises",
+            "audit": "BRIDGE76 source fix after real F46 shadow-attachment failure; native rebuilt, real continuation pending",
+        },
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
         "monster_move_canonical_to_real": dict(CS._MONSTER_CANON2REAL),

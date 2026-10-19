@@ -119,7 +119,15 @@ def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
                 battle = sts.create_battle(gc, encounter)
             except Exception:
                 continue
-            found = _monster_ids(battle.to_dict())
+            try:
+                found = _monster_ids(battle.to_dict())
+            except ValueError as exc:
+                # A malformed candidate is a native producer bug, not evidence
+                # that its entities may be dropped or replaced with PAD.
+                raise ValueError(
+                    f"invalid native shadow encounter={encounter!r} "
+                    f"seed_nonce={seed_nonce} wanted={wanted!r}: {exc}"
+                ) from exc
             if found == wanted or (
                 summon_leader in _SUMMON_ROSTERS
                 and found.count(summon_leader) == 1

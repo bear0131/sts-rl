@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE76 | 原生修复并构建，待F46续档 | F46候选构造被INVALID带状态阻断；PhilosophersStone/Neow/燃烧精英buff/昆虫只作用已有实体，燃烧加成入口要求ELITE房。保持空槽/目标号及normalize严格拒绝，候选错误补encounter/nonce上下文而不吞掉。native重建F4656071…，从保存F46/index509续测，无离线测试。 |
 | BRIDGE74 | 源码修复并构建，实机分支待覆盖 | Colosseum补阶段0/1/2与首战无展示奖励→第二轮选项、二战稀有/罕见/100金、Smoke首战回事件；保留disableColosseum=true及旧权重布局。DeadAdventurer/Colosseum第二战eliteTrigger作用于昆虫/投石器/颈环，MindBloom实际Boss也触发颈环；昆虫只减不增当前HP。完整词表event_combat_rule_contracts记录来源，未实机覆盖这些组合。 |
 | BRIDGE75 | 源码修复并构建，实机分支待覆盖 | MaskedBandits补药水；强盗/蘑菇已有专属遗物改头环；五类已有事件战补GoldenIdol（战前按合并金币计算），MindBloom减金门槛A15→A13。DeadAdventurer药水先于卡牌；原“会误算四项上限”判断撤回，当前数量不足以证明影响。已复读Smoke：事件预置最多三项，隐藏药水判定等价，首竞技场例外见BRIDGE74；未离线测试或分支行为验收。 |
 | BRIDGE73 | 已修复并构建，实机组合待覆盖 | BattleContext/GameContext补ToyOrnithopter喝药5治疗，战内排在药水效果后，Smoke结束在治疗后；SacredBark不翻倍遗物治疗，Flower/Bloom经原治疗路径。Entropic按容量抽取并顺序填第一个空槽；战外Sozu不抽取，战内仍抽取但阻止获得。战外槽位/上下文/类型消费前拒绝，自动仙女/丢弃不触发Toy；源码复读，无离线测试/实际组合验证。 |
