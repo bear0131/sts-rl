@@ -366,6 +366,7 @@ def complete_word_tables():
             "rewards_taken": "DeadAdventurer.numRewards distinguishes a successful NOTHING result from a stale frame",
             "startSpin/buttonPressed/purgeResult": "actual GremlinWheelGame execution flags; hidden random result is not exported",
             "Bonfire": "BONFIRE_SPIRITS precedes generic for_purge; native opens selection directly, Java intro/offer are transport",
+            "ScrapOoze failure": "buttonEffect applies damage synchronously before displayed damage+1/chance+10; actual offer change acknowledges failure despite Fairy/Tail net healing; only one FairyPotion-to-empty slot change is allowed (BRIDGE80)",
         },
         "dynamic_event_kinds": DYNAMIC_EVENT_OPTION_KINDS,
         "dynamic_event_kind_aliases": DYNAMIC_EVENT_OPTION_KIND_ALIASES,

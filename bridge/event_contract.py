@@ -1099,10 +1099,17 @@ class EventEffectAck:
                 return True  # Includes HP-only animation/intermediate frames.
             if current != (previous[0] + 1, previous[1] + 10):
                 raise RuntimeError('Scrap Ooze failure cost/chance mismatch')
-            if relic_changed or gained or lost or potion_changed or delta('gold'):
+            # The next offer is updated only after synchronous player.damage.
+            # Revival can increase net HP and automatically consume one Fairy;
+            # neither is evidence that the command remains unacknowledged.
+            old_potions, new_potions = old['potions'], g['potions']
+            if len(old_potions) != len(new_potions):
+                raise RuntimeError('Scrap Ooze changed potion inventory capacity')
+            potion_changes = [(a['id'], b['id']) for a, b in zip(old_potions, new_potions)
+                              if a['id'] != b['id']]
+            if (relic_changed or gained or lost or delta('gold')
+                    or potion_changes not in ([], [('FairyPotion', 'Potion Slot')])):
                 raise RuntimeError('Scrap Ooze failure effect type mismatch')
-            if delta('current_hp') >= 0:
-                return True
             self.pending = None
             return False
         if effect.startswith('altar_'):
