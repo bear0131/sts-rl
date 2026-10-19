@@ -668,6 +668,7 @@ class RealGameAdapter:
         self.multi_selected: set[int] = set()
         self._multi_signature: tuple[Any, ...] | None = None
         self._leaving_shop = False
+        self._shop_proceed_sent = False
         # CommunicationMod's SKIP on CARD_REWARD closes the card sub-screen
         # instead of marking the combat card reward skipped.  Track this case so
         # the returned COMBAT_REWARD frame behaves like the sim's skipRewardCards:
@@ -740,8 +741,9 @@ class RealGameAdapter:
         self._last_relic_ids = current_relic_ids
         self._seen_game_frame = self._seen_game_frame or bool(frame.get("in_game"))
         self._reconcile_multi()
-        if self.screen_type() == "SHOP_SCREEN":
+        if self.screen_type() == "MAP" or self.gs.get("room_type") != "ShopRoom":
             self._leaving_shop = False
+            self._shop_proceed_sent = False
         if self.screen_type() == "COMBAT_REWARD":
             self._combat_reward_outer_choices = tuple(self.choices())
             self._combat_reward_outer_commands = frozenset(self.commands())
@@ -942,10 +944,15 @@ class RealGameAdapter:
                         raise ValueError("Neow dialogue transport requires exactly one choice")
                     return "CHOOSE 0", "neow_intro"
 
-        if auto_enter_shop and st == "SHOP_ROOM":
-            if self._leaving_shop:
-                self._leaving_shop = False
+        if auto_enter_shop and self._leaving_shop:
+            if st == "SHOP_SCREEN":
+                return self._refresh_command(), "await_shop_screen_leave"
+            if st == "SHOP_ROOM":
+                if self._shop_proceed_sent or "PROCEED" not in self.commands():
+                    return self._refresh_command(), "await_shop_room_exit"
+                self._shop_proceed_sent = True
                 return "PROCEED", "leave_shop_room"
+        if auto_enter_shop and st == "SHOP_ROOM":
             if "CHOOSE" in self.commands() and cl:
                 return "CHOOSE 0", "enter_shop_screen"
 
@@ -2399,6 +2406,7 @@ class RealGameAdapter:
         if verb == ga.SHOP_PROCEED:
             if self.screen_type() == "SHOP_SCREEN":
                 self._leaving_shop = True
+                self._shop_proceed_sent = False
                 return "LEAVE"
             return "PROCEED"
         if verb == ga.SHOP_BUY:

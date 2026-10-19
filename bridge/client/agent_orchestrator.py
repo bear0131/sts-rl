@@ -535,17 +535,18 @@ def searched_command_still_current(frame, original, command):
 
 
 def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
-    """A combat command must change its real frame before another decision."""
+    """A mutating command must change its real frame before another decision."""
     return pending is not None and frame.get("game_state") == pending
 
 
 def combat_command_needs_ack(frame: dict[str, Any], command: str) -> bool:
     gs = frame.get("game_state") or {}
-    # Rest choices also enqueue effects: a stale REST reply must not enqueue a
-    # second smith screen. Reuse the same in-flight barrier before re-deciding.
-    guarded = bool(gs.get("combat_state")) or gs.get('screen_type') == 'REST'
-    return guarded and command.split()[0].upper() in {
-        "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN",
+    # Keep the existing helper name, but protect mutations outside combat too:
+    # shop purchases, dialogue choices, and overworld potions can also receive
+    # an identical old frame. Dedicated effect receipts add stronger checks;
+    # they do not replace this common prohibition on acting on the old frame.
+    return bool(gs) and command.split()[0].upper() in {
+        "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN", "LEAVE", "SKIP", "PROCEED",
     }
 
 
@@ -666,6 +667,11 @@ class RewardCommandAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get("game_state") or {}
+        if gs.get("room_phase") == "COMBAT":
+            # Discovery/Codex reuse CARD_REWARD, but choose a temporary combat
+            # card, not a permanent deck reward. Their source/candidates and
+            # result are owned by the combat adapter/search transaction.
+            return
         room_exit = self.room_exit_expectation(gs, decision.command)
         if (gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD", "CHEST"}
                 and room_exit is None):
@@ -1062,7 +1068,7 @@ def main() -> None:
                 pending_end_frame = None
                 if stale_combat_play_frame(frame, pending_play_frame):
                     if now - pending_play_since > 10.0:
-                        raise RuntimeError("game state unchanged for 10 seconds after combat command")
+                        raise RuntimeError("game state unchanged for 10 seconds after mutating command")
                     time.sleep(0.05)
                     send("STATE")
                     continue
