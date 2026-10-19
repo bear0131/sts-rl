@@ -24,6 +24,29 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 14) {
+        for (bool bark : {false, true}) {
+            auto child = root;
+            child.maxHp = 80;
+            child.curHp = 1;
+            if (bark) child.obtainRelic(RelicId::SACRED_BARK);
+            child.potions.fill(Potion::EMPTY_POTION_SLOT);
+            child.potions[0] = Potion::FAIRY_POTION;
+            child.potionCount = 1;
+            child.playerLoseHp(2);
+            if (child.curHp != (bark ? 48 : 24) || child.potionCount != 0) return 20;
+        }
+        root.obtainRelic(RelicId::TUNGSTEN_ROD);
+        const int hp = root.curHp;
+        root.playerLoseHp(0);
+        if (root.curHp != hp) return 21;
+        root.playerLoseHp(1);
+        if (root.curHp != hp) return 21;
+        root.playerLoseHp(2);
+        if (root.curHp != hp - 1) return 21;
+        std::cout << "fairy_bark_60_percent_zero_damage_no_heal" << std::endl;
+        return 0;
+    }
     if (variant >= 10 && variant <= 13) {
         root.deck = Deck();
         if (variant == 10) {

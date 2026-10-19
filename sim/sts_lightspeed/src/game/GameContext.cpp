@@ -2158,6 +2158,7 @@ Room GameContext::getEventRoomOutcomeHelper(bool lastRoomWasShop) {
 }
 
 void GameContext::damagePlayer(int amount) {
+    if (amount == 0) return;
 #ifdef sts_asserts
     assert(amount > 0);
 #endif
@@ -2168,6 +2169,7 @@ void GameContext::damagePlayer(int amount) {
 }
 
 void GameContext::playerLoseHp(int amount) {
+    if (amount == 0) return;
 #ifdef sts_asserts
     assert(amount > 0);
 #endif
@@ -2194,7 +2196,7 @@ void GameContext::playerOnDie() {
     if (it != potions.end()) {
         *it = Potion::EMPTY_POTION_SLOT;
         --potionCount;
-        curHp = std::max(1, static_cast<int>(hasBark ? 0.6f : 0.3f * static_cast<float>(maxHp)));
+        curHp = std::max(1, static_cast<int>((hasBark ? 0.6f : 0.3f) * static_cast<float>(maxHp)));
         return;
     }
 

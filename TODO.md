@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE18 | 事件HP/复活底层：源码已修，未部署 | 神圣树皮精灵药水表达式优先级使复活仅1HP；钨杆零HP损失变负数回血，鸟居零伤害也须短路。核对Java FairyPotion/TungstenRod，80上限复活24/48及0/1/2HP损失反例旧exit20新0，仍需全部伤害遗物/复活路径审查。 |
+
 | BRIDGE17 | 事件底层Deck计数/删除/瓶装：源码已修，未部署 | obtainRaw重复计数；removeSelected排序未使用；removeAllMatching访问size槽；anyCardBottled反向；删诅咒未移动瓶装索引。四类旧反例exit16..19，新A0/A15全0；影响存档/桥接set_deck与事件删除消费者，须独立扩展兼容，不替换生产。 |
 
 | BRIDGE15 | 设计师分支与搜索复制回调：源码修复中，未部署 | 逐行发现随机升级漏扣款、变牌空函数/两处switch落入后续分支、全套服务回调捕获原this；修正付款、玩家选两张变牌、分支出口及gc.miscRng。A0/A15六选项成本/HP/选牌/复制隔离反例旧exit13新0；继续检查其他捕获this的事件奖励回调，生产不变。 |
