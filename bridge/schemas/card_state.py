@@ -70,3 +70,88 @@ def real_master_deck_state(records):
         result.append({'id': card['id'], 'upgrades': card['up'], 'misc': misc,
                        'bottle': bottles[0] if bottles else 'NONE'})
     return result
+
+
+class CombatCardIdentityMap:
+    """Physical master slots plus persistent, disjoint temporary-card identities.
+
+    Master slots are read afresh because Java can change the master deck during
+    combat. All live cards are restored together at a settled decision boundary.
+    Temporary UUIDs survive pile moves and disappearance; their IDs are never
+    recycled within a combat. Native speculative copies do not update this map.
+    """
+    MASTER_CAPACITY = 96
+
+    def __init__(self):
+        self._temporary = {}
+
+    def snapshot(self, master_records, piles, stasis):
+        from .combat_state import real_to_sim_card_enum
+        from .entity_ids import NATIVE_COMBAT_CARD_ENUM_IDS
+        import slaythespire as sts
+
+        if set(piles) != {'hand', 'draw', 'discard', 'exhaust'} or len(stasis) != 2:
+            raise ValueError('combat snapshot requires four piles and two stasis slots')
+        master = [real_card_state(row) for row in master_records]
+        if len(master) > self.MASTER_CAPACITY:
+            raise ValueError('master deck exceeds native identity capacity')
+        master_ids = {card['uuid']: index for index, card in enumerate(master)}
+        if len(master_ids) != len(master):
+            raise ValueError('duplicate master card UUID')
+        active = [card for pile in piles.values() for card in pile]
+        active += [card for card in stasis if card is not None]
+        identities = [card['uuid'] for card in active]
+        if len(set(identities)) != len(identities):
+            raise ValueError('duplicate physical combat card UUID')
+        temporary = dict(self._temporary)
+        for identity in sorted(set(identities) - set(master_ids) - set(temporary)):
+            temporary[identity] = self.MASTER_CAPACITY + len(temporary)
+        next_uid = self.MASTER_CAPACITY + len(temporary)
+        if next_uid > 32767:
+            raise ValueError('combat card identity cursor exceeds native int16')
+
+        def convert(card):
+            if card is None:
+                return None  # Only a real empty stasis slot calls this branch.
+            native_id = real_to_sim_card_enum(card['id'])
+            if native_id not in NATIVE_COMBAT_CARD_ENUM_IDS:
+                raise ValueError(f'card combat transition is not implemented: {native_id}')
+            identity = card['uuid']
+            if identity in master_ids:
+                uid = master_ids[identity]
+                if master[uid]['id'] != card['id']:
+                    raise ValueError('combat UUID refers to a different master card identity')
+            else:
+                uid = temporary[identity]
+            traits = sts.card_instance_traits(native_id, card['up'])
+            for field in ('exhausts', 'ethereal', 'self_retain'):
+                if card[field] != traits[field]:
+                    raise ValueError(f'{native_id} dynamic {field} is not representable in native state')
+            special = card['misc']
+            if native_id == 'SEARING_BLOW':
+                if special != 0:
+                    raise ValueError('Searing Blow has independent nonzero misc')
+                special = card['up']
+            elif native_id == 'RAMPAGE':
+                if special != 0:
+                    raise ValueError('Rampage has independent nonzero misc')
+                special = card['base_damage'] - 8
+            elif native_id != 'RITUAL_DAGGER' and special != 0:
+                raise ValueError(f'{native_id} has unrepresentable nonzero misc')
+            if not 0 <= special <= 32767:
+                raise ValueError('combat card growth exceeds native int16')
+
+            def cost(field):
+                value = card[field]
+                # Explicit sentinel translation, never construction as fallback.
+                return -3 if value == -2 and traits['base_cost'] == -3 else value
+
+            return dict(id=native_id, upgrades=card['up'], uid=uid, special_data=special,
+                        base_cost=cost('base_cost'), cost=cost('cost'),
+                        free_to_play_once=card['free_to_play_once'], retain=card['retain'])
+
+        result = dict(version=1, next_uid=next_uid,
+                      **{name: [convert(card) for card in pile] for name, pile in piles.items()},
+                      stasis=[convert(card) for card in stasis])
+        self._temporary = temporary  # Failed conversion never consumes an identity.
+        return result

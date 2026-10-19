@@ -19,6 +19,7 @@ import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
 from bridge.native_state import make_native_combat_root, native_combat_room
+from bridge.schemas.card_state import CombatCardIdentityMap, real_master_deck_state
 from env.core import native_actions as C
 from env.core.encounters import ACT_POOLS
 from env.core.run_env import SlayTheSpireEnv
@@ -36,7 +37,6 @@ from schemas.combat_state import (
     real_to_sim_monster_move,
 )
 from schemas.entity_ids import (
-    NATIVE_COMBAT_CARD_ENUM_IDS,
     NATIVE_MONSTER_STATUS_IDS,
     NATIVE_PLAYER_STATUS_IDS,
     native_power_enum,
@@ -61,29 +61,6 @@ _SUPPORTED_MONSTER_POWERS = frozenset(NATIVE_MONSTER_STATUS_IDS)
 
 def _enumish(value: Any) -> str:
     return native_power_enum(value or "")
-
-
-def _card_rows(cards: list[dict[str, Any]], *, costs: bool = False) -> list[tuple]:
-    result = []
-    for card in cards:
-        native_id = real_to_sim_card_enum(card["id"])
-        if native_id not in NATIVE_COMBAT_CARD_ENUM_IDS:
-            raise ValueError(
-                f"card {card['id']!r} maps to native {native_id!r}, whose "
-                "combat transition is not implemented"
-            )
-        row = (native_id, int(card["up"]))
-        if costs:
-            if "cost" not in card:
-                raise ValueError(f"live hand card is missing cost: {card!r}")
-            cost = int(card["cost"])
-            # Java uses -2 for every unplayable card.  The simulator keeps its
-            # own internal distinction (-2 statuses, -3 curses), which is part
-            # of the checkpoint's training distribution.  Preserve that native
-            # base value while the canonical diff treats both as UNPLAYABLE.
-            row += (None if cost <= -2 else cost,)
-        result.append(row)
-    return result
 
 
 def _power_rows(powers: dict[str, int], supported: frozenset[str]) -> list[tuple[str, int]]:
@@ -184,6 +161,7 @@ class RealCombatSearch:
         self.strategy.bind_environments([self.env])
         self._combat_branch_bound = False
         self.identity: tuple[int, int] | None = None
+        self.card_identities = CombatCardIdentityMap()
         self.decision_index = 0
         self.sim_to_real_targets: dict[int, int] = {}
         self.sim_to_real_selection_handles: dict[int, int] = {}
@@ -256,6 +234,7 @@ class RealCombatSearch:
 
     def reset_run(self) -> None:
         self.identity = None
+        self.card_identities = CombatCardIdentityMap()
         self.decision_index = 0
         self.sim_to_real_targets = {}
         self.sim_to_real_selection_handles = {}
@@ -412,6 +391,7 @@ class RealCombatSearch:
         self.env._nosl_cpp_pending = None
         self.env._invalidate_backend_cache()
         self.identity = identity
+        self.card_identities = CombatCardIdentityMap()
         self.sim_to_real_targets = {}
         self.sim_to_real_targets = self._target_mapping(real)
         self.run_encounters += 1
@@ -553,6 +533,21 @@ class RealCombatSearch:
         ]
         return sim
 
+    def _card_state(self, real: dict[str, Any]) -> dict[str, Any]:
+        stasis = [None, None]
+        covered = set()
+        for sim_index, real_index in self.sim_to_real_targets.items():
+            card = real['stasis_cards'][real_index]
+            if card is not None:
+                slot = min(sim_index, 1)  # CardManager's Bronze Orb physical slots.
+                if stasis[slot] is not None:
+                    raise ValueError('two real stasis cards map to one native slot')
+                stasis[slot] = card
+                covered.add(real_index)
+        if covered != {i for i, card in enumerate(real['stasis_cards']) if card is not None}:
+            raise ValueError('real stasis card has no native monster mapping')
+        return self.card_identities.snapshot(self.adapter.gs['deck'], real['card_instances'], stasis)
+
     def _state_spec(self, real: dict[str, Any]) -> dict[str, Any]:
         self.sim_to_real_targets = self._target_mapping(real)
         native_count = len(self.env.thick.bc.to_dict()["monsters"])
@@ -611,10 +606,7 @@ class RealCombatSearch:
                 "powers": _power_rows(player["powers"], _SUPPORTED_PLAYER_POWERS),
             },
             "monsters": monsters,
-            "hand": _card_rows(real["hand"], costs=True),
-            "draw": _card_rows(real["draw"]),
-            "discard": _card_rows(real["discard"]),
-            "exhaust": _card_rows(real["exhaust"]),
+            "card_state": self._card_state(real),
             "potions": [_empty_potion_name(p) for p in self.adapter._potions()],
         }
 
@@ -629,7 +621,13 @@ class RealCombatSearch:
         before = diff(real, predicted)
         if before:
             LOG.warning("native shadow pre-sync differs count=%s sample=%s", len(before), before[:8])
-        self.env.thick.bc.apply_custom_state(self._state_spec(real))
+        spec = self._state_spec(real)
+        master = [dict(card, id=real_to_sim_card_enum(card['id']))
+                  for card in real_master_deck_state(self.adapter.gs['deck'])]
+        self.env.thick.gc.set_deck_state(master)
+        self.env.thick.bc.apply_custom_state(spec)
+        if self.env.thick.bc.card_state() != spec['card_state']:
+            raise RuntimeError('native real-game card instance alignment failed')
         self.env.thick.gc.max_hp = int(real["player"]["max_hp"])
         self.env.thick.gc.cur_hp = int(real["player"]["hp"])
         self.env.thick.gc.gold = int(real["player"]["gold"])

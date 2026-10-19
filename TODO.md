@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+本轮范围（用户2026-10-19明确更新）：翻牌配对/Match and Keep暂不处理，BRIDGE12断点存档保留；不将其作为其他修复或实机验证的前置条件。遇到该事件须标记本轮未支持，不能猜牌、伪造通过或混入正式胜负成绩。其他桥接/原生对齐目标不缩减。
+
 | BRIDGE29 | 战斗升级费用规则已修，未部署 | `CardInstance::upgrade`按Java保留costForTurn与基础费的差，BloodForBlood按受伤后的基础费升级并避免被通用分支重设3费。旧56例42失败14通过；新57例全过，含四牌堆Apotheosis、Armaments实际0能量出牌及三次Bloodletting自然减费→升级→22伤害链。195原生含完整109搜索矩阵通过、621桥接/相关定向通过；最终TRAIN47真实GPU加载/预测/一步通过，Full-Gumbel128/G0参数未改。规则差异需与旧冻结成绩分开；实际胜率影响未量化。 |
 
 | BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |
@@ -8,7 +10,7 @@
 
 | BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
 
-| BRIDGE28 | 主牌组已修；原生实例快照接口已验，真实实例接入待修，未部署 | parity-v7第7只读serializer补11项typed字段、misc0显式导出；16全局字段的deck_state经搜索/replay共享根入口恢复当前misc/完整升级/物理瓶装槽。原生card_state/set_card_state完整8实例字段/7快照字段，保留四牌堆/两暂扣槽/UID/生成cursor，原子恢复；同状态模型输入、动作mask、压缩观测和future key一致。638桥接/原生定向通过、补字段词表后73定向通过；主牌组阶段174原生含109矩阵与真实GPU最终模型一步验收见worklog。仍需真实UUID稳定映射、所有牌堆费用/freeOnce/成长/动态标志及暂扣牌导出接入实时搜索；现有tuple路径未替换，接口验收不等于完整桥接，不能部署。 |
+| BRIDGE28 | 主牌组/普通战斗根实例已接入；选择与动态字段待审，未部署 | parity-v8七serializer显式导出11typed字段、misc0、每怪物Stasis私有卡或真实空槽。实时搜索已移除lossy tuple，使用完整四牌堆/两暂扣槽/base-current费用/freeOnce/retain/成长快照；主牌组UUID按当前物理槽、临时UUID独立稳定分配，整根核对并刷新master当前值。原生strict_complete必须card_state，禁止混用fresh piles；动态exhaust/ethereal/selfRetain不符则拒绝。555相关回归、211原生含完整109搜索矩阵、最终词表61项通过；真实CUDA最终TRAIN47加载/预测/一步通过。还需选择画面实例身份/费用对接、baseDamage/baseBlock/其他动态独立字段审计；不将已导出或普通根可恢复称作所有选择/卡牌已支持，不能部署已知不完整路径。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 

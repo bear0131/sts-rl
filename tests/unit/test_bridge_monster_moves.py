@@ -81,6 +81,7 @@ def test_real_normalizer_preserves_public_move_history():
         "move_id": 1, "last_move_id": 1, "second_last_move_id": 3,
         "intent": "ATTACK", "half_dead": False,
         "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
+        "simulator_stasis_card": None,
         "powers": [
             {"id": "Ritual", "amount": 3},
             {"id": "Strength", "amount": 3},
@@ -105,6 +106,7 @@ def test_live_real_monster_move_cannot_be_fabricated_as_padding():
         "last_move_id": -1, "second_last_move_id": -1,
         "half_dead": False,
         "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
+        "simulator_stasis_card": None,
     }
     game_state = _real_combat_frame([monster])
     with pytest.raises(ValueError, match="missing.*move_id"):

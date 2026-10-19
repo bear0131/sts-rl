@@ -16,7 +16,7 @@
 `relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
 29个Java类实际读写counter，其他类继承显示哨兵。数值映射与`phase_audit_status`
 分开：有映射不等于完整效果/阶段已验收；待处理项不是运行时用PAD或0代替缺失状态的许可。
-卡牌词表逐项列原serializer的12字段、7项附加字段合同及原生4种specialData来源。
+卡牌词表逐项列原serializer的12字段、11项附加字段合同及原生4种specialData来源。
 parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0也明确导出；
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
 `set_deck_state`并核对旧模型的deck投影，不以`set_deck`创建fresh牌代替当前快照。
@@ -24,8 +24,8 @@ parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0
 原生`BattleContext.card_state/set_card_state`完整读写8项实例成员和7项牌堆快照字段，
 保留四个牌堆、两个青铜球暂扣槽、稳定UID和后续生成编号；整批验证后替换并重算派生缓存。
 该接口的同状态回灌保持模型输入、合法动作、压缩观测与搜索future key逐项一致。
-真实UUID到native UID、动态卡牌标志及暂扣牌导出仍须完成后，实时搜索才能使用此完整路径；
-现有`apply_custom_state`简化tuple不得被视为实例快照，新增接口本身不代表实时接入完成。
+实时普通决策已接入UUID映射和暂扣牌导出；选择中实例和其他动态字段的剩余审查单列，
+不能将`apply_custom_state`简化tuple视为实例快照，严格真实根必须提供完整`card_state`。
 347个真机卡牌构造字节码中仅GeneticAlgorithm/RitualDagger写非零misc，分别为1/15；
 fresh初值和370个native CardId一一核对，但这不代替当前misc、UUID实例映射、永久/回合费用和瓶装状态的完整对接。
 `pending_transport/pending_mapping` 明确是未完成项，不得解释成可以丢字段的支持路径；
@@ -35,7 +35,14 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-OBS20 / ACTION8 / compact layout8 / `simulator-parity-v7` 配套使用。
+OBS20 / ACTION8 / compact layout8 / `simulator-parity-v8` 配套使用。
+普通战斗决策的实时搜索使用完整 `card_state` 恢复四牌堆和两个青铜球暂扣槽，
+禁止退回只含身份/升级/手牌费用的 fresh tuple。主牌组 UUID 映射当前物理槽；
+临时 UUID 从原生主牌组容量 96 之后分配，战斗内不随牌堆移动重新编号、不复用。
+保留 base/current cost、freeOnce、retain、成长与生成游标；每个 settled 根核对原生快照，
+同时刷新主牌组当前成长值。Java 每个怪物明确导出 `simulator_stasis_card`（确实未暂扣才是 null）。
+动态 exhaust/ethereal/selfRetain 与原生固有语义不一致时拒绝；其他数值变更和选择中实例
+仍须完成审查，不能将普通根恢复视为所有卡牌/所有选择路径已经对齐。
 layout8 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实时余量；19件实时/回合派生遗物在搜索叶观测中覆盖根计数。
 六项player scalar逐列有名称/来源/消费者词表，实时gold必须覆盖根journal；layout8保持payload宽度、模型输入形状不变，拒绝旧解码合同。
 敌方回合后、下次抽牌前的搜索专用边界保留怀表的上回合出牌数，不能随普通回合计数清零。

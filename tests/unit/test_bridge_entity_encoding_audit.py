@@ -121,8 +121,9 @@ def test_card_field_inventory_declares_transport_gaps_and_all_native_special_dat
     source = (Path(__file__).resolve().parents[2] / 'sim/sts_lightspeed/src/combat/CardInstance.cpp').read_text()
     body = source.split('bool CardInstance::usesSpecialData() const {', 1)[1].split('default:', 1)[0]
     assert set(re.findall(r'case CardId::(\w+):', body)) == set(tables['card_special_data_fields'])
-    assert tables['real_card_wire_fields']['misc']['status'] == 'master_restored_runtime_pending'
-    assert tables['real_card_wire_fields']['uuid']['status'] == 'pending_mapping'
+    assert tables['real_card_wire_fields']['misc']['status'] == 'settled_root_restored'
+    assert tables['real_card_wire_fields']['uuid']['status'] == 'settled_root_restored_selection_pending'
+    assert tables['card_state_field_contracts']['base_block']['status'] == 'mutation_audit_pending'
     assert 'free_to_play_once' in tables['card_state_field_contracts']
     assert 'base_cost' in tables['card_state_field_contracts']
 

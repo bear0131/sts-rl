@@ -8,7 +8,7 @@ import pytest
 from env.core import native_actions as C
 from env.core import game_actions as ga
 from bridge.real_game_env import RealGameAdapter
-from bridge.search_bridge import RealCombatSearch, _card_rows, _find_shadow_battle
+from bridge.search_bridge import RealCombatSearch, _find_shadow_battle
 from bridge.schemas.combat_state import (
     _REAL_MONSTER_MOVES,
     _monster_real,
@@ -254,21 +254,6 @@ def test_game_context_potion_state_can_match_real_slots(combat_factory):
         "Attack Potion",
         "EMPTY_POTION_SLOT",
     ]
-
-
-def test_java_unplayable_cost_preserves_native_curse_encoding(combat_factory):
-    env = combat_factory(
-        ["PAIN", "STRIKE_RED"],
-        encounter="Jaw Worm",
-        combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
-    )
-    rows = _card_rows([{"id": "Pain", "up": 0, "cost": -2}], costs=True)
-    assert rows == [("PAIN", 0, None)]
-
-    env.thick.bc.apply_custom_state({"hand": rows})
-    raw = env.thick.bc.to_dict()
-    assert raw["hand"] == [("PAIN", 0, -3)]
-    assert normalize_sim(raw)["hand"] == [{"id": "Pain", "up": 0, "cost": -2}]
 
 
 def test_java_confusion_power_maps_to_native_confused_presence(combat_factory):
@@ -1007,7 +992,7 @@ def test_irregular_real_card_ids_roundtrip_native_piles(combat_factory, native, 
     assert real_to_sim_card_enum(java) == native
     assert _sim_card_id(native) == _card(java, 0)["id"]
     env = combat_factory(["STRIKE_RED"] * 5)
-    env.thick.bc.apply_custom_state({"hand": _card_rows([{"id": java, "up": 0}])})
+    env.thick.bc.apply_custom_state({"hand": [(real_to_sim_card_enum(java), 0)]})
     assert normalize_sim(env.thick.bc.to_dict())["hand"][0]["id"] == _card(java, 0)["id"]
 
 
@@ -1030,6 +1015,7 @@ def test_exploder_unknown_intent_preserves_native_explosion(combat_factory):
     search.env = env
     search.adapter = SimpleNamespace(_potions=lambda: ["PAD"] * 3)
     search._target_mapping = lambda state: {idx: idx}
+    search._card_state = lambda state: bc.card_state()
     spec = search._state_spec(real)
     assert "base_damage" not in spec["monsters"][idx]
     bc.apply_custom_state(spec)
@@ -1204,6 +1190,7 @@ def test_dome_missing_current_intent_fails_instead_of_guessing(combat_factory):
     search.env = env
     search.adapter = SimpleNamespace(_potions=lambda: ["PAD"] * 3)
     search._target_mapping = lambda state: {0: 0}
+    search._card_state = lambda state: bc.card_state()
     with pytest.raises(RuntimeError, match="current intent missing"):
         search._state_spec(real)
     # Patched export provides the actual current move even with Dome.

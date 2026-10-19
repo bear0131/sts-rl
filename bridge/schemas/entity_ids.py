@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v7"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v8"
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((
@@ -395,31 +395,35 @@ CARD_STATE_TRANSPORT_FIELDS = {
 # is still missing. Missing transport is not permission to substitute zero.
 REAL_CARD_WIRE_FIELDS = {
     'name': {'source': 'AbstractCard.name', 'consumer': 'presentation only; never identity', 'status': 'display_only'},
-    'uuid': {'source': 'AbstractCard.uuid', 'consumer': 'pending stable combat/master-deck identity mapping', 'status': 'pending_mapping'},
-    'misc': {'source': 'AbstractCard.misc; parity-v7 always exports zero too', 'consumer': 'Card.misc restored; CardInstance.specialData import still pending', 'status': 'master_restored_runtime_pending'},
+    'uuid': {'source': 'AbstractCard.uuid', 'consumer': 'CombatCardIdentityMap: current physical master slot; stable temporary IDs >=96', 'status': 'settled_root_restored_selection_pending'},
+    'misc': {'source': 'AbstractCard.misc; parity exporter always exports zero too', 'consumer': 'Card.misc / CardInstance.specialData; independent unsupported nonzero values rejected', 'status': 'settled_root_restored'},
     'is_playable': {'source': 'AbstractCard.canUse(player,null)', 'consumer': 'real legal mask crosschecked against native action mask', 'status': 'action_validation'},
-    'cost': {'source': 'AbstractCard.costForTurn', 'consumer': 'hand cost only; other piles currently drop it', 'status': 'pending_all_piles'},
+    'cost': {'source': 'AbstractCard.costForTurn', 'consumer': 'CardInstance.costForTurn in all four piles and stasis; hand projection uses free-once', 'status': 'settled_root_restored'},
     'upgrades': {'source': 'AbstractCard.timesUpgraded', 'consumer': 'Card.getUpgraded / CardInstance.getUpgradeCount', 'status': 'transported'},
     'id': {'source': 'AbstractCard.cardID', 'consumer': 'card identity word tables', 'status': 'transported'},
     'type': {'source': 'AbstractCard.type.name()', 'consumer': 'native card-type metadata', 'status': 'identity_metadata'},
     'rarity': {'source': 'AbstractCard.rarity.name()', 'consumer': 'native card-rarity metadata', 'status': 'identity_metadata'},
     'has_target': {'source': 'AbstractCard.target ENEMY/SELF_AND_ENEMY', 'consumer': 'real/native legal target masks', 'status': 'action_validation'},
-    'exhausts': {'source': 'AbstractCard.exhaust', 'consumer': 'CardInstance.doesExhaust; dynamic changes need verification', 'status': 'pending_dynamic_state'},
-    'ethereal': {'source': 'AbstractCard.isEthereal', 'consumer': 'CardInstance.isEthereal; dynamic changes need verification', 'status': 'pending_dynamic_state'},
+    'exhausts': {'source': 'AbstractCard.exhaust', 'consumer': 'checked against CardInstance.doesExhaust; different dynamic values rejected', 'status': 'printed_validated_dynamic_pending'},
+    'ethereal': {'source': 'AbstractCard.isEthereal', 'consumer': 'checked against CardInstance.isEthereal; different dynamic values rejected', 'status': 'printed_validated_dynamic_pending'},
 }
 CARD_STATE_FIELD_CONTRACTS = {
-    'base_cost': {'source': 'AbstractCard.cost', 'native': 'CardInstance.cost', 'status': 'exported_runtime_pending', 'reason': 'Madness/combat-permanent cost must survive turn reset'},
-    'free_to_play_once': {'source': 'AbstractCard.freeToPlayOnce', 'native': 'CardInstance.freeToPlayOnce', 'status': 'exported_runtime_pending', 'reason': 'costForTurn alone is not the effective cost'},
+    'base_cost': {'source': 'AbstractCard.cost', 'native': 'CardInstance.cost', 'status': 'settled_root_restored', 'reason': 'Madness/combat-permanent cost survives turn reset'},
+    'free_to_play_once': {'source': 'AbstractCard.freeToPlayOnce', 'native': 'CardInstance.freeToPlayOnce', 'status': 'settled_root_restored', 'reason': 'effective hand cost is zero without erasing underlying cost'},
     'bottled_flame': {'source': 'AbstractCard.inBottleFlame', 'native': 'Deck.bottleIdxs[ATTACK]', 'status': 'master_restored', 'reason': 'master deck candidate eligibility and initial draw'},
     'bottled_lightning': {'source': 'AbstractCard.inBottleLightning', 'native': 'Deck.bottleIdxs[SKILL]', 'status': 'master_restored', 'reason': 'master deck candidate eligibility and initial draw'},
     'bottled_tornado': {'source': 'AbstractCard.inBottleTornado', 'native': 'Deck.bottleIdxs[POWER]', 'status': 'master_restored', 'reason': 'master deck candidate eligibility and initial draw'},
-    'retain': {'source': 'AbstractCard.retain', 'native': 'CardInstance.retain', 'status': 'exported_runtime_pending', 'reason': 'turn-end retention is separate from printed self-retain'},
-    'rampage_growth': {'source': 'Rampage.baseDamage - printed base damage', 'native': 'CardInstance.specialData', 'status': 'exported_runtime_pending', 'reason': 'not encoded in AbstractCard.misc'},
+    'retain': {'source': 'AbstractCard.retain', 'native': 'CardInstance.retain', 'status': 'settled_root_restored', 'reason': 'turn-end retention is separate from printed self-retain'},
+    'self_retain': {'source': 'AbstractCard.selfRetain', 'native': 'CardInstance.hasSelfRetain()', 'status': 'printed_validated_dynamic_pending', 'reason': 'different dynamic values rejected rather than dropped'},
+    'innate': {'source': 'AbstractCard.isInnate', 'native': 'Card innate metadata at initial draw', 'status': 'initial_draw_audit_pending', 'reason': 'settled root already contains actual drawn cards; independent mutations need source audit'},
+    'base_damage': {'source': 'AbstractCard.baseDamage', 'native': 'Rampage growth / fixed or recomputed card damage', 'status': 'growth_restored_other_mutations_audit_pending', 'reason': 'do not confuse cached Body Slam / Perfected Strike values with independent instance growth'},
+    'base_block': {'source': 'AbstractCard.baseBlock', 'native': 'fixed card block / unsupported GeneticAlgorithm', 'status': 'mutation_audit_pending', 'reason': 'not yet a general native instance field'},
+    'rampage_growth': {'source': 'Rampage.baseDamage - printed base damage', 'native': 'CardInstance.specialData', 'status': 'settled_root_restored', 'reason': 'not encoded in AbstractCard.misc'},
 }
 CARD_SPECIAL_DATA_FIELDS = {
     'SEARING_BLOW': {'real': 'AbstractCard.timesUpgraded (not misc)', 'native': 'Card.misc / CardInstance.specialData', 'status': 'upgrade_count_transported'},
-    'RAMPAGE': {'real': 'baseDamage minus printed damage (not misc)', 'native': 'CardInstance.specialData', 'status': 'pending_transport'},
-    'RITUAL_DAGGER': {'real': 'AbstractCard.misc, fresh15, fatal growth3/5', 'native': 'Card.misc / CardInstance.specialData', 'status': 'master_restored_runtime_pending'},
+    'RAMPAGE': {'real': 'baseDamage minus printed damage (not misc)', 'native': 'CardInstance.specialData', 'status': 'settled_root_restored'},
+    'RITUAL_DAGGER': {'real': 'AbstractCard.misc, fresh15, fatal growth3/5', 'native': 'Card.misc / CardInstance.specialData', 'status': 'settled_root_restored'},
     'GENETIC_ALGORITHM': {'real': 'AbstractCard.misc, fresh1', 'native': 'Card.misc / CardInstance.specialData', 'status': 'fresh_rule_fixed_combat_unsupported'},
 }
 NATIVE_GLOBAL_FIELDS = {

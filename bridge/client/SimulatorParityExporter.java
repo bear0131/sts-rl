@@ -18,10 +18,25 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v7";
+    public static final String VERSION = "simulator-parity-v8";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
+
+    public static AbstractCard stasisCard(com.megacrit.cardcrawl.monsters.AbstractMonster monster) {
+        if (monster.isDeadOrEscaped()) return null;
+        for (AbstractPower power : monster.powers) {
+            if ("Stasis".equals(power.ID)) {
+                if (!(power instanceof com.megacrit.cardcrawl.powers.StasisPower))
+                    throw new IllegalStateException("Unknown Stasis power implementation");
+                AbstractCard card = ReflectionHacks.getPrivate(power,
+                    com.megacrit.cardcrawl.powers.StasisPower.class, "card");
+                if (card == null) throw new IllegalStateException("Active Stasis has no card");
+                return card;
+            }
+        }
+        return null;
+    }
 
     public static void augmentCardState(HashMap<String, Object> state, AbstractCard card) {
         // Read actual instance fields only: no RNG, copies, applyPowers, or use.

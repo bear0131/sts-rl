@@ -384,6 +384,23 @@ def normalize_real(game_state):
         player_powers["Panache"] = int(power_overrides["Panache"])
     elif "Panache" in power_overrides:
         raise ValueError("Panache override was exported without an active Panache power")
+    from .card_state import real_card_state
+    instances = {name: [real_card_state(card) for card in cs[wire]]
+                 for name, wire in (('hand', 'hand'), ('draw', 'draw_pile'),
+                                    ('discard', 'discard_pile'), ('exhaust', 'exhaust_pile'))}
+    monsters = [_monster_real(m, intents_hidden=any(
+        r["id"] == "Runic Dome" for r in game_state["relics"]
+    )) for m in cs["monsters"]]
+    stasis = []
+    for monster in cs['monsters']:
+        if 'simulator_stasis_card' not in monster:
+            raise ValueError('real monster is missing simulator_stasis_card')
+        held = monster['simulator_stasis_card']
+        active = (not monster['is_gone'] and monster['current_hp'] > 0
+                  and any(p['id'] == 'Stasis' for p in monster['powers']))
+        if active != (held is not None) or (active and monster['id'] != 'BronzeOrb'):
+            raise ValueError('stasis card export disagrees with its live Bronze Orb owner')
+        stasis.append(None if held is None else real_card_state(held))
     return {
         "turn": cs["turn"],
         "post_enemy_turn_boundary": False,
@@ -398,13 +415,12 @@ def normalize_real(game_state):
                        if k != "Berserk"},
             "energy_per_turn": _real_energy_per_turn(game_state),
         },
-        "monsters": [_monster_real(m, intents_hidden=any(
-            r["id"] == "Runic Dome" for r in game_state["relics"]
-        )) for m in cs["monsters"]],
-        "hand": _cards_real(cs["hand"], include_cost=True),
-        "draw": _cards_real(cs["draw_pile"]),
-        "discard": _cards_real(cs["discard_pile"]),
-        "exhaust": _cards_real(cs["exhaust_pile"]),
+        "monsters": monsters,
+        "card_instances": instances,
+        "stasis_cards": stasis,
+        **{name: [_card(card['id'], card['up'],
+                       (0 if card['free_to_play_once'] else card['cost']) if name == 'hand' else None)
+                  for card in pile] for name, pile in instances.items()},
     }
 
 

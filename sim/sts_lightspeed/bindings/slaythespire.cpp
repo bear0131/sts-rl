@@ -750,8 +750,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         && spec["strict_complete"].cast<bool>();
     if (strictComplete) {
         static constexpr const char *kRequired[] = {
-            "turn", "player", "monsters", "hand", "draw", "discard",
-            "exhaust", "potions",
+            "turn", "player", "monsters", "card_state", "potions",
         };
         for (const auto *key : kRequired) {
             if (!spec.contains(key)) {
@@ -759,6 +758,17 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     std::string("strict combat state missing ") + key);
             }
         }
+    }
+    if (spec.contains("card_state")) {
+        for (const auto *key : {"hand", "draw", "discard", "exhaust",
+                                "draw_pile", "discard_pile", "exhaust_pile"}) {
+            if (spec.contains(key)) throw std::invalid_argument(
+                "complete card_state cannot be mixed with fresh card piles");
+        }
+        // Validate before changing any other state. The replacement is committed
+        // below instead of constructing fresh cards and renumbering their IDs.
+        auto validation = bc;
+        restoreCombatCardState(validation, spec["card_state"].cast<py::dict>());
     }
     if (spec.contains("potions")) {
         const auto names = spec["potions"].cast<std::vector<std::string>>();
@@ -1096,6 +1106,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             if (!bc.monsters.arr[i].isDeadOrEscaped()) ++bc.monsters.monstersAlive;
         }
     }
+    if (spec.contains("card_state")) {
+        restoreCombatCardState(bc, spec["card_state"].cast<py::dict>());
+    } else {
     int nextUid = 0;
     auto applyVectorPile = [&](const char *key, auto &pile) {
         if (!spec.contains(key)) return;
@@ -1196,6 +1209,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     else applyVectorPile("exhaust_pile", bc.cards.exhaustPile);
     bc.cards.recomputeDerivedState();
     bc.cards.nextUniqueCardId = std::max(bc.cards.nextUniqueCardId, nextUid);
+    }
     if (spec.contains("turn")) {
         const int turn = spec["turn"].cast<int>();
         if (strictComplete && turn < 0) {
@@ -2415,6 +2429,19 @@ py::dict ruleTurnResult(const search::ruleturn::Result &r,int worlds) {
 } // namespace
 
 PYBIND11_MODULE(slaythespire, m) {
+    m.def("card_instance_traits", [](const std::string &name, int upgrades) {
+        const auto id = cardIdFromEnum(name);
+        if (id == CardId::INVALID || upgrades < 0 || upgrades > 32767 ||
+            (id != CardId::SEARING_BLOW && upgrades > 1))
+            throw std::invalid_argument("invalid card traits identity/upgrades");
+        const CardInstance card(Card(id, upgrades));
+        pybind11::dict out;
+        out["base_cost"] = card.cost;
+        out["exhausts"] = card.doesExhaust();
+        out["ethereal"] = card.isEthereal();
+        out["self_retain"] = card.hasSelfRetain();
+        return out;
+    }, "printed card-instance traits used to validate real snapshot representability; never a current-state fallback");
     m.def("boss_opening_route_version", []() { return 1; });
     bindNeuralObservation(m);
     pybind11::class_<sts::search::NeuralSearchBatch>(m, "NeuralSearchBatch")

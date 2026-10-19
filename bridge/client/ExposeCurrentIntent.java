@@ -46,7 +46,10 @@ public final class ExposeCurrentIntent {
         gameMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentGameState($_); }");
         monsterMethod.insertAfter(
-            "{ $_.put(\"current_intent_export\", communicationmod.SimulatorParityExporter.VERSION); }");
+            "{ $_.put(\"current_intent_export\", communicationmod.SimulatorParityExporter.VERSION); " +
+            "com.megacrit.cardcrawl.cards.AbstractCard stasis = communicationmod.SimulatorParityExporter.stasisCard($1); " +
+            "if (stasis == null) $_.put(\"simulator_stasis_card\", null); " +
+            "else $_.put(\"simulator_stasis_card\", convertCardToJson(stasis)); }");
         combatMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentCombatState($_); }");
         gridMethod.insertAfter(

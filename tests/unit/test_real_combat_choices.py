@@ -7,6 +7,7 @@ from bridge.real_game_env import RealGameAdapter
 from bridge.schemas.combat_state import _REAL_COMBAT_COUNTER_KEYS
 from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
 from env.core import action_space as A, game_actions as ga, encode
+from tests.bridge_fixtures import real_card
 
 
 def _grid_export(
@@ -74,15 +75,9 @@ def test_real_grid_candidates_and_command_preserve_indices():
 
 def test_real_grid_uses_selected_cards_as_authoritative_progress():
     adapter = RealGameAdapter()
-    cards = [
-        {"id": "Strike_R", "upgrades": 0, "uuid": f"strike-{i}"}
-        for i in range(5)
-    ] + [
-        {"id": "Defend_R", "upgrades": 0, "uuid": f"defend-{i}"}
-        for i in range(4)
-    ] + [
-        {"id": "Bash", "upgrades": 0, "uuid": "bash-0"}
-    ]
+    cards = ([real_card(index=i) for i in range(5)]
+             + [real_card('Defend_R', index=i) for i in range(5, 9)]
+             + [real_card('Bash', index=9, base_cost=2)])
     frame = {
         "in_game": True,
         "ready_for_command": True,
@@ -144,6 +139,7 @@ def test_real_astrolabe_waits_for_transformed_cards_before_leaving_neow():
             "screen_type": "EVENT",
             "choice_list": ["leave"],
             "screen_state": {"event_id": "Neow"},
+            "simulator_neow_screen": 99,
             "deck": starter,
             "relics": [{"id": "Burning Blood"}],
         },
@@ -196,7 +192,7 @@ def test_real_pending_sources_are_always_encoded(monkeypatch):
 
 
 def joint_frame(hand, *, selected=0, multi=False):
-    hand = [dict(upgrades=0, cost=1, **card) for card in hand]
+    hand = [dict(real_card(card['id'], index=index), **card) for index, card in enumerate(hand)]
     selection_state = {
         "selection_context": "EXHAUST_MANY",
         "selection_source": "com.megacrit.cardcrawl.actions.common.ExhaustAction",
@@ -235,13 +231,15 @@ def joint_frame(hand, *, selected=0, multi=False):
                      "last_move_id": -1, "second_last_move_id": -1,
                      "move_base_damage": -1, "move_adjusted_damage": -1,
                      "move_hits": 0, "half_dead": False,
-                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION},
+                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
+                     "simulator_stasis_card": None},
                     {"id":"JawWorm","intent":"ATTACK","current_hp":10,"max_hp":42,"block":0,
                      "is_gone":False,"move_id":1,"last_move_id":-1,
                      "second_last_move_id":-1,
                      "move_base_damage":11,"move_adjusted_damage":11,
                      "move_hits":1,"powers":[], "half_dead": False,
-                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION}]}}}
+                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
+                     "simulator_stasis_card": None}]}}}
 
 
 def test_joint_bridge_keeps_target_slot_and_executes_complete_play():
