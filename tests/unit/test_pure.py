@@ -74,7 +74,7 @@ def _fake_combat():
             "relics": [
                 "Burning Blood", "Centennial Puzzle", "Lizard Tail", "Akabeko",
             ],
-            "relic_counters": [0, -1, -1, 2],
+            "relic_counters": [0, 0, 1, 0],
             "potions": ["Fire Potion", "PAD"], "gold": 99,
             "deck": [("Strike_R", 0), ("Strike_R", 0), ("Bash", 0),
                      ("Defend_R", 1)],
@@ -98,7 +98,7 @@ def _fake_map():
         "global": {
             "character": "IRONCLAD", "ascension": 0, "act": 1, "floor": 5,
             "hp": 61, "max_hp": 80,
-            "boss": "HEXAGHOST", "relics": ["Burning Blood"], "potions": [],
+            "boss": "HEXAGHOST", "relics": ["Burning Blood"], "relic_counters": [0], "potions": [],
             "gold": 50, "deck": [("Strike_R", 0)], "boss_relics": [],
         },
     }

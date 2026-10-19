@@ -73,6 +73,18 @@ def test_live_card_cannot_claim_the_empty_sentinel():
         _card('EMPTY', 0)
 
 
+@pytest.mark.parametrize('counters', [None, [], [None], [-1], ['1'], [True]])
+def test_relic_counter_absence_or_invalid_type_cannot_be_filled_with_zero(counters):
+    canonical = {'phase': 'map', 'global': {'relics': ['Lizard Tail']}}
+    if counters is not None:
+        canonical['global']['relic_counters'] = counters
+    with pytest.raises(ValueError, match='relic'):
+        encode.encode(canonical)
+    canonical['phase'] = 'combat'
+    with pytest.raises(ValueError, match='relic'):
+        encode.encode_combat(canonical)
+
+
 def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     import json
     from bridge.schemas.codec_contract import complete_word_tables, validate_codec_contract

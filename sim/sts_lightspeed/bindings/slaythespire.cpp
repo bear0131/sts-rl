@@ -1616,7 +1616,11 @@ sts::CardId cardIdFromEnum(const std::string &name) {
 sts::RelicId relicIdFromString(const std::string &name) {
     constexpr int n = sizeof(sts::relicIds) / sizeof(sts::relicIds[0]);
     for (int i = 0; i < n; ++i) {
-        if (name == sts::relicIds[i]) return static_cast<sts::RelicId>(i);
+        if (name == sts::relicIds[i]) {
+            if (static_cast<sts::RelicId>(i) == sts::RelicId::INVALID)
+                throw std::invalid_argument("INVALID is not a live relic identity");
+            return static_cast<sts::RelicId>(i);
+        }
     }
     throw std::runtime_error("unknown relic id: " + name);
 }
@@ -1636,29 +1640,35 @@ void setDeck(sts::GameContext &gc, const std::vector<std::pair<std::string, int>
 }
 
 void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
-    gc.relics.relics.clear();
-    gc.relics.relicBits0 = gc.relics.relicBits1 = gc.relics.relicBits2 = 0;
+    sts::RelicContainer replacement;
     for (const auto &id : ids) {
         const auto relicId = relicIdFromString(id);
-        const int data = relicId == sts::RelicId::LIZARD_TAIL ? 1 : 0;
-        gc.relics.add(sts::RelicInstance{relicId, data});
+        if (replacement.has(relicId)) throw std::invalid_argument("duplicate fresh relic identity");
+        replacement.add({relicId, sts::RelicInstance::initialData(relicId)});
     }
+    gc.relics = std::move(replacement);
 }
 
 void setRelicState(sts::GameContext &gc, const py::list &items) {
-    gc.relics.relics.clear();
-    gc.relics.relicBits0 = gc.relics.relicBits1 = gc.relics.relicBits2 = 0;
+    sts::RelicContainer replacement;
     for (auto item : items) {
-        std::string id;
-        int data = 0;
-        if (py::isinstance<py::str>(item)) id = item.cast<std::string>();
-        else {
-            auto d = item.cast<py::dict>();
-            id = d["id"].cast<std::string>();
-            if (d.contains("counter")) data = d["counter"].cast<int>();
+        if (!py::isinstance<py::dict>(item))
+            throw std::invalid_argument("native relic snapshot requires explicit {id, counter} records");
+        auto d = item.cast<py::dict>();
+        if (!d.contains("id") || !d.contains("counter") || d.size() != 2 ||
+            !py::isinstance<py::str>(d["id"]) || !py::isinstance<py::int_>(d["counter"]) ||
+            py::isinstance<py::bool_>(d["counter"])) {
+            throw std::invalid_argument("native relic snapshot requires only string id and integer counter");
         }
-        gc.relics.add(sts::RelicInstance{relicIdFromString(id), data});
+        const auto relicId = relicIdFromString(d["id"].cast<std::string>());
+        const int data = d["counter"].cast<int>();
+        if (data < 0) throw std::invalid_argument("native relic counter must be nonnegative; translate Java sentinels first");
+        if (replacement.has(relicId)) throw std::invalid_argument("duplicate relic snapshot identity");
+        if (relicId == sts::RelicId::DU_VU_DOLL && data != gc.deck.getCurseCount())
+            throw std::invalid_argument("Du-Vu Doll snapshot counter differs from the master deck curse count");
+        replacement.add({relicId, data});
     }
+    gc.relics = std::move(replacement);
 }
 
 // The sim's OWN out-of-combat action enumerator (search::GameAction) already
@@ -2459,8 +2469,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("relic_ids", &gcRelicIds, "relics as [stable_id_string, ...]")
         .def("relic_state", &gcRelics, "relics as [{id, counter}, ...]")
         .def("set_deck", &setDeck, "replace the deck with [(sim_card_enum, upgrade_count), ...]")
-        .def("set_relics", &setRelics, "replace the relics with [stable_id_string, ...]")
-        .def("set_relic_state", &setRelicState, "replace relics with [{id, counter}, ...]")
+        .def("set_relics", &setRelics, "replace with fresh unique relic IDs and initial counters, without replaying on-equip effects")
+        .def("set_relic_state", &setRelicState, "atomically replace complete native [{id, counter}, ...] snapshots; never accepts Java sentinels")
         .def("set_potion_state", [](GameContext &gc, const std::vector<std::string> &names) {
             if (names.size() > static_cast<std::size_t>(gc.potionCapacity)) {
                 throw std::invalid_argument("custom potions exceed potion capacity");

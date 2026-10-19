@@ -18,6 +18,20 @@ namespace sts {
         RelicId id;
         int data;
 
+        static int initialData(RelicId id) {
+            switch (id) {
+                case RelicId::LIZARD_TAIL:
+                case RelicId::MAW_BANK:
+                case RelicId::NLOTHS_HUNGRY_FACE:
+                case RelicId::CIRCLET: return 1;
+                case RelicId::MATRYOSHKA:
+                case RelicId::OMAMORI: return 2;
+                case RelicId::NEOWS_LAMENT:
+                case RelicId::WING_BOOTS: return 3;
+                default: return 0;
+            }
+        }
+
         // Native persistence uses nonnegative charges/flags, not Java's
         // display sentinels. Keep save import distinct from native snapshots.
         static int fromJavaCounter(RelicId id, int value) {

@@ -856,11 +856,15 @@ def _encode_combat_global(o, canon):
     relic_counters = g.get("relic_counters", [])
     _require_capacity("global.relics", relics, R_MAX)
     _require_capacity("global.relic_counters", relic_counters, R_MAX)
+    if len(relics) != len(relic_counters):
+        raise ValueError("global relic ids and counters are not slot-aligned; missing counters cannot become zero")
     live_counters = canon.get("player", {}).get("combat_counters", {})
     for i, rid in enumerate(relics):
         o["relics"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
-        if i < len(relic_counters):
-            o["relic_counters"][i] = relic_counters[i] / COUNTER_SCALE
+        value = relic_counters[i]
+        if type(value) is not int or value < 0:
+            raise ValueError("global native relic counter must be an explicit nonnegative integer")
+        o["relic_counters"][i] = value / COUNTER_SCALE
         live_key = _LIVE_RELIC_COUNTER.get(rid)
         if (
             canon.get("phase") == "combat"
@@ -930,10 +934,14 @@ def _encode_global(o, canon):
     relic_counters = g.get("relic_counters", [])
     _require_capacity("global.relics", relics, R_MAX)
     _require_capacity("global.relic_counters", relic_counters, R_MAX)
+    if len(relics) != len(relic_counters):
+        raise ValueError("global relic ids and counters are not slot-aligned; missing counters cannot become zero")
     for i, rid in enumerate(relics):
         o["relics"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
-        if i < len(relic_counters):
-            o["relic_counters"][i] = relic_counters[i] / COUNTER_SCALE
+        value = relic_counters[i]
+        if type(value) is not int or value < 0:
+            raise ValueError("global native relic counter must be an explicit nonnegative integer")
+        o["relic_counters"][i] = value / COUNTER_SCALE
         live_key = _LIVE_RELIC_COUNTER.get(rid)
         live_counters = canon.get("player", {}).get("combat_counters", {})
         if (

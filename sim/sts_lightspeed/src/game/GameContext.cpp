@@ -1331,14 +1331,10 @@ bool GameContext::obtainRelic(RelicId r) {
 
     relics.setHasRelic(r, true);
 
-    int relicData = 0;
+    int relicData = RelicInstance::initialData(r);
     bool opensScreen = false;
 
     switch (r) {
-
-        case RelicId::CIRCLET:
-            relicData = 1;
-            break;
 
         case RelicId::ASTROLABE: {
             info.toSelectCards.clear();
@@ -1415,40 +1411,8 @@ bool GameContext::obtainRelic(RelicId r) {
             break;
         }
 
-        case RelicId::LIZARD_TAIL: {
-            relicData = 1;
-            break;
-        }
-
-        case RelicId::MATRYOSHKA:
-            relicData = 2;
-            break;
-
-        case RelicId::NLOTHS_HUNGRY_FACE:
-            relicData = 1;
-            break;
-
-        case RelicId::WING_BOOTS:
-            relicData = 3;
-            break;
-
-        case RelicId::NEOWS_LAMENT: {
-            relicData = 3;
-            break;
-        }
-
         case RelicId::MANGO: {
             playerIncreaseMaxHp(14);
-            break;
-        }
-
-        case RelicId::MAW_BANK: {
-            relicData = 1;
-            break;
-        }
-
-        case RelicId::OMAMORI: {
-            relicData = 2;
             break;
         }
 

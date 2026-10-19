@@ -1,5 +1,9 @@
 # 仓库总 TODO
 
+| BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |
+
+| BRIDGE26 | 源码确认待修：搜索根全局恢复遗漏 | `bridge/search_bridge.py::_attach_battle.make_gc`未复制Act4钥匙，以adapter配置替代真机ascension，HP/金币静默夹取；PotionBelt恢复不重放onEquip且未设置容量，5/4槽不能正确注入；房型子串匹配拒绝事件战。验收：显式全局字段对接表、逐字段验证，保持真实值或明确拒绝，搜索/replay共享严格恢复，含钥匙/容量/事件战和非法输入原生回归。replay其他部分恢复/跳过假成功问题另须审查，不能把BRIDGE25最小修复称完整replay对齐。 |
+
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 
 | BRIDGE23 | 遗物来源/数值词表、18件实时观测及怀表边界已修，未部署；阶段/效果继续审查 | 当前OBS20/ACTION8/layout6/parity-v5；180遗物逐项列来源/含义/数值域/映射，29个Java计数使用者恰好有处置；其余继承显示哨兵-1→native0，缺字段/未知ID/越界数值仍拒绝。canonical/Python compact/native batch按18件实时/回合计数覆盖根元数据；怀表上回合3/4张在搜索敌方回合后边界显式保留，state key同步区分，真实下回合抽牌8/5验证。376桥接单元、109完整批次矩阵、69原生定向通过（另F07既有strict xfail）；固定TRAIN47 CUDA加载/预测159/一步环境接入通过。此前Tea/充能/save、Du-Vu/Circlet/奖励收据等见worklog/2026-10-19.md的BRIDGE23各节。下一步：Neow战斗开始/结束充能阶段差、WingedGreaves地图能力、Neow bonus/drawback关键词与typed导出；phase_audit_status与数值映射分开，不把映射完备称作全部效果正确。其他动态事件/收据仍见BRIDGE22。 |

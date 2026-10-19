@@ -30,6 +30,7 @@ from .entity_ids import (
     PHASE_RELIC_COUNTER_DOMAINS,
     REAL_RELIC_COUNTER_USAGE,
     DERIVED_RELIC_COUNTER_SOURCES,
+    FRESH_RELIC_INITIAL_DATA,
     NEOW_BONUS_IDS,
     NEOW_DRAWBACK_IDS,
     NEOW_IMPLICIT_DRAWBACK_IDS,
@@ -170,6 +171,7 @@ def complete_word_tables():
         relic_counters[relic] = {
             "java_field": "AbstractRelic.counter",
             "native_persistent_field": DERIVED_RELIC_COUNTER_SOURCES.get(relic, "RelicInstance.data"),
+            "fresh_native_initial_data": FRESH_RELIC_INITIAL_DATA.get(relic, 0),
             "java_class_with_counter_usage": usage[0] if usage else "AbstractRelic (inherited)",
             "meaning": usage[1] if usage else "inherited_display_sentinel",
             "persistent_value_map": RELIC_COUNTER_SENTINELS.get(relic, {}),
@@ -207,6 +209,7 @@ def complete_word_tables():
         "combat_relic_counter_sentinels": COMBAT_RELIC_COUNTER_SENTINELS,
         "relic_counter_contracts": relic_counters,
         "combat_counter_fields": {key: key for key in CS._REAL_COMBAT_COUNTER_KEYS},
+        "native_relic_snapshot_fields": {"id": "required stable identity", "counter": "required native integer; no Java sentinel/default"},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
         "neow_bonus_keywords": NEOW_BONUS_IDS,
         "neow_drawback_keywords": NEOW_DRAWBACK_IDS,
@@ -337,6 +340,10 @@ def validate_codec_contract() -> dict[str, int]:
             raise RuntimeError(f"live relic counter table names unknown field: {relic!r}/{field!r}")
     if (set(REAL_RELIC_COUNTER_USAGE) | set(DERIVED_RELIC_COUNTER_SOURCES)) - canonical_sets["relic"]:
         raise RuntimeError("relic counter source inventory names unknown relics")
+    if set(FRESH_RELIC_INITIAL_DATA) - canonical_sets["relic"] or any(
+        type(value) is not int or value <= 0 for value in FRESH_RELIC_INITIAL_DATA.values()
+    ):
+        raise RuntimeError("fresh relic initial-data word table is malformed")
     classified_counters = (set(RELIC_COUNTER_SENTINELS) | set(RELIC_COUNTER_DOMAINS)
                            | set(PHASE_RELIC_COUNTER_DOMAINS) | {"CeramicFish"})
     if classified_counters != set(REAL_RELIC_COUNTER_USAGE):

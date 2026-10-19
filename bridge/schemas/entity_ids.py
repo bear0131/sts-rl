@@ -104,6 +104,10 @@ REAL_RELIC_COUNTER_USAGE = {
 }
 
 DERIVED_RELIC_COUNTER_SOURCES = {"Du-Vu Doll": "Deck::getCurseCount()"}
+FRESH_RELIC_INITIAL_DATA = {
+    "Lizard Tail": 1, "MawBank": 1, "NlothsMask": 1, "Circlet": 1,
+    "Matryoshka": 2, "Omamori": 2, "NeowsBlessing": 3, "WingedGreaves": 3,
+}
 
 # Inclusive Java display-counter domains at stable decision/save boundaries;
 # unbounded counters use the Java signed-int limit, never clipping.
