@@ -60,6 +60,7 @@ namespace sts {
         
         static Action PlayerLoseHp(int hp, bool selfDamage=false);
         static Action HealPlayer(int amount);
+        static Action HealMonster(int idx, int amount);
 
         static Action MonsterGainBlock(int idx, int amount);
         static Action RollMove(int monsterIdx);

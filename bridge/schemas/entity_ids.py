@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v9"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v10"
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((
@@ -688,6 +688,19 @@ MONSTER_DEATH_CONTRACTS = {
     'StasisPower': {'java': 'StasisPower.onDeath / MakeTempCard actions', 'queue': 'choose hand-vs-discard at death; return same-UID stat-equivalent copy later; hand action may overflow at execution'},
     'TheSpecimen': {'java': 'TheSpecimen.onMonsterDeath / ApplyPowerToRandomEnemyAction', 'queue': 'only actual Poison and remaining battle; capture amount, later random target; never open player selection'},
     'GremlinHorn/SporeCloud/CorpseExplosion': {'java': 'onMonsterDeath/onDeath', 'queue': 'guard actual battle-ending condition; do not stop all death processing solely on MINION_LEADER'},
+}
+
+MONSTER_LIFECYCLE_FIELDS = {
+    'gone': {'java': 'AbstractCreature.isDeadOrEscaped()', 'native': 'Monster::isDeadOrEscaped', 'contract': 'is_dying OR half_dead OR is_escaping; not an absent slot and not inferred from HP'},
+    'half_dead': {'java': 'AbstractCreature.halfDead', 'native': 'Monster.halfDead', 'contract': 'preserve even at positive HP during queued revival; not itself battle victory'},
+    'is_dying': {'java': 'AbstractCreature.isDying', 'native': 'Monster.isDyingB', 'contract': 'explicit death flag; with escaping drives areMonstersBasicallyDead'},
+    'is_dead': {'java': 'AbstractCreature.isDead', 'native': 'Monster.isDeadB', 'contract': 'preserve animation-completed death flag independently; GainBlock/Regenerate guards consume it'},
+    'is_escaping': {'java': 'AbstractMonster.isEscaping', 'native': 'Monster.isEscapingB', 'contract': 'HP/block/powers/history retained; do not run death callbacks'},
+    'escape_next': {'java': 'AbstractMonster.escapeNext', 'native': 'Monster.escapeNext', 'contract': 'preserve upcoming escape separately from currently escaping'},
+    'unawakened': {'java': 'AwakenedOne + room.cannotLose', 'native': 'AwakenedOne !miscInfo', 'contract': 'death protection survives first-life removal of UnawakenedPower; private form1/firstTurn and pending CanLose remain BRIDGE37'},
+    'powers': {'java': 'AbstractCreature.powers', 'native': 'Monster status fields/bits', 'contract': 'canonical retains powers at zero HP; OBS20 masks gone powers only in fixed policy projection'},
+    'move_history': {'java': 'nextMove + two moveHistory entries', 'native': 'Monster.moveHistory[0..2]', 'contract': 'never erase on gone/zero HP; only actual no-move sentinel maps INVALID'},
+    'present': {'java': 'complete real entity list plus explicit slot mapping', 'native': 'INVALID Monster empty slot', 'contract': 'present=false only after proving full real entity coverage; reject corpse loss/identity replacement without complete private state'},
 }
 
 

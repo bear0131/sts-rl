@@ -58,8 +58,8 @@ void Monster::applyEndOfTurnTriggers(BattleContext &bc) {
         decrementStatus<MS::INTANGIBLE>();
     }
 
-    if (hasStatus<MS::REGEN>()) {
-        heal(getStatus<MS::REGEN>());
+    if (hasStatus<MS::REGEN>() && !halfDead && !isDying() && !isDeadB) {
+        bc.addToBot(Actions::HealMonster(idx, getStatus<MS::REGEN>()));
     }
 
     if (hasStatus<MS::SHACKLED>()) {
@@ -109,8 +109,10 @@ void Monster::applyEndOfRoundPowers(BattleContext &bc) {
 }
 
 void Monster::construct(BattleContext &bc, MonsterId monsterId, int monsterIdx) {
+    *this = Monster();
     this->id = monsterId;
     this->idx = monsterIdx;
+    isDyingB = false;
     initHp(bc.monsterHpRng, bc.ascension);
 
     switch (id) {
@@ -241,11 +243,11 @@ bool Monster::isAlive() const {
 }
 
 bool Monster::isTargetable() const {
-    return !isDeadOrEscaped();
+    return id != MonsterId::INVALID && !isDeadOrEscaped();
 }
 
 bool Monster::isDying() const {
-    return curHp <= 0;
+    return isDyingB;
 }
 
 bool Monster::isEscaping() const {
@@ -275,7 +277,7 @@ void Monster::heal(int amount) {
     }
 #endif
 
-    curHp = std::min(maxHp, curHp + amount);
+    if (!isDying()) curHp = std::min(maxHp, curHp + amount);
 }
 
 void Monster::addBlock(int amount) {
@@ -285,32 +287,22 @@ void Monster::addBlock(int amount) {
     }
 }
 
-void Monster::die(BattleContext &bc) {
-    if (!isEscaping()) --bc.monsters.monstersAlive;
-
-    if (id == MonsterId::AWAKENED_ONE && !miscInfo) { // is awakened one stage 1 // todo change to status
-        halfDead = true;
-    }
-
+void Monster::triggerDeathEffects(BattleContext &bc) {
     const bool battleEnding = bc.monsters.areMonstersBasicallyDead();
-    if (battleEnding && bc.outcome == Outcome::UNDECIDED) {
-        bc.outcome = Outcome::PLAYER_VICTORY;
-    }
-
-    if (hasStatus<MS::SPORE_CLOUD>() && !battleEnding) {
+    if (curHp <= 0 && hasStatus<MS::SPORE_CLOUD>() && !battleEnding) {
         bc.addToTop(Actions::DebuffPlayer<PS::VULNERABLE>(getStatus<MS::SPORE_CLOUD>(), true));
     }
 
-    if (hasStatus<MS::STASIS>()) {
+    if (curHp <= 0 && hasStatus<MS::STASIS>()) {
         returnStasisCard(bc);
     }
 
-    if (hasStatus<MS::CORPSE_EXPLOSION>() && !battleEnding) {
+    if (curHp <= 0 && hasStatus<MS::CORPSE_EXPLOSION>() && !battleEnding) {
         int damage = maxHp * getStatus<MS::CORPSE_EXPLOSION>();
         bc.addToBot( Actions::DamageAllEnemy(damage) );
     }
 
-    if (bc.player.hasRelic<RelicId::GREMLIN_HORN>() && !battleEnding) {
+    if (curHp == 0 && bc.player.hasRelic<RelicId::GREMLIN_HORN>() && !battleEnding) {
         bc.addToBot( Actions::GainEnergy(1) );
         bc.addToBot( Actions::DrawCards(1) );
     }
@@ -323,21 +315,68 @@ void Monster::die(BattleContext &bc) {
         }});
     }
 
-    // Darkling invokes death callbacks before removing its powers.
-    if (hasStatus<MS::REGROW>() && !battleEnding) {
-        resetAllStatusEffects();
-        setMove(MMID::DARKLING_REGROW);
-        halfDead = true;
-    }
+}
 
+void Monster::finishDeath(BattleContext &bc, bool triggerRelics, bool removeFromLivingCount) {
+    // AbstractMonster.die(boolean), also called directly by SuicideAction.
+    // It deliberately bypasses subclass damage/revival logic.
+    if (isDying()) return;
+    isDyingB = true;
+    if (removeFromLivingCount && !isEscaping()) --bc.monsters.monstersAlive;
+    if (triggerRelics) triggerDeathEffects(bc);
+    if (bc.monsters.areMonstersBasicallyDead() && bc.outcome == Outcome::UNDECIDED) {
+        bc.outcome = Outcome::PLAYER_VICTORY;
+    }
+}
+
+void Monster::die(BattleContext &bc) {
+    if (isDying() || isHalfDead()) return;
     if (id == MonsterId::AWAKENED_ONE && !miscInfo) {
-        // The first-life death callbacks see the original Poison/debuffs.
-        // ClearCardQueue is queued at top, not executed inside the hit.
+        if (!isEscaping()) --bc.monsters.monstersAlive;
+        halfDead = true;
+        triggerDeathEffects(bc);
         bc.addToTop(Actions::ClearCardQueue());
         removeDebuffs();
         removeStatus<MS::CURIOSITY>();
         setMove(MonsterMoveId::AWAKENED_ONE_REBIRTH);
+        const int target = idx;
+        bc.addToBot({[target](BattleContext &ctx) {
+            ctx.monsters.arr[target].setMove(MMID::AWAKENED_ONE_REBIRTH);
+        }});
+        return;
     }
+
+    if (id == MonsterId::DARKLING) {
+        if (!isEscaping()) --bc.monsters.monstersAlive;
+        halfDead = true;
+        triggerDeathEffects(bc);
+        resetAllStatusEffects();
+        bool allDown = true;
+        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+            const auto &m = bc.monsters.arr[i];
+            if (m.id == MonsterId::DARKLING && !m.isHalfDead()) allDown = false;
+        }
+        if (allDown) {
+            // Java clears the last one's halfDead flag, then calls die on the
+            // whole group. The Darklings' living-count decrements already
+            // happened; other entities (in custom encounters) still count.
+            halfDead = false;
+            for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+                auto &other = bc.monsters.arr[i];
+                other.finishDeath(bc, true,
+                    other.id != MonsterId::DARKLING && other.isTargetable());
+            }
+        } else if (moveHistory[0] != MMID::DARKLING_REGROW) {
+            setMove(MMID::DARKLING_REGROW);
+            const int target = idx;
+            bc.addToBot({[target](BattleContext &ctx) {
+                ctx.monsters.arr[target].setMove(MMID::DARKLING_REGROW);
+            }});
+        }
+        return;
+    }
+
+    finishDeath(bc, true, true);
 
     // These callbacks enqueue effects after the current damage action. In
     // particular, an AOE still hits the remaining slots before these execute.
@@ -358,22 +397,26 @@ void Monster::die(BattleContext &bc) {
             }
         }
     }
+
+    if (id == MonsterId::AWAKENED_ONE) {
+        // Its damage override executes this block even after final-life die().
+        // Keep that second callback pass; do not normalize it away as redundant.
+        triggerDeathEffects(bc);
+        bc.addToTop(Actions::ClearCardQueue());
+        removeDebuffs();
+        removeStatus<MS::CURIOSITY>();
+        setMove(MMID::AWAKENED_ONE_REBIRTH);
+        const int target = idx;
+        bc.addToBot({[target](BattleContext &ctx) {
+            ctx.monsters.arr[target].setMove(MMID::AWAKENED_ONE_REBIRTH);
+        }});
+    }
 }
 
 void Monster::suicideAction(BattleContext &bc, bool triggerRelics) {
-    if (!isAlive()) {
-        return;
-    }
-
+    const bool wasCounted = isTargetable();
     curHp = 0;
-    if (triggerRelics) {
-        die(bc);
-        return;
-    }
-    if (!isEscaping()) --bc.monsters.monstersAlive;
-    if (bc.monsters.areMonstersBasicallyDead() && bc.outcome == Outcome::UNDECIDED) {
-        bc.outcome = Outcome::PLAYER_VICTORY;
-    }
+    finishDeath(bc, triggerRelics, wasCounted);
 }
 
 void Monster::escape(BattleContext &bc) {
@@ -477,6 +520,7 @@ void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
     if (curHp <= 0) {
         curHp = 0;
         die(bc);
+        block = 0; // AbstractMonster.damage clears block after the death callbacks.
     } else {
         onHpLost(bc, damage);
     }
@@ -530,6 +574,7 @@ void Monster::damageUnblockedHelper(BattleContext &bc, int damage) {
     curHp = std::max(0, curHp-damage);
     if (curHp == 0) {
         die(bc);
+        block = 0;
     } else {
         onHpLost(bc, damage);
     }

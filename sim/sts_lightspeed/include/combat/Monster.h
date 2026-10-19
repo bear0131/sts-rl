@@ -55,7 +55,8 @@ struct Monster {
         int block = 0;
 
         bool isEscapingB = false;
-//        bool isDyingB = false;
+        bool isDyingB = true; // empty slots; construct() starts a living entity
+        bool isDeadB = false;
         bool halfDead = false;
         bool escapeNext = false;
         // Current intent plus the two Java move-history entries.  Combat rules
@@ -149,6 +150,8 @@ struct Monster {
         void heal(int amount);
         void addBlock(int amount);
         void die(BattleContext &bc);
+        void finishDeath(BattleContext &bc, bool triggerRelics, bool removeFromLivingCount);
+        void triggerDeathEffects(BattleContext &bc);
         void suicideAction(BattleContext &bc, bool triggerRelics = false);
         void escape(BattleContext &bc);
 

@@ -205,12 +205,23 @@ def _attack(base, hits):
     return base, (hits if base > 0 else 0)
 
 
+def _monster_lifecycle(record, *, gone_key="gone"):
+    fields = ("half_dead", "is_dying", "is_dead", "is_escaping", "escape_next")
+    for key in (*fields, gone_key, "unawakened"):
+        if key not in record or type(record[key]) is not bool:
+            raise ValueError(f"monster lifecycle requires an explicit boolean {key!r}")
+    gone = record["half_dead"] or record["is_dying"] or record["is_escaping"]
+    if record[gone_key] != gone:
+        raise ValueError("monster gone disagrees with lifecycle flags")
+    return {key: record[key] for key in fields}
+
+
 def _monster_real(m, *, intents_hidden=False):
     required = {
         "id", "current_hp", "max_hp", "block", "is_gone", "powers",
         "move_base_damage", "move_adjusted_damage", "move_hits", "move_id",
         "last_move_id", "second_last_move_id", "half_dead",
-        "current_intent_export", "intent",
+        "current_intent_export", "intent", "unawakened",
     }
     missing = required - set(m)
     if missing:
@@ -231,82 +242,47 @@ def _monster_real(m, *, intents_hidden=False):
     base, hits = _attack(m["move_base_damage"], m["move_hits"])
     adjusted, _ = _attack(m["move_adjusted_damage"], hits)
     hp = m["current_hp"]
-    gone = bool(m["is_gone"])
-    if gone or hp <= 0:
-        move = "INVALID"
-        move_id = 0
-        last_move = "INVALID"
-        last_move_id = 0
-        second_last_move = "INVALID"
-        second_last_move_id = 0
-    else:
-        move = real_to_sim_monster_move(m["id"], m["move_id"])
-        if move == "INVALID":
-            raise ValueError(
-                f"live real monster {m['id']!r} has no current move"
-            )
-        from env.core.vocab import MOVE_VOCAB_INDEX
-        try:
-            move_id = MOVE_VOCAB_INDEX[move]
-        except KeyError as exc:
-            raise ValueError(
-                f"mapped real monster move {move!r} is absent from MOVE_VOCAB"
-            ) from exc
-        last_move = real_to_sim_monster_move(m["id"], m["last_move_id"])
-        if last_move == "INVALID":
-            last_move_id = 0
+    lifecycle = _monster_lifecycle(m, gone_key="is_gone")
+    if m["unawakened"] and canonical_id != "AwakenedOne":
+        raise ValueError("only Awakened One can have first-life protection")
+    gone = m["is_gone"]
+    from env.core.vocab import MOVE_VOCAB_INDEX
+    moves = []
+    for key in ("move_id", "last_move_id", "second_last_move_id"):
+        name = real_to_sim_monster_move(m["id"], m[key])
+        if name == "INVALID":
+            index = 0  # The real -1/no-history sentinel, never an unknown move.
         else:
             try:
-                last_move_id = MOVE_VOCAB_INDEX[last_move]
+                index = MOVE_VOCAB_INDEX[name]
             except KeyError as exc:
-                raise ValueError(
-                    f"mapped real previous monster move {last_move!r} is absent "
-                    "from MOVE_VOCAB"
-                ) from exc
-        second_last_move = real_to_sim_monster_move(
-            m["id"], m["second_last_move_id"]
-        )
-        if second_last_move == "INVALID":
-            second_last_move_id = 0
-        else:
-            try:
-                second_last_move_id = MOVE_VOCAB_INDEX[second_last_move]
-            except KeyError as exc:
-                raise ValueError(
-                    f"mapped real second-previous monster move "
-                    f"{second_last_move!r} is absent from MOVE_VOCAB"
-                ) from exc
+                raise ValueError(f"mapped real monster move {name!r} is absent from MOVE_VOCAB") from exc
+        moves.append((name, index))
+    (move, move_id), (last_move, last_move_id), (second_last_move, second_last_move_id) = moves
+    if move == "INVALID" and (not gone or lifecycle["half_dead"]):
+        raise ValueError(f"active/reviving real monster {m['id']!r} has no current move")
     return {
         "id": canonical_id,
         "hp": hp,
         "max_hp": m["max_hp"],
         "block": m["block"],
         "gone": gone,
+        **lifecycle,
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
-        # Java exposes the first Awakened One phase as a presence power.  The
-        # native simulator stores the same phase in Monster.miscInfo, so carry
-        # it as an explicit root-state field instead of pretending it is an
-        # ordinary status-vector entry.
-        "unawakened": (
-            hp > 0
-            and m["id"] == "AwakenedOne"
-            and any(p["id"] == "Unawakened" for p in m["powers"])
-        ),
+        "unawakened": m["unawakened"],
         # Java exposes Writhing Mass's attack-triggered intent reroll as the
         # presence power Compulsive. The native simulator stores the same
         # mechanism in the REACTIVE status bit while reusing its numeric slot
         # as a transient queued-hit counter. Carry presence separately so a
         # settled root does not inject a fake pending reroll count of one.
         "reactive": (
-            hp > 0
-            and m["id"] == "WrithingMass"
+            m["id"] == "WrithingMass"
             and any(p["id"] == "Compulsive" for p in m["powers"])
         ),
-        # a dead monster's powers are meaningless and reported inconsistently
-        # (real clears them on death, sim keeps them) -> drop them once hp<=0.
-        "powers": _monster_powers_real(m["powers"]) if hp > 0 else {},
+        # Dead/halfDead entities can still have pending power callbacks.
+        "powers": _monster_powers_real(m["powers"]),
         # CommunicationMod and the simulator use different numeric move-id
         # spaces. Translate the real byte through the explicit per-monster
         # table, then publish the actual MOVE_VOCAB index. A live monster with a
@@ -319,7 +295,6 @@ def _monster_real(m, *, intents_hidden=False):
         "second_last_move_id": second_last_move_id,
         "intent": m["intent"],
         "intent_hidden": False,
-        "half_dead": bool(m["half_dead"]),
         "real_move_id": m["move_id"],
         "real_last_move_id": m["last_move_id"],
         "real_second_last_move_id": m["second_last_move_id"],
@@ -600,8 +575,10 @@ _REAL_MONSTER_MOVES = {
 
 def real_to_sim_monster_move(real_monster_id, real_move_id):
     """Translate a CommunicationMod per-monster byte into MonsterMoveId name."""
-    move_id = int(real_move_id)
-    if move_id < 0:
+    if type(real_move_id) is not int:
+        raise ValueError(f"real monster move must be an integer byte: {real_move_id!r}")
+    move_id = real_move_id
+    if move_id == -1:
         return "INVALID"
     try:
         return _REAL_MONSTER_MOVES[real_monster_id][move_id]
@@ -655,13 +632,21 @@ def _norm_sim_monster(m, *, allow_no_move=False):
     missing = required - set(m)
     if missing:
         raise ValueError(f"sim monster is missing {sorted(missing)!r}: {m!r}")
+    lifecycle = _monster_lifecycle(m)
     if m["id"] == _SIM_MONSTER_INVALID:
+        if (any(m[key] != 0 for key in ("hp", "max_hp", "block"))
+                or m["powers"] or not m["gone"] or not m["is_dying"]
+                or any(m[key] for key in ("half_dead", "is_dead", "is_escaping", "escape_next",
+                                         "unawakened", "reactive"))
+                or any(m[key] != "INVALID" for key in ("move", "last_move", "second_last_move"))
+                or any(m[key] != 0 for key in ("move_id", "last_move_id", "second_last_move_id"))):
+            raise ValueError("invalid native monster ID carries entity state; cannot encode as PAD")
         return dict(id="PAD", hp=0, max_hp=0, block=0, gone=True,
                     base_damage=0, adjusted_damage=0, hits=0, powers={},
                     move="INVALID", move_id=0, last_move="INVALID",
                     last_move_id=0, second_last_move="INVALID",
                     second_last_move_id=0, unawakened=False,
-                    reactive=False, half_dead=False)
+                    reactive=False, **lifecycle)
     try:
         move = m["move"]
         move_id = int(m["move_id"])
@@ -729,14 +714,13 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         "max_hp": m["max_hp"],
         "block": m["block"],
         "gone": m["gone"],
-        "half_dead": bool(m["half_dead"]),
+        **lifecycle,
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
         "unawakened": bool(m["unawakened"]),
         "reactive": bool(m["reactive"]),
-        "powers": _powers_sim(m["powers"], MONSTER_BUFF_VOCAB_INDEX)
-        if hp > 0 else {},
+        "powers": _powers_sim(m["powers"], MONSTER_BUFF_VOCAB_INDEX),
         "move": move,
         "move_id": move_id,
         "last_move": last_move,
@@ -1175,6 +1159,7 @@ def diff_overworld(real, sim):
 
 _MONSTER_CMP_FIELDS = (
     "id", "hp", "max_hp", "block", "gone", "half_dead", "base_damage",
+    "is_dying", "is_dead", "is_escaping", "escape_next",
     "adjusted_damage", "hits", "move", "move_id", "last_move",
     "last_move_id", "second_last_move", "second_last_move_id", "unawakened",
     "reactive", "powers",
@@ -1212,12 +1197,10 @@ def diff(real, sim, pile_mode="auto"):
         sim["player"]["combat_counters"],
     )
 
-    # Drop monsters that have left combat (gone=True): when a slime splits, the
-    # real game keeps the dead parent slot in the list while the sim removes it,
-    # which would shift indices and break the positional compare. The live
-    # monsters that remain still align in order.
-    rms = [m for m in real["monsters"] if not m["gone"]]
-    sms = [m for m in sim["monsters"] if not m["gone"]]
+    # Callers must supply an explicit entity mapping. Only actual empty slots
+    # are absent; corpses, escaping entities and halfDead retain their state.
+    rms = [m for m in real["monsters"] if m["id"] != "PAD"]
+    sms = [m for m in sim["monsters"] if m["id"] != "PAD"]
     if len(rms) != len(sms):
         out.append(("monsters.len", len(rms), len(sms)))
     for i, (rm, sm) in enumerate(zip(rms, sms)):

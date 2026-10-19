@@ -232,11 +232,11 @@ public:
             if (boundary[r] != 0.0f && boundary[r] != 1.0f)
                 throw std::invalid_argument("native post-enemy-turn marker is not boolean");
             for (int k=0; k<5; ++k) {
+                const auto *raw=s+6+ps+counters+1+k*6; auto *m=mon+(r*5+k)*6;
                 if (c[10+k] == 0 && c[15+k] != 0)
                     throw std::invalid_argument("empty monster slot carries a move");
-                if (c[10+k] != 0 && c[15+k] == 0 && boundary[r] == 0.0f)
+                if (c[10+k] != 0 && c[15+k] == 0 && raw[0] > 0 && boundary[r] == 0.0f)
                     throw std::invalid_argument("live monster has no move outside a turn boundary");
-                const auto *raw=s+6+ps+counters+1+k*6; auto *m=mon+(r*5+k)*6;
                 m[0]=raw[0]; m[1]=std::min(raw[1],hpScale)/hpScale; m[2]=raw[2] ? raw[1]/raw[2] : 0.0f;
                 m[3]=raw[3]/blockScale; m[4]=raw[4]/dmgScale; m[5]=raw[5]/hitsScale;
                 for (py::ssize_t j=0; j<mn.size(); ++j)

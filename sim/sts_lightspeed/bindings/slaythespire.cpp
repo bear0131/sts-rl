@@ -303,11 +303,12 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         md["block"] = m.block;
         md["gone"] = m.isDeadOrEscaped();
         md["half_dead"] = m.halfDead;
-        // Java represents Awakened One phase one with UnawakenedPower.  The
-        // simulator already stores the same phase in miscInfo (false for phase
-        // one, true after rebirth); expose it so a real settled frame can
-        // strictly synchronize the hidden rule state without adding a fake
-        // monster status.
+        md["is_dying"] = m.isDyingB;
+        md["is_dead"] = m.isDeadB;
+        md["is_escaping"] = m.isEscapingB;
+        md["escape_next"] = m.escapeNext;
+        // This is the first-life death protection, not UnawakenedPower's
+        // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
             m.id == sts::MonsterId::AWAKENED_ONE && !m.miscInfo;
         // Java's CompulsivePower is the persistent presence marker for
@@ -746,7 +747,7 @@ inline void packLanguagePile(const Pile &pile, const std::int32_t *cardIndex,
 // dashboard's custom-state editor; it never advances the simulator or touches
 // RNG streams.  Card piles are rebuilt with normal CardInstance bookkeeping so
 // subsequent draws/discards remain authoritative.
-void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
     const bool strictComplete = spec.contains("strict_complete")
         && spec["strict_complete"].cast<bool>();
     if (strictComplete) {
@@ -802,6 +803,13 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 + key + "=" + std::to_string(value));
         }
         return std::clamp(value, lower, upper);
+    };
+    auto getBool = [&](const py::dict &d, const char *key, bool current) {
+        if (!d.contains(key)) return current;
+        if (!py::isinstance<py::bool_>(d[key])) {
+            throw std::invalid_argument(std::string("monster flag must be a boolean: ") + key);
+        }
+        return d[key].cast<bool>();
     };
     if (spec.contains("player")) {
         auto p = spec["player"].cast<py::dict>();
@@ -941,23 +949,26 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
             auto &monster = bc.monsters.arr[i];
+            if (m.contains("present") && !getBool(m, "present", true)) {
+                if (m.size() != 1) throw std::invalid_argument(
+                    "absent monster slot must contain only present=false");
+                monster = sts::Monster();
+                monster.idx = i;
+                continue;
+            }
             if (strictComplete && !m.contains("gone")) {
                 throw std::invalid_argument("strict monster state missing gone");
-            }
-            if (m.contains("gone") && m["gone"].cast<bool>()) {
-                monster.curHp = 0;
-                monster.block = 0;
-                continue;
             }
             if (strictComplete) {
                 static constexpr const char *kMonsterKeys[] = {
                     "id", "max_hp", "hp", "block", "half_dead",
+                    "is_dying", "is_dead", "is_escaping", "escape_next",
                     "unawakened", "reactive", "move_history", "powers",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
                         throw std::invalid_argument(
-                            std::string("strict live monster state missing ") + key);
+                            std::string("strict monster state missing ") + key);
                     }
                 }
             }
@@ -968,7 +979,14 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     throw std::invalid_argument("unknown custom monster id");
                 }
                 if (monster.id != requestedId) {
-                    monster.construct(bc, requestedId, i);
+                    if (strictComplete) throw std::invalid_argument(
+                        "monster species replacement requires complete private state (BRIDGE37)");
+                    // Restoring an entity is not spawning one. Do not sample
+                    // HP/hidden values and advance RNG while injecting a root.
+                    monster = sts::Monster();
+                    monster.id = requestedId;
+                    monster.idx = i;
+                    monster.isDyingB = false;
                 }
             }
             monster.maxHp = getBoundedInt(
@@ -977,19 +995,28 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 m, "hp", monster.curHp, 0, monster.maxHp);
             monster.block = getBoundedInt(
                 m, "block", monster.block, 0, std::numeric_limits<int>::max());
-            if (m.contains("half_dead")) {
-                monster.halfDead = m["half_dead"].cast<bool>();
-            } else if (strictComplete) {
-                throw std::invalid_argument("strict monster state missing half_dead");
+            monster.halfDead = getBool(m, "half_dead", monster.halfDead);
+            monster.isDyingB = getBool(m, "is_dying", monster.isDyingB);
+            monster.isDeadB = getBool(m, "is_dead", monster.isDeadB);
+            monster.isEscapingB = getBool(m, "is_escaping", monster.isEscapingB);
+            monster.escapeNext = getBool(m, "escape_next", monster.escapeNext);
+            if (!strictComplete && !m.contains("is_dying") && m.contains("hp")) {
+                // The non-strict dashboard editor requests fresh HP edits,
+                // not real-game snapshot restoration. Strict roots never infer
+                // lifecycle from HP (halfDead may have positive HP).
+                monster.isDyingB = monster.curHp == 0 && !monster.halfDead;
+            }
+            if (m.contains("gone") && getBool(m, "gone", false) != monster.isDeadOrEscaped()) {
+                throw std::invalid_argument("monster gone disagrees with explicit lifecycle flags");
             }
             if (m.contains("unawakened")) {
                 if (monster.id != sts::MonsterId::AWAKENED_ONE
-                    && m["unawakened"].cast<bool>()) {
+                    && getBool(m, "unawakened", false)) {
                     throw std::invalid_argument(
                         "unawakened phase is only valid for Awakened One");
                 }
                 if (monster.id == sts::MonsterId::AWAKENED_ONE) {
-                    monster.miscInfo = m["unawakened"].cast<bool>() ? 0 : 1;
+                    monster.miscInfo = getBool(m, "unawakened", false) ? 0 : 1;
                 }
             }
             if (m.contains("move_history")) {
@@ -1089,7 +1116,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 }
             }
             if (m.contains("reactive")) {
-                const bool reactive = m["reactive"].cast<bool>();
+                const bool reactive = getBool(m, "reactive", false);
                 if (reactive && monster.id != sts::MonsterId::WRITHING_MASS) {
                     throw std::invalid_argument(
                         "reactive root state is only valid for Writhing Mass");
@@ -1104,7 +1131,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         }
         bc.monsters.monstersAlive = 0;
         for (int i = 0; i < bc.monsters.monsterCount; ++i) {
-            if (!bc.monsters.arr[i].isDeadOrEscaped()) ++bc.monsters.monstersAlive;
+            if (bc.monsters.arr[i].isTargetable()) ++bc.monsters.monstersAlive;
         }
     }
     if (spec.contains("card_state")) {
@@ -1226,6 +1253,14 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     bc.stopAfterEnemyTurn = false;
     bc.postEnemyTurnBoundary = false;
     bc.monsterTurnIdx = bc.monsters.monsterCount;
+}
+
+void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+    // A malformed late monster/card field must not leave a partially replaced
+    // player, potion set, or RNG state behind.
+    auto replacement = bc;
+    applyCustomCombatStateImpl(replacement, spec);
+    bc = std::move(replacement);
 }
 
 std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc) {

@@ -364,7 +364,8 @@ class RealCombatSearch:
             return make_native_combat_root(global_state, seed=seed,
                                            room_type=room_type, seed_nonce=seed_nonce)
 
-        wanted = tuple(sorted(m["id"] for m in real["monsters"] if not m["gone"]))
+        wanted = tuple(sorted(m["id"] for m in real["monsters"]
+                              if not m["is_dying"] and not m["is_escaping"]))
         act = int(global_state["act"])
         pool_kind = "boss" if native_room == sts.Room.BOSS else (
             "elite" if native_room == sts.Room.ELITE else "normal"
@@ -413,7 +414,7 @@ class RealCombatSearch:
         sim = normalize_sim(self.env.thick.bc.to_dict())
         unused = {
             index for index, monster in enumerate(real["monsters"])
-            if not monster["gone"] and monster["id"] != "PAD"
+            if monster["id"] != "PAD"
         }
         mapping: dict[int, int] = {}
         for sim_index, real_index in sorted(self.sim_to_real_targets.items()):
@@ -439,12 +440,11 @@ class RealCombatSearch:
         mapping.update({si: self.sim_to_real_targets[si] for si in confirmed_dead})
         unmatched_live_sim: list[int] = []
         for sim_index, monster in enumerate(sim["monsters"]):
-            if (sim_index in mapping or sim_index in confirmed_dead or monster["gone"]
+            if (sim_index in mapping or sim_index in confirmed_dead
                     or monster["id"] == "PAD"):
                 continue
             matches = [i for i in sorted(unused)
-                       if not real["monsters"][i]["gone"]
-                       and real["monsters"][i]["id"] == monster["id"]]
+                       if real["monsters"][i]["id"] == monster["id"]]
             if not matches:
                 unmatched_live_sim.append(sim_index)
                 continue
@@ -529,6 +529,11 @@ class RealCombatSearch:
         if unused:
             raise RuntimeError(
                 f"cannot map real monster slots {sorted(unused)!r} to native slots")
+        expected = {i for i, monster in enumerate(real["monsters"]) if monster["id"] != "PAD"}
+        if set(mapping.values()) != expected or len(set(mapping.values())) != len(mapping):
+            raise RuntimeError(
+                "monster mapping would discard/alias real entities; corpse-slot reuse "
+                "requires an explicit complete lifecycle mapping (BRIDGE37)")
         return mapping
 
     def _sim_state_in_real_target_order(self) -> dict[str, Any]:
@@ -559,16 +564,13 @@ class RealCombatSearch:
     def _state_spec(self, real: dict[str, Any]) -> dict[str, Any]:
         self.sim_to_real_targets = self._target_mapping(real)
         native_count = len(self.env.thick.bc.to_dict()["monsters"])
-        # Any unpaired native slot is absent from the authoritative real frame.
-        # Mark it gone so a divergent summon cannot remain targetable.
+        # _target_mapping proved coverage of every real entity. An unpaired
+        # native slot is explicitly absent, not a fabricated dead entity.
         monsters: list[dict[str, Any]] = [
-            {"gone": True} for _ in range(native_count)
+            {"present": False} for _ in range(native_count)
         ]
         for sim_index, real_index in self.sim_to_real_targets.items():
             monster = real["monsters"][real_index]
-            if monster["gone"]:
-                monsters[sim_index] = {"gone": True}
-                continue
             move = real_to_sim_monster_move(monster["id"], monster["real_move_id"])
             last_move = real_to_sim_monster_move(
                 monster["id"], monster["real_last_move_id"]
@@ -577,12 +579,16 @@ class RealCombatSearch:
                 monster["id"], monster["real_second_last_move_id"]
             )
             monsters[sim_index] = {
-                "gone": False,
+                "gone": monster["gone"],
                 "id": _REAL_TO_SIM_MONSTER[monster["id"]],
                 "hp": int(monster["hp"]),
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
                 "half_dead": bool(monster["half_dead"]),
+                "is_dying": monster["is_dying"],
+                "is_dead": monster["is_dead"],
+                "is_escaping": monster["is_escaping"],
+                "escape_next": monster["escape_next"],
                 "unawakened": bool(monster["unawakened"]),
                 "reactive": bool(monster["reactive"]),
                 "move_history": [move, last_move, second_last_move],

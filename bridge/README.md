@@ -47,8 +47,14 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v9`配套使用。
-v9新增HAND_SELECT真实`any_number`字段，必须重新构建Java补丁；旧v8不能配当前Python。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v10`配套使用。
+v9新增HAND_SELECT真实`any_number`，v10新增明确的怪物生命周期字段与觉醒者死亡保护状态；
+必须重新构建Java补丁，旧v8/v9不能配当前Python。
+`monster_lifecycle_fields`逐项列出死亡、动画结束、半死、逃跑、下回合逃跑及消费者。
+canonical保留零HP实体的能力和行动历史；OBS20只在固定模型投影中屏蔽gone能力，不删除原始规则信息。
+根注入必须提供完整生命周期布尔值，失败原子回滚；不再接受`gone=true`代替一整只怪物。
+真实空槽通过完整实体映射证明后传`present=false`。尸体槽复用会丢实体或更换种类但缺私有状态时明确拒绝，
+不能伪造PAD或随机初始化。Awakened私有阶段与完整复活pending仍待BRIDGE37，不宣称全状态对齐。
 原生扩展也必须包含`selection_card_state()`与`selected_card_state()`；接口与源码未统一验证前不部署。
 神圣树皮液态记忆的两张GRID选择逐次使用现有PICK动作，记录已选物理UID，选齐才按顺序取牌。
 候选排除已选实例但保留真实CHOOSE句柄；完整已选实例独立于模型投影进行核对。

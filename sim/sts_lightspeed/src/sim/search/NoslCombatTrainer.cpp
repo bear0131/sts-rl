@@ -342,6 +342,13 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, monster.halfDead ? 1 : 0);
         hashValue(hash, monster.isEscapingB ? 1 : 0);
         hashValue(hash, monster.escapeNext ? 1 : 0);
+        // Keep ordinary old keys, but preserve lifecycle states that HP and
+        // halfDead cannot reconstruct (e.g. permanently dead Darklings).
+        if (monster.isDeadB || monster.isDyingB != (monster.curHp <= 0 && !monster.halfDead)) {
+            hashValue(hash, 0x4c494645); // LIFE
+            hashValue(hash, monster.isDyingB ? 1 : 0);
+            hashValue(hash, monster.isDeadB ? 1 : 0);
+        }
         hashValue(hash, static_cast<int>(monster.moveHistory[0]));
         hashValue(hash, static_cast<int>(monster.moveHistory[1]));
         hashValue(hash, static_cast<int>(monster.moveHistory[2]));

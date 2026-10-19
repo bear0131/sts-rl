@@ -98,12 +98,17 @@ Action Actions::HealPlayer(int amount) {
     }, false};
 }
 
+Action Actions::HealMonster(int idx, int amount) {
+    return {[=] (BattleContext &bc) {
+        bc.monsters.arr[idx].heal(amount);
+    }, false}; // HealAction survives post-combat filtering.
+}
+
 Action Actions::MonsterGainBlock(int idx, int amount) {
     return {[=] (BattleContext &bc) {
         auto &m = bc.monsters.arr[idx];
-        // GainBlockAction rejects dying/dead targets, but not escaping ones.
-        // A pending rebirth is halfDead rather than dying in Java.
-        if (m.isAlive() || (m.isHalfDead() && !bc.monsters.areMonstersBasicallyDead())) {
+        // GainBlockAction rejects dying/dead targets, not halfDead/escaping.
+        if (!m.isDying() && !m.isDeadB) {
             m.addBlock(amount);
         }
     }, false};

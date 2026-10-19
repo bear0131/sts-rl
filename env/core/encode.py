@@ -775,12 +775,16 @@ def _encode_combat(o, canon):
             m.get("adjusted_damage", m["base_damage"]) / DMG_SCALE,
             m["hits"] / HITS_SCALE,
         )
-        for name, amt in m["powers"].items():
+        # Frozen OBS20's native compact decoder masks powers of untargetable
+        # entities. Apply that same policy projection without erasing the full
+        # canonical powers needed by revival, pending callbacks and root sync.
+        projected_powers = m["powers"] if present else {}
+        for name, amt in projected_powers.items():
             j = _idx(V.MONSTER_BUFF_VOCAB_INDEX, name)
             o["monster_buffs"][i, j] = amt / BUFF_SCALE
         if "monster_status_language" in o:
             status = CL.status_program(
-                "MONSTER", mhp, mmax, m["block"], m["powers"]
+                "MONSTER", mhp, mmax, m["block"], projected_powers
             )
             _require_capacity(
                 f"monster[{i}] status language",

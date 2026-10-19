@@ -14,11 +14,7 @@ using namespace sts;
 bool MonsterGroup::areMonstersBasicallyDead() const {
     for (int i = 0; i < monsterCount; ++i) {
         const auto &m = arr[i];
-        if (m.isEscaping()) continue;
-        if (m.isAlive()) return false;
-        // No living targets does not mean victory while Awakened One is
-        // awaiting rebirth. Darklings, in contrast, finish when all are down.
-        if (m.id == MonsterId::AWAKENED_ONE && m.isHalfDead() && !m.miscInfo) return false;
+        if (m.id != MonsterId::INVALID && !m.isDying() && !m.isEscaping()) return false;
     }
     return true;
 }
@@ -558,9 +554,7 @@ MonsterId MonsterGroup::getSlaver(Random &miscRng) {
 
 void MonsterGroup::doMonsterTurn(BattleContext &bc) {
     auto &m = arr[bc.monsterTurnIdx];
-    if ((!m.isDeadOrEscaped() || m.isHalfDead())
-        && !skipTurn[bc.monsterTurnIdx])
-    {
+    if (m.id != MonsterId::INVALID && !m.isDying() && !m.isEscaping()) {
         if (skipTurn[bc.monsterTurnIdx]) {
             skipTurn.set(bc.monsterTurnIdx, false);
         } else {
@@ -585,7 +579,7 @@ void MonsterGroup::doMonsterTurn(BattleContext &bc) {
 void MonsterGroup::applyPreTurnLogic(BattleContext &bc) {
     for (int i = 0; i < monsterCount; ++i) {
         auto &m = arr[i];
-        if (m.isDying() || m.isEscaping()) { // todo fix this line
+        if (m.isDying() || m.isEscaping()) {
             continue;
         }
         m.applyStartOfTurnPowers(bc); // dont need to do this before I think

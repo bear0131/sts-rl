@@ -18,10 +18,30 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v9";
+    public static final String VERSION = "simulator-parity-v10";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
+
+    public static void augmentMonsterState(HashMap<String, Object> state, AbstractMonster monster) {
+        // Stock CommunicationMod omits short history, whereas the strict
+        // transport needs explicit absence. Read the actual history length;
+        // never turn an unavailable/unknown move into the no-history sentinel.
+        int historySize = monster.moveHistory.size();
+        state.put("last_move_id", Integer.valueOf(historySize >= 2
+            ? monster.moveHistory.get(historySize - 2).intValue() : -1));
+        state.put("second_last_move_id", Integer.valueOf(historySize >= 3
+            ? monster.moveHistory.get(historySize - 3).intValue() : -1));
+        state.put("is_dying", Boolean.valueOf(monster.isDying));
+        state.put("is_dead", Boolean.valueOf(monster.isDead));
+        state.put("is_escaping", Boolean.valueOf(monster.isEscaping));
+        state.put("escape_next", Boolean.valueOf(monster.escapeNext));
+        // UnawakenedPower is removed at the first lethal hit, while the room's
+        // death protection remains until the queued CanLoseAction executes.
+        state.put("unawakened", Boolean.valueOf(
+            monster instanceof com.megacrit.cardcrawl.monsters.beyond.AwakenedOne
+            && AbstractDungeon.getCurrRoom().cannotLose));
+    }
 
     public static AbstractCard stasisCard(com.megacrit.cardcrawl.monsters.AbstractMonster monster) {
         if (monster.isDeadOrEscaped()) return null;

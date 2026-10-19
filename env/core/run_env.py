@@ -1663,19 +1663,20 @@ class SlayTheSpireEnv(gym.Env):
         if np.any((f[:, boundary] != 0.0) & (f[:, boundary] != 1.0)):
             raise RuntimeError("native packed post-enemy-turn marker is not boolean")
         native_monsters = c[:, 10:15]
+        monster_start = boundary + 1
+        monster_raw = f[:, monster_start:monster_start + 5 * 6].reshape(n, 5, 6)
         if np.any((native_monsters == 0) & (moves != 0)):
             raise RuntimeError("native packed empty monster slot carries a move")
         if np.any(
             (native_monsters != 0)
             & (moves == 0)
+            & (monster_raw[:, :, 0] > 0)
             & (f[:, boundary, None] == 0.0)
         ):
             raise RuntimeError(
                 "native packed live monster has no move outside a turn boundary"
             )
 
-        monster_start = boundary + 1
-        monster_raw = f[:, monster_start:monster_start + 5 * 6].reshape(n, 5, 6)
         out["monster_scalars"][:, :, 0] = monster_raw[:, :, 0]
         out["monster_scalars"][:, :, 1] = np.minimum(monster_raw[:, :, 1], encode.HP_SCALE) / encode.HP_SCALE
         out["monster_scalars"][:, :, 2] = np.divide(

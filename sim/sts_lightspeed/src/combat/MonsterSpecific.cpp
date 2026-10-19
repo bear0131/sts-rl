@@ -1436,11 +1436,11 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::DARKLING_HARDEN:
-            addBlock(12);
+            bc.addToBot(Actions::MonsterGainBlock(idx, 12));
             if (asc17) {
-                buff<MS::STRENGTH>(2);
+                bc.addToBot(Actions::BuffEnemy<MS::STRENGTH>(idx, 2));
             }
-            rollMove(bc);
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::DARKLING_NIP: {
@@ -1452,23 +1452,27 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::DARKLING_REGROW:
             // do nothing
-            rollMove(bc);
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
-        case MMID::DARKLING_REINCARNATE:
-            // revive with 50% hp
-            // todo does it heep its buffs and debuffs?
-            curHp = maxHp / 2;
-            halfDead = false;
-            ++bc.monsters.monstersAlive;
-
-            buff<MS::REGROW>();
+        case MMID::DARKLING_REINCARNATE: {
+            // Heal precedes ChangeState(REVIVE): halfDead with positive HP is
+            // a real intermediate state, not a permanently dead/empty slot.
+            const int target = idx;
+            bc.addToBot(Actions::HealMonster(target, maxHp / 2));
+            bc.addToBot({[target](BattleContext &ctx) {
+                auto &monster = ctx.monsters.arr[target];
+                const bool wasTargetable = monster.isTargetable();
+                monster.halfDead = false;
+                if (!wasTargetable && monster.isTargetable()) ++ctx.monsters.monstersAlive;
+            }});
+            bc.addToBot(Actions::BuffEnemy<MS::REGROW>(target));
             if (bc.player.hasRelic<R::PHILOSOPHERS_STONE>()) {
-                buff<MS::STRENGTH>(1);
+                bc.addToBot(Actions::BuffEnemy<MS::STRENGTH>(target, 1));
             }
-
-            rollMove(bc);
+            bc.addToBot(Actions::RollMove(target));
             break;
+        }
 
         // ************ SPIRE GROWTH ************
 
@@ -3003,16 +3007,16 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 5 reincarnate
             auto myRoll = roll;
 
+            if (halfDead) {
+                return MMID::DARKLING_REINCARNATE;
+            }
+
             if (firstTurn()) {
                 if (myRoll < 50) {
                     return MMID::DARKLING_HARDEN;
                 } else {
                     return MMID::DARKLING_NIP;
                 }
-            }
-
-            if (halfDead) {
-                return MMID::DARKLING_REINCARNATE;
             }
 
             if (myRoll < 40) {
@@ -3319,8 +3323,10 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
 }
 
 void Monster::initSpawnedMonster(BattleContext &bc, const MonsterId monsterId, const int monsterIdx, const int hp) {
+    *this = Monster();
     idx = monsterIdx;
     id = monsterId;
+    isDyingB = false;
     curHp = hp;
     maxHp = hp;
     rollMove(bc);
@@ -3393,6 +3399,7 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
     m.arr[deadIdx] = m.arr[placeIdx];
     m.arr[deadIdx].idx = deadIdx;
     m.arr[deadIdx].curHp = 0; // the large slime dies when it splits
+    m.arr[deadIdx].isDyingB = true;
 
     m.arr[idx1] = Monster();
     m.arr[idx1].initSpawnedMonster(bc, mediumSlimeType, idx1, hp);
@@ -3426,6 +3433,7 @@ void Monster::slimeBossSplit(BattleContext &bc, const int hp) {
     m.arr[1] = m.arr[0];
     m.arr[1].idx = 1;
     m.arr[1].curHp = 0;
+    m.arr[1].isDyingB = true;
 
     m.arr[0] = Monster();
     m.arr[0].initSpawnedMonster(bc, MonsterId::SPIKE_SLIME_L, 0, hp);

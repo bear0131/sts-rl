@@ -59,6 +59,7 @@ from .entity_ids import (
     CARD_DAMAGE_TIMING_CONTRACTS,
     COMBAT_VICTORY_ACTION_CONTRACTS,
     MONSTER_DEATH_CONTRACTS,
+    MONSTER_LIFECYCLE_FIELDS,
     NATIVE_COMBAT_CARD_ENUM_IDS,
     OVERWORLD_SELECTION_EVENTS,
     OVERWORLD_SELECTION_FLAGS,
@@ -269,6 +270,7 @@ def complete_word_tables():
         "card_damage_timing_contracts": CARD_DAMAGE_TIMING_CONTRACTS,
         "combat_victory_action_contracts": COMBAT_VICTORY_ACTION_CONTRACTS,
         "monster_death_contracts": MONSTER_DEATH_CONTRACTS,
+        "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
         "rejected_real_ids": {
             "cards": UNSUPPORTED_REAL_CARD_IDS,
             "relics": UNSUPPORTED_REAL_RELIC_IDS,
@@ -545,6 +547,7 @@ def validate_codec_contract() -> dict[str, int]:
         "card_damage_timing_contracts": len(CARD_DAMAGE_TIMING_CONTRACTS),
         "combat_victory_action_contracts": len(COMBAT_VICTORY_ACTION_CONTRACTS),
         "monster_death_contracts": len(MONSTER_DEATH_CONTRACTS),
+        "monster_lifecycle_fields": len(MONSTER_LIFECYCLE_FIELDS),
         "card_special_data_fields": len(CARD_SPECIAL_DATA_FIELDS),
         "relic_counter_contracts": len(canonical_sets["relic"]),
         "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),
