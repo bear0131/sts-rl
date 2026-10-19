@@ -572,7 +572,7 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
 
     const auto &r = gc.info.rewardsContainer;
     for (int i = 0; i < r.goldRewardCount; ++i) {
-        actions.emplace_back(search::GameAction::RewardsActionType::GOLD);
+        actions.emplace_back(search::GameAction::RewardsActionType::GOLD, i);
     }
 
     for (int i = 0; i < r.cardRewardCount; ++i) {
@@ -845,11 +845,9 @@ int search::GameAction::getValidEventSelectBits(const GameContext &gc) {
             }
 
         case Event::THE_CLERIC:
-            if (gc.gold >= (gc.ascension >= 15 ? 75 : 50)) {
-                return 0x7;
-            } else {
-                return 0b101;
-            }
+            return gc.gold >= (gc.ascension >= 15 ? 75 : 50) ? 0b111
+                 : gc.gold >= 35 ? 0b101
+                 : 0b100;
 
         case Event::THE_MOAI_HEAD:
             if (gc.hasRelic(sts::RelicId::GOLDEN_IDOL)) {

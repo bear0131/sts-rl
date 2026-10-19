@@ -24,6 +24,48 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 17) {
+        Rewards reward;
+        reward.addGold(11);
+        reward.addGold(29);
+        root.openCombatRewardScreen(reward);
+        const auto actions = search::GameAction::getAllActionsInState(root);
+        std::vector<int> goldIdxs;
+        for (const auto &action : actions) {
+            if (action.getRewardsActionType() == search::GameAction::RewardsActionType::GOLD) {
+                goldIdxs.push_back(action.getIdx1());
+            }
+        }
+        if (goldIdxs != std::vector<int>{0, 1}) return 24;
+        auto child = root;
+        const int goldBefore = child.gold;
+        search::GameAction(search::GameAction::RewardsActionType::GOLD, 1).execute(child);
+        if (child.gold != goldBefore + 29
+            || child.info.rewardsContainer.goldRewardCount != 1
+            || child.info.rewardsContainer.gold[0] != 11) return 24;
+        std::cout << "gold_rewards_preserve_distinct_indices" << std::endl;
+        return 0;
+    }
+    if (variant == 18) {
+        root.curEvent = Event::THE_CLERIC;
+        root.screenState = ScreenState::EVENT_SCREEN;
+        const int purifyCost = ascension >= 15 ? 75 : 50;
+        const std::array<std::pair<int, int>, 5> cases {{
+            {0, 0b100}, {34, 0b100}, {35, 0b101},
+            {purifyCost - 1, 0b101}, {purifyCost, 0b111},
+        }};
+        for (const auto &[gold, expected] : cases) {
+            root.gold = gold;
+            const int actual = search::GameAction::getValidEventSelectBits(root);
+            if (actual != expected) return 25;
+            for (int option = 0; option < 3; ++option) {
+                const bool valid = search::GameAction(option).isValidAction(root);
+                if (valid != static_cast<bool>(expected & (1 << option))) return 25;
+            }
+        }
+        std::cout << "cleric_options_respect_heal_and_purify_costs" << std::endl;
+        return 0;
+    }
     if (variant == 15) {
         root.curEvent = Event::BIG_FISH;
         root.setupEvent();
