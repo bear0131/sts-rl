@@ -274,8 +274,11 @@ namespace sts {
     template<MonsterStatus s>
     Action Actions::BuffEnemy(int idx, int amount) {
         return {[=] (BattleContext &bc) {
-            // todo check if alive?
-            bc.monsters.arr[idx].buff<s>(amount);
+            // ApplyPowerAction checks again when the queued action executes.
+            // Earlier damage may have killed or knocked down this target.
+            auto &monster = bc.monsters.arr[idx];
+            if (!monster.isTargetable()) return;
+            monster.buff<s>(amount);
         }};
     }
 
@@ -304,6 +307,7 @@ namespace sts {
     void BattleContext::debuffEnemy(int idx, int amount, bool isSourceMonster) {
         // todo poison and snake skull
         Monster &e = monsters.arr[idx];
+        if (!e.isTargetable()) return;
 
         if (e.hasStatus<MS::ARTIFACT>()) {
             e.decrementStatus<MS::ARTIFACT>();
