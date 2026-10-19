@@ -10,6 +10,7 @@
 using namespace sts;
 
 CardInstance::CardInstance(CardId id, bool upgraded) : id(id), upgraded(upgraded) {
+    specialData = id == CardId::SEARING_BLOW ? int(upgraded) : Card::initialMisc(id);
     cost = getEnergyCost(id, upgraded);
     costForTurn = cost;
 }

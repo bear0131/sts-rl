@@ -616,8 +616,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             }
             const auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
-            sts::CardInstance card(id, up > 0);
-            for (int k = 1; k < up; ++k) card.upgrade();
+            sts::Card source(id);
+            for (int k = 0; k < up; ++k) source.upgrade();
+            sts::CardInstance card(source); // Preserve the full Searing Blow upgrade count.
             card.uniqueId = static_cast<std::int16_t>(nextUid++);
             pile.push_back(card);
         }
@@ -631,8 +632,9 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             else { auto pair = item.cast<py::tuple>(); name = pair[0].cast<std::string>(); up = pair.size() > 1 ? pair[1].cast<int>() : 0; }
             auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
-            sts::CardInstance card(id, up > 0);
-            for (int k = 1; k < up; ++k) card.upgrade();
+            sts::Card source(id);
+            for (int k = 0; k < up; ++k) source.upgrade();
+            sts::CardInstance card(source); // Preserve the full Searing Blow upgrade count.
             card.uniqueId = static_cast<std::int16_t>(nextUid++);
             if (bc.cards.cardsInHand >= sts::CardManager::MAX_HAND_SIZE) break;
             bc.cards.hand[bc.cards.cardsInHand++] = card;

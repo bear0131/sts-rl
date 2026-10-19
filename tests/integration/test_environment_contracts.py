@@ -197,7 +197,8 @@ def test_gauntlet_potions_obtained_and_discarded_persist(gauntlet_factory):
 
 def test_gauntlet_preserves_ritual_dagger_growth(gauntlet_factory):
     env = gauntlet_factory(["RITUAL_DAGGER"] * 5)
+    assert [card.misc for card in env.gc.deck] == [15] * 5
     env.bc.set_player_strength(999)
     env.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     env._settle()
-    assert sorted(card.misc for card in env.gc.deck) == [0, 0, 0, 0, 3]
+    assert sorted(card.misc for card in env.gc.deck) == [15, 15, 15, 15, 18]

@@ -16,8 +16,15 @@ namespace sts {
         bool upgraded = false;
 
         Card() = default;
-        Card(CardId id) : id(id) {}
-        Card(CardId id, int upgraded) : id(id), upgraded(upgraded) {}
+        static int initialMisc(CardId id) {
+            switch (id) {
+                case CardId::RITUAL_DAGGER: return 15;
+                case CardId::GENETIC_ALGORITHM: return 1;
+                default: return 0;
+            }
+        }
+        Card(CardId id) : id(id), misc(initialMisc(id)) {}
+        Card(CardId id, int upgraded) : id(id), misc(id == CardId::SEARING_BLOW ? upgraded : initialMisc(id)), upgraded(upgraded) {}
 
         [[nodiscard]] CardId getId() const;
         [[nodiscard]] int getUpgraded() const;
