@@ -270,7 +270,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::DU_VU_DOLL:
-                p.buff<PS::STRENGTH>(r.data);
+                p.buff<PS::STRENGTH>(gc.deck.getCurseCount());
                 break;
 
             case R::FOSSILIZED_HELIX:

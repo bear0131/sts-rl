@@ -882,6 +882,37 @@ static void checkShopPrice(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown shop-price fixture"); }
 }
 
+static void checkDuVu(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.deck = Deck{};
+    gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+    if (variant % 2 == 0) gc.obtainRelic(RelicId::DU_VU_DOLL);
+    gc.deck.obtainRaw(Card(CardId::STRIKE_RED));
+    for (auto id : {CardId::ASCENDERS_BANE, CardId::CURSE_OF_THE_BELL, CardId::NECRONOMICURSE})
+        gc.deck.obtain(gc, Card(id));
+    if (variant % 2 == 1) gc.obtainRelic(RelicId::DU_VU_DOLL);
+    auto check = [&](int expected) {
+        BattleContext bc;
+        bc.init(gc, MonsterEncounter::CULTIST);
+        require(bc.player.strength == expected, "Du-Vu strength differs from current curses");
+    };
+    require(!gc.deck.hasCurse(), "permanent curses became removable event candidates");
+    check(3);
+    gc.deck.obtain(gc, Card(CardId::PAIN), 2);
+    require(gc.deck.hasCurse(), "ordinary curse lost event eligibility");
+    check(5);
+    gc.deck.remove(gc, gc.deck.size() - 1);
+    check(4);
+    if (variant >= 2) {
+        gc.obtainRelic(RelicId::OMAMORI);
+        gc.relics.getRelicValueRef(RelicId::OMAMORI) = 1;
+    }
+    // Astrolabe transforms Strike and Pain; the three permanent curses stay.
+    require(!gc.obtainRelic(RelicId::ASTROLABE), "unexpected selection for two eligible cards");
+    check(variant >= 2 ? 3 : 4);
+    require(gc.deck.hasCurse() == (variant < 2), "transform changed removable-curse semantics");
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -890,6 +921,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "duvu") {
+            checkDuVu(std::stoi(argv[2]), std::stoi(argv[3]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "augmenter-reward") {
             checkAugmenterRewards(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

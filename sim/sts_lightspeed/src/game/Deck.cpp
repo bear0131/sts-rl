@@ -34,6 +34,11 @@ bool Deck::hasCurse() const {
     return cardTypeCounts[static_cast<int>(CardType::CURSE)];
 }
 
+int Deck::getCurseCount() const {
+    // Du-Vu Doll also counts permanent curses excluded from cardTypeCounts.
+    return getCountMatching([](const Card &card) { return card.getType() == CardType::CURSE; });
+}
+
 bool Deck::isCardBottled(int idx) const {
     return idx == bottleIdxs[0] || idx == bottleIdxs[1] || idx == bottleIdxs[2];
 }
