@@ -43,6 +43,7 @@ from .entity_ids import (
     JSON_PRESENCE_CONTRACTS,
     REAL_ANONYMOUS_ACTION_CONTRACTS,
     THIEF_STATE_FIELDS,
+    LAGAVULIN_STATE_FIELDS,
     REAL_CARD_WIRE_FIELDS,
     CARD_STATE_FIELD_CONTRACTS,
     CARD_SPECIAL_DATA_FIELDS,
@@ -226,6 +227,7 @@ def complete_word_tables():
         "json_presence_contracts": JSON_PRESENCE_CONTRACTS,
         "anonymous_action_contracts": REAL_ANONYMOUS_ACTION_CONTRACTS,
         "thief_private_state_fields": THIEF_STATE_FIELDS,
+        "lagavulin_state_fields": LAGAVULIN_STATE_FIELDS,
         "turn_start_power_effect_contracts": {
             "Magnetism": {
                 "java": "MagnetismPower.atStartOfTurn / MakeTempCardInHandAction constructor",
@@ -586,7 +588,8 @@ def validate_codec_contract() -> dict[str, int]:
             f"extra={sorted(native_player - set(NATIVE_PLAYER_STATUS_IDS))!r}"
         )
     native_monster = {native_power_enum(power) for power in V.MONSTER_BUFF_VOCAB}
-    # ASLEEP is transported by the monster's move and intentionally absent
+    # ASLEEP is transported by explicit Lagavulin gameplay state, not the shared
+    # SLEEP/STUN move token, and is intentionally absent
     # from the ordinary buff vector; every other native status must be present.
     expected_monster = set(NATIVE_MONSTER_STATUS_IDS) - {"ASLEEP"}
     if native_monster != expected_monster:

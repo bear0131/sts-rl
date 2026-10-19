@@ -888,12 +888,20 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::LAGAVULIN_SLEEP:
-            if (bc.turn == 2 || !hasStatus<MS::ASLEEP>()) {
+            if (!hasStatus<MS::ASLEEP>()) {
+                // The shared model token also represents the one stunned turn
+                // after HP damage wakes it. That turn does not advance idleCount.
                 setMove(MMID::LAGAVULIN_ATTACK);
+                bc.noOpRollMove();
+            } else if (++miscInfo >= 3) {
+                setHasStatus<MS::ASLEEP>(false);
+                decrementStatus<MS::METALLICIZE>(8);
+                setMove(MMID::LAGAVULIN_ATTACK);
+                // Natural opening uses SetMoveAction, not RollMoveAction.
             } else {
                 setMove(MMID::LAGAVULIN_SLEEP);
+                bc.noOpRollMove();
             }
-            bc.noOpRollMove();
             break;
 
         // ************ LOOTER ************

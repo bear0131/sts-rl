@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v15"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v16"
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -24,6 +24,7 @@ JSON_PRESENCE_CONTRACTS = {
     'combat_state': 'required object while room_phase=COMBAT; absent outside combat per stock serializer',
     'simulator_stasis_card': 'required key for every monster; actual held-card object or explicit null; never infer null from a missing key',
     'simulator_thief_state': 'required key for every monster; Looter/Mugger actual stolenGold/slashCount/goldAmt including dead/escaping entities; explicit null only for other species',
+    'simulator_lagavulin_state': 'required monster key; Lagavulin gameplay sleep flag and completed idle turns; explicit null for other species, never infer sleep from SLEEP/STUN shared model token',
     'card/relic_list_aliases': 'if multiple aliases are present, complete lists must be equal, including empty lists; no nonempty-wins fallback',
     'screen_inventories': 'card/relic/potion/reward screens require their structured lists; explicit lists must agree with coexisting reward records; labels do not replace entities',
     'conditional_exports': 'Neow typed offers only on screen3; private power overrides only for a present matching power; unknown reflection fields must not be invented',
@@ -33,6 +34,11 @@ THIEF_STATE_FIELDS = {
     'stolen_gold': {'java': 'Looter/Mugger.stolenGold', 'native': 'Monster::miscInfo', 'domain': 'nonnegative signed int; cumulative ledger, not current player gold'},
     'slash_count': {'java': 'Looter/Mugger.slashCount', 'native': 'Monster::thiefSlashCount', 'domain': '0..3 stock attack executions; does not advance on skipped monster turns'},
     'gold_amount': {'java': 'Looter/Mugger.goldAmt', 'native': 'Monster::thiefGoldAmount', 'domain': '15 or 20 from actual field; never restore from ThieveryPower or ascension'},
+}
+
+LAGAVULIN_STATE_FIELDS = {
+    'sleeping': {'java': '!Lagavulin.isOutTriggered', 'native': 'MonsterStatus::ASLEEP', 'effect': 'whether HP damage still triggers wakeup; not the unchanged constructor asleep flag'},
+    'idle_count': {'java': 'Lagavulin.idleCount', 'native': 'Monster::miscInfo', 'effect': '0..3 completed idle actions; natural wake on third, independent of player/room turns'},
 }
 
 # Exhaustive classfile ancestry + InnerClasses/EnclosingMethod inventory of the
@@ -858,7 +864,7 @@ def native_power_enum(value):
 # is carried by the named structural field.  The contract validator rejects a
 # dropped power unless this table documents where the information lives.
 STRUCTURAL_POWER_FIELDS = {
-    "Asleep": "monster.move",
+    "Asleep": "monster.lagavulin_state.sleeping (model still uses shared sleep/stun move token)",
     "Split": "monster.move",
     "Explosive": "monster.move_history",
     "Unawakened": "monster.unawakened",

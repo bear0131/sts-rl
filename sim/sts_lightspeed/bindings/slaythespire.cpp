@@ -316,6 +316,14 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         } else {
             md["thief_state"] = py::none();
         }
+        if (m.id == sts::MonsterId::LAGAVULIN) {
+            py::dict sleep;
+            sleep["sleeping"] = m.hasStatus<sts::MonsterStatus::ASLEEP>();
+            sleep["idle_count"] = m.miscInfo;
+            md["lagavulin_state"] = sleep;
+        } else {
+            md["lagavulin_state"] = py::none();
+        }
         // This is the first-life death protection, not UnawakenedPower's
         // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
@@ -990,6 +998,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     "is_dying", "is_dead", "is_escaping", "escape_next",
                     "unawakened", "reactive", "move_history", "powers", "adjusted_damage",
                     "thief_state",
+                    "lagavulin_state",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1168,6 +1177,21 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     const auto name = pair[0].cast<std::string>();
                     const int amount = pair[1].cast<int>();
                     setRuleMonsterStatusByName(bc, i, name, amount);
+                }
+            }
+            // Apply after powers: ASLEEP is gameplay state, not a Java power.
+            if (m.contains("lagavulin_state")) {
+                if (monster.id != sts::MonsterId::LAGAVULIN) {
+                    if (!m["lagavulin_state"].is_none()) throw std::invalid_argument(
+                        "non-Lagavulin cannot carry sleep state");
+                } else {
+                    if (!py::isinstance<py::dict>(m["lagavulin_state"]))
+                        throw std::invalid_argument("Lagavulin requires explicit gameplay state");
+                    const auto sleep = m["lagavulin_state"].cast<py::dict>();
+                    if (sleep.size() != 2 || !sleep.contains("sleeping") || !sleep.contains("idle_count"))
+                        throw std::invalid_argument("incomplete Lagavulin gameplay state");
+                    monster.setHasStatus<sts::MonsterStatus::ASLEEP>(getBool(sleep, "sleeping", false));
+                    monster.miscInfo = snapshotInteger(sleep, "idle_count", 0, 3);
                 }
             }
             if (m.contains("reactive")) {

@@ -571,7 +571,7 @@ void Monster::damageUnblockedHelper(BattleContext &bc, int damage) {
         damage = std::min(damage, getStatus<MS::INVINCIBLE>());
         setStatus<MS::INVINCIBLE>(getStatus<MS::INVINCIBLE>() - damage);
     }
-        if (hasStatus<MS::ASLEEP>()) {
+    if (damage > 0 && hasStatus<MS::ASLEEP>()) {
         // lagavulin
         setHasStatus<MS::ASLEEP>(false);
         decrementStatus<MS::METALLICIZE>(8);

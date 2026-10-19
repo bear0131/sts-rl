@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v15";
+    public static final String VERSION = "simulator-parity-v16";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -50,6 +50,15 @@ public final class SimulatorParityExporter {
         }
         // Corpses retain their ledger; only a genuinely non-thief has null.
         state.put("simulator_thief_state", thief);
+        HashMap<String, Object> lagavulin = null;
+        if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.Lagavulin) {
+            Class<?> type = com.megacrit.cardcrawl.monsters.exordium.Lagavulin.class;
+            lagavulin = new HashMap<String, Object>();
+            // Gameplay sleep/wake state, not the constructor's unchanged asleep flag.
+            lagavulin.put("sleeping", Boolean.valueOf(!privateBool(monster, type, "isOutTriggered")));
+            lagavulin.put("idle_count", Integer.valueOf(privateInt(monster, type, "idleCount")));
+        }
+        state.put("simulator_lagavulin_state", lagavulin);
         // UnawakenedPower is removed at the first lethal hit, while the room's
         // death protection remains until the queued CanLoseAction executes.
         state.put("unawakened", Boolean.valueOf(
