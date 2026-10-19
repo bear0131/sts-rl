@@ -4,6 +4,20 @@ With `--combat-search`, `--gumbel-scale 0` disables search Gumbel noise.
 Omitting it preserves the checkpoint's setting. Upper decisions remain
 deterministic unless `--stochastic` is explicitly requested.
 
+For a checkpoint predating `run_keys`/`reward_keys`, the default `native` reward
+contract refuses unsupported key decisions. After explicitly agreeing to a
+historical Act 1-3 evaluation, pass
+`--reward-policy-contract checkpoint-v7-act3`. This preserves the old policy's
+decision set by excluding only the added `CLAIM_KEY` action from its policy
+mask. Real keys, all rewards, world legality and raw frames remain complete;
+the agent does not auto-claim keys or change the old campfire recall action.
+The protocol and excluded actions are logged, terminal receipts name the
+protocol, and actions outside Acts 1-3 are rejected. This is not an Act 4
+evaluation or evidence that the old network learned key features.
+Simulator evaluation can select the same contract through
+`PolicyStrategy(..., reward_policy_contract="checkpoint-v7-act3")`; both paths
+use `rl.policies.model.action_mask_for_policy` without altering the environment.
+
 Automatic real-game runner:
 
 ```powershell

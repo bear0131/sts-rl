@@ -170,6 +170,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument('--continuous-test', action='store_true',
                         help='Explicit authorization for automated main-menu starts; also requires --auto-start.')
+    parser.add_argument('--reward-policy-contract', choices=_model.REWARD_POLICY_CONTRACTS,
+                        default='native',
+                        help='Explicit checkpoint-v7-act3 preserves old key-free reward decisions; world state stays complete.')
     parser.add_argument('--attach-existing-seed', type=int, default=None,
                         help='Wait for user/UI save resume, never START; verify this internal seed.')
     parser.add_argument('--attach-existing-floor', type=int, default=None,
@@ -296,6 +299,7 @@ class RealPolicyAgent:
         character: str,
         campaign: SeedCampaign | None = None,
         combat_search=None,
+        reward_policy_contract: str = "native",
     ) -> None:
         self.model = model
         self.adapter = adapter
@@ -309,9 +313,15 @@ class RealPolicyAgent:
         self.character = character
         self.campaign = campaign
         self.combat_search = combat_search
+        _model.validate_reward_policy_contract(model, reward_policy_contract)
+        self.reward_policy_contract = reward_policy_contract
+        log.info("reward_policy_contract=%s; no automatic key claiming", reward_policy_contract)
 
     def decide(self, frame: dict[str, Any]) -> RealDecision:
         self.adapter.update(frame)
+        if self.adapter.in_game():
+            _model.validate_reward_policy_scope(
+                self.reward_policy_contract, self.adapter.gs["act"])
         if frame.get("in_game") is False and not self.auto_start:
             return RealDecision("STATE", "await_manual_continue")
         if self.combat_search is not None:
@@ -325,8 +335,10 @@ class RealPolicyAgent:
         campaign_result = (
             self.campaign.observe(
                 frame,
-                metadata=(self.combat_search.run_summary()
-                          if self.combat_search is not None else None),
+                metadata={
+                    **(self.combat_search.run_summary() if self.combat_search is not None else {}),
+                    "reward_policy_contract": self.reward_policy_contract,
+                },
             )
             if self.campaign is not None else None
         )
@@ -367,21 +379,18 @@ class RealPolicyAgent:
             return RealDecision("STATE", "combat_only_requires_manual_overworld")
         if self.adapter.phase() == "combat" and self.combat_search is not None:
             return self.combat_search.decide()
-        if self.adapter.phase() == "combat_reward":
-            has_key_action = any(
-                action[0] == ga.CLAIM and action[1] == ga.CLAIM_KEY
-                for action in self.adapter.legal_semantic_actions()
-            )
-            if (has_key_action
-                    and "reward_keys" not in self.model.observation_space.spaces):
-                raise RuntimeError(
-                    "checkpoint predates OBS20/ACTION8 key rewards; refusing to "
-                    "silently skip an emerald/sapphire key"
-                )
         trace: list[tuple[int, tuple | None, str]] = []
         for inner in range(max(self.max_inner_decisions, 11 if self.adapter.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT else 1)):
             obs = self.adapter.observation(pending=pending)
-            mask = self.adapter.action_mask(pending=pending)
+            world_mask = self.adapter.action_mask(pending=pending)
+            mask = _model.action_mask_for_policy(
+                self.model, world_mask, phase=self.adapter.phase(), act=self.adapter.gs["act"],
+                reward_policy_contract=self.reward_policy_contract)
+            excluded = np.flatnonzero(world_mask & ~mask)
+            if len(excluded):
+                log.info("reward_policy_contract=%s policy_excluded_ids=%s actual_reward_keys=%s run_keys=%s",
+                         self.reward_policy_contract, excluded.tolist(),
+                         obs["reward_keys"].tolist(), obs["run_keys"].tolist())
             legal_ids = tuple(int(i) for i in np.flatnonzero(mask))
             if not legal_ids:
                 raise RuntimeError(
@@ -874,6 +883,7 @@ def main() -> None:
         character=args.character,
         campaign=campaign,
         combat_search=combat_search,
+        reward_policy_contract=args.reward_policy_contract,
     )
 
     try:

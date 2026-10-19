@@ -13,7 +13,9 @@ import numpy as np
 import torch
 from env.core import native_actions as C
 
-from rl.policies.model import observation_for_policy
+from rl.policies.model import (
+    observation_for_policy, action_mask_for_policy, validate_reward_policy_contract,
+)
 from rl.policies.precision import bf16_autocast
 from rl.search.native import (
     MODEL_LEAF_BACKEND,
@@ -102,16 +104,20 @@ def strategy_manifest(strategy):
                 statistics=backend.statistics())
     if isinstance(strategy, PolicyStrategy):
         result['deterministic'] = strategy.deterministic
+        result['reward_policy_contract'] = strategy.reward_policy_contract
     return result
 
 
 class PolicyStrategy:
     name = 'policy'
 
-    def __init__(self, model, *, deterministic=True, lock=None, autocast=nullcontext):
+    def __init__(self, model, *, deterministic=True, lock=None, autocast=nullcontext,
+                 reward_policy_contract="native"):
         self.model, self.deterministic, self.lock = model, deterministic, lock
         self.autocast = autocast
         self.combat_action_contract = C.policy_contract(getattr(model, 'observation_space', None))
+        validate_reward_policy_contract(model, reward_policy_contract)
+        self.reward_policy_contract = reward_policy_contract
 
     def decide(self, requests, *, check=lambda: None):
         if not requests:
@@ -119,12 +125,20 @@ class PolicyStrategy:
         if getattr(getattr(getattr(self.model, 'policy', None), 'core', None), 'combat_only', False):
             if any(r.info.get('phase') != 'combat' for r in requests):
                 raise ValueError('combat-only model requires a separate overworld strategy')
+        from env.core.encode import ACT_SCALE
+        masks = np.stack([
+            action_mask_for_policy(
+                self.model, r.env.action_masks(), phase=r.info['phase'],
+                act=(float(r.observation['act'].item()) * ACT_SCALE
+                     if self.reward_policy_contract == 'checkpoint-v7-act3' else None),
+                reward_policy_contract=self.reward_policy_contract)
+            for r in requests
+        ])
         forced = _forced_end_batch(self, requests, check)
         if forced is not None:
             return forced
         check()
         observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
-        masks = np.stack([r.env.action_masks() for r in requests])
         if self.combat_action_contract in C.NEURAL_CONTRACTS and 'combat_legal' not in observations:
             if any(r.info.get('phase') == 'combat' for r in requests):
                 raise ValueError('joint-v2 combat policy requires combat_legal observations')
@@ -160,7 +174,8 @@ class PolicyStrategy:
                 actions, _ = self.model.predict(observation_for_policy(self.model, observations),
                                                 action_masks=masks, deterministic=self.deterministic)
         return [Decision(int(action), self.name,
-                         {'equivalent_play_mass_decisions': 1} if grouped else {})
+                         {'reward_policy_contract': self.reward_policy_contract,
+                          **({'equivalent_play_mass_decisions': 1} if grouped else {})})
                 for action in np.asarray(actions).reshape(-1)]
 
 

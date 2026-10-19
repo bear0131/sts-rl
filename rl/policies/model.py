@@ -19,6 +19,52 @@ from env.core.card_language import (
 from env.core.combat_language import TOKEN_VOCAB as COMBAT_TOKEN_VOCAB
 
 
+REWARD_POLICY_CONTRACTS = ("native", "checkpoint-v7-act3")
+
+
+def validate_reward_policy_contract(model, contract: str) -> None:
+    if contract not in REWARD_POLICY_CONTRACTS:
+        raise ValueError(f"unknown reward policy contract: {contract!r}")
+    if contract == "checkpoint-v7-act3":
+        fields = model.observation_space.spaces
+        if "reward_keys" in fields or "run_keys" in fields:
+            raise ValueError("checkpoint-v7-act3 requires a checkpoint predating key inputs")
+
+
+def validate_reward_policy_scope(contract: str, act) -> None:
+    if contract == "checkpoint-v7-act3" and (
+            isinstance(act, (bool, np.bool_)) or act not in (1, 2, 3)):
+        raise ValueError(f"checkpoint-v7-act3 cannot dispatch actions in act={act!r}")
+
+
+def action_mask_for_policy(model, mask, *, phase: str, act=None,
+                           reward_policy_contract: str = "native") -> np.ndarray:
+    """Apply an explicit checkpoint action contract, never edit world state.
+
+    The v7 policy never had CLAIM_KEY. Keeping that historical decision set is
+    opt-in and Act 1-3 only; actual rewards/keys remain in canonical state and
+    the environment's legal actions. No auto-claim, replacement logits or PAD.
+    """
+    from env.core import action_space as A
+
+    validate_reward_policy_contract(model, reward_policy_contract)
+    validate_reward_policy_scope(reward_policy_contract, act)
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 1:
+        raise ValueError("policy action mask must be one unbatched row")
+    if phase == "combat_reward" and len(mask) > A._RKEY and mask[A._RKEY]:
+        if "reward_keys" not in model.observation_space.spaces:
+            if reward_policy_contract != "checkpoint-v7-act3":
+                raise RuntimeError(
+                    "checkpoint predates OBS20/ACTION8 key rewards; use an explicitly "
+                    "authorized checkpoint-v7-act3 protocol or a key-capable checkpoint")
+            mask = mask.copy()
+            mask[A._RKEY] = False
+    if not mask.any():
+        raise ValueError("checkpoint action contract leaves no legal policy action")
+    return mask
+
+
 def observation_for_policy(model, observation: dict) -> dict:
     """Project newer observations onto a checkpoint's declared input fields.
 
