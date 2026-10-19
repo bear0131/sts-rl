@@ -30,7 +30,7 @@ import numpy as np
 from bridge.real_game_env import RealDecision, RealGameAdapter, validate_transport_frame
 from bridge.campaign import SeedCampaign
 from bridge.event_contract import EventEffectAck
-from bridge.schemas.entity_ids import REWARD_ROOM_EXIT_CONTRACTS
+from bridge.schemas.entity_ids import CHEST_REWARD_SCREEN_CONTRACTS, REWARD_ROOM_EXIT_CONTRACTS
 from env.core import action_space as A
 from env.core import game_actions as ga
 
@@ -660,7 +660,7 @@ class RewardCommandAck:
     def arm(self, frame, decision, now):
         gs = frame.get("game_state") or {}
         room_exit = self.room_exit_expectation(gs, decision.command)
-        if (gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD"}
+        if (gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD", "CHEST"}
                 and room_exit is None):
             return
         if decision.command.split()[0].upper() not in {"CHOOSE", "SKIP", "PROCEED", "RETURN"}:
@@ -674,6 +674,14 @@ class RewardCommandAck:
                     raise ValueError("reward card index is outside the offered cards")
                 expected = self.card_identity(cards[index])
         claim = None
+        if gs.get("screen_type") == "CHEST" and decision.command.upper().startswith("CHOOSE "):
+            ss = gs.get("screen_state") or {}
+            chest_type = ss.get("chest_type")
+            if (decision.semantic != (ga.CHEST, True) or decision.command.upper() != "CHOOSE 0"
+                    or ss.get("chest_open") is not False
+                    or chest_type not in CHEST_REWARD_SCREEN_CONTRACTS):
+                raise ValueError("chest opening receipt requires the explicit unopened chest and OPEN action")
+            claim = ("chest_open", chest_type, None)
         if (gs.get("screen_type") == "CARD_REWARD" and decision.semantic
                 and decision.semantic[0] == "skip_cards"
                 and decision.command.upper().startswith("CHOOSE ")):
@@ -764,7 +772,11 @@ class RewardCommandAck:
                             == card_count(before["deck"])[expected] + 1)
         elif claim is not None:
             kind, entity, amount = claim
-            if kind == "bowl":
+            if kind == "chest_open":
+                # An old CHEST response can arrive after CHOOSE was sent. Never
+                # resend it: a second CHOOSE 0 would select the first boss relic.
+                acknowledged = gs.get("screen_type") == CHEST_REWARD_SCREEN_CONTRACTS[entity]
+            elif kind == "bowl":
                 acknowledged = (gs.get("max_hp", 0) == (before.get("max_hp") or 0) + 2
                                 and gs.get("screen_type") != "CARD_REWARD")
             elif kind == "gold":
@@ -960,6 +972,8 @@ def main() -> None:
             try:
                 frame = json.loads(line)
                 validate_transport_frame(frame)
+                if "error" in frame:
+                    raise RuntimeError(f"CommunicationMod rejected command: {frame['error']}")
                 if frame.get('in_game') is False and args.attach_existing_seed is not None:
                     if attached_live:
                         # Menu round-trip is a save-load boundary, not an overlay.
@@ -1021,8 +1035,8 @@ def main() -> None:
                     original, prepared = unsent_search
                     unsent_search = None
                     if searched_command_still_current(frame, original, prepared.command):
-                        send_decision(frame, prepared)
                         reward_ack.arm(frame, prepared, now)
+                        send_decision(frame, prepared)
                         if combat_command_needs_ack(frame, prepared.command):
                             pending_play_frame = deepcopy(frame.get("game_state"))
                             pending_play_since = now
@@ -1058,8 +1072,8 @@ def main() -> None:
                     continue
                 event_ack.arm(frame, decision, now)
                 map_ack.arm(frame, decision, now, adapter)
-                send_decision(frame, decision)
                 reward_ack.arm(frame, decision, now)
+                send_decision(frame, decision)
                 if combat_command_needs_ack(frame, decision.command):
                     pending_play_frame = deepcopy(frame.get("game_state"))
                     pending_play_since = now

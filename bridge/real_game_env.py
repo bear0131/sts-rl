@@ -153,14 +153,16 @@ def validate_transport_frame(frame: dict[str, Any]) -> None:
     """
     if not isinstance(frame, dict):
         raise ValueError("CommunicationMod frame must be an object")
-    _commands(frame)
     _required_bool(frame, "ready_for_command", context="frame")
     if "error" in frame:
         if not isinstance(frame["error"], str) or not frame["error"]:
             raise ValueError("error response requires a nonempty message")
         if "in_game" in frame or "game_state" in frame:
             raise ValueError("error response must not impersonate a normal game/menu frame")
+        if "available_commands" in frame:
+            _commands(frame)
         return
+    _commands(frame)
     if not _required_bool(frame, "in_game", context="frame"):
         if "game_state" in frame:
             raise ValueError("main-menu response must not carry a game_state")

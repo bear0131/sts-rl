@@ -34,6 +34,7 @@ from .entity_ids import (
     FRESH_RELIC_INITIAL_DATA,
     REAL_ROOM_CLASS_IDS,
     REWARD_ROOM_EXIT_CONTRACTS,
+    CHEST_REWARD_SCREEN_CONTRACTS,
     NATIVE_GLOBAL_FIELDS,
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
@@ -248,6 +249,7 @@ def complete_word_tables():
         "run_keys": RUN_KEY_FIELDS,
         "real_room_classes": REAL_ROOM_CLASS_IDS,
         "reward_room_exit_contracts": REWARD_ROOM_EXIT_CONTRACTS,
+        "chest_reward_screen_contracts": CHEST_REWARD_SCREEN_CONTRACTS,
         "native_combat_root_fields": NATIVE_GLOBAL_FIELDS,
         "potion_capacity_rules": POTION_CAPACITY_RULES,
         "compact_player_scalar_fields": {

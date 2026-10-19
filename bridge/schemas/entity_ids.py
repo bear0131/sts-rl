@@ -10,11 +10,11 @@ SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v13"
 # None/empty collections are observations, not substitutes for missing fields.
 JSON_PRESENCE_CONTRACTS = {
     'serialization': 'GameStateConverter.getCommunicationState and CommunicationMod.receivePreUpdate use shaded GsonBuilder.serializeNulls; no change to gameplay',
-    'error': 'error responses carry a nonempty error string, ready_for_command and available_commands; in_game/game_state can be absent, never infer main menu',
+    'error': 'CommunicationMod.receivePreUpdate error responses contain error and ready_for_command only; available_commands is optional and validated if present; never infer a menu or policy choice',
     'in_game': 'normal response requires explicit boolean; missing/null cannot authorize START',
     'ready_for_command': 'explicit boolean, including false',
     'action_phase/is_screen_up': 'required phase enum and explicit boolean; missing cannot be treated as a settled actionable screen',
-    'available_commands': 'required list; [] means no commands, missing/null is invalid',
+    'available_commands': 'required list on normal frames; [] means no commands, missing/null is invalid; error replies have a distinct contract',
     'game_state': 'required nonempty object when in_game=true; absent at main menu',
     'screen_state': 'required object in a game; {} means no screen payload, missing/null is invalid',
     'current_action': 'required in-game key; null means actionManager.currentAction is actually absent, nonempty string is its class name',
@@ -394,6 +394,10 @@ REWARD_ROOM_EXIT_CONTRACTS = {
         "target_node": (0, -1), "act_delta": 1, "floor_delta": 0,
         "java_source": "ProceedButton.goToNextDungeon / CardCrawlGame.update / AbstractDungeon.firstRoomLogic",
     },
+}
+CHEST_REWARD_SCREEN_CONTRACTS = {
+    "SmallChest": "COMBAT_REWARD", "MediumChest": "COMBAT_REWARD",
+    "LargeChest": "COMBAT_REWARD", "BossChest": "BOSS_REWARD",
 }
 POTION_CAPACITY_RULES = {"ascension_0_to_10": 3, "ascension_11_to_20": 2, "Potion Belt": 2, "native_max": 5}
 COMPACT_PLAYER_SCALAR_FIELDS = {
