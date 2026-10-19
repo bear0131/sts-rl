@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <cmath>
 
 #include <constants/PlayerStatusEffects.h>
 #include <combat/BattleContext.h>
@@ -170,7 +171,8 @@ void Player::heal(int amount) {
     }
 
     if (hasRelic<RelicId::MAGIC_FLOWER>()) {
-        amount = amount * 3 / 2;
+        // MagicFlower.onPlayerHeal rounds the positive float product, not floor.
+        amount = static_cast<int>(std::round(static_cast<float>(amount) * 1.5f));
     }
 
     bool wasBloodied = curHp <= maxHp/2;
@@ -178,7 +180,7 @@ void Player::heal(int amount) {
     curHp = std::min(static_cast<int>(maxHp), curHp + amount);
 
     if (wasBloodied && curHp > maxHp/2 && hasRelic<RelicId::RED_SKULL>()) {
-        debuff<PS::STRENGTH>(3);
+        debuff<PS::STRENGTH>(-3);
     }
 }
 

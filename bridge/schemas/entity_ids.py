@@ -88,7 +88,7 @@ REAL_ANONYMOUS_ACTION_CONTRACTS = {
         'source': 'RedSkull.atBattleStart',
         'effect': 'when wrapper executes, if not active and bloodied add 3 Strength directly, mark isActive and refresh powers; queue relic visual on top',
         'native_source': 'BattleContext::initRelics / Player::hpWasLost / Player::heal',
-        'native_audit': 'BRIDGE54: early grant and private isActive lifecycle require correction',
+        'native_audit': 'BRIDGE56 fixes the gameplay-sign error on healing above half HP; full queue/isActive internals deferred under effect-equivalence scope, not certified identical',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.rooms.AbstractRoom$1': {

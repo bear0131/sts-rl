@@ -4,6 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE56 | 红头骨治疗后力量符号/魔法花取整源码已修，待必要构建实机 | Player::heal越过半血改为debuff<STRENGTH>(-3)，原+3会凭空增加攻击伤害；MagicFlower用Java float×1.5后正数四舍五入，非整数3/2截断，修复奇数治疗少1。按用户效果标准做小范围规则修复，不扩展全部动画/私有时序，不改权重张量或策略选择。源对照RedSkull.onNotBloodied、MagicFlower.onPlayerHeal、原生debuff消费者；无离线行为测试。 |
 | BRIDGE54 | 11个匿名动作全表/严格身份、排队及盗贼三字段源码已接；红头骨/奖励捕获等未完，不开实机 | 原游戏8个/BaseMod3个匿名动作逐项登记来源/效果/native/未决状态。Mayhem执行时RNG二阶段排队；盗贼分开记账与DAMAGE，v15显式传stolenGold/slashCount/goldAmt至canonical/根/dict/key；攻击计数不再猜总回合，变招/格挡保留实际即时或排队区别，补Mugger死亡aiRng。turnHasEnded/怪物游标延后设置。待修：RedSkull开战时序/isActive；盗贼死亡时奖励捕获（exitBattle仍按末态账本/意图推算，不能证明与die时捕获等价）；完整power顺序/pending队列。7个stock不等于全部语义验收，1废弃及3custom明确不支持。仅源码/字节码/diff，无产品构建/行为测试/实机；按用户最新要求修完再完整复查，发现新错继续修，未清零不开机。 |
 | BRIDGE55 | 磁力空实现/战内血药反倍率源码已修，未构建或行为验证 | Magnetism在atStartOfTurn逐层用cardRandomRng抽非治疗无色牌，构造时捕获MasterReality，逐张入队并复用满手入弃牌堆；有别于Mayhem的延迟随机。BloodPotion恢复无树皮20%/有树皮40%，使用Java float(maxHP)*ratio截断顺序，战外路径原已正确。共享词表记录两种回合开始时机和血药治疗来源；权重/观察形状不变。仅源码/diff二次核对，无测试/实机；完整power顺序/pending仍BRIDGE28，不据此称全对齐。 |
 | BRIDGE53 | 匿名动作空身份源码已修；按最新指令不启动实机，先完成全部已知项及源码复查 | F18执行中真实current_action为空，Java getSimpleName不能表示匿名动作；v14改为真实binary class name，含包名/匿名后缀，只有真实无动作才null。所有消费者不依赖短名，选择来源合同独立不变；不放宽空串校验、不填PAD，不改权重/native。仅源码及diff检查，尚未构建/实机验收；F18入口存档已保全。 |
