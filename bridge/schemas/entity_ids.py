@@ -397,6 +397,24 @@ COMBAT_SELECTION_TRANSPORT_FIELDS = {
     'grid_selection_slots': 'compact layout9 capacity 2; categorical columns 224/225, select-relative scalar columns 196/197; Python/native decoders fill existing OBS20 selected_card_ids/upgrades slots',
     'grid_settlement': 'Liquid Memories receipt validates all four ordered piles and complete instances; actual moved cards get cost0, full hand leaves remainder in discard; applyPowers refreshes Body Slam.base_damage=block, Mind Blast.base_damage=draw size, Ritual Dagger.base_block=misc',
 }
+# Internal pending-use inventory, not a claim that arbitrary Java queues can
+# already be restored. These values survive native clones and pending keys;
+# full real queue/action transport remains tracked by BRIDGE28.
+NATIVE_CARD_QUEUE_FIELDS = {
+    'card': 'full CardInstance; same-instance copies retain UUID but are distinct objects',
+    'target': 'explicit monster slot, not compacted visible-monster ordinal',
+    'isEndTurn': 'null Java card/end-turn queue marker; not an EMPTY playable card',
+    'triggerOnUse': 'inverse of dontTriggerOnUseCard for status/end-turn settlement',
+    'ignoreEnergyTotal': 'AbstractCard.ignoreEnergyOnUse; preserve original X-cost energy',
+    'energyOnUse': 'CardQueueItem.energyOnUse; captured use budget',
+    'freeToPlay': 'queue-level free play, separate from instance freeToPlayOnce',
+    'randomTarget': 'choose a target when this queued item executes',
+    'autoplay': 'CardQueueItem.autoplayCard / AbstractCard.isInAutoplay',
+    'regretCardCount': 'captured hand size used by queued Regret HP loss',
+    'purgeOnUse': 'temporary replay object removed after use; no physical pile move',
+    'inLimbo': 'queued power copy belongs to Java limbo and receives same-UUID growth; Necronomicon copy does not',
+    'exhaustOnUse': 'one-use exhaust outcome, distinct from persistent CardInstance.exhaust',
+}
 CARD_STATE_TRANSPORT_FIELDS = {
     'version': 'integer 1', 'base_cost': 'AbstractCard.cost',
     'free_to_play_once': 'AbstractCard.freeToPlayOnce', 'retain': 'AbstractCard.retain',

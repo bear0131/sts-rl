@@ -1095,7 +1095,7 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
         if (m.isDeadOrEscaped()) {
             return;
         }
-        bc.monsters.arr[idx].damage(bc, damage);
+        bc.monsters.arr[idx].attacked(bc, damage);
 
         const bool effectTriggered = !m.hasStatus<MS::MINION>()
                 && !m.isAlive()
@@ -1140,7 +1140,13 @@ Action Actions::ReaperAction(int baseDamage) {
     }};
 }
 
-Action Actions::RitualDaggerAction(int idx, int damage) {
+Action Actions::IncreaseCardSpecialData(std::int16_t uniqueId, int amount) {
+    return {[=] (BattleContext &bc) {
+        bc.increaseCardSpecialData(uniqueId, amount);
+    }};
+}
+
+Action Actions::RitualDaggerAction(int idx, int damage, std::int16_t uniqueId, int increaseAmount) {
     return {[=] (BattleContext &bc) {
         auto &m = bc.monsters.arr[idx];
         if (m.isDeadOrEscaped()) {
@@ -1150,15 +1156,9 @@ Action Actions::RitualDaggerAction(int idx, int damage) {
 
         const bool shouldUpgrade = !m.hasStatus<MS::MINION>()
                                    && !m.isAlive()
-                                   && !(m.hasStatus<MS::REGROW>() && bc.monsters.monstersAlive > 0);
+                                   && !m.isHalfDead();
         if (shouldUpgrade) {
-            auto &c = bc.curCardQueueItem.card;
-            const auto upgradeAmt = c.isUpgraded() ? 5 : 3;
-
-            if (bc.curCardQueueItem.purgeOnUse) {
-                bc.cards.findAndUpgradeSpecialData(c.uniqueId, upgradeAmt);
-            }
-            c.specialData += upgradeAmt;
+            bc.increaseCardSpecialData(uniqueId, increaseAmount);
         }
 
         bc.checkCombat();

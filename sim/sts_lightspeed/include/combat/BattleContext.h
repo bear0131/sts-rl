@@ -199,8 +199,8 @@ namespace sts {
         [[nodiscard]] int calculateCardDamage(const CardInstance &card, int targetIdx, int baseDamage) const;
         [[nodiscard]] int calculateCardBlock(int baseBlock) const;
 
-        void queuePurgeCard(const CardInstance &c, int target);
-        void addPurgeCardToCardQueue(const CardQueueItem &item); // not really the front but hey
+        void queuePurgeCard(const CardInstance &c, int target, bool inLimbo = true);
+        void increaseCardSpecialData(std::int16_t uniqueId, int amount);
         void noOpRollMove(); // called by monsters to manipulate the aiRng counter when their rollMove function doesn't do anything
 
         void onManualDiscard(const CardInstance &c);

@@ -94,7 +94,6 @@ namespace sts {
         // special helpers
         void draw(BattleContext &bc, int amount);
         void onTookDamage(); // update blood for blood, masterful stab
-        void findAndUpgradeSpecialData(std::int16_t uniqueId, int amount);
         void onBuffCorruption();
     };
 

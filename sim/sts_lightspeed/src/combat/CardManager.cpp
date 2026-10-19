@@ -498,56 +498,6 @@ void CardManager::onTookDamage() {
     }
 }
 
-void upgrade(CardInstance &c, int upgradeAmount) {
-    c.specialData += upgradeAmount;
-}
-
-// for ritual dagger, rampage
-void CardManager::findAndUpgradeSpecialData(const std::int16_t uniqueId, const int upgradeAmount) {
-
-    // special checks for most common scenarios
-    if (!discardPile.empty() && discardPile.back().uniqueId == uniqueId) {
-        upgrade(discardPile.back(), upgradeAmount);
-        return;
-    }
-    if (!exhaustPile.empty() && exhaustPile.back().uniqueId == uniqueId) {
-        upgrade(exhaustPile.back(), upgradeAmount);
-        return;
-    }
-
-    for (int i = static_cast<int>(discardPile.size())-2; i >= 0; --i) {
-        auto &c = discardPile[i];
-        if (c.uniqueId == uniqueId) {
-            upgrade(c, upgradeAmount);
-            return;
-        }
-    }
-
-    for (int i = static_cast<int>(exhaustPile.size())-2; i >= 0; --i) {
-        auto &c = exhaustPile[i];
-        if (c.uniqueId == uniqueId) {
-            upgrade(c, upgradeAmount);
-            return;
-        }
-    }
-
-    for (auto & c : drawPile) {
-        if (c.uniqueId == uniqueId) {
-            upgrade(c, upgradeAmount);
-            return;
-        }
-    }
-
-    for (int i = 0; i < cardsInHand; ++i) {
-        auto &c = hand[i];
-        if (c.uniqueId == uniqueId) {
-            upgrade(c, upgradeAmount);
-            return;
-        }
-    }
-
-}
-
 void CardManager::onBuffCorruption() {
     // game does modifyCostForCombat here but I don't think its necessary as skills cant cost more than 4?
     for (int i = 0; i < cardsInHand; ++i) {

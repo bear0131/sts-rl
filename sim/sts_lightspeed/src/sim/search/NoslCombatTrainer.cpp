@@ -300,6 +300,33 @@ std::uint64_t publicStateKey(const BattleContext &bc,
             hashCardComposition(hash, std::array<CardInstance, 1>{card}, cards, equivalentFutures);
     }
 
+    if (bc.outcome == Outcome::UNDECIDED &&
+        (bc.inputState == InputState::CARD_SELECT || !bc.cardQueue.isEmpty())) {
+        // Pending use/copy state changes future effects even when the displayed
+        // candidate list is identical. Normal settled keys add no new inputs.
+        hashValue(hash, 0x43515545); // card-queue domain marker
+        auto hashQueuedCard = [&](const CardQueueItem &item) {
+            hashCardComposition(hash, std::array<CardInstance, 1>{item.card}, cards, equivalentFutures);
+            hashValue(hash, item.card.uniqueId); // same-UUID growth linkage
+            hashValue(hash, item.target);
+            hashValue(hash, item.isEndTurn);
+            hashValue(hash, item.triggerOnUse);
+            hashValue(hash, item.ignoreEnergyTotal);
+            hashValue(hash, item.energyOnUse);
+            hashValue(hash, item.freeToPlay);
+            hashValue(hash, item.randomTarget);
+            hashValue(hash, item.autoplay);
+            hashValue(hash, item.regretCardCount);
+            hashValue(hash, item.purgeOnUse);
+            hashValue(hash, item.inLimbo);
+            hashValue(hash, item.exhaustOnUse);
+        };
+        hashQueuedCard(bc.curCardQueueItem);
+        hashValue(hash, bc.cardQueue.size);
+        for (int i = 0; i < bc.cardQueue.size; ++i)
+            hashQueuedCard(bc.cardQueue.arr[(bc.cardQueue.frontIdx + i) % CardQueue::capacity]);
+    }
+
     hashValue(hash, bc.monsters.monsterCount);
     hashValue(hash, bc.monsters.monstersAlive);
     hashValue(hash, bc.monsters.extraRollMoveOnTurn.to_ulong());

@@ -167,7 +167,8 @@ namespace sts {
         static Action HandOfGreedAction(int idx, int damage, bool upgraded);
         static Action LimitBreakAction();
         static Action ReaperAction(int baseDamage);
-        static Action RitualDaggerAction(int idx, int damage);
+        static Action RitualDaggerAction(int idx, int damage, std::int16_t uniqueId, int increaseAmount);
+        static Action IncreaseCardSpecialData(std::int16_t uniqueId, int amount);
         static Action SecondWindAction(int blockPerCard);
         static Action SeverSoulExhaustAction();
         static Action SpotWeaknessAction(int target, int strength); // Spot Weakness

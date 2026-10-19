@@ -28,6 +28,9 @@ namespace sts {
         int regretCardCount = 0; // maybe use to indicate triggerOnUse too?
 
         bool purgeOnUse = false;
+        // Power-created same-UUID copies are also in Java's limbo group.
+        // Necronomicon queues a copy without adding it to that group.
+        bool inLimbo = false;
         bool exhaustOnUse = false;
 
         CardQueueItem() = default;
@@ -51,7 +54,7 @@ namespace sts {
         void pushFront(CardQueueItem item);
         void pushBack(CardQueueItem item);
         [[nodiscard]] bool isEmpty() const;
-        [[nodiscard]] bool containsCardWithId(int uniqueId) const;
+        [[nodiscard]] bool containsPhysicalCardWithId(int uniqueId) const;
 
         CardQueueItem popFront();
         CardQueueItem popBack();

@@ -11,13 +11,11 @@ bool CardQueue::isEmpty() const {
     return size == 0;
 }
 
-bool CardQueue::containsCardWithId(int uniqueId) const {
-    int idx = frontIdx;
+bool CardQueue::containsPhysicalCardWithId(int uniqueId) const {
     for (int i = 0; i < size; ++i) {
-        if (frontIdx >= capacity) {
-            idx = 0;
-        }
-        if (arr[idx].card.getUniqueId() == uniqueId) {
+        const auto &item = arr[(frontIdx + i) % capacity];
+        // Same UUID does not mean the same Java object for a purge copy.
+        if (!item.isEndTurn && !item.purgeOnUse && item.card.getUniqueId() == uniqueId) {
             return true;
         }
     }

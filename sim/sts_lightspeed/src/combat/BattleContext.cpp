@@ -707,6 +707,9 @@ void BattleContext::clearPostCombatActions() {
         }
         ++curIdx;
     }
+    // pushBack must append after the compacted survivors, including when all
+    // actions were removed or the ring wrapped around its physical end.
+    actionQueue.back = placeIdx % actionQueue.getCapacity();
 }
 
 void BattleContext::cleanCardQueue() {
@@ -1192,15 +1195,12 @@ void BattleContext::useAttackCard() {
             break;
         }
 
-        case CardId::RAMPAGE: { // todo doubled card damage is changed by the first
+        case CardId::RAMPAGE: {
             const int damage = calculateCardDamage(c, t, 8+c.specialData);
             addToBot( Actions::AttackEnemy(t, damage) );
-
-            if (item.purgeOnUse) {
-                cards.findAndUpgradeSpecialData(c.uniqueId, up ? 8 : 5);
-            }
-            c.specialData += up ? 8 : 5;
-
+            // Java's ModifyDamageAction runs after damage, and can be removed
+            // by combat victory. It updates all same-UUID live/limbo objects.
+            addToBot(Actions::IncreaseCardSpecialData(c.uniqueId, up ? 8 : 5));
             break;
         }
 
@@ -1216,7 +1216,8 @@ void BattleContext::useAttackCard() {
             break;
 
         case CardId::RITUAL_DAGGER:
-            addToBot( Actions::RitualDaggerAction(t, calculateCardDamage(c, t, c.specialData)) );
+            addToBot(Actions::RitualDaggerAction(t, calculateCardDamage(c, t, c.specialData),
+                                               c.uniqueId, up ? 5 : 3));
             break;
 
         case CardId::SEARING_BLOW: {
@@ -1776,7 +1777,7 @@ void BattleContext::onUseAttackCard() {
 
     if (p.hasRelic<R::NECRONOMICON>() && !p.haveUsedNecronomiconThisTurn && !item.freeToPlay && !item.purgeOnUse &&
         (c.costForTurn >= 2 || c.isXCost() && item.energyOnUse >= 2)) {
-        queuePurgeCard(c, item.target);
+        queuePurgeCard(c, item.target, false);
         p.haveUsedNecronomiconThisTurn = true;
     }
 
@@ -2910,26 +2911,49 @@ int BattleContext::calculateCardBlock(int baseBlock) const {
     return block;
 }
 
-void BattleContext::queuePurgeCard(const CardInstance &c, int target) {
+void BattleContext::queuePurgeCard(const CardInstance &c, int target, bool inLimbo) {
     CardQueueItem item;
-    item.card = c;
+    // AbstractCard.makeSameInstanceOf is a stat-equivalent copy with the
+    // original UUID, not an unrestricted copy of all instance flags.
+    item.card = c.makeStatEquivalentCopy();
+    item.card.uniqueId = c.uniqueId;
     item.purgeOnUse = true;
+    item.inLimbo = inLimbo;
     item.target = target;
     item.energyOnUse = curCardQueueItem.energyOnUse;
     item.ignoreEnergyTotal = true;
     item.autoplay = true;
-    addPurgeCardToCardQueue(item);
+    // Java inserts at index 1 while the current card still occupies index 0.
+    // Native already popped the current card, so the equivalent index is 0.
+    cardQueue.pushFront(item);
 }
 
-void BattleContext::addPurgeCardToCardQueue(const CardQueueItem &item) {
-    if (cardQueue.size > 0) {
-        auto temp = cardQueue.front();
-        cardQueue.front() = item;
-        cardQueue.pushFront(temp);
-    } else {
-        cardQueue.pushFront(item);
+void BattleContext::increaseCardSpecialData(std::int16_t uniqueId, int amount) {
+    if (uniqueId < 0 || amount <= 0)
+        throw std::invalid_argument("invalid combat card growth identity/amount");
+    std::vector<CardInstance *> instances;
+    auto include = [&](CardInstance &card) {
+        if (card.uniqueId == uniqueId) instances.push_back(&card);
+    };
+    if (!curCardQueueItem.isEndTurn) include(curCardQueueItem.card);
+    for (int i = 0; i < cards.cardsInHand; ++i) include(cards.hand[i]);
+    for (auto &card : cards.drawPile) include(card);
+    for (auto &card : cards.discardPile) include(card);
+    for (auto &card : cards.exhaustPile) include(card);
+    for (int i = 0; i < cardQueue.size; ++i) {
+        auto &queued = cardQueue.arr[(cardQueue.frontIdx + i) % CardQueue::capacity];
+        if (!queued.isEndTurn && queued.inLimbo) include(queued.card);
     }
-
+    // Validate before mutating any instance. Do not silently wrap int16 growth.
+    if (instances.empty())
+        throw std::logic_error("combat card growth has no live instance");
+    for (const auto *card : instances) {
+        if ((card->id != CardId::RAMPAGE && card->id != CardId::RITUAL_DAGGER) ||
+            amount > 32767 - card->specialData)
+            throw std::overflow_error("unrepresentable combat card growth");
+    }
+    for (auto *card : instances)
+        card->specialData = static_cast<std::int16_t>(card->specialData + amount);
 }
 
 void BattleContext::noOpRollMove() {
@@ -3013,7 +3037,8 @@ void BattleContext::mummifiedHandOnUsePower() {
 
     for (int i = matchingIdxList.size()-1; i >= 0; --i) {
         const auto uniqueId = cards.hand[matchingIdxList[i]].getUniqueId();
-        if (cardQueue.containsCardWithId(uniqueId)) {
+        if ((!curCardQueueItem.purgeOnUse && curCardQueueItem.card.uniqueId == uniqueId) ||
+            cardQueue.containsPhysicalCardWithId(uniqueId)) {
             matchingIdxList.remove(i);
         }
     }
