@@ -50,7 +50,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v20`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v21`配套使用。
+v21将最近一次怪物攻击扣血限定为NORMAL攻击，按受击前HP封顶，缠绕等THORNS不覆盖；
+配套原生包含HP_LOSS的Buffer防护、自伤来源与复活最低生命修正，模型张量/动作编号不变。
 v9新增HAND_SELECT真实`any_number`，v10新增明确的怪物生命周期字段与觉醒者死亡保护状态；
 必须重新构建Java补丁，旧v8/v9不能配当前Python。
 `monster_lifecycle_fields`逐项列出死亡、动画结束、半死、逃跑、下回合逃跑及消费者。

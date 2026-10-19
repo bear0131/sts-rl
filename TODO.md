@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE78 | 源码已修并构建，待实机 | HP_LOSS补Buffer先于Tungsten，Intangible不将0变1，零伤不触发受伤收益；Pain/Brutality补玩家来源→Rupture，Brutality先抽后伤；Tail最低回1HP。正常怪物攻击lastDamageTaken按受击前HP封顶，防过量吸血；v21导出仅NORMAL不被缠绕THORNS覆盖。Java/native构建完成，词表/两README同步，旧v20拒绝；OBS20/ACTION8/layout9/权重不变，无逐bug离线测试，特殊组合未自然验证。 |
 | BRIDGE77 | 已部署实机至三幕胜利，特殊组合仍未覆盖 | executeActions移除三牌区全空的假判负，保留药水/回合/被动及原预算。Anger→ENRAGE按全部实际怪物槽技能触发TOP，Curiosity能力触发BOTTOM，执行时拒绝dead/halfDead/escaping；避免漏竞技场Nob与觉醒者倒地后的额外力量。SharpHide同类槽遍历。ef57158从seed200206 F42续至F51胜利83/115，桥接ERROR0；空牌区/竞技场Nob/能力与Panache同时击倒觉醒者未自然覆盖，不冒充组合验证。无离线测试/权重布局变化。 |
 | BRIDGE76 | F46实机阻断已消除，续跑至自然终局 | 06a9dc6修复PhilosophersStone/Neow/燃烧精英/昆虫向预留空槽写状态；保留固定槽/严格校验，不吞异常。F46同档nonce4正确匹配四Shapes并胜利，随后黑暗虫半死复活、颚虫均走通；617.4秒至F50自然战败，桥接ERROR0。Neow/燃烧精英组合仍未实机覆盖；证据worklog“F46续档终局审计”。 |
 | BRIDGE74 | 源码修复并构建，实机分支待覆盖 | Colosseum补阶段0/1/2与首战无展示奖励→第二轮选项、二战稀有/罕见/100金、Smoke首战回事件；保留disableColosseum=true及旧权重布局。DeadAdventurer/Colosseum第二战eliteTrigger作用于昆虫/投石器/颈环，MindBloom实际Boss也触发颈环；昆虫只减不增当前HP。完整词表event_combat_rule_contracts记录来源，未实机覆盖这些组合。 |

@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v20`.
+`current_intent_export: simulator-parity-v21`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -201,7 +201,12 @@ only confirmed inert deaths leave the bounded search projection. Target commands
 still use actual current UI indices. Wizard charge is restored explicitly, never
 inferred from a new random template. The matching native extension must be rebuilt
 for this full-state field and strict audited-minion replacement support.
-Do not mix v20 Python with an older jar/native extension. Model tensor layouts
+Since v21 the last-monster-attack counter tracks only NORMAL monster damage,
+not Constricted/other THORNS. Both sides cap it at HP before damage/revival,
+matching Java lastDamageTaken and Shelled Parasite's actual life-steal amount.
+The matching native build also fixes HP_LOSS Buffer protection, self-damage
+sources and minimum Lizard Tail revival HP. No policy tensor or action IDs change.
+Do not mix v21 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

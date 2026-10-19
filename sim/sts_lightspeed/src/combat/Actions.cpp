@@ -112,7 +112,7 @@ Action Actions::VampireAttack(int damage) {
     }, false};
 }
 
-Action Actions::PlayerLoseHp(int hp, bool selfDamage) { // TODO this doesn't take into account intangible or relics
+Action Actions::PlayerLoseHp(int hp, bool selfDamage) {
     return {[=] (BattleContext &bc) {
         bc.player.loseHp(bc, hp, selfDamage);
     }, false};

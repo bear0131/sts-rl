@@ -254,7 +254,9 @@ void Player::attacked(BattleContext &bc, int enemyIdx, int calculatedDamage) {
     }
 
     if (damage > 0) {
-        lastAttackUnblockedDamage = damage;
+        // Java records lastDamageTaken before revival, capped at remaining HP.
+        // VampireDamageAction must not heal its owner for overkill damage.
+        lastAttackUnblockedDamage = std::min(damage, static_cast<int>(curHp));
 
         if (hasStatus<PS::PLATED_ARMOR>()) {
             decrementStatus<PS::PLATED_ARMOR>();
@@ -272,11 +274,19 @@ void Player::attacked(BattleContext &bc, int enemyIdx, int calculatedDamage) {
 }
 
 void Player::loseHp(BattleContext &bc, int amount, bool selfDamage) {
-    if (hasStatus<PS::INTANGIBLE>()) {
+    // LoseHPAction still enters AbstractPlayer.damage: it bypasses block,
+    // not Intangible/Buffer/Tungsten. Zero damage has no wasHPLost callbacks.
+    if (amount <= 0) return;
+    if (amount > 1 && hasStatus<PS::INTANGIBLE>()) {
         amount = 1;
     }
 
-    if (amount > 0 && hasRelic<RelicId::TUNGSTEN_ROD>()) {
+    if (hasStatus<PS::BUFFER>()) {
+        decrementStatus<PS::BUFFER>();
+        return;
+    }
+
+    if (hasRelic<RelicId::TUNGSTEN_ROD>()) {
         amount -= 1;
         if (amount == 0) {
             return;
@@ -334,7 +344,6 @@ void Player::hpWasLost(BattleContext &bc, int amount, bool selfDamage) {
 }
 
 void Player::wouldDie(BattleContext &bc) {
-    // assume fairy and lizard tail heal for greater than zero - max hp is not less than ~8
     curHp = 0;
     if  (!hasRelic<RelicId::MARK_OF_THE_BLOOM>()) {
         for (int i = 0; i < bc.potionCapacity; i++) {
@@ -351,7 +360,7 @@ void Player::wouldDie(BattleContext &bc) {
 
         if (hasRelic<RelicId::LIZARD_TAIL>()) {
             setHasRelic<RelicId::LIZARD_TAIL>(false);
-            heal(maxHp/2);
+            heal(std::max(1, maxHp/2));
             return;
         }
     }
@@ -702,8 +711,8 @@ void Player::applyStartOfTurnPostDrawPowers(BattleContext &bc) {
 
         switch (pair.first) {
             case PS::BRUTALITY:
-                bc.addToBot( Actions::PlayerLoseHp(pair.second) );
                 bc.addToBot( Actions::DrawCards(pair.second) );
+                bc.addToBot( Actions::PlayerLoseHp(pair.second, true) );
                 break;
 
             case PS::DEMON_FORM:

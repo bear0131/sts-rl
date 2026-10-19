@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v20";
+    public static final String VERSION = "simulator-parity-v21";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -497,7 +497,7 @@ public final class SimulatorParityExporter {
 
     /**
      * Java's public lastDamageTaken is overwritten by HP-loss and self-damage.
-     * The native field instead remembers only the latest monster attack after
+     * The native field instead remembers only the latest NORMAL monster attack after
      * block/relic/power mitigation (it is consumed by Shelled Parasite's heal).
      * Track that exact subset without changing damage, queues, or RNG.
      */
@@ -505,7 +505,7 @@ public final class SimulatorParityExporter {
     public static final class DamagePatch {
         @SpirePostfixPatch
         public static void afterDamage(AbstractPlayer __instance, DamageInfo info) {
-            if (info.owner instanceof AbstractMonster) {
+            if (info.owner instanceof AbstractMonster && info.type == DamageInfo.DamageType.NORMAL) {
                 lastAttackUnblockedDamage = __instance.lastDamageTaken;
             }
         }
