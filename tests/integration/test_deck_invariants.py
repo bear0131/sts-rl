@@ -110,3 +110,22 @@ def test_vampires_does_not_remove_a_stale_strike_outside_deck(cards):
     gc.choose_event_option(1)
     assert gc.deck_ids() == [('DEFEND_RED', 0)] + [('BITE', 0)] * 5
     assert gc.screen_state_name.endswith('MAP_SCREEN')
+
+
+@pytest.mark.parametrize('bottle', ['Bottled Flame', 'Bottled Lightning', 'Bottled Tornado'])
+def test_fresh_deck_replacement_does_not_bottle_unrelated_cards(bottled_deck_factory, bottle):
+    gc = bottled_deck_factory('REGRET', (bottle,))
+    replacement = [('BASH', 0), ('ANGER', 0), ('DEFEND_RED', 0), ('INFLAME', 0), ('STRIKE_RED', 0)]
+    gc.set_deck(replacement)
+    gc.cur_map_node_y, gc.gold = 1, 9999
+    gc.transition_to_map_node(5)
+    gc.shop_remove()
+    assert gc.get_select_cards() == replacement
+
+
+def test_invalid_fresh_deck_does_not_partially_replace_original_cards(combat_factory):
+    gc = combat_factory(['BASH', 'DEFEND_RED'], 'Cultist').thick.gc
+    before = gc.deck_ids()
+    with pytest.raises(RuntimeError, match='unknown card enum'):
+        gc.set_deck([('ANGER', 0), ('UNKNOWN', 0)])
+    assert gc.deck_ids() == before
