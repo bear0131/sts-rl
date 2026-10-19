@@ -388,7 +388,7 @@ constexpr int kNativeMoves =
 constexpr int kNativePotions =
     static_cast<int>(sizeof(sts::potionNames) /
                      sizeof(sts::potionNames[0]));
-// Categorical layout: hand cards, compacted monster ids/moves/intent classes,
+// Categorical layout: hand cards, fixed-slot monster ids/moves/intent classes,
 // potion slots, and the card-select task.
 constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
                          kMaxMonsters + kPotionSlots + 1;
@@ -510,28 +510,21 @@ inline Row pack(const sts::BattleContext &bc) {
         row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
     }
     c += kHandSlots;
-    int monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
-         ++i) {
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters; ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
-        row.categorical[c + monsterCount] = static_cast<int>(monster.id);
-        row.categorical[c + kMaxMonsters + monsterCount] =
+        row.categorical[c + i] = static_cast<int>(monster.id);
+        row.categorical[c + kMaxMonsters + i] =
             static_cast<int>(monster.moveHistory[0]);
-        ++monsterCount;
     }
     c += 2 * kMaxMonsters;
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
-         ++i) {
+    for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters; ++i) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) continue;
         const auto damage = monster.getMoveBaseDamage(bc);
-        baseDamages[monsterCount] = std::max(0, damage.damage);
-        attackCounts[monsterCount] = damage.attackCount;
-        row.categorical[c + monsterCount] = intentCategory(
-            monster, baseDamages[monsterCount]);
-        ++monsterCount;
+        baseDamages[i] = std::max(0, damage.damage);
+        attackCounts[i] = damage.attackCount;
+        row.categorical[c + i] = intentCategory(monster, baseDamages[i]);
     }
     c += kMaxMonsters;
     for (int i = 0; i < bc.potionCapacity && i < kPotionSlots; ++i) {
@@ -586,12 +579,14 @@ inline Row pack(const sts::BattleContext &bc) {
     // status vectors.  The Python decoder relies on these two rectangular
     // blocks when reshaping a batch; interleaving status fields per monster
     // silently corrupts multi-monster leaves.
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
-         ++i) {
+    for (int i = 0; i < kMaxMonsters; ++i) {
+        if (i >= bc.monsters.monsterCount ||
+                bc.monsters.arr[i].id == sts::MonsterId::INVALID) {
+            f += 6;  // Leave the reserved target slot zero-filled.
+            continue;
+        }
         const auto &monster = bc.monsters.arr[i];
-        if (monster.id == sts::MonsterId::INVALID) continue;
-        const int baseDamage = baseDamages[monsterCount];
+        const int baseDamage = baseDamages[i];
         const int adjusted = baseDamage > 0
             ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
         row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
@@ -599,21 +594,19 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f++] = static_cast<float>(monster.maxHp);
         row.scalars[f++] = static_cast<float>(monster.block);
         row.scalars[f++] = static_cast<float>(adjusted);
-        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[monsterCount] : 0);
-        ++monsterCount;
+        row.scalars[f++] = static_cast<float>(baseDamage > 0 ? attackCounts[i] : 0);
     }
-    f += 6 * (kMaxMonsters - monsterCount);
-    monsterCount = 0;
-    for (int i = 0; i < bc.monsters.monsterCount && monsterCount < kMaxMonsters;
-         ++i) {
+    for (int i = 0; i < kMaxMonsters; ++i) {
+        if (i >= bc.monsters.monsterCount ||
+                bc.monsters.arr[i].id == sts::MonsterId::INVALID) {
+            f += kMonsterStatus;
+            continue;
+        }
         const auto &monster = bc.monsters.arr[i];
-        if (monster.id == sts::MonsterId::INVALID) continue;
         for (int status = 0; status < kMonsterStatus; ++status) {
             row.scalars[f++] = static_cast<float>(monsterStatusValue(monster, status));
         }
-        ++monsterCount;
     }
-    f += kMonsterStatus * (kMaxMonsters - monsterCount);
     for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
         const auto &card = bc.cards.hand[i];
         row.scalars[f++] = static_cast<float>(card.getUpgradeCount());
@@ -1721,6 +1714,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["player_status_count"] = compact_leaf::kPlayerStatus;
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
+        out["monster_slot_version"] = 1;  // Native target slots, including gaps.
         out["categorical_width"] = compact_leaf::kCatSize;
         out["scalar_width"] = compact_leaf::kFloatSize;
         return out;

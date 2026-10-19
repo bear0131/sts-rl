@@ -244,6 +244,12 @@ def _powers_sim(pairs):
 
 
 def _norm_sim_monster(m):
+    if m['id'] == _SIM_MONSTER_INVALID:
+        # Empty native slots are executable target positions, not entities to
+        # remove. Keep a neutral placeholder; diff() alone filters gone slots.
+        return dict(id='PAD', hp=0, max_hp=0, block=0, gone=True,
+                    base_damage=0, adjusted_damage=0, hits=0, powers={},
+                    move='INVALID', move_id=0)
     base, hits = _attack(m["base_damage"], m["hits"])
     adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
     hp = m["hp"]
@@ -287,14 +293,7 @@ def normalize_sim(raw):
             "combat_counters": p.get("combat_counters", {}),
             "powers": _powers_sim(p["powers"]),
         },
-        "monsters": [
-            # Skip empty placeholder slots: the sim's monsterCount can include
-            # not-yet-activated slots (e.g. Slime Boss reserves a slot for its
-            # split halves) which surface as id "INVALID = 0", gone=true. The
-            # real game never reports these.
-            _norm_sim_monster(m) for m in raw["monsters"]
-            if m["id"] != _SIM_MONSTER_INVALID
-        ],
+        "monsters": [_norm_sim_monster(m) for m in raw["monsters"]],
         "hand": [_card(_sim_card_id(n), u, cost) for n, u, cost in raw["hand"]],
         "draw": [_card(_sim_card_id(n), u) for n, u in raw["draw"]],
         "discard": [_card(_sim_card_id(n), u) for n, u in raw["discard"]],

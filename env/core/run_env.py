@@ -107,7 +107,9 @@ def _nosl_compact_lut():
     if _NOSL_COMPACT_LUT is not _UNCACHED:
         return _NOSL_COMPACT_LUT
     layout = _nosl_compact_layout()
-    if layout is None:
+    if layout is None or layout.get('monster_slot_version') != 1:
+        # Older extensions compacted empty monster slots. Their numeric rows
+        # cannot be repaired without the source slots; use canonical leaves.
         _NOSL_COMPACT_LUT = None
         return None
 

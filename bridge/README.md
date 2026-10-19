@@ -6,6 +6,8 @@
 策略导入 canonical rl/policies，禁止在客户端复制动作/观测规则。真实帧兼容、错误分类和有界重试仍见 TODO F15。CI 的合成 checkpoint/模拟器验证不代表真实游戏端到端通过。
 原始帧/log 放忽略的本地输出，不进入核心模块目录。
 
+canonical怪物列表保留来源后端的位置：模拟器的INVALID槽成为PAD占位，真实列表保留死亡实体及客户端索引。只有差分报告的存活实体比较过滤gone槽，不将该视图传给策略。真实策略的观测/mask/PLAY命令使用同一个客户端槽位；这不等于录制回放已经建立客户端到native的目标映射，后者单列TODO BRIDGE31。
+
 战斗GRID/CARD_REWARD单选使用实际候选索引，经SELECT映射到CHOOSE命令，覆盖181动作的全部96个选牌槽，不再截到10张或压缩索引；超过96个候选明确拒绝。HAND_SELECT仍遵守十张手牌限制。动作容量与原生完整动作边界见 `env/README.md`，合成帧回归见 `tests/unit/test_bridge_selection_indices.py`；这不代表真实客户端验收。
 
 奖励领取以当前 `COMBAT_REWARD` 的合法项及按种类计数的索引生成命令；满物理药水槽或持 Sozu 时不可领取药水。直接调用 `command_for_semantic` 也拒绝不可领取项和错误画面，不只依赖策略 mask。模拟器侧 `SimGameEnv` 使用原生 `GameContext.legal_reward_options()` 的 `(kind, reward_group_index, item_index)` 过滤领取动作；更新 Python 后必须同步重建本 checkout 的扩展，旧扩展缺少此接口时不可混用。已有 action/observation 张量布局和 checkpoint 参数形状不变。

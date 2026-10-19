@@ -26,8 +26,6 @@ def test_auto_reset_reproduces_episode_seed_stream():
     assert streams[0] == streams[1]
 
 
-@pytest.mark.xfail(reason="F01: canonical monster compaction changes target slots",
-                   strict=True, raises=AssertionError)
 def test_gremlin_leader_observation_matches_native_target_slot(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, "Gremlin Leader")
     raw = env.thick.bc.to_dict()

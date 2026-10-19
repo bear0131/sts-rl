@@ -589,6 +589,8 @@ def _encode_combat(o, canon):
         if i >= len(monsters):
             break
         m = monsters[i]
+        if m['id'] == 'PAD':
+            continue  # Reserved native slot: all fields, including language, stay zero.
         present = 0.0 if m["gone"] else 1.0
         o["monster_id"][i] = _idx(V.MONSTER_VOCAB_INDEX, m["id"])
         o["monster_move"][i] = m.get("move_id", 0) or 0
