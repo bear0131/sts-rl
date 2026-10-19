@@ -983,3 +983,29 @@ def test_skull_blocked_potion_requires_no_gain_and_completed_effect(event_adapte
     assert ack.waiting(after, 2)  # HP-only intermediate frame is not completion.
     after['game_state']['screen_state']['options'][0]['text'] = '[来点喝的？] 失去 10 生命。'
     assert not ack.waiting(after, 3)
+@pytest.mark.parametrize('hp,blocked,expected', [(40, False, 26), (75, False, 5),
+                                               (80, False, 0), (40, True, 0)])
+def test_big_fish_banana_requires_exact_effect_and_result(event_adapter, hp, blocked, expected):
+    from bridge.event_contract import EventEffectAck
+    from types import SimpleNamespace
+    from copy import deepcopy
+    a = event_adapter('Big Fish', [('[Banana]', False), ('[Donut]', False), ('[Box]', False)])
+    a.gs.update(current_hp=hp, max_hp=80, gold=100, deck=[], potions=[],
+                relics=[dict(id='Mark of the Bloom')] if blocked else [])
+    ack = EventEffectAck()
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    assert ack.waiting(a.frame, 1)
+    result = deepcopy(a.frame)
+    result['game_state']['current_hp'] += expected
+    assert ack.waiting(result, 2)
+    result['game_state']['screen_state']['options'] = [dict(text='[Leave]', choice_index=0)]
+    wrong = deepcopy(result)
+    wrong['game_state']['gold'] += 1
+    with pytest.raises(RuntimeError, match='unexpected resource'):
+        ack.waiting(wrong, 3)
+    wrong = deepcopy(result)
+    wrong['game_state']['current_hp'] -= 1
+    with pytest.raises(RuntimeError, match='amount mismatch'):
+        ack.waiting(wrong, 3)
+    assert not ack.waiting(result, 4)
+

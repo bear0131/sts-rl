@@ -571,6 +571,23 @@ class EventEffectAck:
             # A card-vs-potion mismatch must never pass merely because HP fell.
             if (effect != 'card' and gained) or (effect != 'potion' and potion_changed) or (effect != 'gold' and delta('gold') > 0):
                 raise RuntimeError(f'event effect type mismatch: expected {effect}, card={bool(gained)}, potion={potion_changed}, gold={delta("gold")}')
+        if old.get('screen_state', {}).get('event_id') == 'Big Fish' and effect == 'heal':
+            # Banana heals maxHP/3; Mark of the Bloom can legitimately make it
+            # zero even below full health. Neither a stale frame nor a wrong
+            # reward type is evidence that the selected option completed.
+            blocked = any(r.get('id') == 'Mark of the Bloom' for r in old.get('relics', []))
+            amount = 0 if blocked else min(old['max_hp'] // 3, old['max_hp'] - old['current_hp'])
+            if gained or lost or relic_changed or potion_changed or delta('gold') or delta('max_hp'):
+                raise RuntimeError('Big Fish banana unexpected resource effect')
+            if delta('current_hp') not in (0, amount):
+                raise RuntimeError('Big Fish banana heal amount mismatch')
+            done = (g.get('screen_type') == 'EVENT'
+                    and g.get('screen_state', {}).get('event_id') == 'Big Fish'
+                    and transport_only(g) is not None)
+            if done and delta('current_hp') == amount:
+                self.pending = None
+                return False
+            return True
         success = {
             'gold': delta('gold') > 0, 'gold_loss': delta('gold') < 0,
             'card': bool(gained), 'remove': bool(lost) and not gained,
