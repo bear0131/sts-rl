@@ -236,6 +236,23 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkTransformUpgrade(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    const CardId originals[] = {CardId::SEARING_BLOW, CardId::FLASH_OF_STEEL, CardId::PARASITE};
+    require(variant >= 0 && variant < 3, "invalid transform color variant");
+    const auto original = originals[variant];
+    for (int seed = 1; seed <= 64; ++seed) {
+        Random normalRng(seed), upgradedRng(seed);
+        const auto normal = gc.getTransformedCard(normalRng, original, false);
+        const auto upgraded = gc.getTransformedCard(upgradedRng, original, true);
+        require(normal.id == upgraded.id && normal.id != original, "autoUpgrade changed transformed identity");
+        require(getCardColor(normal.id) == getCardColor(original), "transform changed color pool");
+        require(normal.getUpgraded() == 0, "ordinary transform unexpectedly upgraded");
+        require(upgraded.getUpgraded() == (normal.canUpgrade() ? 1 : 0), "transform omitted requested upgrade or upgraded a curse");
+        require(sameRng(normalRng, upgradedRng), "autoUpgrade changed RNG consumption");
+    }
+}
+
 static void checkRelicSelection(int variant, int ascension) {
     const bool reward = variant >= 14;
     const bool boss = variant >= 10 && !reward;
@@ -761,7 +778,7 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
@@ -769,6 +786,7 @@ int main(int argc, char **argv) {
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "deck-upgrade") checkDeckUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "transform-upgrade") checkTransformUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "relic-selection") checkRelicSelection(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "bottle-transform") checkBottleTransform(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));

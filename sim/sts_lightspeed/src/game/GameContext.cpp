@@ -1725,15 +1725,18 @@ CardId GameContext::returnTrulyRandomCardFromAvailable(Random &rng, CardId exclu
 
 Card GameContext::getTransformedCard(Random &rng, CardId exclude, bool autoUpgrade) {
     auto color = getCardColor(exclude);
-
+    Card transformed;
     if (color == CardColor::CURSE) {
-        return getRandomCurse(rng, exclude);
-    } else  if (color == CardColor::COLORLESS) {
-        return returnTrulyRandomColorlessCardFromAvailable(rng, exclude);
+        transformed = getRandomCurse(rng, exclude);
+    } else if (color == CardColor::COLORLESS) {
+        transformed = returnTrulyRandomColorlessCardFromAvailable(rng, exclude);
+    } else {
+        transformed = returnTrulyRandomCardFromAvailable(rng, exclude);
     }
-
-    CardId transformCard = returnTrulyRandomCardFromAvailable(rng, exclude);
-    return Card(transformCard, autoUpgrade ? 1 : 0);
+    if (autoUpgrade && transformed.canUpgrade()) {
+        transformed.upgrade();
+    }
+    return transformed;
 }
 
 CardId GameContext::returnColorlessCard(CardRarity rarity) {
