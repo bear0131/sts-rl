@@ -80,7 +80,7 @@ def test_complete_neow_keyword_table_matches_native_named_enums():
     def enums(name):
         body = re.search(r'enum class ' + name + r'\s*\{(.*?)\};', source, re.S).group(1)
         result, index = {}, 0
-        for token, value in re.findall(r'\b([A-Z_]+)\s*(?:=\s*(\d+))?\s*,', body):
+        for token, value in re.findall(r'\b([A-Z][A-Z0-9_]*)\s*(?:=\s*(\d+))?\s*,', body):
             if value:
                 index = int(value)
             result[token] = index
