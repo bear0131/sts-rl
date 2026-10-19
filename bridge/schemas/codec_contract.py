@@ -251,6 +251,7 @@ def complete_word_tables():
         },
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
+        "monster_move_canonical_to_real": dict(CS._MONSTER_CANON2REAL),
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),

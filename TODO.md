@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE70 | F41发现SpireGrowth行动表跨层别名遗漏，源码已修待续测 | from_real以Serpent读取三个正确行动编号，_state_spec改用canonical SpireGrowth再次查询却未反向解别名。real_to_sim_monster_move统一接受登记的transport/canonical身份，共用原始行动表，当前及两层history都覆盖；词表导出对应别名，不猜未知/填PAD。外部SpireGrowth.java与原生三招已核对。F34跨幕实机已通过、继续至F41首动作前停；从F41/index423续档，无需重走三幕前段。 |
 | BRIDGE69 | 二→三幕入口回执源码已修，待F34宝箱续档 | c9d711f实机F31 Rage候选已通过、F33铜制机械人获胜；F34领Boss遗物PROCEED后实际Act3 MAP仍引用TreasureRoomBoss(-1,15)，旧合同照搬TheCity而要求EmptyRoom(0,-1)。原TheBeyond构造不重置currMapNode，与TheCity不同；词表按来源幕分别指定目标，额外要求实际first_node_chosen=false，不放宽seed/floor/phase/room/node。F34保存仍是Act2宝箱入口，可直接重验跨幕无需再打Boss，下一搜索index329。 |
 | BRIDGE68 | 实机发现Rage费用错误，同类Trip已源码修复，待构建续档 | F25续测已通过宝典多次选/跳、奖励、休息及F29地精召唤槽，F31宝典真实RAGE 0费与native默认1费严格比较失败。逐项读取外部75战士/39无色卡构造及费用升级表达式，对照getEnergyCost确认仅RAGE遗漏零费、TRIP误列1费；两者改0，ID/形状/权重不变。需重建当前native，从F31/index258入口继续实机；不放宽实例比较、不覆盖真实费用，不将该SL计正式胜率样本。 |
 | BRIDGE67 | 事件零变化与部分奖励提前回执源码已修，未实机 | 泛用事件等待真实ready和四队列obtain完成，避免先拿金币/遗物就离开而漏延迟诅咒。限定已核对结果页或Skull费用选项变化确认Ectoplasm零金币、空钱包付强盗、Library满血/Bloom零治疗、maxHP1封底、Omamori挡单诅咒；不以任意屏幕变化放行。祭坛献祭用同步伤害后的最终页而非净扣血，蘑菇加入Darkstone的6上限/治疗。源码逐支复读与diff检查，无离线行为测试；沿用v20字段/构建，不改变模型输入或策略。 |

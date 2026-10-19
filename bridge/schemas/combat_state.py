@@ -540,6 +540,7 @@ _MONSTER_SIM2REAL = {
 # Keep transport and model identities separate; feeding the transport ID into
 # the encoder used to turn this live monster into PAD.
 _MONSTER_REAL2CANON = MONSTER_ALIASES
+_MONSTER_CANON2REAL = {canonical: raw for raw, canonical in MONSTER_ALIASES.items()}
 
 
 def _canonical_real_monster_id(real_id):
@@ -621,14 +622,19 @@ _REAL_MONSTER_MOVES = {
 
 
 def real_to_sim_monster_move(real_monster_id, real_move_id):
-    """Translate a CommunicationMod per-monster byte into MonsterMoveId name."""
+    """Translate a byte using either its transport or registered canonical ID.
+
+    from_real calls this before identity normalization; search root restoration
+    calls it afterwards. Both must address the same transport move table.
+    """
     if type(real_move_id) is not int:
         raise ValueError(f"real monster move must be an integer byte: {real_move_id!r}")
     move_id = real_move_id
     if move_id == -1:
         return "INVALID"
     try:
-        return _REAL_MONSTER_MOVES[real_monster_id][move_id]
+        transport_id = _MONSTER_CANON2REAL.get(real_monster_id, real_monster_id)
+        return _REAL_MONSTER_MOVES[transport_id][move_id]
     except KeyError as exc:
         raise KeyError(
             f"unmapped real monster move {real_monster_id!r} id={move_id}"
