@@ -262,6 +262,18 @@ def skull_costs(gs):
     return costs
 
 
+def _automatic_revival_potion_bases(gs):
+    """Ordered inventories allowed by one synchronous damage call, no reward."""
+    original = [p['id'] for p in gs['potions']]
+    bases = [original]
+    if ('FairyPotion' in original
+            and all(r['id'] != 'Mark of the Bloom' for r in gs['relics'])):
+        revived = list(original)
+        revived[revived.index('FairyPotion')] = 'Potion Slot'
+        bases.append(revived)
+    return bases
+
+
 def _validate_choice_indices(gs):
     """Reject malformed wire indices before policy or transport can send CHOOSE."""
     seen = set()
@@ -817,12 +829,7 @@ class EventEffectAck:
         # Damage precedes reward. Permit the observed inventory either without
         # revival or after consuming its first Fairy; never compact physical
         # slots or decide availability using the pre-damage full/empty flag.
-        bases = [old_potions]
-        if 'FairyPotion' in old_potions and 'Mark of the Bloom' not in relics:
-            revived = list(old_potions)
-            revived[revived.index('FairyPotion')] = 'Potion Slot'
-            bases.append(revived)
-        for base in bases:
+        for base in _automatic_revival_potion_bases(old):
             if index == 2 and 'Sozu' not in relics and 'Potion Slot' in base:
                 slot = base.index('Potion Slot')
                 if (new_potions[slot] != 'Potion Slot'
@@ -916,8 +923,19 @@ class EventEffectAck:
                 raise ValueError('Augmenter invalid Omamori charge count')
             self._augmenter_picks = []
             self._augmenter_confirm_sent = False
-        if effect == 'woman_leave' and gs.get('ascension_level', 0) >= 15:
-            raise ValueError('Woman in Blue A15 leave damage variants not yet audited')
+        if effect.startswith('woman_'):
+            ui, _ = options(gs)[decision.semantic[1]]
+            if decision.command != f'CHOOSE {ui}':
+                raise ValueError('Woman in Blue semantic action and UI command disagree')
+            if effect == 'woman_leave':
+                text = next(_text(o['text']) for o in gs['screen_state']['options']
+                            if not o.get('disabled') and o['choice_index'] == ui)
+                if gs['ascension_level'] >= 15:
+                    match = re.fullmatch(r'\[(?:离开|leave)\](?:受到|take)(\d+)(?:点伤害。|damage\.)', text)
+                    if not match or int(match[1]) <= 0:
+                        raise ValueError('Woman in Blue displayed leave damage missing/invalid')
+                elif text not in {'[离开]', '[leave]'}:
+                    raise ValueError('Woman in Blue no-damage leave text mismatch')
         if effect.startswith('woman_potions_'):
             count = int(effect.rsplit('_', 1)[1])
             ui, _ = options(gs)[decision.semantic[1]]
@@ -1048,10 +1066,19 @@ class EventEffectAck:
         new_relics = {r['id']: r for r in g.get('relics', [])}
         if effect.startswith('woman_potions_') or effect == 'woman_leave':
             count = 0 if effect == 'woman_leave' else int(effect.rsplit('_', 1)[1])
+            damaging_leave = not count and old['ascension_level'] >= 15
+            if damaging_leave and g.get('screen_type') == 'GAME_OVER' and g['current_hp'] <= 0:
+                self.pending = None
+                return False
             cost = min(old.get('gold', 0), 10 + 10 * count) if count else 0
-            if (gained or lost or relic_changed or potion_changed or delta('current_hp')
-                    or delta('max_hp') or delta('gold') not in (0, -cost)):
+            if (gained or lost or relic_changed or delta('max_hp')
+                    or delta('gold') not in (0, -cost)):
                 raise RuntimeError('Woman in Blue payment/resource mismatch')
+            if damaging_leave:
+                if [p['id'] for p in g['potions']] not in _automatic_revival_potion_bases(old):
+                    raise RuntimeError('Woman in Blue automatic revival potion mismatch')
+            elif potion_changed or delta('current_hp'):
+                raise RuntimeError('Woman in Blue no-damage option changed HP/potions')
             if count and g.get('screen_type') == 'COMBAT_REWARD':
                 rewards = g.get('screen_state', {}).get('rewards', [])
                 if len(rewards) != count or any(r.get('reward_type') != 'POTION' for r in rewards):
@@ -1060,8 +1087,7 @@ class EventEffectAck:
                     return True
                 self.pending = None
                 return False
-            if (not count and g.get('screen_state', {}).get('event_id') == 'The Woman in Blue'
-                    and transport_only(g) is not None):
+            if not count and final_leave:
                 self.pending = None
                 return False
             return True
@@ -1110,7 +1136,10 @@ class EventEffectAck:
                 return False
             reward = 0 if any(r['id'] == 'Ectoplasm' for r in old.get('relics', [])) else 75
             expected = reward if effect == 'goop_gold' else -self.goop_loss
-            if gained or lost or relic_changed or potion_changed or delta('max_hp') != 0 or delta('gold') not in (0, expected):
+            allowed_potions = (_automatic_revival_potion_bases(old) if effect == 'goop_gold'
+                               else [[p['id'] for p in old['potions']]])
+            if (gained or lost or relic_changed or [p['id'] for p in g['potions']] not in allowed_potions
+                    or delta('max_hp') != 0 or delta('gold') not in (0, expected)):
                 raise RuntimeError('World of Goop effect type/amount mismatch')
             complete = (g.get('screen_state', {}).get('event_id') == 'World of Goop'
                         and transport_only(g) is not None)
@@ -1181,13 +1210,8 @@ class EventEffectAck:
             # The next offer is updated only after synchronous player.damage.
             # Revival can increase net HP and automatically consume one Fairy;
             # neither is evidence that the command remains unacknowledged.
-            old_potions, new_potions = old['potions'], g['potions']
-            if len(old_potions) != len(new_potions):
-                raise RuntimeError('Scrap Ooze changed potion inventory capacity')
-            potion_changes = [(a['id'], b['id']) for a, b in zip(old_potions, new_potions)
-                              if a['id'] != b['id']]
             if (relic_changed or gained or lost or delta('gold')
-                    or potion_changes not in ([], [('FairyPotion', 'Potion Slot')])):
+                    or [p['id'] for p in g['potions']] not in _automatic_revival_potion_bases(old)):
                 raise RuntimeError('Scrap Ooze failure effect type mismatch')
             self.pending = None
             return False

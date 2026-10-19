@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE83 | 源码已修并复读，特殊分支待自然覆盖 | EventEffectAck的Goop金币和A15蓝衣女子离开允许实际第一瓶Fairy原位消耗；蓝衣女子不再直接拒绝A15，核对公开伤害文案/语义命令并等最终Leave或真实死亡。共享有序候选复用于Scrap/Skull，Bloom禁止、不得换槽或吞任意药水变化；购药/A0无伤离开约束保留。无原生/Java/布局变更或离线测试，特殊实机分支未覆盖。 |
 | BRIDGE82 | 源码已修并构建，特殊分支待自然覆盖 | BattleContext.h的排队BuffEnemy/debuffEnemy在实际执行时拒绝dying/halfDead/escaping/INVALID，早于Artifact/Sadistic/ChampionBelt；修复Bash/Uppercut击倒黑暗虫/觉醒者后重加debuff污染复活预测。低层初始化/还原不改，Darkling清halfDead后的正常Regrow/Philo增力保留。验收为源码复读、构建及自然实机组合，不以当前a2a6102运行替代；无离线测试/权重布局改变。 |
 | BRIDGE81 | 知识之颅源码已修并构建，特殊分支待自然覆盖 | bridge/event_contract.py按四个公开费用与语义命令确认仅选中项+1，Leave最终页；保留原deck UUID，卡牌UNCOMMON/数量与Fish9金、Ectoplasm、Sozu、满槽/复活释放物理槽/原位补回同药分别处理。原生Skull Sozu不roll药水，满槽仍roll。OBS/ACTION/Java v22不变，无离线测试；验收需自然交易与副作用，不把第三幕续档当该事件验证。 |
 | BRIDGE80 | 源码已修，特殊复活分支未实机覆盖 | ScrapOoze失败按实际同步伤害之后的费用+1/成功率+10确认，不要求净HP下降；仅允许单槽FairyPotion→Potion Slot自动复活药水变化，其余资源约束保留。适用bridge/event_contract.py，词表登记；验收需自然失败及复活变体，不以当前883f266运行替代新源码验收，无离线测试。 |
