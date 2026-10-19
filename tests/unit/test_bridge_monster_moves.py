@@ -47,6 +47,28 @@ def test_real_move_codec_covers_every_supported_real_monster():
         real_to_sim_monster_move("Cultist", 2)
 
 
+def test_real_relic_sentinels_and_live_flags_are_explicit():
+    from bridge.real_game_env import RealGameAdapter
+    from bridge.schemas.entity_ids import native_relic_counter
+    adapter = RealGameAdapter()
+    adapter.gs = {"relics": [
+        {"id": "Lizard Tail", "counter": -2}, {"id": "MawBank", "counter": -1}]}
+    assert adapter._relic_counters() == [0, 1]
+    for value in (-3, 0, 1, True, "-1"):
+        with pytest.raises(ValueError, match="counter"):
+            native_relic_counter("Lizard Tail", value)
+    frame = _real_combat_frame([])
+    counters = frame["combat_state"]["simulator_combat_counters"]
+    counters.update(pen_nib=9, centennial_puzzle_active=True, lizard_tail_active=False)
+    actual = normalize_real(frame)["player"]["combat_counters"]
+    assert actual["pen_nib"] == -1
+    assert actual["centennial_puzzle_active"] == 1
+    assert actual["lizard_tail_active"] == 0
+    counters["lizard_tail_active"] = -2
+    with pytest.raises(ValueError, match="not boolean"):
+        normalize_real(frame)
+
+
 def test_real_normalizer_preserves_public_move_history():
     gs = _real_combat_frame([{
         "id": "Cultist", "current_hp": 5, "max_hp": 49,

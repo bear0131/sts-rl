@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v4";
+    public static final String VERSION = "simulator-parity-v5";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -60,6 +60,17 @@ public final class SimulatorParityExporter {
         counters.put("nunchaku", Integer.valueOf(relicCounter("Nunchaku")));
         counters.put("pen_nib", Integer.valueOf(relicCounter("Pen Nib")));
         counters.put("sundial", Integer.valueOf(relicCounter("Sundial")));
+        AbstractRelic puzzle = player.getRelic("Centennial Puzzle");
+        counters.put("centennial_puzzle_active", Boolean.valueOf(puzzle != null &&
+            !((Boolean)ReflectionHacks.getPrivateStatic(
+                com.megacrit.cardcrawl.relics.CentennialPuzzle.class,
+                "usedThisCombat")).booleanValue()));
+        AbstractRelic tail = player.getRelic("Lizard Tail");
+        if (tail != null && tail.counter != -1 && tail.counter != -2) {
+            throw new IllegalStateException("Lizard Tail counter outside -1/-2 contract: "
+                + tail.counter);
+        }
+        counters.put("lizard_tail_active", Boolean.valueOf(tail != null && tail.counter == -1));
 
         AbstractRelic necronomicon = player.getRelic("Necronomicon");
         counters.put("necronomicon_used", Boolean.valueOf(

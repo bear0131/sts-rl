@@ -33,6 +33,8 @@ from .entity_ids import (
     MONSTER_ALIASES,
     REAL_POWER_ALIASES,
     REAL_INTENT_COMPONENTS,
+    LIVE_RELIC_STATE_FIELDS,
+    native_combat_relic_counter,
     SIM_POWER_ALIASES,
     SIMULATOR_PARITY_EXPORT_VERSION,
     RUN_KEY_FIELDS,
@@ -71,7 +73,23 @@ _REAL_COMBAT_COUNTER_KEYS = (
     "echo_form_cards_doubled", "panache_counter",
     "cards_discarded", "times_damaged",
     "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
+    *LIVE_RELIC_STATE_FIELDS.values(),
 )
+
+
+def _validated_combat_counters(counters):
+    binary = {"necronomicon_used", "orange_attack", "orange_skill", "orange_power",
+              *LIVE_RELIC_STATE_FIELDS.values()}
+    result = {}
+    for key in _REAL_COMBAT_COUNTER_KEYS:
+        value = counters[key]
+        if key in binary:
+            if type(value) not in (int, bool) or value not in (0, 1):
+                raise ValueError(f"combat counter {key!r} is not boolean: {value!r}")
+        elif type(value) is not int:
+            raise ValueError(f"combat counter {key!r} is not an integer: {value!r}")
+        result[key] = int(value)
+    return result
 
 
 def _powers_real(power_list, *, include_structural=False):
@@ -342,12 +360,8 @@ def normalize_real(game_state):
             "real combat counter export is incomplete: "
             f"{sorted(missing_counters)!r}"
         )
-    combat_counters = {
-        key: int(bool(exported_counters[key]))
-        if key in {"necronomicon_used", "orange_attack", "orange_skill", "orange_power"}
-        else int(exported_counters[key])
-        for key in _REAL_COMBAT_COUNTER_KEYS
-    }
+    combat_counters = _validated_combat_counters(exported_counters)
+    combat_counters["pen_nib"] = native_combat_relic_counter("Pen Nib", combat_counters["pen_nib"])
     player_powers = _player_powers_real(p["powers"])
     power_overrides = cs.get("simulator_player_power_overrides")
     if not isinstance(power_overrides, dict):
@@ -752,12 +766,7 @@ def normalize_sim(raw):
             "block": p["block"],
             "energy": p["energy"],
             "gold": p["gold"],
-            "combat_counters": {
-                key: int(bool(p["combat_counters"][key]))
-                if key in {"necronomicon_used", "orange_attack", "orange_skill", "orange_power"}
-                else int(p["combat_counters"][key])
-                for key in _REAL_COMBAT_COUNTER_KEYS
-            },
+            "combat_counters": _validated_combat_counters(p["combat_counters"]),
             "powers": _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX),
             "energy_per_turn": p["energy_per_turn"],
         },

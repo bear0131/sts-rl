@@ -5,6 +5,8 @@ import numpy as np
 import pytest
 
 from env.search.native_batch import NativeSearchBatch
+from bridge.schemas.combat_state import normalize_sim
+from bridge.schemas.entity_ids import native_relic_counter
 from rl.search.native import NativeSearchConfig
 
 pytestmark = [pytest.mark.native, pytest.mark.timeout(60)]
@@ -17,10 +19,6 @@ class LiveRelicObservationMismatch(AssertionError):
 @pytest.mark.parametrize("relics", [
     ["Centennial Puzzle"], ["Lizard Tail"], ["Happy Flower", "Pen Nib", "InkBottle"],
 ])
-@pytest.mark.xfail(strict=True, raises=LiveRelicObservationMismatch, reason=(
-    "OBS02: packed/native leaf relic_counters copy persistent root metadata "
-    "instead of canonical branch runtime flags/counters; numerical equality fails"
-))
 def test_leaf_live_relic_counters_match_canonical(combat_factory, relics):
     def make():
         return combat_factory(["STRIKE_RED"] * 5 + ["DEFEND_RED"] * 4 + ["BASH"],
@@ -59,3 +57,36 @@ def test_leaf_live_relic_counters_match_canonical(combat_factory, relics):
     finally:
         pool.close()
         reference.nosl_is_az_cpp_abort()
+
+
+@pytest.mark.parametrize("active", [0, 1])
+def test_live_relic_flags_survive_import_and_both_leaf_decoders(combat_factory, active):
+    env = combat_factory(["STRIKE_RED"] * 5, relics=["Centennial Puzzle", "Lizard Tail"])
+    battle = env.thick.bc
+    battle.apply_custom_state({"player": {"counters": {
+        "centennial_puzzle_active": active, "lizard_tail_active": active}}})
+    env._invalidate_backend_cache()
+    canonical = normalize_sim(battle.to_dict())["player"]["combat_counters"]
+    assert canonical["centennial_puzzle_active"] == active
+    assert canonical["lizard_tail_active"] == active
+    raw = battle.compact_leaf_arrays()
+    packed = {"categorical": np.asarray(raw["categorical"])[None],
+              "scalars": np.asarray(raw["scalars"])[None]}
+    observed = env._native_packed_observation_batch(packed)
+    np.testing.assert_array_equal(observed["relic_counters"][0, :2], [active, active])
+    np.testing.assert_array_equal(observed["relic_counters"][0], env._obs()["relic_counters"])
+
+
+@pytest.mark.parametrize("java_counter,expected", [(-1, 1), (-2, 0)])
+def test_real_tail_sentinel_does_not_resurrect_consumed_relic(combat_factory, java_counter, expected):
+    import slaythespire as sts
+    env = combat_factory(["STRIKE_RED"] * 5)
+    env.thick.gc.set_relic_state([{"id": "Lizard Tail", "counter": native_relic_counter("Lizard Tail", java_counter)}])
+    battle = sts.create_battle(env.thick.gc, "Cultist")
+    assert battle.to_dict()["player"]["combat_counters"]["lizard_tail_active"] == bool(expected)
+
+
+def test_pen_nib_armed_native_counter_is_importable(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 5, relics=["Pen Nib"])
+    env.thick.bc.apply_custom_state({"player": {"counters": {"pen_nib": -1}}})
+    assert normalize_sim(env.thick.bc.to_dict())["player"]["combat_counters"]["pen_nib"] == -1

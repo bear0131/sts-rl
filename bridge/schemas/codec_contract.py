@@ -22,6 +22,9 @@ from .entity_ids import (
     COMBAT_SELECTION_SOURCES,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
+    LIVE_RELIC_STATE_FIELDS,
+    RELIC_COUNTER_SENTINELS,
+    COMBAT_RELIC_COUNTER_SENTINELS,
     EMPTY_REAL_POTION_IDS,
     EVENT_ALIASES,
     MONSTER_ALIASES,
@@ -161,6 +164,9 @@ def complete_word_tables():
         "commands": sorted(REAL_COMMAND_IDS),
         "reward_types": dict(REWARD_CHOICE_TYPES),
         "run_keys": RUN_KEY_FIELDS,
+        "live_relic_state_fields": LIVE_RELIC_STATE_FIELDS,
+        "persistent_relic_counter_sentinels": RELIC_COUNTER_SENTINELS,
+        "combat_relic_counter_sentinels": COMBAT_RELIC_COUNTER_SENTINELS,
         "intent_components": REAL_INTENT_COMPONENTS,
         "room_phases": sorted(REAL_ROOM_PHASES),
         "action_phases": sorted(REAL_ACTION_PHASES),
@@ -269,6 +275,13 @@ def validate_codec_contract() -> dict[str, int]:
         raise RuntimeError("reward choice word table contains duplicate labels")
     if set(RUN_KEY_FIELDS) != {"ruby", "emerald", "sapphire"}:
         raise RuntimeError("run-key word table is incomplete")
+    for relic, field in LIVE_RELIC_STATE_FIELDS.items():
+        if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
+            raise RuntimeError(f"live relic state word table names unknown field: {relic!r}/{field!r}")
+    for table in (RELIC_COUNTER_SENTINELS, COMBAT_RELIC_COUNTER_SENTINELS):
+        for relic, values in table.items():
+            if relic not in canonical_sets["relic"] or not values:
+                raise RuntimeError(f"relic counter sentinel word table is malformed: {relic!r}")
     for semantic, fields in RUN_KEY_FIELDS.items():
         if set(fields) != {"real", "sim"} or not all(fields.values()):
             raise RuntimeError(f"run-key word table is malformed for {semantic!r}")

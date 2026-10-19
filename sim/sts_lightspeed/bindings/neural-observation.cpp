@@ -36,7 +36,7 @@ public:
         const int handStart = 6+ps+counters+1+30+5*ms;
         const int pileStart = handStart+20, selectStart = pileStart+3*cards;
         if (cat.shape(1)!=224 || scalar.ndim()!=2 || scalar.shape(0)!=n ||
-            scalar.shape(1)!=selectStart+196 || owners.ndim()!=1 || owners.size()!=n ||
+            scalar.shape(1)!=selectStart+198 || owners.ndim()!=1 || owners.size()!=n ||
             prefix.ndim()!=1 || prefix.size()!=n || legal.ndim()!=2 || legal.shape(0)!=n)
             throw std::invalid_argument("native observation layout mismatch");
         py::dict out;
@@ -79,17 +79,22 @@ public:
         auto *hand=i("hand_ids"), *monster=i("monster_id"), *moves=i("monster_move"),
              *intents=i("monster_intent_cat"), *potions=i("potions"),
              *context=i("select_context"), *selectIds=i("select_card_ids"),
-             *selectIndices=i("select_native_indices"), *zone=i("select_zone");
+             *selectIndices=i("select_native_indices"), *zone=i("select_zone"), *relics=i("relics");
         auto *player=f("player_scalars"), *pb=f("player_buffs"), *cb=f("combat_counters"),
              *boundary=f("post_enemy_turn_boundary"), *mon=f("monster_scalars"), *mb=f("monster_buffs"),
              *hu=f("hand_upgrades"), *hc=f("hand_costs"), *hd=f("hand_damage"), *hb=f("hand_block"),
              *draw=f("draw_counts"), *discard=f("discard_counts"), *exhaust=f("exhaust_counts"),
              *pick=f("pick_remaining"), *zero=f("can_pick_zero"), *any=f("can_pick_any"),
-             *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask");
+             *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
+             *relicCounters=f("relic_counters");
+        const auto relicWidth=arrays.at("relics").shape(1);
         const auto pbWidth=arrays.at("player_buffs").shape(1), mbWidth=arrays.at("monster_buffs").shape(2);
         Array<std::int64_t> cardMap(lut_["card"]), monsterMap(lut_["monster"]),
             moveMap(lut_["move"]), potionMap(lut_["potion"]),
-            contextMap(lut_["select_context"]), binary(lut_["binary_counters"]);
+            contextMap(lut_["select_context"]), binary(lut_["binary_counters"]),
+            liveRelicIds(lut_["live_relic_ids"]), liveColumns(lut_["live_relic_counter_columns"]);
+        if (liveRelicIds.size()!=liveColumns.size())
+            throw std::invalid_argument("native live relic counter word table mismatch");
         auto pc=py::cast<py::tuple>(lut_["player_status_columns"]), mc=py::cast<py::tuple>(lut_["monster_status_columns"]);
         Array<std::int64_t> pn(pc[0]), pt(pc[1]), mn(mc[0]), mt(mc[1]);
         Array<float> damage(stats_["damage"]), block(stats_["block"]);
@@ -149,6 +154,23 @@ public:
         };
         for (py::ssize_t r=0; r<n; ++r) {
             const auto *c=cat.data()+r*cat.shape(1); const auto *s=scalar.data()+r*scalar.shape(1);
+            for (int k=0; k<2; ++k)
+                if (s[selectStart+196+k]!=0.0f && s[selectStart+196+k]!=1.0f)
+                    throw std::invalid_argument("native live relic flag is not boolean");
+            for (py::ssize_t k=0; k<liveRelicIds.size(); ++k) {
+                const auto column=liveColumns.data()[k];
+                if (column < -2 || column >= counters)
+                    throw std::invalid_argument("native live relic counter column out of range");
+                const float value=column < 0 ? s[selectStart+195-column] : s[6+ps+column]/counterScale;
+                bool owned=false;
+                for (py::ssize_t slot=0; slot<relicWidth; ++slot)
+                    if (relics[r*relicWidth+slot]==liveRelicIds.data()[k]) {
+                        relicCounters[r*relicWidth+slot]=value;
+                        owned=true;
+                    }
+                if (column < 0 && value!=0.0f && !owned)
+                    throw std::invalid_argument("native active relic flag has no owned relic");
+            }
             for (int k=0; k<10; ++k)
                 hand[r*10+k]=lookup(cardMap,c[k],"hand card");
             for (int k=0; k<5; ++k) {

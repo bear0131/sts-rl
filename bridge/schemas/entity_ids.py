@@ -4,7 +4,41 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v4"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v5"
+
+# These are active runtime abilities, distinct from the relic's persistent
+# display counter. Both are represented by native Player relic bits.
+LIVE_RELIC_STATE_FIELDS = {
+    "Centennial Puzzle": "centennial_puzzle_active",
+    "Lizard Tail": "lizard_tail_active",
+}
+
+# Java counter sentinel -> native persistent RelicInstance.data.  The mapping
+# is explicit so a used-up relic cannot become true merely because -2 != 0.
+RELIC_COUNTER_SENTINELS = {
+    "Lizard Tail": {-1: 1, -2: 0},
+    "MawBank": {-1: 1, -2: 0},
+}
+
+# Native combat uses -1 for the armed tenth attack; persistent native and
+# Java counters both use 9. Do not apply this transform to run/save data.
+COMBAT_RELIC_COUNTER_SENTINELS = {"Pen Nib": {9: -1}}
+
+
+def native_relic_counter(relic_id, value):
+    """Translate explicit Java sentinel states; never clamp unknown values."""
+    if type(value) is not int:
+        raise ValueError(f"relic {relic_id!r} counter is not an integer: {value!r}")
+    sentinels = RELIC_COUNTER_SENTINELS.get(relic_id)
+    if sentinels is not None:
+        if value not in sentinels:
+            raise ValueError(f"relic {relic_id!r} counter outside its sentinel word table: {value}")
+        return sentinels[value]
+    return value
+
+
+def native_combat_relic_counter(relic_id, value):
+    return COMBAT_RELIC_COUNTER_SENTINELS.get(relic_id, {}).get(value, value)
 
 CARD_ALIASES = {
     "Venomology": "Alchemize",

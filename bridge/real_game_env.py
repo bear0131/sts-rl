@@ -51,6 +51,8 @@ from bridge.schemas.entity_ids import (
     RUN_KEY_FIELDS,
     SCREEN_PHASES,
     SIMULATOR_PARITY_EXPORT_VERSION,
+    native_relic_counter,
+    native_combat_relic_counter,
     UNSUPPORTED_REAL_RELIC_IDS,
     UNSUPPORTED_SELECTION_SOURCES,
 )
@@ -1082,7 +1084,7 @@ class RealGameAdapter:
             ):
                 key = _COMBAT_COUNTER_KEYS.get(relic)
                 if key is not None:
-                    if int(counters[key]) != int(value):
+                    if int(counters[key]) != native_combat_relic_counter(relic, value):
                         raise ValueError(
                             "combat counter/relic export mismatch: "
                             f"{relic!r} counter={value} combat[{key}]={counters[key]}"
@@ -1172,7 +1174,9 @@ class RealGameAdapter:
         )
         counters = []
         for relic in relics:
-            counters.append(int(_required(relic, "counter", context="relic record")))
+            counters.append(native_relic_counter(
+                _relic_id(relic), _required(relic, "counter", context="relic record")
+            ))
         return counters
 
     def _potions(self) -> list[str]:

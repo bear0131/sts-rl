@@ -89,7 +89,7 @@ Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
 It patches six `GameStateConverter` serializers. The Dome-specific export mask
-is bypassed, and monsters receive `current_intent_export: simulator-parity-v4`.
+is bypassed, and monsters receive `current_intent_export: simulator-parity-v5`.
 The exporter also supplies all three run keys, recurring energy, combat/relic
 counters, private power values, and explicit card-selection source/context.
 Two read-only game hooks track the last monster attack damage and reset it at
