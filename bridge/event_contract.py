@@ -243,6 +243,25 @@ def scrap_offer(gs):
     raise ValueError('Scrap Ooze search option missing')
 
 
+def skull_costs(gs):
+    """All four displayed HP prices, indexed by native semantic action."""
+    if gs.get('screen_state', {}).get('event_id') != 'Knowing Skull':
+        raise ValueError('Knowing Skull costs requested outside the event')
+    mapping = options(gs)
+    if set(mapping) != {0, 1, 2, 3}:
+        raise ValueError('Knowing Skull requires four explicit offers')
+    offered = {o['choice_index']: o for o in gs['screen_state']['options'] if not o.get('disabled')}
+    costs = {}
+    for index, (ui, _) in mapping.items():
+        match = re.search(r'(?:失去|lose)(\d+)(?:生命。|hp\.)$', _text(offered[ui]['text']))
+        if match is None or int(match[1]) < 6:
+            raise ValueError('Knowing Skull displayed HP price missing/invalid')
+        costs[index] = int(match[1])
+    if costs[3] != 6:
+        raise ValueError('Knowing Skull leave price differs from the native contract')
+    return costs
+
+
 def _validate_choice_indices(gs):
     """Reject malformed wire indices before policy or transport can send CHOOSE."""
     seen = set()
@@ -752,6 +771,69 @@ class EventEffectAck:
             return False
         return True
 
+    def _waiting_skull(self, old, gs, effect):
+        for key in ('seed', 'act', 'floor'):
+            if key not in old or gs.get(key) != old[key]:
+                raise RuntimeError(f'Knowing Skull changed/missing {key} before receipt')
+        if gs.get('screen_type') == 'GAME_OVER' and gs['current_hp'] <= 0:
+            self.pending = None
+            return False
+        if (gs.get('screen_type') != 'EVENT'
+                or gs['screen_state'].get('event_id') != 'Knowing Skull'):
+            raise RuntimeError('Knowing Skull unexpected result screen')
+        index = {'skull_gold': 0, 'skull_card': 1, 'skull_potion': 2, 'skull_hp_loss': 3}[effect]
+        if index == 3:
+            if transport_only(gs) is None:
+                if skull_costs(gs) != skull_costs(old):
+                    raise RuntimeError('Knowing Skull leave changed an offer instead')
+                return True
+        else:
+            before_costs, after_costs = skull_costs(old), skull_costs(gs)
+            if after_costs == before_costs:
+                return True
+            expected_costs = dict(before_costs)
+            expected_costs[index] += 1
+            if after_costs != expected_costs:
+                raise RuntimeError('Knowing Skull acknowledged a different offer/price increment')
+        from bridge.schemas.card_state import real_card_state
+        before = {c['uuid']: real_card_state(c) for c in old['deck']}
+        after = {c['uuid']: real_card_state(c) for c in gs['deck']}
+        if (len(before) != len(old['deck']) or len(after) != len(gs['deck'])
+                or any(after.get(uid) != card for uid, card in before.items())):
+            raise RuntimeError('Knowing Skull removed/changed an existing master instance')
+        gained = [c for c in gs['deck'] if c['uuid'] not in before]
+        if len(gained) != int(index == 1) or any(c.get('rarity') != 'UNCOMMON' for c in gained):
+            raise RuntimeError('Knowing Skull card reward count/rarity mismatch')
+        relics = {r['id'] for r in old['relics']}
+        gold = 0 if 'Ectoplasm' in relics else (90 if index == 0 else
+                                             9 if index == 1 and 'CeramicFish' in relics else 0)
+        if ({r['id'] for r in gs['relics']} != relics or gs['gold'] != old['gold'] + gold
+                or gs['max_hp'] != old['max_hp']):
+            raise RuntimeError('Knowing Skull reward/resource mismatch')
+        old_potions = [p['id'] for p in old['potions']]
+        new_potions = [p['id'] for p in gs['potions']]
+        if len(new_potions) != len(old_potions):
+            raise RuntimeError('Knowing Skull changed potion capacity')
+        # Damage precedes reward. Permit the observed inventory either without
+        # revival or after consuming its first Fairy; never compact physical
+        # slots or decide availability using the pre-damage full/empty flag.
+        bases = [old_potions]
+        if 'FairyPotion' in old_potions and 'Mark of the Bloom' not in relics:
+            revived = list(old_potions)
+            revived[revived.index('FairyPotion')] = 'Potion Slot'
+            bases.append(revived)
+        for base in bases:
+            if index == 2 and 'Sozu' not in relics and 'Potion Slot' in base:
+                slot = base.index('Potion Slot')
+                if (new_potions[slot] != 'Potion Slot'
+                        and all(a == b for i, (a, b) in enumerate(zip(base, new_potions)) if i != slot)):
+                    self.pending = None
+                    return False
+            elif base == new_potions:
+                self.pending = None
+                return False
+        raise RuntimeError('Knowing Skull potion reward/automatic revival slots mismatch')
+
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
         if self.pending and self.pending[1] in STAGED_EFFECTS:
@@ -861,13 +943,11 @@ class EventEffectAck:
         if effect == 'falling_remove':
             card = next(d['card'] for d in falling_choices(gs) if d['index'] == decision.semantic[1])
             self.falling_target = (card['id'], card.get('upgrades', 0))
-        if effect == 'potion' and (not any(p.get('id') == 'Potion Slot' for p in gs.get('potions', []))
-                                   or any(r.get('id') == 'Sozu' for r in gs.get('relics', []))):
-            # Skull pays HP even when obtainPotion cannot insert into inventory.
-            # Keep the simulator's legal action; verify this precise no-gain case.
-            if gs.get('screen_state', {}).get('event_id') != 'Knowing Skull':
-                raise RuntimeError('unsupported blocked event potion reward')
-            effect = 'blocked_skull_potion'
+        if gs['screen_state'].get('event_id') == 'Knowing Skull':
+            skull_costs(gs)
+            if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
+                raise ValueError('Knowing Skull semantic action and UI command disagree')
+            effect = 'skull_' + effect
         self.pending = (deepcopy(gs), effect, now)
 
     def waiting(self, frame, now):
@@ -895,6 +975,8 @@ class EventEffectAck:
             # Gold/relic/max-HP can change before the associated curse/cards
             # enter the deck. Do not release a partially completed reward.
             return True
+        if effect.startswith('skull_'):
+            return self._waiting_skull(old, g, effect)
         if effect in {'portal_boss', 'portal_boss_confirmed'}:
             if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
                 if g.get('room_type') != 'MonsterRoomBoss':
@@ -964,9 +1046,6 @@ class EventEffectAck:
                        and _text(current_options[0].get('text', '')).strip('[]') in {'离开', 'leave'})
         old_relics = {r['id']: r for r in old.get('relics', [])}
         new_relics = {r['id']: r for r in g.get('relics', [])}
-        skull_paid = (same_event and event == 'Knowing Skull'
-                      and len(current_options) == 4
-                      and g['screen_state']['options'] != old['screen_state']['options'])
         if effect.startswith('woman_potions_') or effect == 'woman_leave':
             count = 0 if effect == 'woman_leave' else int(effect.rsplit('_', 1)[1])
             cost = min(old.get('gold', 0), 10 + 10 * count) if count else 0
@@ -1176,10 +1255,6 @@ class EventEffectAck:
                 self.pending = None
                 return False
             return True
-        if old.get('screen_state', {}).get('event_id') == 'Knowing Skull':
-            # A card-vs-potion mismatch must never pass merely because HP fell.
-            if (effect != 'card' and gained) or (effect != 'potion' and potion_changed) or (effect != 'gold' and delta('gold') > 0):
-                raise RuntimeError(f'event effect type mismatch: expected {effect}, card={bool(gained)}, potion={potion_changed}, gold={delta("gold")}')
         if old.get('screen_state', {}).get('event_id') == 'Big Fish' and effect == 'heal':
             # Banana heals maxHP/3; Mark of the Bloom can legitimately make it
             # zero even below full health. Neither a stale frame nor a wrong
@@ -1200,8 +1275,7 @@ class EventEffectAck:
         # Only audited completed pages/cost progression can prove a legitimate
         # zero delta. A changed arbitrary frame or a stale Leave is not enough.
         blocked_gold = ('Ectoplasm' in old_relics and delta('gold') == 0
-                        and ((final_leave and event in {'Golden Shrine', 'Tomb of Lord Red Mask', 'MindBloom', 'Nest'})
-                             or skull_paid))
+                        and final_leave and event in {'Golden Shrine', 'Tomb of Lord Red Mask', 'MindBloom', 'Nest'})
         paid_empty = (event == 'Masked Bandits' and effect == 'gold_loss'
                       and old['gold'] == g['gold'] == 0 and same_event
                       and transport_only(g) is not None
@@ -1215,16 +1289,13 @@ class EventEffectAck:
             'transform': bool(gained) and bool(lost),
             'upgrade': bool(gained) and bool(lost) and Counter(c['id'] for c in g.get('deck', [])) == Counter(c['id'] for c in old.get('deck', [])),
             'potion': potion_changed, 'relic': relic_changed,
-            'blocked_skull_potion': (skull_paid and not potion_changed
-                                     and not gained and not lost and not relic_changed
-                                     and delta('gold') == 0 and delta('max_hp') == 0),
             'heal': delta('current_hp') > 0 or (final_leave and event == 'The Library'
                                               and (old['current_hp'] == old['max_hp'] or 'Mark of the Bloom' in old_relics)),
             'maxhp_gain': delta('max_hp') > 0,
             'maxhp_loss': delta('max_hp') < 0 or (final_leave and old['max_hp'] == g['max_hp'] == 1
                                                 and event in {'Vampires', 'Ghosts', 'Winding Halls'}),
             'vial_bites': relic_changed and bool(gained),
-            'hp_loss': delta('current_hp') < 0 or (event == 'Knowing Skull' and final_leave),
+            'hp_loss': delta('current_hp') < 0,
             'combat': bool(g.get('combat_state')) or g.get('room_phase') == 'COMBAT',
             'leave': g.get('screen_state') != old.get('screen_state') or g.get('screen_type') != 'EVENT',
         }[effect]

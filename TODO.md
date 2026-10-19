@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE81 | 知识之颅源码已修并构建，特殊分支待自然覆盖 | bridge/event_contract.py按四个公开费用与语义命令确认仅选中项+1，Leave最终页；保留原deck UUID，卡牌UNCOMMON/数量与Fish9金、Ectoplasm、Sozu、满槽/复活释放物理槽/原位补回同药分别处理。原生Skull Sozu不roll药水，满槽仍roll。OBS/ACTION/Java v22不变，无离线测试；验收需自然交易与副作用，不把第三幕续档当该事件验证。 |
 | BRIDGE80 | 源码已修，特殊复活分支未实机覆盖 | ScrapOoze失败按实际同步伤害之后的费用+1/成功率+10确认，不要求净HP下降；仅允许单槽FairyPotion→Potion Slot自动复活药水变化，其余资源约束保留。适用bridge/event_contract.py，词表登记；验收需自然失败及复活变体，不以当前883f266运行替代新源码验收，无离线测试。 |
 | BRIDGE79 | 篝火/营火/铁匠三类预览确认实机通过，其他组合未覆盖 | v22导出真实hoveredCard UUID，独立于selected_cards；共享验证原实例，事件核对请求，通用流程单次CONFIRM等关闭。883f266自然F12移除打击、F15营火升级Uppercut、F19AccursedBlacksmith升级SpotWeakness，均实际回读牌组变化并离开；原死等消除。Wing/Wheel/变牌等其余组合仍未逐项实机覆盖，不改模型动作、不填假selected/PAD，无离线测试。 |
 | BRIDGE78 | 已部署F6→F12，特殊组合未自然覆盖 | HP_LOSS补Buffer先于Tungsten，Intangible不将0变1，零伤不触发受伤收益；Pain/Brutality补玩家来源→Rupture，Brutality先抽后伤；Tail最低回1HP。正常怪物攻击lastDamageTaken按受击前HP封顶，防过量吸血；v21起导出仅NORMAL不被缠绕THORNS覆盖。750d67a/v21/native真实运行至F12，因独立BRIDGE79确认死等停止，非本批伤害验证；OBS20/ACTION8/layout9/权重不变，无逐bug离线测试。 |

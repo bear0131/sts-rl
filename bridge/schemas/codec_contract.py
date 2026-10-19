@@ -367,6 +367,8 @@ def complete_word_tables():
             "startSpin/buttonPressed/purgeResult": "actual GremlinWheelGame execution flags; hidden random result is not exported",
             "Bonfire": "BONFIRE_SPIRITS precedes generic for_purge; native opens selection directly, Java intro/offer are transport",
             "ScrapOoze failure": "buttonEffect applies damage synchronously before displayed damage+1/chance+10; actual offer change acknowledges failure despite Fairy/Tail net healing; only one FairyPotion-to-empty slot change is allowed (BRIDGE80)",
+            "KnowingSkull": "four displayed HP prices >=6, leave=6; only chosen reward price increments by1 after HP_LOSS and reward, leave requires final dialogue; actual delayed card obtain awaited; real deck UUIDs, uncommon card count/Fish9 gold/Ectoplasm90-or0 gold and ordered potion slots checked (BRIDGE81)",
+            "KnowingSkull potions": "damage may consume first Fairy before reward; then first empty physical slot receives reward, Sozu blocks before random generation, full inventory without Sozu still rolls; unchanged full/Sozu or same-potion refill is acknowledged by exact price progression, never a fabricated slot",
         },
         "dynamic_event_kinds": DYNAMIC_EVENT_OPTION_KINDS,
         "dynamic_event_kind_aliases": DYNAMIC_EVENT_OPTION_KIND_ALIASES,

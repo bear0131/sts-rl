@@ -3133,7 +3133,11 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 2:
                     playerLoseHp(info.hpAmount2++);
-                    obtainPotion(getRandomPotion(potionRng, cc));
+                    // KnowingSkull checks Sozu before generating the reward.
+                    // A full inventory still rolls; damage can free a Fairy slot.
+                    if (!hasRelic(RelicId::SOZU)) {
+                        obtainPotion(getRandomPotion(potionRng, cc));
+                    }
                     break;
 
                 case 3:
