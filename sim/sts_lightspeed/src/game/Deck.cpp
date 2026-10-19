@@ -149,6 +149,11 @@ void Deck::obtain(GameContext &gc, Card card, int count) {
                 transformableCount += count;
                 cardTypeCounts[static_cast<int>(CardType::CURSE)] += count;
             }
+            // Only curses actually obtained after Omamori trigger this relic.
+            // The shared HP helper keeps Mark of the Bloom's healing restriction.
+            if (gc.hasRelic(RelicId::DARKSTONE_PERIAPT)) {
+                gc.playerIncreaseMaxHp(6 * count);
+            }
             break;
 
         case CardType::STATUS:

@@ -5,3 +5,5 @@ Python binding 位于 sts_lightspeed/ 的绑定源码；第三方 json/pybind11 
 
 按 ../tests/README.md 从本仓库源码构建。用绝对 STS_LIGHTSPEED_BUILD_DIR 选择 .pyd/.so；测试需要 STS_ENABLE_RULE_TRACE=ON。不要把已存在的 build-gumbel-current 目录当成“当前源码已重建”的证据。
 改规则需同时验证 canonical/packed 观测、合法动作与结算边界；一次训练 smoke 不能验证全部游戏规则。
+
+主牌组的实际取得效果集中在 `Deck::obtain`：御守先消耗挡诅咒次数，剩余实际取得的诅咒才触发黑石护符最大HP/回血及陶瓷小鱼金币。`obtainRaw`、`set_deck_state`等恢复接口不重放取得效果。最大生命变化复用GameContext的HP入口，减最大HP最低1；Bloom只阻止回血。药贩子重复取得突变剂转为Circlet，首次计数1、重复递增。A0/A20与公开星盘路径回归见 `tests/integration/test_bottle_transforms.py`，需要从当前源码重建原生扩展。

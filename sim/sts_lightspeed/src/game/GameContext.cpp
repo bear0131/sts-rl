@@ -1305,6 +1305,9 @@ bool GameContext::obtainRelic(RelicId r) {
 //    std::cout << *this << std::endl;
 
     if (relics.has(r)) {
+        if (r == RelicId::CIRCLET) {
+            ++relics.getRelicValueRef(r);
+        }
         return false;
     }
 
@@ -1314,7 +1317,7 @@ bool GameContext::obtainRelic(RelicId r) {
 
     relics.setHasRelic(r, true);
 
-    int relicData = 0;
+    int relicData = r == RelicId::CIRCLET ? 1 : 0;
     bool opensScreen = false;
 
     switch (r) {
@@ -2247,7 +2250,7 @@ void GameContext::loseGold(int amount, bool inShop) {
 }
 
 void GameContext::loseMaxHp(int amount) {
-    maxHp -= amount;
+    maxHp = std::max(1, maxHp - amount);
     curHp = std::min(curHp, maxHp);
 }
 
@@ -2785,7 +2788,8 @@ void GameContext::chooseEventOption(int idx) {
                     break;
 
                 case 2:
-                    obtainRelic(RelicId::MUTAGENIC_STRENGTH);
+                    obtainRelic(hasRelic(RelicId::MUTAGENIC_STRENGTH)
+                        ? RelicId::CIRCLET : RelicId::MUTAGENIC_STRENGTH);
                     regainControl();
                     break;
 

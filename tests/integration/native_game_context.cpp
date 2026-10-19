@@ -395,6 +395,78 @@ static void checkRelicSelection(int variant, int ascension) {
                 "removed card retained bottle binding");
 }
 
+static void checkAugmenterRewards(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.deck = Deck{};
+    gc.curEvent = Event::AUGMENTER;
+    gc.screenState = ScreenState::EVENT_SCREEN;
+    gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+    gc.gold = 12;
+    gc.curHp = gc.maxHp = 80;
+    if (variant < 2) {
+        if (variant == 1) {
+            gc.obtainRelic(RelicId::TOXIC_EGG);
+            gc.obtainRelic(RelicId::CERAMIC_FISH);
+        }
+        gc.chooseEventOption(0);
+        require(gc.deck.size() == 1 && gc.deck.cards[0].id == CardId::JAX &&
+                gc.deck.cards[0].getUpgraded() == variant, "JAX gain/egg mismatch");
+        require(gc.gold == 12 + 9 * variant && gc.screenState == ScreenState::MAP_SCREEN,
+                "JAX obtain side effect/continuation mismatch");
+    } else if (variant < 5) {
+        if (variant >= 3) gc.obtainRelic(RelicId::MUTAGENIC_STRENGTH);
+        if (variant == 4) gc.obtainRelic(RelicId::CIRCLET);
+        gc.chooseEventOption(2);
+        require(gc.hasRelic(RelicId::MUTAGENIC_STRENGTH), "missing Mutagenic Strength");
+        require(gc.hasRelic(RelicId::CIRCLET) == (variant >= 3), "duplicate Mutagens must give Circlet");
+        if (variant >= 3) require(gc.relics.getRelicValue(RelicId::CIRCLET) == variant - 2,
+                                 "duplicate Circlet counter mismatch");
+    } else if (variant < 11) {
+        const int charges = (variant - 5) % 3;
+        const bool bloom = variant >= 8;
+        gc.obtainRelic(RelicId::OMAMORI);
+        gc.relics.getRelicValueRef(RelicId::OMAMORI) = charges;
+        for (auto r : {RelicId::DARKSTONE_PERIAPT, RelicId::CERAMIC_FISH, RelicId::DU_VU_DOLL}) gc.obtainRelic(r);
+        if (bloom) gc.obtainRelic(RelicId::MARK_OF_THE_BLOOM);
+        for (auto c : {CardId::PARASITE, CardId::PAIN, CardId::ASCENDERS_BANE}) gc.deck.obtainRaw(Card(c));
+        gc.chooseEventOption(1);
+        gc.chooseSelectCardScreenOption(0);
+        gc.chooseSelectCardScreenOption(0);
+        const int obtained = 2 - charges;
+        require(gc.deck.size() == 1 + obtained && gc.deck.cards[0].id == CardId::ASCENDERS_BANE,
+                "Omamori transform count/permanent curse mismatch");
+        require(gc.maxHp == 77 + 6 * obtained && gc.curHp == (bloom ? 77 : gc.maxHp),
+                "Darkstone/Parasite/Bloom transform HP mismatch");
+        require(gc.gold == 12 + 9 * obtained && gc.relics.getRelicValue(RelicId::OMAMORI) == 0,
+                "blocked curses must not trigger gain effects");
+        require(gc.deck.getCountMatching([](const Card &c) { return c.getType() == CardType::CURSE; }) == 1 + obtained, "physical curse count mismatch");
+    } else if (variant == 11) {
+        gc.curHp = gc.maxHp = 2;
+        gc.deck.obtainRaw(Card(CardId::PARASITE));
+        gc.deck.remove(gc, 0);
+        require(gc.maxHp == 1 && gc.curHp == 1, "Parasite must not lower maximum HP below one");
+    } else if (variant == 12) {
+        gc.obtainRelic(RelicId::OMAMORI);
+        gc.obtainRelic(RelicId::DARKSTONE_PERIAPT);
+        gc.obtainRelic(RelicId::CERAMIC_FISH);
+        gc.deck.obtain(gc, Card(CardId::PAIN), 3);
+        require(gc.deck.size() == 1 && gc.maxHp == 86 && gc.curHp == 86 && gc.gold == 21,
+                "bulk curse obtain must apply effects only to the unblocked card");
+    } else if (variant >= 13 && variant <= 15) {
+        gc.curHp = 30;
+        gc.obtainRelic(RelicId::DARKSTONE_PERIAPT);
+        if (variant == 14) gc.obtainRelic(RelicId::MARK_OF_THE_BLOOM);
+        gc.deck.obtain(gc, Card(variant == 15 ? CardId::BASH : CardId::PAIN), 2);
+        require(gc.maxHp == (variant == 15 ? 80 : 92), "max HP must count only obtained curses");
+        require(gc.curHp == (variant == 13 ? 42 : 30), "curse gain heals by six, not to full");
+    } else if (variant == 16) {
+        gc.curHp = gc.maxHp = 1;
+        gc.deck.obtainRaw(Card(CardId::PARASITE));
+        gc.deck.remove(gc, 0);
+        require(gc.maxHp == 1 && gc.curHp == 1, "minimum HP must survive another Parasite removal");
+    } else throw std::invalid_argument("unknown Augmenter reward fixture");
+}
+
 static void checkBottleTransform(int variant, int ascension) {
     GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
     gc.deck = Deck{};
@@ -818,6 +890,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "augmenter-reward") {
+            checkAugmenterRewards(std::stoi(argv[2]), std::stoi(argv[3]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade" || mode == "dynamic-exhaust-search") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
