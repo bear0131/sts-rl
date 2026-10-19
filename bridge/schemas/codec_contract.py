@@ -24,6 +24,10 @@ from .entity_ids import (
     DYNAMIC_EVENT_OPTION_KINDS,
     LIVE_RELIC_STATE_FIELDS,
     LIVE_RELIC_COUNTER_FIELDS,
+    LIVE_RELIC_COUNTER_MODULI,
+    LIVE_RELIC_COUNTER_STOP_TURNS,
+    RELIC_COUNTER_DOMAINS,
+    PHASE_RELIC_COUNTER_DOMAINS,
     REAL_RELIC_COUNTER_USAGE,
     DERIVED_RELIC_COUNTER_SOURCES,
     RELIC_COUNTER_SENTINELS,
@@ -167,11 +171,21 @@ def complete_word_tables():
             "persistent_value_map": RELIC_COUNTER_SENTINELS.get(relic, {}),
             "combat_value_map": COMBAT_RELIC_COUNTER_SENTINELS.get(relic, {}),
             "combat_runtime_field": LIVE_RELIC_COUNTER_FIELDS.get(relic),
+            "java_numeric_domain": RELIC_COUNTER_DOMAINS.get(relic) or PHASE_RELIC_COUNTER_DOMAINS.get(relic),
+            "combat_modulo": LIVE_RELIC_COUNTER_MODULI.get(relic),
+            "combat_stop_turn": LIVE_RELIC_COUNTER_STOP_TURNS.get(relic),
+            "inherited_display_value_map": {-1: 0} if relic not in REAL_RELIC_COUNTER_USAGE or relic == "CeramicFish" else {},
             "numeric_audit_status": (
                 "mapped_runtime" if relic in LIVE_RELIC_COUNTER_FIELDS else
                 "mapped_derived" if relic in DERIVED_RELIC_COUNTER_SOURCES else
-                "mapped_persistent" if relic in RELIC_COUNTER_SENTINELS else
-                "pending_phase_and_numeric_review"
+                "mapped_persistent" if relic in RELIC_COUNTER_SENTINELS or relic in RELIC_COUNTER_DOMAINS else
+                "mapped_display_sentinel"
+            ),
+            "phase_audit_status": (
+                "pending_combat_entry_charge_timing" if relic == "NeowsBlessing" else
+                "pending_map_action_support" if relic == "WingedGreaves" else
+                "legacy_use_not_supported" if relic == "CeramicFish" else
+                "numeric_transport_reviewed_not_full_effect_acceptance"
             ),
         }
     return {
@@ -190,6 +204,7 @@ def complete_word_tables():
         "combat_relic_counter_sentinels": COMBAT_RELIC_COUNTER_SENTINELS,
         "relic_counter_contracts": relic_counters,
         "combat_counter_fields": {key: key for key in CS._REAL_COMBAT_COUNTER_KEYS},
+        "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
         "intent_components": REAL_INTENT_COMPONENTS,
         "room_phases": sorted(REAL_ROOM_PHASES),
         "action_phases": sorted(REAL_ACTION_PHASES),
@@ -302,10 +317,16 @@ def validate_codec_contract() -> dict[str, int]:
         if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
             raise RuntimeError(f"live relic state word table names unknown field: {relic!r}/{field!r}")
     for relic, field in LIVE_RELIC_COUNTER_FIELDS.items():
-        if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
+        if relic not in canonical_sets["relic"] or field not in (*CS._REAL_COMBAT_COUNTER_KEYS, "$turn"):
             raise RuntimeError(f"live relic counter table names unknown field: {relic!r}/{field!r}")
     if (set(REAL_RELIC_COUNTER_USAGE) | set(DERIVED_RELIC_COUNTER_SOURCES)) - canonical_sets["relic"]:
         raise RuntimeError("relic counter source inventory names unknown relics")
+    classified_counters = (set(RELIC_COUNTER_SENTINELS) | set(RELIC_COUNTER_DOMAINS)
+                           | set(PHASE_RELIC_COUNTER_DOMAINS) | {"CeramicFish"})
+    if classified_counters != set(REAL_RELIC_COUNTER_USAGE):
+        raise RuntimeError("Java counter users and numeric disposition word tables differ")
+    if (set(LIVE_RELIC_COUNTER_MODULI) | set(LIVE_RELIC_COUNTER_STOP_TURNS)) - set(LIVE_RELIC_COUNTER_FIELDS):
+        raise RuntimeError("live relic transforms name unknown runtime fields")
     for table in (RELIC_COUNTER_SENTINELS, COMBAT_RELIC_COUNTER_SENTINELS):
         for relic, values in table.items():
             if relic not in canonical_sets["relic"] or not values:

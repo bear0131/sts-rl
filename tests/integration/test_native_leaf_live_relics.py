@@ -18,6 +18,8 @@ class LiveRelicObservationMismatch(AssertionError):
 
 @pytest.mark.parametrize("relics", [
     ["Centennial Puzzle"], ["Lizard Tail"], ["Happy Flower", "Pen Nib", "InkBottle"],
+    ["Kunai", "Letter Opener", "Ornamental Fan", "Pocketwatch", "Shuriken"],
+    ["CaptainsWheel", "HornCleat", "StoneCalendar", "Velvet Choker"],
 ])
 def test_leaf_live_relic_counters_match_canonical(combat_factory, relics):
     def make():
@@ -106,6 +108,20 @@ def test_java_relic_sentinel_word_table_matches_native_save_conversion():
                     sts.java_relic_counter(relic_id, raw)
 
 
+def test_every_relic_numeric_word_table_matches_native_save_converter():
+    import slaythespire as sts
+    from env.core.vocab import RELIC_VOCAB
+    for relic_id in RELIC_VOCAB[1:]:
+        for raw in (*range(-3, 11), 2147483647):
+            try:
+                expected = native_relic_counter(relic_id, raw)
+            except ValueError:
+                with pytest.raises(ValueError, match="counter"):
+                    sts.java_relic_counter(relic_id, raw)
+            else:
+                assert sts.java_relic_counter(relic_id, raw) == expected, (relic_id, raw)
+
+
 def test_tea_set_pending_charge_is_spent_in_combat_observation(combat_factory):
     import slaythespire as sts
     env = combat_factory(["STRIKE_RED"] * 5)
@@ -134,3 +150,49 @@ def test_du_vu_observation_and_strength_derive_from_all_master_deck_curses(comba
         assert env.thick.gc.relic_state()[0]["counter"] == expected
         assert dict(env.thick.bc.to_dict()["player"]["powers"]).get("Strength", 0) == expected
         assert env._obs()["relic_counters"][0] == np.float32(expected / 10)
+
+
+@pytest.mark.parametrize("played,drawn", [(3, 8), (4, 5)])
+def test_pocketwatch_boundary_retains_next_turn_draw_condition_in_both_decoders(combat_factory, played, drawn):
+    import slaythespire as sts
+    env = combat_factory(["STRIKE_RED"] * 20, "Cultist", relics=["Pocketwatch"])
+    original = env.thick.bc
+    original.apply_custom_state({"player": {"counters": {"cards_played": played}}})
+    boundary = original.clone()
+    raw = boundary.execute_to_enemy_boundary(4 << 29)
+    assert raw["post_enemy_turn_boundary"]
+    assert raw["player"]["combat_counters"]["cards_played"] == 0
+    assert raw["pocketwatch_cards_at_boundary"] == played
+    canonical = normalize_sim(raw)
+    assert canonical["boundary_relic_counters"] == {"Pocketwatch": played}
+    original.execute(sts.Action(sts.ActionType.END_TURN))
+    assert len(original.to_dict()["hand"]) == drawn
+    env.thick.bc = boundary
+    env._invalidate_backend_cache()
+    raw_packed = boundary.compact_leaf_arrays()
+    packed = {"categorical": np.asarray(raw_packed["categorical"])[None],
+              "scalars": np.asarray(raw_packed["scalars"])[None],
+              "owners": np.array([0], dtype=np.int64),
+              "selection_prefix": np.array([0], dtype=np.int32),
+              "legal_policy_ids": np.empty((1, 0), dtype=np.int32)}
+    expected = np.float32(played / 10)
+    assert env._obs()["relic_counters"][0] == expected
+    assert env._native_packed_observation_batch(packed)["relic_counters"][0, 0] == expected
+    pool = NativeSearchBatch([env], 1)
+    try:
+        globals = {key: value[None] for key, value in env._native_packed_global_fields().items()}
+        assert pool.decoder.decode(packed, globals)["relic_counters"][0, 0] == expected
+    finally:
+        pool.close()
+
+
+def test_pocketwatch_future_key_keeps_three_and_four_card_boundaries_distinct(combat_factory):
+    env = combat_factory(["STRIKE_RED"] * 20, "Cultist", relics=["Pocketwatch"])
+    keys = []
+    for played in (3, 4):
+        branch = env.thick.bc.clone()
+        branch.apply_custom_state({"player": {"counters": {"cards_played": played}}})
+        branch.execute_to_enemy_boundary(4 << 29)
+        assert branch.to_dict()["player"]["combat_counters"]["cards_played"] == 0
+        keys.append(branch.nosl_future_key())
+    assert keys[0] != keys[1], "Pocketwatch's future extra draw must not be merged"

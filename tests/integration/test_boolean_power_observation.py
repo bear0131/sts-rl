@@ -88,4 +88,4 @@ def test_real_bridge_presence_and_native_contract():
     assert all(powers[name] == 1 for name in BOOLEAN_PLAYER_POWERS)
     assert powers['Strength'] == -3
     assert encode.OBS_VERSION == sts.nosl_compact_layout()['observation_version'] == 20
-    assert sts.nosl_compact_layout()['version'] == 5
+    assert sts.nosl_compact_layout()['version'] == 6

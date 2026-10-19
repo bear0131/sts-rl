@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE23 | 遗物完整来源词表及多阶段修复已push，未部署；阶段数值语义继续审查 | OBS20/ACTION8/layout5/parity-v5配套；8件充能/二态哨兵、九件实时叶计数、Tea跨房间保持/消费、初始充能已修，详见worklog/2026-10-19.md的BRIDGE23各节。complete_word_tables逐项列出180遗物的来源/含义/数值映射/审查状态，29个Java类读写counter，另含26战斗计数字段。Du-Vu Doll改从全主牌组CURSE计数，包括不可移除诅咒；Circlet初始1、重复只加counter、奖励收据核对恰好+1。variants27/28旧exit34/35，新A0/A15全0；394定向通过。下一步：无计数Java-1/native0、回合/派生计数观测、Neow战斗开始/结束阶段差、WingedGreaves地图能力；表中pending_phase_and_numeric_review明确不是已验证，不允许用PAD或假0填补。其他动态事件/效果收据仍见BRIDGE22。 |
+| BRIDGE23 | 遗物来源/数值词表、18件实时观测及怀表边界已修，未部署；阶段/效果继续审查 | 当前OBS20/ACTION8/layout6/parity-v5；180遗物逐项列来源/含义/数值域/映射，29个Java计数使用者恰好有处置；其余继承显示哨兵-1→native0，缺字段/未知ID/越界数值仍拒绝。canonical/Python compact/native batch按18件实时/回合计数覆盖根元数据；怀表上回合3/4张在搜索敌方回合后边界显式保留，state key同步区分，真实下回合抽牌8/5验证。376桥接单元、109完整批次矩阵、69原生定向通过（另F07既有strict xfail）；固定TRAIN47 CUDA加载/预测159/一步环境接入通过。此前Tea/充能/save、Du-Vu/Circlet/奖励收据等见worklog/2026-10-19.md的BRIDGE23各节。下一步：Neow战斗开始/结束充能阶段差、WingedGreaves地图能力、Neow bonus/drawback关键词与typed导出；phase_audit_status与数值映射分开，不把映射完备称作全部效果正确。其他动态事件/收据仍见BRIDGE22。 |
 
 | BRIDGE22 | 词表与严格传输阶段已修，效果审查/实机未完成；未部署 | `bridge/schemas/codec_contract.py::complete_word_tables` 展开1089个真机/1045个原生身份、198行动映射、38选择来源、52事件处置及17意图/14屏幕/15命令和其他Java枚举；禁止未知或缺失字段填PAD。OBS20/ACTION8/layout4/parity-v4配套重建，修正钥匙、行动历史、状态/计数导入和压缩观测越界截断/类型/单选计数/单行全局复制等错误。410单元、111原生定向及90兼容/同步通过，97搜索批次一致性通过；固定TRAIN47 CUDA加载/一步预测/环境动作通过。下一步：`bridge/event_contract.py` 中 pending_* 效果收据、动态事件typed导出、Match and Keep板面传输、其余默认值与跨层副作用继续源码核对；词表识别不等于事件全支持。完成后可恢复部署并按授权显式`--continuous-test --auto-start`实机测试。 |
 

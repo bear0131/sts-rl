@@ -88,6 +88,9 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert counts['combat_counter_fields'] == 26
     assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
     assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_derived'
+    assert tables['relic_counter_contracts']['Kunai']['combat_modulo'] == 3
+    assert tables['relic_counter_contracts']['HornCleat']['combat_stop_turn'] == 2
+    assert tables['relic_counter_contracts']['Burning Blood']['inherited_display_value_map'] == {-1: 0}
     assert json.loads(json.dumps(tables))['rejected_real_ids']['cards']
 
 

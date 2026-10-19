@@ -738,6 +738,12 @@ def normalize_sim(raw):
     missing = required - set(raw)
     if missing:
         raise ValueError(f"sim combat state is missing {sorted(missing)!r}")
+    boundary_counters = {}
+    if raw["post_enemy_turn_boundary"]:
+        value = raw["pocketwatch_cards_at_boundary"]
+        if type(value) is not int or value < 0:
+            raise ValueError("native boundary Pocketwatch counter is not a nonnegative integer")
+        boundary_counters["Pocketwatch"] = value
     p = raw["player"]
     player_required = {
         "hp", "max_hp", "block", "energy", "gold", "combat_counters",
@@ -763,6 +769,7 @@ def normalize_sim(raw):
         "post_enemy_turn_boundary": bool(
             raw["post_enemy_turn_boundary"]
         ),
+        "boundary_relic_counters": boundary_counters,
         "player": {
             "hp": p["hp"],
             "max_hp": p["max_hp"],

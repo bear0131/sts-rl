@@ -132,6 +132,7 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     // Search-only marker: true only after the complete enemy phase and its
     // deterministic end-of-round cleanup have finished.
     d["post_enemy_turn_boundary"] = bc.postEnemyTurnBoundary;
+    d["pocketwatch_cards_at_boundary"] = bc.pocketwatchCardsAtBoundary;
     d["outcome"] = static_cast<int>(bc.outcome);
     d["input_state"] = static_cast<int>(bc.inputState);
 
@@ -297,7 +298,7 @@ constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
 // and card-select metadata.
 constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
                            kMaxMonsters * 6 + kMaxMonsters * kMonsterStatus +
-                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + 2;
+                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + 3;
 
 struct Row {
     std::array<std::int32_t, kCatSize> categorical{};
@@ -590,8 +591,9 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
         row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
     }
-    row.scalars[kFloatSize - 2] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
-    row.scalars[kFloatSize - 1] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
+    row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
+    row.scalars[kFloatSize - 2] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
+    row.scalars[kFloatSize - 1] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
     return row;
 }
 
@@ -2361,7 +2363,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["live_relic_names"] = pybind11::make_tuple("Centennial Puzzle", "Lizard Tail");
-        out["version"] = 5;
+        out["version"] = 6;
         // OBS20 adds run-global/reward key fields in Python. Compact combat
         // transport bytes are unchanged; root-global key ownership is overlaid
         // by run_env exactly like relic metadata.

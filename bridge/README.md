@@ -14,15 +14,16 @@
 `validate_codec_contract()` 检查目标存在、全集覆盖、哨兵隔离和能力/选择来源的完整性。
 它们复用 `entity_ids.py` 与 `event_contract.py` 的运行时数据，不另维护一份文档副本。
 `relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
-29个Java类实际读写counter，其他类继承显示哨兵。`pending_phase_and_numeric_review`
-明确表示数值/阶段尚未核实，不是运行时用PAD或0代替缺失状态的许可。
+29个Java类实际读写counter，其他类继承显示哨兵。数值映射与`phase_audit_status`
+分开：有映射不等于完整效果/阶段已验收；待处理项不是运行时用PAD或0代替缺失状态的许可。
 
 PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip 候选；未知身份、
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-OBS20 / ACTION8 / compact layout5 / `simulator-parity-v5` 配套使用。
-layout5 追加百年积木/蜥蜴尾巴的实时可用标志；九件实时遗物在搜索叶观测中覆盖根计数。
+OBS20 / ACTION8 / compact layout6 / `simulator-parity-v5` 配套使用。
+layout6 携带百年积木/蜥蜴尾巴实时可用标志和怀表边界计数；18件实时/回合派生遗物在搜索叶观测中覆盖根计数。
+敌方回合后、下次抽牌前的搜索专用边界保留怀表的上回合出牌数，不能随普通回合计数清零。
 永久与战斗计数使用不同对接表（例如钢笔尖永久9、战斗-1），不能按名称直接复制。
 旧 checkpoint 只投影到其原有字段与动作几何，不补造不存在的输入或新动作 logits；
 训练恢复和 replay 不支持跨合同。当前真机原生搜索仅支持 Ironclad 及明确实现的

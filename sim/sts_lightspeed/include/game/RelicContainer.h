@@ -21,6 +21,11 @@ namespace sts {
         // Native persistence uses nonnegative charges/flags, not Java's
         // display sentinels. Keep save import distinct from native snapshots.
         static int fromJavaCounter(RelicId id, int value) {
+            const auto bounded = [](int input, int minimum, int maximum) {
+                if (input < minimum || input > maximum)
+                    throw std::invalid_argument("Java relic counter outside its numeric domain");
+                return input == -1 ? 0 : input;
+            };
             switch (id) {
                 case RelicId::ANCIENT_TEA_SET:
                     if (value == -1) return 0;
@@ -47,8 +52,29 @@ namespace sts {
                 case RelicId::OMAMORI:
                     if (value >= 0 && value <= 2) return value;
                     break;
+                case RelicId::CIRCLET: return bounded(value, 1, 2147483647);
+                case RelicId::DU_VU_DOLL: return bounded(value, 0, 2147483647);
+                case RelicId::GIRYA: return bounded(value, 0, 3);
+                case RelicId::HAPPY_FLOWER: return bounded(value, 0, 2);
+                case RelicId::INCENSE_BURNER: return bounded(value, 0, 5);
+                case RelicId::INK_BOTTLE:
+                case RelicId::NUNCHAKU:
+                case RelicId::PEN_NIB: return bounded(value, 0, 9);
+                case RelicId::INSERTER: return bounded(value, 0, 1);
+                case RelicId::SUNDIAL: return bounded(value, 0, 2);
+                case RelicId::TINY_CHEST: return bounded(value, 0, 3);
+                case RelicId::CAPTAINS_WHEEL:
+                case RelicId::KUNAI:
+                case RelicId::LETTER_OPENER:
+                case RelicId::ORNAMENTAL_FAN:
+                case RelicId::SHURIKEN: return bounded(value, -1, 2);
+                case RelicId::HORN_CLEAT: return bounded(value, -1, 1);
+                case RelicId::POCKETWATCH:
+                case RelicId::STONE_CALENDAR: return bounded(value, -1, 2147483647);
+                case RelicId::VELVET_CHOKER: return bounded(value, -1, 6);
                 default:
-                    return value;
+                    if (value == -1) return 0; // explicit inherited display sentinel
+                    break;
             }
             throw std::invalid_argument("Java relic counter outside its declared sentinel/charge domain");
         }

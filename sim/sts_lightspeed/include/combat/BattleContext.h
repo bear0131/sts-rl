@@ -87,6 +87,7 @@ namespace sts {
         // been reached.  Keep it separate from the control flag so in-flight
         // enemy actions are never mislabeled as value boundaries.
         bool postEnemyTurnBoundary = false;
+        int pocketwatchCardsAtBoundary = 0;
 
         ActionQueue<50> actionQueue;
         CardQueue cardQueue;

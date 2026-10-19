@@ -23,7 +23,18 @@ LIVE_RELIC_COUNTER_FIELDS = {
     "Nunchaku": "nunchaku",
     "Pen Nib": "pen_nib",
     "Sundial": "sundial",
+    "Kunai": "attacks_played",
+    "Letter Opener": "skills_played",
+    "Ornamental Fan": "attacks_played",
+    "Pocketwatch": "cards_played",
+    "Shuriken": "attacks_played",
+    "Velvet Choker": "cards_played",
+    "CaptainsWheel": "$turn",
+    "HornCleat": "$turn",
+    "StoneCalendar": "$turn",
 }
+LIVE_RELIC_COUNTER_MODULI = {"Kunai": 3, "Letter Opener": 3, "Ornamental Fan": 3, "Shuriken": 3}
+LIVE_RELIC_COUNTER_STOP_TURNS = {"CaptainsWheel": 3, "HornCleat": 2}
 
 # Every stock relic class in desktop-1.0.jar was checked for reads/writes of
 # AbstractRelic.counter (including setCounter calls). These 29 classes use it;
@@ -54,7 +65,7 @@ REAL_RELIC_COUNTER_USAGE = {
     "Pen Nib": ("PenNib", "attacks_modulo_ten_armed_at_nine"),
     "Pocketwatch": ("Pocketwatch", "cards_this_turn"),
     "Shuriken": ("Shuriken", "attacks_this_turn_modulo_three"),
-    "StoneCalendar": ("StoneCalendar", "combat_turn_until_activation"),
+    "StoneCalendar": ("StoneCalendar", "combat_turn"),
     "Sundial": ("Sundial", "shuffles_modulo_three"),
     "Tiny Chest": ("TinyChest", "question_rooms_modulo_four"),
     "Velvet Choker": ("VelvetChoker", "cards_this_turn"),
@@ -62,6 +73,21 @@ REAL_RELIC_COUNTER_USAGE = {
 }
 
 DERIVED_RELIC_COUNTER_SOURCES = {"Du-Vu Doll": "Deck::getCurseCount()"}
+
+# Inclusive Java display-counter domains at stable decision/save boundaries;
+# unbounded counters use the Java signed-int limit, never clipping.
+RELIC_COUNTER_DOMAINS = {
+    "Circlet": (1, 2147483647), "Du-Vu Doll": (0, 2147483647), "Girya": (0, 3),
+    "Happy Flower": (0, 2), "Incense Burner": (0, 5), "InkBottle": (0, 9),
+    "Inserter": (0, 1), "Nunchaku": (0, 9), "Pen Nib": (0, 9),
+    "Sundial": (0, 2), "Tiny Chest": (0, 3),
+}
+PHASE_RELIC_COUNTER_DOMAINS = {
+    "CaptainsWheel": (-1, 2), "HornCleat": (-1, 1), "Kunai": (-1, 2),
+    "Letter Opener": (-1, 2), "Ornamental Fan": (-1, 2),
+    "Pocketwatch": (-1, 2147483647), "Shuriken": (-1, 2),
+    "StoneCalendar": (-1, 2147483647), "Velvet Choker": (-1, 6),
+}
 
 # Java counter sentinel -> native persistent RelicInstance.data.  The mapping
 # is explicit so a used-up relic cannot become true merely because -2 != 0.
@@ -85,16 +111,45 @@ def native_relic_counter(relic_id, value):
     """Translate explicit Java sentinel states; never clamp unknown values."""
     if type(value) is not int:
         raise ValueError(f"relic {relic_id!r} counter is not an integer: {value!r}")
+    from env.core.vocab import RELIC_VOCAB_INDEX
+    if relic_id not in RELIC_VOCAB_INDEX or relic_id == "PAD":
+        raise ValueError(f"unknown live relic identity: {relic_id!r}")
     sentinels = RELIC_COUNTER_SENTINELS.get(relic_id)
     if sentinels is not None:
         if value not in sentinels:
             raise ValueError(f"relic {relic_id!r} counter outside its sentinel word table: {value}")
         return sentinels[value]
-    return value
+    domain = RELIC_COUNTER_DOMAINS.get(relic_id) or PHASE_RELIC_COUNTER_DOMAINS.get(relic_id)
+    if domain is not None:
+        if not domain[0] <= value <= domain[1]:
+            raise ValueError(f"relic {relic_id!r} counter outside its numeric word table: {value}")
+        return 0 if value == -1 else value
+    # CeramicFish.use() is a legacy unused counter path; ordinary obtain-card
+    # gold does not change counter. All remaining classes inherit -1.
+    if value != -1:
+        raise ValueError(f"relic {relic_id!r} has no supported display counter: {value}")
+    return 0
 
 
 def native_combat_relic_counter(relic_id, value):
+    if relic_id == "Pen Nib" and (type(value) is not int or not 0 <= value <= 9):
+        raise ValueError(f"real Pen Nib counter outside 0..9: {value!r}")
     return COMBAT_RELIC_COUNTER_SENTINELS.get(relic_id, {}).get(value, value)
+
+
+def live_relic_counter_value(relic_id, canonical):
+    if relic_id == "Pocketwatch" and canonical.get("post_enemy_turn_boundary", False):
+        return canonical["boundary_relic_counters"][relic_id]
+    source = LIVE_RELIC_COUNTER_FIELDS[relic_id]
+    value = (canonical["turn"] if source == "$turn" else
+             canonical["player"]["combat_counters"][source])
+    modulo = LIVE_RELIC_COUNTER_MODULI.get(relic_id)
+    stop = LIVE_RELIC_COUNTER_STOP_TURNS.get(relic_id)
+    if modulo is not None:
+        value %= modulo
+    if stop is not None and value >= stop:
+        value = 0
+    return value
 
 CARD_ALIASES = {
     "Venomology": "Alchemize",

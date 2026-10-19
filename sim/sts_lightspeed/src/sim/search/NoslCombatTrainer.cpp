@@ -179,6 +179,9 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, bc.turnHasEnded ? 1 : 0);
     hashValue(hash, bc.skipMonsterTurn ? 1 : 0);
     hashValue(hash, bc.postEnemyTurnBoundary ? 1 : 0);
+    if (bc.postEnemyTurnBoundary && bc.player.hasRelic<RelicId::POCKETWATCH>()) {
+        hashValue(hash, bc.pocketwatchCardsAtBoundary);
+    }
     hashValue(hash, bc.miscBits.to_ulong());
     hashValue(hash, bc.loopCount);
     // Historical scum-search scores are not part of NOSL HP futures.

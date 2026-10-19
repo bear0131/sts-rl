@@ -39,7 +39,7 @@ overworld-only canonical both encode):
 
 import numpy as np
 from gymnasium import spaces
-from bridge.schemas.entity_ids import LIVE_RELIC_COUNTER_FIELDS
+from bridge.schemas.entity_ids import LIVE_RELIC_COUNTER_FIELDS, live_relic_counter_value
 
 from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 from .ironclad_cards import card_numbers
@@ -862,9 +862,9 @@ def _encode_combat_global(o, canon):
         if (
             canon.get("phase") == "combat"
             and live_key is not None
-            and live_key in live_counters
+            and ((live_key == "$turn" and "turn" in canon) or live_key in live_counters)
         ):
-            live_value = live_counters[live_key]
+            live_value = live_relic_counter_value(rid, canon)
             o["relic_counters"][i] = (
                 float(bool(live_value))
                 if rid in _BINARY_LIVE_RELICS
@@ -936,9 +936,9 @@ def _encode_global(o, canon):
         if (
             canon.get("phase") == "combat"
             and live_key is not None
-            and live_key in live_counters
+            and ((live_key == "$turn" and "turn" in canon) or live_key in live_counters)
         ):
-            live_value = live_counters[live_key]
+            live_value = live_relic_counter_value(rid, canon)
             o["relic_counters"][i] = (
                 float(bool(live_value))
                 if rid in _BINARY_LIVE_RELICS

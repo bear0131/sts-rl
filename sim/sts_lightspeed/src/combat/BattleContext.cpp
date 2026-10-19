@@ -20,6 +20,7 @@ void BattleContext::init(const GameContext &gc) {
 }
 
 void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit) {
+    pocketwatchCardsAtBoundary = 0;
     undefinedBehaviorEvoked = false;
     haveUsedDiscoveryAction = false;
     seed = gc.seed;
@@ -2270,6 +2271,7 @@ void BattleContext::enterPostEnemyTurnBoundary() {
     if (!player.hasRelic<R::ICE_CREAM>()) {
         player.energy = 0;
     }
+    pocketwatchCardsAtBoundary = player.hasRelic<R::POCKETWATCH>() ? player.cardsPlayedThisTurn : 0;
     player.cardsPlayedThisTurn = 0;
     player.attacksPlayedThisTurn = 0;
     player.skillsPlayedThisTurn = 0;

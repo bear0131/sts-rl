@@ -36,7 +36,7 @@ public:
         const int handStart = 6+ps+counters+1+30+5*ms;
         const int pileStart = handStart+20, selectStart = pileStart+3*cards;
         if (cat.shape(1)!=224 || scalar.ndim()!=2 || scalar.shape(0)!=n ||
-            scalar.shape(1)!=selectStart+198 || owners.ndim()!=1 || owners.size()!=n ||
+            scalar.shape(1)!=selectStart+199 || owners.ndim()!=1 || owners.size()!=n ||
             prefix.ndim()!=1 || prefix.size()!=n || legal.ndim()!=2 || legal.shape(0)!=n)
             throw std::invalid_argument("native observation layout mismatch");
         py::dict out;
@@ -92,8 +92,10 @@ public:
         Array<std::int64_t> cardMap(lut_["card"]), monsterMap(lut_["monster"]),
             moveMap(lut_["move"]), potionMap(lut_["potion"]),
             contextMap(lut_["select_context"]), binary(lut_["binary_counters"]),
-            liveRelicIds(lut_["live_relic_ids"]), liveColumns(lut_["live_relic_counter_columns"]);
-        if (liveRelicIds.size()!=liveColumns.size())
+            liveRelicIds(lut_["live_relic_ids"]), liveColumns(lut_["live_relic_counter_columns"]),
+            liveModuli(lut_["live_relic_counter_moduli"]), liveStopTurns(lut_["live_relic_counter_stop_turns"]);
+        if (liveRelicIds.size()!=liveColumns.size() || liveRelicIds.size()!=liveModuli.size() ||
+            liveRelicIds.size()!=liveStopTurns.size())
             throw std::invalid_argument("native live relic counter word table mismatch");
         auto pc=py::cast<py::tuple>(lut_["player_status_columns"]), mc=py::cast<py::tuple>(lut_["monster_status_columns"]);
         Array<std::int64_t> pn(pc[0]), pt(pc[1]), mn(mc[0]), mt(mc[1]);
@@ -157,18 +159,25 @@ public:
             for (int k=0; k<2; ++k)
                 if (s[selectStart+196+k]!=0.0f && s[selectStart+196+k]!=1.0f)
                     throw std::invalid_argument("native live relic flag is not boolean");
+            const float pocketwatch=s[selectStart+198];
+            if (!std::isfinite(pocketwatch) || pocketwatch<0.0f || pocketwatch!=std::nearbyint(pocketwatch))
+                throw std::invalid_argument("native Pocketwatch counter is not a nonnegative integer");
             for (py::ssize_t k=0; k<liveRelicIds.size(); ++k) {
                 const auto column=liveColumns.data()[k];
-                if (column < -2 || column >= counters)
+                if (column < -4 || column >= counters)
                     throw std::invalid_argument("native live relic counter column out of range");
-                const float value=column < 0 ? s[selectStart+195-column] : s[6+ps+column]/counterScale;
+                float value=column == -4 ? s[selectStart+198] : column == -3 ? s[4]+1.0f : column < 0 ? s[selectStart+195-column] : s[6+ps+column];
+                const auto modulo=liveModuli.data()[k], stop=liveStopTurns.data()[k];
+                if (modulo) value=std::fmod(value,static_cast<float>(modulo));
+                if (stop && value>=stop) value=0.0f;
+                if (column!=-1 && column!=-2) value/=counterScale;
                 bool owned=false;
                 for (py::ssize_t slot=0; slot<relicWidth; ++slot)
                     if (relics[r*relicWidth+slot]==liveRelicIds.data()[k]) {
                         relicCounters[r*relicWidth+slot]=value;
                         owned=true;
                     }
-                if (column < 0 && value!=0.0f && !owned)
+                if ((column==-1 || column==-2) && value!=0.0f && !owned)
                     throw std::invalid_argument("native active relic flag has no owned relic");
             }
             for (int k=0; k<10; ++k)
