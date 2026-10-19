@@ -115,8 +115,10 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 8 or layout.get("observation_version") != encode.OBS_VERSION:
-        raise RuntimeError("observation v20 requires matching native compact layout v8; rebuild the simulator")
+    if layout.get("version") != 9 or layout.get("observation_version") != encode.OBS_VERSION:
+        raise RuntimeError("observation v20 requires matching native compact layout v9; rebuild the simulator")
+    if layout.get("grid_selection_slots") != 2 or encode.SELECT_PICK_SLOTS < 2:
+        raise RuntimeError("native pending GRID selection capacity mismatch")
     from bridge.schemas.entity_ids import (
         LIVE_RELIC_STATE_FIELDS, LIVE_RELIC_COUNTER_MODULI, LIVE_RELIC_COUNTER_STOP_TURNS,
         COMPACT_PLAYER_SCALAR_FIELDS,
@@ -1532,8 +1534,8 @@ class SlayTheSpireEnv(gym.Env):
         ps = int(layout["player_status_count"])
         ms = int(layout["monster_status_count"])
         card_count = int(layout["card_count"])
-        expected_cat = 10 + 5 + 5 + 5 + 5 + 1 + 193
-        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192 + 4
+        expected_cat = 10 + 5 + 5 + 5 + 5 + 1 + 193 + 2
+        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192 + 2 + 4
         if (categorical.shape[1] != expected_cat or
                 scalars.shape[1] != expected_scalar):
             raise RuntimeError(
@@ -1607,6 +1609,8 @@ class SlayTheSpireEnv(gym.Env):
             raise RuntimeError("native packed selection zone is out of range")
         out["select_native_indices"][:] = native_indices
         out["select_zone"][:, 0] = zones
+        out["selected_card_ids"][:, :2] = checked_lookup(
+            "selected GRID card", card_lut, c[:, 224:226])
 
         f = scalars
         gold = f[:, 5]
@@ -1727,6 +1731,12 @@ class SlayTheSpireEnv(gym.Env):
         out["can_pick_any"][:, 0] = f[:, select_start + 2]
         out["select_card_upgrades"][:] = f[:, select_start + 4:select_start + 100] / encode.UPGRADE_SCALE
         out["select_card_costs"][:] = f[:, select_start + 100:select_start + 196] / encode.ENERGY_SCALE
+        grid_upgrades = f[:, select_start + 196:select_start + 198]
+        if (not np.all(np.isfinite(grid_upgrades)) or np.any(grid_upgrades < 0)
+                or np.any(grid_upgrades != np.rint(grid_upgrades))
+                or np.any((c[:, 224:226] == 0) & (grid_upgrades != 0))):
+            raise RuntimeError("native packed selected GRID upgrades are invalid")
+        out["selected_card_upgrades"][:, :2] = grid_upgrades / encode.UPGRADE_SCALE
         # C++ stores the multi-select marker; it is represented by the hand
         # mask only when the thin layer has a pending selection, so no extra
         # model field is needed here.

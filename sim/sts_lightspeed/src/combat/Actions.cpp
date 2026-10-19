@@ -652,17 +652,23 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
     }};
 }
 
-// todo the amount should be the copies put into the hand 2 if have sacred bark and liquid memories
 Action Actions::BetterDiscardPileToHandAction(int amount, CardSelectTask task) {
     return {[=] (BattleContext &bc) {
-        if (bc.cards.discardPile.empty()) {
+        if (bc.cards.discardPile.empty() || amount <= 0) {
             return;
         }
-        if (bc.cards.discardPile.size() == 1) {
-            const int idx = 0;
-            bc.chooseDiscardToHandCard(0, task==CardSelectTask::LIQUID_MEMORIES_POTION);
+        if (amount > CardSelectInfo::GRID_PICK_CAPACITY ||
+            (amount != 1 && task != CardSelectTask::LIQUID_MEMORIES_POTION)) {
+            throw std::invalid_argument("unsupported discard retrieval count/context");
+        }
+        if (bc.cards.discardPile.size() <= amount) {
+            // Mandatory retrieval needs no UI when every card is selected.
+            // A full hand leaves the remaining source cards and costs intact.
+            const auto count = bc.cards.discardPile.size();
+            for (int i = 0; i < count && bc.cards.cardsInHand < CardManager::MAX_HAND_SIZE; ++i)
+                bc.chooseDiscardToHandCard(0, task == CardSelectTask::LIQUID_MEMORIES_POTION);
         } else {
-            bc.openSimpleCardSelectScreen(task, 1);
+            bc.openSimpleCardSelectScreen(task, amount);
         }
     }};
 }

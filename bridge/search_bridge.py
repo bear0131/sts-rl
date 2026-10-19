@@ -198,6 +198,7 @@ class RealCombatSearch:
             self.env._nosl_cpp_pending = deepcopy(thin.get("nosl_cpp_pending"))
             self.adapter.multi_selected = set(thin.get("real_multi_selected", ()))
             self.adapter._joint_multi_plan = deepcopy(thin.get("real_joint_multi_plan"))
+            self.adapter._combat_grid_receipt = deepcopy(thin.get("real_combat_grid_receipt"))
             self.env._invalidate_backend_cache()
         self._rollback_bc = None
         self._rollback_thin = None
@@ -237,6 +238,7 @@ class RealCombatSearch:
             self._awaiting_command = False
 
     def reset_run(self) -> None:
+        self.adapter._combat_grid_receipt = None
         self.identity = None
         self.card_identities = CombatCardIdentityMap()
         self.decision_index = 0
@@ -290,6 +292,7 @@ class RealCombatSearch:
             "nosl_cpp_pending": deepcopy(self.env._nosl_cpp_pending),
             "real_multi_selected": set(self.adapter.multi_selected),
             "real_joint_multi_plan": deepcopy(self.adapter._joint_multi_plan),
+            "real_combat_grid_receipt": deepcopy(self.adapter._combat_grid_receipt),
         }
         last_diagnostics: dict[str, Any] = {}
         for _ in range(12):
@@ -713,6 +716,13 @@ class RealCombatSearch:
                 raise ValueError("physical selection cannot contain a skip template")
             real_instances = self.card_identities.selection_records(
                 self.adapter.gs['deck'], real_instances)
+        if 'selected_instances' not in real_desc:
+            raise ValueError('real combat selection is missing selected instance records')
+        real_selected = self.card_identities.selection_records(
+            self.adapter.gs['deck'], real_desc['selected_instances'])
+        if (real_desc['selected'] != sim_desc['selected']
+                or real_selected != battle.selected_card_state()):
+            raise RuntimeError('combat selected GRID progress/physical instances differ')
         sim_candidates = self._selection_candidates(sim_desc)
         real_handles = tuple(row[0] for row in real_candidates)
         sim_handles = tuple(row[0] for row in sim_candidates)
@@ -763,7 +773,7 @@ class RealCombatSearch:
                 )
             return int(desc["pick_remaining"])
 
-        for key in ("zone", "pick_min", "can_pick_zero", "can_pick_any"):
+        for key in ("zone", "pick_min", "pick_max", "can_pick_zero", "can_pick_any"):
             if real_desc[key] != sim_desc[key]:
                 raise RuntimeError(
                     f"combat selection {key} mismatch "

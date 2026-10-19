@@ -4,9 +4,9 @@
 
 当前优先级（用户2026-10-19追加）：先修无色卡和战士卡，以及影响这两类卡的共用药水、遗物、选择与待结算链路；其他职业专属卡后置。后置不等于已支持，未知/未支持仍须明确拒绝，禁止PAD代填。固定TRAIN47权重、向量、动作几何和搜索预算不改；继续先集中源码修复、成批统一验证。
 
-交接边界（2026-10-19）：249b428为上一已验证阶段；其后的选择候选改动按用户要求立即保存推送，属于WIP，尚未编译/运行测试，不能直接部署。BRIDGE28增加完整候选实例校验、已知UUID匹配、有效费用与单选策略索引映射；不是pending动作完整恢复，旧选择测试夹具尚未同步。接手位置与复现入口见worklog/2026-10-19.md“用户要求立即推送的交接快照”。用户要求先集中读代码、成批修复，再统一测试，不再逐个问题打断加测试。
+交接边界（2026-10-19）：249b428为上一已验证阶段；其后的选择候选改动按用户要求立即保存推送，属于WIP，交接时未编译/运行测试。后续BRIDGE30批次已完成原生编译与Python语法检查，仍未统一回归，不能直接部署。BRIDGE28增加完整候选实例校验、已知UUID匹配、有效费用与单选策略索引映射；不是pending动作完整恢复，旧选择测试夹具尚未同步。接手位置与复现入口见worklog/2026-10-19.md“用户要求立即推送的交接快照”及“BRIDGE30源码批次收尾”。用户要求先集中读代码、成批修复，再统一测试，不再逐个问题打断加测试。
 
-| BRIDGE30 | 部分实现，未统一验证；amount=2待修 | `BattleContext.cpp::chooseDiscardToHandCard`已使用forZeroCost参数，满手不移除/改费；`Actions.cpp::BetterDiscardPileToHandAction`仍忽略amount，神圣树皮液态记忆仍只取1张。验收需沿1/2张、自动/选择、满手、实际0费与弃牌守恒核对；固定动作几何下必须保留多选进度，不能假装两张是一张。 |
+| BRIDGE30 | 两张GRID链路已批量实现，未统一验证/部署 | `Actions.cpp::BetterDiscardPileToHandAction`按amount自动取全或打开1/2张GRID；`BattleContext.cpp::chooseLiquidMemoriesCard`保存物理UID前缀，全部校验后按选择顺序统一结算，满手不移除/改费。已选实例、剩余候选/数量、搜索key、canonical与layout9双解码器接通；真机完整UUID回执处理重复帧/确认/最终四牌堆及明确applyPowers派生字段。验收须覆盖1/2张、自动/选择、只剩一个空位、负费用、候选重排、回滚、延迟/重复帧及两编码器/固定权重兼容；未完成统一构建回归，不声称完整pending根恢复已解决。 |
 | BRIDGE31 | 批量实现，未统一验证/部署 | 选择入口统一清CardSelectInfo，Purity/Elixir空手不打开选择；parity-v9导出HAND_SELECT真实anyNumber供Python严格读取，含升级Forethought；joint multi以完整UUID实例核对hand移除和selected追加，按原生Forethought升序、exhaust/gamble降序执行。验收跨选择来源context/flags/数量、相同身份不同费用、重复/延迟回执、满手/零张及真实UI顺序；清旧元数据会影响NOSL future key，不能假称旧搜索随机身份全部不变。GRID两张与完整pending恢复仍见BRIDGE30/28。 |
 | BRIDGE32 | 无色/战士源码确认并批量实现，未统一验证/部署 | `Actions.cpp::ViolenceAction`候选不足提前return导致跨堆重复实例；`EnlightenmentAction`升级分支错误抬高已有0费；`BattleContext.cpp::useSkillCard`花样百出随机生成时机延后且双牌反序；`useAttackCard`愤怒副本丢当前费用/freeOnce；`CardInstance::makeStatEquivalentCopy`供愤怒/双持保留费用成长但重置Java未复制的retain/exhaust；`TimeEaterPlayCardQueueItem`错误读取上一张牌的消耗属性。已逐项对照本机游戏字节码修正。验收须统一覆盖卡牌守恒、费用跨回合、生成顺序/满手去向、真实复制身份及自动出牌取消后的消耗/弃牌；不改冻结权重/动作几何，不将源码修正称为性能或实机通过。 |
 

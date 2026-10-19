@@ -31,7 +31,10 @@
 
 ## 公开候选与实体槽位
 
-OBS_VERSION=20、ACTION_VERSION=8、native compact layout v8 必须配套使用。
+OBS_VERSION=20、ACTION_VERSION=8、native compact layout v9 必须配套使用。
+layout v9新增两张GRID已选牌的传输列，复用现有selected_card_ids/upgrades模型槽；
+液态记忆按已有PICK动作积累选择，选齐后统一结算，不使用手牌MULTI位图。
+原生状态保留已选UID，搜索身份保留已选内容与顺序，剩余候选不再包含已选实例。
 v18将真实布尔能力/减益写入player_buffs（激活为1，再按BUFF_SCALE归一化），
 包括腐化、壁垒、混乱、Hex及钢笔尖就绪；数值buff仍保留实际层数。
 canonical与packed共享原生读取逻辑；新训练使用新合同，旧checkpoint推理按声明空间投影，

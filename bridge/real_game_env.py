@@ -570,6 +570,7 @@ class RealGameAdapter:
             raise ValueError("unsupported bridge combat action contract")
         self.combat_action_contract = combat_action_contract
         self._joint_multi_plan = None
+        self._combat_grid_receipt = None
         self.character = character
         self.ascension = int(ascension)
         self.global_map_view = bool(global_map_view)
@@ -714,7 +715,7 @@ class RealGameAdapter:
         # The settled screen and its advertised commands are the command
         # contract; waiting for action_phase to change deadlocks selections
         # opened by effects such as Gambler's Brew.
-        if (self.screen_type() == "HAND_SELECT"
+        if (self.screen_type() in {"HAND_SELECT", "GRID"}
                 and ({"CHOOSE", "CONFIRM"} & self.commands())):
             return True
         action_phase = str(self.gs.get("action_phase") or "").upper()
@@ -749,6 +750,10 @@ class RealGameAdapter:
 
     def auto_command(self, *, auto_enter_shop: bool = True) -> tuple[str, str] | None:
         """Commands that should bypass the policy to match the sim state model."""
+        if self._combat_grid_receipt is not None:
+            import time
+            if time.monotonic() - self._combat_grid_receipt['started'] > 10:
+                raise RuntimeError('Liquid Memories GRID acknowledgement timed out')
         if "error" in self.frame:
             return "STATE", "mod_error_state_refresh"
         if not self.in_game():
@@ -768,6 +773,10 @@ class RealGameAdapter:
             return self._refresh_command(), "await_combat_map_overlay_close"
         if self.gs.get("combat_state") and not self._combat_ready_for_policy():
             return self._refresh_command(), "combat_not_waiting"
+        if self._combat_grid_receipt is not None:
+            command = self._continue_combat_grid()
+            if command is not None:
+                return command, "acknowledge_combat_grid_selection"
         if self._joint_multi_plan is not None:
             command = self._continue_joint_multi()
             if command is not None:
@@ -1041,6 +1050,96 @@ class RealGameAdapter:
         plan["remaining"].pop(0)
         plan.update(previous=hand, selected=selected, sent=index)
         return f"CHOOSE {index}"
+
+    def _liquid_memory_piles(self):
+        combat = _required(self.gs, 'combat_state', context='Liquid Memories receipt')
+        return {
+            name: tuple(real_card_state(card) for card in _list_value(
+                combat, name, context='Liquid Memories receipt'))
+            for name in ('hand', 'draw_pile', 'discard_pile', 'exhaust_pile')
+        }
+
+    def _begin_combat_grid_receipt(self, desc, instance):
+        import time
+        if self._combat_grid_receipt is not None:
+            raise RuntimeError('cannot choose another GRID card before acknowledgement')
+        previous = tuple(desc['selected_instances'])
+        chosen = previous + (instance,)
+        if len({card['uuid'] for card in chosen}) != len(chosen):
+            raise ValueError('combat GRID attempted to select an instance twice')
+        piles = self._liquid_memory_piles()
+        expected = {name: [dict(card) for card in cards] for name, cards in piles.items()}
+        hand, discard = expected['hand'], expected['discard_pile']
+        if len(hand) > actions.HAND_SLOTS:
+            raise ValueError('Liquid Memories receipt exceeds hand capacity')
+        for card in chosen:
+            matches = [i for i, source in enumerate(discard) if source == card]
+            if len(matches) != 1:
+                raise ValueError('Liquid Memories selected instance is not in discard')
+            if len(hand) < actions.HAND_SLOTS:
+                moved = discard.pop(matches[0])
+                if moved['cost'] >= 0:
+                    moved['cost'] = 0
+                hand.append(moved)
+        # Java calls applyPowers on every selected card (even when full) and
+        # finally on the whole hand. These three overrides change base fields;
+        # PerfectedStrike restores its temporary baseDamage before returning.
+        # Account for the exact refresh instead of ignoring those wire fields.
+        refreshed = {card['uuid'] for card in (*chosen, *hand)}
+        combat = self.gs['combat_state']
+        block = _required(_required(combat, 'player', context='Liquid Memories receipt'),
+                          'block', context='Liquid Memories receipt player')
+        if type(block) is not int or block < 0:
+            raise ValueError('Liquid Memories receipt requires explicit nonnegative block')
+        for cards in expected.values():
+            for card in cards:
+                if card['uuid'] not in refreshed:
+                    continue
+                if card['id'] == 'Body Slam':
+                    card['base_damage'] = block
+                elif card['id'] == 'Mind Blast':
+                    card['base_damage'] = len(expected['draw_pile'])
+                elif card['id'] == 'Ritual Dagger':
+                    card['base_block'] = card['misc']
+        expected = {name: tuple(cards) for name, cards in expected.items()}
+        self._combat_grid_receipt = dict(
+            signature=self._joint_screen_identity(), previous=previous, chosen=chosen,
+            remaining=int(desc['pick_remaining']) - 1, piles=piles, expected=expected,
+            confirmed=False, started=time.monotonic())
+
+    def _continue_combat_grid(self):
+        import time
+        receipt = self._combat_grid_receipt
+        if time.monotonic() - receipt['started'] > 10:
+            raise RuntimeError('Liquid Memories GRID acknowledgement timed out')
+        identity = (self.gs.get('seed'), self.gs.get('floor'),
+                    (self.gs.get('combat_state') or {}).get('turn'))
+        if identity != receipt['signature'][1:4]:
+            raise RuntimeError('combat identity changed before Liquid Memories acknowledgement')
+        if self.screen_type() == 'GRID':
+            if self._joint_screen_identity() != receipt['signature']:
+                raise RuntimeError('combat GRID source changed before acknowledgement')
+            desc = self.select_descriptor()
+            selected = tuple(desc['selected_instances'])
+            if self._liquid_memory_piles() != receipt['piles']:
+                raise RuntimeError('Liquid Memories changed piles before GRID completion')
+            if selected == receipt['previous']:
+                return self._refresh_command()  # Old frame: never re-issue CHOOSE.
+            if selected != receipt['chosen'] or desc['pick_remaining'] != receipt['remaining']:
+                raise RuntimeError('Liquid Memories acknowledged a different selection')
+            if receipt['remaining']:
+                self._combat_grid_receipt = None
+                return None
+            if 'CONFIRM' in self.commands() and not receipt['confirmed']:
+                receipt['confirmed'] = True
+                return 'CONFIRM'
+            return self._refresh_command()
+        if receipt['remaining']:
+            raise RuntimeError('Liquid Memories closed before all required cards were chosen')
+        if self._liquid_memory_piles() != receipt['expected']:
+            raise RuntimeError('Liquid Memories settled pile/instance/cost receipt differs')
+        self._combat_grid_receipt = None
+        return None
 
     # ---------------------------------------------------------- canonical state
     def _base_canonical(self) -> dict[str, Any]:
@@ -1565,11 +1664,11 @@ class RealGameAdapter:
             for card in _dict_records(selected_raw, context="selected cards")
         ]
         have_selected = len(selected_cards)
-        multi = bool(
+        multi = bool(hand_screen and (
             context in {"EXHAUST_MANY", "GAMBLE"}
             or can_pick_any
             or pick_count != 1
-        )
+        ))
         pick_max = pick_count
         # BaseMod uses 99 as the unbounded hand-selection sentinel (notably
         # Gambler's Brew).  Normalize that transport value to the actual
@@ -1595,6 +1694,18 @@ class RealGameAdapter:
                 "selection card records/canonical identities have different lengths: "
                 f"{len(raw_cards)} != {len(cards)}"
             )
+        selected_instances = []
+        if not overworld and grid_screen:
+            selected_instances = [real_card_state(card) for card in selected_raw]
+            grid_instances = [real_card_state(card) for card in raw_cards]
+            by_uuid = {card['uuid']: card for card in grid_instances}
+            chosen_uuids = [card['uuid'] for card in selected_instances]
+            if (len(by_uuid) != len(grid_instances)
+                    or len(set(chosen_uuids)) != len(chosen_uuids)
+                    or any(by_uuid.get(card['uuid']) != card for card in selected_instances)):
+                raise ValueError('combat GRID selected instances do not match their source cards')
+            if have_selected > pick_count:
+                raise ValueError('combat GRID has more selected cards than requested')
         selected_uuids = {
             str(card["uuid"])
             for card in selected_raw
@@ -1619,6 +1730,8 @@ class RealGameAdapter:
             card = {"id": cid, "up": up}
             if not overworld:
                 instance = real_card_state(raw_card)
+                if grid_screen and instance['uuid'] in selected_uuids:
+                    continue
                 card["cost"] = 0 if instance["free_to_play_once"] else instance["cost"]
             elif "cost" in raw_card:
                 card["cost"] = raw_card["cost"]
@@ -1651,7 +1764,8 @@ class RealGameAdapter:
             "pick_remaining": max(0, pick_count - have_selected),
             "can_pick_zero": can_pick_zero,
             "can_pick_any": can_pick_any,
-            "selected": selected_cards if overworld else [],
+            "selected": selected_cards if (overworld or grid_screen) else [],
+            "selected_instances": selected_instances,
             "multi": multi,
             "pick_min": 0 if (can_pick_zero or can_pick_any) else int(pick_count),
             "pick_max": int(pick_max),
@@ -2160,6 +2274,10 @@ class RealGameAdapter:
                 )
             if desc["candidates"][candidate_index]["card"] is None:
                 return "SKIP"
+            if (self.gs.get('combat_state') and self.screen_type() == 'GRID'
+                    and desc['context'] == 'LIQUID_MEMORIES_POTION'):
+                self._begin_combat_grid_receipt(
+                    desc, desc['candidates'][candidate_index]['instance'])
             index = desc["candidates"][candidate_index]["native_index"]
             return f"CHOOSE {index}"
         if verb == ga.MULTI_SELECT:

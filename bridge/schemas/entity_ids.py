@@ -391,8 +391,11 @@ COMBAT_SELECTION_TRANSPORT_FIELDS = {
     'num_cards': 'GRID.numCards; actual requested count, not always one',
     'can_pick_zero': 'HAND_SELECT.canPickZero; explicit boolean, independent of any_number',
     'selected': 'HAND_SELECT.selectedCards; complete typed instances; UUID and full instance hand-removal/selected-append acknowledgement',
-    'selected_cards': 'GRID.selectedCards; complete typed instances; sequential discard-selection audit pending',
+    'selected_cards': 'GRID.selectedCards; complete typed instances in selection order; Liquid Memories stages 1/2 mandatory picks without moving source cards',
     'instance': 'parsed real_card_state sidecar per candidate; native selection_card_state validates all representable members and physical UID',
+    'selected_instances': 'parsed GRID records; known UUID to stable native UID, checked against selected_card_state; not hand MULTI prefix bits',
+    'grid_selection_slots': 'compact layout9 capacity 2; categorical columns 224/225, select-relative scalar columns 196/197; Python/native decoders fill existing OBS20 selected_card_ids/upgrades slots',
+    'grid_settlement': 'Liquid Memories receipt validates all four ordered piles and complete instances; actual moved cards get cost0, full hand leaves remainder in discard; applyPowers refreshes Body Slam.base_damage=block, Mind Blast.base_damage=draw size, Ritual Dagger.base_block=misc',
 }
 CARD_STATE_TRANSPORT_FIELDS = {
     'version': 'integer 1', 'base_cost': 'AbstractCard.cost',

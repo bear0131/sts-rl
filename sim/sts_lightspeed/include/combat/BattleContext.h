@@ -216,6 +216,7 @@ namespace sts {
         void chooseArmamentsCard(int handIdx);
         void chooseCodexCard(CardId id);
         void chooseDiscardToHandCard(int discardIdx, bool forZeroCost);
+        bool chooseLiquidMemoriesCard(int discardIdx);
         void chooseDiscoveryCard(CardId id);
         void chooseDualWieldCard(int handIdx);
         void chooseExhaustOneCard(int handIdx);

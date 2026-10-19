@@ -165,10 +165,13 @@ bool isValidSingleCardSelectAction(const BattleContext &bc, const search::Action
             return a.getSelectIdx() >= 0 && a.getSelectIdx() < 3;
 
         case CardSelectTask::HOLOGRAM:
-        case CardSelectTask::LIQUID_MEMORIES_POTION:
         case CardSelectTask::HEADBUTT:
         case CardSelectTask::MEDITATE:
             return a.getSelectIdx() >= 0 && a.getSelectIdx() < bc.cards.discardPile.size();
+
+        case CardSelectTask::LIQUID_MEMORIES_POTION:
+            return a.getSelectIdx() >= 0 && a.getSelectIdx() < bc.cards.discardPile.size() &&
+                !bc.cardSelectInfo.hasSelectedUid(bc.cards.discardPile[a.getSelectIdx()].uniqueId);
 
         case CardSelectTask::EXHUME:
             if (a.getSelectIdx() < 0 || a.getSelectIdx() >= bc.cards.exhaustPile.size()) {
@@ -474,7 +477,7 @@ std::ostream& search::Action::printDesc(std::ostream &os, const BattleContext &b
     }
 }
 
-void executeSingleCardSelectActionHelper(BattleContext &bc, search::Action a) {
+bool executeSingleCardSelectActionHelper(BattleContext &bc, search::Action a) {
     // assumed to be valid action here
 
     const auto idx = a.getSelectIdx();
@@ -520,8 +523,7 @@ void executeSingleCardSelectActionHelper(BattleContext &bc, search::Action a) {
             break;
 
         case CardSelectTask::LIQUID_MEMORIES_POTION:
-            bc.chooseDiscardToHandCard(idx, true);
-            break;
+            return bc.chooseLiquidMemoriesCard(idx);
 
         case CardSelectTask::SECRET_TECHNIQUE:
             bc.chooseDrawToHandCards(&idx, 1);
@@ -545,6 +547,7 @@ void executeSingleCardSelectActionHelper(BattleContext &bc, search::Action a) {
         default:
             break;
     }
+    return true;
 }
 
 void executeMultiCardSelectActionHelper(BattleContext &bc, search::Action a) {
@@ -595,7 +598,8 @@ void search::Action::execute(BattleContext &bc) const {
         }
 
         case ActionType::SINGLE_CARD_SELECT:
-            executeSingleCardSelectActionHelper(bc, *this);
+            // Partial GRID choices do not execute the waiting action queue.
+            if (!executeSingleCardSelectActionHelper(bc, *this)) return;
             break;
 
         case ActionType::MULTI_CARD_SELECT:
@@ -675,8 +679,14 @@ std::vector<search::Action> search::Action::enumerateCardSelectActions(const Bat
             break;
 
         case CardSelectTask::HEADBUTT:
-        case CardSelectTask::LIQUID_MEMORIES_POTION:
             setupCardOptionsHelper(actions, bc.cards.discardPile.begin(), bc.cards.discardPile.end());
+            break;
+
+        case CardSelectTask::LIQUID_MEMORIES_POTION:
+            for (int i = 0; i < bc.cards.discardPile.size(); ++i) {
+                const Action action(ActionType::SINGLE_CARD_SELECT, i);
+                if (action.isValidAction(bc)) actions.push_back(action);
+            }
             break;
 
         case CardSelectTask::SECRET_TECHNIQUE:

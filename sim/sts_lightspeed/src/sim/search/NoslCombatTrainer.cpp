@@ -291,6 +291,14 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     for (const auto card : bc.cardSelectInfo.cards) {
         hashValue(hash, static_cast<int>(card));
     }
+    const auto selectedCards = combatSelectedCards(bc);
+    if (!selectedCards.empty()) {
+        // Only new pending GRID states add data: settled/old single-choice
+        // keys keep their inputs. Order matters when the hand has one space.
+        hashValue(hash, selectedCards.size());
+        for (const auto &card : selectedCards)
+            hashCardComposition(hash, std::array<CardInstance, 1>{card}, cards, equivalentFutures);
+    }
 
     hashValue(hash, bc.monsters.monsterCount);
     hashValue(hash, bc.monsters.monstersAlive);

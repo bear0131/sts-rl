@@ -987,14 +987,10 @@ def _select_options(context, pick_count, have_selected, selected_ids,
       context        : SELECT_CONTEXT_VOCAB name (CardSelectTask for combat or
                        CardSelectScreenType for overworld); "INVALID" off-screen.
       pick_remaining : how many MORE to pick = pick_count - have_selected.
-      selected       : canonical ids already picked THIS screen. The combat
-                       SINGLE sub-screen never accumulates across env steps (one
-                       pick resolves) -> []. The combat MULTI screen (Exhaust
-                       Many / Gamble) DOES accumulate, but in the THIN layer's
-                       own monotonic selection set (the sim is told the whole
-                       bitset at once on confirm) -> the bridge leaves it [] and
-                       the thin layer
-                       patches pick_remaining/selected from its accumulator.
+      selected       : canonical ids picked THIS screen. Mandatory combat GRID
+                       choices accumulate in native state, without moving cards
+                       until completion. MULTI hand selections accumulate in
+                       the thin layer and submit one bitset on confirmation.
       multi          : True for Exhaust Many / Gamble — the thin layer drives a
                        select+confirm machine over `cards_in_hand` hand indices,
                        capped at `pick_max` (obs_design §4.2). False otherwise.
@@ -1002,7 +998,7 @@ def _select_options(context, pick_count, have_selected, selected_ids,
     return {
         "context": context,
         "pick_remaining": max(0, pick_count - have_selected),
-        "pick_min": 0 if (can_pick_zero or multi) else int(pick_count),
+        "pick_min": 0 if (can_pick_zero or can_pick_any) else int(pick_count),
         "can_pick_zero": bool(can_pick_zero),
         "can_pick_any": bool(can_pick_any),
         "selected": selected_ids,
@@ -1017,32 +1013,26 @@ def combat_select_options(select_info):
     bc.select_info() (context = CardSelectTask name, pick_count, can_pick_zero,
     can_pick_any, multi, pick_max, cards_in_hand).
 
-    SINGLE screens: one pick resolves, no accumulation -> 'selected' is empty and
-    the thin layer maps each candidate to a PICK_CARD id directly.
-
-    MULTI screens (Exhaust Many / Gamble): the sim resolves the whole screen with
-    one bitset Action, so the thin layer selects hand indices and confirms. The
-    sim leaves canPickZero/canPickAnyNumber false for these, but a MULTI screen
-    can ALWAYS confirm zero (chooseExhaust/GambleCards early-return on empty) and
-    Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any
-    from pick_max being the whole hand (Gamble) vs a fixed cap (Exhaust Many)."""
+    SINGLE/GRID use PICK_CARD directly; mandatory GRID screens expose the
+    ordered pending selections and settle only after the last required pick.
+    MULTI hand screens resolve a whole bitset; their thin prefix stays separate
+    from GRID's source-pile identities. All flags/counts are explicit."""
     required = {
         "context", "pick_count", "can_pick_zero", "can_pick_any", "multi",
-        "pick_max", "cards_in_hand", "zone", "candidates",
+        "pick_max", "cards_in_hand", "zone", "candidates", "selected",
     }
     missing = required - set(select_info)
     if missing:
         raise ValueError(f"native combat selection is missing {sorted(missing)!r}")
     multi = bool(select_info["multi"])
-    # CardSelectInfo::pickCount is only populated for MULTI tasks.  Every live
-    # SINGLE task still requires exactly one pick, but the native field remains
-    # zero (Warcry/Armaments/Headbutt and the generated-card screens included).
-    # Surface the semantic count here so the observation and the real-game
-    # reconciliation agree with CommunicationMod's max_cards=1 contract.
-    pick_count = int(select_info["pick_count"]) if multi else 1
+    pick_count = int(select_info["pick_count"])
+    selected = [(_sim_card_id(name), up) for name, up in select_info["selected"]]
+    if (pick_count < 0 or (not multi and len(selected) >= pick_count)
+            or (multi and selected)):
+        raise ValueError("native live selection has invalid count/progress")
     result = _select_options(
-        select_info["context"], pick_count, 0, [],
-        can_pick_zero=select_info["can_pick_zero"] or multi,
+        select_info["context"], pick_count, len(selected), selected,
+        can_pick_zero=select_info["can_pick_zero"],
         can_pick_any=select_info["can_pick_any"],
         multi=multi,
         pick_max=select_info["pick_max"],

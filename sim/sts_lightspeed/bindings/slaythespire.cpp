@@ -405,17 +405,18 @@ constexpr int kNativePotions =
 // The language observation has one slot per supported card ID. The Python
 // adapter checks this against its observation schema before enabling it.
 constexpr int kLanguageSlots = 80;
+constexpr int kGridPickSlots = sts::CardSelectInfo::GRID_PICK_CAPACITY;
 // Categorical layout: hand cards, fixed monster slots/moves/intent classes,
 // potion slots, and the card-select task.
 constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
-                         kMaxMonsters + kPotionSlots + 1 + 96 * 2 + 1;
+                         kMaxMonsters + kPotionSlots + 1 + 96 * 2 + 1 + kGridPickSlots;
 
 // Float layout: player scalars, player statuses, counters, boundary bit,
 // monster scalars/statuses, hand upgrade/cost, three native pile histograms,
 // and card-select metadata.
 constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
                            kMaxMonsters * 6 + kMaxMonsters * kMonsterStatus +
-                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + 4;
+                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + kGridPickSlots + 4;
 
 struct Row {
     std::array<std::int32_t, kCatSize> categorical{};
@@ -599,6 +600,9 @@ inline Row pack(const sts::BattleContext &bc) {
         row.categorical[c + 96 + i] = choices.cards[i].nativeIndex + 1;
     }
     row.categorical[c + 192] = choices.zone;
+    const auto selectedCards = sts::search::combatSelectedCards(bc);
+    for (std::size_t i = 0; i < selectedCards.size(); ++i)
+        row.categorical[c + 193 + i] = static_cast<int>(selectedCards[i].id);
 
     int f = 0;
     row.scalars[f++] = static_cast<float>(bc.player.curHp);
@@ -690,24 +694,19 @@ inline Row pack(const sts::BattleContext &bc) {
     countPile(bc.cards.drawPile);
     countPile(bc.cards.discardPile);
     countPile(bc.cards.exhaustPile);
-    // CardSelectInfo::pickCount is populated only for MULTI tasks.  Every live
-    // SINGLE task still requires exactly one choice; exporting the native zero
-    // here made the packed observation disagree with select_info() and the
-    // real-game max_cards=1 contract.
+    // GRID prefixes remain in the discard pile until the mandatory last pick.
     row.scalars[f++] = selecting
-        ? static_cast<float>(bc.cardSelectInfo.isMultiSelection()
-            ? bc.cardSelectInfo.pickCount : 1)
+        ? static_cast<float>(bc.cardSelectInfo.pickCount - bc.cardSelectInfo.selectedCount)
         : 0.0f;
-    row.scalars[f++] = selecting && (bc.cardSelectInfo.canPickZero ||
-        bc.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY ||
-        bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
+    row.scalars[f++] = selecting && bc.cardSelectInfo.canPickZero ? 1.0f : 0.0f;
     row.scalars[f++] = selecting && bc.cardSelectInfo.canPickAnyNumber ? 1.0f : 0.0f;
-    const auto task = bc.cardSelectInfo.cardSelectTask;
     row.scalars[f++] = selecting && bc.cardSelectInfo.isMultiSelection() ? 1.0f : 0.0f;
     for (std::size_t i = 0; i < choices.cards.size(); ++i) {
         row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
         row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
     }
+    for (std::size_t i = 0; i < selectedCards.size(); ++i)
+        row.scalars[f + 192 + i] = static_cast<float>(selectedCards[i].getUpgradeCount());
     row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
     row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
     row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
@@ -2159,8 +2158,8 @@ py::dict selectScreenInfo(const sts::GameContext &gc) {
 // for the same obs fields while in combat (Armaments/Headbutt/Gamble/...).
 //
 // Two structurally different combat card-selects exist:
-//   * SINGLE (Armaments/Headbutt/...) -- one pick resolves the screen in one
-//     action; the thin layer maps each candidate to a PICK_CARD id.
+//   * SINGLE/GRID -- candidates use PICK_CARD ids; mandatory GRID prompts can
+//     stage physical selections across actions before any pile is changed.
 //   * MULTI  (Exhaust Many / Gamble)  -- the sim resolves the WHOLE screen with
 //     one Action whose low 10 bits are a hand-index bitset (getSelectedIdxs() ->
 //     chooseExhaustCards/chooseGambleCards). The thin layer therefore TOGGLES
@@ -2168,7 +2167,7 @@ py::dict selectScreenInfo(const sts::GameContext &gc) {
 // `multi` lets the thin layer pick which machine to drive. For a MULTI screen we
 // also expose `cards_in_hand` (the toggleable indices 0..n-1) and `pick_max`
 // (the cap: Exhaust Many = pickCount limit; Gamble = the whole hand). pickCount
-// is only meaningful for MULTI -- SINGLE tasks leave it 0 (see CardSelectInfo).
+// is explicit for every selection task.
 py::dict combatSelectInfo(const sts::BattleContext &bc) {
     const auto &csi = bc.cardSelectInfo;
     const auto task = csi.cardSelectTask;
@@ -2181,9 +2180,14 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     d["can_pick_any"] = csi.canPickAnyNumber;
     d["multi"] = multi;
     d["cards_in_hand"] = bc.cards.cardsInHand;
+    py::list selected;
+    for (const auto &card : sts::search::combatSelectedCards(bc))
+        selected.append(py::make_tuple(sts::cardEnumStrings[static_cast<int>(card.id)], card.getUpgradeCount()));
+    d["selected"] = selected;
     // pick_max: hand indices a MULTI screen may toggle. Exhaust Many caps at its
-    // limit (pickCount); Gamble has no limit beyond the hand. 0 for SINGLE.
-    int pickMax = 0;
+    // limit (pickCount); Gamble has no limit beyond the hand. SINGLE/GRID use
+    // the explicit total number of mandatory picks.
+    int pickMax = csi.pickCount;
     if (task == sts::CardSelectTask::EXHAUST_MANY) {
         pickMax = csi.pickCount;
     } else if (multi) {
@@ -2232,6 +2236,15 @@ py::list combatSelectionCardState(const sts::BattleContext &bc) {
             result.append(record);
         }
     }
+    return result;
+}
+
+py::list combatSelectedCardState(const sts::BattleContext &bc) {
+    if (bc.inputState != sts::InputState::CARD_SELECT)
+        throw std::invalid_argument("selected card state requires a live selection");
+    py::list result;
+    for (const auto &card : sts::search::combatSelectedCards(bc))
+        result.append(combatCardRecord(card));
     return result;
 }
 
@@ -2607,11 +2620,11 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["live_relic_names"] = pybind11::make_tuple("Centennial Puzzle", "Lizard Tail");
-        out["version"] = 8;
+        out["version"] = 9;
+        out["grid_selection_slots"] = compact_leaf::kGridPickSlots;
         out["player_scalar_fields"] = pybind11::make_tuple("hp", "max_hp", "block", "energy", "turn", "gold");
-        // OBS20 adds run-global/reward key fields in Python. Compact combat
-        // transport bytes are unchanged; root-global key ownership is overlaid
-        // by run_env exactly like relic metadata.
+        // Transport v9 carries pending GRID choices in existing OBS20 selected
+        // slots; it does not add model features or change policy dimensions.
         out["observation_version"] = 20;
         out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
@@ -4129,6 +4142,8 @@ PYBIND11_MODULE(slaythespire, m) {
              "pick_count, can_pick_zero, can_pick_any}")
         .def("selection_card_state", &combatSelectionCardState,
              "complete live candidate instances in policy order; generated templates have null uid")
+        .def("selected_card_state", &combatSelectedCardState,
+             "complete pending GRID instances in selection order, still in their source pile")
         .def("set_generated_selection_cards", &setGeneratedCombatSelectionCards,
              pybind11::arg("cards"),
              "replace the three public CODEX/DISCOVERY candidates without advancing the battle")

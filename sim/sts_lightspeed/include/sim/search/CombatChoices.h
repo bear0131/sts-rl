@@ -33,6 +33,29 @@ inline CardInstance combatChoiceCard(const BattleContext &bc, int zone, int inde
     }
 }
 
+inline std::vector<CardInstance> combatSelectedCards(const BattleContext &bc) {
+    std::vector<CardInstance> result;
+    if (bc.inputState != InputState::CARD_SELECT) return result;
+    const auto &info = bc.cardSelectInfo;
+    if (info.selectedCount < 0 || info.selectedCount > CardSelectInfo::GRID_PICK_CAPACITY ||
+        (info.selectedCount && (info.cardSelectTask != CardSelectTask::LIQUID_MEMORIES_POTION ||
+            info.selectedCount >= info.pickCount || info.pickCount > CardSelectInfo::GRID_PICK_CAPACITY)))
+        throw std::logic_error("invalid pending combat GRID selection");
+    for (int i = 0; i < info.selectedCount; ++i) {
+        const auto uid = info.selectedUids[i];
+        if (uid < 0 || std::count(info.selectedUids.begin(), info.selectedUids.begin() + i, uid) ||
+            std::count_if(bc.cards.discardPile.begin(), bc.cards.discardPile.end(),
+                [uid](const CardInstance &card) { return card.uniqueId == uid; }) != 1)
+            throw std::logic_error("pending combat GRID identity is missing or duplicated");
+        const auto it = std::find_if(bc.cards.discardPile.begin(), bc.cards.discardPile.end(),
+            [uid](const CardInstance &card) { return card.uniqueId == uid; });
+        if (it == bc.cards.discardPile.end())
+            throw std::logic_error("pending combat GRID card is absent from source pile");
+        result.push_back(*it);
+    }
+    return result;
+}
+
 inline CombatChoices combatChoices(const BattleContext &bc) {
     CombatChoices result;
     if (bc.inputState != InputState::CARD_SELECT) return result;

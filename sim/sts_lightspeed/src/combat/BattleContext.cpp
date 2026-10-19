@@ -3146,6 +3146,42 @@ void BattleContext::chooseDiscardToHandCard(int discardIdx, bool forZeroCost) {
     moveToHandHelper(c);
 }
 
+bool BattleContext::chooseLiquidMemoriesCard(int discardIdx) {
+    auto &info = cardSelectInfo;
+    if (info.cardSelectTask != CardSelectTask::LIQUID_MEMORIES_POTION ||
+        info.pickCount < 1 || info.pickCount > CardSelectInfo::GRID_PICK_CAPACITY ||
+        info.selectedCount < 0 || info.selectedCount >= info.pickCount ||
+        discardIdx < 0 || discardIdx >= cards.discardPile.size() ||
+        info.hasSelectedUid(cards.discardPile[discardIdx].uniqueId)) {
+        throw std::invalid_argument("invalid Liquid Memories selection progress");
+    }
+    auto selectedUids = info.selectedUids;
+    selectedUids[info.selectedCount] = cards.discardPile[discardIdx].uniqueId;
+    // Validate the entire prefix before changing progress or any source pile.
+    // A rejected/stale snapshot must not partially settle the earlier pick.
+    for (int i = 0; i <= info.selectedCount; ++i) {
+        const auto uid = selectedUids[i];
+        if (uid < 0 || std::count(selectedUids.begin(), selectedUids.begin() + i, uid) ||
+            std::count_if(cards.discardPile.begin(), cards.discardPile.end(),
+                [uid](const CardInstance &card) { return card.uniqueId == uid; }) != 1)
+            throw std::logic_error("Liquid Memories selected identity is missing or duplicated");
+    }
+    info.selectedUids = selectedUids;
+    ++info.selectedCount;
+    if (info.selectedCount < info.pickCount) return false;
+    for (int i = 0; i < info.selectedCount; ++i) {
+        const auto uid = info.selectedUids[i];
+        const auto it = std::find_if(cards.discardPile.begin(), cards.discardPile.end(),
+            [uid](const CardInstance &card) { return card.uniqueId == uid; });
+        if (it == cards.discardPile.end())
+            throw std::logic_error("Liquid Memories selected card left its source pile");
+        chooseDiscardToHandCard(static_cast<int>(it - cards.discardPile.begin()), true);
+    }
+    info.selectedCount = 0;
+    info.selectedUids.fill(0);
+    return true;
+}
+
 void BattleContext::chooseDiscoveryCard(CardId id) {
     const auto discoveryAmount = cardSelectInfo.data0;
     CardInstance c(id);

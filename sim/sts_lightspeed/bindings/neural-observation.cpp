@@ -35,8 +35,8 @@ public:
         const int cards = py::cast<int>(layout["card_count"]), counters = py::cast<int>(limits_["counters"]);
         const int handStart = 6+ps+counters+1+30+5*ms;
         const int pileStart = handStart+20, selectStart = pileStart+3*cards;
-        if (cat.shape(1)!=224 || scalar.ndim()!=2 || scalar.shape(0)!=n ||
-            scalar.shape(1)!=selectStart+200 || owners.ndim()!=1 || owners.size()!=n ||
+        if (cat.shape(1)!=226 || scalar.ndim()!=2 || scalar.shape(0)!=n ||
+            scalar.shape(1)!=selectStart+202 || owners.ndim()!=1 || owners.size()!=n ||
             prefix.ndim()!=1 || prefix.size()!=n || legal.ndim()!=2 || legal.shape(0)!=n)
             throw std::invalid_argument("native observation layout mismatch");
         py::dict out;
@@ -79,14 +79,18 @@ public:
         auto *hand=i("hand_ids"), *monster=i("monster_id"), *moves=i("monster_move"),
              *intents=i("monster_intent_cat"), *potions=i("potions"),
              *context=i("select_context"), *selectIds=i("select_card_ids"),
-             *selectIndices=i("select_native_indices"), *zone=i("select_zone"), *relics=i("relics");
+             *selectIndices=i("select_native_indices"), *zone=i("select_zone"), *relics=i("relics"),
+             *selectedIds=i("selected_card_ids");
         auto *player=f("player_scalars"), *pb=f("player_buffs"), *cb=f("combat_counters"),
              *boundary=f("post_enemy_turn_boundary"), *mon=f("monster_scalars"), *mb=f("monster_buffs"),
              *hu=f("hand_upgrades"), *hc=f("hand_costs"), *hd=f("hand_damage"), *hb=f("hand_block"),
              *draw=f("draw_counts"), *discard=f("discard_counts"), *exhaust=f("exhaust_counts"),
              *pick=f("pick_remaining"), *zero=f("can_pick_zero"), *any=f("can_pick_any"),
              *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
-             *relicCounters=f("relic_counters"), *gold=f("gold");
+             *relicCounters=f("relic_counters"), *gold=f("gold"), *selectedUpgrades=f("selected_card_upgrades");
+        const auto selectedWidth=arrays.at("selected_card_ids").shape(1);
+        if (selectedWidth<2 || arrays.at("selected_card_upgrades").shape(1)!=selectedWidth)
+            throw std::invalid_argument("native selected GRID observation capacity mismatch");
         const auto relicWidth=arrays.at("relics").shape(1);
         const auto pbWidth=arrays.at("player_buffs").shape(1), mbWidth=arrays.at("monster_buffs").shape(2);
         Array<std::int64_t> cardMap(lut_["card"]), monsterMap(lut_["monster"]),
@@ -160,19 +164,19 @@ public:
                 throw std::invalid_argument("native packed gold is outside the explicit integer domain 0..32767");
             gold[r]=s[5]/goldScale;
             for (int k=0; k<2; ++k)
-                if (s[selectStart+196+k]!=0.0f && s[selectStart+196+k]!=1.0f)
+                if (s[selectStart+198+k]!=0.0f && s[selectStart+198+k]!=1.0f)
                     throw std::invalid_argument("native live relic flag is not boolean");
-            const float pocketwatch=s[selectStart+198];
+            const float pocketwatch=s[selectStart+200];
             if (!std::isfinite(pocketwatch) || pocketwatch<0.0f || pocketwatch!=std::nearbyint(pocketwatch))
                 throw std::invalid_argument("native Pocketwatch counter is not a nonnegative integer");
-            const float neow=s[selectStart+199];
+            const float neow=s[selectStart+201];
             if (!std::isfinite(neow) || neow<0.0f || neow>3.0f || neow!=std::nearbyint(neow))
                 throw std::invalid_argument("native Neow remainder is outside 0..3");
             for (py::ssize_t k=0; k<liveRelicIds.size(); ++k) {
                 const auto column=liveColumns.data()[k];
                 if (column < -5 || column >= counters)
                     throw std::invalid_argument("native live relic counter column out of range");
-                float value=column == -5 ? neow : column == -4 ? pocketwatch : column == -3 ? s[4]+1.0f : column < 0 ? s[selectStart+195-column] : s[6+ps+column];
+                float value=column == -5 ? neow : column == -4 ? pocketwatch : column == -3 ? s[4]+1.0f : column < 0 ? s[selectStart+197-column] : s[6+ps+column];
                 const auto modulo=liveModuli.data()[k], stop=liveStopTurns.data()[k];
                 if (modulo) value=std::fmod(value,static_cast<float>(modulo));
                 if (stop && value>=stop) value=0.0f;
@@ -204,6 +208,13 @@ public:
             if (c[223] < 0 || c[223] > 6)
                 throw std::invalid_argument("native selection zone is outside its word table");
             zone[r]=c[223];
+            for (int k=0; k<2; ++k) {
+                selectedIds[r*selectedWidth+k]=lookup(cardMap,c[224+k],"selected GRID card");
+                const float up=s[selectStart+196+k];
+                if (!std::isfinite(up) || up<0 || up!=std::nearbyint(up) || (c[224+k]==0 && up!=0))
+                    throw std::invalid_argument("native selected GRID upgrades are invalid");
+                selectedUpgrades[r*selectedWidth+k]=up/upgradeScale;
+            }
             for (int k=0; k<96; ++k) {
                 selectIds[r*96+k]=lookup(cardMap,c[31+k],"selection card");
                 if (c[127+k] < 0 || c[127+k] > 65536)
