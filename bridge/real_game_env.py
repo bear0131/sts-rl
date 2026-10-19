@@ -48,6 +48,7 @@ from bridge.schemas.entity_ids import (
     REAL_CHARACTER_IDS,
     REAL_ROOM_PHASES,
     REAL_ACTION_PHASES,
+    REAL_ANONYMOUS_ACTION_CONTRACTS,
     REWARD_CHOICE_TYPES,
     ROOM_ALIASES,
     RUN_KEY_FIELDS,
@@ -185,6 +186,22 @@ def validate_transport_frame(frame: dict[str, Any]) -> None:
     action = gs["current_action"]
     if action is not None and (not isinstance(action, str) or not action.strip()):
         raise ValueError("current_action must be null or a nonempty action class name")
+    anonymous = _required_bool(gs, "current_action_is_anonymous", context="game_state")
+    contract = REAL_ANONYMOUS_ACTION_CONTRACTS.get(action)
+    if anonymous:
+        if contract is None:
+            raise ValueError(f"unmapped anonymous action identity: {action!r}")
+        if contract['transport'] != 'settle':
+            raise ValueError(
+                f"unsupported anonymous action {action!r}: {contract['native_audit']}"
+            )
+        # Registered stock wrappers never own a selection UI. Do not release
+        # an ordinary policy decision or interpret an anonymous wrapper as a
+        # generic HAND_SELECT/GRID source, even if the mod advertises CHOOSE.
+        if gs.get('screen_type') in {'HAND_SELECT', 'GRID', 'CARD_REWARD'}:
+            raise ValueError(f"anonymous wrapper cannot own this selection: {action!r}")
+    elif contract is not None:
+        raise ValueError(f"anonymous action class incorrectly marked as named: {action!r}")
     room_phase = _required(gs, "room_phase", context="game_state")
     if room_phase not in REAL_ROOM_PHASES:
         raise ValueError(f"unknown real-game room_phase keyword: {room_phase!r}")

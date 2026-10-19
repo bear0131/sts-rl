@@ -126,7 +126,7 @@ It patches seven `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v13`.
+`current_intent_export: simulator-parity-v14`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -153,12 +153,24 @@ null when none is held. Master-deck restore consumes current persistent values
 and physical bottle slots. Settled combat roots restore complete native card
 instances with UUID mapping; in-progress selection and independent dynamic
 attributes still require their own alignment audit.
-The v13 wire also always includes `current_action` (explicit null when none)
+The wire always includes `current_action` (explicit null when none)
 and `choice_list` (explicit [] when CHOOSE is unavailable). Normal frames and
 error replies have separate presence contracts; missing/null screen payloads,
 inventories, command lists or contradictory aliases fail before menu actions,
 ACK handling or policy inference. See `json_presence_contracts` in the complete
-word tables. Do not mix v13 Python with an older jar. Model tensor layouts and
+word tables. Since v14, a present current action is its Java binary class name
+(`Class.getName()`), not its simple name: anonymous actions have no simple name
+but are still executing actions. The package and `$` suffix are preserved;
+they are not replaced with null, a base-class name or a placeholder. Selection
+semantics still come from the separately validated selection source/context.
+`current_action_is_anonymous` is the actual reflection result, not a name
+heuristic. `anonymous_action_contracts` inventories all eight stock and three
+installed BaseMod anonymous actions by exact binary identity, source, effects,
+native counterpart and audit status. Unknown identities, mismatched flags,
+deprecated/custom unsupported semantics and stock wrappers claiming a selection
+are rejected explicitly. A `settle` entry only permits waiting for its real
+completion; it does not certify pending native effect/root-restore gaps.
+Do not mix v14 Python with an older jar. Model tensor layouts and
 checkpoint parameters are unchanged; this is a transport change.
 Two read-only game hooks track the last monster attack damage and reset it at
 combat entry. Gameplay, UI and RNG are untouched.

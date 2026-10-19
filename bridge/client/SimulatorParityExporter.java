@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v13";
+    public static final String VERSION = "simulator-parity-v14";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -104,7 +104,12 @@ public final class SimulatorParityExporter {
         // Stock export omits this key outside an action. Emit observed absence
         // explicitly; the patched wire serializer must preserve the null.
         AbstractGameAction currentAction = AbstractDungeon.actionManager.currentAction;
-        state.put("current_action", currentAction == null ? null : currentAction.getClass().getSimpleName());
+        // Anonymous actions have an empty simple name. Preserve their actual
+        // binary class identity, including the enclosing class and $ ordinal;
+        // only a genuinely absent action is represented by null.
+        state.put("current_action", currentAction == null ? null : currentAction.getClass().getName());
+        state.put("current_action_is_anonymous", Boolean.valueOf(
+            currentAction != null && currentAction.getClass().isAnonymousClass()));
         if (CommandExecutor.isChooseCommandAvailable()) {
             if (!(state.get("choice_list") instanceof java.util.ArrayList))
                 throw new IllegalStateException("Available CHOOSE requires the actual choice list");

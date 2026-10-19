@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v13"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v14"
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -17,7 +17,8 @@ JSON_PRESENCE_CONTRACTS = {
     'available_commands': 'required list on normal frames; [] means no commands, missing/null is invalid; error replies have a distinct contract',
     'game_state': 'required nonempty object when in_game=true; absent at main menu',
     'screen_state': 'required object in a game; {} means no screen payload, missing/null is invalid',
-    'current_action': 'required in-game key; null means actionManager.currentAction is actually absent, nonempty string is its class name',
+    'current_action': 'required in-game key; null means actionManager.currentAction is actually absent; otherwise Java binary class name including package and anonymous/nested class suffix, never an empty simple name',
+    'current_action_is_anonymous': 'required boolean from Class.isAnonymousClass, false only for an absent or actually named action; every true value requires an exact registered class contract',
     'choice_list': 'required in-game list; exporter emits [] only when CHOOSE is actually unavailable',
     'deck/relics/potions/map': 'required in-game lists; empty is data, missing/null is not an empty inventory',
     'combat_state': 'required object while room_phase=COMBAT; absent outside combat per stock serializer',
@@ -25,6 +26,93 @@ JSON_PRESENCE_CONTRACTS = {
     'card/relic_list_aliases': 'if multiple aliases are present, complete lists must be equal, including empty lists; no nonempty-wins fallback',
     'screen_inventories': 'card/relic/potion/reward screens require their structured lists; explicit lists must agree with coexisting reward records; labels do not replace entities',
     'conditional_exports': 'Neow typed offers only on screen3; private power overrides only for a present matching power; unknown reflection fields must not be invented',
+}
+
+# Exhaustive classfile ancestry + InnerClasses/EnclosingMethod inventory of the
+# installed desktop-1.0.jar, BaseMod.jar, ModTheSpire.jar and original
+# CommunicationMod.jar. Eight game + three BaseMod anonymous descendants of
+# AbstractGameAction; method effects were separately read from source/bytecode.
+# No stock anonymous wrapper itself opens a selection. Mayhem can enqueue a
+# named card action that later does: that selection needs its own source codec.
+# "settle" is transport handling, NOT proof of native future-state equivalence.
+REAL_ANONYMOUS_ACTION_CONTRACTS = {
+    'com.megacrit.cardcrawl.monsters.exordium.Looter$1': {
+        'source': 'Looter.takeTurn, MUG (1)',
+        'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
+        'native_source': 'Monster::stealGoldFromPlayer / LOOTER_MUG',
+        'native_audit': 'BRIDGE54: queue timing and stolenGold private root transport require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.monsters.exordium.Looter$2': {
+        'source': 'Looter.takeTurn, LUNGE (4)',
+        'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
+        'native_source': 'Monster::stealGoldFromPlayer / LOOTER_LUNGE',
+        'native_audit': 'BRIDGE54: queue timing and stolenGold private root transport require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.monsters.city.Mugger$1': {
+        'source': 'Mugger.takeTurn, MUG (1)',
+        'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
+        'native_source': 'Monster::stealGoldFromPlayer / MUGGER_MUG',
+        'native_audit': 'BRIDGE54: queue timing and stolenGold private root transport require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.monsters.city.Mugger$2': {
+        'source': 'Mugger.takeTurn, LUNGE (4)',
+        'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
+        'native_source': 'Monster::stealGoldFromPlayer / MUGGER_LUNGE',
+        'native_audit': 'BRIDGE54: queue timing and stolenGold private root transport require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.powers.MayhemPower$1': {
+        'source': 'MayhemPower.atStartOfTurn, one wrapper per stack',
+        'effect': 'sample living target using cardRandomRng when wrapper executes, then append PlayTopCardAction(target, false) to the bottom',
+        'native_source': 'Player::applyStartOfTurnPowers / Actions::PlayTopCard',
+        'native_audit': 'BRIDGE54: deferred target RNG and second-stage append require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.relics.RedSkull$1': {
+        'source': 'RedSkull.atBattleStart',
+        'effect': 'when wrapper executes, if not active and bloodied add 3 Strength directly, mark isActive and refresh powers; queue relic visual on top',
+        'native_source': 'BattleContext::initRelics / Player::hpWasLost / Player::heal',
+        'native_audit': 'BRIDGE54: early grant and private isActive lifecycle require correction',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.rooms.AbstractRoom$1': {
+        'source': 'AbstractRoom.endTurn',
+        'effect': 'append EndTurnAction then visual WaitAction then MonsterStartTurnAction unless skipMonsterTurn; clear monsterAttacksQueued',
+        'native_source': 'Actions::UnnamedEndOfTurnAction / BattleContext::executeActions',
+        'native_audit': 'BRIDGE54: turnHasEnded must change in queued EndTurnAction, not in the wrapper',
+        'transport': 'settle',
+    },
+    'com.megacrit.cardcrawl.relics.deprecated.DEPRECATEDDodecahedron$1': {
+        'source': 'DEPRECATEDDodecahedron.atTurnStart',
+        'effect': 'at execution, if current HP >= max HP append relic visual and GainEnergyAction(1)',
+        'native_source': None,
+        'native_audit': 'deprecated relic absent from native enum and stock reward pools',
+        'transport': 'unsupported',
+    },
+    'basemod.abstracts.cardbuilder.actionbuilder.AllEnemyActionBuilder$1': {
+        'source': 'AllEnemyActionBuilder.buildAction',
+        'effect': 'for each living enemy enqueue custom builder action at top/bottom; installed bytecode does not set isDone',
+        'native_source': None,
+        'native_audit': 'custom mod card builder has no stock simulator action contract',
+        'transport': 'unsupported',
+    },
+    'basemod.helpers.CardModifierManager$1': {
+        'source': 'CardModifierManager.deferredConditionalRemoval',
+        'effect': 'remove captured modifiers and invoke their onRemove hooks, onCardModified and initializeDescription',
+        'native_source': None,
+        'native_audit': 'arbitrary mod modifier callbacks cannot be treated as stock card attributes',
+        'transport': 'unsupported',
+    },
+    'basemod.helpers.ModalChoice$1': {
+        'source': 'ModalChoice.open',
+        'effect': 'open BaseMod modalChoiceScreen with captured card copies and header',
+        'native_source': None,
+        'native_audit': 'custom choice UI has no stock selection context; must not be mistaken for GRID/HAND_SELECT',
+        'transport': 'unsupported',
+    },
 }
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
@@ -329,6 +417,7 @@ UNSUPPORTED_REAL_CARD_IDS = {
 }
 
 UNSUPPORTED_REAL_RELIC_IDS = {
+    "Dodecahedron": "deprecated relic absent from the native relic enum and current stock pools",
     "Discerning Monocle": "deprecated relic absent from the native relic enum",
     "Test 1": "developer-only relic",
     "Test 3": "developer-only relic",
