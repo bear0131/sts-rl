@@ -330,7 +330,7 @@ def test_policy_failures_never_choose_transport_fallback(monkeypatch, failure):
 
 def test_unknown_event_cannot_be_encoded_as_padding(event_adapter):
     a = event_adapter('Unknown Mod Event', [('[祈祷]', False)])
-    with pytest.raises(ValueError, match='unknown event identity'):
+    with pytest.raises(ValueError, match='unknown real event identity'):
         a._options('event')
 
 
@@ -430,9 +430,15 @@ def test_late_mind_bloom_heal_is_not_wealth(event_adapter):
     assert a.command_for_semantic(ga.event(3)) == "CHOOSE 2"
 
 
-def test_unknown_event_does_not_fall_back_to_number(event_adapter):
+def test_cursed_tome_stage_uses_sparse_native_semantic_not_button_number(event_adapter):
+    a = event_adapter("Cursed Tome", [("[继续] 失去 2 生命。", False)])
+    assert a._legal_event_actions() == [ga.event(3)]
+    assert a.command_for_semantic(ga.event(3)) == "CHOOSE 0"
+
+
+def test_cursed_tome_unknown_stage_does_not_fall_back_to_number(event_adapter):
     a = event_adapter("Cursed Tome", [("[继续阅读]", False)])
-    with pytest.raises(ValueError, match="unsupported event"):
+    with pytest.raises(ValueError, match="unrecognized"):
         a._legal_event_actions()
 
 
@@ -790,6 +796,35 @@ def test_all_game_jar_policy_event_ids_are_known(real_id):
     assert _normalize_event(real_id) != 'PAD'
 
 
+def test_every_frozen_event_has_an_explicit_option_word_contract():
+    from bridge.event_contract import canonical_contract_events
+    from env.core import vocab as V
+    assert canonical_contract_events() == set(V.EVENT_VOCAB) - {'PAD'}
+
+
+@pytest.mark.parametrize(('event', 'label', 'semantic'), [
+    ('Accursed Blacksmith', '[Rummage] Obtain a special Relic.', 1),
+    ('Bonfire Elementals', '[献上] 根据贡品获得奖励。', 0),
+    ('Colosseum', '[VICTORY] A powerful fight.', 1),
+    ('Dead Adventurer', '[继续] 寻找东西。', 0),
+    ('Drug Dealer', '[当一下实验对象] 选择2张牌。', 1),
+    ('Golden Idol', '[Hide] Lose Max HP.', 4),
+    ('Golden Wing', '[摧毁] 获得金币。', 1),
+    ('Liars Game', '[Agree] Gain Gold.', 0),
+    ('Shining Light', '[走进] 随机升级2张牌。', 0),
+    ('The Joust', '[Owner] Bet Gold.', 1),
+    ('The Mausoleum', '[打开棺材] 获得一件遗物。', 0),
+    ('The Moai Head', '[Offer: Golden Idol] Gain 333 Gold.', 1),
+    ('Wheel of Change', '[Play]', 0),
+])
+def test_new_static_event_words_map_to_native_semantics(
+    event_adapter, event, label, semantic,
+):
+    a = event_adapter(event, [(label, False)])
+    assert a._legal_event_actions() == [ga.event(semantic)]
+    assert a.command_for_semantic(ga.event(semantic)) == 'CHOOSE 0'
+
+
 @pytest.mark.parametrize('enter,leave', [('进入传送门', '离开'), ('Enter the Portal', 'Leave')])
 def test_secret_portal_requires_confirmation_and_boss(event_adapter, enter, leave):
     from bridge.event_contract import EventEffectAck, options
@@ -875,7 +910,8 @@ def test_woman_in_blue_payment_and_reward_count(event_adapter, count, chinese):
     from copy import deepcopy
     from types import SimpleNamespace
     cost = 10 + 10 * count
-    text = f'[买 {count} 瓶药水] {cost} 金币。' if chinese else f'[Buy {count} Potions] {cost} Gold.'
+    text = (f'[买 {count} 瓶药水] {cost} 金币。' if chinese else
+            f'[Buy {count} Potion' + ('s' if count > 1 else '') + f'] {cost} Gold.')
     a = event_adapter('The Woman in Blue', [(text, False)])
     a.gs['gold'] = 100
     ack = EventEffectAck()

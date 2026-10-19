@@ -69,6 +69,21 @@ def test_claiming_sapphire_linked_relic_removes_key_choice(chest_env_type):
         env.close()
 
 
+def test_claiming_sapphire_key_uses_the_public_semantic_action(chest_env_type):
+    env = chest_env_type()
+    try:
+        env.reset(seed=0)
+        env.thick.step(ga.chest(True))
+        assert env.thick.gc.get_reward_info()["keys"] == ["SAPPHIRE_KEY"]
+        assert ga.claim(ga.CLAIM_KEY, 0) in env.thick.legal_semantic_actions()
+        env.thick.step(ga.claim(ga.CLAIM_KEY, 0))
+        assert env.thick.gc.blue_key
+        assert env.thick.gc.get_reward_info()["keys"] == []
+        assert not env.thick.gc.get_reward_info()["relics"]
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize('relic,offers', [('Matryoshka', 2), ('NlothsMask', 0)])
 def test_multiple_or_empty_chest_counts_at_most_once(chest_env_type, relic, offers):
     env = chest_env_type()

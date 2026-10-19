@@ -228,7 +228,7 @@ def test_native_large_batch_conversion_matches_serial_and_recovers(combat_factor
             if target is None:
                 # An invalid row must not poison subsequent decoder calls.
                 for field, message in [('owners', 'owner out of range'),
-                                       ('categorical', 'selection card outside vocabulary')]:
+                                       ('categorical', 'selection card enum is outside')]:
                     invalid = dict(pool.payload)
                     value = np.asarray(invalid[field]).copy()
                     if field == 'owners': value[-1] = 65
@@ -261,5 +261,53 @@ def test_native_large_batch_conversion_matches_serial_and_recovers(combat_factor
             for key in ('action', 'native_action_bits', 'root_value', 'simulations',
                         'visit_policy', 'root_visit_policy', 'root_visits'):
                 np.testing.assert_array_equal(results[owner][key], responses[owner]['result'][key])
+    finally:
+        pool.close()
+@pytest.mark.native
+@pytest.mark.parametrize(('column', 'bad'), [(0, -1), (10, 9999), (15, 9999),
+                                           (20, 9), (25, -1), (30, 9999),
+                                           (31, -1), (127, 65537), (223, 7)])
+def test_compact_decoders_reject_unmapped_identity_instead_of_clamping(
+    combat_factory, column, bad,
+):
+    from env.search.native_batch import NativeSearchBatch
+    env = combat_factory(['STRIKE_RED'] * 5)
+    pool = NativeSearchBatch([env], 1)
+    try:
+        packed = {key: value[None, :].copy()
+                  for key, value in env.thick.bc.compact_leaf_arrays().items()}
+        packed.update(owners=[0], selection_prefix=[0],
+                      legal_policy_ids=np.empty((1, 0), np.int32))
+        packed['categorical'][0, column] = bad
+        fields = {key: value[None, :] for key, value
+                  in env._native_packed_global_fields().items()}
+        with pytest.raises(RuntimeError):
+            env._native_packed_observation_batch(packed)
+        with pytest.raises(ValueError):
+            pool.decoder.decode(packed, fields)
+    finally:
+        pool.close()
+
+
+@pytest.mark.native
+def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factory):
+    from env.search.native_batch import NativeSearchBatch
+    from env.core import encode
+    env = combat_factory(['SEARING_BLOW'] * 5)
+    env.thick.bc.apply_custom_state({'hand': [('SEARING_BLOW', 130, 2)]})
+    env._invalidate_backend_cache()
+    pool = NativeSearchBatch([env], 1)
+    try:
+        pool.payload = {key: value[None, :]
+                        for key, value in env.thick.bc.compact_leaf_arrays().items()}
+        pool.payload.update(owners=[0], selection_prefix=[0],
+                            legal_policy_ids=np.empty((1, 0), np.int32))
+        pool.global_fields = {key: value[None, :] for key, value
+                              in env._native_packed_global_fields().items()}
+        actual = pool.observations()
+        expected = env._native_leaf_observation(env.thick.bc.to_dict(), combat_only=True)
+        assert actual['hand_damage'][0, 0] * encode.DMG_SCALE == 8917
+        for key, value in expected.items():
+            np.testing.assert_array_equal(actual[key][0], value, err_msg=key)
     finally:
         pool.close()

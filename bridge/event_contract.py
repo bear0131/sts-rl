@@ -7,6 +7,11 @@ import re
 from collections import Counter
 from copy import deepcopy
 
+from bridge.schemas.entity_ids import (
+    DYNAMIC_EVENT_OPTION_KINDS,
+    EVENT_ALIASES,
+)
+
 
 # native semantic ID, public label aliases, expected effect type
 def first_two_match_slots(available_slots):
@@ -27,12 +32,34 @@ def first_two_match_slots(available_slots):
 
 
 CONTRACTS = {
+    # Each semantic ID below is the native GameAction event index, not the
+    # current CommunicationMod ordinal.  Multi-page events deliberately keep
+    # their sparse native IDs (Cursed Tome 0..6; Golden Idol trap 2..4).
+    "Accursed Blacksmith": [(0, '锻造|Forge', 'pending_blacksmith_upgrade'),
+                            (1, '翻查|Rummage', 'pending_blacksmith_relic_curse'),
+                            (2, '离开|Leave', 'leave')],
     "The Woman in Blue": [(0, '买1瓶药水|Buy 1 Potion', 'woman_potions_1'),
                           (1, '买2瓶药水|Buy 2 Potions', 'woman_potions_2'),
                           (2, '买3瓶药水|Buy 3 Potions', 'woman_potions_3'),
                           (3, '离开|Leave', 'woman_leave')],
     "Back to Basics": [(0, '简约|Elegance', 'basics_remove'),
                        (1, '质朴|Simplicity', 'basics_upgrade')],
+    "Bonfire Elementals": [(0, '献上|Offer', 'pending_bonfire_offer')],
+    "Colosseum": [(0, '战斗|Fight', 'pending_colosseum_first_combat'),
+                   (0, '怂了|Cowardice', 'leave'),
+                   (1, '战斗到底|Victory', 'pending_colosseum_second_combat')],
+    "Cursed Tome": [(0, '阅读|Read', 'pending_tome_read'),
+                     (1, '离开|Leave', 'leave'),
+                     (2, '继续|Continue', 'pending_tome_continue_1'),
+                     (3, '继续|Continue', 'pending_tome_continue_2'),
+                     (4, '继续|Continue', 'pending_tome_continue_3'),
+                     (5, '拿走|Take', 'pending_tome_take'),
+                     (6, '停止|Stop', 'pending_tome_stop')],
+    "Dead Adventurer": [(0, '搜索|继续|Search|Continue', 'pending_dead_search'),
+                        (1, '离开|Leave', 'leave')],
+    "Drug Dealer": [(0, '试一下J.A.X.|Test J.A.X.', 'pending_augmenter_jax'),
+                     (1, '当一下实验对象|Become Test Subject', 'pending_augmenter_transform'),
+                     (2, '喝一下突变剂|Ingest Mutagens', 'pending_augmenter_relic')],
     "SecretPortal": [(0, '进入传送门|Enter the Portal', 'portal_boss'),
                      (1, '离开|Leave', 'leave')],
     "Fountain of Cleansing": [(0, '喝水|Drink', 'remove_curses'),
@@ -45,7 +72,7 @@ CONTRACTS = {
                    (2, '离开|Leave', 'leave')],
     "Scrap Ooze": [(0, '伸手进去|接着往里伸|Reach Inside|Deeper', 'scrap_search'),
                    (1, '离开|Leave', 'leave')],
-    "Forgotten Altar": [(0, '献上|Offer', 'altar_idol'), (1, '献祭|Sacrifice', 'altar_sacrifice'),
+    "Forgotten Altar": [(0, '献上|献上：金神像|Offer|Offer: Golden Idol', 'altar_idol'), (1, '献祭|Sacrifice', 'altar_sacrifice'),
                         (2, '亵渎|Desecrate', 'altar_decay')],
     "Beggar": [(0, '给金币|Offer Gold', 'beggar_remove'), (1, '离开|Leave', 'leave')],
     "The Cleric": [(0, '治疗|Heal', 'cleric_heal'), (1, '净化|Purify', 'cleric_remove'),
@@ -53,9 +80,10 @@ CONTRACTS = {
     "Mushrooms": [(0, '踩扁|Stomp', 'mushroom_combat'), (1, '吃下|Eat', 'mushroom_eat')],
     "Knowing Skull": [(0, '财富？|Riches?', 'gold'), (1, '成功？|Success?', 'card'),
                       (2, '来点喝的？|A Pick Me Up?', 'potion'), (3, '我要怎么离开？|How do I leave?', 'hp_loss')],
-    "Vampires": [(0, '失去鲜血药瓶|Lose Blood Vial', 'vial_bites'),
-                 (1, '失去.*最大生命|Lose.*Max HP', 'maxhp_loss'), (2, '拒绝|Refuse', 'leave')],
-    "Tomb of Lord Red Mask": [(0, '戴上|Don', 'gold'), (1, '献上|Offer', 'relic'), (2, '离开|Leave', 'leave')],
+    "Vampires": [(0, '接受|Accept|失去鲜血药瓶|Lose Blood Vial', 'vial_bites'),
+                 (1, '接受|Accept', 'maxhp_loss'), (2, '拒绝|Refuse', 'leave')],
+    "Tomb of Lord Red Mask": [(0, '戴上|戴上红面具|Don|Don the Red Mask', 'gold'),
+                              (1, '献上|Offer', 'relic'), (2, '离开|Leave', 'leave')],
     "MindBloom": [(0, '我必凯旋|I am War', 'combat'), (1, '我已觉醒|I am Awake', 'relic'),
                   (2, '我将富有|我很富有|I am Rich', 'gold'), (3, '我无伤痛|I am Healthy', 'card')],
     "Big Fish": [(0, '香蕉|Banana', 'heal'), (1, '甜甜圈|Donut', 'maxhp_gain'), (2, '盒子|Box', 'relic')],
@@ -65,17 +93,77 @@ CONTRACTS = {
     "Upgrade Shrine": [(0, '祈祷|Pray', 'upgrade'), (1, '离开|Leave', 'leave')],
     "Duplicator": [(0, '祈祷|Pray', 'card'), (1, '离开|Leave', 'leave')],
     "Ghosts": [(0, '接受|Accept', 'maxhp_loss'), (1, '拒绝|Refuse', 'leave')],
-    "Masked Bandits": [(0, '付钱|Pay', 'gold_loss'), (1, '战斗|Fight', 'combat')],
+    "Masked Bandits": [(0, '付钱|Pay', 'gold_loss'), (1, '战斗|战斗！|Fight|Fight!', 'combat')],
     "Golden Shrine": [(0, '祈祷|Pray', 'gold'), (1, '亵渎|Desecrate', 'gold'), (2, '离开|Leave', 'leave')],
+    "Golden Idol": [(0, '拿走|Take', 'pending_idol_take'),
+                    (1, '离开|Leave', 'leave'),
+                    (2, '逃跑|Outrun', 'pending_idol_curse'),
+                    (3, '砸烂|Smash', 'pending_idol_damage'),
+                    (4, '躲藏|Hide', 'pending_idol_maxhp')],
+    "Golden Wing": [(0, '祈祷|Pray', 'pending_wing_remove'),
+                    (1, '摧毁|Destroy', 'pending_wing_gold'),
+                    (2, '离开|Leave', 'leave')],
+    "Lab": [(0, '搜索|Search', 'lab_rewards')],
+    "Liars Game": [(0, '同意|Agree', 'pending_serpent_gold_curse'),
+                   (1, '反对|Disagree', 'leave')],
     "Nest": [(0, '抢了钱就跑|Smash and Grab', 'gold'), (1, '留在队伍中|Stay in Line', 'card')],
     "The Library": [(0, '阅读|Read', 'card'), (1, '睡觉|Sleep', 'heal')],
+    "Shining Light": [(0, '走进|Enter', 'pending_shining_upgrade_damage'),
+                      (1, '离开|Leave', 'leave')],
+    "The Joust": [(0, '凶手|Murderer', 'pending_joust_murderer'),
+                  (1, '主人|Owner', 'pending_joust_owner')],
+    "The Mausoleum": [(0, '打开棺材|Open Coffin', 'pending_mausoleum_relic_curse'),
+                      (1, '离开|Leave', 'leave')],
+    "The Moai Head": [(0, '跳进去|Jump Inside', 'pending_moai_heal_maxhp'),
+                      (1, '献上：金神像|Offer: Golden Idol', 'pending_moai_idol_gold'),
+                      (2, '离开|Leave', 'leave')],
     "Addict": [(0, '给他金币|Offer Gold', 'relic'), (1, '抢夺|Rob', 'relic'), (2, '离开|Leave', 'leave')],
-    "Winding Halls": [(0, '拥抱疯狂|Embrace Madness', 'card'), (1, '集中精神|Focus', 'card'), (2, '寻找来路|Retrace', 'maxhp_loss')],
+    "Winding Halls": [(0, '拥抱疯狂|Embrace Madness', 'card'), (1, '集中精神|Focus', 'card'), (2, '寻找来路|Retrace|Retrace Your Steps', 'maxhp_loss')],
+    "Wheel of Change": [(0, '玩小游戏|Play', 'pending_wheel_random')],
 }
+
+# Contracts whose semantic identity comes from public per-instance records
+# rather than a static label: exact card, relic, service variant, or board slot.
+# They still belong to the complete event word table and are validated beside
+# CONTRACTS; none may fall through to a UI ordinal.
+STRUCTURED_CONTRACTS = frozenset({
+    "Falling", "N'loth", "SensoryStone", "Match and Keep!",
+    *DYNAMIC_EVENT_OPTION_KINDS,
+})
+
+
+def canonical_contract_events():
+    """Canonical policy-event identities with an explicit option disposition."""
+    return {
+        EVENT_ALIASES.get(event, event)
+        for event in {*CONTRACTS, *STRUCTURED_CONTRACTS}
+    } | {"NEOW"}
 
 
 def _text(text):
     return re.sub(r'\s+|#[a-zA-Z]', '', str(text)).casefold()
+
+
+def _rule_matches(event, text, labels, effect):
+    """Match a whole button label, then explicitly disambiguate reused labels."""
+    match = re.match(r'^\[([^\]]+)\]', text)
+    if match is None:
+        return False
+    if event == 'Tomb of Lord Red Mask' and effect == 'relic':
+        return re.fullmatch(r'(?:献上[:：]?\d+金币|offer:\d+gold)', match[1]) is not None
+    if match[1] not in {_text(label) for label in labels.split('|')}:
+        return False
+    if event == 'Cursed Tome' and effect.startswith('pending_tome_continue_'):
+        cost = int(effect.rsplit('_', 1)[1])
+        return re.fullmatch(
+            r'\[(?:继续|continue)\](?:失去|lose)' + str(cost) + r'(?:生命。|hp\.)',
+            text,
+        ) is not None
+    if event == 'Vampires' and effect in {'vial_bites', 'maxhp_loss'}:
+        vial = any(word in text for word in ('失去鲜血药瓶', 'losebloodvial'))
+        maxhp = re.search(r'(?:失去\d+最大生命|lose\d+maxhp)', text) is not None
+        return (vial and not maxhp) if effect == 'vial_bites' else (maxhp and not vial)
+    return True
 
 
 def scrap_offer(gs):
@@ -183,6 +271,10 @@ def options(gs):
     _validate_choice_indices(gs)
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'Match and Keep!':
+        raise ValueError(
+            'Match and Keep requires the fixed board-slot transport contract'
+        )
     if event == "N'loth":
         return {d['index']: (d['ui'], 'nloth_trade' if d['kind'] == 'lose_relic' else 'leave')
                 for d in nloth_choices(gs)}
@@ -215,7 +307,7 @@ def options(gs):
             continue
         text = _text(o.get('text', ''))
         matches = [(idx, effect) for idx, pattern, effect in rules
-                   if any(re.search(_text(p).replace('?', r'\?'), text) for p in pattern.split('|'))]
+                   if _rule_matches(event, text, pattern, effect)]
         if len(matches) != 1 or o.get('choice_index') is None:
             raise ValueError(f'unrecognized/ambiguous event option: {event}: {text}')
         idx, effect = matches[0]
@@ -261,6 +353,10 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        if effect.startswith('pending_'):
+            raise ValueError(
+                f'recognized event option has no audited effect receipt: {effect}'
+            )
         if effect == 'woman_leave' and gs.get('ascension_level', 0) >= 15:
             raise ValueError('Woman in Blue A15 leave damage variants not yet audited')
         if effect.startswith('woman_potions_'):

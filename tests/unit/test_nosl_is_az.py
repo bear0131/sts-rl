@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from gymnasium import spaces
 
-from bridge.schemas.combat_state import normalize_sim
+from bridge.schemas.combat_state import _REAL_COMBAT_COUNTER_KEYS, normalize_sim
 from env.core import vocab as V
 from rl.algorithms.accumulating_ppo import (
     AccumulatingMaskablePPO,
@@ -483,8 +483,12 @@ class NOSLISAZTest(unittest.TestCase):
                 "max_hp": 20,
                 "block": 0,
                 "energy": 3,
+                "energy_per_turn": 3,
+                "gold": 0,
                 "powers": [],
-                "combat_counters": {},
+                "combat_counters": {
+                    key: 0 for key in _REAL_COMBAT_COUNTER_KEYS
+                },
             },
             "monsters": [],
             "hand": [],
@@ -494,7 +498,8 @@ class NOSLISAZTest(unittest.TestCase):
         }
         self.assertTrue(normalize_sim(raw)["post_enemy_turn_boundary"])
         raw.pop("post_enemy_turn_boundary")
-        self.assertFalse(normalize_sim(raw)["post_enemy_turn_boundary"])
+        with self.assertRaisesRegex(ValueError, "post_enemy_turn_boundary"):
+            normalize_sim(raw)
 
     def test_leaf_dtype_packing_preserves_fields(self):
         observation = {

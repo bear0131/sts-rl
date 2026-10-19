@@ -716,6 +716,8 @@ class StSTransformerExtractor(BaseFeaturesExtractor):
             "gold", "pick_remaining", "can_pick_zero", "can_pick_any",
             "shop_remove_cost",
         ]
+        if "run_keys" in observation_space.spaces:
+            self.global_scalar_keys.append("run_keys")
         if "deck_size" in observation_space.spaces:
             self.global_scalar_keys.append("deck_size")
         g_in = sum(self._n(k, flat=True) for k in self.global_scalar_keys) + d_global_cat

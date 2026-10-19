@@ -103,6 +103,8 @@ class EntityCombatNetwork(nn.Module):
         self.scalar_keys = ('player_scalars','player_buffs','combat_counters',
                             'post_enemy_turn_boundary','ascension','gold','pick_remaining',
                             'can_pick_zero','can_pick_any')
+        if 'run_keys' in space.spaces:
+            self.scalar_keys += ('run_keys',)
         if config.boss_win_weight:
             self.scalar_keys += ('combat_is_boss',)
         # Additional HP deficit, log turn, and soft threshold features.

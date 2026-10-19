@@ -29,7 +29,31 @@ from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 from bridge import event_contract
-from bridge.schemas.entity_ids import POTION_ALIASES
+from bridge.schemas.entity_ids import (
+    BOSS_ALIASES,
+    BOSS_CANONICAL_IDS,
+    COMBAT_SELECTION_SOURCES,
+    DYNAMIC_COMBAT_SELECTION_SOURCES,
+    DYNAMIC_EVENT_OPTION_KINDS,
+    EMPTY_REAL_POTION_IDS,
+    EVENT_ALIASES,
+    OVERWORLD_SELECTION_EVENTS,
+    OVERWORLD_SELECTION_FLAGS,
+    OVERWORLD_SELECTION_RELICS,
+    POTION_ALIASES,
+    REAL_REWARD_TYPE_IDS,
+    REAL_COMMAND_IDS,
+    REAL_CHARACTER_IDS,
+    REAL_ROOM_PHASES,
+    REAL_ACTION_PHASES,
+    REWARD_CHOICE_TYPES,
+    ROOM_ALIASES,
+    RUN_KEY_FIELDS,
+    SCREEN_PHASES,
+    SIMULATOR_PARITY_EXPORT_VERSION,
+    UNSUPPORTED_REAL_RELIC_IDS,
+    UNSUPPORTED_SELECTION_SOURCES,
+)
 
 LOG = logging.getLogger(__name__)
 
@@ -80,73 +104,10 @@ def _neow_option_from_text(text: str) -> dict[str, int]:
     return {'bonus_id': bonus, 'drawback_id': drawback}
 
 
-_SCREEN_PHASE = {
-    "EVENT": "event",
-    "CARD_REWARD": "combat_reward",
-    "COMBAT_REWARD": "combat_reward",
-    "GRID": "card_select",
-    "MAP": "map",
-    "REST": "rest",
-    "CHEST": "chest",
-    "BOSS_REWARD": "boss_relic",
-    "SHOP_ROOM": "shop",
-    "SHOP_SCREEN": "shop",
-    "GAME_OVER": "none",
-}
-
-_ROOM_LABELS = {
-    "m": "MONSTER",
-    "monster": "MONSTER",
-    "enemy": "MONSTER",
-    "e": "ELITE",
-    "elite": "ELITE",
-    "?": "EVENT",
-    "event": "EVENT",
-    "$": "SHOP",
-    "shop": "SHOP",
-    "r": "REST",
-    "rest": "REST",
-    "t": "TREASURE",
-    "treasure": "TREASURE",
-    "chest": "TREASURE",
-    "boss": "BOSS",
-}
-
-_BOSS_ALIASES = {
-    "The Guardian": "THE_GUARDIAN",
-    "Guardian": "THE_GUARDIAN",
-    "Slime Boss": "SLIME_BOSS",
-    "SlimeBoss": "SLIME_BOSS",
-    "Hexaghost": "HEXAGHOST",
-    "Bronze Automaton": "AUTOMATON",
-    "BronzeAutomaton": "AUTOMATON",
-    "The Collector": "COLLECTOR",
-    "Collector": "COLLECTOR",
-    "The Champ": "CHAMP",
-    "Champ": "CHAMP",
-    "Awakened One": "AWAKENED_ONE",
-    "AwakenedOne": "AWAKENED_ONE",
-    "Time Eater": "TIME_EATER",
-    "TimeEater": "TIME_EATER",
-    "Donu and Deca": "DONU_AND_DECA",
-    "Donu & Deca": "DONU_AND_DECA",
-    "DonuDeca": "DONU_AND_DECA",
-}
-
-_EVENT_ALIASES = {
-    "FaceTrader": "Face Trader",
-    "SecretPortal": "Secret Portal",
-    "Match and Keep!": "Match and Keep",
-    "N'loth": "Nloth",
-    "NoteForYourself": "Note For Yourself",
-    "MindBloom": "Mindbloom",
-    "SensoryStone": "Sensory Stone",
-    "Neow Event": "NEOW",
-    "Neow": "NEOW",
-    "We Meet Again": "WeMeetAgain",
-    "WeMeetAgain": "WeMeetAgain",
-    "Bonfire Spirits": "Bonfire Elementals",
-}
+_SCREEN_PHASE = SCREEN_PHASES
+_ROOM_LABELS = ROOM_ALIASES
+_BOSS_ALIASES = BOSS_ALIASES
+_EVENT_ALIASES = EVENT_ALIASES
 
 _CAMPFIRE_ALIASES = {
     "rest": "rest",
@@ -157,15 +118,17 @@ _CAMPFIRE_ALIASES = {
     "dig": "dig",
 }
 
-_TARGETED_POTIONS = {
-    "Fear Potion",
-    "Fire Potion",
-    "Poison Potion",
-    "Weak Potion",
-}
-_TARGETED_POTION_KEYS = {"fearpotion", "firepotion", "poisonpotion", "weakpotion"}
-
 _MAP_MAX_Y = 14
+
+
+def _is_terminal_rest_node(node: dict[str, Any]) -> bool:
+    """Java draws the mandatory pre-boss rest at (3, 16).
+
+    The simulator/global-map contract contains only the 15 generated rows
+    0..14; that fixed rest is represented by the current local map choices, not
+    by a fabricated/clamped row in the global grid.
+    """
+    return _node_xy(node) == (3, 16) and _node_room(node) == "REST"
 
 
 @dataclass(frozen=True)
@@ -185,33 +148,131 @@ def _norm_label(value: Any) -> str:
 
 
 def _commands(frame: dict[str, Any]) -> set[str]:
-    return {str(c).upper() for c in frame.get("available_commands", []) or []}
+    raw = frame.get("available_commands")
+    if raw is None:
+        return set()
+    if not isinstance(raw, list):
+        raise ValueError(f"available_commands must be a list, got {raw!r}")
+    commands = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"available_commands[{index}] must be a nonempty string, got {value!r}"
+            )
+        command = value.strip().upper()
+        if command not in REAL_COMMAND_IDS:
+            raise ValueError(f"unknown CommunicationMod command keyword: {value!r}")
+        commands.add(command)
+    return commands
 
 
 def _choice_list(gs: dict[str, Any]) -> list[Any]:
-    return list(gs.get("choice_list") or [])
+    raw = gs.get("choice_list")
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"choice_list must be a list, got {raw!r}")
+    return list(raw)
 
 
 def _screen_state(gs: dict[str, Any]) -> dict[str, Any]:
-    ss = gs.get("screen_state") or {}
-    return ss if isinstance(ss, dict) else {}
+    ss = gs.get("screen_state")
+    if ss is None:
+        return {}
+    if not isinstance(ss, dict):
+        raise ValueError(f"screen_state must be an object, got {ss!r}")
+    return ss
 
 
 def _int_or_none(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
+    # JSON integer fields arrive as actual Python ints.  Coercing strings,
+    # floats, or booleans lets malformed transport data impersonate an index.
+    return value if type(value) is int else None
+
+
+def _required(mapping: dict[str, Any], *keys: str, context: str) -> Any:
+    for key in keys:
+        if key in mapping:
+            value = mapping[key]
+            if value is None:
+                continue
+            return value
+    raise ValueError(f"{context} is missing required field {keys!r}")
+
+
+def _required_bool(mapping: dict[str, Any], key: str, *, context: str) -> bool:
+    value = _required(mapping, key, context=context)
+    if type(value) is not bool:
+        raise ValueError(f"{context}.{key} must be a boolean, got {value!r}")
+    return value
+
+
+def _required_int(mapping: dict[str, Any], *keys: str, context: str) -> int:
+    value = _required(mapping, *keys, context=context)
+    if type(value) is not int:
+        raise ValueError(f"{context}.{keys!r} must be an integer, got {value!r}")
+    return value
+
+
+def _list_value(
+    mapping: dict[str, Any],
+    *keys: str,
+    context: str,
+    required: bool = True,
+) -> list[Any]:
+    for key in keys:
+        if key in mapping:
+            value = mapping[key]
+            if not isinstance(value, list):
+                raise ValueError(f"{context}.{key} must be a list, got {value!r}")
+            return value
+    if required:
+        raise ValueError(f"{context} is missing required list {keys!r}")
+    return []
+
+
+def _list_alias_value(
+    mapping: dict[str, Any],
+    *keys: str,
+    context: str,
+    required: bool = True,
+) -> list[Any]:
+    """Read schema aliases without letting an earlier empty field hide data."""
+    present = []
+    for key in keys:
+        if key not in mapping:
+            continue
+        value = mapping[key]
+        if not isinstance(value, list):
+            raise ValueError(f"{context}.{key} must be a list, got {value!r}")
+        present.append((key, value))
+    if not present:
+        if required:
+            raise ValueError(f"{context} is missing required list {keys!r}")
+        return []
+    nonempty = [(key, value) for key, value in present if value]
+    if len(nonempty) > 1:
+        first = nonempty[0][1]
+        if any(value != first for _key, value in nonempty[1:]):
+            raise ValueError(
+                f"{context} contains conflicting list aliases: "
+                f"{[key for key, _value in nonempty]!r}"
+            )
+    return nonempty[0][1] if nonempty else present[0][1]
+
+
+def _dict_records(values: list[Any], *, context: str) -> list[dict[str, Any]]:
+    for index, value in enumerate(values):
+        if not isinstance(value, dict):
+            raise ValueError(f"{context}[{index}] must be an object, got {value!r}")
+    return values
 
 
 def _real_card_tuple(card: dict[str, Any]) -> tuple[str, int]:
-    cid = card.get("id") or card.get("name") or "EMPTY"
-    for key in ("upgrades", "upgrade_count", "up"):
-        if key in card:
-            up = int(card[key] or 0)
-            break
-    else:
-        raise ValueError(f"card record is missing its upgrade count: {card!r}")
+    cid = _required(card, "id", context="real card record")
+    up = _required_int(card, "upgrades", context="real card record")
+    if up < 0:
+        raise ValueError(f"real card upgrade count must be nonnegative: {card!r}")
     c = _card(str(cid), up)
     return c["id"], c["up"]
 
@@ -220,14 +281,28 @@ def _real_card_dict(card: dict[str, Any], *, include_cost: bool = False) -> dict
     cid, up = _real_card_tuple(card)
     out: dict[str, Any] = {"id": cid, "up": up}
     if include_cost:
-        out["cost"] = int(card.get("cost", 0) or 0)
+        if "cost" not in card:
+            raise ValueError(f"real hand card is missing its current cost: {card!r}")
+        out["cost"] = int(card["cost"])
     return out
 
 
 def _relic_id(relic: Any) -> str:
     if isinstance(relic, dict):
-        return str(relic.get("id") or relic.get("name") or "PAD")
-    return str(relic or "PAD")
+        value = _required(relic, "id", context="real relic record")
+    else:
+        value = relic
+    if not value:
+        raise ValueError(f"real relic record is missing its identity: {relic!r}")
+    rid = str(value)
+    if rid in UNSUPPORTED_REAL_RELIC_IDS:
+        raise ValueError(
+            f"unsupported real relic ID {rid!r}: "
+            f"{UNSUPPORTED_REAL_RELIC_IDS[rid]}"
+        )
+    if rid == "PAD" or rid not in V.RELIC_VOCAB_INDEX:
+        raise ValueError(f"unknown real relic ID: {rid}")
+    return rid
 
 
 _COMBAT_COUNTER_KEYS = {
@@ -243,11 +318,16 @@ _COMBAT_COUNTER_KEYS = {
 
 def _potion_id(potion: Any) -> str:
     if isinstance(potion, dict):
-        pid = str(potion.get("id") or potion.get("name") or "PAD")
+        value = _required(potion, "id", context="real potion record")
     else:
-        pid = str(potion or "PAD")
-    if pid in {"Potion Slot", "EMPTY", "None", "", "PAD"}:
+        value = potion
+    if not value:
+        raise ValueError(f"real potion record is missing its identity: {potion!r}")
+    pid = str(value)
+    if pid in EMPTY_REAL_POTION_IDS:
         return "PAD"
+    if pid == "PAD":
+        raise ValueError("real potion data cannot use the bridge PAD sentinel")
     canonical = POTION_ALIASES.get(pid, pid)
     if canonical not in V.POTION_VOCAB_INDEX:
         raise ValueError(f"unknown real potion ID: {pid}")
@@ -255,67 +335,86 @@ def _potion_id(potion: Any) -> str:
 
 
 def _potion_requires_target(potion: Any, pid: str) -> bool:
-    if isinstance(potion, dict) and "requires_target" in potion:
-        return bool(potion.get("requires_target"))
-    key = re.sub(r"[^a-z0-9]+", "", pid.lower())
-    return pid in _TARGETED_POTIONS or key in _TARGETED_POTION_KEYS
+    if not isinstance(potion, dict):
+        raise ValueError(f"real potion record must be an object: {potion!r}")
+    return _required_bool(
+        potion, "requires_target", context=f"real potion {pid!r}"
+    )
 
 
-def _price(item: Any) -> int:
+def _monster_is_live(monster: Any, *, context: str) -> bool:
+    if not isinstance(monster, dict):
+        raise ValueError(f"{context} must be an object, got {monster!r}")
+    gone = _required_bool(monster, "is_gone", context=context)
+    hp = int(_required(monster, "current_hp", context=context))
+    return not gone and hp > 0
+
+
+def _price(item: Any, *, required: bool = True) -> int | None:
     if not isinstance(item, dict):
-        return -1
-    return int(item.get("price", item.get("cost", -1)) or -1)
+        raise ValueError(f"priced item must be an object, got {item!r}")
+    for key in ("price", "cost"):
+        if key in item and item[key] is not None:
+            return int(item[key])
+    if required:
+        raise ValueError(f"item is missing its price: {item!r}")
+    return None
 
 
 def _normalize_boss(value: Any) -> str:
     if not value:
-        return "PAD"
+        raise ValueError("real game state is missing the act boss identity")
     text = str(value)
-    if text in V.BOSS_VOCAB_INDEX:
+    if text == "PAD":
+        raise ValueError("real boss data cannot use the bridge PAD sentinel")
+    if text in BOSS_CANONICAL_IDS:
         return text
     if text in _BOSS_ALIASES:
         return _BOSS_ALIASES[text]
-    enumish = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper()
-    return enumish if enumish in V.BOSS_VOCAB_INDEX else "PAD"
+    raise ValueError(f"unknown real boss identity: {value!r}")
 
 
 def _normalize_event(value: Any) -> str:
     if not value:
-        return "PAD"
+        raise ValueError("real event screen is missing its event identity")
     text = str(value)
+    if text == "PAD":
+        raise ValueError("real event data cannot use the bridge PAD sentinel")
     if text in _EVENT_ALIASES:
         return _EVENT_ALIASES[text]
     if text in V.EVENT_VOCAB_INDEX:
         return text
-    if text.endswith(" Event"):
-        stripped = text[:-6]
-        if stripped in _EVENT_ALIASES:
-            return _EVENT_ALIASES[stripped]
-        if stripped in V.EVENT_VOCAB_INDEX:
-            return stripped
-    return text if text in V.EVENT_VOCAB_INDEX else "PAD"
+    raise ValueError(f"unknown real event identity: {value!r}")
 
 
 def _screen_cards(ss: dict[str, Any]) -> list[tuple[str, int]]:
-    cards = ss.get("cards") or ss.get("card_reward") or ss.get("cardRewards") or []
-    if not isinstance(cards, list):
-        return []
-    out = []
-    for card in cards:
-        if isinstance(card, dict):
-            out.append(_real_card_tuple(card))
-    return out
+    cards = _list_alias_value(
+        ss, "cards", "card_reward", "cardRewards",
+        context="screen_state", required=False,
+    )
+    return [_real_card_tuple(card) for card in _dict_records(cards, context="screen cards")]
 
 
 def _reward_records(ss: dict[str, Any]) -> list[dict[str, Any]]:
-    rewards = ss.get("rewards") or []
-    if not isinstance(rewards, list):
-        return []
-    return [reward for reward in rewards if isinstance(reward, dict)]
+    rewards = _list_value(ss, "rewards", context="screen_state", required=False)
+    return _dict_records(rewards, context="screen rewards")
 
 
 def _reward_type(reward: dict[str, Any]) -> str:
-    return str(reward.get("reward_type") or reward.get("type") or "").upper()
+    value = str(_required(
+        reward, "reward_type", context="combat reward record"
+    )).upper()
+    if value not in REAL_REWARD_TYPE_IDS:
+        raise ValueError(f"unknown real reward type: {value!r}")
+    return value
+
+
+def _reward_choice_type(choice: Any) -> str:
+    label = _norm_label(choice)
+    try:
+        return REWARD_CHOICE_TYPES[label]
+    except KeyError as exc:
+        raise ValueError(f"unknown combat reward choice keyword: {choice!r}") from exc
 
 
 def _screen_reward_gold(ss: dict[str, Any]) -> list[int]:
@@ -323,38 +422,49 @@ def _screen_reward_gold(ss: dict[str, Any]) -> list[int]:
     for reward in _reward_records(ss):
         if _reward_type(reward) not in {"GOLD", "STOLEN_GOLD"}:
             continue
-        amount = _int_or_none(reward.get("gold"))
-        if amount is not None:
-            gold.append(amount)
+        amount = int(_required(reward, "gold", context="gold reward record"))
+        if amount < 0:
+            raise ValueError(f"gold reward amount must be nonnegative: {amount}")
+        gold.append(amount)
     return gold
 
 
+def _screen_reward_keys(ss: dict[str, Any]) -> list[str]:
+    keys = [
+        reward_type
+        for reward in _reward_records(ss)
+        if (reward_type := _reward_type(reward))
+        in {"EMERALD_KEY", "SAPPHIRE_KEY"}
+    ]
+    if len(keys) > 1:
+        raise ValueError(f"multiple simultaneous key rewards are unsupported: {keys!r}")
+    return keys
+
+
 def _screen_relics(ss: dict[str, Any]) -> list[str]:
-    relics = ss.get("relics") or ss.get("boss_relics") or []
-    if not isinstance(relics, list):
-        return []
+    relics = _list_alias_value(
+        ss, "relics", "boss_relics", context="screen_state", required=False
+    )
     if not relics:
         relics = [
             reward["relic"]
             for reward in _reward_records(ss)
             if _reward_type(reward) == "RELIC"
-            and isinstance(reward.get("relic"), dict)
         ]
     return [_relic_id(r) for r in relics]
 
 
-def _screen_potions(ss: dict[str, Any]) -> list[tuple[str, int]]:
-    potions = ss.get("potions") or []
-    if not isinstance(potions, list):
-        return []
+def _screen_potions(
+    ss: dict[str, Any], *, require_price: bool = False
+) -> list[tuple[str, int | None]]:
+    potions = _list_value(ss, "potions", context="screen_state", required=False)
     if not potions:
         potions = [
             reward["potion"]
             for reward in _reward_records(ss)
             if _reward_type(reward) == "POTION"
-            and isinstance(reward.get("potion"), dict)
         ]
-    return [(_potion_id(p), _price(p)) for p in potions]
+    return [(_potion_id(p), _price(p, required=require_price)) for p in potions]
 
 
 def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
@@ -365,27 +475,36 @@ def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict
     so this adapter deliberately does not parse card/relic/potion names from
     them.  A richer bridge can add ``kind`` plus typed fields to each option.
     """
-    raw_options = ss.get("options") or []
-    if not isinstance(raw_options, list):
+    raw_options = _list_value(ss, "options", context="event screen", required=False)
+    # ``choice_index`` is stock transport metadata, not a semantic type.  Only
+    # an explicit ``kind`` opts a richer bridge into typed option decoding.
+    # Treating every stock option as typed would either parse localized labels
+    # as identities or reject all ordinary event screens.
+    typed = any(
+        isinstance(raw, dict) and "kind" in raw
+        for raw in raw_options
+    )
+    if not typed:
         return []
+    _dict_records(raw_options, context="event options")
     choices = []
-    for raw in raw_options:
-        if not isinstance(raw, dict) or raw.get("disabled"):
+    for raw_index, raw in enumerate(raw_options):
+        if raw.get("disabled"):
             continue
         index = _int_or_none(raw.get("choice_index"))
         if index is None:
-            return []
+            raise ValueError(f"typed event option {raw_index} has no choice_index")
         if not (0 <= index < min(legal_count, A.EVENT_OPT_W)):
-            continue
+            raise ValueError(f"typed event option index is out of range: {index}")
         kind = raw.get("kind")
         if not isinstance(kind, str) or not kind:
-            return []
+            raise ValueError(f"typed event option {index} has no kind")
         detail: dict[str, Any] = {"index": index, "kind": kind}
         try:
             if kind in {"lose_card", "gain_card_then_remove"}:
                 card = raw.get("card")
                 if not isinstance(card, dict):
-                    return []
+                    raise ValueError(f"typed event option {index} has no card record")
                 detail["card"] = _real_card_tuple(card)
             elif kind == "lose_relic":
                 detail["relic"] = _relic_id(raw["relic"])
@@ -401,12 +520,12 @@ def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict
                 if "count" in raw:
                     detail["count"] = int(raw["count"])
             elif kind != "leave":
-                return []
-        except (KeyError, TypeError, ValueError):
-            return []
+                raise ValueError(f"unsupported typed event option kind: {kind!r}")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"malformed typed event option {index}: {raw!r}") from exc
         choices.append(detail)
     if {choice["index"] for choice in choices} != set(range(min(legal_count, A.EVENT_OPT_W))):
-        return []
+        raise ValueError("typed event options do not cover every legal event choice")
     return choices
 
 
@@ -420,26 +539,14 @@ def _choice_index(labels: list[Any], aliases: set[str], occurrence: int = 0) -> 
     return None
 
 
-def _map_choice(label: Any, fallback_x: int) -> tuple[int, str]:
-    text = str(label)
-    lower = text.strip().lower()
-    if lower == "boss":
-        return fallback_x, "BOSS"
-    x = fallback_x
-    match = re.search(r"x\s*=\s*(-?\d+)", text)
-    if match:
-        x = int(match.group(1))
-    room = "NONE"
-    for token, mapped in _ROOM_LABELS.items():
-        if token and re.search(rf"(^|[^a-z]){re.escape(token)}([^a-z]|$)", lower):
-            room = mapped
-            break
-    return x, room
-
-
 def _map_room(value: Any) -> str:
-    text = str(value or "NONE")
-    return _ROOM_LABELS.get(_norm_label(text), text)
+    if value is None or value == "":
+        raise ValueError("map node is missing its room identity")
+    text = str(value)
+    room = _ROOM_LABELS.get(_norm_label(text), text)
+    if room not in V.ROOM_VOCAB_INDEX or room in {"NONE", "INVALID"}:
+        raise ValueError(f"unknown/non-actionable map room identity: {value!r}")
+    return room
 
 
 def _node_xy(node: Any) -> tuple[int, int] | None:
@@ -458,16 +565,19 @@ def _node_room(node: dict[str, Any]) -> str:
 
 def _node_children(node: dict[str, Any]) -> list[tuple[int, int]]:
     out = []
-    for child in node.get("children") or []:
+    children = _list_value(node, "children", context="map node", required=False)
+    for child_index, child in enumerate(children):
         if isinstance(child, dict):
             xy = _node_xy(child)
-            if xy is not None:
-                out.append(xy)
+            if xy is None:
+                raise ValueError(f"map child {child_index} is missing x/y: {child!r}")
+            out.append(xy)
         else:
             x = _int_or_none(child)
             y = _int_or_none(node.get("y"))
-            if x is not None and y is not None:
-                out.append((x, y + 1))
+            if x is None or y is None:
+                raise ValueError(f"malformed map child {child_index}: {child!r}")
+            out.append((x, y + 1))
     return out
 
 
@@ -491,6 +601,11 @@ class RealGameAdapter:
         event_option_observation: bool = False,
         combat_action_contract: str = "legacy",
     ) -> None:
+        # Refuse to start a live bridge if any identity/source vocabulary has
+        # drifted. Validation expands every canonical identity and alias; PAD is
+        # reserved solely for structurally absent fixed-width slots.
+        from bridge.schemas.codec_contract import validate_codec_contract
+        validate_codec_contract()
         if combat_action_contract not in ("legacy", *C.NEURAL_CONTRACTS):
             raise ValueError("unsupported bridge combat action contract")
         self.combat_action_contract = combat_action_contract
@@ -542,6 +657,10 @@ class RealGameAdapter:
         previous_relic_ids = self._last_relic_ids
         self.frame = frame
         self.gs = frame.get("game_state") or {}
+        for key, table in (("room_phase", REAL_ROOM_PHASES),
+                           ("action_phase", REAL_ACTION_PHASES)):
+            if key in self.gs and self.gs[key] not in table:
+                raise ValueError(f"unknown real-game {key} keyword: {self.gs[key]!r}")
         if "error" not in frame:
             combat = self.gs.get("combat_state")
             identity = ((self.gs.get("seed"), self.gs.get("floor"))
@@ -592,12 +711,20 @@ class RealGameAdapter:
             self._deferred_combat_reward_action = None
 
     def screen_type(self) -> str:
-        return str(self.gs.get("screen_type") or "NONE")
+        if "screen_type" not in self.gs or self.gs["screen_type"] is None:
+            if not self.in_game() or "error" in self.frame:
+                return "NONE"
+            raise ValueError("in-game frame is missing required screen_type")
+        return str(self.gs["screen_type"])
 
     def phase(self) -> str:
         if self.gs.get("combat_state") and str(self.gs.get("room_phase") or "").upper() == "COMBAT":
             return "combat"
-        return _SCREEN_PHASE.get(self.screen_type(), "none")
+        screen = self.screen_type()
+        try:
+            return _SCREEN_PHASE[screen]
+        except KeyError as exc:
+            raise ValueError(f"unknown real-game screen type: {screen!r}") from exc
 
     def in_game(self) -> bool:
         return bool(self.frame.get("in_game"))
@@ -611,7 +738,11 @@ class RealGameAdapter:
     def _refresh_command(self) -> str:
         if "STATE" in self.commands():
             return "STATE"
-        return "WAIT 1" if "WAIT" in self.commands() else "STATE"
+        if "WAIT" in self.commands():
+            return "WAIT 1"
+        raise RuntimeError(
+            "frame requires refresh but advertises neither STATE nor WAIT"
+        )
 
     def _combat_ready_for_policy(self) -> bool:
         if not self.gs.get("combat_state"):
@@ -654,7 +785,7 @@ class RealGameAdapter:
         if "CHOOSE" not in self.commands():
             return False
         ss = _screen_state(self.gs)
-        return bool(_screen_cards(ss) or self.choices())
+        return bool(_screen_cards(ss))
 
     def auto_command(self, *, auto_enter_shop: bool = True) -> tuple[str, str] | None:
         """Commands that should bypass the policy to match the sim state model."""
@@ -662,7 +793,7 @@ class RealGameAdapter:
             return "STATE", "mod_error_state_refresh"
         if not self.in_game():
             return None
-        if not self.frame.get("ready_for_command", True):
+        if not self.frame.get("ready_for_command", False):
             return self._refresh_command(), "not_ready"
         # The in-combat map is an inspect-only overlay.  CommunicationMod still
         # publishes the underlying combat state and room phase, but replaces
@@ -742,13 +873,12 @@ class RealGameAdapter:
                 and self._grid_required_selection_complete()):
             return "CONFIRM", "complete_grid_selection"
 
-        if st == "EVENT" and _normalize_event(ss.get("event_id")) == "NEOW" and len(cl) == 1:
-            return "CHOOSE 0", "neow_intro"
-
         if st == "EVENT":
             dialogue = event_contract.transport_only(self.gs)
             if dialogue is not None:
                 return f"CHOOSE {dialogue}", "event_dialogue_transport"
+            if _normalize_event(ss.get("event_id")) == "NEOW" and len(cl) == 1:
+                return "CHOOSE 0", "neow_intro"
 
         if auto_enter_shop and st == "SHOP_ROOM":
             if self._leaving_shop:
@@ -765,8 +895,11 @@ class RealGameAdapter:
         # rewards and defers outer commands through a transport-only SKIP.
         if (st == "COMBAT_REWARD" and not self._skipped_combat_card_reward
                 and "CHOOSE" in self.commands()):
-            normalized = [_norm_label(choice) for choice in cl]
-            card_indices = [i for i, label in enumerate(normalized) if label == "card"]
+            reward_types = [_reward_choice_type(choice) for choice in cl]
+            card_indices = [
+                i for i, reward_type in enumerate(reward_types)
+                if reward_type == "CARD"
+            ]
             if len(card_indices) > self._skipped_reward_card_count:
                 self._combat_reward_card_open = True
                 # Native consumes the last remaining reward, not the first.
@@ -801,7 +934,7 @@ class RealGameAdapter:
             sel = dict((canon.get("options") or {}).get("select") or desc)
             sel["hand_selected"] = sorted(self.multi_selected)
             sel["pick_remaining"] = max(
-                0, int(sel.get("pick_max", 0)) - len(self.multi_selected)
+                0, int(sel["pick_max"]) - len(self.multi_selected)
             )
             canon.setdefault("options", {})["select"] = sel
         else:
@@ -820,7 +953,15 @@ class RealGameAdapter:
         for action_id in ids:
             if 0 <= action_id < A.N_ACTIONS:
                 mask[action_id] = True
-        return (np.pad(mask, (0, C.policy_size(self.combat_action_contract) - C.JOINT_END)) if self.combat_action_contract in C.NEURAL_CONTRACTS else mask)
+        if self.combat_action_contract in C.NEURAL_CONTRACTS:
+            policy_size = C.policy_size(self.combat_action_contract)
+            if policy_size < len(mask):
+                raise ValueError(
+                    f"policy action contract is narrower than overworld actions: "
+                    f"{policy_size} < {len(mask)}"
+                )
+            return np.pad(mask, (0, policy_size - len(mask)))
+        return mask
 
     def joint_semantic_actions(self):
         """Complete actions share policy IDs with the simulator; UI indices stay handles."""
@@ -836,7 +977,7 @@ class RealGameAdapter:
                     first = max(self.multi_selected, default=-1) + 1
                     result.update({C.AUTOREGRESSIVE_MULTI + i: ("select_next", i)
                                    for i in range(first, count)})
-                if len(self.multi_selected) >= int(desc.get("pick_min", 0)):
+                if len(self.multi_selected) >= int(desc["pick_min"]):
                     result[C.AUTOREGRESSIVE_STOP] = (ga.MULTI_SELECT, tuple(sorted(self.multi_selected)))
                 return result
             return {C.JOINT_MULTI + bits: (ga.MULTI_SELECT, tuple(i for i in range(count) if bits >> i & 1))
@@ -873,7 +1014,11 @@ class RealGameAdapter:
         return self._continue_joint_multi()
 
     def _joint_screen_identity(self):
-        desc = self.select_descriptor() or {}
+        desc = self.select_descriptor()
+        if desc is None:
+            if self.screen_type() not in {"HAND_SELECT", "GRID"}:
+                return None
+            raise ValueError("multi-selection plan is missing its descriptor")
         return (self.screen_type(), self.gs.get("floor"),
                 (self.gs.get("combat_state") or {}).get("turn"), desc.get("context"))
 
@@ -885,13 +1030,10 @@ class RealGameAdapter:
             return None
         hand = tuple(self._combat_hand_cards())
         screen_state = _screen_state(self.gs)
-        selected = (
-            screen_state.get("selected_cards") or screen_state.get("selectedCards")
-            or screen_state.get("selected") or []
+        selected = _list_value(
+            screen_state, "selected", context="HAND_SELECT selection"
         )
-        count = int(screen_state.get(
-            "have_selected", len(selected) if isinstance(selected, list) else 0
-        ))
+        count = len(selected)
         if plan["sent"] is not None:
             previous, index = plan["previous"], plan["sent"]
             removed = previous[:index] + previous[index + 1:]
@@ -926,6 +1068,7 @@ class RealGameAdapter:
             except Exception:
                 LOG.exception("normalize_real failed")
                 raise
+            canon["strict_complete"] = True
             canon["phase"] = "combat"
             desc = self.select_descriptor()
             if desc is not None:
@@ -939,17 +1082,23 @@ class RealGameAdapter:
             ):
                 key = _COMBAT_COUNTER_KEYS.get(relic)
                 if key is not None:
-                    counters[key] = value
+                    if int(counters[key]) != int(value):
+                        raise ValueError(
+                            "combat counter/relic export mismatch: "
+                            f"{relic!r} counter={value} combat[{key}]={counters[key]}"
+                        )
             return canon
 
         phase = self.phase()
         canon = {
-            "floor": int(self.gs.get("floor", 0) or 0),
-            "hp": int(self.gs.get("current_hp", 0) or 0),
-            "max_hp": int(self.gs.get("max_hp", 0) or 0),
-            "gold": int(self.gs.get("gold", 0) or 0),
+            "strict_complete": True,
+            "floor": int(_required(self.gs, "floor", context="game_state")),
+            "hp": int(_required(self.gs, "current_hp", context="game_state")),
+            "max_hp": int(_required(self.gs, "max_hp", context="game_state")),
+            "gold": int(_required(self.gs, "gold", context="game_state")),
             "deck": sorted(self._deck_cards()),
             "relics": sorted(self._relics()),
+            "keys": dict(self._run_keys()),
             "phase": phase,
             "options": self._options(phase),
             "global": self._global_block(),
@@ -959,60 +1108,78 @@ class RealGameAdapter:
     def _global_block(self) -> dict[str, Any]:
         from env.core.boss_value import is_boss_room
         ss = _screen_state(self.gs)
+        parity_version = _required(
+            self.gs, "simulator_parity_export", context="game_state"
+        )
+        if parity_version != SIMULATOR_PARITY_EXPORT_VERSION:
+            raise ValueError(
+                "real game state was not produced by the required parity exporter: "
+                f"{parity_version!r}"
+            )
+        raw_character = _required(self.gs, "class", context="game_state")
+        if raw_character not in REAL_CHARACTER_IDS:
+            raise ValueError(f"unknown real-game character: {raw_character!r}")
+        character = REAL_CHARACTER_IDS[raw_character]
+        ascension = _required_int(
+            self.gs, "ascension_level", "ascension", context="game_state"
+        )
+        room_type = _required(self.gs, "room_type", context="game_state")
         return {
-            "character": self.gs.get("class") or self.character,
-            "ascension": int(
-                self.gs.get("ascension_level", self.gs.get("ascension", self.ascension))
-                or self.ascension
-            ),
-            "act": int(self.gs.get("act", 0) or 0),
-            "floor": int(self.gs.get("floor", 0) or 0),
-            "combat_is_boss": is_boss_room(self.gs.get("room_type", "")),
+            "character": character,
+            "ascension": ascension,
+            "act": _required_int(self.gs, "act", context="game_state"),
+            "floor": _required_int(self.gs, "floor", context="game_state"),
+            "combat_is_boss": is_boss_room(room_type),
             "boss": _normalize_boss(
-                self.gs.get("boss")
-                or self.gs.get("act_boss")
-                or ss.get("boss")
-                or ss.get("act_boss")
+                _required(
+                    self.gs, "boss", "act_boss", context="game_state"
+                )
             ),
             "relics": self._relics(),
             "relic_counters": self._relic_counters(),
             "potions": self._potions(),
-            "gold": int(self.gs.get("gold", 0) or 0),
-            "hp": int(self.gs.get("current_hp", 0) or 0),
-            "max_hp": int(self.gs.get("max_hp", 0) or 0),
+            "keys": dict(self._run_keys()),
+            "gold": _required_int(self.gs, "gold", context="game_state"),
+            "hp": _required_int(self.gs, "current_hp", context="game_state"),
+            "max_hp": _required_int(self.gs, "max_hp", context="game_state"),
             "deck": self._deck_cards(),
             "boss_relics": _screen_relics(ss) if self.phase() == "boss_relic" else [],
         }
 
+    def _run_keys(self) -> dict[str, bool]:
+        return {
+            semantic: _required_bool(
+                self.gs, fields["real"], context="game_state"
+            )
+            for semantic, fields in RUN_KEY_FIELDS.items()
+        }
+
     def _deck_cards(self) -> list[tuple[str, int]]:
-        deck = self.gs.get("deck") or []
-        if not isinstance(deck, list):
-            return []
-        return [_real_card_tuple(c) for c in deck if isinstance(c, dict)]
+        deck = _list_value(self.gs, "deck", context="game_state")
+        return [
+            _real_card_tuple(card)
+            for card in _dict_records(deck, context="game_state.deck")
+        ]
 
     def _relics(self) -> list[str]:
-        relics = self.gs.get("relics") or []
-        if not isinstance(relics, list):
-            return []
+        relics = _list_value(self.gs, "relics", context="game_state")
         return [_relic_id(r) for r in relics]
 
     def _relic_counters(self) -> list[int]:
-        relics = self.gs.get("relics") or []
-        if not isinstance(relics, list):
-            return []
-        return [
-            int(r.get("counter", 0) or 0) if isinstance(r, dict) else 0
-            for r in relics
-        ]
+        relics = _dict_records(
+            _list_value(self.gs, "relics", context="game_state"),
+            context="game_state.relics",
+        )
+        counters = []
+        for relic in relics:
+            counters.append(int(_required(relic, "counter", context="relic record")))
+        return counters
 
     def _potions(self) -> list[str]:
         return [_potion_id(p) for p in self._potion_records()]
 
     def _potion_records(self) -> list[Any]:
-        potions = self.gs.get("potions") or []
-        if not isinstance(potions, list):
-            return []
-        return potions
+        return _list_value(self.gs, "potions", context="game_state")
 
     def _options(self, phase: str) -> dict[str, Any]:
         ss = _screen_state(self.gs)
@@ -1032,31 +1199,64 @@ class RealGameAdapter:
                 "gold": list(outer.get("gold", [])),
                 "relics": list(outer.get("relics", [])),
                 "potions": list(outer.get("potions", [])),
-                "card_count": (len(cards) if cards else int("card" in {_norm_label(c) for c in cl}))
-                              if has_card else 0,
+                "keys": list(outer.get("keys", [])),
+                # card_count is the number of reward groups, not the number of
+                # cards inside the currently-open group.
+                "card_count": max(
+                    0,
+                    sum(
+                        _reward_choice_type(choice) == "CARD"
+                        for choice in (
+                            self._combat_reward_outer_choices or tuple(cl)
+                        )
+                    ) - self._skipped_reward_card_count,
+                ) if has_card else 0,
                 "cards": cards if has_card else [],
             })
         elif phase == "event":
-            event = _normalize_event(ss.get("event_id") or ss.get("event_name"))
+            event = _normalize_event(_required(
+                ss, "event_id", context="event screen"
+            ))
             if event == "PAD":
                 raise ValueError(f"unknown event identity: {ss.get('event_id')!r}")
             opts["event"] = event
             if event == "NEOW" and self.neow_observation:
                 opts["neow"] = self._neow_options(ss)
             elif event != "NEOW":
-                mapping = event_contract.options(self.gs)
-                opts["event_options"] = sorted(mapping)
                 details = _structured_event_choices(ss, len(cl))
                 if ss.get('event_id') == 'Falling':
+                    mapping = event_contract.options(self.gs)
+                    opts["event_options"] = sorted(mapping)
                     opts['event_choices'] = [dict(index=d['index'], kind='lose_card', card=_real_card_tuple(d['card']))
                                              for d in event_contract.falling_choices(self.gs)]
                     details = []
-                if ss.get('event_id') == "N'loth":
+                elif ss.get('event_id') == "N'loth":
+                    mapping = event_contract.options(self.gs)
+                    opts["event_options"] = sorted(mapping)
                     opts['event_choices'] = [
                         dict(index=d['index'], kind=d['kind'], **({'relic': _relic_id(d['relic'])}
                              if d['kind'] == 'lose_relic' else {}))
                         for d in event_contract.nloth_choices(self.gs)]
                     details = []
+                elif details and event in DYNAMIC_EVENT_OPTION_KINDS:
+                    kind_to_semantic = DYNAMIC_EVENT_OPTION_KINDS[event]
+                    unknown = sorted({d["kind"] for d in details} - set(kind_to_semantic))
+                    if unknown:
+                        raise ValueError(
+                            f"unknown typed event option kinds for {event}: {unknown!r}"
+                        )
+                    semantic_details = [
+                        dict(d, index=kind_to_semantic[d["kind"]]) for d in details
+                    ]
+                    semantic_indices = [d["index"] for d in semantic_details]
+                    if len(semantic_indices) != len(set(semantic_indices)):
+                        raise ValueError(f"duplicate typed event semantics for {event}")
+                    opts["event_options"] = sorted(semantic_indices)
+                    opts["event_choices"] = semantic_details
+                    details = []
+                else:
+                    mapping = event_contract.options(self.gs)
+                    opts["event_options"] = sorted(mapping)
                 if details:
                     reverse = {ui: native for native, (ui, _) in mapping.items()}
                     opts["event_choices"] = [dict(d, index=reverse[d["index"]]) for d in details]
@@ -1082,18 +1282,49 @@ class RealGameAdapter:
             opts.update(self._shop_options(ss))
         return opts
 
+    def _event_option_mapping(self) -> dict[int, tuple[int, str]]:
+        """Map frozen native EVENT_OPT IDs to current CommunicationMod ordinals."""
+        ss = _screen_state(self.gs)
+        event = _normalize_event(_required(ss, "event_id", context="event screen"))
+        details = _structured_event_choices(ss, len(self.choices()))
+        kind_to_semantic = DYNAMIC_EVENT_OPTION_KINDS.get(event)
+        if details and kind_to_semantic is not None:
+            result: dict[int, tuple[int, str]] = {}
+            for detail in details:
+                kind = detail["kind"]
+                if kind not in kind_to_semantic:
+                    raise ValueError(
+                        f"unknown typed event option kind for {event}: {kind!r}"
+                    )
+                semantic = kind_to_semantic[kind]
+                if semantic in result:
+                    raise ValueError(f"duplicate typed event semantic for {event}: {semantic}")
+                result[semantic] = (detail["index"], kind)
+            return result
+        return event_contract.options(self.gs)
+
     def _current_outer_reward_options(self) -> dict[str, list[Any]]:
         ss = _screen_state(self.gs)
-        labels = [_norm_label(choice) for choice in self.choices()]
+        labels = [_reward_choice_type(choice) for choice in self.choices()]
+        record_types = [_reward_type(record) for record in _reward_records(ss)]
+        if record_types != labels:
+            raise ValueError(
+                "CommunicationMod reward records and choice keywords disagree: "
+                f"records={record_types!r} choices={labels!r}"
+            )
         expected = {
-            "gold": sum(label in {"gold", "stolen_gold"} for label in labels),
-            "relics": labels.count("relic"),
-            "potions": labels.count("potion"),
+            "gold": sum(label in {"GOLD", "STOLEN_GOLD"} for label in labels),
+            "relics": labels.count("RELIC"),
+            "potions": labels.count("POTION"),
+            "keys": sum(
+                label in {"EMERALD_KEY", "SAPPHIRE_KEY"} for label in labels
+            ),
         }
         actual: dict[str, list[Any]] = {
             "gold": _screen_reward_gold(ss),
             "relics": _screen_relics(ss),
             "potions": [pid for pid, _price_ in _screen_potions(ss)],
+            "keys": _screen_reward_keys(ss),
         }
         for kind, count in expected.items():
             if len(actual[kind]) != count:
@@ -1105,62 +1336,74 @@ class RealGameAdapter:
         return actual
 
     def _neow_options(self, ss: dict[str, Any]) -> list[dict[str, int]]:
-        raw = ss.get("options") or ss.get("rewards") or []
+        raw = _list_alias_value(ss, "options", "rewards", context="Neow screen")
+        if len(raw) != A.NEOW_W:
+            raise ValueError(
+                f"Neow must expose exactly {A.NEOW_W} offers, got {len(raw)}"
+            )
         out = []
-        if isinstance(raw, list):
-            for item in raw[:A.NEOW_W]:
-                if isinstance(item, dict):
-                    if "bonus_id" in item and "drawback_id" in item:
-                        out.append({"bonus_id": int(item["bonus_id"]),
-                                    "drawback_id": int(item["drawback_id"])})
-                    else:
-                        out.append(_neow_option_from_text(str(item.get("text") or item.get("label") or "")))
-        while len(out) < A.NEOW_W:
-            out.append({"bonus_id": 0, "drawback_id": 0})
+        for item in _dict_records(raw, context="Neow offers"):
+            if "bonus_id" in item and "drawback_id" in item:
+                out.append({"bonus_id": int(item["bonus_id"]),
+                            "drawback_id": int(item["drawback_id"])})
+            else:
+                label = _required(item, "text", "label", context="Neow offer")
+                out.append(_neow_option_from_text(str(label)))
         return out
 
     def _map_nodes(self) -> list[tuple[int, str]]:
         ss = _screen_state(self.gs)
-        next_nodes = ss.get("next_nodes") or []
-        if isinstance(next_nodes, list) and next_nodes:
-            nodes = []
-            for node in next_nodes:
-                xy = _node_xy(node)
-                if xy is None:
-                    continue
-                x, _y = xy
-                if 0 <= x < A.N_COLS:
-                    nodes.append((x, _node_room(node)))
-            return nodes[:encode.MAP_EDGES]
-
         if ss.get("boss_available"):
             current = _node_xy(ss.get("current_node"))
-            if current is not None:
-                return [(current[0], "BOSS")]
+            if current is None:
+                raise ValueError("boss map choice is missing current_node coordinates")
+            return [(current[0], "BOSS")]
 
+        next_nodes = _dict_records(
+            _list_value(ss, "next_nodes", context="map screen"),
+            context="map next_nodes",
+        )
+        if not next_nodes:
+            raise ValueError("actionable map screen has no structured next_nodes")
+        if len(next_nodes) > encode.MAP_EDGES:
+            raise ValueError(
+                f"map edge capacity {encode.MAP_EDGES} exceeded: {len(next_nodes)}"
+            )
         nodes = []
-        fallback = int(self.gs.get("current_x", self.gs.get("map_node_x", 0)) or 0)
-        for i, choice in enumerate(self.choices()):
-            x, room = _map_choice(choice, fallback + i)
-            if 0 <= x < A.N_COLS:
-                nodes.append((x, room))
-        return nodes[:encode.MAP_EDGES]
-
-    def _full_map_nodes(self, ss: dict[str, Any]) -> list[dict[str, Any]]:
-        raw = self.gs.get("map") or ss.get("map") or ss.get("nodes") or ss.get("full_map") or []
-        if not isinstance(raw, list):
-            return []
-
-        raw_nodes: dict[tuple[int, int], dict[str, Any]] = {}
-        for node in raw:
+        for node in next_nodes:
             xy = _node_xy(node)
             if xy is None:
-                continue
+                raise ValueError(f"map choice is missing x/y coordinates: {node!r}")
+            x, _y = xy
+            if not 0 <= x < A.N_COLS:
+                raise ValueError(f"map choice x is out of range: {x}")
+            nodes.append((x, _node_room(node)))
+        if len({x for x, _room in nodes}) != len(nodes):
+            raise ValueError(f"map choices contain duplicate x coordinates: {nodes!r}")
+        return nodes
+
+    def _full_map_nodes(self, ss: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = _list_value(
+            self.gs, "map", context="game_state", required=False
+        ) or _list_value(
+            ss, "map", "nodes", "full_map", context="map screen", required=False
+        )
+        if not raw:
+            raise ValueError("global map observation requires the structured full map")
+
+        raw_nodes: dict[tuple[int, int], dict[str, Any]] = {}
+        for node in _dict_records(raw, context="full map"):
+            xy = _node_xy(node)
+            if xy is None:
+                raise ValueError(f"full-map node is missing x/y coordinates: {node!r}")
             x, y = xy
-            if not (0 <= x < A.N_COLS and 0 <= y <= _MAP_MAX_Y):
+            if _is_terminal_rest_node(node):
                 continue
-            if isinstance(node, dict):
-                raw_nodes[(x, y)] = node
+            if not (0 <= x < A.N_COLS and 0 <= y <= _MAP_MAX_Y):
+                raise ValueError(f"full-map node coordinate is out of range: {(x, y)!r}")
+            if (x, y) in raw_nodes:
+                raise ValueError(f"duplicate full-map node coordinate: {(x, y)!r}")
+            raw_nodes[(x, y)] = node
 
         current = _node_xy(ss.get("current_node"))
         if current is None:
@@ -1178,19 +1421,17 @@ class RealGameAdapter:
         if ss.get("boss_available") and current is not None and current[1] >= _MAP_MAX_Y:
             choices.add(current)
         else:
-            next_nodes = ss.get("next_nodes") or []
-            if isinstance(next_nodes, list):
-                for node in next_nodes:
-                    xy = _node_xy(node)
-                    if xy is not None:
-                        choices.add(xy)
+            for node in _dict_records(
+                _list_value(ss, "next_nodes", context="map screen"),
+                context="map next_nodes",
+            ):
+                xy = _node_xy(node)
+                if xy is None:
+                    raise ValueError(f"map choice is missing x/y coordinates: {node!r}")
+                choices.add(xy)
 
         if not choices:
-            for x, _room in self._map_nodes():
-                if current is not None and current[1] is not None and current[1] >= 0:
-                    choices.add((x, int(current[1]) + 1))
-                else:
-                    choices.add((x, 0))
+            raise ValueError("structured map screen exposes no reachable choices")
 
         downstream = set(choices)
         frontier = list(choices)
@@ -1198,8 +1439,14 @@ class RealGameAdapter:
             xy = frontier.pop()
             node = raw_nodes.get(xy)
             if node is None:
-                continue
+                if xy == (3, 16):
+                    continue
+                raise ValueError(f"reachable map coordinate is absent from full map: {xy!r}")
             for child in _node_children(node):
+                if child not in raw_nodes:
+                    if child == (3, 16):
+                        continue
+                    raise ValueError(f"map edge points to absent node: {xy!r} -> {child!r}")
                 if child not in downstream:
                     downstream.add(child)
                     frontier.append(child)
@@ -1225,14 +1472,24 @@ class RealGameAdapter:
         return out
 
     def _shop_options(self, ss: dict[str, Any]) -> dict[str, Any]:
+        card_records = _dict_records(
+            _list_value(ss, "cards", context="shop screen"), context="shop cards"
+        )
         cards = []
-        for card in ss.get("cards") or []:
-            if isinstance(card, dict):
-                cid, up = _real_card_tuple(card)
-                cards.append((cid, up, _price(card)))
-        relics = [(_relic_id(r), _price(r)) for r in ss.get("relics") or []]
-        potions = _screen_potions(ss)
-        remove_cost = int(ss.get("purge_cost", ss.get("remove_cost", -1)) or -1)
+        for card in card_records:
+            cid, up = _real_card_tuple(card)
+            cards.append((cid, up, int(_price(card))))
+        relics = [
+            (_relic_id(relic), int(_price(relic)))
+            for relic in _dict_records(
+                _list_value(ss, "relics", context="shop screen"),
+                context="shop relics",
+            )
+        ]
+        potions = _screen_potions(ss, require_price=True)
+        remove_cost = int(_required(
+            ss, "purge_cost", "remove_cost", context="shop screen"
+        ))
         return {
             "shop_cards": cards,
             "shop_relics": relics,
@@ -1259,50 +1516,86 @@ class RealGameAdapter:
         self, *, cards: list[tuple[str, int]], overworld: bool
     ) -> dict[str, Any]:
         ss = _screen_state(self.gs)
-        context = self._select_context(ss, cards)
-        pick_count = (
-            _int_or_none(ss.get("pick_count"))
-            or _int_or_none(ss.get("num_cards"))
-            or _int_or_none(ss.get("max_cards"))
-            or 1
-        )
-        selected_raw = (
-            ss.get("selected_cards") or ss.get("selectedCards")
-            or ss.get("selected") or []
-        )
-        if not isinstance(selected_raw, list):
+        if ss.get("simulator_parity_export") != SIMULATOR_PARITY_EXPORT_VERSION:
+            raise ValueError(
+                "actionable selection was not produced by the required parity "
+                f"exporter: {ss.get('simulator_parity_export')!r}"
+            )
+        context = self._select_context(ss, cards, overworld=overworld)
+        grid_screen = self.screen_type() == "GRID"
+        hand_screen = self.screen_type() == "HAND_SELECT"
+        card_reward_screen = self.screen_type() == "CARD_REWARD"
+        if grid_screen:
+            pick_count = int(_required(ss, "num_cards", context="GRID selection"))
+            selected_raw = _list_value(
+                ss, "selected_cards", context="GRID selection"
+            )
+            can_pick_any = _required_bool(
+                ss, "any_number", context="GRID selection"
+            )
+            for flag in OVERWORLD_SELECTION_FLAGS:
+                _required(ss, flag, context="GRID selection")
+            can_pick_zero = can_pick_any
+        elif hand_screen:
+            pick_count = int(_required(
+                ss, "max_cards", context="HAND_SELECT selection"
+            ))
+            selected_raw = _list_value(
+                ss, "selected", context="HAND_SELECT selection"
+            )
+            can_pick_zero = _required_bool(
+                ss, "can_pick_zero", context="HAND_SELECT selection"
+            )
+            can_pick_any = context == "GAMBLE"
+        elif card_reward_screen:
+            # Combat Discovery/Codex screens select exactly one generated card.
+            # Codex exposes SKIP as an explicit extra candidate; that is not
+            # the same contract as confirming an empty selection.
+            pick_count = 1
             selected_raw = []
+            can_pick_zero = False
+            can_pick_any = False
+        else:
+            raise ValueError(
+                f"unsupported actionable selection screen {self.screen_type()!r}"
+            )
+        if pick_count < 0:
+            raise ValueError(f"selection count must be nonnegative, got {pick_count}")
         selected_cards = [
-            _real_card_tuple(card) for card in selected_raw if isinstance(card, dict)
+            _real_card_tuple(card)
+            for card in _dict_records(selected_raw, context="selected cards")
         ]
-        explicit_have_selected = _int_or_none(ss.get("have_selected"))
-        have_selected = (
-            explicit_have_selected
-            if explicit_have_selected is not None
-            else len(selected_cards)
-        )
-        can_pick_zero = bool(ss.get("can_pick_zero", ss.get("canPickZero", False)))
-        can_pick_any = bool(ss.get("can_pick_any", ss.get("canPickAny", False)))
-        multi = bool(ss.get("multi", False))
-        if not overworld and (
+        have_selected = len(selected_cards)
+        multi = bool(
             context in {"EXHAUST_MANY", "GAMBLE"}
             or can_pick_any
-            or ("CONFIRM" in self.commands() and pick_count != 1)
-        ):
-            multi = True
-        if context == "GAMBLE":
-            can_pick_any = True
-        pick_max = _int_or_none(ss.get("pick_max")) or _int_or_none(ss.get("max_cards"))
+            or pick_count != 1
+        )
+        pick_max = pick_count
         # BaseMod uses 99 as the unbounded hand-selection sentinel (notably
         # Gambler's Brew).  Normalize that transport value to the actual
         # selectable hand so it matches the simulator's public contract.
-        if multi and not overworld and pick_max is not None and pick_max >= 99:
-            can_pick_any = True
+        if multi and hand_screen and pick_max >= 99:
             pick_count = len(cards)
             pick_max = len(cards)
-        if pick_max is None:
-            pick_max = len(cards) if multi and can_pick_any else pick_count
-        raw_cards = ss.get("cards") or (self.gs.get("combat_state") or {}).get("hand") or []
+        if pick_max < 0:
+            raise ValueError(f"selection maximum must be nonnegative, got {pick_max}")
+        raw_cards = (
+            _required(ss, "cards", context=f"{self.screen_type()} selection")
+            if not hand_screen
+            else _required(
+                self.gs.get("combat_state") or {}, "hand",
+                context="HAND_SELECT combat_state",
+            )
+        )
+        if not isinstance(raw_cards, list):
+            raise ValueError(f"selection source cards must be a list, got {raw_cards!r}")
+        _dict_records(raw_cards, context="selection source cards")
+        if len(raw_cards) != len(cards):
+            raise ValueError(
+                "selection card records/canonical identities have different lengths: "
+                f"{len(raw_cards)} != {len(cards)}"
+            )
         selected_uuids = {
             str(card["uuid"])
             for card in selected_raw
@@ -1315,7 +1608,7 @@ class RealGameAdapter:
         )
         candidates = []
         for i, (cid, up) in enumerate(cards):
-            raw_card = raw_cards[i] if i < len(raw_cards) and isinstance(raw_cards[i], dict) else {}
+            raw_card = raw_cards[i]
             if overworld:
                 raw_uuid = str(raw_card.get("uuid") or "")
                 selected = bool(raw_uuid and raw_uuid in selected_uuids)
@@ -1330,76 +1623,141 @@ class RealGameAdapter:
             candidates.append({"native_index": i, "card": card})
         if not overworld and context == "CODEX" and "SKIP" in self.commands():
             candidates.append({"native_index": len(cards), "card": None})
+        if len(candidates) > A.G_MAX:
+            raise ValueError(
+                f"selection candidate capacity {A.G_MAX} exceeded: {len(candidates)}"
+            )
         if not overworld and context in {"SECRET_WEAPON", "SECRET_TECHNIQUE", "SEEK"}:
             # Static vocabulary preserves native CardId order without importing the sim.
-            candidates.sort(key=lambda c: (encode.CARD_INDEX.get(c["card"]["id"], 0),
-                                            c["card"]["up"], c["card"].get("cost", 0)))
+            missing_cost = [
+                candidate["native_index"]
+                for candidate in candidates
+                if candidate["card"] is not None and "cost" not in candidate["card"]
+            ]
+            if missing_cost:
+                raise ValueError(
+                    "draw-pile selection is missing current card costs at indices "
+                    f"{missing_cost!r}"
+                )
+            candidates.sort(key=lambda c: (encode.CARD_INDEX[c["card"]["id"]],
+                                            c["card"]["up"], c["card"]["cost"]))
         return {
             "context": context,
             "pick_remaining": max(0, pick_count - have_selected),
-            "can_pick_zero": can_pick_zero or multi,
+            "can_pick_zero": can_pick_zero,
             "can_pick_any": can_pick_any,
             "selected": selected_cards if overworld else [],
             "multi": multi,
+            "pick_min": 0 if (can_pick_zero or can_pick_any) else int(pick_count),
             "pick_max": int(pick_max),
             "cards_in_hand": len(cards) if not overworld else 0,
-            "zone": "grid" if overworld else (
-                "hand" if self.screen_type() == "HAND_SELECT" else
-                {"HEADBUTT": "discard", "HOLOGRAM": "discard",
-                 "LIQUID_MEMORIES_POTION": "discard", "EXHUME": "exhaust",
-                 "SECRET_WEAPON": "draw", "SECRET_TECHNIQUE": "draw",
-                 "SEEK": "draw", "CODEX": "generated", "DISCOVERY": "generated"}.get(context, "grid")),
+            "zone": "grid" if overworld else {
+                "ARMAMENTS": "hand", "DUAL_WIELD": "hand",
+                "FORETHOUGHT": "hand", "GAMBLE": "hand",
+                "NIGHTMARE": "hand", "RECYCLE": "hand", "SETUP": "hand",
+                "WARCRY": "hand", "EXHAUST_ONE": "hand",
+                "EXHAUST_MANY": "hand", "HEADBUTT": "discard",
+                "HOLOGRAM": "discard", "LIQUID_MEMORIES_POTION": "discard",
+                "MEDITATE": "discard", "EXHUME": "exhaust",
+                "SECRET_WEAPON": "draw", "SECRET_TECHNIQUE": "draw",
+                "SEEK": "draw", "CODEX": "generated",
+                "DISCOVERY": "generated",
+            }[context],
             "candidates": candidates,
         }
 
-    def _select_context(self, ss: dict[str, Any], cards: list[tuple[str, int]]) -> str:
-        for key in ("context", "task", "select_context", "screen_name", "screen_type"):
+    def _select_context(
+        self, ss: dict[str, Any], cards: list[tuple[str, int]], *, overworld: bool
+    ) -> str:
+        context = None
+        for key in ("selection_context", "context", "task", "select_context"):
             value = ss.get(key)
             if value:
                 enumish = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_").upper()
-                if enumish in V.SELECT_CONTEXT_VOCAB_INDEX:
-                    return enumish
-        if ss.get("for_upgrade") or ss.get("forUpgrade"):
-            return "UPGRADE"
-        if ss.get("for_transform") or ss.get("forTransform"):
-            return "TRANSFORM"
-        if ss.get("for_purge") or ss.get("forPurge"):
-            return "REMOVE"
-        # Grid actions carry their source on game_state, not screen_state.
-        # Identify draw-pile searches before the generic GRID/PAD fallback so
-        # candidates use native CardId order while retaining UI handles.
-        action_context = {
-            "SkillFromDeckToHandAction": "SECRET_TECHNIQUE",
-            "AttackFromDeckToHandAction": "SECRET_WEAPON",
-            "SeekAction": "SEEK",
-        }.get(str(self.gs.get("current_action") or ""))
-        if action_context is not None and self.gs.get("combat_state"):
-            return action_context
-        if self.screen_type() == "GRID":
-            return "REMOVE" if any(_norm_label(c) == "purge" for c in self.choices()) else "PAD"
-        if self.screen_type() == "HAND_SELECT":
-            names = {cid for cid, _up in cards}
-            if "Calculated Gamble" in names:
-                return "GAMBLE"
-        current_action = str(self.gs.get("current_action") or "")
-        generated_context = {
-            "CodexAction": "CODEX",
-            "DiscoveryAction": "DISCOVERY",
-        }.get(current_action)
-        if generated_context is not None:
-            return generated_context
-        return "PAD"
+                if enumish in V.SELECT_CONTEXT_VOCAB_INDEX and enumish != "PAD":
+                    context = enumish
+                    break
+        if context is None:
+            raise ValueError(
+                "actionable card selection is missing a recognized exported context: "
+                f"screen={self.screen_type()!r}, "
+                f"current_action={self.gs.get('current_action')!r}, "
+                f"selection_source={ss.get('selection_source')!r}, "
+                f"screen_state={ss!r}"
+            )
+        source = str(_required(ss, "selection_source", context="selection screen"))
+        if source in {"", "NONE"}:
+            raise ValueError("actionable selection is missing its source class")
+        source_class = source.rsplit(".", 1)[-1]
+        if not overworld:
+            if source_class in UNSUPPORTED_SELECTION_SOURCES:
+                raise ValueError(
+                    f"unsupported combat selection source {source_class}: "
+                    f"{UNSUPPORTED_SELECTION_SOURCES[source_class]}"
+                )
+            expected = COMBAT_SELECTION_SOURCES.get(source_class)
+            if expected is None and source_class in DYNAMIC_COMBAT_SELECTION_SOURCES:
+                allowed = set(DYNAMIC_COMBAT_SELECTION_SOURCES[source_class].values())
+                if context not in allowed:
+                    raise ValueError(
+                        f"combat selection source/context mismatch: "
+                        f"{source_class!r} cannot produce {context!r}"
+                    )
+            elif expected is None:
+                raise ValueError(
+                    f"unknown combat selection source class: {source_class!r}"
+                )
+            elif context != expected:
+                raise ValueError(
+                    f"combat selection source/context mismatch: "
+                    f"{source_class!r} expected {expected!r}, got {context!r}"
+                )
+        else:
+            possible = {
+                mapped
+                for flag, mapped in OVERWORLD_SELECTION_FLAGS.items()
+                if _required_bool(ss, flag, context="GRID selection")
+            }
+            possible.update(
+                mapped
+                for relic, mapped in OVERWORLD_SELECTION_RELICS.items()
+                if relic in self._relics()
+            )
+            event_context = OVERWORLD_SELECTION_EVENTS.get(source_class)
+            if event_context is not None:
+                possible.add(event_context)
+            if context not in possible:
+                raise ValueError(
+                    "overworld selection source/context mismatch: "
+                    f"source={source_class!r}, context={context!r}, "
+                    f"derivable={sorted(possible)!r}"
+                )
+        return context
 
     def _select_signature(self) -> tuple[Any, ...] | None:
         desc = self.select_descriptor()
         if not A.is_multi_select(desc):
             return None
+        candidates = tuple(
+            (
+                int(candidate["native_index"]),
+                None if candidate["card"] is None else (
+                    candidate["card"]["id"],
+                    int(candidate["card"]["up"]),
+                    candidate["card"].get("cost"),
+                ),
+            )
+            for candidate in desc["candidates"]
+        )
         return (
             self.screen_type(),
-            self.gs.get("floor"),
-            self.gs.get("combat_state", {}).get("turn"),
+            _required(self.gs, "seed", context="game_state"),
+            _required(self.gs, "floor", context="game_state"),
+            (_required(self.gs["combat_state"], "turn", context="combat_state")
+             if self.phase() == "combat" else None),
             desc.get("context"),
-            tuple(self._combat_hand_cards()),
+            candidates,
+            tuple(desc.get("selected", ())),
         )
 
     def _reconcile_multi(self) -> None:
@@ -1409,11 +1767,14 @@ class RealGameAdapter:
             self._multi_signature = sig
 
     def _combat_hand_cards(self) -> list[tuple[str, int]]:
-        cs = self.gs.get("combat_state") or {}
-        hand = cs.get("hand") or []
-        if not isinstance(hand, list):
-            return []
-        return [_real_card_tuple(c) for c in hand if isinstance(c, dict)]
+        cs = self.gs.get("combat_state")
+        if not isinstance(cs, dict):
+            raise ValueError("combat hand requested without combat_state")
+        hand = _list_value(cs, "hand", context="combat_state")
+        return [
+            _real_card_tuple(card)
+            for card in _dict_records(hand, context="combat hand")
+        ]
 
     # --------------------------------------------------------------- legal acts
     def legal_semantic_actions(self) -> list[tuple]:
@@ -1443,7 +1804,11 @@ class RealGameAdapter:
             return acts + pots
         if phase == "boss_relic":
             n = len(_screen_relics(_screen_state(self.gs))) or len(self.choices())
-            return [ga.boss_relic(i) for i in range(min(n, A.BOSS_RELIC_W))] + pots
+            if n > A.BOSS_RELIC_W:
+                raise ValueError(
+                    f"boss relic capacity {A.BOSS_RELIC_W} exceeded: {n}"
+                )
+            return [ga.boss_relic(i) for i in range(n)] + pots
         if phase == "shop":
             return self._legal_shop_actions() + pots
         return pots
@@ -1472,17 +1837,24 @@ class RealGameAdapter:
         cs = self.gs.get("combat_state") or {}
         if "END" in self.commands():
             acts.append(ga.combat(actions.END_TURN))
-        monsters = cs.get("monsters") or []
+        monsters = _list_value(cs, "monsters", context="combat_state")
         targets = [
             policy_index
             for policy_index, real_index in enumerate(self.combat_target_layout())
             for m in (monsters[real_index],)
-            if isinstance(m, dict) and not m.get("is_gone") and int(m.get("current_hp", 0) or 0) > 0
+            if _monster_is_live(m, context=f"combat monster[{real_index}]")
         ]
-        for h, card in enumerate((cs.get("hand") or [])[:actions.HAND_SLOTS]):
-            if not isinstance(card, dict) or not card.get("is_playable", True):
+        hand = _dict_records(
+            _list_value(cs, "hand", context="combat_state"), context="combat hand"
+        )
+        if len(hand) > actions.HAND_SLOTS:
+            raise ValueError(
+                f"combat hand capacity {actions.HAND_SLOTS} exceeded: {len(hand)}"
+            )
+        for h, card in enumerate(hand):
+            if not _required_bool(card, "is_playable", context=f"combat hand[{h}]"):
                 continue
-            if card.get("has_target"):
+            if _required_bool(card, "has_target", context=f"combat hand[{h}]"):
                 for target in targets:
                     acts.append(ga.combat(actions.encode_play(h, target)))
             else:
@@ -1491,11 +1863,13 @@ class RealGameAdapter:
 
     def _legal_event_actions(self) -> list[tuple]:
         ss = _screen_state(self.gs)
-        event = _normalize_event(ss.get("event_id") or ss.get("event_name"))
+        event = _normalize_event(_required(
+            ss, "event_id", context="event screen"
+        ))
         n = len(self.choices())
         if event == "NEOW" and n >= A.NEOW_W:
             return [ga.neow(i) for i in range(A.NEOW_W)]
-        return [ga.event(i) for i in sorted(event_contract.options(self.gs))]
+        return [ga.event(i) for i in sorted(self._event_option_mapping())]
 
     def _legal_card_select_actions(self) -> list[tuple]:
         cmds = self.commands()
@@ -1503,43 +1877,34 @@ class RealGameAdapter:
             return [ga.proceed()]
         if "CHOOSE" not in cmds:
             return [ga.proceed()] if "CONFIRM" in cmds else []
-        desc = self.select_descriptor() or {}
-        acts = [ga.select(i) for i, _ in enumerate((desc.get("candidates") or [])[:A.G_MAX])]
+        desc = self.select_descriptor()
+        if desc is None:
+            raise ValueError("card selection is missing its descriptor")
+        candidates = desc["candidates"]
+        if len(candidates) > A.G_MAX:
+            raise ValueError(
+                f"selection candidate capacity {A.G_MAX} exceeded: {len(candidates)}"
+            )
+        acts = [ga.select(i) for i, _ in enumerate(candidates)]
         if "CONFIRM" in cmds and self._grid_can_confirm_without_more_picks():
             acts.append(ga.proceed())
         return acts
 
     def _grid_can_confirm_without_more_picks(self) -> bool:
-        ss = _screen_state(self.gs)
-        if bool(ss.get("any_number") or ss.get("can_pick_any") or ss.get("canPickAny")):
-            return True
-        selected = (
-            ss.get("selected_cards") or ss.get("selectedCards")
-            or ss.get("selected") or []
+        desc = self.select_descriptor()
+        if desc is None:
+            raise ValueError("GRID confirm is missing its selection descriptor")
+        return bool(
+            desc["can_pick_zero"]
+            or desc["can_pick_any"]
+            or int(desc["pick_remaining"]) == 0
         )
-        selected_count = len(selected) if isinstance(selected, list) else 0
-        required = (
-            _int_or_none(ss.get("num_cards"))
-            or _int_or_none(ss.get("pick_count"))
-            or _int_or_none(ss.get("max_cards"))
-            or 1
-        )
-        return selected_count >= required
 
     def _grid_required_selection_complete(self) -> bool:
-        ss = _screen_state(self.gs)
-        selected = (
-            ss.get("selected_cards") or ss.get("selectedCards")
-            or ss.get("selected") or []
-        )
-        selected_count = len(selected) if isinstance(selected, list) else 0
-        required = (
-            _int_or_none(ss.get("num_cards"))
-            or _int_or_none(ss.get("pick_count"))
-            or _int_or_none(ss.get("max_cards"))
-            or 1
-        )
-        return selected_count >= required
+        desc = self.select_descriptor()
+        if desc is None:
+            raise ValueError("GRID acknowledgement is missing its selection descriptor")
+        return int(desc["pick_remaining"]) == 0
 
     def _legal_reward_actions(self) -> list[tuple]:
         st = self.screen_type()
@@ -1547,11 +1912,17 @@ class RealGameAdapter:
         cl = self.choices()
         if st == "CARD_REWARD":
             cards = _screen_cards(ss)
-            n = len(cards) or len(cl)
+            if not cards:
+                raise ValueError("CARD_REWARD is missing structured card records")
+            n = len(cards)
             acts = []
             if self._combat_reward_card_open:
                 acts.extend(self._outer_reward_claim_actions())
-            acts.extend(ga.reward_card(i) for i in range(min(n, A.REWARD_CARD)))
+            if n > A.REWARD_CARD:
+                raise ValueError(
+                    f"card reward capacity {A.REWARD_CARD} exceeded: {n}"
+                )
+            acts.extend(ga.reward_card(i) for i in range(n))
             if "SKIP" in self.commands():
                 acts.append(ga.skip_cards())
             if (self._combat_reward_card_open
@@ -1561,7 +1932,7 @@ class RealGameAdapter:
 
         acts = self._outer_reward_claim_actions()
         if not self._skipped_combat_card_reward and any(
-                _norm_label(label) == "card" for label in cl):
+                _reward_choice_type(label) == "CARD" for label in cl):
             acts.append(ga.reward_card(0))
         if "PROCEED" in self.commands():
             acts.append(ga.proceed())
@@ -1574,19 +1945,29 @@ class RealGameAdapter:
             else tuple(self.choices())
         )
         acts = []
-        counts = {ga.CLAIM_GOLD: 0, ga.CLAIM_RELIC: 0, ga.CLAIM_POTION: 0}
+        counts = {
+            ga.CLAIM_GOLD: 0,
+            ga.CLAIM_RELIC: 0,
+            ga.CLAIM_POTION: 0,
+            ga.CLAIM_KEY: 0,
+        }
         for label in labels:
-            norm = _norm_label(label)
-            if norm in {"gold", "stolen_gold"}:
+            reward_type = _reward_choice_type(label)
+            if reward_type in {"GOLD", "STOLEN_GOLD"}:
                 acts.append(ga.claim(ga.CLAIM_GOLD, counts[ga.CLAIM_GOLD]))
                 counts[ga.CLAIM_GOLD] += 1
-            elif norm == "relic":
+            elif reward_type == "RELIC":
                 acts.append(ga.claim(ga.CLAIM_RELIC, counts[ga.CLAIM_RELIC]))
                 counts[ga.CLAIM_RELIC] += 1
-            elif norm == "potion":
+            elif reward_type == "POTION":
                 if self._has_empty_potion_slot():
                     acts.append(ga.claim(ga.CLAIM_POTION, counts[ga.CLAIM_POTION]))
                 counts[ga.CLAIM_POTION] += 1
+            elif reward_type in {"EMERALD_KEY", "SAPPHIRE_KEY"}:
+                if counts[ga.CLAIM_KEY]:
+                    raise ValueError("multiple simultaneous key reward choices")
+                acts.append(ga.claim(ga.CLAIM_KEY, 0))
+                counts[ga.CLAIM_KEY] += 1
         return acts
 
     def _legal_rest_actions(self) -> list[tuple]:
@@ -1617,13 +1998,18 @@ class RealGameAdapter:
         if combat and not self.gs.get("combat_state"):
             return []
         acts = []
-        for slot, potion in enumerate(self._potion_records()[:A.P_MAX]):
+        potions = self._potion_records()
+        if len(potions) > A.P_MAX:
+            raise ValueError(
+                f"potion slot capacity {A.P_MAX} exceeded: {len(potions)}"
+            )
+        for slot, potion in enumerate(potions):
             pid = _potion_id(potion)
             if pid == "PAD":
                 continue
-            if isinstance(potion, dict) and potion.get("can_use") is False:
-                continue
-            if not combat and not (isinstance(potion, dict) and potion.get("can_use") is True):
+            if not isinstance(potion, dict):
+                raise ValueError(f"real potion record must be an object: {potion!r}")
+            if not _required_bool(potion, "can_use", context=f"potion slot {slot}"):
                 continue
             if combat and _potion_requires_target(potion, pid):
                 for target in self._live_monster_indices():
@@ -1633,12 +2019,14 @@ class RealGameAdapter:
         return acts
 
     def _live_monster_indices(self) -> list[int]:
-        cs = self.gs.get("combat_state") or {}
-        monsters = cs.get("monsters") or []
+        cs = self.gs.get("combat_state")
+        if not isinstance(cs, dict):
+            raise ValueError("monster targets requested without combat_state")
+        monsters = _list_value(cs, "monsters", context="combat_state")
         out: list[int] = []
         for policy_index, real_index in enumerate(self.combat_target_layout()):
             m = monsters[real_index]
-            if isinstance(m, dict) and not m.get("is_gone") and int(m.get("current_hp", 0) or 0) > 0:
+            if _monster_is_live(m, context=f"combat monster[{real_index}]"):
                 out.append(policy_index)
         return out
 
@@ -1654,17 +2042,13 @@ class RealGameAdapter:
         commands translate those slots back to the current Java indices.
         """
         cs = self.gs.get("combat_state") or {}
-        monsters = cs.get("monsters") or []
-        if not isinstance(monsters, list):
-            return ()
+        monsters = _list_value(cs, "monsters", context="combat_state")
         if len(monsters) <= actions.MAX_MONSTERS:
             return tuple(range(len(monsters)))
         live = tuple(
             index
             for index, monster in enumerate(monsters)
-            if isinstance(monster, dict)
-            and not monster.get("is_gone")
-            and int(monster.get("current_hp", 0) or 0) > 0
+            if _monster_is_live(monster, context=f"combat monster[{index}]")
         )
         if len(live) > actions.MAX_MONSTERS:
             raise ValueError(
@@ -1731,7 +2115,17 @@ class RealGameAdapter:
             return f"CHOOSE {idx}"
         if verb == ga.REWARD_CARD:
             if self.screen_type() == "COMBAT_REWARD":
-                idx = _choice_index(self.choices(), {"card"}) or 0
+                idx = next(
+                    (
+                        i for i, choice in enumerate(self.choices())
+                        if _reward_choice_type(choice) == "CARD"
+                    ),
+                    None,
+                )
+                if idx is None:
+                    raise ValueError(
+                        "combat reward card placeholder is absent from choices"
+                    )
                 self._combat_reward_card_open = True
                 return f"CHOOSE {idx}"
             self._combat_reward_card_open = False
@@ -1744,14 +2138,24 @@ class RealGameAdapter:
                 if bowl is not None:
                     return f"CHOOSE {bowl}"
                 self._skipped_reward_card_count += 1
-                total = sum(_norm_label(x) == "card" for x in self._combat_reward_outer_choices)
+                total = sum(
+                    _reward_choice_type(choice) == "CARD"
+                    for choice in self._combat_reward_outer_choices
+                )
                 self._skipped_combat_card_reward = self._skipped_reward_card_count >= total
             return "SKIP"
         if verb == ga.SELECT:
             desc = self.select_descriptor()
-            if desc and desc["candidates"][int(action[1])]["card"] is None:
+            if desc is None:
+                raise ValueError("selection action is missing its descriptor")
+            candidate_index = int(action[1])
+            if not 0 <= candidate_index < len(desc["candidates"]):
+                raise ValueError(
+                    f"selection index {candidate_index} is outside current candidates"
+                )
+            if desc["candidates"][candidate_index]["card"] is None:
                 return "SKIP"
-            index = desc["candidates"][int(action[1])]["native_index"] if desc else action[1]
+            index = desc["candidates"][candidate_index]["native_index"]
             return f"CHOOSE {index}"
         if verb == ga.MULTI_SELECT:
             return "CONFIRM"
@@ -1759,7 +2163,7 @@ class RealGameAdapter:
             idx = self._campfire_command_index(action[1])
             return f"CHOOSE {idx}"
         if verb == ga.EVENT:
-            return f"CHOOSE {event_contract.options(self.gs)[action[1]][0]}"
+            return f"CHOOSE {self._event_option_mapping()[action[1]][0]}"
         if verb == ga.CHEST:
             return "CHOOSE 0" if action[1] else "PROCEED"
         if verb == ga.BOSS_RELIC:
@@ -1811,6 +2215,7 @@ class RealGameAdapter:
             ga.CLAIM_GOLD: {"gold", "stolen_gold"},
             ga.CLAIM_RELIC: {"relic"},
             ga.CLAIM_POTION: {"potion"},
+            ga.CLAIM_KEY: {"emerald_key", "sapphire_key"},
         }[kind]
         idx = _choice_index(self.choices(), aliases, occurrence)
         if idx is None:
@@ -1826,7 +2231,7 @@ class RealGameAdapter:
     def _shop_choice_actions(self) -> list[tuple[tuple, int]]:
         cl = self.choices()
         ss = _screen_state(self.gs)
-        gold = int(self.gs.get("gold", 0) or 0)
+        gold = int(_required(self.gs, "gold", context="game_state"))
         can_buy_potion = (
             "Sozu" not in self._relics()
             and self._has_empty_potion_slot()
@@ -1840,8 +2245,12 @@ class RealGameAdapter:
         ):
             if kind == ga.SHOP_POTION and not can_buy_potion:
                 continue
-            for i, item in enumerate(ss.get(key) or []):
-                price = _price(item)
+            items = _dict_records(
+                _list_value(ss, key, context="shop screen"),
+                context=f"shop {key}",
+            )
+            for i, item in enumerate(items):
+                price = int(_price(item))
                 if 0 <= price <= gold:
                     affordable.append((kind, i, {_norm_label(item.get("name", "")),
                                                   _norm_label(item.get("id", ""))} - {""}))
@@ -1912,22 +2321,6 @@ class RealGameAdapter:
         return ga.describe(semantic, self.obs_canonical(pending=pending))
 
     def fallback_command(self) -> str:
-        cmds = self.commands()
-        if "PROCEED" in cmds:
-            return "PROCEED"
-        if "LEAVE" in cmds:
-            self._leaving_shop = True
-            return "LEAVE"
-        if "SKIP" in cmds:
-            return "SKIP"
-        if "CONFIRM" in cmds:
-            return "CONFIRM"
-        if "CHOOSE" in cmds and self.choices():
-            return "CHOOSE 0"
-        if "END" in cmds:
-            return "END"
-        if "STATE" in cmds:
-            return "STATE"
-        if "WAIT" in cmds:
-            return "WAIT 1"
-        return "STATE"
+        raise RuntimeError(
+            "policy fallback commands are forbidden; refresh or fail the exact contract"
+        )

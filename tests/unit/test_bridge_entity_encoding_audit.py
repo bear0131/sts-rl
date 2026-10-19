@@ -1,8 +1,14 @@
 """BRIDGE08: known real IDs must not become padding in checkpoint inputs."""
 import pytest
 
-from bridge.real_game_env import _potion_id
+from bridge.real_game_env import (
+    _normalize_boss,
+    _normalize_event,
+    _potion_id,
+    _relic_id,
+)
 from bridge.schemas.combat_state import _card
+from env.core import encode
 from env.core.cards_vocab import CARD_INDEX
 from env.core.vocab import POTION_VOCAB_INDEX
 
@@ -36,6 +42,47 @@ def test_unknown_ids_fail_before_policy_instead_of_padding():
         _potion_id("UnrecognizedPotion")
     with pytest.raises(ValueError, match="unknown card"):
         _card("UnrecognizedCard", 0)
+    with pytest.raises(ValueError, match="unknown real relic"):
+        _relic_id({"id": "UnrecognizedRelic"})
+    with pytest.raises(ValueError, match="unknown real boss"):
+        _normalize_boss("UnrecognizedBoss")
+    with pytest.raises(ValueError, match="unknown real event"):
+        _normalize_event("UnrecognizedEvent")
+    with pytest.raises(ValueError, match="unknown categorical"):
+        encode._idx(POTION_VOCAB_INDEX, "UnrecognizedPotion")
+    with pytest.raises(ValueError, match="unknown card id"):
+        encode._card_idx({"id": "UnrecognizedCard"})
+
+
+def test_only_explicit_empty_potion_slots_become_padding():
+    assert _potion_id({"id": "Potion Slot"}) == "PAD"
+    with pytest.raises(ValueError, match="missing required field.*id"):
+        _potion_id({})
+    with pytest.raises(ValueError, match="PAD sentinel"):
+        _potion_id("PAD")
+
+
+@pytest.mark.parametrize('upgrades', [-1, 32768, True, 1.5, '1'])
+def test_card_upgrade_transport_never_coerces_or_truncates(upgrades):
+    with pytest.raises(ValueError, match='upgrade count'):
+        _card('Searing Blow', upgrades)
+
+
+def test_live_card_cannot_claim_the_empty_sentinel():
+    with pytest.raises(ValueError, match='EMPTY sentinel'):
+        _card('EMPTY', 0)
+
+
+def test_complete_codec_inventory_is_serializable_and_coverage_checked():
+    import json
+    from bridge.schemas.codec_contract import complete_word_tables, validate_codec_contract
+    tables = complete_word_tables()
+    counts = validate_codec_contract()
+    assert counts['event_option_contracts'] == len(encode.V.EVENT_VOCAB) - 1
+    assert counts['screen_types'] == len(tables['real_to_canonical']['screen'])
+    assert tables['real_to_canonical']['character']['THE_SILENT'] == 'SILENT'
+    assert tables['intent_components']['ATTACK_DEBUFF'] == ('attack', 'debuff')
+    assert json.loads(json.dumps(tables))['rejected_real_ids']['cards']
 
 
 def test_all_declared_aliases_preserve_nonzero_tokens():
@@ -76,9 +123,11 @@ def test_shop_choices_resolve_identity_not_position():
     from env.core import game_actions as ga
     a = RealGameAdapter()
     a.update({'game_state': {'screen_type': 'SHOP_SCREEN', 'gold': 100,
+        'relics': [], 'potions': [],
         'choice_list': ['防御', '打击'], 'screen_state': {'cards': [
             {'id': 'Strike_R', 'name': '打击', 'price': 20},
-            {'id': 'Defend_R', 'name': '防御', 'price': 20}]}}})
+            {'id': 'Defend_R', 'name': '防御', 'price': 20}],
+            'relics': [], 'potions': [], 'purge_cost': 75}}})
     assert a._shop_choice_actions() == [(ga.shop_buy(ga.SHOP_CARD, 1), 0),
                                        (ga.shop_buy(ga.SHOP_CARD, 0), 1)]
     a.gs['choice_list'] = ['打击']

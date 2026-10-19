@@ -58,7 +58,12 @@ struct Monster {
 //        bool isDyingB = false;
         bool halfDead = false;
         bool escapeNext = false;
-        MMID moveHistory[2] = {MMID::INVALID, MMID::INVALID };
+        // Current intent plus the two Java move-history entries.  Combat rules
+        // currently consume the first two, but the bridge must not discard the
+        // authoritative second-last move when mirroring a live battle.
+        MMID moveHistory[3] = {
+            MMID::INVALID, MMID::INVALID, MMID::INVALID
+        };
 
         std::uint64_t statusBits = 0;
         std::int8_t artifact = 0;

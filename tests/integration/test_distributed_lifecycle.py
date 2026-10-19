@@ -473,7 +473,7 @@ def test_blue_individual_search_lifecycle(tmp_path, monkeypatch, capsys, short_c
     from env.core import encode
     bundle = tmp_path / 'state' / 'rank0' / 'step-000000000128'
     manifest = json.loads((bundle / 'manifest.json').read_text())
-    assert manifest['observation_version'] == encode.OBS_VERSION == 19
+    assert manifest['observation_version'] == encode.OBS_VERSION == 20
     replay = torch.load(bundle / 'learner.pt', map_location='cpu', weights_only=False)['replay']
     index = encode.V.PLAYER_BUFF_VOCAB_INDEX['Barricade']
     assert (replay['observations']['player_buffs'][:, index] > 0).any()

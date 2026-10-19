@@ -159,7 +159,10 @@ def test_joint_overworld_policy_composes_with_a_legacy_combat_solver():
     from rl.evaluation.strategies import DecisionRequest, PolicyStrategy
 
     class JointModel:
-        observation_space = SimpleNamespace(spaces={'seed': None, 'combat_legal': None})
+        observation_space = SimpleNamespace(spaces={
+            'seed': None,
+            'combat_legal': SimpleNamespace(shape=(C.JOINT_WIDTH,)),
+        })
         action_space = SimpleNamespace(n=C.JOINT_SIZE)
 
         def predict(self, obs, *, action_masks, deterministic):

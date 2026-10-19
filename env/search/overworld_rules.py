@@ -322,7 +322,7 @@ def event_scores(state):
     hp = g['hp'] / max(1, g['max_hp'])
     gold = g.get('gold', 0)
     empty_potion_slots = sum(
-        _item_key(potion) in ('EMPTYPOTIONSLOT', 'INVALID', '')
+        potion == 'PAD'
         for potion in g.get('potions', ())
     )
     curses = any(c in CURSES - PERMANENT_CURSES for c, _ in g.get('deck', ()))
@@ -430,12 +430,12 @@ def rank_overworld(state, legal, *, rmap=None, current_y=-1):
         score, reason = -100.0, kind.lower()
         if kind == 'USE_POTION':
             potion = _item_key(g.get('potions', ())[i])
-            empty = sum(p in ('EMPTY_POTION_SLOT', 'INVALID', '') for p in g.get('potions', ()))
+            empty = sum(p == 'PAD' for p in g.get('potions', ()))
             score = 100 if potion == 'FRUITJUICE' else (100 if hp <= .8 * max_hp else -10) if potion == 'BLOODPOTION' else (90 if empty >= 2 else -10) if potion == 'ENTROPICBREW' else -100
         elif kind in ('REWARD_GOLD', 'REWARD_RELIC'):
             score = 80
         elif kind == 'REWARD_POTION':
-            score = 70 if any(p in ('EMPTY_POTION_SLOT', 'INVALID', '') for p in g.get('potions', ())) else -10
+            score = 70 if any(p == 'PAD' for p in g.get('potions', ())) else -10
         elif kind in ('PROCEED', 'REWARD_SKIP'):
             score = 0
         elif kind == 'REWARD_CARD':

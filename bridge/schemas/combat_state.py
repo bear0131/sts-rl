@@ -13,8 +13,8 @@ localized `name` field, which is GBK-localized and unstable):
     "player": {"hp", "max_hp", "block", "energy", "powers": {power_id: amount}},
     "monsters": [
       {"id", "hp", "max_hp", "block", "gone", "base_damage",
-       "adjusted_damage", "hits",
-       "powers": {power_id: amount}}, ...],   # real side also carries intent/move_id (diff ignores)
+       "adjusted_damage", "hits", "move", "move_id",
+       "powers": {power_id: amount}}, ...],
     "hand": [{"id", "up", "cost"}, ...],
     "draw"/"discard"/"exhaust": [{"id", "up"}, ...],
   }
@@ -28,6 +28,20 @@ localized `name` field, which is GBK-localized and unstable):
 
 from functools import lru_cache
 
+from .entity_ids import (
+    CARD_ALIASES,
+    MONSTER_ALIASES,
+    REAL_POWER_ALIASES,
+    REAL_INTENT_COMPONENTS,
+    SIM_POWER_ALIASES,
+    SIMULATOR_PARITY_EXPORT_VERSION,
+    RUN_KEY_FIELDS,
+    STRUCTURAL_POWER_FIELDS,
+    UNSUPPORTED_REAL_CARD_IDS,
+    UNSUPPORTED_REAL_POWER_IDS,
+    UNSUPPORTED_REAL_RELIC_IDS,
+)
+
 # Powers whose semantics the native simulator stores outside its status table
 # are omitted from the public power comparison.  In particular, Exploder's
 # countdown is encoded by its real move history/current move on every synced
@@ -36,7 +50,7 @@ from functools import lru_cache
 # the canonical power map would therefore reject an otherwise exact root.
 # Pen Nib's armed power remains observable separately from its relic counter;
 # OBS18 includes it in player_buffs.
-_POWER_DROP = {"Asleep", "Split", "Explosive", "Unawakened", "Compulsive"}
+_POWER_DROP = set(STRUCTURAL_POWER_FIELDS)
 BOOLEAN_PLAYER_POWERS = frozenset({
     "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
@@ -46,39 +60,66 @@ BOOLEAN_MONSTER_POWERS = frozenset({
     "Barricade", "Minion", "Minion Leader", "Painful Stabs", "Regrow",
     "Shifting", "Stasis",
 })
-_REAL_POWER_CANON_ID = {
-    # CommunicationMod uses the Java power ID; the native simulator and its
-    # observation vocabulary use the displayed/stable semantic name.
-    "Confusion": "Confused",
-    "DuplicationPower": "Duplication",
-    "NoBlockPower": "No Block",
-    "Flex": "Lose Strength",
-    "DexLoss": "Lose Dexterity",
-    "Generic Strength Up Power": "Generic Strength Up",
-    "Life Link": "Regrow",
-    "Regenerate": "Regen",
-    "Regeneration": "Regen",
-}
+_REAL_POWER_CANON_ID = REAL_POWER_ALIASES
+
+_REAL_COMBAT_COUNTER_KEYS = (
+    "happy_flower", "incense_burner", "ink_bottle", "inserter",
+    "nunchaku", "pen_nib", "sundial", "necronomicon_used",
+    "cards_played", "attacks_played", "skills_played",
+    "orange_attack", "orange_skill", "orange_power",
+    "combust_hp_loss", "deva_form_energy_per_turn",
+    "echo_form_cards_doubled", "panache_counter",
+    "cards_discarded", "times_damaged",
+    "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
+)
 
 
-def _powers_real(power_list):
+def _powers_real(power_list, *, include_structural=False):
     # real game flattens every buff/debuff into a list; key by stable English id
-    return {
-        _REAL_POWER_CANON_ID.get(p["id"], p["id"]): p["amount"]
-        for p in power_list
-        if _REAL_POWER_CANON_ID.get(p["id"], p["id"]) not in _POWER_DROP
-    }
+    if not isinstance(power_list, list):
+        raise ValueError(f"real powers must be a list, got {power_list!r}")
+    out = {}
+    for index, power in enumerate(power_list):
+        if not isinstance(power, dict) or "id" not in power or "amount" not in power:
+            raise ValueError(f"malformed real power record {index}: {power!r}")
+        raw_name = str(power["id"])
+        if raw_name.startswith("TheBomb") and raw_name[7:].isdigit():
+            # Each copy has a generated ID (TheBomb0, TheBomb1, ...).  Its
+            # countdown and private damage are exported into bomb_1..bomb_3.
+            continue
+        if raw_name in UNSUPPORTED_REAL_POWER_IDS:
+            raise ValueError(
+                f"unsupported real power ID {raw_name!r}: "
+                f"{UNSUPPORTED_REAL_POWER_IDS[raw_name]}"
+            )
+        name = _REAL_POWER_CANON_ID.get(raw_name, raw_name)
+        if name in _POWER_DROP and not include_structural:
+            continue
+        if name in out:
+            raise ValueError(f"duplicate real power identity: {name!r}")
+        out[name] = int(power["amount"])
+    return out
 
 
 def _player_powers_real(power_list):
     # Presence powers commonly use amount=-1 in CommunicationMod.
-    return {name: 1 if name in BOOLEAN_PLAYER_POWERS else amount
-            for name, amount in _powers_real(power_list).items()}
+    powers = {name: 1 if name in BOOLEAN_PLAYER_POWERS else amount
+              for name, amount in _powers_real(power_list).items()}
+    from env.core.vocab import PLAYER_BUFF_VOCAB_INDEX
+    unknown = set(powers) - set(PLAYER_BUFF_VOCAB_INDEX)
+    if unknown:
+        raise ValueError(f"unknown real player power IDs: {sorted(unknown)!r}")
+    return powers
 
 
 def _monster_powers_real(power_list):
-    return {name: 1 if name in BOOLEAN_MONSTER_POWERS else amount
-            for name, amount in _powers_real(power_list).items()}
+    powers = {name: 1 if name in BOOLEAN_MONSTER_POWERS else amount
+              for name, amount in _powers_real(power_list).items()}
+    from env.core.vocab import MONSTER_BUFF_VOCAB_INDEX
+    unknown = set(powers) - set(MONSTER_BUFF_VOCAB_INDEX)
+    if unknown:
+        raise ValueError(f"unknown real monster power IDs: {sorted(unknown)!r}")
+    return powers
 
 
 # status cards with no upgraded variant: the sim can mark them upgraded (e.g. an
@@ -86,32 +127,53 @@ def _monster_powers_real(power_list):
 # The cards behave identically either way, so canonicalize the upgrade to 0.
 _NO_UPGRADE = {"Dazed", "Wound", "Slimed", "Void"}  # Burn excluded (Burn+ exists)
 
-# Explicit Java ID aliases preserve the generated checkpoint vocabulary.
-from .entity_ids import CARD_ALIASES
-
 _CARD_CANON_ID = CARD_ALIASES
 
 
 def _card(card_id, up, cost=None):
+    if not isinstance(card_id, str):
+        raise ValueError(f"card ID must be a string: {card_id!r}")
+    if type(up) is not int or not 0 <= up <= 32767:
+        raise ValueError(f"card upgrade count must be an integer in native range: {up!r}")
+    if card_id in UNSUPPORTED_REAL_CARD_IDS:
+        raise ValueError(
+            f"unsupported real card ID {card_id!r}: "
+            f"{UNSUPPORTED_REAL_CARD_IDS[card_id]}"
+        )
     card_id = _CARD_CANON_ID.get(card_id, card_id)
     from env.core.cards_vocab import CARD_INDEX
+    if card_id == "EMPTY":
+        raise ValueError("a live card identity cannot be the EMPTY sentinel")
     if card_id not in CARD_INDEX:
         raise ValueError(f"unknown card ID: {card_id}")
     card = {"id": card_id, "up": 0 if card_id in _NO_UPGRADE else up}
     if cost is not None:
-        value = int(cost)
+        if type(cost) is not int or not -3 <= cost <= 127:
+            raise ValueError(f"card cost must be an integer in native range: {cost!r}")
+        value = cost
         # CommunicationMod follows AbstractCard.COST_UNPLAYABLE (-2), while
         # the native simulator distinguishes unplayable statuses (-2) from
         # unplayable curses (-3).  They have one public/action meaning here.
-        card["cost"] = -2 if value <= -2 else value
+        card["cost"] = -2 if value in (-3, -2) else value
     return card
 
 
 def _cards_real(pile, *, include_cost=False):
-    return [
-        _card(c["id"], c["upgrades"], c.get("cost") if include_cost else None)
-        for c in pile
-    ]
+    if not isinstance(pile, list):
+        raise ValueError(f"real card pile must be a list, got {pile!r}")
+    cards = []
+    for index, c in enumerate(pile):
+        if not isinstance(c, dict):
+            raise ValueError(f"malformed real card record {index}: {c!r}")
+        for key in ("id", "upgrades"):
+            if key not in c:
+                raise ValueError(f"real card record is missing {key}: {c!r}")
+        if include_cost and "cost" not in c:
+            raise ValueError(f"real hand card is missing its current cost: {c!r}")
+        cards.append(
+            _card(c["id"], c["upgrades"], c["cost"] if include_cost else None)
+        )
+    return cards
 
 
 def _attack(base, hits):
@@ -122,15 +184,82 @@ def _attack(base, hits):
 
 
 def _monster_real(m, *, intents_hidden=False):
-    base, hits = _attack(m.get("move_base_damage", -1), m.get("move_hits", 1))
-    adjusted, _ = _attack(m.get("move_adjusted_damage", base), hits)
+    required = {
+        "id", "current_hp", "max_hp", "block", "is_gone", "powers",
+        "move_base_damage", "move_adjusted_damage", "move_hits", "move_id",
+        "last_move_id", "second_last_move_id", "half_dead",
+        "current_intent_export", "intent",
+    }
+    missing = required - set(m)
+    if missing:
+        raise ValueError(
+            f"real monster record is missing {sorted(missing)!r}: {m!r}"
+        )
+    if m["current_intent_export"] != SIMULATOR_PARITY_EXPORT_VERSION:
+        raise ValueError(
+            "real monster state was not produced by the required parity exporter: "
+            f"{m['current_intent_export']!r}"
+        )
+    if m["intent"] not in REAL_INTENT_COMPONENTS:
+        raise ValueError(f"unknown real monster intent keyword: {m['intent']!r}")
+    canonical_id = _canonical_real_monster_id(m["id"])
+    from env.core.vocab import MONSTER_VOCAB_INDEX
+    if canonical_id not in MONSTER_VOCAB_INDEX or canonical_id == "PAD":
+        raise ValueError(f"unknown real monster ID: {m['id']!r}")
+    base, hits = _attack(m["move_base_damage"], m["move_hits"])
+    adjusted, _ = _attack(m["move_adjusted_damage"], hits)
     hp = m["current_hp"]
+    gone = bool(m["is_gone"])
+    if gone or hp <= 0:
+        move = "INVALID"
+        move_id = 0
+        last_move = "INVALID"
+        last_move_id = 0
+        second_last_move = "INVALID"
+        second_last_move_id = 0
+    else:
+        move = real_to_sim_monster_move(m["id"], m["move_id"])
+        if move == "INVALID":
+            raise ValueError(
+                f"live real monster {m['id']!r} has no current move"
+            )
+        from env.core.vocab import MOVE_VOCAB_INDEX
+        try:
+            move_id = MOVE_VOCAB_INDEX[move]
+        except KeyError as exc:
+            raise ValueError(
+                f"mapped real monster move {move!r} is absent from MOVE_VOCAB"
+            ) from exc
+        last_move = real_to_sim_monster_move(m["id"], m["last_move_id"])
+        if last_move == "INVALID":
+            last_move_id = 0
+        else:
+            try:
+                last_move_id = MOVE_VOCAB_INDEX[last_move]
+            except KeyError as exc:
+                raise ValueError(
+                    f"mapped real previous monster move {last_move!r} is absent "
+                    "from MOVE_VOCAB"
+                ) from exc
+        second_last_move = real_to_sim_monster_move(
+            m["id"], m["second_last_move_id"]
+        )
+        if second_last_move == "INVALID":
+            second_last_move_id = 0
+        else:
+            try:
+                second_last_move_id = MOVE_VOCAB_INDEX[second_last_move]
+            except KeyError as exc:
+                raise ValueError(
+                    f"mapped real second-previous monster move "
+                    f"{second_last_move!r} is absent from MOVE_VOCAB"
+                ) from exc
     return {
-        "id": m["id"],
+        "id": canonical_id,
         "hp": hp,
         "max_hp": m["max_hp"],
         "block": m["block"],
-        "gone": m["is_gone"],
+        "gone": gone,
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
@@ -156,37 +285,36 @@ def _monster_real(m, *, intents_hidden=False):
         # a dead monster's powers are meaningless and reported inconsistently
         # (real clears them on death, sim keeps them) -> drop them once hp<=0.
         "powers": _monster_powers_real(m["powers"]) if hp > 0 else {},
-        # OBS move fields. NOTE: the obs MOVE_VOCAB is keyed on the sim's
-        # MonsterMoveId enum; CommunicationMod's move_id is a DIFFERENT id space,
-        # so we do NOT pass it as the obs `move_id` (that would index the wrong
-        # vocab). Real backend leaves move/move_id PAD and lets the encoder derive
-        # INTENT_CATEGORY from base_damage (attack) — a real intent->sim-move map
-        # is future work when the real inference backend is wired (see obs_design
-        # §6 / DEVNOTES). The raw real fields are kept under real_* for debugging.
-        "move": "INVALID",
-        "move_id": 0,
-        "intent": m.get("intent"),
-        "intent_hidden": bool(intents_hidden and "move_id" not in m),
-        "real_move_id": m.get("move_id", -1),
-        "real_last_move_id": m.get("last_move_id", -1),
-        "real_second_last_move_id": m.get("second_last_move_id", -1),
+        # CommunicationMod and the simulator use different numeric move-id
+        # spaces. Translate the real byte through the explicit per-monster
+        # table, then publish the actual MOVE_VOCAB index. A live monster with a
+        # missing/unmapped move is an incomplete bridge frame, never PAD.
+        "move": move,
+        "move_id": move_id,
+        "last_move": last_move,
+        "last_move_id": last_move_id,
+        "second_last_move": second_last_move,
+        "second_last_move_id": second_last_move_id,
+        "intent": m["intent"],
+        "intent_hidden": False,
+        "half_dead": bool(m["half_dead"]),
+        "real_move_id": m["move_id"],
+        "real_last_move_id": m["last_move_id"],
+        "real_second_last_move_id": m["second_last_move_id"],
     }
 
 
 def _real_energy_per_turn(game_state):
-    # Native Berserk is folded into energyPerTurn rather than a power slot.
-    # Rebuild from the authoritative relics/power, never current (spent) energy.
-    energy_relics = {
-        "Busted Crown", "Coffee Dripper", "Cursed Key", "Ectoplasm",
-        "Fusion Hammer", "Mark of Pain", "Philosopher's Stone",
-        "Runic Dome", "Sozu", "Velvet Choker",
-    }
-    relics = {r["id"] for r in game_state.get("relics", [])}
-    collar = "SlaversCollar" in relics and game_state.get("room_type") in {
-        "MonsterRoomElite", "MonsterRoomBoss",
-    }
-    powers = _powers_real(game_state["combat_state"]["player"]["powers"])
-    return 3 + len(relics & energy_relics) + int(collar) + int(powers.get("Berserk", 0))
+    cs = game_state["combat_state"]
+    if "simulator_energy_per_turn" not in cs:
+        raise ValueError(
+            "real combat state is missing simulator_energy_per_turn; install "
+            "the complete simulator-parity CommunicationMod exporter"
+        )
+    value = int(cs["simulator_energy_per_turn"])
+    if value < 0 or value > 127:
+        raise ValueError(f"real energy-per-turn is outside native range: {value}")
+    return value
 
 
 def normalize_real(game_state):
@@ -196,29 +324,64 @@ def normalize_real(game_state):
     cs = game_state.get("combat_state")
     if not cs:
         return None
+    if cs.get("simulator_parity_export") != SIMULATOR_PARITY_EXPORT_VERSION:
+        raise ValueError(
+            "real combat state was not produced by the required parity exporter: "
+            f"{cs.get('simulator_parity_export')!r}"
+        )
     p = cs["player"]
+    exported_counters = cs.get("simulator_combat_counters")
+    if not isinstance(exported_counters, dict):
+        raise ValueError(
+            "real combat state is missing simulator_combat_counters; install "
+            "the complete simulator-parity CommunicationMod exporter"
+        )
+    missing_counters = set(_REAL_COMBAT_COUNTER_KEYS) - set(exported_counters)
+    if missing_counters:
+        raise ValueError(
+            "real combat counter export is incomplete: "
+            f"{sorted(missing_counters)!r}"
+        )
     combat_counters = {
-        # These two counters are exported directly by CommunicationMod. Other
-        # simulator-internal counters are unavailable in the real-game schema
-        # and intentionally remain zero-filled by the observation encoder.
-        "cards_discarded": int(cs.get("cards_discarded_this_turn", 0) or 0),
-        "times_damaged": int(cs.get("times_damaged", 0) or 0),
+        key: int(bool(exported_counters[key]))
+        if key in {"necronomicon_used", "orange_attack", "orange_skill", "orange_power"}
+        else int(exported_counters[key])
+        for key in _REAL_COMBAT_COUNTER_KEYS
     }
+    player_powers = _player_powers_real(p["powers"])
+    power_overrides = cs.get("simulator_player_power_overrides")
+    if not isinstance(power_overrides, dict):
+        raise ValueError(
+            "real combat state is missing simulator_player_power_overrides; "
+            "install the complete simulator-parity CommunicationMod exporter"
+        )
+    unknown_overrides = set(power_overrides) - {"Panache"}
+    if unknown_overrides:
+        raise ValueError(
+            f"unknown simulator player power overrides: {sorted(unknown_overrides)!r}"
+        )
+    if "Panache" in player_powers:
+        if "Panache" not in power_overrides:
+            raise ValueError("Panache is active but its private damage was not exported")
+        player_powers["Panache"] = int(power_overrides["Panache"])
+    elif "Panache" in power_overrides:
+        raise ValueError("Panache override was exported without an active Panache power")
     return {
         "turn": cs["turn"],
+        "post_enemy_turn_boundary": False,
         "player": {
             "hp": p["current_hp"],
             "max_hp": p["max_hp"],
             "block": p["block"],
             "energy": p["energy"],
-            "gold": game_state.get("gold", 0),
+            "gold": game_state["gold"],
             "combat_counters": combat_counters,
-            "powers": {k: v for k, v in _player_powers_real(p["powers"]).items()
+            "powers": {k: v for k, v in player_powers.items()
                        if k != "Berserk"},
             "energy_per_turn": _real_energy_per_turn(game_state),
         },
         "monsters": [_monster_real(m, intents_hidden=any(
-            r["id"] == "Runic Dome" for r in game_state.get("relics", [])
+            r["id"] == "Runic Dome" for r in game_state["relics"]
         )) for m in cs["monsters"]],
         "hand": _cards_real(cs["hand"], include_cost=True),
         "draw": _cards_real(cs["draw_pile"]),
@@ -315,6 +478,17 @@ _MONSTER_SIM2REAL = {
     "CORRUPT_HEART": "CorruptHeart",
 }
 
+# CommunicationMod mostly exposes the same monster identity used by the model
+# vocabulary.  Spire Growth is the exception: the Java monster's internal ID is
+# ``Serpent`` while the frozen observation vocabulary uses ``SpireGrowth``.
+# Keep transport and model identities separate; feeding the transport ID into
+# the encoder used to turn this live monster into PAD.
+_MONSTER_REAL2CANON = MONSTER_ALIASES
+
+
+def _canonical_real_monster_id(real_id):
+    return _MONSTER_REAL2CANON.get(real_id, real_id)
+
 
 # CommunicationMod exposes the Java monsters' private byte move ids.  They are
 # local to each monster and are unrelated to the global C++ MonsterMoveId enum.
@@ -406,63 +580,163 @@ def real_to_sim_monster_move(real_monster_id, real_move_id):
 def _sim_monster_id(name):
     if name not in _MONSTER_SIM2REAL:
         raise KeyError(f"unmapped sim monster id {name!r} - add it to _MONSTER_SIM2REAL")
-    return _MONSTER_SIM2REAL[name]
+    return _canonical_real_monster_id(_MONSTER_SIM2REAL[name])
 
 
 # Powers: sim names are mostly identical to real ids; only the known diffs need
 # overriding. Unknowns pass through (a wrong one will surface in the diff).
-_POWER_SIM2REAL = {
-    "Weak": "Weakened",
-    "Enrage": "Anger",  # Gremlin Nob's growing-strength power (sim name vs real id)
-}
+_POWER_SIM2REAL = SIM_POWER_ALIASES
 
 
 def _sim_power_id(name):
     return _POWER_SIM2REAL.get(name, name)
 
 
-def _powers_sim(pairs):
-    return {_sim_power_id(name): amt for name, amt in pairs
-            if _sim_power_id(name) not in _POWER_DROP}
+def _powers_sim(pairs, vocabulary_index):
+    if not isinstance(pairs, (list, tuple)):
+        raise ValueError(f"sim powers must be a sequence, got {pairs!r}")
+    out = {}
+    known = set(vocabulary_index)
+    for index, pair in enumerate(pairs):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise ValueError(f"malformed sim power record {index}: {pair!r}")
+        name = _sim_power_id(pair[0])
+        if name in _POWER_DROP:
+            continue
+        if name not in known:
+            raise ValueError(f"unknown sim power ID: {name!r}")
+        if name in out:
+            raise ValueError(f"duplicate sim power identity: {name!r}")
+        out[name] = int(pair[1])
+    return out
 
 
-def _norm_sim_monster(m):
+def _norm_sim_monster(m, *, allow_no_move=False):
+    required = {
+        "id", "hp", "max_hp", "block", "gone", "half_dead",
+        "base_damage", "adjusted_damage", "hits", "powers", "move",
+        "move_id", "last_move", "last_move_id", "second_last_move",
+        "second_last_move_id", "unawakened", "reactive",
+    }
+    missing = required - set(m)
+    if missing:
+        raise ValueError(f"sim monster is missing {sorted(missing)!r}: {m!r}")
     if m["id"] == _SIM_MONSTER_INVALID:
         return dict(id="PAD", hp=0, max_hp=0, block=0, gone=True,
                     base_damage=0, adjusted_damage=0, hits=0, powers={},
-                    move="INVALID", move_id=0, unawakened=False,
-                    reactive=False)
+                    move="INVALID", move_id=0, last_move="INVALID",
+                    last_move_id=0, second_last_move="INVALID",
+                    second_last_move_id=0, unawakened=False,
+                    reactive=False, half_dead=False)
+    try:
+        move = m["move"]
+        move_id = int(m["move_id"])
+    except KeyError as exc:
+        raise ValueError(f"live sim monster is missing {exc.args[0]}: {m!r}") from exc
+    if move == "INVALID":
+        if not allow_no_move and not m["gone"]:
+            raise ValueError(
+                f"live sim monster {m['id']!r} has no current move"
+            )
+        expected_move_id = 0
+    else:
+        from env.core.vocab import MOVE_VOCAB_INDEX
+        try:
+            expected_move_id = MOVE_VOCAB_INDEX[move]
+        except KeyError as exc:
+            raise ValueError(f"unknown sim monster move: {move!r}") from exc
+    if move_id != expected_move_id:
+        raise ValueError(
+            f"sim monster move index mismatch: {move!r} exports {move_id}, "
+            f"expected {expected_move_id}"
+        )
+    last_move = m["last_move"]
+    if last_move == "INVALID":
+        expected_last_move_id = 0
+    else:
+        from env.core.vocab import MOVE_VOCAB_INDEX
+        try:
+            expected_last_move_id = MOVE_VOCAB_INDEX[last_move]
+        except KeyError as exc:
+            raise ValueError(f"unknown sim previous monster move: {last_move!r}") from exc
+    if int(m["last_move_id"]) != expected_last_move_id:
+        raise ValueError(
+            f"sim previous monster move index mismatch: {last_move!r} exports "
+            f"{m['last_move_id']}, expected {expected_last_move_id}"
+        )
+    second_last_move = m["second_last_move"]
+    if second_last_move == "INVALID":
+        expected_second_last_move_id = 0
+    else:
+        from env.core.vocab import MOVE_VOCAB_INDEX
+        try:
+            expected_second_last_move_id = MOVE_VOCAB_INDEX[second_last_move]
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown sim second-previous monster move: {second_last_move!r}"
+            ) from exc
+    if int(m["second_last_move_id"]) != expected_second_last_move_id:
+        raise ValueError(
+            "sim second-previous monster move index mismatch: "
+            f"{second_last_move!r} exports {m['second_last_move_id']}, "
+            f"expected {expected_second_last_move_id}"
+        )
     base, hits = _attack(m["base_damage"], m["hits"])
-    adjusted, _ = _attack(m.get("adjusted_damage", base), hits)
-    if m.get("move") == "EXPLODER_EXPLODE":
+    adjusted, _ = _attack(m["adjusted_damage"], hits)
+    if m["move"] == "EXPLODER_EXPLODE":
         # CommunicationMod publishes UNKNOWN, with no visible damage or hits.
         # This observable projection must not change native explosion damage.
         base, adjusted, hits = 0, 0, 0
     hp = m["hp"]
+    from env.core.vocab import MONSTER_BUFF_VOCAB_INDEX
     return {
         "id": _sim_monster_id(m["id"]),
         "hp": hp,
         "max_hp": m["max_hp"],
         "block": m["block"],
         "gone": m["gone"],
+        "half_dead": bool(m["half_dead"]),
         "base_damage": base,
         "adjusted_damage": adjusted,
         "hits": hits,
-        "unawakened": bool(m.get("unawakened", False)),
-        "reactive": bool(m.get("reactive", False)),
-        "powers": _powers_sim(m["powers"]) if hp > 0 else {},
-        # current intent: the sim now exports the rolled MonsterMoveId as an
-        # enum-name string + int (see bindings to_dict). Carried for the obs
-        # MOVE_VOCAB / derived INTENT_CATEGORY; the differential `diff()` ignores
-        # it (real-side move ids are not aligned and not compared).
-        "move": m.get("move", "INVALID"),
-        "move_id": m.get("move_id", 0),
+        "unawakened": bool(m["unawakened"]),
+        "reactive": bool(m["reactive"]),
+        "powers": _powers_sim(m["powers"], MONSTER_BUFF_VOCAB_INDEX)
+        if hp > 0 else {},
+        "move": move,
+        "move_id": move_id,
+        "last_move": last_move,
+        "last_move_id": expected_last_move_id,
+        "second_last_move": second_last_move,
+        "second_last_move_id": expected_second_last_move_id,
     }
 
 
 def normalize_sim(raw):
     """`raw` = sim BattleContext.to_dict(). Returns the canonical combat state."""
+    required = {
+        "turn", "post_enemy_turn_boundary", "player", "monsters", "hand",
+        "draw", "discard", "exhaust",
+    }
+    missing = required - set(raw)
+    if missing:
+        raise ValueError(f"sim combat state is missing {sorted(missing)!r}")
     p = raw["player"]
+    player_required = {
+        "hp", "max_hp", "block", "energy", "gold", "combat_counters",
+        "powers", "energy_per_turn",
+    }
+    missing_player = player_required - set(p)
+    if missing_player:
+        raise ValueError(
+            f"sim player state is missing {sorted(missing_player)!r}"
+        )
+    missing_counters = set(_REAL_COMBAT_COUNTER_KEYS) - set(p["combat_counters"])
+    if missing_counters:
+        raise ValueError(
+            f"sim combat counters are incomplete: {sorted(missing_counters)!r}"
+        )
+    from env.core.vocab import PLAYER_BUFF_VOCAB_INDEX
     return {
         # sim turn is 0-based at combat start; real game is 1-based.
         "turn": raw["turn"] + 1,
@@ -470,21 +744,29 @@ def normalize_sim(raw):
         # next-turn draw/energy setup. Preserve this search-only boundary bit
         # through the canonical layer so the combat encoder can expose it.
         "post_enemy_turn_boundary": bool(
-            raw.get("post_enemy_turn_boundary", False)
+            raw["post_enemy_turn_boundary"]
         ),
         "player": {
             "hp": p["hp"],
             "max_hp": p["max_hp"],
             "block": p["block"],
             "energy": p["energy"],
-            "gold": p.get("gold", 0),
-            "combat_counters": p.get("combat_counters", {}),
-            "powers": _powers_sim(p["powers"]),
-            "energy_per_turn": p.get("energy_per_turn", 3),
+            "gold": p["gold"],
+            "combat_counters": {
+                key: int(bool(p["combat_counters"][key]))
+                if key in {"necronomicon_used", "orange_attack", "orange_skill", "orange_power"}
+                else int(p["combat_counters"][key])
+                for key in _REAL_COMBAT_COUNTER_KEYS
+            },
+            "powers": _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX),
+            "energy_per_turn": p["energy_per_turn"],
         },
         "monsters": [
             # Preserve native target slots, including reserved empty positions.
-            _norm_sim_monster(m) for m in raw["monsters"]
+            _norm_sim_monster(
+                m, allow_no_move=bool(raw["post_enemy_turn_boundary"])
+            )
+            for m in raw["monsters"]
         ],
         "hand": [_card(_sim_card_id(n), u, cost) for n, u, cost in raw["hand"]],
         "draw": [_card(_sim_card_id(n), u) for n, u in raw["draw"]],
@@ -499,13 +781,57 @@ def normalize_sim(raw):
 # moment an out-of-combat decision (reward/event/shop/rest) diverges.
 
 def normalize_real_overworld(gs):
+    required = {
+        "floor", "current_hp", "max_hp", "gold", "deck", "relics",
+        "simulator_parity_export",
+    }
+    required.update(fields["real"] for fields in RUN_KEY_FIELDS.values())
+    missing = required - set(gs)
+    if missing:
+        raise ValueError(f"real overworld state is missing {sorted(missing)!r}")
+    if gs["simulator_parity_export"] != SIMULATOR_PARITY_EXPORT_VERSION:
+        raise ValueError(
+            "real overworld state was not produced by the required parity exporter: "
+            f"{gs['simulator_parity_export']!r}"
+        )
+    if not isinstance(gs["deck"], list) or not isinstance(gs["relics"], list):
+        raise ValueError("real overworld deck/relics must be lists")
+    deck = []
+    for index, card in enumerate(gs["deck"]):
+        if not isinstance(card, dict) or "id" not in card or "upgrades" not in card:
+            raise ValueError(f"malformed overworld card record {index}: {card!r}")
+        canonical = _card(card["id"], card["upgrades"])
+        deck.append((canonical["id"], canonical["up"]))
+    from env.core.vocab import RELIC_VOCAB_INDEX
+    relics = []
+    for index, relic in enumerate(gs["relics"]):
+        if not isinstance(relic, dict) or "id" not in relic:
+            raise ValueError(f"malformed overworld relic record {index}: {relic!r}")
+        relic_id = str(relic["id"])
+        if relic_id in UNSUPPORTED_REAL_RELIC_IDS:
+            raise ValueError(
+                f"unsupported real relic ID {relic_id!r}: "
+                f"{UNSUPPORTED_REAL_RELIC_IDS[relic_id]}"
+            )
+        if relic_id == "PAD" or relic_id not in RELIC_VOCAB_INDEX:
+            raise ValueError(f"unknown real relic ID: {relic_id!r}")
+        relics.append(relic_id)
+    keys = {}
+    for semantic, fields in RUN_KEY_FIELDS.items():
+        value = gs[fields["real"]]
+        if type(value) is not bool:
+            raise ValueError(
+                f"real run key {fields['real']!r} must be boolean, got {value!r}"
+            )
+        keys[semantic] = value
     return {
-        "floor": gs.get("floor"),
+        "floor": gs["floor"],
         "hp": gs["current_hp"],
         "max_hp": gs["max_hp"],
         "gold": gs["gold"],
-        "deck": sorted((c["id"], c["upgrades"]) for c in gs["deck"]),
-        "relics": sorted(r["id"] for r in gs["relics"]),
+        "deck": sorted(deck),
+        "relics": sorted(relics),
+        "keys": keys,
     }
 
 
@@ -528,7 +854,10 @@ _SCREEN2PHASE = {
 def sim_phase(gc):
     """Semantic phase for the gc's current screen (bare-name lookup)."""
     tail = gc.screen_state_name.split(".")[-1]
-    return _SCREEN2PHASE.get(tail, tail.lower())
+    try:
+        return _SCREEN2PHASE[tail]
+    except KeyError as exc:
+        raise ValueError(f"unknown native screen-state keyword: {tail!r}") from exc
 
 
 def _sim_outcome_name(gc):
@@ -554,6 +883,7 @@ def _sim_screen_options(gc, phase):
             "gold": list(info["gold"]),
             "relics": list(info["relics"]),
             "potions": list(info["potions"]),
+            "keys": list(info["keys"]),
             "card_count": card_count,
             # the actual card choices, so the player/agent sees WHICH cards are on
             # offer, not just how many. get_card_reward returns Card objects;
@@ -636,6 +966,7 @@ def _select_options(context, pick_count, have_selected, selected_ids,
     return {
         "context": context,
         "pick_remaining": max(0, pick_count - have_selected),
+        "pick_min": 0 if (can_pick_zero or multi) else int(pick_count),
         "can_pick_zero": bool(can_pick_zero),
         "can_pick_any": bool(can_pick_any),
         "selected": selected_ids,
@@ -659,7 +990,14 @@ def combat_select_options(select_info):
     can ALWAYS confirm zero (chooseExhaust/GambleCards early-return on empty) and
     Gamble has no upper bound — so we derive can_pick_zero=multi, and can_pick_any
     from pick_max being the whole hand (Gamble) vs a fixed cap (Exhaust Many)."""
-    multi = bool(select_info.get("multi"))
+    required = {
+        "context", "pick_count", "can_pick_zero", "can_pick_any", "multi",
+        "pick_max", "cards_in_hand", "zone", "candidates",
+    }
+    missing = required - set(select_info)
+    if missing:
+        raise ValueError(f"native combat selection is missing {sorted(missing)!r}")
+    multi = bool(select_info["multi"])
     # CardSelectInfo::pickCount is only populated for MULTI tasks.  Every live
     # SINGLE task still requires exactly one pick, but the native field remains
     # zero (Warcry/Armaments/Headbutt and the generated-card screens included).
@@ -671,15 +1009,15 @@ def combat_select_options(select_info):
         can_pick_zero=select_info["can_pick_zero"] or multi,
         can_pick_any=select_info["can_pick_any"],
         multi=multi,
-        pick_max=select_info.get("pick_max", 0),
-        cards_in_hand=select_info.get("cards_in_hand", 0))
-    result["zone"] = select_info.get("zone", "hand" if multi else "none")
+        pick_max=select_info["pick_max"],
+        cards_in_hand=select_info["cards_in_hand"])
+    result["zone"] = select_info["zone"]
     result["candidates"] = [
         {"native_index": int(item["native_index"]),
-         "card": None if item.get("skip") else _card(
+         "card": None if item["skip"] else _card(
              _sim_card_id(item["card"][0]), item["card"][1],
              item["card"][2])}
-        for item in select_info.get("candidates", ())
+        for item in select_info["candidates"]
     ]
     return result
 
@@ -699,6 +1037,10 @@ def normalize_sim_overworld(gc):
         "gold": gc.gold,
         "deck": sorted((_sim_card_id(n), u) for n, u in gc.deck_ids()),
         "relics": sorted(gc.relic_ids()),
+        "keys": {
+            semantic: bool(getattr(gc, fields["sim"]))
+            for semantic, fields in RUN_KEY_FIELDS.items()
+        },
         "phase": phase,
         "options": _sim_screen_options(gc, phase),
     }
@@ -727,6 +1069,16 @@ def _enum_tail(v):
     return str(v).split(".")[-1]
 
 
+def canonical_sim_potion(value):
+    """Translate native empty-slot sentinels at the backend boundary only."""
+    name = _enum_tail(value)
+    if name == "EMPTY_POTION_SLOT":
+        return "PAD"
+    if name == "INVALID":
+        raise ValueError("native held-potion slot contains INVALID instead of EMPTY_POTION_SLOT")
+    return name
+
+
 def normalize_sim_global(gc):
     """Run-global obs block (obs_design.md §3/§4). Backend-agnostic shape; the
     sim fills it from gc. `boss_relics` is only meaningful on a boss-relic
@@ -738,11 +1090,13 @@ def normalize_sim_global(gc):
     # otherwise. (AttributeError guards an older .so without the binding.)
     boss_relics = []
     if sim_phase(gc) == "boss_relic":
-        try:
-            boss_relics = list(gc.boss_relic_ids())
-        except (AttributeError, RuntimeError):
-            boss_relics = []
+        if not hasattr(gc, "boss_relic_ids"):
+            raise RuntimeError(
+                "boss-relic screen requires a native boss_relic_ids exporter"
+            )
+        boss_relics = list(gc.boss_relic_ids())
     relic_state = list(gc.relic_state())
+    potions = [canonical_sim_potion(potion) for potion in gc.overworld_potions]
     return {
         # True only for the search-only state immediately after the final
         # enemy action of End Turn, before next-turn setup/draw.
@@ -751,17 +1105,21 @@ def normalize_sim_global(gc):
         # are always outside that boundary.
         "post_enemy_turn_boundary": False,
         "character": _enum_tail(gc.character) if hasattr(gc, "character")
-                     else _enum_tail(gc.cc) if hasattr(gc, "cc") else "INVALID",
-        "ascension": getattr(gc, "ascension", 0),
+                     else _enum_tail(gc.cc),
+        "ascension": gc.ascension,
         "act": gc.act,
         "floor": gc.floor_num,
         "hp": gc.cur_hp,
         "max_hp": gc.max_hp,
         "boss": _enum_tail(gc.boss),
-        "combat_is_boss": _enum_tail(getattr(gc, "cur_room", "")) == "BOSS",
+        "combat_is_boss": _enum_tail(gc.cur_room) == "BOSS",
         "relics": [item["id"] for item in relic_state],
         "relic_counters": [item["counter"] for item in relic_state],
-        "potions": list(gc.overworld_potions),
+        "potions": potions,
+        "keys": {
+            semantic: bool(getattr(gc, fields["sim"]))
+            for semantic, fields in RUN_KEY_FIELDS.items()
+        },
         "gold": gc.gold,
         "deck": [(_sim_card_id(n), u) for n, u in gc.deck_ids()],
         "boss_relics": boss_relics,
@@ -770,7 +1128,7 @@ def normalize_sim_global(gc):
 
 def diff_overworld(real, sim):
     out = []
-    for k in ("floor", "hp", "max_hp", "gold", "deck", "relics"):
+    for k in ("floor", "hp", "max_hp", "gold", "deck", "relics", "keys"):
         if real[k] != sim[k]:
             out.append((k, real[k], sim[k]))
     return out
@@ -779,8 +1137,10 @@ def diff_overworld(real, sim):
 # ================================ diff =================================
 
 _MONSTER_CMP_FIELDS = (
-    "id", "hp", "max_hp", "block", "gone", "base_damage", "hits",
-    "unawakened", "reactive", "powers",
+    "id", "hp", "max_hp", "block", "gone", "half_dead", "base_damage",
+    "adjusted_damage", "hits", "move", "move_id", "last_move",
+    "last_move_id", "second_last_move", "second_last_move_id", "unawakened",
+    "reactive", "powers",
 )
 
 
@@ -798,12 +1158,22 @@ def diff(real, sim, pile_mode="auto"):
             out.append((path, a, b))
 
     cmp("turn", real["turn"], sim["turn"])
-    for k in ("hp", "max_hp", "block", "energy"):
+    cmp(
+        "post_enemy_turn_boundary",
+        bool(real["post_enemy_turn_boundary"]),
+        bool(sim["post_enemy_turn_boundary"]),
+    )
+    for k in ("hp", "max_hp", "block", "energy", "gold"):
         cmp(f"player.{k}", real["player"][k], sim["player"][k])
     if "energy_per_turn" in real["player"]:
         cmp("player.energy_per_turn", real["player"]["energy_per_turn"],
-            sim["player"].get("energy_per_turn"))
+            sim["player"]["energy_per_turn"])
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
+    cmp(
+        "player.combat_counters",
+        real["player"]["combat_counters"],
+        sim["player"]["combat_counters"],
+    )
 
     # Drop monsters that have left combat (gone=True): when a slime splits, the
     # real game keeps the dead parent slot in the list while the sim removes it,
@@ -815,10 +1185,6 @@ def diff(real, sim, pile_mode="auto"):
         out.append(("monsters.len", len(rms), len(sms)))
     for i, (rm, sm) in enumerate(zip(rms, sms)):
         for k in _MONSTER_CMP_FIELDS:
-            # Hidden intent is unknown, not an observed zero-damage attack.
-            # Other public fields must still agree exactly.
-            if rm.get("intent_hidden") and k in {"base_damage", "hits"}:
-                continue
             cmp(f"monsters[{i}].{k}", rm[k], sm[k])
 
     for pile in ("hand", "draw", "discard", "exhaust"):

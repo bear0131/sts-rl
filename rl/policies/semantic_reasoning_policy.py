@@ -680,7 +680,12 @@ class SemanticReasoningPolicyCore(SplitStSPolicyCore):
         for parameter in self.combat.encoder.pile_projection.parameters():
             parameter.requires_grad_(False)
 
-        self.action_embedding = nn.Embedding(A.N_ACTIONS, d_model)
+        self.action_embedding = nn.Embedding(
+            A.N_ACTIONS
+            if "reward_keys" in observation_space.spaces
+            else A.FIXED_HEAD_ACTIONS,
+            d_model,
+        )
         context_keys = (
             "player_scalars",
             "player_buffs",
@@ -692,6 +697,7 @@ class SemanticReasoningPolicyCore(SplitStSPolicyCore):
             "ascension",
             "act",
             "floor",
+            "run_keys",
         )
         self.reasoning_context_keys = tuple(
             key for key in context_keys if key in observation_space.spaces

@@ -49,7 +49,7 @@ def test_native_mode_does_not_relabel_legacy_masks_or_observations(combat_factor
     native = legacy.fork_combat()
     native.combat_action_contract = 'native-v1'
     try:
-        assert legacy.action_space.n == native.action_space.n == A.N_ACTIONS == 181
+        assert legacy.action_space.n == native.action_space.n == A.N_ACTIONS == 182
         for key,value in legacy._obs().items():
             np.testing.assert_array_equal(value,native._obs()[key])
         old = legacy.step(A._PLAY)

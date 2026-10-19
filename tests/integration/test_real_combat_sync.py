@@ -17,6 +17,7 @@ from bridge.schemas.combat_state import (
     diff,
     normalize_sim,
 )
+from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
 import slaythespire as sts
 
 
@@ -490,6 +491,7 @@ def test_java_unawakened_power_syncs_native_boss_phase(combat_factory):
 def test_java_compulsive_power_syncs_writhing_mass_reactive_presence(combat_factory):
     real = _monster_real({
         "id": "WrithingMass",
+        "intent": "ATTACK",
         "current_hp": 160,
         "max_hp": 160,
         "block": 0,
@@ -498,6 +500,10 @@ def test_java_compulsive_power_syncs_writhing_mass_reactive_presence(combat_fact
         "move_adjusted_damage": 15,
         "move_hits": 1,
         "move_id": 2,
+        "last_move_id": -1,
+        "second_last_move_id": -1,
+        "half_dead": False,
+        "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION,
         "powers": [
             {"id": "Malleable", "amount": 3},
             {"id": "Compulsive", "amount": -1},
@@ -735,7 +741,11 @@ def test_real_search_recognizes_live_nilry_codex_action_and_skip(combat_factory)
         "available_commands": ["choose", "skip", "state"],
         "game_state": {
             "screen_type": "CARD_REWARD",
-            "screen_state": {"cards": [
+            "screen_state": {
+                "selection_context": "CODEX",
+                "selection_source": "com.megacrit.cardcrawl.actions.common.CodexAction",
+                "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+                "cards": [
                 {"id": "Body Slam", "upgrades": 0},
                 {"id": "Rage", "upgrades": 0},
                 {"id": "Flex", "upgrades": 0},
@@ -908,8 +918,15 @@ def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
             "screen_type": "HAND_SELECT",
             "action_phase": "EXECUTING_ACTIONS",
             "current_action": "ExhaustAction",
-            "screen_state": {"max_cards": 99, "can_pick_zero": True},
+            "seed": 42, "floor": 1,
+            "screen_state": {
+                "selection_context": "EXHAUST_MANY",
+                "selection_source": "com.megacrit.cardcrawl.actions.common.ExhaustAction",
+                "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+                "selected": [], "max_cards": 99, "can_pick_zero": True,
+            },
             "combat_state": {
+                "turn": 1,
                 "hand": [{"id": "Strike_R", "upgrades": 0}] * 5,
                 "monsters": [],
             },
@@ -918,7 +935,7 @@ def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
     real_desc = adapter.select_descriptor()
     assert real_desc["pick_remaining"] == 5
     assert real_desc["pick_max"] == 5
-    assert real_desc["can_pick_any"] is True
+    assert real_desc["can_pick_any"] is False
 
     search = RealCombatSearch.__new__(RealCombatSearch)
     search.env = env
@@ -927,29 +944,26 @@ def test_real_search_normalizes_elixir_unbounded_sentinel(combat_factory):
     assert search.run_alignment_checks == 1
 
 
-@pytest.mark.parametrize("room,relics,berserk,expected", [
-    ("MonsterRoom", [], 1, 4),
-    ("MonsterRoom", ["Cursed Key", "SlaversCollar"], 2, 6),
-    ("MonsterRoomElite", ["Cursed Key", "SlaversCollar"], 2, 7),
-    ("MonsterRoomBoss", ["SlaversCollar"], 0, 4),
+@pytest.mark.parametrize("exported", [
+    3, 4, 6, 7,
 ])
-def test_real_berserk_syncs_next_turn_energy(combat_factory, room, relics, berserk, expected):
+def test_real_energy_per_turn_uses_exact_export_without_reconstruction(
+    combat_factory, exported
+):
     from bridge.schemas.combat_state import _real_energy_per_turn
 
-    real = {"room_type": room, "relics": [{"id": r} for r in relics],
-            "combat_state": {"player": {"energy": 0,
-                "powers": [{"id": "Berserk", "amount": berserk}]}}}
+    real = {"combat_state": {"simulator_energy_per_turn": exported}}
     energy = _real_energy_per_turn(real)
-    assert energy == expected
+    assert energy == exported
     env = combat_factory(["DEFEND_RED"] * 10, encounter="Jaw Worm",
                          combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
     bc = env.thick.bc
     # Repeated state synchronization must not add Berserk a second time.
     for _ in range(2):
         bc.apply_custom_state({"player": {"energy": 0, "energy_per_turn": energy}})
-    assert bc.to_dict()["player"]["energy_per_turn"] == expected
+    assert bc.to_dict()["player"]["energy_per_turn"] == exported
     bc.execute(sts.Action(sts.ActionType.END_TURN))
-    assert bc.to_dict()["player"]["energy"] == expected
+    assert bc.to_dict()["player"]["energy"] == exported
 
 
 def test_false_reactive_does_not_erase_guardian_sharp_hide(combat_factory):
@@ -1009,11 +1023,12 @@ def test_exploder_unknown_intent_preserves_native_explosion(combat_factory):
     for m in real["monsters"]:
         m["real_move_id"] = 1
         m["real_last_move_id"] = 1
+        m["real_second_last_move_id"] = 1
     m = real["monsters"][idx]
-    m.update(real_move_id=2, base_damage=0, hits=0)
+    m.update(real_move_id=2, base_damage=0, hits=0, intent_hidden=False)
     search = RealCombatSearch.__new__(RealCombatSearch)
     search.env = env
-    search.adapter = SimpleNamespace(_potions=lambda: [])
+    search.adapter = SimpleNamespace(_potions=lambda: ["PAD"] * 3)
     search._target_mapping = lambda state: {idx: idx}
     spec = search._state_spec(real)
     assert "base_damage" not in spec["monsters"][idx]
@@ -1143,14 +1158,20 @@ def test_secret_technique_real_grid_sorts_native_candidates_and_keeps_ui_handles
         'player':{'energy':3}})
     env.thick.bc.execute(sts.Action(sts.ActionType.CARD,0))
     env._invalidate_backend_cache()
-    cards = [{'id':c,'upgrades':u} for c,u in [('Armaments',0),('Defend_R',0),
+    cards = [{'id':c,'upgrades':u,'cost':1} for c,u in [('Armaments',0),('Defend_R',0),
              ('Spot Weakness',0),('Shrug It Off',0),('Defend_R',1),('Defend_R',1)]]
     adapter=RealGameAdapter(combat_action_contract=C.AUTOREGRESSIVE_CONTRACT)
     adapter.update({'in_game':True,'ready_for_command':True,'available_commands':['choose','state'],
         'game_state':{'current_action':'SkillFromDeckToHandAction','screen_type':'GRID',
             'room_phase':'COMBAT','combat_state':{'turn':1},
             'choice_list':[c['id'] for c in cards],
-            'screen_state':{'cards':cards,'num_cards':1,'selected_cards':[]}}})
+            'screen_state':{
+                'selection_context':'SECRET_TECHNIQUE',
+                'selection_source':'com.megacrit.cardcrawl.actions.common.SkillFromDeckToHandAction',
+                'simulator_parity_export':SIMULATOR_PARITY_EXPORT_VERSION,
+                'cards':cards,'num_cards':1,'selected_cards':[],
+                'any_number':False, 'for_upgrade':False,
+                'for_purge':False, 'for_transform':False}}})
     desc=adapter.select_descriptor()
     assert desc['context']=='SECRET_TECHNIQUE'
     assert desc['zone']=='draw'
@@ -1178,19 +1199,21 @@ def test_dome_missing_current_intent_fails_instead_of_guessing(combat_factory):
     real = normalize_sim(bc.to_dict())
     m = real['monsters'][0]
     m.update(intent_hidden=True, real_move_id=-1, real_last_move_id=-1,
-             base_damage=0, hits=0)
+             real_second_last_move_id=-1, base_damage=0, hits=0)
     search = RealCombatSearch.__new__(RealCombatSearch)
     search.env = env
-    search.adapter = SimpleNamespace(_potions=lambda: [])
+    search.adapter = SimpleNamespace(_potions=lambda: ["PAD"] * 3)
     search._target_mapping = lambda state: {0: 0}
     with pytest.raises(RuntimeError, match="current intent missing"):
         search._state_spec(real)
     # Patched export provides the actual current move even with Dome.
     exported = _monster_real({"id": "JawWorm", "current_hp": 40, "max_hp": 40,
                              "move_id": 1, "move_base_damage": 11, "move_hits": 1,
+                             "move_adjusted_damage": 11,
+                             "last_move_id": -1, "second_last_move_id": -1,
                              "intent": "ATTACK", "powers": [], "block": 0,
                              "is_gone": False, "half_dead": False,
-                             "current_intent_export": "simulator-parity-v1"},
+                             "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION},
                             intents_hidden=True)
     assert not exported["intent_hidden"]
     m.update(intent_hidden=False, real_move_id=exported["real_move_id"],

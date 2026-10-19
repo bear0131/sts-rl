@@ -1,5 +1,5 @@
-// Offline CommunicationMod patcher: only current monster serialization changes.
-// Compile/run with ModTheSpire's Javassist; dependencies are local, never bundled.
+// Offline CommunicationMod patcher for the complete simulator-visible state.
+// Compile/run with local game/mod jars; only the exporter helper is bundled.
 import javassist.*;
 import javassist.expr.*;
 import java.nio.file.*;
@@ -16,14 +16,22 @@ public final class ExposeCurrentIntent {
         ClassPool pool = new ClassPool(true);
         for (int i : new int[]{0, 2, 3, 4}) pool.appendClassPath(args[i]);
         CtClass converter = pool.get("communicationmod.GameStateConverter");
-        CtMethod method = converter.getDeclaredMethod("convertMonsterToJson");
+        CtMethod gameMethod = converter.getDeclaredMethod("getGameState");
+        CtMethod monsterMethod = converter.getDeclaredMethod("convertMonsterToJson");
+        CtMethod combatMethod = converter.getDeclaredMethod("getCombatState");
+        CtMethod gridMethod = converter.getDeclaredMethod("getGridState");
+        CtMethod handMethod = converter.getDeclaredMethod("getHandSelectState");
+        CtMethod cardRewardMethod = converter.getDeclaredMethod("getCardRewardState");
+        Set<CtMethod> changedMethods = new HashSet<CtMethod>(Arrays.asList(
+            gameMethod, monsterMethod, combatMethod, gridMethod, handMethod,
+            cardRewardMethod));
         Map<String, byte[]> unchanged = new HashMap<>();
         for (CtMethod candidate : converter.getDeclaredMethods()) {
-            if (!candidate.equals(method)) unchanged.put(candidate.getLongName(),
+            if (!changedMethods.contains(candidate)) unchanged.put(candidate.getLongName(),
                 candidate.getMethodInfo().getCodeAttribute().getCode().clone());
         }
         final int[] replacements = {0};
-        method.instrument(new ExprEditor() {
+        monsterMethod.instrument(new ExprEditor() {
             public void edit(MethodCall call) throws CannotCompileException {
                 if (call.getClassName().equals("com.megacrit.cardcrawl.characters.AbstractPlayer")
                         && call.getMethodName().equals("hasRelic")) {
@@ -34,15 +42,43 @@ public final class ExposeCurrentIntent {
         });
         if (replacements[0] != 1) throw new IllegalStateException(
             "Unexpected serializer version: hasRelic calls=" + replacements[0]);
-        method.insertAfter("{ $_.put(\"current_intent_export\", \"simulator-parity-v1\"); }");
+        gameMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentGameState($_); }");
+        monsterMethod.insertAfter(
+            "{ $_.put(\"current_intent_export\", communicationmod.SimulatorParityExporter.VERSION); }");
+        combatMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentCombatState($_); }");
+        gridMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentGridState($_); }");
+        handMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentHandSelectState($_); }");
+        cardRewardMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentCardRewardState($_); }");
         byte[] patched = converter.toBytecode();
         for (CtMethod candidate : converter.getDeclaredMethods()) {
-            if (!candidate.equals(method) && !Arrays.equals(
+            if (!changedMethods.contains(candidate) && !Arrays.equals(
                     unchanged.get(candidate.getLongName()),
                     candidate.getMethodInfo2().getCodeAttribute().getCode()))
                 throw new IllegalStateException("Unexpected method change: " + candidate.getLongName());
         }
         String target = "communicationmod/GameStateConverter.class";
+        String[] helperTargets = new String[] {
+            "communicationmod/SimulatorParityExporter.class",
+            "communicationmod/SimulatorParityExporter$DamagePatch.class",
+            "communicationmod/SimulatorParityExporter$PreBattlePatch.class",
+        };
+        Map<String, byte[]> helpers = new LinkedHashMap<String, byte[]>();
+        for (String helperTarget : helperTargets) {
+            try (InputStream stream = ExposeCurrentIntent.class.getClassLoader()
+                    .getResourceAsStream(helperTarget)) {
+                if (stream == null) throw new IOException("Missing compiled helper " + helperTarget);
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                byte[] helperBuffer = new byte[65536];
+                int n;
+                while ((n = stream.read(helperBuffer)) != -1) bytes.write(helperBuffer, 0, n);
+                helpers.put(helperTarget, bytes.toByteArray());
+            }
+        }
         int changed = 0;
         try (ZipFile source = new ZipFile(input.toFile());
              ZipOutputStream dest = new ZipOutputStream(Files.newOutputStream(output))) {
@@ -50,6 +86,9 @@ public final class ExposeCurrentIntent {
             byte[] buffer = new byte[65536];
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
+                if (helpers.containsKey(entry.getName())) {
+                    throw new IllegalStateException("Input jar already contains " + entry.getName());
+                }
                 ZipEntry copy = new ZipEntry(entry.getName());
                 copy.setTime(entry.getTime());
                 dest.putNextEntry(copy);
@@ -59,8 +98,15 @@ public final class ExposeCurrentIntent {
                 }
                 dest.closeEntry();
             }
+            for (Map.Entry<String, byte[]> helper : helpers.entrySet()) {
+                ZipEntry helperEntry = new ZipEntry(helper.getKey());
+                dest.putNextEntry(helperEntry);
+                dest.write(helper.getValue());
+                dest.closeEntry();
+            }
         }
         if (changed != 1) throw new IllegalStateException("Target count=" + changed);
-        System.out.println("Patched one serializer; no gameplay or RNG methods modified");
+        System.out.println(
+            "Patched six serializers and added read-only parity exporters; no gameplay or RNG modified");
     }
 }

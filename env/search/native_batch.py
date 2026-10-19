@@ -23,10 +23,18 @@ class NativeSearchBatch:
         shapes = dict(_nosl_compact_empty(card_language=first._card_language))
         if first._joint_actions:
             shapes['combat_legal'] = np.zeros(first._neural_width, dtype=bool)
-        self._prototypes = {key: (value.astype(np.int32) if key in ('monster_move', 'monster_intent_cat')
-                                 else value) for key, value in shapes.items()}
+        # The decoder must preserve the public observation-space dtypes.  In
+        # particular categorical observations are int64; narrowing just these
+        # two fields made batched native leaves differ byte-for-byte from the
+        # serial bridge path.
+        self._prototypes = dict(shapes)
         self._layouts = {}
-        self.decoder = sts.NeuralObservationDecoder(shapes, _nosl_compact_lut(), _nosl_card_stats(),
+        # Grow printed-card data only when a real leaf needs a higher upgrade
+        # count, so Searing Blow remains exact without reserving the complete
+        # int16 range in every search worker.
+        self._card_stats = _nosl_card_stats()
+        self.decoder = sts.NeuralObservationDecoder(
+            shapes, _nosl_compact_lut(), self._card_stats,
             {key: getattr(encode, key+'_SCALE') for key in
                 ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK')},
             dict(counters=encode.COMBAT_COUNTERS, moves=encode.V.MOVE_VOCAB_CAPACITY,
@@ -37,6 +45,7 @@ class NativeSearchBatch:
         self.payload = None
         self.global_fields = None
         self.leaves = None
+        self.native_seconds = self.pack_seconds = self.decode_seconds = 0.0
 
     def begin(self, calls):
         if not calls:
@@ -71,6 +80,7 @@ class NativeSearchBatch:
 
     def observations(self):
         started = time.perf_counter()
+        self._ensure_card_stats()
         result = self.decoder.decode(self.payload, self.global_fields)
         self.decode_seconds += time.perf_counter()-started
         return result
@@ -94,8 +104,26 @@ class NativeSearchBatch:
     def write_observations(self, destination):
         """Fill caller-owned contiguous arrays before their next device upload."""
         started = time.perf_counter()
+        self._ensure_card_stats()
         self.decoder.decode(self.payload, self.global_fields, destination)
         self.decode_seconds += time.perf_counter()-started
+
+    def _ensure_card_stats(self):
+        layout = _nosl_compact_lut()['layout']
+        hand_start = (6 + int(layout['player_status_count'])
+                      + encode.COMBAT_COUNTERS + 1 + 30
+                      + 5 * int(layout['monster_status_count']))
+        scalars = np.asarray(self.payload['scalars'])
+        if scalars.ndim != 2 or scalars.shape[1] < hand_start + 20:
+            raise ValueError('native observation layout omits hand upgrade data')
+        upgrades = scalars[:, hand_start:hand_start+20:2]
+        if (not np.all(np.isfinite(upgrades)) or np.any(upgrades < 0)
+                or np.any(upgrades != np.rint(upgrades))):
+            raise ValueError('native hand upgrade count is invalid')
+        needed = int(upgrades.max(initial=0)) + 1
+        if needed > self._card_stats['damage'].shape[1]:
+            self._card_stats = _nosl_card_stats(needed)
+            self.decoder.set_card_stats(self._card_stats)
 
     def advance(self, logits, values):
         self.leaves[np.asarray(self.payload['owners'], dtype=np.intp)] += 1

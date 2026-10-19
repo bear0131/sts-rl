@@ -83,14 +83,17 @@ legal-action contract and the real game's accepted commands.
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
 
-### Simulator-parity current intents
+### Simulator-parity state exporter
 
 Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
-It changes only `GameStateConverter.convertMonsterToJson`: the Dome-specific
-export mask is bypassed, and each monster receives
-`current_intent_export: simulator-parity-v1`. Gameplay, UI and RNG are untouched.
+It patches six `GameStateConverter` serializers. The Dome-specific export mask
+is bypassed, and monsters receive `current_intent_export: simulator-parity-v4`.
+The exporter also supplies all three run keys, recurring energy, combat/relic
+counters, private power values, and explicit card-selection source/context.
+Two read-only game hooks track the last monster attack damage and reset it at
+combat entry. Gameplay, UI and RNG are untouched.
 The bridge fails on a live Dome monster whose current move is still missing;
 it no longer substitutes a shadow-world guess. Future search outcomes remain
 hypothetical, not the real game's hidden future.
@@ -100,7 +103,8 @@ with arguments `original.jar patched.jar desktop-1.0.jar BaseMod.jar ModTheSpire
 The output must not exist. The patcher checks exactly one target call and checks
 that other converter methods retain identical bytecode. Keep originals and
 SHA256s outside Git, stop the game before deployment, and verify that only the
-converter class differs between jars. This is an explicit evaluation protocol
+converter class differs among existing classes; the exporter and its two hook
+classes are added. This is an explicit evaluation protocol
 change, not a claim of complete game/simulator equivalence.
 
 When the checkpoint expects `--global-map-view`, the agent reads

@@ -1,9 +1,53 @@
 from copy import deepcopy
 
 import numpy as np
+import pytest
 
 from bridge.real_game_env import RealGameAdapter
+from bridge.schemas.combat_state import _REAL_COMBAT_COUNTER_KEYS
+from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
 from env.core import action_space as A, game_actions as ga, encode
+
+
+def _grid_export(
+    state, *, context, source="com.megacrit.cardcrawl.rooms.EventRoom",
+    for_upgrade=False, for_purge=False, for_transform=False,
+):
+    state.update({
+        "selection_context": context,
+        "selection_source": source,
+        "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+        "selected_cards": state.get("selected_cards", []),
+        "num_cards": state.get("num_cards", 1),
+        "any_number": state.get("any_number", False),
+        "for_upgrade": for_upgrade,
+        "for_purge": for_purge,
+        "for_transform": for_transform,
+    })
+    return state
+
+
+def _complete_run_state(state):
+    defaults = {
+        "seed": 42,
+        "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+        "floor": 1,
+        "current_hp": 80,
+        "max_hp": 80,
+        "gold": 99,
+        "class": "IRONCLAD",
+        "ascension_level": 0,
+        "act": 1,
+        "room_type": "MonsterRoom",
+        "act_boss": "Slime Boss",
+        "has_ruby_key": False,
+        "has_emerald_key": False,
+        "has_sapphire_key": False,
+        "deck": [],
+        "relics": [{"id": "Burning Blood", "counter": -1}],
+        "potions": [{"id": "Potion Slot"}] * 3,
+    }
+    return defaults | state
 
 
 def test_real_grid_candidates_and_command_preserve_indices():
@@ -12,7 +56,10 @@ def test_real_grid_candidates_and_command_preserve_indices():
     adapter.update({"in_game": True, "available_commands": ["choose"], "game_state": {
         "room_phase": "COMBAT", "screen_type": "GRID",
         "combat_state": {"hand": []},
-        "screen_state": {"cards": cards, "context": "HEADBUTT"},
+        "screen_state": _grid_export(
+            {"cards": cards}, context="HEADBUTT",
+            source="com.megacrit.cardcrawl.actions.utility.DiscardPileToTopOfDeckAction",
+        ),
     }})
     legal = adapter.legal_semantic_actions()
     assert legal == [ga.select(i) for i in range(13)]
@@ -40,17 +87,20 @@ def test_real_grid_uses_selected_cards_as_authoritative_progress():
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "state"],
-        "game_state": {
+        "game_state": _complete_run_state({
             "floor": 0,
+            "act_boss": "Slime Boss",
             "room_phase": "INCOMPLETE",
             "screen_type": "GRID",
-            "screen_state": {
+            "screen_state": _grid_export({
                 "cards": cards,
                 "selected_cards": [cards[5]],
                 "num_cards": 3,
                 "any_number": False,
-            },
-        },
+            }, context="TRANSFORM", for_transform=True),
+            "relics": [{"id": "Burning Blood", "counter": -1}],
+            "deck": cards,
+        }),
     }
     adapter.update(frame)
 
@@ -88,6 +138,7 @@ def test_real_astrolabe_waits_for_transformed_cards_before_leaving_neow():
         "ready_for_command": True,
         "available_commands": ["choose", "wait", "state"],
         "game_state": {
+            "seed": 42,
             "floor": 0,
             "room_phase": "EVENT",
             "screen_type": "EVENT",
@@ -103,11 +154,11 @@ def test_real_astrolabe_waits_for_transformed_cards_before_leaving_neow():
     grid["game_state"].update({
         "screen_type": "GRID",
         "choice_list": [],
-        "screen_state": {
+        "screen_state": _grid_export({
             "cards": starter,
             "selected_cards": [],
             "num_cards": 3,
-        },
+        }, context="TRANSFORM_UPGRADE"),
         "relics": [{"id": "Astrolabe"}],
     })
     adapter.update(grid)
@@ -145,13 +196,52 @@ def test_real_pending_sources_are_always_encoded(monkeypatch):
 
 
 def joint_frame(hand, *, selected=0, multi=False):
-    hand = [dict(upgrades=0, **card) for card in hand]
-    return {"in_game":True, "available_commands":["choose","confirm","state"] if multi else ["play","end","potion"],
+    hand = [dict(upgrades=0, cost=1, **card) for card in hand]
+    selection_state = {
+        "selection_context": "EXHAUST_MANY",
+        "selection_source": "com.megacrit.cardcrawl.actions.common.ExhaustAction",
+        "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+        "selected": [
+            {"id": "Strike_R", "upgrades": 0}
+            for _ in range(selected)
+        ],
+        "max_cards": 3,
+        "can_pick_zero": True,
+    }
+    counters = {key: 0 for key in _REAL_COMBAT_COUNTER_KEYS}
+    return {"in_game":True, "ready_for_command": True,
+        "available_commands":["choose","confirm","state"] if multi else ["play","end","potion"],
         "game_state":{"room_phase":"COMBAT", "screen_type":"HAND_SELECT" if multi else "NONE",
-            "floor":1, "screen_state":{"context":"EXHAUST_MANY", "multi":multi, "pick_max":3,
-                                      "have_selected":selected},
-            "combat_state":{"turn":1,"hand":hand,"monsters":[
-                {"current_hp":0,"is_gone":True}, {"current_hp":10,"is_gone":False}]}}}
+            "seed":42, "floor":1, "act_boss":"Slime Boss", "boss": "SLIME_BOSS",
+            "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+            "class": "IRONCLAD", "ascension_level": 0, "act": 1,
+            "room_type": "MonsterRoom", "current_hp": 80, "max_hp": 80,
+            "gold": 0, "deck": [],
+            "has_ruby_key": False, "has_emerald_key": False,
+            "has_sapphire_key": False,
+            "relics": [], "potions": [{"id": "Potion Slot"}] * 3,
+            "screen_state":selection_state if multi else {},
+            "combat_state":{
+                "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
+                "simulator_energy_per_turn": 3,
+                "simulator_combat_counters": counters,
+                "simulator_player_power_overrides": {},
+                "turn":1,"hand":hand,"draw_pile":[],
+                "discard_pile":[],"exhaust_pile":[],
+                "player":{"current_hp":80,"max_hp":80,"block":0,"energy":3,"powers":[]},
+                "monsters":[
+                    {"id":"Cultist","intent":"NONE","current_hp":0,"max_hp":48,"block":0,
+                     "is_gone":True,"powers":[], "move_id": -1,
+                     "last_move_id": -1, "second_last_move_id": -1,
+                     "move_base_damage": -1, "move_adjusted_damage": -1,
+                     "move_hits": 0, "half_dead": False,
+                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION},
+                    {"id":"JawWorm","intent":"ATTACK","current_hp":10,"max_hp":42,"block":0,
+                     "is_gone":False,"move_id":1,"last_move_id":-1,
+                     "second_last_move_id":-1,
+                     "move_base_damage":11,"move_adjusted_damage":11,
+                     "move_hits":1,"powers":[], "half_dead": False,
+                     "current_intent_export": SIMULATOR_PARITY_EXPORT_VERSION}]}}}
 
 
 def test_joint_bridge_keeps_target_slot_and_executes_complete_play():
@@ -234,8 +324,6 @@ def test_actionable_hand_select_overrides_executing_action_phase():
     frame = joint_frame(hand, multi=True)
     frame["game_state"]["action_phase"] = "EXECUTING_ACTIONS"
     frame["game_state"]["current_action"] = "ExhaustAction"
-    frame["game_state"]["screen_state"].pop("context")
-    frame["game_state"]["screen_state"].pop("pick_max")
     frame["game_state"]["screen_state"].update({
         "max_cards": 99,
         "can_pick_zero": True,
@@ -245,7 +333,8 @@ def test_actionable_hand_select_overrides_executing_action_phase():
 
     assert adapter.auto_command() is None
     assert adapter.select_descriptor()["multi"] is True
-    assert adapter.select_descriptor()["can_pick_any"] is True
+    assert adapter.select_descriptor()["can_pick_any"] is False
+    assert adapter.select_descriptor()["can_pick_zero"] is True
     assert adapter.select_descriptor()["pick_max"] == len(hand)
     assert adapter.select_descriptor()["pick_remaining"] == len(hand)
     assert adapter.action_mask()[C.JOINT_MULTI]
@@ -317,6 +406,9 @@ def test_single_hand_select_confirms_selected_alias_without_second_policy_call()
         "current_action": "ExhaustAction",
     })
     frame["game_state"]["screen_state"] = {
+        "selection_context": "EXHAUST_ONE",
+        "selection_source": "com.megacrit.cardcrawl.actions.common.ExhaustAction",
+        "simulator_parity_export": SIMULATOR_PARITY_EXPORT_VERSION,
         "hand": [dict(upgrades=0, **card) for card in hand],
         "selected": [],
         "max_cards": 1,
@@ -336,6 +428,31 @@ def test_single_hand_select_confirms_selected_alias_without_second_policy_call()
     adapter.update(acknowledged)
     assert adapter.select_descriptor()["pick_remaining"] == 0
     assert adapter.auto_command() == ("CONFIRM", "complete_hand_selection")
+
+
+def test_actionable_selection_without_context_fails_closed():
+    frame = joint_frame([{"id": "Strike_R"}], multi=True)
+    frame["game_state"]["screen_state"].pop("selection_context")
+    adapter = RealGameAdapter()
+    with pytest.raises(ValueError, match="missing a recognized exported context"):
+        adapter.update(frame)
+
+
+def test_hand_contents_cannot_guess_selection_context():
+    frame = joint_frame([{"id": "Calculated Gamble"}], multi=True)
+    frame["game_state"]["screen_state"].pop("selection_context")
+    adapter = RealGameAdapter()
+    with pytest.raises(ValueError, match="missing a recognized exported context"):
+        adapter.update(frame)
+
+
+def test_current_action_cannot_replace_exported_selection_context():
+    frame = joint_frame([{"id": "Strike_R"}], multi=True)
+    frame["game_state"]["screen_state"].pop("selection_context")
+    frame["game_state"]["current_action"] = "GamblingChipAction"
+    adapter = RealGameAdapter()
+    with pytest.raises(ValueError, match="missing a recognized exported context"):
+        adapter.update(frame)
 
 
 def test_joint_bridge_handles_stable_hand_and_discards_plan_on_screen_change():
@@ -381,11 +498,12 @@ def test_combat_reward_opens_card_candidates_before_policy_decides():
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "proceed", "state"],
-        "game_state": {
+        "game_state": _complete_run_state({
             "screen_type": "COMBAT_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": ["card"],
             "screen_state": {"rewards": [{"reward_type": "CARD"}]},
-        },
+        }),
     })
 
     assert adapter.auto_command() == ("CHOOSE 0", "open_card_reward")
@@ -394,15 +512,16 @@ def test_combat_reward_opens_card_candidates_before_policy_decides():
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "skip", "state"],
-        "game_state": {
+        "game_state": _complete_run_state({
             "screen_type": "CARD_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": ["Anger", "Shrug It Off", "Cleave"],
             "screen_state": {"cards": [
                 {"id": "Anger", "upgrades": 0},
                 {"id": "Shrug It Off", "upgrades": 0},
                 {"id": "Cleave", "upgrades": 0},
             ]},
-        },
+        }),
     })
 
     assert adapter.auto_command() is None
@@ -423,17 +542,19 @@ def _reward_outer_frame(*choices):
             "potion": {"id": "Regen Potion", "can_discard": True},
         },
         "card": {"reward_type": "CARD"},
+        "emerald_key": {"reward_type": "EMERALD_KEY"},
+        "sapphire_key": {"reward_type": "SAPPHIRE_KEY"},
     }
     return {
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "potion", "proceed", "state"],
-        "game_state": {
+        "game_state": _complete_run_state({
             "screen_type": "COMBAT_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": list(choices),
             "screen_state": {"rewards": [rewards[choice] for choice in choices]},
-            "potions": [{"id": "Potion Slot"}] * 3,
-        },
+        }),
     }
 
 
@@ -447,12 +568,12 @@ def _reward_card_frame():
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "skip", "state"],
-        "game_state": {
+        "game_state": _complete_run_state({
             "screen_type": "CARD_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": [card["id"] for card in cards],
             "screen_state": {"cards": cards, "skip_available": True},
-            "potions": [{"id": "Potion Slot"}] * 3,
-        },
+        }),
     }
 
 
@@ -467,7 +588,8 @@ def test_combat_reward_preview_matches_training_candidates_and_outer_rewards():
         "gold": [27],
         "relics": ["Matryoshka"],
         "potions": ["Regen Potion"],
-        "card_count": 3,
+        "keys": [],
+        "card_count": 1,
         "cards": [("Anger", 0), ("Searing Blow", 0), ("Whirlwind", 0)],
     }
     assert adapter.legal_semantic_actions() == [
@@ -485,6 +607,42 @@ def test_combat_reward_preview_matches_training_candidates_and_outer_rewards():
     assert observation["offer_card_ids"][0] == encode.CARD_INDEX["Anger"]
     assert adapter.command_for_semantic(ga.reward_card(2)) == "CHOOSE 2"
     assert adapter._deferred_combat_reward_action is None
+
+
+@pytest.mark.parametrize("key_name,slot", [
+    ("emerald_key", 0),
+    ("sapphire_key", 1),
+])
+def test_real_key_reward_is_an_explicit_observation_and_action(key_name, slot):
+    adapter = RealGameAdapter()
+    adapter.update(_reward_outer_frame(key_name))
+
+    canonical = adapter.obs_canonical()
+    assert canonical["global"]["keys"] == {
+        "ruby": False, "emerald": False, "sapphire": False,
+    }
+    assert canonical["options"]["keys"] == [key_name.upper()]
+    assert adapter.legal_semantic_actions() == [
+        ga.claim(ga.CLAIM_KEY, 0), ga.proceed(),
+    ]
+    assert np.flatnonzero(adapter.action_mask()).tolist() == [A._PROCEED, A._RKEY]
+    assert adapter.command_for_semantic(ga.claim(ga.CLAIM_KEY, 0)) == "CHOOSE 0"
+    expected = [0.0, 0.0]
+    expected[slot] = 1.0
+    assert adapter.observation()["reward_keys"].tolist() == expected
+
+
+def test_real_reward_labels_and_records_must_name_the_same_key():
+    adapter = RealGameAdapter()
+    frame = _reward_outer_frame("emerald_key")
+    frame["game_state"]["screen_state"]["rewards"][0]["reward_type"] = "SAPPHIRE_KEY"
+    with pytest.raises(ValueError, match="keywords disagree"):
+        adapter.update(frame)
+
+    frame = _reward_outer_frame("emerald_key")
+    frame["game_state"]["choice_list"] = ["ruby_key"]
+    with pytest.raises(ValueError, match="unknown combat reward choice keyword"):
+        adapter.update(frame)
 
 
 def test_combat_reward_preview_defers_outer_actions_without_second_policy_call():
@@ -521,6 +679,7 @@ def test_combat_reward_semantic_skip_masks_cancelled_real_placeholder():
         "gold": [27],
         "relics": [],
         "potions": [],
+        "keys": [],
         "card_count": 0,
         "cards": [],
     }

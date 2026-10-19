@@ -68,8 +68,10 @@ from . import native_actions as C
 from . import _BUILD  # noqa: F401  (sys.path bootstrap for slaythespire/schemas)
 from schemas.combat_state import (
     combat_select_options,
+    canonical_sim_potion,
     normalize_sim,
     normalize_sim_global,
+    _POWER_DROP,
     _sim_card_id,
     _sim_monster_id,
 )
@@ -79,6 +81,7 @@ from . import actions
 from . import combat_env
 from . import encode
 from . import game_actions as ga
+from . import intents
 from .boss_value import context_value_mode
 from .game_env import SimGameEnv
 
@@ -112,8 +115,8 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 3 or layout.get("observation_version") != encode.OBS_VERSION:
-        raise RuntimeError("observation v19 requires matching native compact layout v3; rebuild the simulator")
+    if layout.get("version") != 4 or layout.get("observation_version") != encode.OBS_VERSION:
+        raise RuntimeError("observation v20 requires matching native compact layout v4; rebuild the simulator")
 
     def _power_name(name):
         # Simulator enum names are intentionally normalized the same way as
@@ -124,16 +127,45 @@ def _nosl_compact_lut():
     for native, name in enumerate(layout.get("monster_names", ())):
         if native == 0:
             continue
-        try:
-            canonical = _sim_monster_id(str(name))
-        except (KeyError, TypeError):
-            canonical = ""
+        canonical = _sim_monster_id(str(name))
         monster_lut[native] = encode._idx(
             encode.V.MONSTER_VOCAB_INDEX, canonical
         )
+    move_names = tuple(str(name) for name in layout.get("move_names", ()))
+    move_categories = tuple(layout.get("move_intent_categories", ()))
+    if not move_names or len(move_categories) != len(move_names):
+        raise RuntimeError("native compact layout omits the monster-move word table")
+    move_lut = np.zeros(len(move_names), dtype=np.int64)
+    for native, name in enumerate(move_names):
+        if native == 0:
+            if name != "INVALID":
+                raise RuntimeError("native monster-move sentinel is not INVALID")
+            continue
+        move_lut[native] = encode._idx(encode.V.MOVE_VOCAB_INDEX, name)
+        category = move_categories[native]
+        expected = encode.V.INTENT_CATEGORY_INDEX[intents.derive(name, 0)]
+        if type(category) is not int or category != expected:
+            raise RuntimeError(
+                "native monster-move intent word table disagrees with Python: "
+                f"{name!r} native={category!r} expected={expected}"
+            )
+    select_context_names = tuple(
+        str(name) for name in layout.get("select_context_names", ())
+    )
+    if not select_context_names or select_context_names[0] != "INVALID":
+        raise RuntimeError("native compact layout omits the selection-context word table")
+    select_context_lut = np.zeros(len(select_context_names), dtype=np.int64)
+    for native, name in enumerate(select_context_names):
+        if native == 0:
+            continue
+        select_context_lut[native] = encode._idx(
+            encode.V.SELECT_CONTEXT_VOCAB_INDEX, name
+        )
     potion_lut = np.zeros(len(layout.get("potion_names", ())), dtype=np.int64)
     for native, name in enumerate(layout.get("potion_names", ())):
-        # INVALID and EMPTY_POTION_SLOT are both PAD in the model space.
+        # Zero is reserved for structurally absent slots beyond potionCapacity;
+        # live physical slots are validated by the native packer.  Only the
+        # explicit EMPTY_POTION_SLOT identity maps to model PAD.
         if native == 0 or str(name) == "EMPTY_POTION_SLOT":
             continue
         potion_lut[native] = encode._idx(
@@ -145,22 +177,34 @@ def _nosl_compact_lut():
         if native == 0:
             continue
         canonical = _sim_card_id(str(name))
-        card_lut[native] = encode.CARD_INDEX.get(canonical, encode.CARD_INDEX[encode.EMPTY])
+        card_lut[native] = encode._card_id_idx(canonical)
         if canonical in encode.LANGUAGE_CARDS:
             language_card_index[native] = card_lut[native]
+    # Compact pile histograms currently use native CardId columns directly.
+    # Preserve that ABI only when the complete exported word table proves the
+    # frozen canonical order identical; a future enum reorder must require an
+    # explicit transport migration instead of silently relabeling every pile.
+    if not np.array_equal(card_lut, np.arange(len(encode.CARD_VOCAB))):
+        raise RuntimeError("native pile histogram order differs from the canonical card word table")
     player_status_lut = np.full(
         len(layout.get("player_status_names", ())), -1, dtype=np.int64
     )
     for native, name in enumerate(layout.get("player_status_names", ())):
-        player_status_lut[native] = encode.V.PLAYER_BUFF_VOCAB_INDEX.get(
-            _power_name(str(name)), -1
+        canonical = _power_name(str(name))
+        if canonical in _POWER_DROP or canonical == "INVALID":
+            continue
+        player_status_lut[native] = encode._idx(
+            encode.V.PLAYER_BUFF_VOCAB_INDEX, canonical
         )
     monster_status_lut = np.full(
         len(layout.get("monster_status_names", ())), -1, dtype=np.int64
     )
     for native, name in enumerate(layout.get("monster_status_names", ())):
-        monster_status_lut[native] = encode.V.MONSTER_BUFF_VOCAB_INDEX.get(
-            _power_name(str(name)), -1
+        canonical = _power_name(str(name))
+        if canonical in _POWER_DROP or canonical == "INVALID":
+            continue
+        monster_status_lut[native] = encode._idx(
+            encode.V.MONSTER_BUFF_VOCAB_INDEX, canonical
         )
 
     def status_columns(mapping, width):
@@ -174,6 +218,8 @@ def _nosl_compact_lut():
     _NOSL_COMPACT_LUT = {
         "layout": layout,
         "monster": monster_lut,
+        "move": move_lut,
+        "select_context": select_context_lut,
         "potion": potion_lut,
         "card": card_lut,
         "language_card_index": language_card_index,
@@ -202,7 +248,7 @@ def _nosl_compact_empty(*, card_language=False):
     return _NOSL_COMPACT_EMPTY[bool(card_language)]
 
 
-def _nosl_card_stats():
+def _nosl_card_stats(min_upgrades=128):
     """Precompute static Ironclad card damage/block for packed leaf decode.
 
     Native leaves already carry card ids and upgrade counts.  Looking up the
@@ -211,19 +257,37 @@ def _nosl_card_stats():
     canonical-vocab LUT once and gather it with NumPy instead.
     """
     global _NOSL_CARD_STATS
-    if _NOSL_CARD_STATS is not _UNCACHED:
+    required = max(128, int(min_upgrades))
+    if required > 32768:
+        raise RuntimeError(
+            f"native card upgrade count exceeds int16 storage: {required - 1}"
+        )
+    if (_NOSL_CARD_STATS is not _UNCACHED
+            and _NOSL_CARD_STATS["damage"].shape[1] >= required):
         return _NOSL_CARD_STATS
-    max_upgrades = 128
+    max_upgrades = required
     damage = np.zeros((len(encode.CARD_VOCAB), max_upgrades), dtype=np.float32)
     block = np.zeros_like(damage)
     for card_index, card_id in enumerate(encode.CARD_VOCAB):
-        for upgrades in range(max_upgrades):
-            numbers = encode.card_numbers(card_id, upgrades)
-            if numbers is None:
-                continue
-            _cost, card_damage, card_block = numbers
-            damage[card_index, upgrades] = float(card_damage)
-            block[card_index, upgrades] = float(card_block)
+        base = encode.card_numbers(card_id, 0)
+        upgraded = encode.card_numbers(card_id, 1)
+        if base is None:
+            continue
+        if upgraded is None:
+            raise RuntimeError(
+                f"printed-card table has base data but no upgraded row: {card_id!r}"
+            )
+        damage[card_index, 0] = float(base[1])
+        block[card_index, 0] = float(base[2])
+        if max_upgrades > 1:
+            damage[card_index, 1:] = float(upgraded[1])
+            block[card_index, 1:] = float(upgraded[2])
+        if card_id == "Searing Blow":
+            levels = np.arange(max_upgrades, dtype=np.float64)
+            values = levels * (levels + 7.0) / 2.0 + 12.0
+            if np.any(values > np.finfo(np.float32).max):
+                raise RuntimeError("Searing Blow damage exceeds observation precision")
+            damage[card_index] = values.astype(np.float32)
     _NOSL_CARD_STATS = {"damage": damage, "block": block}
     return _NOSL_CARD_STATS
 
@@ -1365,7 +1429,10 @@ class SlayTheSpireEnv(gym.Env):
         global_state["hp"] = int(raw_state["player"]["hp"])
         global_state["max_hp"] = int(raw_state["player"]["max_hp"])
         if "potions" in raw_state:
-            global_state["potions"] = list(raw_state["potions"])
+            global_state["potions"] = [
+                canonical_sim_potion(potion)
+                for potion in raw_state["potions"]
+            ]
         canon["global"] = global_state
         if combat_only:
             obs = encode.encode_combat(
@@ -1415,7 +1482,7 @@ class SlayTheSpireEnv(gym.Env):
             cached = (global_state, {
                 key: template[key] for key in (
                     "arg_step", "ascension", "character", "gold", "combat_is_boss",
-                    "relics", "relic_counters")
+                    "run_keys", "relics", "relic_counters")
             })
             if global_state is not None:
                 self._nosl_cpp_encoded_global_template = cached
@@ -1431,10 +1498,12 @@ class SlayTheSpireEnv(gym.Env):
         lut = _nosl_compact_lut()
         if lut is None:
             return None
-        categorical = np.asarray(response.get("categorical"), dtype=np.int32)
-        scalars = np.asarray(response.get("scalars"), dtype=np.float32)
+        if "categorical" not in response or "scalars" not in response:
+            raise RuntimeError("native packed leaf omitted categorical/scalar data")
+        categorical = np.asarray(response["categorical"], dtype=np.int32)
+        scalars = np.asarray(response["scalars"], dtype=np.float32)
         if categorical.ndim != 2 or scalars.ndim != 2:
-            return None
+            raise RuntimeError("native packed leaf arrays must be rank two")
         n = int(categorical.shape[0])
         layout = lut["layout"]
         ps = int(layout["player_status_count"])
@@ -1442,9 +1511,15 @@ class SlayTheSpireEnv(gym.Env):
         card_count = int(layout["card_count"])
         expected_cat = 10 + 5 + 5 + 5 + 5 + 1 + 193
         expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192
-        if (categorical.shape[1] < expected_cat or
-                scalars.shape[1] < expected_scalar):
-            return None
+        if (categorical.shape[1] != expected_cat or
+                scalars.shape[1] != expected_scalar):
+            raise RuntimeError(
+                "native packed leaf widths do not match observation schema: "
+                f"categorical={categorical.shape[1]}/{expected_cat} "
+                f"scalar={scalars.shape[1]}/{expected_scalar}"
+            )
+        if scalars.shape[0] != n:
+            raise RuntimeError("native packed categorical/scalar row counts differ")
 
         if self._card_language:
             language_ids = np.asarray(response.get("language_ids"), dtype=np.int32)
@@ -1468,20 +1543,47 @@ class SlayTheSpireEnv(gym.Env):
         c = categorical
         card_lut = lut["card"]
         monster_lut = lut["monster"]
+        move_lut = lut["move"]
         potion_lut = lut["potion"]
-        # These tiny batches are dominated by NumPy dispatch/checking. take's
-        # clip mode preserves both bounds without a separate clip allocation.
-        out["hand_ids"] = np.take(card_lut, c[:, 0:10], mode='clip')
-        out["monster_id"] = np.take(monster_lut, c[:, 10:15], mode='clip')
-        # Move enum order is append-only and is the source of MOVE_VOCAB.
-        out["monster_move"] = np.minimum(np.maximum(c[:, 15:20], 0), encode.V.MOVE_VOCAB_CAPACITY - 1)
-        out["monster_intent_cat"] = np.minimum(np.maximum(c[:, 20:25], 0), len(encode.V.INTENT_CATEGORY) - 1)
-        out["potions"] = np.take(potion_lut, c[:, 25:30], mode='clip')
-        out["select_context"][:, 0] = np.minimum(np.maximum(c[:, 30], 0), encode.V.SELECT_CONTEXT_VOCAB_CAPACITY - 1)
 
-        out["select_card_ids"][:] = np.take(card_lut, c[:, 31:127])
-        out["select_native_indices"][:] = c[:, 127:223]
-        out["select_zone"][:, 0] = c[:, 223]
+        def checked_lookup(name, table, values, *, zero_mapped=()):
+            values = np.asarray(values)
+            if np.any(values < 0) or np.any(values >= len(table)):
+                raise RuntimeError(f"native packed {name} contains an out-of-range enum")
+            encoded = table[values]
+            allowed = np.isin(values, np.asarray((0, *zero_mapped)))
+            if np.any((encoded == 0) & ~allowed):
+                raise RuntimeError(f"native packed {name} maps a live identity to PAD")
+            return encoded
+
+        out["hand_ids"] = checked_lookup("hand card", card_lut, c[:, 0:10])
+        out["monster_id"] = checked_lookup("monster", monster_lut, c[:, 10:15])
+        moves = c[:, 15:20]
+        intents = c[:, 20:25]
+        contexts = c[:, 30]
+        if np.any(intents < 0) or np.any(intents >= len(encode.V.INTENT_CATEGORY)):
+            raise RuntimeError("native packed monster intent contains an out-of-range enum")
+        out["monster_move"] = checked_lookup("monster move", move_lut, moves)
+        out["monster_intent_cat"][:] = intents
+        out["potions"] = checked_lookup(
+            "potion", potion_lut, c[:, 25:30], zero_mapped=(1,)
+        )
+        out["select_context"][:, 0] = checked_lookup(
+            "selection context", lut["select_context"], contexts
+        )
+
+        out["select_card_ids"][:] = checked_lookup(
+            "selection card", card_lut, c[:, 31:127]
+        )
+        native_indices = c[:, 127:223]
+        zones = c[:, 223]
+        if (np.any(native_indices < 0)
+                or np.any(native_indices >= encode.SELECT_NATIVE_HANDLE_CAPACITY)):
+            raise RuntimeError("native packed selection handle is out of range")
+        if np.any(zones < 0) or np.any(zones > 6):
+            raise RuntimeError("native packed selection zone is out of range")
+        out["select_native_indices"][:] = native_indices
+        out["select_zone"][:, 0] = zones
 
         f = scalars
         hp, max_hp = f[:, 0], f[:, 1]
@@ -1503,6 +1605,19 @@ class SlayTheSpireEnv(gym.Env):
         out["combat_counters"][:, binary] = counters[:, binary] != 0
         boundary = counter_start + encode.COMBAT_COUNTERS
         out["post_enemy_turn_boundary"][:, 0] = f[:, boundary]
+        if np.any((f[:, boundary] != 0.0) & (f[:, boundary] != 1.0)):
+            raise RuntimeError("native packed post-enemy-turn marker is not boolean")
+        native_monsters = c[:, 10:15]
+        if np.any((native_monsters == 0) & (moves != 0)):
+            raise RuntimeError("native packed empty monster slot carries a move")
+        if np.any(
+            (native_monsters != 0)
+            & (moves == 0)
+            & (f[:, boundary, None] == 0.0)
+        ):
+            raise RuntimeError(
+                "native packed live monster has no move outside a turn boundary"
+            )
 
         monster_start = boundary + 1
         monster_raw = f[:, monster_start:monster_start + 5 * 6].reshape(n, 5, 6)
@@ -1527,11 +1642,15 @@ class SlayTheSpireEnv(gym.Env):
         # Printed damage/block are deterministic card metadata.  Gather both
         # fields from a cached LUT in one vectorized operation; this removes
         # ten Python ``card_numbers`` calls per leaf.
-        stats = _nosl_card_stats()
         card_indices = np.asarray(out["hand_ids"], dtype=np.int64)
-        upgrade_indices = np.minimum(np.maximum(
-            np.rint(hand_raw[:, :, 0]).astype(np.int64), 0),
-            stats["damage"].shape[1] - 1)
+        raw_upgrades = hand_raw[:, :, 0]
+        if (not np.all(np.isfinite(raw_upgrades))
+                or np.any(raw_upgrades < 0)
+                or np.any(raw_upgrades != np.rint(raw_upgrades))):
+            raise RuntimeError("native packed hand contains an invalid upgrade count")
+        upgrade_indices = raw_upgrades.astype(np.int64)
+        max_upgrade = int(upgrade_indices.max(initial=0))
+        stats = _nosl_card_stats(max_upgrade + 1)
         out["hand_damage"][:, :] = (
             stats["damage"][card_indices, upgrade_indices]
             / encode.DMG_SCALE
@@ -1562,13 +1681,22 @@ class SlayTheSpireEnv(gym.Env):
         # model field is needed here.
         if self._autoregressive_actions:
             prefix = np.asarray(response['selection_prefix'], dtype=np.int32)
+            if prefix.shape != (n,) or np.any(prefix < 0) or np.any(prefix >= (1 << 10)):
+                raise RuntimeError("native packed selection_prefix has invalid shape/value")
             selected = (prefix[:, None] >> np.arange(10)) & 1
             out['select_hand_mask'][:] = selected
             out['pick_remaining'][:, 0] = np.maximum(0, out['pick_remaining'][:, 0] - selected.sum(1)/encode.PICK_SCALE)
         if self._joint_actions:
             ids = np.asarray(response['legal_policy_ids'], dtype=np.int64)
+            if ids.ndim != 2 or ids.shape[0] != n:
+                raise RuntimeError("native packed legal_policy_ids has invalid shape")
+            live = ids >= 0
+            if (np.any(ids < -1)
+                    or np.any(ids[live] < self._policy_offset)
+                    or np.any(ids[live] >= self._policy_offset + self._neural_width)):
+                raise RuntimeError("native packed legal policy id is out of range")
             out['combat_legal'] = np.zeros((n, self._neural_width), dtype=bool)
-            rows, columns = np.nonzero(ids >= self._policy_offset)
+            rows, columns = np.nonzero(live)
             out['combat_legal'][rows, ids[rows, columns] - self._policy_offset] = True
         return out
 
@@ -1975,20 +2103,28 @@ class SlayTheSpireEnv(gym.Env):
                 raise RuntimeError("native packed leaf does not match observation layout")
             if observation_batch is not None:
                 leaf_meta = []
-                request_ids = packed_response.get("request_ids", ())
+                if "request_ids" not in packed_response or "needs_policy" not in packed_response:
+                    raise RuntimeError(
+                        "native packed leaf omitted request_ids/needs_policy"
+                    )
+                request_ids = packed_response["request_ids"]
                 # New native builds return a rectangular uint32 matrix sized
                 # to this batch's largest row plus a per-row count, avoiding
                 # one Python list allocation per leaf.
                 # Older extensions still return nested lists and are handled
                 # by the fallback branch below.
                 ids = np.asarray(packed_response['legal_policy_ids'])
-                needs_policy = packed_response.get("needs_policy", ())
+                needs_policy = packed_response["needs_policy"]
+                if len(request_ids) != packed_rows or len(needs_policy) != packed_rows:
+                    raise RuntimeError(
+                        "native packed leaf metadata row counts disagree"
+                    )
                 for i, request_id in enumerate(request_ids):
                     mask = self._leaf_policy_mask(ids[i][ids[i] >= 0])
                     leaf_meta.append({
                         "request_id": int(request_id),
                         "action_mask": mask,
-                        "needs_policy": bool(needs_policy[i]) if i < len(needs_policy) else True,
+                        "needs_policy": bool(needs_policy[i]),
                     })
                 return timed({
                     "done": False,
@@ -2005,6 +2141,12 @@ class SlayTheSpireEnv(gym.Env):
         leaves = []
         encoded_fields = {}
         for request in requests:
+            required_request = {"state", "request_id", "needs_policy"}
+            missing_request = required_request - set(request)
+            if missing_request:
+                raise RuntimeError(
+                    f"native leaf request omitted {sorted(missing_request)!r}"
+                )
             raw = request["state"]
             mask = self._leaf_policy_mask(raw['joint_action_ids'])
             observation = self._native_leaf_observation(
@@ -2016,7 +2158,7 @@ class SlayTheSpireEnv(gym.Env):
             leaves.append({
                 "request_id": int(request["request_id"]),
                 "action_mask": mask,
-                "needs_policy": bool(request.get("needs_policy", True)),
+                "needs_policy": bool(request["needs_policy"]),
             })
         # Build one contiguous, already-stacked batch.  The collector/evaluator can
         # consume this directly instead of repeatedly walking

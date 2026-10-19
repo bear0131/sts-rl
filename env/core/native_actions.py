@@ -12,9 +12,11 @@ from . import action_space as A
 
 CONTRACT = 'native-v1'
 JOINT_CONTRACT = 'joint-v2'
-# Existing overworld controls keep their IDs. Combat IDs are complete actions;
-# NONE is the sixth target, distinct from native enemy slot zero.
-JOINT_END = A.N_ACTIONS
+# Existing combat IDs are a separately frozen ABI. ACTION_VERSION 8 appended
+# an overworld-only key reward at id 181, which intentionally shares a numeric
+# column with END in combat phases instead of renumbering the 198-wide native
+# combat contract. NONE is the sixth target, distinct from enemy slot zero.
+JOINT_END = 181
 JOINT_PLAY = JOINT_END + 1
 JOINT_POTION = JOINT_PLAY + 10 * 6
 JOINT_PICK = JOINT_POTION + 5 * 6
@@ -36,9 +38,10 @@ NEURAL_CONTRACTS = (JOINT_CONTRACT, AUTOREGRESSIVE_CONTRACT)
 def policy_contract(space):
     """Recover the versioned action contract from the checkpoint's space."""
     spaces = getattr(space, 'spaces', {})
-    if 'combat_legal' not in spaces:
+    combat_legal = spaces.get('combat_legal')
+    if combat_legal is None or not hasattr(combat_legal, 'shape'):
         return 'legacy'
-    width = spaces['combat_legal'].shape[-1]
+    width = combat_legal.shape[-1]
     if width == JOINT_WIDTH:
         return JOINT_CONTRACT
     if width == AUTOREGRESSIVE_WIDTH:

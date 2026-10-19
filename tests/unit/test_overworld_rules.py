@@ -22,7 +22,8 @@ def state(phase='combat_reward', *, cards=(), deck=None, hp=80, **global_extra):
     deck = deck if deck is not None else [('Strike_R', 0)] * 5 + [('Defend_R', 0)] * 4 + [('Bash', 0)]
     global_state = dict(
         hp=hp, max_hp=80, gold=100, act=1, floor=3, deck=deck, relics=[],
-        potions=['EMPTY_POTION_SLOT'] * 3)
+        potions=['PAD'] * 3,
+        keys={'ruby': False, 'emerald': False, 'sapphire': False})
     global_state.update(global_extra)
     return {'phase': phase, 'options': {'cards': list(cards)}, 'global': global_state}
 
@@ -412,9 +413,14 @@ def test_real_bridge_preserves_structured_public_event_details_when_available():
         },
     })
     assert adapter._options('event')['event_choices'] == [
-        {'index': 0, 'kind': 'lose_card', 'card': ('Clash', 1)},
-        {'index': 1, 'kind': 'leave'},
+        {'index': 2, 'kind': 'lose_card', 'card': ('Clash', 1)},
+        {'index': 3, 'kind': 'leave'},
     ]
+    assert adapter._legal_event_actions() == [
+        ('event', 2), ('event', 3),
+    ]
+    assert adapter.command_for_semantic(('event', 2)) == 'CHOOSE 0'
+    assert adapter.command_for_semantic(('event', 3)) == 'CHOOSE 1'
 
 
 def test_real_bridge_does_not_guess_typed_entities_from_event_button_text():
@@ -433,7 +439,8 @@ def test_real_bridge_does_not_guess_typed_entities_from_event_button_text():
             },
         },
     })
-    assert 'event_choices' not in adapter._options('event')
+    with pytest.raises(ValueError, match='unsupported event contract'):
+        adapter._options('event')
 
 
 def test_unknown_event_still_requires_fallback():
@@ -506,11 +513,11 @@ def test_real_shop_potions_require_capacity_and_no_sozu(relics, potions, can_buy
         "available_commands": ["choose", "leave"],
         "game_state": {
             "screen_type": "SHOP_SCREEN",
-            "choice_list": ["potion"],
+            "choice_list": ["Power Potion"] if can_buy else [],
             "screen_state": {
                 "cards": [],
                 "relics": [],
-                "potions": [{"id": "PowerPotion", "price": 50}],
+                "potions": [{"id": "PowerPotion", "name": "Power Potion", "price": 50}],
                 "purge_cost": -1,
             },
             "gold": 100,

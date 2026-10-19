@@ -33,6 +33,12 @@ is live for the low option ids (the thick layer enumerates real event options)
 with a reserved wide tail; SHOP_* likewise went LIVE this way (the thick layer
 enumerates real buys/removes) — both filling reserved width.
 
+ACTION_VERSION 8: appends REWARD_KEY after every v7 segment.  The simulator
+and the real game both expose emerald/sapphire keys as explicit reward choices;
+silently omitting them made the run policy unable to enter Act 4.  Existing
+0..180 ids and the independent 198-wide autoregressive combat contract retain
+their meanings.
+
 ACTION_VERSION 7: combat PICK_CARD indexes the public candidate list, with
 explicit native handles for draw/discard/exhaust/generated screens. Slot widths
 stay fixed; the 71-id standalone combat codec remains a legacy interface.
@@ -72,7 +78,7 @@ from . import actions
 from . import game_actions as ga
 from . import vocab as V
 
-ACTION_VERSION = 7
+ACTION_VERSION = 8
 
 # ---- capacities (must match encode.py slot counts) ----
 HAND_SLOTS = actions.HAND_SLOTS        # 10  (combat hand; play slot == hand idx)
@@ -122,6 +128,7 @@ _SEGMENTS = [
     ("PROCEED",       1),
     ("CONFIRM_SELECT", 1),            # commit a combat MULTI pick (Exhaust Many /
                                       # Gamble); appended last so prior ids freeze.
+    ("REWARD_KEY",     1),            # emerald/sapphire reward; appended in v8
 ]
 
 # base id of each segment + total width, derived from the frozen order/widths.
@@ -155,6 +162,10 @@ _SHOP_POTION = _BASE["SHOP_POTION"]
 _SHOP_REMOVE = _BASE["SHOP_REMOVE"]
 _PROCEED = _BASE["PROCEED"]
 _CONFIRM = _BASE["CONFIRM_SELECT"]
+_RKEY = _BASE["REWARD_KEY"]
+# The v7 neural flat head is checkpoint ABI.  New appended entity actions use
+# pointer/specialized scores so retained v7 checkpoints keep their tensor shape.
+FIXED_HEAD_ACTIONS = _RKEY
 
 # shop buy-kind -> its segment base (the thick layer keys buys on these strings).
 _SHOP_BASE_BY_KIND = {
@@ -307,7 +318,9 @@ def legal_ids(legal_semantic, pending, phase):
         elif verb == ga.CLAIM:
             kind, idx = a[1], a[2]
             base = {ga.CLAIM_GOLD: _RGOLD, ga.CLAIM_RELIC: _RRELIC,
-                    ga.CLAIM_POTION: _RPOTION}[kind]
+                    ga.CLAIM_POTION: _RPOTION, ga.CLAIM_KEY: _RKEY}[kind]
+            if kind == ga.CLAIM_KEY and idx != 0:
+                raise ValueError(f"key reward occurrence must be zero, got {idx}")
             mark(base + idx)
         elif verb == ga.REWARD_CARD:
             mark(_RCARD + a[1])
@@ -406,6 +419,8 @@ def resolve(chosen_id, legal_semantic, pending, phase):
         return ga.claim(ga.CLAIM_RELIC, cid - _RRELIC), None
     if _RPOTION <= cid < _RPOTION + REWARD_POTION:
         return ga.claim(ga.CLAIM_POTION, cid - _RPOTION), None
+    if cid == _RKEY:
+        return ga.claim(ga.CLAIM_KEY, 0), None
     if _RCARD <= cid < _RCARD + REWARD_CARD:
         return ga.reward_card(cid - _RCARD), None
     if cid == _RSKIP:

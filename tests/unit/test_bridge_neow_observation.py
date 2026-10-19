@@ -47,4 +47,9 @@ def test_neow_adapter_uses_real_text_and_preserves_structured_ids():
 
 def test_unknown_neow_offer_fails_instead_of_silent_zeros():
     with pytest.raises(ValueError, match='unsupported Neow'):
-        RealGameAdapter(neow_observation=True)._neow_options({'options':[{'text':'unknown offer'}]})
+        RealGameAdapter(neow_observation=True)._neow_options({'options':[
+            {'text':'Choose a Card to obtain'},
+            {'text':'Obtain 100 Gold'},
+            {'text':'Upgrade a Card'},
+            {'text':'unknown offer'},
+        ]})

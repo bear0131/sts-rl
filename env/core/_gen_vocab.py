@@ -134,7 +134,7 @@ def build():
     sim_monster_names = [m for m in _string_table(monsters, "monsterIdStrings")
                          if m != "INVALID = 0"]
     monster_ids = _dedup_keep_order(
-        cs._MONSTER_SIM2REAL[n] for n in sim_monster_names
+        cs._sim_monster_id(n) for n in sim_monster_names
         if n in cs._MONSTER_SIM2REAL
     )
 
@@ -197,8 +197,9 @@ Do not hand-edit. Regenerate with:  python -m env.core._gen_vocab
 
 Every vocabulary is a list in CANONICAL id space (the stable ids the bridge
 normalizers speak — see bridge/schemas/combat_state.py). Index 0 is always a
-PAD / EMPTY / NONE / unknown sentinel so an absent or out-of-vocab value encodes
-as 0. Lists are APPEND-ONLY: they mirror the sim's own (append-only) enum source
+PAD / EMPTY / NONE sentinel for a structurally absent slot. An unknown or
+out-of-vocabulary live value is an error and must never encode as 0. Lists are
+APPEND-ONLY: they mirror the sim's own (append-only) enum source
 order, so an existing id's index never shifts and old checkpoints stay valid.
 
 Two kinds of consumer (see encode.py):
@@ -232,8 +233,8 @@ def main():
     buff_vecs = {"PLAYER_BUFF_VEC": 110, "MONSTER_BUFF_VEC": 50}
 
     parts = [_HEADER]
-    # id vocabs: PREPEND a PAD sentinel at index 0 (an absent / out-of-vocab id
-    # encodes as 0), mirroring CARD_VOCAB's EMPTY-at-0 convention.
+    # id vocabs: PREPEND a PAD sentinel at index 0 for absent fixed-width slots,
+    # mirroring CARD_VOCAB's EMPTY-at-0 convention. Unknown live ids are errors.
     id_order = ["MONSTER_VOCAB", "MOVE_VOCAB", "RELIC_VOCAB", "POTION_VOCAB",
                 "EVENT_VOCAB", "BOSS_VOCAB", "SELECT_CONTEXT_VOCAB"]
     for name in id_order:

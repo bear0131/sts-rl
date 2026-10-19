@@ -601,7 +601,7 @@ def test_strict_gumbel_matches_reference_schedule_transform_and_target(
 ):
     env = combat_factory(["STRIKE_RED"] * 5, "Gremlin Leader")
     response = env.nosl_is_az_cpp_begin(
-        np.zeros(181),
+        np.zeros(env.action_space.n),
         root_value=0.35,
         state_nonce=123,
         simulations=32,
@@ -616,7 +616,8 @@ def test_strict_gumbel_matches_reference_schedule_transform_and_target(
     leaf_index = 0
     while not response["done"]:
         updates = [
-            (leaf["request_id"], 0.2 + (leaf_index % 5) * 0.1, np.zeros(181))
+            (leaf["request_id"], 0.2 + (leaf_index % 5) * 0.1,
+             np.zeros(env.action_space.n))
             for leaf in response["leaves"]
         ]
         leaf_index += len(updates)
@@ -654,7 +655,7 @@ def test_strict_gumbel_matches_reference_schedule_transform_and_target(
         for child in children
     ])
     complete_weights /= complete_weights.sum()
-    expected_target = np.zeros(181)
+    expected_target = np.zeros(env.action_space.n)
     for child, weight in zip(children, complete_weights):
         action_type = (child["action_bits"] >> 29) & 0xF
         thin_action = 0 if action_type == 4 else 1 + child["source_idx"]

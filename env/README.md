@@ -31,10 +31,11 @@
 
 ## 公开候选与实体槽位
 
-OBS_VERSION=18、ACTION_VERSION=7、native compact layout v3 必须配套使用。
+OBS_VERSION=20、ACTION_VERSION=8、native compact layout v4 必须配套使用。
 v18将真实布尔能力/减益写入player_buffs（激活为1，再按BUFF_SCALE归一化），
 包括腐化、壁垒、混乱、Hex及钢笔尖就绪；数值buff仍保留实际层数。
-canonical与packed共享原生读取逻辑；本轮从零训练，不提供旧checkpoint/replay适配。
+canonical与packed共享原生读取逻辑；新训练使用新合同，旧checkpoint推理按声明空间投影，
+不允许跨版本恢复优化器或replay，也不给旧动作头补造新增动作分数。
 怪物数组保留原生槽位，INVALID 用 PAD 填充；完整动作的目标编号不压缩。
 战斗 PICK_CARD 指向 `options.select.candidates` 的公开顺序，各候选携带 zone、
 牌 ID、升级、当前费用和 `native_index` 执行句柄。draw 候选按公开牌面排序；

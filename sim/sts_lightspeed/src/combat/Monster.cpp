@@ -641,6 +641,7 @@ void Monster::rollMove(BattleContext &bc) {
 }
 
 void Monster::setMove(MMID moveId) {
+    moveHistory[2] = moveHistory[1];
     moveHistory[1] = moveHistory[0];
     moveHistory[0] = moveId;
 }
@@ -684,7 +685,7 @@ namespace sts {
         os << "}";
 
         os << " halfDead: " << m.halfDead
-           << ", moveHistory: { " << monsterMoveStrings[(int) m.moveHistory[0]] << ", " << monsterMoveStrings[(int) m.moveHistory[1]] << "}"
+           << ", moveHistory: { " << monsterMoveStrings[(int) m.moveHistory[0]] << ", " << monsterMoveStrings[(int) m.moveHistory[1]] << ", " << monsterMoveStrings[(int) m.moveHistory[2]] << "}"
            << " nextActionDamage: " << " miscInfo: " << m.miscInfo << " uniquePower0: " << m.uniquePower0 << " uniquePower1: " << m.uniquePower1
             << "}";
         return os;

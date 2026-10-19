@@ -75,7 +75,7 @@ def _fake_combat():
                 "Burning Blood", "Centennial Puzzle", "Lizard Tail", "Akabeko",
             ],
             "relic_counters": [0, -1, -1, 2],
-            "potions": ["Fire Potion", "INVALID"], "gold": 99,
+            "potions": ["Fire Potion", "PAD"], "gold": 99,
             "deck": [("Strike_R", 0), ("Strike_R", 0), ("Bash", 0),
                      ("Defend_R", 1)],
             "boss_relics": [],
@@ -368,7 +368,7 @@ def test_global_and_options():
     assert o["relic_counters"][1] == 1
     assert o["relic_counters"][2] == 0
     assert o["potions"][0] == V.POTION_VOCAB_INDEX["Fire Potion"]
-    assert o["potions"][1] == 0                    # 'INVALID' -> PAD
+    assert o["potions"][1] == 0                    # actual empty slot -> PAD
     assert abs(o["gold"][0] - 99 / encode.GOLD_SCALE) < 1e-6
 
     m = encode.encode(_fake_map())

@@ -157,33 +157,51 @@ def test_reward_preview_transport_does_not_call_policy_between_commands():
     policy_calls = []
     driver._predict = lambda *_args, **_kwargs: (
         policy_calls.append("predict") or A._RGOLD, ())
+    common_state = {
+        "simulator_parity_export": "simulator-parity-v4",
+        "floor": 1,
+        "current_hp": 80,
+        "max_hp": 80,
+        "gold": 99,
+        "class": "IRONCLAD",
+        "ascension_level": 0,
+        "act": 1,
+        "room_type": "MonsterRoom",
+        "act_boss": "Slime Boss",
+        "has_ruby_key": False,
+        "has_emerald_key": False,
+        "has_sapphire_key": False,
+        "deck": [],
+        "relics": [{"id": "Burning Blood", "counter": -1}],
+        "potions": [{"id": "Potion Slot"}] * 3,
+    }
     outer = {
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "proceed", "state"],
-        "game_state": {
+        "game_state": common_state | {
             "screen_type": "COMBAT_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": ["gold", "card"],
             "screen_state": {"rewards": [
                 {"reward_type": "GOLD", "gold": 27},
                 {"reward_type": "CARD"},
             ]},
-            "potions": [{"id": "Potion Slot"}] * 3,
         },
     }
     card_page = {
         "in_game": True,
         "ready_for_command": True,
         "available_commands": ["choose", "skip", "state"],
-        "game_state": {
+        "game_state": common_state | {
             "screen_type": "CARD_REWARD",
+            "act_boss": "Slime Boss",
             "choice_list": ["Anger", "Searing Blow", "Whirlwind"],
             "screen_state": {"cards": [
                 {"id": "Anger", "upgrades": 0},
                 {"id": "Searing Blow", "upgrades": 0},
                 {"id": "Whirlwind", "upgrades": 0},
             ]},
-            "potions": [{"id": "Potion Slot"}] * 3,
         },
     }
 
@@ -198,6 +216,40 @@ def test_reward_preview_transport_does_not_call_policy_between_commands():
     assert (complete_outer.command, complete_outer.reason) == (
         "CHOOSE 0", "complete_deferred_reward_action")
     assert policy_calls == ["predict"]
+
+
+@pytest.mark.parametrize("reward_type,key_field", [
+    ("EMERALD_KEY", "has_emerald_key"),
+    ("SAPPHIRE_KEY", "has_sapphire_key"),
+])
+def test_reward_key_ack_requires_the_exact_owned_key_transition(reward_type, key_field):
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    from env.core import game_actions as ga
+
+    before = {
+        "game_state": {
+            "screen_type": "COMBAT_REWARD",
+            "choice_list": [reward_type.lower()],
+            "screen_state": {"rewards": [{"reward_type": reward_type}]},
+            "has_ruby_key": False,
+            "has_emerald_key": False,
+            "has_sapphire_key": False,
+        },
+    }
+    ack = RewardCommandAck()
+    ack.arm(before, RealDecision(
+        "CHOOSE 0", "policy", semantic=ga.claim(ga.CLAIM_KEY, 0)
+    ), 0)
+    wrong = deepcopy(before)
+    wrong["game_state"][
+        "has_sapphire_key" if key_field == "has_emerald_key" else "has_emerald_key"
+    ] = True
+    assert ack.waiting(wrong, 1)
+    after = deepcopy(before)
+    after["game_state"][key_field] = True
+    assert not ack.waiting(after, 2)
 
 
 @pytest.mark.parametrize('screen,room,command,delayed', [
@@ -424,13 +476,15 @@ def test_reward_pick_requires_intended_card_to_enter_deck():
     from bridge.real_game_env import RealDecision
     gate = RewardCommandAck()
     frame = {'game_state': {'seed': 1, 'floor': 25, 'screen_type': 'CARD_REWARD',
-                            'deck': [], 'screen_state': {'cards': [{'id': 'Searing Blow'}]}}}
+                            'deck': [], 'screen_state': {'cards': [{'id': 'Searing Blow', 'upgrades': 2}]}}}
     gate.arm(frame, RealDecision('CHOOSE 0', 'policy', semantic=('reward_card', 0)), 0)
     frame['game_state']['screen_type'] = 'COMBAT_REWARD'
-    frame['game_state']['deck'] = [{'id': 'Feel No Pain'}]
+    frame['game_state']['deck'] = [{'id': 'Feel No Pain', 'upgrades': 0}]
     assert gate.waiting(frame, 1)
     with pytest.raises(RuntimeError, match='not resending'):
         gate.waiting(frame, 11)
+    frame['game_state']['deck'] = [{'id': 'Searing Blow', 'upgrades': 1}]
+    assert gate.waiting(frame, 1)
     frame['game_state']['deck'] = [{'id': 'Searing Blow', 'upgrades': 2}]
     assert not gate.waiting(frame, 12)
 
@@ -445,8 +499,8 @@ def test_reward_rejection_is_not_silently_retried():
         gate.waiting({'error': 'Invalid command'}, 1)
 
 
-@pytest.mark.parametrize('command', ['CHOOSE 0', 'PROCEED', 'SKIP'])
-def test_reward_mutation_waits_for_state_change(command):
+@pytest.mark.parametrize('command', ['PROCEED', 'SKIP', 'RETURN'])
+def test_reward_transport_requires_its_screen_to_close(command):
     from copy import deepcopy
     from bridge.client.agent_orchestrator import RewardCommandAck
     from bridge.real_game_env import RealDecision
@@ -456,7 +510,32 @@ def test_reward_mutation_waits_for_state_change(command):
     assert gate.waiting({}, .1)
     assert gate.waiting(deepcopy(frame), .5)
     frame['game_state']['gold'] = 25
-    assert not gate.waiting(frame, 1)
+    assert gate.waiting(frame, 1)
+    frame['game_state']['screen_type'] = 'MAP'
+    assert not gate.waiting(frame, 2)
+
+
+def test_reward_choose_requires_an_explicit_effect_receipt():
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    with pytest.raises(ValueError, match='no explicit effect receipt'):
+        RewardCommandAck().arm({'game_state': {'screen_type': 'COMBAT_REWARD'}},
+                               RealDecision('CHOOSE 0', 'policy'), 0)
+
+
+def test_gold_reward_receipt_requires_the_exact_offered_amount():
+    from copy import deepcopy
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    from bridge.real_game_env import RealDecision
+    frame = {'game_state': {'screen_type': 'COMBAT_REWARD', 'gold': 10,
+        'relics': [], 'screen_state': {'rewards': [{'reward_type': 'GOLD', 'gold': 27}]}}}
+    gate = RewardCommandAck()
+    gate.arm(frame, RealDecision('CHOOSE 0', 'policy', semantic=('claim', 'gold', 0)), 0)
+    after = deepcopy(frame)
+    after['game_state']['gold'] = 11
+    assert gate.waiting(after, 1)
+    after['game_state']['gold'] = 37
+    assert not gate.waiting(after, 2)
 
 
 def test_combat_stability_requires_fresh_unchanged_frame_after_animation():

@@ -297,6 +297,7 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, monster.escapeNext ? 1 : 0);
         hashValue(hash, static_cast<int>(monster.moveHistory[0]));
         hashValue(hash, static_cast<int>(monster.moveHistory[1]));
+        hashValue(hash, static_cast<int>(monster.moveHistory[2]));
         hashValue(hash, monster.statusBits);
         hashValue(hash, monster.artifact);
         hashValue(hash, monster.blockReturn);

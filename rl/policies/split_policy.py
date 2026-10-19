@@ -85,6 +85,7 @@ COMBAT_OBSERVATION_KEYS = frozenset({
     "potions",
     "relic_counters",
     "relics",
+    "run_keys",
     "select_context",
     "select_hand_mask",
     "select_card_ids",
@@ -116,6 +117,7 @@ OVERWORLD_OBSERVATION_KEYS = frozenset({
     "relic_counters",
     "relics",
     "run_hp",
+    "run_keys",
     "select_context",
     "shop_remove_cost",
 })
@@ -127,6 +129,7 @@ OVERWORLD_PHASE_OBSERVATION_KEYS = {
         "reward_gold",
         "reward_potion_ids",
         "reward_relic_ids",
+        "reward_keys",
     }),
     V.PHASE_VOCAB_INDEX["card_select"]: frozenset({
         "select_card_ids",
@@ -404,7 +407,7 @@ class CombatEncoder(_SpecialistEncoder):
         scalar_keys = (
             "player_scalars", "player_buffs", "combat_counters", "ascension",
             "post_enemy_turn_boundary", "gold", "pick_remaining",
-            "can_pick_zero", "can_pick_any",
+            "can_pick_zero", "can_pick_any", "run_keys",
         )
         self.global_scalar_keys = tuple(
             key for key in scalar_keys if key in observation_space.spaces
@@ -616,12 +619,13 @@ class OverworldEncoder(_SpecialistEncoder):
         features_dim: int,
         map_dag: bool,
     ) -> None:
+        reward_key_enabled = "reward_keys" in observation_space.spaces
         super().__init__(
             d_model=d_model,
             n_layers=n_layers,
             n_heads=n_heads,
             features_dim=features_dim,
-            roles=self._ROLES,
+            roles=self._ROLES + (("reward_key",) if reward_key_enabled else ()),
         )
         self.observation_space = observation_space
         self.map_dag_enabled = bool(
@@ -642,7 +646,10 @@ class OverworldEncoder(_SpecialistEncoder):
         self.global_category_keys = global_category_keys
         scalar_keys = [
             "run_hp", "ascension", "act", "floor", "gold", "pick_remaining",
-            "can_pick_zero", "can_pick_any", "shop_remove_cost",
+            "can_pick_zero", "can_pick_any", "shop_remove_cost", "run_keys",
+        ]
+        scalar_keys = [
+            key for key in scalar_keys if key in observation_space.spaces
         ]
         if "deck_size" in observation_space.spaces:
             scalar_keys.append("deck_size")
@@ -657,6 +664,10 @@ class OverworldEncoder(_SpecialistEncoder):
         self.relic_price = nn.Linear(1, d_model, bias=False)
         self.potion_price = nn.Linear(1, d_model, bias=False)
         self.reward_gold_projection = nn.Linear(1, d_model)
+        self.reward_key_enabled = reward_key_enabled
+        if self.reward_key_enabled:
+            self.reward_key_projection = nn.Linear(2, d_model)
+            self.reward_key_position = nn.Parameter(torch.zeros(1, d_model))
 
         room_dim = _embedding_dim_for(_vocab_size(observation_space, "map_node_rooms"))
         self.room_embedding = nn.Embedding(
@@ -825,6 +836,16 @@ class OverworldEncoder(_SpecialistEncoder):
                 self._relic_block(obs, shared, "reward_relic", "reward_relic_ids"),
                 self._potion_block(obs, shared, "reward_potion", "reward_potion_ids"),
             ])
+            if self.reward_key_enabled:
+                reward_key = (
+                    self.reward_key_projection(obs["reward_keys"].float()).unsqueeze(1)
+                    + self.reward_key_position
+                )
+                blocks.append((
+                    "reward_key",
+                    reward_key,
+                    obs["reward_keys"].float().sum(dim=-1, keepdim=True) == 0,
+                ))
         elif phase_id == V.PHASE_VOCAB_INDEX["card_select"]:
             blocks.extend([
                 self._card_block(
@@ -915,7 +936,7 @@ class _SpecialistActorCritic(nn.Module):
         self.ptr_k = nn.Linear(d_model, d_model)
         self.ptr_q = nn.Linear(d_model, d_model, bias=False)
         self.ptr_v = nn.Linear(d_model, 1)
-        self.fixed_head = nn.Linear(d_model, A.N_ACTIONS)
+        self.fixed_head = nn.Linear(d_model, A.FIXED_HEAD_ACTIONS)
         layers: list[nn.Module] = []
         previous = features_dim
         for width in vf_arch:
@@ -979,6 +1000,15 @@ class _SpecialistActorCritic(nn.Module):
             global_token, blocks = self.encoder(obs, shared, phase_id)
         blocks["__global__"] = global_token
         logits = self.fixed_head(global_token).clone()
+        if self.kind != "combat":
+            from env.core import native_actions as C
+            width = (
+                C.policy_size(C.policy_contract(self.encoder.observation_space))
+                if self.joint_actions else A.N_ACTIONS
+            )
+            logits = torch.nn.functional.pad(
+                logits, (0, width - logits.shape[1]), value=-1e9
+            )
         if self.kind == "combat":
             for segment, role in (
                 ("PLAY_CARD", "hand"),
@@ -995,6 +1025,7 @@ class _SpecialistActorCritic(nn.Module):
                 ("REWARD_RELIC", "reward_relic"),
                 ("REWARD_POTION", "reward_potion"),
                 ("REWARD_CARD", "offer"),
+                ("REWARD_KEY", "reward_key"),
                 ("SHOP_CARD", "shop_card"),
                 ("SHOP_RELIC", "shop_relic"),
                 ("SHOP_POTION", "shop_potion"),
@@ -1022,8 +1053,12 @@ class _SpecialistActorCritic(nn.Module):
                 rows = torch.arange(logits.shape[0], device=logits.device)
                 logits[:, A._TARGET:A._TARGET + 5] = targets[rows, selected, :5].float()
             else:
-                width = C.policy_size(C.policy_contract(self.encoder.observation_space))
-                logits = torch.nn.functional.pad(logits, (0, width - A.N_ACTIONS), value=-1e9)
+                # Overworld logits were already expanded before pointer writes.
+                pass
+        elif logits.shape[1] < A.N_ACTIONS:
+            logits = torch.nn.functional.pad(
+                logits, (0, A.N_ACTIONS - logits.shape[1]), value=-1e9
+            )
         return logits, values
 
 
@@ -1088,6 +1123,7 @@ class SplitStSPolicyCore(nn.Module):
         )
         self.joint_actions = "combat_legal" in observation_space.spaces
         from env.core import native_actions as C
+        self.policy_width = C.policy_size(C.policy_contract(observation_space))
         if self.joint_actions and observation_space['combat_legal'].shape[-1] != C.JOINT_WIDTH:
             raise ValueError('autoregressive-v2 requires EntityCombatPolicy')
         if self.joint_actions and combat_arch != "transformer":
@@ -1153,12 +1189,17 @@ class SplitStSPolicyCore(nn.Module):
     def combat_actor_critic(self, obs, *, active_relic_width=None, evaluate_subsets=True):
         """Evaluate a known all-combat batch without phase routing copies."""
         extra = {'evaluate_subsets': evaluate_subsets} if self.joint_actions else {}
-        return self.combat(
+        logits, values = self.combat(
             self._keys_only(obs, COMBAT_OBSERVATION_KEYS),
             self.shared,
             active_relic_width=active_relic_width,
             **extra,
         )
+        if logits.shape[1] < self.policy_width:
+            logits = torch.nn.functional.pad(
+                logits, (0, self.policy_width - logits.shape[1]), value=-1e9
+            )
+        return logits, values
 
     def actor_critic(self, obs, *, combat_relic_width=None):
         phase = obs["phase"].long().reshape(-1)
@@ -1194,6 +1235,10 @@ class SplitStSPolicyCore(nn.Module):
                     self.shared,
                     active_relic_width=combat_relic_width,
                 )
+                if logits.shape[1] < self.policy_width:
+                    logits = torch.nn.functional.pad(
+                        logits, (0, self.policy_width - logits.shape[1]), value=-1e9
+                    )
                 indices_parts.append(indices)
                 logits_parts.append(logits)
                 value_parts.append(values)

@@ -113,7 +113,12 @@ class StSPolicyCore(nn.Module):
         # Flat head over [CLS] for phase-fixed (non-entity) segments. Sized to the
         # full table for index convenience; entity columns are overwritten by
         # pointer scores and simply never train.
-        self.fixed_head = nn.Linear(d, A.N_ACTIONS)
+        self.fixed_action_width = (
+            A.N_ACTIONS
+            if "reward_keys" in observation_space.spaces
+            else A.FIXED_HEAD_ACTIONS
+        )
+        self.fixed_head = nn.Linear(d, self.fixed_action_width)
 
         # Value head — same architecture as the baseline vf path (CLS readout ->
         # MLP[512,256] -> Linear 1), so an A/B isolates the action head.

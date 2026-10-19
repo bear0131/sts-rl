@@ -28,7 +28,7 @@ from . import _BUILD  # noqa: F401  (ensures sys.path bootstrap ran)
 import slaythespire as sts
 from schemas.combat_state import (
     normalize_sim, normalize_sim_overworld, normalize_sim_global, sim_phase,
-    combat_select_options,
+    combat_select_options, canonical_sim_potion,
 )
 
 from . import actions
@@ -109,8 +109,8 @@ class SimGameEnv:
                  interactive_reasoning=False,
                  nosl_is_az_boss_transition_target=False,
                  emit_step_observation=True):
-        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 3:
-            raise RuntimeError("observation v18 requires native layout v3; rebuild the simulator")
+        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 4:
+            raise RuntimeError("observation v20 requires native layout v4; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view
@@ -230,7 +230,9 @@ class SimGameEnv:
         d = self._canonical()
         d["global"] = normalize_sim_global(self.gc)
         if self.bc is not None:
-            d["global"]["potions"] = list(self.bc.potions)
+            d["global"]["potions"] = [
+                canonical_sim_potion(potion) for potion in self.bc.potions
+            ]
         return d
 
     def obs(self):
@@ -337,6 +339,22 @@ class SimGameEnv:
                      if ("relic", i) in legal_reward_options]
             acts += [ga.claim(ga.CLAIM_POTION, i) for i in range(len(info["potions"]))
                      if ("potion", i) in legal_reward_options]
+            key_actions = [
+                (reward_idx, item_idx)
+                for kind, reward_idx, item_idx in self.gc.legal_reward_options()
+                if str(kind) == "key"
+            ]
+            if len(key_actions) > 1:
+                raise RuntimeError(
+                    f"simulator exposed multiple simultaneous key actions: {key_actions!r}"
+                )
+            if key_actions:
+                if len(info["keys"]) != 1:
+                    raise RuntimeError(
+                        "simulator key action/details mismatch: "
+                        f"actions={key_actions!r} keys={list(info['keys'])!r}"
+                    )
+                acts.append(ga.claim(ga.CLAIM_KEY, 0))
             if int(info["card_count"]) and _has_card_rewards(self.gc):
                 n = len(self.gc.get_card_reward())
                 acts += [ga.reward_card(j) for j in range(n)]
@@ -624,6 +642,12 @@ class SimGameEnv:
             if kind == ga.CLAIM_GOLD:    gc.claim_gold(idx)
             elif kind == ga.CLAIM_RELIC: gc.claim_relic(idx)
             elif kind == ga.CLAIM_POTION: gc.claim_potion(idx)
+            elif kind == ga.CLAIM_KEY:
+                if idx != 0:
+                    raise ValueError(f"key reward occurrence must be zero, got {idx}")
+                gc.claim_key()
+            else:
+                raise ValueError(f"unknown reward claim kind: {kind!r}")
             return
         if verb == ga.REWARD_CARD:
             if not _has_card_rewards(gc):

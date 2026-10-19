@@ -28,7 +28,7 @@ from . import actions
 NEOW = "neow"               # (NEOW, option_idx)            0..3
 MAP = "map"                 # (MAP, x)                      next-row column to enter
 COMBAT = "combat"           # (COMBAT, action_id)           delegates to actions.py (0..N_ACTIONS)
-CLAIM = "claim"             # (CLAIM, kind, idx)            kind in {"gold","relic","potion"}
+CLAIM = "claim"             # (CLAIM, kind, idx)            kind in {"gold","relic","potion","key"}
 REWARD_CARD = "reward_card" # (REWARD_CARD, j)              pick card j on a combat card-reward
 SKIP_CARDS = "skip_cards"   # (SKIP_CARDS,)                 skip the card reward
 SELECT = "select"           # (SELECT, k)                   pick k on a CARD_SELECT/grid screen
@@ -55,6 +55,7 @@ USE_POTION = "use_potion"   # (USE_POTION, slot, target)    drink the held potio
 CLAIM_GOLD = "gold"
 CLAIM_RELIC = "relic"
 CLAIM_POTION = "potion"
+CLAIM_KEY = "key"
 
 # shop buy kinds (keyed to the sim's shop_buy_card/relic/potion + the
 # gc.legal_shop_options() "kind" strings)

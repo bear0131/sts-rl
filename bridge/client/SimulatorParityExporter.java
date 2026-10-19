@@ -1,0 +1,262 @@
+package communicationmod;
+
+import basemod.ReflectionHacks;
+import com.megacrit.cardcrawl.actions.AbstractGameAction;
+import com.megacrit.cardcrawl.cards.AbstractCard;
+import com.megacrit.cardcrawl.cards.DamageInfo;
+import com.megacrit.cardcrawl.characters.AbstractPlayer;
+import com.megacrit.cardcrawl.dungeons.AbstractDungeon;
+import com.megacrit.cardcrawl.events.AbstractEvent;
+import com.megacrit.cardcrawl.monsters.AbstractMonster;
+import com.megacrit.cardcrawl.powers.AbstractPower;
+import com.megacrit.cardcrawl.relics.AbstractRelic;
+import com.megacrit.cardcrawl.screens.select.GridCardSelectScreen;
+import com.megacrit.cardcrawl.core.Settings;
+import com.evacipated.cardcrawl.modthespire.lib.SpirePatch;
+import com.evacipated.cardcrawl.modthespire.lib.SpirePostfixPatch;
+import java.util.HashMap;
+
+/** Extra state that the simulator observes but stock CommunicationMod omits. */
+public final class SimulatorParityExporter {
+    public static final String VERSION = "simulator-parity-v4";
+    private static int lastAttackUnblockedDamage = 0;
+
+    private SimulatorParityExporter() {}
+
+    private static int relicCounter(String id) {
+        AbstractRelic relic = AbstractDungeon.player.getRelic(id);
+        return relic == null ? 0 : relic.counter;
+    }
+
+    private static AbstractPower power(String id) {
+        for (AbstractPower power : AbstractDungeon.player.powers) {
+            if (id.equals(power.ID)) return power;
+        }
+        return null;
+    }
+
+    private static int privateInt(Object value, Class<?> owner, String field) {
+        return ((Integer)ReflectionHacks.getPrivate(value, owner, field)).intValue();
+    }
+
+    private static boolean privateBool(Object value, Class<?> owner, String field) {
+        return ((Boolean)ReflectionHacks.getPrivate(value, owner, field)).booleanValue();
+    }
+
+    public static void augmentGameState(HashMap<String, Object> state) {
+        state.put("has_ruby_key", Boolean.valueOf(Settings.hasRubyKey));
+        state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
+        state.put("has_sapphire_key", Boolean.valueOf(Settings.hasSapphireKey));
+        state.put("simulator_parity_export", VERSION);
+    }
+
+    public static void augmentCombatState(HashMap<String, Object> state) {
+        AbstractPlayer player = AbstractDungeon.player;
+        HashMap<String, Object> counters = new HashMap<String, Object>();
+        counters.put("happy_flower", Integer.valueOf(relicCounter("Happy Flower")));
+        counters.put("incense_burner", Integer.valueOf(relicCounter("Incense Burner")));
+        counters.put("ink_bottle", Integer.valueOf(relicCounter("InkBottle")));
+        counters.put("inserter", Integer.valueOf(relicCounter("Inserter")));
+        counters.put("nunchaku", Integer.valueOf(relicCounter("Nunchaku")));
+        counters.put("pen_nib", Integer.valueOf(relicCounter("Pen Nib")));
+        counters.put("sundial", Integer.valueOf(relicCounter("Sundial")));
+
+        AbstractRelic necronomicon = player.getRelic("Necronomicon");
+        counters.put("necronomicon_used", Boolean.valueOf(
+            necronomicon != null && privateBool(
+                necronomicon,
+                com.megacrit.cardcrawl.relics.Necronomicon.class,
+                "activated")));
+
+        int attacks = 0;
+        int skills = 0;
+        for (AbstractCard card : AbstractDungeon.actionManager.cardsPlayedThisTurn) {
+            if (card.type == AbstractCard.CardType.ATTACK) attacks++;
+            if (card.type == AbstractCard.CardType.SKILL) skills++;
+        }
+        counters.put("cards_played", Integer.valueOf(
+            AbstractDungeon.actionManager.cardsPlayedThisTurn.size()));
+        counters.put("attacks_played", Integer.valueOf(attacks));
+        counters.put("skills_played", Integer.valueOf(skills));
+
+        AbstractRelic pellets = player.getRelic("OrangePellets");
+        counters.put("orange_attack", Boolean.valueOf(pellets != null &&
+            ((Boolean)ReflectionHacks.getPrivateStatic(
+                com.megacrit.cardcrawl.relics.OrangePellets.class, "ATTACK")).booleanValue()));
+        counters.put("orange_skill", Boolean.valueOf(pellets != null &&
+            ((Boolean)ReflectionHacks.getPrivateStatic(
+                com.megacrit.cardcrawl.relics.OrangePellets.class, "SKILL")).booleanValue()));
+        counters.put("orange_power", Boolean.valueOf(pellets != null &&
+            ((Boolean)ReflectionHacks.getPrivateStatic(
+                com.megacrit.cardcrawl.relics.OrangePellets.class, "POWER")).booleanValue()));
+
+        AbstractPower combust = power("Combust");
+        counters.put("combust_hp_loss", Integer.valueOf(combust == null ? 0 : privateInt(
+            combust, com.megacrit.cardcrawl.powers.CombustPower.class, "hpLoss")));
+        AbstractPower deva = power("DevaForm");
+        counters.put("deva_form_energy_per_turn", Integer.valueOf(deva == null ? 0 : privateInt(
+            deva, com.megacrit.cardcrawl.powers.watcher.DevaPower.class, "energyGainAmount")));
+        AbstractPower echo = power("Echo Form");
+        counters.put("echo_form_cards_doubled", Integer.valueOf(echo == null ? 0 : privateInt(
+            echo, com.megacrit.cardcrawl.powers.EchoPower.class, "cardsDoubledThisTurn")));
+        AbstractPower panache = power("Panache");
+        counters.put("panache_counter", Integer.valueOf(panache == null ? 0 : panache.amount));
+        HashMap<String, Object> powerOverrides = new HashMap<String, Object>();
+        if (panache != null) {
+            // Panache.amount is the cards-remaining countdown.  The native
+            // PANACHE status value is the private damage, so export both.
+            powerOverrides.put("Panache", Integer.valueOf(privateInt(
+                panache, com.megacrit.cardcrawl.powers.PanachePower.class, "damage")));
+        }
+
+        counters.put("cards_discarded", Integer.valueOf(
+            com.megacrit.cardcrawl.actions.GameActionManager.totalDiscardedThisTurn));
+        counters.put("times_damaged", Integer.valueOf(player.damagedThisCombat));
+
+        int[] bombs = new int[] {0, 0, 0};
+        for (AbstractPower candidate : player.powers) {
+            if (!candidate.ID.startsWith("TheBomb")) continue;
+            if (candidate.amount < 1 || candidate.amount > 3) {
+                throw new IllegalStateException("The Bomb countdown outside simulator contract: "
+                    + candidate.amount);
+            }
+            bombs[candidate.amount - 1] += privateInt(
+                candidate, com.megacrit.cardcrawl.powers.TheBombPower.class, "damage");
+        }
+        counters.put("bomb_1", Integer.valueOf(bombs[0]));
+        counters.put("bomb_2", Integer.valueOf(bombs[1]));
+        counters.put("bomb_3", Integer.valueOf(bombs[2]));
+        counters.put("last_attack_unblocked_damage", Integer.valueOf(lastAttackUnblockedDamage));
+        state.put("simulator_combat_counters", counters);
+        state.put("simulator_player_power_overrides", powerOverrides);
+        AbstractPower berserk = power("Berserk");
+        // EnergyManager.energyMaster already includes boss relics and temporary
+        // Slaver's Collar combat changes. Berserk grants its amount separately
+        // at turn start, while native folds that recurring grant into
+        // energyPerTurn, so both parts are required for an exact root.
+        state.put("simulator_energy_per_turn", Integer.valueOf(
+            player.energy.energyMaster + (berserk == null ? 0 : berserk.amount)));
+        state.put("simulator_parity_export", VERSION);
+    }
+
+    /**
+     * Java's public lastDamageTaken is overwritten by HP-loss and self-damage.
+     * The native field instead remembers only the latest monster attack after
+     * block/relic/power mitigation (it is consumed by Shelled Parasite's heal).
+     * Track that exact subset without changing damage, queues, or RNG.
+     */
+    @SpirePatch(clz = AbstractPlayer.class, method = "damage")
+    public static final class DamagePatch {
+        @SpirePostfixPatch
+        public static void afterDamage(AbstractPlayer __instance, DamageInfo info) {
+            if (info.owner instanceof AbstractMonster) {
+                lastAttackUnblockedDamage = __instance.lastDamageTaken;
+            }
+        }
+    }
+
+    @SpirePatch(clz = AbstractPlayer.class, method = "preBattlePrep")
+    public static final class PreBattlePatch {
+        @SpirePostfixPatch
+        public static void afterPreBattle(AbstractPlayer __instance) {
+            lastAttackUnblockedDamage = 0;
+        }
+    }
+
+    private static String combatSelectionContext(AbstractGameAction action) {
+        if (action == null) return null;
+        String name = action.getClass().getSimpleName();
+        if ("ArmamentsAction".equals(name)) return "ARMAMENTS";
+        if ("CodexAction".equals(name)) return "CODEX";
+        if ("DiscoveryAction".equals(name)) return "DISCOVERY";
+        if ("DualWieldAction".equals(name)) return "DUAL_WIELD";
+        if ("ExhumeAction".equals(name)) return "EXHUME";
+        if ("ForethoughtAction".equals(name)) return "FORETHOUGHT";
+        if ("GamblingChipAction".equals(name)) return "GAMBLE";
+        if ("DiscardPileToTopOfDeckAction".equals(name)) return "HEADBUTT";
+        if ("MeditateAction".equals(name)) return "MEDITATE";
+        if ("NightmareAction".equals(name)) return "NIGHTMARE";
+        if ("RecycleAction".equals(name)) return "RECYCLE";
+        if ("SkillFromDeckToHandAction".equals(name)) return "SECRET_TECHNIQUE";
+        if ("AttackFromDeckToHandAction".equals(name)) return "SECRET_WEAPON";
+        // The shipped Seek card uses BetterDrawPileToHandAction. SeekAction is
+        // an unused legacy implementation; keep both source names explicit.
+        if ("BetterDrawPileToHandAction".equals(name)) return "SEEK";
+        if ("SeekAction".equals(name)) return "SEEK";
+        if ("SetupAction".equals(name)) return "SETUP";
+        if ("PutOnDeckAction".equals(name)) return "WARCRY";
+        if ("BetterDiscardPileToHandAction".equals(name)) {
+            boolean setCost = privateBool(
+                action,
+                com.megacrit.cardcrawl.actions.common.BetterDiscardPileToHandAction.class,
+                "setCost");
+            return setCost ? "LIQUID_MEMORIES_POTION" : "HOLOGRAM";
+        }
+        if ("ExhaustAction".equals(name)) {
+            boolean anyNumber = privateBool(
+                action, com.megacrit.cardcrawl.actions.common.ExhaustAction.class, "anyNumber");
+            return anyNumber || action.amount > 1 ? "EXHAUST_MANY" : "EXHAUST_ONE";
+        }
+        return null;
+    }
+
+    private static boolean unfinishedRelic(String id, Class<?> owner, String field) {
+        AbstractRelic relic = AbstractDungeon.player.getRelic(id);
+        return relic != null && !privateBool(relic, owner, field);
+    }
+
+    private static String overworldSelectionContext(GridCardSelectScreen screen) {
+        if (unfinishedRelic("Astrolabe", com.megacrit.cardcrawl.relics.Astrolabe.class,
+                            "cardsSelected")) return "TRANSFORM_UPGRADE";
+        if (unfinishedRelic("Bottled Flame", com.megacrit.cardcrawl.relics.BottledFlame.class,
+                            "cardSelected")) return "BOTTLE";
+        if (unfinishedRelic("Bottled Lightning", com.megacrit.cardcrawl.relics.BottledLightning.class,
+                            "cardSelected")) return "BOTTLE";
+        if (unfinishedRelic("Bottled Tornado", com.megacrit.cardcrawl.relics.BottledTornado.class,
+                            "cardSelected")) return "BOTTLE";
+        if (unfinishedRelic("DollysMirror", com.megacrit.cardcrawl.relics.DollysMirror.class,
+                            "cardSelected")) return "DUPLICATE";
+
+        if (screen.forUpgrade) return "UPGRADE";
+        if (screen.forPurge) return "REMOVE";
+        if (screen.forTransform) return "TRANSFORM";
+
+        AbstractEvent event = AbstractDungeon.getCurrRoom().event;
+        if (event != null) {
+            String name = event.getClass().getSimpleName();
+            if ("Bonfire".equals(name)) return "BONFIRE_SPIRITS";
+            if ("Duplicator".equals(name)) return "DUPLICATE";
+            if ("TheLibrary".equals(name) || "NoteForYourself".equals(name)
+                    || "NeowEvent".equals(name)) return "OBTAIN";
+        }
+        return null;
+    }
+
+    public static void augmentGridState(HashMap<String, Object> state) {
+        String context = combatSelectionContext(AbstractDungeon.actionManager.currentAction);
+        if (context == null) context = overworldSelectionContext(AbstractDungeon.gridSelectScreen);
+        state.put("selection_context", context == null ? "UNMAPPED" : context);
+        AbstractGameAction action = AbstractDungeon.actionManager.currentAction;
+        AbstractEvent event = AbstractDungeon.getCurrRoom().event;
+        state.put("selection_source", action != null
+            ? action.getClass().getName()
+            : event != null ? event.getClass().getName() : AbstractDungeon.getCurrRoom().getClass().getName());
+        state.put("simulator_parity_export", VERSION);
+    }
+
+    public static void augmentHandSelectState(HashMap<String, Object> state) {
+        AbstractGameAction action = AbstractDungeon.actionManager.currentAction;
+        String context = combatSelectionContext(action);
+        state.put("selection_context", context == null ? "UNMAPPED" : context);
+        state.put("selection_source", action == null ? "NONE" : action.getClass().getName());
+        state.put("simulator_parity_export", VERSION);
+    }
+
+    public static void augmentCardRewardState(HashMap<String, Object> state) {
+        AbstractGameAction action = AbstractDungeon.actionManager.currentAction;
+        String context = combatSelectionContext(action);
+        state.put("selection_context", context == null ? "UNMAPPED" : context);
+        state.put("selection_source", action == null ? "NONE" : action.getClass().getName());
+        state.put("simulator_parity_export", VERSION);
+    }
+}

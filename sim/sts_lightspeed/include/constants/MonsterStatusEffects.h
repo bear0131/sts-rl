@@ -149,6 +149,7 @@ namespace sts {
         "TIME_WARP",
 
         "INVINCIBLE",
+        "REACTIVE",
         "SHARP_HIDE",
 
         "ASLEEP",
@@ -156,12 +157,20 @@ namespace sts {
         "MINION",
         "MINION_LEADER",
         "PAINFUL_STABS",
-        "REACTIVE",
         "REGROW",
         "SHIFTING",
         "STASIS",
         "INVALID",
     };
+
+    static_assert(
+        sizeof(enemyStatusStrings) / sizeof(enemyStatusStrings[0])
+        == static_cast<int>(MonsterStatus::INVALID) + 1,
+        "monster display-name table must match MonsterStatus exactly");
+    static_assert(
+        sizeof(monsterStatusEnumStrings) / sizeof(monsterStatusEnumStrings[0])
+        == static_cast<int>(MonsterStatus::INVALID) + 1,
+        "monster enum-name table must match MonsterStatus exactly");
 
     static constexpr bool isBooleanPower(MonsterStatus s) {
         switch (s) {

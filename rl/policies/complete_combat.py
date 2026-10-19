@@ -29,7 +29,8 @@ def complete_logits(source_logits, target_logits, subset_logits, legal, *, compa
     if compact:
         return torch.cat((source_logits[:, :1].float(), targeted,
                           source_logits[:, 16:].float(), subset_logits.float()), dim=1)
-    return torch.cat((source_logits.float(), source_logits[:, :1].float(), targeted,
+    return torch.cat((source_logits[:, :A.FIXED_HEAD_ACTIONS].float(),
+                      source_logits[:, :1].float(), targeted,
                       source_logits[:, A._PICK:A._PICK + A.G_MAX].float(),
                       subset_logits.float()), dim=1)
 

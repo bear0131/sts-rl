@@ -27,11 +27,18 @@ from rl.policies.precision import bf16_autocast
 from rl.search.native import NativeSearchConfig
 from schemas.combat_state import (
     _MONSTER_SIM2REAL,
+    _canonical_real_monster_id,
     diff,
     normalize_real,
     normalize_sim,
     real_to_sim_card_enum,
     real_to_sim_monster_move,
+)
+from schemas.entity_ids import (
+    NATIVE_COMBAT_CARD_ENUM_IDS,
+    NATIVE_MONSTER_STATUS_IDS,
+    NATIVE_PLAYER_STATUS_IDS,
+    native_power_enum,
 )
 
 import slaythespire as sts
@@ -39,63 +46,36 @@ import slaythespire as sts
 
 LOG = logging.getLogger(__name__)
 
-_REAL_TO_SIM_MONSTER = {real: sim for sim, real in _MONSTER_SIM2REAL.items()}
+_REAL_TO_SIM_MONSTER = {
+    _canonical_real_monster_id(real): sim
+    for sim, real in _MONSTER_SIM2REAL.items()
+}
 _GREMLIN_LEADER_MINIONS = frozenset({
     "GremlinFat", "GremlinWarrior", "GremlinTsundere", "GremlinThief",
     "GremlinWizard",
 })
-_SUPPORTED_PLAYER_POWERS = frozenset({
-    "STRENGTH", "DEXTERITY", "WEAK", "FRAIL", "VULNERABLE",
-    "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
-    "CORRUPTION", "CONFUSED", "HEX", "DRAW_REDUCTION", "BLASPHEMER",
-    "ELECTRO", "SURROUNDED", "MASTER_REALITY", "PEN_NIB",
-    "WRATH_NEXT_TURN", "NO_DRAW", "NO_BLOCK", "LOSE_STRENGTH", "LOSE_DEXTERITY", "DOUBLE_TAP", "DUPLICATION",
-    "BUFFER", "BRUTALITY", "COMBUST",
-    "DARK_EMBRACE", "DEMON_FORM", "EVOLVE", "FEEL_NO_PAIN",
-    "FIRE_BREATHING", "FLAME_BARRIER", "JUGGERNAUT", "METALLICIZE", "PLATED_ARMOR",
-    "RAGE", "REGEN", "RUPTURE", "THORNS", "VIGOR",
-})
-_SUPPORTED_MONSTER_POWERS = frozenset({
-    "ARTIFACT", "BLOCK_RETURN", "CHOKED", "CORPSE_EXPLOSION",
-    "LOCK_ON", "MARK", "METALLICIZE", "PLATED_ARMOR", "POISON",
-    "REGEN", "SHACKLED", "STRENGTH", "VULNERABLE", "WEAK",
-    "ANGRY", "BEAT_OF_DEATH", "CURIOSITY", "CURL_UP", "ENRAGE",
-    "FADING", "FLIGHT", "GENERIC_STRENGTH_UP", "INTANGIBLE",
-    "MALLEABLE", "MODE_SHIFT", "RITUAL", "SLOW", "SPORE_CLOUD",
-    "THIEVERY", "THORNS", "TIME_WARP", "INVINCIBLE",
-    "SHARP_HIDE", "ASLEEP", "BARRICADE", "MINION", "MINION_LEADER",
-    "PAINFUL_STABS", "REGROW", "SHIFTING", "STASIS",
-})
-_POWER_ALIASES = {
-    "WEAKENED": "WEAK",
-    "ANGER": "ENRAGE",
-    "CONFUSION": "CONFUSED",
-    "FLEX": "LOSE_STRENGTH",
-    "REGENERATE": "REGEN",
-    "DOUBLE_DAMAGE": "DOUBLE_DAMAGE",
-    "DRAW_REDUCTION": "DRAW_REDUCTION",
-    "MASTER_REALITY": "MASTER_REALITY",
-    "PEN_NIB": "PEN_NIB",
-    "WRATH_NEXT_TURN": "WRATH_NEXT_TURN",
-    "FEEL_NO_PAIN": "FEEL_NO_PAIN",
-    "FIRE_BREATHING": "FIRE_BREATHING",
-    "FLAME_BARRIER": "FLAME_BARRIER",
-    "GENERIC_STRENGTH_UP_POWER": "GENERIC_STRENGTH_UP",
-    "PLATED_ARMOR": "PLATED_ARMOR",
-}
+_SUPPORTED_PLAYER_POWERS = frozenset(NATIVE_PLAYER_STATUS_IDS) - {"THE_BOMB"}
+_SUPPORTED_MONSTER_POWERS = frozenset(NATIVE_MONSTER_STATUS_IDS)
 
 
 def _enumish(value: Any) -> str:
-    text = str(value or "").strip().upper().replace(" ", "_").replace("-", "_")
-    return _POWER_ALIASES.get(text, text)
+    return native_power_enum(value or "")
 
 
 def _card_rows(cards: list[dict[str, Any]], *, costs: bool = False) -> list[tuple]:
     result = []
     for card in cards:
-        row = (real_to_sim_card_enum(card["id"]), int(card["up"]))
+        native_id = real_to_sim_card_enum(card["id"])
+        if native_id not in NATIVE_COMBAT_CARD_ENUM_IDS:
+            raise ValueError(
+                f"card {card['id']!r} maps to native {native_id!r}, whose "
+                "combat transition is not implemented"
+            )
+        row = (native_id, int(card["up"]))
         if costs:
-            cost = int(card.get("cost", 0))
+            if "cost" not in card:
+                raise ValueError(f"live hand card is missing cost: {card!r}")
+            cost = int(card["cost"])
             # Java uses -2 for every unplayable card.  The simulator keeps its
             # own internal distinction (-2 statuses, -3 curses), which is part
             # of the checkpoint's training distribution.  Preserve that native
@@ -109,13 +89,22 @@ def _power_rows(powers: dict[str, int], supported: frozenset[str]) -> list[tuple
     result = []
     for name, amount in powers.items():
         enum_name = _enumish(name)
-        if enum_name in supported:
-            result.append((enum_name, int(amount)))
+        if enum_name not in supported:
+            raise ValueError(
+                f"canonical power {name!r} maps to unsupported native status "
+                f"{enum_name!r}")
+        result.append((enum_name, int(amount)))
     return result
 
 
 def _empty_potion_name(name: str) -> str:
-    return "EMPTY_POTION_SLOT" if str(name).upper() in {"PAD", "EMPTY_POTION_SLOT"} else str(name)
+    if name == "PAD":
+        return "EMPTY_POTION_SLOT"
+    if str(name).upper() == "EMPTY_POTION_SLOT":
+        raise ValueError(
+            "canonical potion state used a native empty sentinel instead of PAD"
+        )
+    return str(name)
 
 
 def _monster_ids(raw: dict[str, Any]) -> tuple[str, ...]:
@@ -298,7 +287,9 @@ class RealCombatSearch:
         real = normalize_real(self.adapter.gs)
         if real is None:
             raise RuntimeError("native combat search called outside combat")
-        identity = (int(self.adapter.gs.get("seed", 0)), int(self.adapter.gs.get("floor", 0)))
+        if "seed" not in self.adapter.gs or "floor" not in self.adapter.gs:
+            raise ValueError("real combat frame is missing seed or floor identity")
+        identity = (int(self.adapter.gs["seed"]), int(self.adapter.gs["floor"]))
         if self.identity != identity or self.env.thick.bc is None or self.env.thick.bc.is_battle_over:
             self._attach_battle(real, identity)
 
@@ -370,13 +361,32 @@ class RealCombatSearch:
     def _attach_battle(self, real: dict[str, Any], identity: tuple[int, int]) -> None:
         seed, floor = identity
         global_state = self.adapter.obs_canonical()["global"]
-        room = str(self.adapter.gs.get("room_type", "")).upper()
-        native_room = (
-            sts.Room.BOSS if "BOSS" in room else
-            sts.Room.ELITE if "ELITE" in room else
-            sts.Room.MONSTER
-        )
-        boss = str(global_state.get("boss") or "")
+        character = str(global_state["character"])
+        if character != "IRONCLAD":
+            raise RuntimeError(
+                "this checkpoint/native search bridge supports IRONCLAD only; "
+                f"refusing to mirror {character!r} as Ironclad"
+            )
+        room = str(self.adapter.gs["room_type"]).upper()
+        if "BOSS" in room:
+            native_room = sts.Room.BOSS
+        elif "ELITE" in room:
+            native_room = sts.Room.ELITE
+        elif "MONSTER" in room:
+            native_room = sts.Room.MONSTER
+        else:
+            raise ValueError(f"combat frame has unsupported room_type {room!r}")
+        boss = str(global_state["boss"])
+        relics = list(global_state["relics"])
+        relic_counters = list(global_state["relic_counters"])
+        if len(relics) != len(relic_counters):
+            raise ValueError("real relic identities and counters have different lengths")
+        if "PrismaticShard" in relics:
+            raise ValueError(
+                "PrismaticShard can generate foreign-color cards whose native "
+                "combat transitions are not fully implemented; refusing an "
+                "apparently aligned shadow battle"
+            )
 
         def make_gc(seed_nonce: int):
             gc = sts.GameContext(
@@ -384,31 +394,34 @@ class RealCombatSearch:
                 seed + int(seed_nonce),
                 self.adapter.ascension,
             )
-            gc.act = max(1, int(global_state.get("act", 1) or 1))
+            gc.act = int(global_state["act"])
+            if gc.act < 1:
+                raise ValueError(f"invalid real-game act {gc.act}")
             gc.floor_num = floor
             gc.max_hp = max(1, int(global_state["max_hp"]))
             gc.cur_hp = min(gc.max_hp, max(0, int(global_state["hp"])))
-            gc.gold = max(0, int(global_state.get("gold", 0)))
+            gc.gold = max(0, int(global_state["gold"]))
             gc.set_deck(_card_rows([
-                {"id": cid, "up": up} for cid, up in global_state.get("deck", [])
+                {"id": cid, "up": up} for cid, up in global_state["deck"]
             ]))
             gc.set_relic_state([
                 {"id": rid, "counter": int(counter)}
                 for rid, counter in zip(
-                    global_state.get("relics", []),
-                    global_state.get("relic_counters", []),
+                    relics,
+                    relic_counters,
                 )
             ])
             gc.set_potion_state([
-                _empty_potion_name(p) for p in global_state.get("potions", [])
+                _empty_potion_name(p) for p in global_state["potions"]
             ])
             gc.cur_room = native_room
-            if boss and hasattr(sts.MonsterEncounter, boss):
-                gc.boss = getattr(sts.MonsterEncounter, boss)
+            if not hasattr(sts.MonsterEncounter, boss):
+                raise ValueError(f"real act boss is absent from native enum: {boss!r}")
+            gc.boss = getattr(sts.MonsterEncounter, boss)
             return gc
 
         wanted = tuple(sorted(m["id"] for m in real["monsters"] if not m["gone"]))
-        act = max(1, int(global_state.get("act", 1) or 1))
+        act = int(global_state["act"])
         pool_kind = "boss" if native_room == sts.Room.BOSS else (
             "elite" if native_room == sts.Room.ELITE else "normal"
         )
@@ -600,14 +613,19 @@ class RealCombatSearch:
             last_move = real_to_sim_monster_move(
                 monster["id"], monster["real_last_move_id"]
             )
+            second_last_move = real_to_sim_monster_move(
+                monster["id"], monster["real_second_last_move_id"]
+            )
             monsters[sim_index] = {
+                "gone": False,
                 "id": _REAL_TO_SIM_MONSTER[monster["id"]],
                 "hp": int(monster["hp"]),
                 "max_hp": int(monster["max_hp"]),
                 "block": int(monster["block"]),
-                "unawakened": bool(monster.get("unawakened", False)),
-                "reactive": bool(monster.get("reactive", False)),
-                "move_history": [move, last_move],
+                "half_dead": bool(monster["half_dead"]),
+                "unawakened": bool(monster["unawakened"]),
+                "reactive": bool(monster["reactive"]),
+                "move_history": [move, last_move, second_last_move],
                 "base_damage": int(monster["base_damage"]),
                 "hits": int(monster["hits"]),
                 "powers": _power_rows(monster["powers"], _SUPPORTED_MONSTER_POWERS),
@@ -617,21 +635,22 @@ class RealCombatSearch:
                 # 30 damage. Preserve the native move's transition semantics.
                 monsters[sim_index].pop("base_damage")
                 monsters[sim_index].pop("hits")
-            if monster.get("intent_hidden"):
+            if monster["intent_hidden"]:
                 raise RuntimeError(
                     "Runic Dome current intent missing: install the simulator-parity "
                     "CommunicationMod exporter; shadow intent guesses are not allowed")
         player = real["player"]
         return {
+            "strict_complete": True,
             "turn": max(0, int(real["turn"]) - 1),
             "player": {
                 "hp": int(player["hp"]),
                 "max_hp": int(player["max_hp"]),
                 "block": int(player["block"]),
                 "energy": int(player["energy"]),
-                "energy_per_turn": int(player.get("energy_per_turn", 3)),
-                "gold": int(player.get("gold", 0)),
-                "counters": dict(player.get("combat_counters", {})),
+                "energy_per_turn": int(player["energy_per_turn"]),
+                "gold": int(player["gold"]),
+                "counters": dict(player["combat_counters"]),
                 "powers": _power_rows(player["powers"], _SUPPORTED_PLAYER_POWERS),
             },
             "monsters": monsters,
@@ -654,11 +673,9 @@ class RealCombatSearch:
         if before:
             LOG.warning("native shadow pre-sync differs count=%s sample=%s", len(before), before[:8])
         self.env.thick.bc.apply_custom_state(self._state_spec(real))
-        self.env.thick.gc.max_hp = max(1, int(real["player"]["max_hp"]))
-        self.env.thick.gc.cur_hp = min(
-            self.env.thick.gc.max_hp, max(0, int(real["player"]["hp"]))
-        )
-        self.env.thick.gc.gold = max(0, int(real["player"].get("gold", 0)))
+        self.env.thick.gc.max_hp = int(real["player"]["max_hp"])
+        self.env.thick.gc.cur_hp = int(real["player"]["hp"])
+        self.env.thick.gc.gold = int(real["player"]["gold"])
         self.env._pending = None
         self.env._multi = None
         self.env._nosl_cpp_pending = None
@@ -670,13 +687,19 @@ class RealCombatSearch:
 
     @staticmethod
     def _selection_candidates(desc: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
+        if "candidates" not in desc or not isinstance(desc["candidates"], (list, tuple)):
+            raise RuntimeError("combat selection descriptor is missing candidates")
         rows = []
-        for candidate in desc.get("candidates", ()):
-            card = candidate.get("card")
+        for index, candidate in enumerate(desc["candidates"]):
+            if not isinstance(candidate, dict) or "native_index" not in candidate or "card" not in candidate:
+                raise RuntimeError(f"malformed combat selection candidate {index}: {candidate!r}")
+            card = candidate["card"]
+            if card is not None and ("id" not in card or "up" not in card):
+                raise RuntimeError(f"incomplete combat selection card {index}: {card!r}")
             rows.append((
-                int(candidate.get("native_index", -1)),
+                int(candidate["native_index"]),
                 None if card is None else real_to_sim_card_enum(card["id"]),
-                None if card is None else int(card.get("up", 0)),
+                None if card is None else int(card["up"]),
             ))
         return tuple(rows)
 
@@ -684,9 +707,24 @@ class RealCombatSearch:
         sim_desc = self.env.thick.select_descriptor()
         if sim_desc is None:
             raise RuntimeError("real game entered combat selection but native shadow did not")
-        real_context = str(real_desc.get("context") or "PAD")
-        sim_context = str(sim_desc.get("context") or "PAD")
-        if real_context != "PAD" and real_context != sim_context:
+        required = {
+            "context", "zone", "candidates", "selected", "pick_remaining",
+            "pick_min", "pick_max", "can_pick_zero", "can_pick_any", "multi",
+            "cards_in_hand",
+        }
+        for side, desc in (("real", real_desc), ("native", sim_desc)):
+            missing = required - set(desc)
+            if missing:
+                raise RuntimeError(
+                    f"{side} combat selection is missing {sorted(missing)!r}")
+        real_context = str(real_desc["context"])
+        sim_context = str(sim_desc["context"])
+        if not real_context or not sim_context:
+            raise RuntimeError(
+                "combat selection context is missing: "
+                f"real={real_context!r} sim={sim_context!r}"
+            )
+        if real_context != sim_context:
             raise RuntimeError(
                 f"combat selection context mismatch real={real_context} sim={sim_context}")
         real_candidates = self._selection_candidates(real_desc)
@@ -717,25 +755,31 @@ class RealCombatSearch:
         # candidate order on both sides, so retain that order and record the
         # transport-handle relation instead of renumbering policy actions.
         self.sim_to_real_selection_handles = dict(zip(sim_handles, real_handles))
-        real_multi = bool(real_desc.get("multi"))
-        sim_multi = bool(sim_desc.get("multi"))
+        real_multi = bool(real_desc["multi"])
+        sim_multi = bool(sim_desc["multi"])
         if real_multi != sim_multi:
             raise RuntimeError(
                 f"combat selection multi mismatch real={real_multi!r} sim={sim_multi!r}")
         def semantic_pick_max(desc: dict[str, Any]) -> int:
-            raw = int(desc.get("pick_max", 0))
-            if bool(desc.get("multi")):
-                return min(raw, len(desc.get("candidates") or ()))
+            raw = int(desc["pick_max"])
+            if bool(desc["multi"]):
+                return min(raw, len(desc["candidates"]))
             return raw
 
         def semantic_pick_remaining(desc: dict[str, Any]) -> int:
-            if bool(desc.get("multi")):
+            if bool(desc["multi"]):
                 return max(
                     0,
                     semantic_pick_max(desc)
-                    - len(desc.get("selected") or ()),
+                    - len(desc["selected"]),
                 )
-            return int(desc.get("pick_remaining", 0))
+            return int(desc["pick_remaining"])
+
+        for key in ("zone", "pick_min", "can_pick_zero", "can_pick_any"):
+            if real_desc[key] != sim_desc[key]:
+                raise RuntimeError(
+                    f"combat selection {key} mismatch "
+                    f"real={real_desc[key]!r} sim={sim_desc[key]!r}")
 
         if semantic_pick_remaining(real_desc) != semantic_pick_remaining(sim_desc):
             raise RuntimeError(
@@ -748,9 +792,7 @@ class RealCombatSearch:
                     "combat selection pick_max mismatch "
                     f"real={real_desc.get('pick_max')!r} "
                     f"sim={sim_desc.get('pick_max')!r}")
-            if int(real_desc.get("cards_in_hand", 0)) != int(
-                sim_desc.get("cards_in_hand", 0)
-            ):
+            if int(real_desc["cards_in_hand"]) != int(sim_desc["cards_in_hand"]):
                 raise RuntimeError(
                     "combat selection cards_in_hand mismatch "
                     f"real={real_desc.get('cards_in_hand')!r} "

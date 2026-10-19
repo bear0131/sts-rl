@@ -13,6 +13,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -55,6 +56,9 @@ namespace {
 namespace py = pybind11;
 
 void setRulePlayerStatusByName(BattleContext &bc, const std::string &name, int amount);
+void setRulePlayerStatusByNameExact(
+    BattleContext &bc, const std::string &name, int amount,
+    bool initializeAuxiliary);
 void setRuleMonsterStatusByName(BattleContext &bc, int target, const std::string &name, int amount);
 sts::CardId cardIdFromEnum(const std::string &name);
 
@@ -89,7 +93,7 @@ int playerPowerObservation(const sts::Player &p, PlayerStatus status) {
         case PlayerStatus::BLASPHEMER: case PlayerStatus::CORRUPTION:
         case PlayerStatus::ELECTRO: case PlayerStatus::SURROUNDED:
         case PlayerStatus::MASTER_REALITY: case PlayerStatus::PEN_NIB:
-        case PlayerStatus::WRATH_NEXT_TURN:
+        case PlayerStatus::WRATH_NEXT_TURN: case PlayerStatus::NO_DRAW:
             return p.hasStatusRuntime(status) ? 1 : 0;
         default:
             return p.getStatusRuntime(status);
@@ -200,10 +204,14 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         // moveHistory[0], so [0] is the *current* intent (the obs MOVE_VOCAB id).
         const auto curMove = m.moveHistory[0];
         const auto previousMove = m.moveHistory[1];
+        const auto secondPreviousMove = m.moveHistory[2];
         md["move_id"] = static_cast<int>(curMove);
         md["move"] = sts::monsterMoveStrings[static_cast<int>(curMove)];
         md["last_move_id"] = static_cast<int>(previousMove);
         md["last_move"] = sts::monsterMoveStrings[static_cast<int>(previousMove)];
+        md["second_last_move_id"] = static_cast<int>(secondPreviousMove);
+        md["second_last_move"] =
+            sts::monsterMoveStrings[static_cast<int>(secondPreviousMove)];
         const auto dmg = m.getMoveBaseDamage(bc);
         md["base_damage"] = dmg.damage;
         // Use the simulator's actual damage pipeline for the displayed intent.
@@ -393,21 +401,41 @@ inline int monsterStatusValue(const sts::Monster &monster, int status) {
 }
 
 inline Row pack(const sts::BattleContext &bc) {
+    if (bc.cards.cardsInHand < 0 || bc.cards.cardsInHand > kHandSlots) {
+        throw std::invalid_argument("combat hand exceeds compact observation capacity");
+    }
+    if (bc.monsters.monsterCount < 0 || bc.monsters.monsterCount > kMaxMonsters) {
+        throw std::invalid_argument("monster slots exceed compact observation capacity");
+    }
+    if (bc.potionCapacity < 0 || bc.potionCapacity > kPotionSlots) {
+        throw std::invalid_argument("potion slots exceed compact observation capacity");
+    }
     Row row;
     std::array<int, kMaxMonsters> baseDamages{};
     std::array<int, kMaxMonsters> attackCounts{};
     int c = 0;
     for (int i = 0; i < bc.cards.cardsInHand && i < kHandSlots; ++i) {
-        row.categorical[c + i] = static_cast<int>(bc.cards.hand[i].getId());
+        const int card = static_cast<int>(bc.cards.hand[i].getId());
+        if (card <= 0 || card >= kCardIds) {
+            throw std::invalid_argument("live hand contains an invalid card identity");
+        }
+        row.categorical[c + i] = card;
     }
     c += kHandSlots;
     for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
          ++i) {
         const auto &monster = bc.monsters.arr[i];
+        const int monsterId = static_cast<int>(monster.id);
         if (monster.id == sts::MonsterId::INVALID) continue;
-        row.categorical[c + i] = static_cast<int>(monster.id);
-        row.categorical[c + kMaxMonsters + i] =
-            static_cast<int>(monster.moveHistory[0]);
+        if (monsterId < 0 || monsterId >= kNativeMonsters) {
+            throw std::invalid_argument("monster slot contains an invalid identity");
+        }
+        const int move = static_cast<int>(monster.moveHistory[0]);
+        if (move < 0 || move >= kNativeMoves) {
+            throw std::invalid_argument("monster slot contains an invalid move identity");
+        }
+        row.categorical[c + i] = monsterId;
+        row.categorical[c + kMaxMonsters + i] = move;
     }
     c += 2 * kMaxMonsters;
     for (int i = 0; i < bc.monsters.monsterCount && i < kMaxMonsters;
@@ -422,14 +450,34 @@ inline Row pack(const sts::BattleContext &bc) {
     }
     c += kMaxMonsters;
     for (int i = 0; i < bc.potionCapacity && i < kPotionSlots; ++i) {
-        row.categorical[c + i] = static_cast<int>(bc.potions[i]);
+        if (bc.potions[i] == sts::Potion::INVALID) {
+            throw std::invalid_argument(
+                "physical potion slot contains INVALID instead of EMPTY_POTION_SLOT");
+        }
+        const int potion = static_cast<int>(bc.potions[i]);
+        if (potion < 0 || potion >= kNativePotions) {
+            throw std::invalid_argument("physical potion slot has an invalid identity");
+        }
+        row.categorical[c + i] = potion;
     }
     c += kPotionSlots;
     const bool selecting = bc.inputState == InputState::CARD_SELECT;
     row.categorical[c++] = selecting ? static_cast<int>(bc.cardSelectInfo.cardSelectTask) : 0;
     const auto choices = sts::search::combatChoices(bc);
+    if (choices.cards.size() > 96 || choices.zone < 0 || choices.zone > 6) {
+        throw std::invalid_argument("combat selection exceeds compact observation contract");
+    }
     for (std::size_t i = 0; i < choices.cards.size(); ++i) {
-        row.categorical[c + i] = static_cast<int>(choices.cards[i].id);
+        const int card = static_cast<int>(choices.cards[i].id);
+        if ((!choices.cards[i].skip && (card <= 0 || card >= kCardIds)) ||
+            (choices.cards[i].skip && card != 0)) {
+            throw std::invalid_argument("combat selection contains an invalid card identity");
+        }
+        if (choices.cards[i].nativeIndex < 0 ||
+            choices.cards[i].nativeIndex >= 65536) {
+            throw std::invalid_argument("combat selection handle is outside observation range");
+        }
+        row.categorical[c + i] = card;
         row.categorical[c + 96 + i] = choices.cards[i].nativeIndex + 1;
     }
     row.categorical[c + 192] = choices.zone;
@@ -514,14 +562,24 @@ inline Row pack(const sts::BattleContext &bc) {
         const int base = f;
         for (const auto &card : pile) {
             const int id = static_cast<int>(card.getId());
-            if (id >= 0 && id < kCardIds) row.scalars[base + id] += 1.0f;
+            if (id <= 0 || id >= kCardIds) {
+                throw std::invalid_argument("combat pile contains an invalid card identity");
+            }
+            row.scalars[base + id] += 1.0f;
         }
         f += kCardIds;
     };
     countPile(bc.cards.drawPile);
     countPile(bc.cards.discardPile);
     countPile(bc.cards.exhaustPile);
-    row.scalars[f++] = selecting ? static_cast<float>(bc.cardSelectInfo.pickCount) : 0.0f;
+    // CardSelectInfo::pickCount is populated only for MULTI tasks.  Every live
+    // SINGLE task still requires exactly one choice; exporting the native zero
+    // here made the packed observation disagree with select_info() and the
+    // real-game max_cards=1 contract.
+    row.scalars[f++] = selecting
+        ? static_cast<float>(bc.cardSelectInfo.isMultiSelection()
+            ? bc.cardSelectInfo.pickCount : 1)
+        : 0.0f;
     row.scalars[f++] = selecting && (bc.cardSelectInfo.canPickZero ||
         bc.cardSelectInfo.cardSelectTask == CardSelectTask::EXHAUST_MANY ||
         bc.cardSelectInfo.cardSelectTask == CardSelectTask::GAMBLE) ? 1.0f : 0.0f;
@@ -544,7 +602,9 @@ inline void packLanguagePile(const Pile &pile, const std::int32_t *cardIndex,
     std::unordered_map<int, int> positions;
     for (const auto &card : pile) {
         const int native = static_cast<int>(card.getId());
-        if (native < 0 || native >= kCardIds) continue;
+        if (native <= 0 || native >= kCardIds) {
+            throw std::invalid_argument("language pile contains an invalid card identity");
+        }
         const int id = cardIndex[native];
         if (id < 0) continue;
         auto [it, inserted] = positions.emplace(id, static_cast<int>(positions.size()));
@@ -566,10 +626,29 @@ inline void packLanguagePile(const Pile &pile, const std::int32_t *cardIndex,
 // RNG streams.  Card piles are rebuilt with normal CardInstance bookkeeping so
 // subsequent draws/discards remain authoritative.
 void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+    const bool strictComplete = spec.contains("strict_complete")
+        && spec["strict_complete"].cast<bool>();
+    if (strictComplete) {
+        static constexpr const char *kRequired[] = {
+            "turn", "player", "monsters", "hand", "draw", "discard",
+            "exhaust", "potions",
+        };
+        for (const auto *key : kRequired) {
+            if (!spec.contains(key)) {
+                throw std::invalid_argument(
+                    std::string("strict combat state missing ") + key);
+            }
+        }
+    }
     if (spec.contains("potions")) {
         const auto names = spec["potions"].cast<std::vector<std::string>>();
         if (names.size() > static_cast<std::size_t>(bc.potionCapacity))
             throw std::invalid_argument("custom potions exceed potion capacity");
+        if (strictComplete
+            && names.size() != static_cast<std::size_t>(bc.potionCapacity)) {
+            throw std::invalid_argument(
+                "strict potion state must contain every physical slot");
+        }
         auto potions = bc.potions;
         std::fill(potions.begin(), potions.end(), Potion::EMPTY_POTION_SLOT);
         int count = 0;
@@ -583,66 +662,163 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     auto getInt = [](const py::dict &d, const char *key, int current) {
         return d.contains(key) ? d[key].cast<int>() : current;
     };
+    auto getBoundedInt = [&](const py::dict &d, const char *key, int current,
+                             int lower, int upper) {
+        const int value = getInt(d, key, current);
+        if (strictComplete && (value < lower || value > upper)) {
+            throw std::invalid_argument(
+                std::string("strict combat integer outside native range: ")
+                + key + "=" + std::to_string(value));
+        }
+        return std::clamp(value, lower, upper);
+    };
     if (spec.contains("player")) {
         auto p = spec["player"].cast<py::dict>();
-        bc.player.maxHp = std::max(1, getInt(p, "max_hp", bc.player.maxHp));
-        bc.player.curHp = std::clamp(
-            getInt(p, "hp", bc.player.curHp), 0, bc.player.maxHp);
-        bc.player.block = std::max(0, getInt(p, "block", bc.player.block));
-        bc.player.energy = std::max(0, getInt(p, "energy", bc.player.energy));
+        if (strictComplete) {
+            static constexpr const char *kPlayerKeys[] = {
+                "max_hp", "hp", "block", "energy", "energy_per_turn",
+                "gold", "counters", "powers",
+            };
+            for (const auto *key : kPlayerKeys) {
+                if (!p.contains(key)) {
+                    throw std::invalid_argument(
+                        std::string("strict player state missing ") + key);
+                }
+            }
+        }
+        bc.player.maxHp = getBoundedInt(
+            p, "max_hp", bc.player.maxHp, 1, std::numeric_limits<int>::max());
+        bc.player.curHp = getBoundedInt(
+            p, "hp", bc.player.curHp, 0, bc.player.maxHp);
+        bc.player.block = getBoundedInt(
+            p, "block", bc.player.block, 0, std::numeric_limits<int>::max());
+        bc.player.energy = getBoundedInt(
+            p, "energy", bc.player.energy, 0, std::numeric_limits<int>::max());
         bc.player.energyPerTurn = static_cast<std::int8_t>(
-            std::clamp(getInt(p, "energy_per_turn", bc.player.energyPerTurn), 0, 127));
-        bc.player.gold = std::max(0, getInt(p, "gold", bc.player.gold));
+            getBoundedInt(p, "energy_per_turn", bc.player.energyPerTurn, 0, 127));
+        bc.player.gold = getBoundedInt(
+            p, "gold", bc.player.gold, 0, std::numeric_limits<std::int16_t>::max());
         if (p.contains("counters")) {
             auto c = p["counters"].cast<py::dict>();
+            if (strictComplete) {
+                static constexpr const char *kCounterKeys[] = {
+                    "happy_flower", "incense_burner", "ink_bottle", "inserter",
+                    "nunchaku", "pen_nib", "sundial", "necronomicon_used",
+                    "cards_played", "attacks_played", "skills_played",
+                    "orange_attack", "orange_skill", "orange_power",
+                    "combust_hp_loss", "deva_form_energy_per_turn",
+                    "echo_form_cards_doubled", "panache_counter",
+                    "cards_discarded", "times_damaged",
+                    "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
+                };
+                for (const auto *key : kCounterKeys) {
+                    if (!c.contains(key)) {
+                        throw std::invalid_argument(
+                            std::string("strict combat counters missing ") + key);
+                    }
+                }
+            }
             bc.player.happyFlowerCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "happy_flower", bc.player.happyFlowerCounter), 0, 255));
+                getBoundedInt(c, "happy_flower", bc.player.happyFlowerCounter, 0, 127));
             bc.player.incenseBurnerCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "incense_burner", bc.player.incenseBurnerCounter), 0, 255));
+                getBoundedInt(c, "incense_burner", bc.player.incenseBurnerCounter, 0, 127));
             bc.player.inkBottleCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "ink_bottle", bc.player.inkBottleCounter), 0, 255));
+                getBoundedInt(c, "ink_bottle", bc.player.inkBottleCounter, 0, 127));
             bc.player.inserterCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "inserter", bc.player.inserterCounter), 0, 255));
+                getBoundedInt(c, "inserter", bc.player.inserterCounter, 0, 127));
             bc.player.nunchakuCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "nunchaku", bc.player.nunchakuCounter), 0, 255));
+                getBoundedInt(c, "nunchaku", bc.player.nunchakuCounter, 0, 127));
             bc.player.penNibCounter = static_cast<std::int8_t>(
-                std::clamp(getInt(c, "pen_nib", bc.player.penNibCounter), 0, 255));
+                getBoundedInt(c, "pen_nib", bc.player.penNibCounter, 0, 127));
+            bc.player.sundialCounter = static_cast<std::int8_t>(
+                getBoundedInt(c, "sundial", bc.player.sundialCounter, 0, 127));
+            bc.player.haveUsedNecronomiconThisTurn =
+                getInt(c, "necronomicon_used", bc.player.haveUsedNecronomiconThisTurn) != 0;
+            bc.player.cardsPlayedThisTurn = static_cast<std::int16_t>(
+                getBoundedInt(c, "cards_played", bc.player.cardsPlayedThisTurn, 0, 32767));
+            bc.player.attacksPlayedThisTurn = static_cast<std::int16_t>(
+                getBoundedInt(c, "attacks_played", bc.player.attacksPlayedThisTurn, 0, 32767));
+            bc.player.skillsPlayedThisTurn = static_cast<std::int16_t>(
+                getBoundedInt(c, "skills_played", bc.player.skillsPlayedThisTurn, 0, 32767));
+            bc.player.orangePelletsCardTypesPlayed.set(
+                0, getInt(c, "orange_attack", 0) != 0);
+            bc.player.orangePelletsCardTypesPlayed.set(
+                1, getInt(c, "orange_skill", 0) != 0);
+            bc.player.orangePelletsCardTypesPlayed.set(
+                2, getInt(c, "orange_power", 0) != 0);
+            bc.player.combustHpLoss = static_cast<std::int8_t>(
+                getBoundedInt(c, "combust_hp_loss", bc.player.combustHpLoss, 0, 127));
+            bc.player.devaFormEnergyPerTurn = static_cast<std::int16_t>(
+                getBoundedInt(c, "deva_form_energy_per_turn", bc.player.devaFormEnergyPerTurn, 0, 32767));
+            bc.player.echoFormCardsDoubled = static_cast<std::int8_t>(
+                getBoundedInt(c, "echo_form_cards_doubled", bc.player.echoFormCardsDoubled, 0, 127));
+            bc.player.panacheCounter = static_cast<std::int8_t>(
+                getBoundedInt(c, "panache_counter", bc.player.panacheCounter, 0, 127));
             bc.player.cardsDiscardedThisTurn = static_cast<std::int16_t>(
-                std::clamp(getInt(c, "cards_discarded", bc.player.cardsDiscardedThisTurn), 0, 32767));
+                getBoundedInt(c, "cards_discarded", bc.player.cardsDiscardedThisTurn, 0, 32767));
             bc.player.timesDamagedThisCombat = static_cast<std::int16_t>(
-                std::clamp(getInt(c, "times_damaged", bc.player.timesDamagedThisCombat), 0, 32767));
+                getBoundedInt(c, "times_damaged", bc.player.timesDamagedThisCombat, 0, 32767));
+            bc.player.bomb1 = static_cast<std::int8_t>(
+                getBoundedInt(c, "bomb_1", bc.player.bomb1, 0, 127));
+            bc.player.bomb2 = static_cast<std::int8_t>(
+                getBoundedInt(c, "bomb_2", bc.player.bomb2, 0, 127));
+            bc.player.bomb3 = static_cast<std::int8_t>(
+                getBoundedInt(c, "bomb_3", bc.player.bomb3, 0, 127));
+            bc.player.lastAttackUnblockedDamage = static_cast<std::int16_t>(
+                getBoundedInt(c, "last_attack_unblocked_damage", bc.player.lastAttackUnblockedDamage, 0, 32767));
         }
         if (p.contains("powers")) {
-            static constexpr const char *kStatuses[] = {
-                "STRENGTH", "DEXTERITY", "LOSE_STRENGTH", "LOSE_DEXTERITY", "NO_DRAW", "NO_BLOCK", "REGEN", "WEAK", "FRAIL", "VULNERABLE",
-                "ARTIFACT", "DOUBLE_DAMAGE", "INTANGIBLE", "BARRICADE",
-                "CORRUPTION", "CONFUSED", "HEX", "DRAW_REDUCTION",
-                "BLASPHEMER", "ELECTRO", "SURROUNDED", "MASTER_REALITY",
-                "PEN_NIB", "WRATH_NEXT_TURN", "BUFFER", "DOUBLE_TAP", "DUPLICATION", "BRUTALITY",
-                "COMBUST", "DARK_EMBRACE", "DEMON_FORM", "EVOLVE",
-                "FEEL_NO_PAIN", "FIRE_BREATHING", "FLAME_BARRIER",
-                "JUGGERNAUT", "METALLICIZE", "PLATED_ARMOR", "RAGE", "RUPTURE", "THORNS",
-                "VIGOR",
-            };
-            for (const auto *name : kStatuses) setRulePlayerStatusByName(bc, name, 0);
+            // Clear the complete enum.  A shadow battle is random state; leaving
+            // even one absent real power behind corrupts the mirrored root.
+            for (int status = 1;
+                 status <= static_cast<int>(PlayerStatus::THE_BOMB);
+                 ++status) {
+                setRulePlayerStatusByNameExact(
+                    bc, playerStatusEnumStrings[status], 0, false);
+            }
             for (auto item : p["powers"].cast<py::list>()) {
                 auto pair = item.cast<py::tuple>();
+                if (pair.size() != 2) {
+                    throw std::invalid_argument(
+                        "player power row must contain exactly name and amount");
+                }
                 const auto name = pair[0].cast<std::string>();
                 const int amount = pair[1].cast<int>();
-                setRulePlayerStatusByName(bc, name, amount);
+                // Auxiliary counters are exported separately and were already
+                // restored above.  Never manufacture them from the power value.
+                setRulePlayerStatusByNameExact(bc, name, amount, false);
             }
         }
     }
     if (spec.contains("monsters")) {
         auto mons = spec["monsters"].cast<py::list>();
+        if (strictComplete && static_cast<int>(mons.size()) != bc.monsters.monsterCount) {
+            throw std::invalid_argument(
+                "strict monster state length does not match native encounter slots");
+        }
         const int n = std::min<int>(static_cast<int>(mons.size()), bc.monsters.monsterCount);
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
             auto &monster = bc.monsters.arr[i];
+            if (strictComplete && !m.contains("gone")) {
+                throw std::invalid_argument("strict monster state missing gone");
+            }
             if (m.contains("gone") && m["gone"].cast<bool>()) {
                 monster.curHp = 0;
                 monster.block = 0;
                 continue;
+            }
+            if (strictComplete) {
+                static constexpr const char *kMonsterKeys[] = {
+                    "id", "max_hp", "hp", "block", "half_dead",
+                    "unawakened", "reactive", "move_history", "powers",
+                };
+                for (const auto *key : kMonsterKeys) {
+                    if (!m.contains(key)) {
+                        throw std::invalid_argument(
+                            std::string("strict live monster state missing ") + key);
+                    }
+                }
             }
             if (m.contains("id")) {
                 const auto requestedId = sts::SimHelpers::getMonsterIdForString(
@@ -654,10 +830,17 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     monster.construct(bc, requestedId, i);
                 }
             }
-            monster.maxHp = std::max(1, getInt(m, "max_hp", monster.maxHp));
-            monster.curHp = std::clamp(
-                getInt(m, "hp", monster.curHp), 0, monster.maxHp);
-            monster.block = std::max(0, getInt(m, "block", monster.block));
+            monster.maxHp = getBoundedInt(
+                m, "max_hp", monster.maxHp, 1, std::numeric_limits<int>::max());
+            monster.curHp = getBoundedInt(
+                m, "hp", monster.curHp, 0, monster.maxHp);
+            monster.block = getBoundedInt(
+                m, "block", monster.block, 0, std::numeric_limits<int>::max());
+            if (m.contains("half_dead")) {
+                monster.halfDead = m["half_dead"].cast<bool>();
+            } else if (strictComplete) {
+                throw std::invalid_argument("strict monster state missing half_dead");
+            }
             if (m.contains("unawakened")) {
                 if (monster.id != sts::MonsterId::AWAKENED_ONE
                     && m["unawakened"].cast<bool>()) {
@@ -670,17 +853,32 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             }
             if (m.contains("move_history")) {
                 const auto moves = m["move_history"].cast<std::vector<std::string>>();
-                if (moves.size() > 2) {
+                if (moves.size() > 3) {
                     throw std::invalid_argument("custom monster move history exceeds capacity");
                 }
+                if (strictComplete && moves.size() != 3) {
+                    throw std::invalid_argument(
+                        "strict monster move history must contain current and two previous moves");
+                }
+                std::fill(
+                    std::begin(monster.moveHistory),
+                    std::end(monster.moveHistory),
+                    sts::MonsterMoveId::INVALID);
                 for (std::size_t history = 0; history < moves.size(); ++history) {
-                    monster.moveHistory[history] = sts::SimHelpers::getMonsterMoveForString(
-                        moves[history]);
+                    const auto move = sts::SimHelpers::getMonsterMoveForString(moves[history]);
+                    if (move == sts::MonsterMoveId::INVALID && moves[history] != "INVALID") {
+                        throw std::invalid_argument(
+                            "unknown custom monster move: " + moves[history]);
+                    }
+                    monster.moveHistory[history] = move;
                 }
             } else if (m.contains("move")) {
-                const auto move = sts::SimHelpers::getMonsterMoveForString(
-                    m["move"].cast<std::string>());
-                if (move != sts::MonsterMoveId::INVALID) monster.moveHistory[0] = move;
+                const auto moveName = m["move"].cast<std::string>();
+                const auto move = sts::SimHelpers::getMonsterMoveForString(moveName);
+                if (move == sts::MonsterMoveId::INVALID && moveName != "INVALID") {
+                    throw std::invalid_argument("unknown custom monster move: " + moveName);
+                }
+                monster.moveHistory[0] = move;
             }
             if (m.contains("base_damage") || m.contains("hits")) {
                 const auto current = monster.getMoveBaseDamage(bc);
@@ -740,6 +938,10 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                 }
                 for (auto item : m["powers"].cast<py::list>()) {
                     auto pair = item.cast<py::tuple>();
+                    if (pair.size() != 2) {
+                        throw std::invalid_argument(
+                            "monster power row must contain exactly name and amount");
+                    }
                     const auto name = pair[0].cast<std::string>();
                     const int amount = pair[1].cast<int>();
                     setRuleMonsterStatusByName(bc, i, name, amount);
@@ -771,11 +973,31 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         for (auto item : spec[key].cast<py::list>()) {
             std::string name;
             int up = 0;
-            if (py::isinstance<py::str>(item)) name = item.cast<std::string>();
+            if (py::isinstance<py::str>(item)) {
+                if (strictComplete) {
+                    throw std::invalid_argument(
+                        std::string("strict ") + key
+                        + " card row must contain exactly id and upgrades");
+                }
+                name = item.cast<std::string>();
+            }
             else {
                 auto pair = item.cast<py::tuple>();
+                if (strictComplete && pair.size() != 2) {
+                    throw std::invalid_argument(
+                        std::string("strict ") + key
+                        + " card row must contain exactly id and upgrades");
+                }
+                if (pair.empty() || pair.size() > 2) {
+                    throw std::invalid_argument(
+                        std::string(key) + " card row has invalid width");
+                }
                 name = pair[0].cast<std::string>();
                 up = pair.size() > 1 ? pair[1].cast<int>() : 0;
+            }
+            if (up < 0) {
+                throw std::invalid_argument(
+                    std::string(key) + " card upgrades must be non-negative");
             }
             const auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
@@ -792,12 +1014,28 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             std::string name;
             int up = 0;
             std::optional<int> cost;
-            if (py::isinstance<py::str>(item)) name = item.cast<std::string>();
+            if (py::isinstance<py::str>(item)) {
+                if (strictComplete) {
+                    throw std::invalid_argument(
+                        "strict hand card row must contain exactly id, upgrades, and cost");
+                }
+                name = item.cast<std::string>();
+            }
             else {
                 auto pair = item.cast<py::tuple>();
+                if (strictComplete && pair.size() != 3) {
+                    throw std::invalid_argument(
+                        "strict hand card row must contain exactly id, upgrades, and cost");
+                }
+                if (pair.empty() || pair.size() > 3) {
+                    throw std::invalid_argument("hand card row has invalid width");
+                }
                 name = pair[0].cast<std::string>();
                 up = pair.size() > 1 ? pair[1].cast<int>() : 0;
                 if (pair.size() > 2 && !pair[2].is_none()) cost = pair[2].cast<int>();
+            }
+            if (up < 0) {
+                throw std::invalid_argument("hand card upgrades must be non-negative");
             }
             auto id = sts::SimHelpers::getCardIdForString(name);
             if (id == sts::CardId::INVALID) throw std::invalid_argument("unknown card: " + name);
@@ -805,12 +1043,18 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             for (int k = 0; k < up; ++k) source.upgrade();
             sts::CardInstance card(source);
             if (cost.has_value()) {
+                if (strictComplete && (*cost < -3 || *cost > 127)) {
+                    throw std::invalid_argument(
+                        "strict hand card cost is outside native range");
+                }
                 card.costForTurn = static_cast<std::int8_t>(
-                    std::clamp(*cost, -1, 127));
+                    std::clamp(*cost, -3, 127));
                 card.freeToPlayOnce = false;
             }
             card.uniqueId = static_cast<std::int16_t>(nextUid++);
-            if (bc.cards.cardsInHand >= sts::CardManager::MAX_HAND_SIZE) break;
+            if (bc.cards.cardsInHand >= sts::CardManager::MAX_HAND_SIZE) {
+                throw std::invalid_argument("custom hand exceeds native hand capacity");
+            }
             bc.cards.hand[bc.cards.cardsInHand++] = card;
         }
     }
@@ -822,7 +1066,13 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     else applyVectorPile("exhaust_pile", bc.cards.exhaustPile);
     bc.cards.recomputeDerivedState();
     bc.cards.nextUniqueCardId = std::max(bc.cards.nextUniqueCardId, nextUid);
-    if (spec.contains("turn")) bc.turn = std::max(0, spec["turn"].cast<int>());
+    if (spec.contains("turn")) {
+        const int turn = spec["turn"].cast<int>();
+        if (strictComplete && turn < 0) {
+            throw std::invalid_argument("strict combat turn must be non-negative");
+        }
+        bc.turn = std::max(0, turn);
+    }
     bc.inputState = sts::InputState::PLAYER_NORMAL;
     bc.outcome = sts::Outcome::UNDECIDED;
     bc.isBattleOver = false;
@@ -1099,13 +1349,26 @@ std::vector<sts::search::Action> legalRuleCombatActions(const sts::BattleContext
 }
 
 template <PlayerStatus status>
-void setRulePlayerStatus(Player &player, int amount) {
+void setRulePlayerStatus(Player &player, int amount, bool initializeAuxiliary) {
     player.setStatusValueNoChecks<status>(amount);
     player.setHasStatus<status>(amount != 0);
+    if (player.getStatus<status>() != amount) {
+        throw std::invalid_argument(
+            "player status amount cannot be represented by native storage");
+    }
     if constexpr (status == PlayerStatus::COMBUST) {
         // Combust stores its HP payment outside statusMap. A directly injected
         // power must initialize both pieces just as playing the card does.
-        player.combustHpLoss = amount != 0 ? 1 : 0;
+        if (initializeAuxiliary) player.combustHpLoss = amount != 0 ? 1 : 0;
+    }
+    if constexpr (status == PlayerStatus::DEVA) {
+        if (initializeAuxiliary) player.devaFormEnergyPerTurn = amount;
+    }
+    if constexpr (status == PlayerStatus::ECHO_FORM) {
+        if (initializeAuxiliary) player.echoFormCardsDoubled = 0;
+    }
+    if constexpr (status == PlayerStatus::PANACHE) {
+        if (initializeAuxiliary) player.panacheCounter = amount != 0 ? 5 : 0;
     }
     if constexpr (
         status == PlayerStatus::DOUBLE_DAMAGE
@@ -1118,61 +1381,118 @@ void setRulePlayerStatus(Player &player, int amount) {
     }
 }
 
-void setRulePlayerStatusByName(
-    BattleContext &bc, const std::string &name, int amount
+void setRulePlayerStatusByNameExact(
+    BattleContext &bc, const std::string &name, int amount,
+    bool initializeAuxiliary
 ) {
-    if (amount < 0 && name != "STRENGTH" && name != "DEXTERITY") {
+    if (amount < 0 && name != "STRENGTH" && name != "DEXTERITY"
+        && name != "FOCUS") {
         throw std::invalid_argument("player status amount must be non-negative");
+    }
+    if (name == "THE_BOMB" && amount != 0) {
+        throw std::invalid_argument(
+            "THE_BOMB is represented by bomb_1/bomb_2/bomb_3 counters");
     }
 #define SET_PLAYER_STATUS(value) \
     if (name == #value) { \
-        setRulePlayerStatus<PlayerStatus::value>(bc.player, amount); \
+        setRulePlayerStatus<PlayerStatus::value>( \
+            bc.player, amount, initializeAuxiliary); \
         return; \
     }
-    SET_PLAYER_STATUS(STRENGTH)
-    SET_PLAYER_STATUS(DEXTERITY)
-    SET_PLAYER_STATUS(WEAK)
-    SET_PLAYER_STATUS(FRAIL)
-    SET_PLAYER_STATUS(VULNERABLE)
-    SET_PLAYER_STATUS(ARTIFACT)
     SET_PLAYER_STATUS(DOUBLE_DAMAGE)
-    SET_PLAYER_STATUS(INTANGIBLE)
-    SET_PLAYER_STATUS(BARRICADE)
-    SET_PLAYER_STATUS(CORRUPTION)
-    SET_PLAYER_STATUS(CONFUSED)
-    SET_PLAYER_STATUS(HEX)
     SET_PLAYER_STATUS(DRAW_REDUCTION)
+    SET_PLAYER_STATUS(FRAIL)
+    SET_PLAYER_STATUS(INTANGIBLE)
+    SET_PLAYER_STATUS(VULNERABLE)
+    SET_PLAYER_STATUS(WEAK)
+    SET_PLAYER_STATUS(BIAS)
+    SET_PLAYER_STATUS(CONFUSED)
+    SET_PLAYER_STATUS(CONSTRICTED)
+    SET_PLAYER_STATUS(ENTANGLED)
+    SET_PLAYER_STATUS(FASTING)
+    SET_PLAYER_STATUS(HEX)
+    SET_PLAYER_STATUS(LOSE_STRENGTH)
+    SET_PLAYER_STATUS(LOSE_DEXTERITY)
+    SET_PLAYER_STATUS(NO_BLOCK)
+    SET_PLAYER_STATUS(NO_DRAW)
+    SET_PLAYER_STATUS(WRAITH_FORM)
+    SET_PLAYER_STATUS(BARRICADE)
     SET_PLAYER_STATUS(BLASPHEMER)
+    SET_PLAYER_STATUS(CORRUPTION)
     SET_PLAYER_STATUS(ELECTRO)
     SET_PLAYER_STATUS(SURROUNDED)
     SET_PLAYER_STATUS(MASTER_REALITY)
     SET_PLAYER_STATUS(PEN_NIB)
     SET_PLAYER_STATUS(WRATH_NEXT_TURN)
-    SET_PLAYER_STATUS(NO_DRAW)
-    SET_PLAYER_STATUS(NO_BLOCK)
-    SET_PLAYER_STATUS(LOSE_DEXTERITY)
-    SET_PLAYER_STATUS(LOSE_STRENGTH)
+    SET_PLAYER_STATUS(AMPLIFY)
+    SET_PLAYER_STATUS(BLUR)
+    SET_PLAYER_STATUS(BUFFER)
+    SET_PLAYER_STATUS(COLLECT)
     SET_PLAYER_STATUS(DOUBLE_TAP)
     SET_PLAYER_STATUS(DUPLICATION)
-    SET_PLAYER_STATUS(BUFFER)
+    SET_PLAYER_STATUS(ECHO_FORM)
+    SET_PLAYER_STATUS(FREE_ATTACK_POWER)
+    SET_PLAYER_STATUS(REBOUND)
+    SET_PLAYER_STATUS(MANTRA)
+    SET_PLAYER_STATUS(ACCURACY)
+    SET_PLAYER_STATUS(AFTER_IMAGE)
+    SET_PLAYER_STATUS(BATTLE_HYMN)
     SET_PLAYER_STATUS(BRUTALITY)
+    SET_PLAYER_STATUS(BURST)
     SET_PLAYER_STATUS(COMBUST)
+    SET_PLAYER_STATUS(CREATIVE_AI)
     SET_PLAYER_STATUS(DARK_EMBRACE)
     SET_PLAYER_STATUS(DEMON_FORM)
+    SET_PLAYER_STATUS(DEVA)
+    SET_PLAYER_STATUS(DEVOTION)
+    SET_PLAYER_STATUS(DRAW_CARD_NEXT_TURN)
+    SET_PLAYER_STATUS(ENERGIZED)
+    SET_PLAYER_STATUS(ENVENOM)
+    SET_PLAYER_STATUS(ESTABLISHMENT)
     SET_PLAYER_STATUS(EVOLVE)
     SET_PLAYER_STATUS(FEEL_NO_PAIN)
     SET_PLAYER_STATUS(FIRE_BREATHING)
     SET_PLAYER_STATUS(FLAME_BARRIER)
+    SET_PLAYER_STATUS(FOCUS)
+    SET_PLAYER_STATUS(FORESIGHT)
+    SET_PLAYER_STATUS(HELLO_WORLD)
+    SET_PLAYER_STATUS(INFINITE_BLADES)
     SET_PLAYER_STATUS(JUGGERNAUT)
+    SET_PLAYER_STATUS(LIKE_WATER)
+    SET_PLAYER_STATUS(LOOP)
+    SET_PLAYER_STATUS(MAGNETISM)
+    SET_PLAYER_STATUS(MAYHEM)
     SET_PLAYER_STATUS(METALLICIZE)
+    SET_PLAYER_STATUS(NEXT_TURN_BLOCK)
+    SET_PLAYER_STATUS(NOXIOUS_FUMES)
+    SET_PLAYER_STATUS(OMEGA)
+    SET_PLAYER_STATUS(PANACHE)
+    SET_PLAYER_STATUS(PHANTASMAL)
     SET_PLAYER_STATUS(PLATED_ARMOR)
     SET_PLAYER_STATUS(RAGE)
     SET_PLAYER_STATUS(REGEN)
+    SET_PLAYER_STATUS(RITUAL)
     SET_PLAYER_STATUS(RUPTURE)
+    SET_PLAYER_STATUS(SADISTIC)
+    SET_PLAYER_STATUS(STATIC_DISCHARGE)
     SET_PLAYER_STATUS(THORNS)
+    SET_PLAYER_STATUS(THOUSAND_CUTS)
+    SET_PLAYER_STATUS(TOOLS_OF_THE_TRADE)
     SET_PLAYER_STATUS(VIGOR)
+    SET_PLAYER_STATUS(WAVE_OF_THE_HAND)
+    SET_PLAYER_STATUS(EQUILIBRIUM)
+    SET_PLAYER_STATUS(ARTIFACT)
+    SET_PLAYER_STATUS(DEXTERITY)
+    SET_PLAYER_STATUS(STRENGTH)
+    SET_PLAYER_STATUS(THE_BOMB)
 #undef SET_PLAYER_STATUS
     throw std::invalid_argument("unsupported player status for rule data: " + name);
+}
+
+void setRulePlayerStatusByName(
+    BattleContext &bc, const std::string &name, int amount
+) {
+    setRulePlayerStatusByNameExact(bc, name, amount, true);
 }
 
 template <MonsterStatus status>
@@ -1183,6 +1503,10 @@ void setRuleMonsterStatus(Monster &monster, int amount) {
         monster.setHasStatus<status>(true);
     } else {
         monster.setHasStatus<status>(amount != 0);
+    }
+    if (monster.getStatus<status>() != amount) {
+        throw std::invalid_argument(
+            "monster status amount cannot be represented by native storage");
     }
     if constexpr (
         status == MonsterStatus::VULNERABLE
@@ -1468,13 +1792,16 @@ py::list legalCampfireOptions(const sts::GameContext &gc) {
 py::dict rewardInfo(const sts::GameContext &gc) {
     const auto &r = gc.info.rewardsContainer;
     py::dict d;
-    py::list gold, relics, potions;
+    py::list gold, relics, potions, keys;
     for (int i = 0; i < r.goldRewardCount; ++i) gold.append(r.gold[i]);
     for (int i = 0; i < r.relicCount; ++i) relics.append(std::string(sts::relicIds[static_cast<int>(r.relics[i])]));
     for (int i = 0; i < r.potionCount; ++i) potions.append(std::string(sts::getPotionName(r.potions[i])));
+    if (r.emeraldKey) keys.append("EMERALD_KEY");
+    if (r.sapphireKey) keys.append("SAPPHIRE_KEY");
     d["gold"] = gold;
     d["relics"] = relics;
     d["potions"] = potions;
+    d["keys"] = keys;
     d["card_count"] = r.cardRewardCount;
     return d;
 }
@@ -1994,6 +2321,13 @@ PYBIND11_MODULE(slaythespire, m) {
         for (int i = 0; i < compact_leaf::kNativeMonsters; ++i) {
             monsters.append(sts::monsterIdStrings[i]);
         }
+        pybind11::list moves;
+        pybind11::list moveIntentCategories;
+        for (int i = 0; i < compact_leaf::kNativeMoves; ++i) {
+            moves.append(sts::monsterMoveStrings[i]);
+            moveIntentCategories.append(
+                compact_leaf::intentCategoryFromName(sts::monsterMoveStrings[i]));
+        }
         pybind11::list potions;
         for (int i = 0; i < compact_leaf::kNativePotions; ++i) {
             potions.append(sts::potionNames[i]);
@@ -2002,16 +2336,26 @@ PYBIND11_MODULE(slaythespire, m) {
         for (int i = 0; i < compact_leaf::kCardIds; ++i) {
             cards.append(sts::cardEnumStrings[i]);
         }
+        pybind11::list selectContexts;
+        for (const char *name : sts::cardSelectTaskStrings) {
+            selectContexts.append(name);
+        }
         out["player_status_names"] = player_status;
         out["monster_status_names"] = monster_status;
         out["monster_names"] = monsters;
+        out["move_names"] = moves;
+        out["move_intent_categories"] = moveIntentCategories;
         out["potion_names"] = potions;
         out["card_names"] = cards;
+        out["select_context_names"] = selectContexts;
         out["player_status_count"] = compact_leaf::kPlayerStatus;
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
-        out["version"] = 3;
-        out["observation_version"] = 19;
+        out["version"] = 4;
+        // OBS20 adds run-global/reward key fields in Python. Compact combat
+        // transport bytes are unchanged; root-global key ownership is overlaid
+        // by run_env exactly like relic metadata.
+        out["observation_version"] = 20;
         out["language_slots"] = compact_leaf::kLanguageSlots;
         out["candidate_capacity"] = 96;
         out["candidate_overflow_contract"] = "overflow-equivalent-v1";
@@ -2165,6 +2509,11 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("claim_potion", [](GameContext &gc, int idx) {
             search::GameAction action(search::GameAction::RewardsActionType::POTION, idx);
             requireValidGameAction(gc, action, "claim_potion");
+            action.execute(gc);
+        })
+        .def("claim_key", [](GameContext &gc) {
+            search::GameAction action(search::GameAction::RewardsActionType::KEY);
+            requireValidGameAction(gc, action, "claim_key");
             action.execute(gc);
         })
         .def("discard_potion", [](GameContext &gc, int slot) {

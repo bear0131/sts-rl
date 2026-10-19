@@ -60,7 +60,7 @@ class CombatMLPActorCritic(nn.Module):
         self.input_width = width
         self.trunk = nn.Sequential(nn.Linear(width, 256), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
         self.policy_mlp = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
-        self.policy_head = nn.Linear(128, A.N_ACTIONS)
+        self.policy_head = nn.Linear(128, A.FIXED_HEAD_ACTIONS)
         self.value_mlp = nn.Sequential(nn.Linear(256, 128), nn.ReLU())
         self.value_head = nn.Linear(128, 1)
         nn.init.orthogonal_(self.policy_head.weight, gain=0.01)

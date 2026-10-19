@@ -116,6 +116,7 @@ def _fixture(observation_space, phase_name):
     obs["reward_gold"][0, 0] = 0.1
     obs["reward_relic_ids"][0, 0] = obs["relics"][0, 0]
     obs["reward_potion_ids"][0, 0] = obs["potions"][0, 0]
+    obs["reward_keys"][0, 0] = 1
 
     obs["map_node_rooms"][0, :2] = torch.tensor([1, 2])
     obs["map_node_x"][0, :2] = torch.tensor([2 / encode.MAP_X_SCALE, 3 / encode.MAP_X_SCALE])
@@ -366,6 +367,20 @@ def test_state_dict_round_trip():
     with torch.no_grad():
         actual = restored.actor_critic(observation)
     _assert_same(expected, actual)
+
+
+def test_key_reward_has_its_own_appended_policy_logit():
+    observation_space = _space()
+    core = _core(observation_space)
+    observation = _fixture(observation_space, "combat_reward")
+    without_key = {key: value.clone() for key, value in observation.items()}
+    without_key["reward_keys"].zero_()
+    with torch.no_grad():
+        key_logits, _ = core.actor_critic(observation)
+        empty_logits, _ = core.actor_critic(without_key)
+    assert key_logits.shape == (1, A.N_ACTIONS)
+    assert torch.isfinite(key_logits[0, A._RKEY])
+    assert key_logits[0, A._RKEY] != empty_logits[0, A._RKEY]
 
 
 def test_policy_metadata_and_layer_budget():

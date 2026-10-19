@@ -99,9 +99,9 @@ def render(state):
             if m.get("is_gone"):
                 continue
             dmg = m.get("move_adjusted_damage", -1)
-            hits = m.get("move_hits", 1)
+            hits = m.get("move_hits")
             intent = m.get("intent", "?")
-            atk = f" {dmg}x{hits}" if dmg and dmg > 0 else ""
+            atk = f" {dmg}x{hits}" if dmg is not None and hits is not None and dmg > 0 else ""
             pw = "  [" + powers_str(m["powers"]) + "]" if m.get("powers") else ""
             out.append(
                 f"  [{i}] {m.get('name')}  HP {m.get('current_hp')}/{m.get('max_hp')}"
@@ -141,7 +141,9 @@ def card_str(c):
         flags.append("ethereal")
     if c.get("exhausts"):
         flags.append("exhausts")
-    if not c.get("is_playable", True):
+    if "is_playable" not in c:
+        flags.append("playability-unknown")
+    elif not c["is_playable"]:
         flags.append("unplayable")
     tag = (" {" + ",".join(flags) + "}") if flags else ""
     target = "  ->target" if c.get("has_target") else ""

@@ -12,6 +12,7 @@ Never write diagnostics to stdout.  Everything except commands goes to
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from copy import deepcopy
 import json
 import logging
@@ -366,6 +367,17 @@ class RealPolicyAgent:
             return RealDecision("STATE", "combat_only_requires_manual_overworld")
         if self.adapter.phase() == "combat" and self.combat_search is not None:
             return self.combat_search.decide()
+        if self.adapter.phase() == "combat_reward":
+            has_key_action = any(
+                action[0] == ga.CLAIM and action[1] == ga.CLAIM_KEY
+                for action in self.adapter.legal_semantic_actions()
+            )
+            if (has_key_action
+                    and "reward_keys" not in self.model.observation_space.spaces):
+                raise RuntimeError(
+                    "checkpoint predates OBS20/ACTION8 key rewards; refusing to "
+                    "silently skip an emerald/sapphire key"
+                )
         trace: list[tuple[int, tuple | None, str]] = []
         for inner in range(max(self.max_inner_decisions, 11 if self.adapter.combat_action_contract == C.AUTOREGRESSIVE_CONTRACT else 1)):
             obs = self.adapter.observation(pending=pending)
@@ -537,7 +549,9 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
         return False
     if any(gs.get(k) != pending.get(k) for k in ("seed", "floor")):
         return False
-    return int(combat.get("turn", 0)) <= int(pending["combat_state"]["turn"])
+    if "turn" not in combat or type(combat["turn"]) is not int:
+        raise ValueError("combat END acknowledgement is missing an integer turn")
+    return combat["turn"] <= pending["combat_state"]["turn"]
 
 
 class RewardCommandAck:
@@ -547,10 +561,18 @@ class RewardCommandAck:
         self.pending = None
 
     @staticmethod
+    def card_identity(card):
+        if (not isinstance(card, dict) or not isinstance(card.get("id"), str)
+                or type(card.get("upgrades")) is not int or card["upgrades"] < 0):
+            raise ValueError("reward card receipt requires explicit id and upgrades")
+        return card["id"], card["upgrades"]
+
+    @staticmethod
     def snapshot(gs):
         return {k: deepcopy(gs.get(k)) for k in (
             "seed", "floor", "screen_type", "screen_state", "choice_list",
             "deck", "gold", "relics", "potions", "max_hp",
+            "has_ruby_key", "has_emerald_key", "has_sapphire_key",
         )}
 
     def arm(self, frame, decision, now):
@@ -564,7 +586,9 @@ class RewardCommandAck:
             index = int(decision.semantic[1])
             cards = (gs.get("screen_state") or {}).get("cards", [])
             if gs.get("screen_type") == "CARD_REWARD":
-                expected = cards[index]["id"]
+                if not 0 <= index < len(cards):
+                    raise ValueError("reward card index is outside the offered cards")
+                expected = self.card_identity(cards[index])
         claim = None
         if (gs.get("screen_type") == "CARD_REWARD" and decision.semantic
                 and decision.semantic[0] == "skip_cards"
@@ -576,13 +600,37 @@ class RewardCommandAck:
         if (gs.get("screen_type") == "COMBAT_REWARD" and decision.command.upper().startswith("CHOOSE ")
                 and decision.semantic and decision.semantic[0] == "claim"):
             kind, index = decision.semantic[1:3]
+            reward_types = {
+                "gold": {"gold", "stolen_gold"},
+                "relic": {"relic"},
+                "potion": {"potion"},
+                "key": {"emerald_key", "sapphire_key"},
+            }.get(kind)
+            if reward_types is None:
+                raise ValueError(f"unsupported reward claim kind: {kind!r}")
             rewards = [r for r in (gs.get("screen_state") or {}).get("rewards", [])
-                       if r.get("reward_type", "").lower() in
-                       ({"gold", "stolen_gold"} if kind == "gold" else {kind})]
-            if index >= len(rewards):
+                       if r.get("reward_type", "").lower() in reward_types]
+            if type(index) is not int or not 0 <= index < len(rewards):
                 raise ValueError(f"reward claim identity missing: {kind}/{index}")
             reward = rewards[index]
-            claim = (kind, reward.get(kind), reward.get("gold"))
+            claim = (
+                kind,
+                reward.get(kind, reward.get("reward_type")),
+                reward.get("gold"),
+            )
+            if kind == "gold" and (type(claim[2]) is not int or claim[2] < 0):
+                raise ValueError("gold reward receipt requires the explicit offered amount")
+        verb = decision.command.split()[0].upper()
+        if (verb == "CHOOSE" and decision.reason != "open_card_reward"
+                and expected is None and claim is None):
+            if decision.semantic and decision.semantic[0] == ga.BOSS_RELIC:
+                index = decision.semantic[1]
+                relics = gs.get("screen_state", {}).get("relics", [])
+                if type(index) is not int or not 0 <= index < len(relics):
+                    raise ValueError("boss relic receipt is missing the chosen identity")
+                claim = ("relic", relics[index], None)
+            else:
+                raise ValueError("reward CHOOSE has no explicit effect receipt")
         self.pending = (self.snapshot(gs), decision.reason, expected, now, claim)
 
     def waiting(self, frame, now):
@@ -593,19 +641,36 @@ class RewardCommandAck:
         before, reason, expected, since, claim = self.pending
         gs = frame.get("game_state") or {}
         after = self.snapshot(gs)
-        acknowledged = bool(gs) and after != before
+        # A gold animation or changing choice label does not acknowledge a
+        # SKIP/RETURN/PROCEED transaction.  Its addressed screen must close.
+        acknowledged = bool(gs) and gs.get("screen_type") != before["screen_type"]
+        if not gs:
+            acknowledged = False
+        elif any(gs.get(key) != before[key] for key in ("seed", "floor")
+                 if before[key] is not None):
+            raise RuntimeError("reward receipt crossed a different run/floor")
         if reason == "open_card_reward":
             acknowledged = gs.get("screen_type") == "CARD_REWARD"
         elif expected is not None:
-            count = lambda deck: sum(c.get("id") == expected for c in (deck or []))
-            acknowledged = count(gs.get("deck")) == count(before["deck"]) + 1
+            def card_count(deck):
+                if not isinstance(deck, list):
+                    raise ValueError("reward card receipt is missing the deck")
+                return Counter(self.card_identity(card) for card in deck)
+            acknowledged = (card_count(gs["deck"])[expected]
+                            == card_count(before["deck"])[expected] + 1)
         elif claim is not None:
             kind, entity, amount = claim
             if kind == "bowl":
                 acknowledged = (gs.get("max_hp", 0) == (before.get("max_hp") or 0) + 2
                                 and gs.get("screen_type") != "CARD_REWARD")
             elif kind == "gold":
-                acknowledged = gs.get("gold", 0) > (before.get("gold") or 0)
+                if type(gs.get("gold")) is not int or type(before["gold"]) is not int:
+                    raise ValueError("gold reward receipt is missing the gold balance")
+                blocked = any(r.get("id") == 'Ectoplasm' for r in before["relics"] or [])
+                expected_gold = before["gold"] + (0 if blocked else amount)
+                acknowledged = gs["gold"] == expected_gold
+                if blocked:
+                    acknowledged = acknowledged and after["screen_state"] != before["screen_state"]
             elif kind in {"potion", "relic"}:
                 entity_id = entity.get("id") if isinstance(entity, dict) else entity
                 if not entity_id:
@@ -613,6 +678,16 @@ class RewardCommandAck:
                 key = "potions" if kind == "potion" else "relics"
                 count = lambda items: sum(x.get("id") == entity_id for x in (items or []))
                 acknowledged = count(gs.get(key)) == count(before.get(key)) + 1
+            elif kind == "key":
+                key_field = {
+                    "EMERALD_KEY": "has_emerald_key",
+                    "SAPPHIRE_KEY": "has_sapphire_key",
+                }.get(str(entity).upper())
+                if key_field is None:
+                    raise ValueError(f"unknown key reward acknowledgement: {entity!r}")
+                acknowledged = (
+                    before.get(key_field) is False and gs.get(key_field) is True
+                )
             else:
                 raise ValueError(f"unsupported reward claim acknowledgement: {kind}")
         if acknowledged:
@@ -653,7 +728,7 @@ class CombatFrameStability:
                 or gs.get("screen_type") != "NONE" or "error" in frame):
             self.state = None
             return False  # Selection screens have their own readiness contract.
-        if (not frame.get("ready_for_command", True) or gs.get("current_action")
+        if (not frame.get("ready_for_command", False) or gs.get("current_action")
                 or gs.get("action_phase") not in (None, "WAITING_ON_USER")
                 or gs.get("is_screen_up")):
             self.state = None

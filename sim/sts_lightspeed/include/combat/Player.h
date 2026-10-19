@@ -230,6 +230,8 @@ struct Player {
                 return artifact;
             case PS::DEXTERITY:
                 return dexterity;
+            case PS::FOCUS:
+                return focus;
             case PS::STRENGTH:
                 return strength;
             default:

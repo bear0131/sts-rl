@@ -61,7 +61,7 @@ from . import combat_language as CL
 # It adds a lossless per-card master-deck sequence (including upgrade count),
 # action-aligned upgrade fields for every overworld card choice, and persistent
 # run HP. The simulator's Deck::MAX_SIZE is the capacity source of truth.
-OBS_VERSION = 19  # public boss-room identity for fight utility
+OBS_VERSION = 20  # owned/claimable Act-4 keys are explicit, not inferred
 GLOBAL_MAP_OBS_VERSION = 12
 CARD_LANGUAGE_OBS_VERSION = 13
 DECK_SIZE_OBS_VERSION = 14
@@ -81,6 +81,7 @@ R_MAX = V.RELIC_VOCAB_CAPACITY
 P_MAX = 5                 # potion slots
 DECK_SLOTS = 96           # sts::Deck::MAX_SIZE
 G_MAX = DECK_SLOTS        # full-deck select grids use the same hard capacity
+SELECT_NATIVE_HANDLE_CAPACITY = 65537  # 0 absent; native_index+1 in 1..65536
 SELECT_PICK_SLOTS = 3     # overworld grid's max simultaneous picks (sim's
                           # haveSelectedCards is fixed_list<3>: Astrolabe=3 max)
 OFFER_SLOTS = 5           # aligns with the reserved REWARD_CARD action segment
@@ -213,6 +214,9 @@ def obs_space(*, global_map_view=False, card_language=False,
         "potions": cat((P_MAX,), V.POTION_VOCAB_CAPACITY),
         "gold": scal((1,)),
         "run_hp": scal((RUN_HP_SCALARS,)),
+        # ruby, emerald, sapphire ownership.  These determine Act-4 access and
+        # cannot be reconstructed from relics or the current screen.
+        "run_keys": scal((3,)),
         # Lossless master deck: slot i is one physical card, including its
         # upgrade count. This is the overworld value model's deck signal.
         "deck_ids": cat((DECK_SLOTS,), N_CARDS),
@@ -223,12 +227,14 @@ def obs_space(*, global_map_view=False, card_language=False,
         "reward_gold": scal((2,)),
         "reward_relic_ids": cat((3,), V.RELIC_VOCAB_CAPACITY),
         "reward_potion_ids": cat((5,), V.POTION_VOCAB_CAPACITY),
+        # emerald, sapphire key offers on the current reward screen.
+        "reward_keys": scal((2,)),
         "select_card_ids": cat((G_MAX,), N_CARDS),
         "select_card_upgrades": scal((G_MAX,)),
         "select_card_costs": scal((G_MAX,)),
         # Handles are for codec alignment only, never neural positional features.
         # 0 is padding; native index n is stored as n+1, including explicit skip.
-        "select_native_indices": cat((G_MAX,), 65537),
+        "select_native_indices": cat((G_MAX,), SELECT_NATIVE_HANDLE_CAPACITY),
         "select_zone": cat((1,), 7),
         "pending_card_slot": cat((1,), HAND_SLOTS + 1),
         "pending_potion_slot": cat((1,), P_MAX + 1),
@@ -319,11 +325,23 @@ def obs_space(*, global_map_view=False, card_language=False,
 # ============================== index helpers ==============================
 
 def _card_idx(card):
-    return CARD_INDEX.get(card["id"], CARD_INDEX[EMPTY])
+    return _card_id_idx(card["id"])
+
+
+def _card_id_idx(card_id):
+    if card_id == EMPTY:
+        raise ValueError("an actual card entry cannot use the EMPTY/PAD sentinel")
+    try:
+        return CARD_INDEX[card_id]
+    except KeyError as exc:
+        raise ValueError(f"unknown card id: {card_id!r}") from exc
 
 
 def _idx(index_map, key):
-    return index_map.get(key, 0)            # 0 == PAD for every id vocabulary
+    try:
+        return index_map[key]
+    except KeyError as exc:
+        raise ValueError(f"unknown categorical value: {key!r}") from exc
 
 
 def _card_tuple(card):
@@ -347,6 +365,125 @@ def _require_capacity(name, values, capacity):
         )
 
 
+def _require_keys(mapping, keys, context):
+    if not isinstance(mapping, dict):
+        raise ValueError(f"{context} must be an object, got {mapping!r}")
+    missing = set(keys) - set(mapping)
+    if missing:
+        raise ValueError(f"{context} is incomplete; missing {sorted(missing)!r}")
+
+
+def _validate_complete_canonical(canon):
+    """Validate a live real-game frame before any encoder defaults run.
+
+    The general encoder deliberately supports partial simulator/test projections.
+    RealGameAdapter marks authoritative frames strict_complete, so a missing
+    value cannot be converted into a plausible zero/PAD observation.
+    """
+    _require_keys(canon, ("phase", "global", "options"), "canonical state")
+    phase = canon["phase"]
+    if phase not in V.PHASE_VOCAB_INDEX or phase in {"none", "invalid"}:
+        raise ValueError(f"strict live frame has no actionable phase: {phase!r}")
+
+    g = canon["global"]
+    _require_keys(
+        g,
+        (
+            "character", "ascension", "act", "floor", "combat_is_boss",
+            "boss", "relics", "relic_counters", "potions", "gold", "hp",
+            "max_hp", "deck", "boss_relics", "keys",
+        ),
+        "canonical global state",
+    )
+    if g["character"] == "INVALID":
+        raise ValueError("strict live frame cannot use INVALID character")
+    _idx(V.CHARACTER_VOCAB_INDEX, g["character"])
+    if g["boss"] == "PAD":
+        raise ValueError("strict live frame cannot use PAD boss")
+    _idx(V.BOSS_VOCAB_INDEX, g["boss"])
+    if len(g["relics"]) != len(g["relic_counters"]):
+        raise ValueError(
+            "global relic ids and counters are not slot-aligned: "
+            f"{len(g['relics'])} != {len(g['relic_counters'])}"
+        )
+    _require_keys(g["keys"], ("ruby", "emerald", "sapphire"), "global keys")
+    for name, value in g["keys"].items():
+        if type(value) is not bool:
+            raise ValueError(f"global key {name!r} must be a boolean, got {value!r}")
+    for rid in g["relics"]:
+        if rid == "PAD":
+            raise ValueError("real relic list cannot contain PAD")
+        _idx(V.RELIC_VOCAB_INDEX, rid)
+    for pid in g["potions"]:
+        _idx(V.POTION_VOCAB_INDEX, pid)  # PAD is legal only for an empty slot.
+    for card in g["deck"]:
+        cid, _up = _card_tuple(card)
+        _card_id_idx(cid)
+
+    opts = canon["options"]
+    if phase == "combat":
+        _require_keys(
+            canon,
+            ("turn", "player", "monsters", "hand", "draw", "discard", "exhaust"),
+            "canonical combat state",
+        )
+        player = canon["player"]
+        _require_keys(
+            player,
+            (
+                "hp", "max_hp", "block", "energy", "gold", "powers",
+                "energy_per_turn", "combat_counters",
+            ),
+            "canonical player state",
+        )
+        missing_counters = set(COMBAT_COUNTER_KEYS) - set(player["combat_counters"])
+        if missing_counters:
+            raise ValueError(
+                "canonical combat counters are incomplete: "
+                f"{sorted(missing_counters)!r}"
+            )
+        for index, monster in enumerate(canon["monsters"]):
+            _require_keys(
+                monster,
+                (
+                    "id", "hp", "max_hp", "block", "gone", "half_dead",
+                    "base_damage", "adjusted_damage", "hits", "powers",
+                    "move", "move_id", "last_move", "last_move_id",
+                    "second_last_move", "second_last_move_id",
+                ),
+                f"canonical monster[{index}]",
+            )
+            if monster["id"] == "PAD":
+                raise ValueError("real monster records cannot use PAD slots")
+        for index, card in enumerate(canon["hand"]):
+            _require_keys(card, ("id", "up", "cost"), f"canonical hand[{index}]")
+    else:
+        required_options = {
+            "combat_reward": (
+                "gold", "relics", "potions", "keys", "card_count", "cards"
+            ),
+            "card_select": ("cards", "select"),
+            "map": ("nodes",),
+            "event": ("event",),
+            "shop": ("shop_cards", "shop_relics", "shop_potions", "shop_remove_cost"),
+        }.get(phase, ())
+        _require_keys(opts, required_options, f"canonical {phase} options")
+
+    select = opts.get("select")
+    if select is not None:
+        _require_keys(
+            select,
+            (
+                "context", "zone", "candidates", "selected", "pick_remaining",
+                "pick_min", "pick_max", "can_pick_zero", "can_pick_any", "multi",
+            ),
+            "canonical selection descriptor",
+        )
+        if select["context"] == "PAD":
+            raise ValueError("live card selection cannot use PAD context")
+        _idx(V.SELECT_CONTEXT_VOCAB_INDEX, select["context"])
+
+
 def _encode_card_sequence(o, pile, cards):
     """Compact every language-covered card ID without truncating duplicates."""
     ids_key = f"{pile}_card_ids"
@@ -368,7 +505,7 @@ def _encode_card_sequence(o, pile, cards):
     for i, (card_id, (count, upgraded_count, upgrade_sum)) in enumerate(
         grouped.items()
     ):
-        o[ids_key][i] = CARD_INDEX.get(card_id, CARD_INDEX[EMPTY])
+        o[ids_key][i] = _card_id_idx(card_id)
         o[f"{pile}_card_counts"][i] = count
         o[f"{pile}_card_upgraded_counts"][i] = upgraded_count
         o[f"{pile}_card_upgrades"][i] = upgrade_sum / UPGRADE_SCALE
@@ -410,6 +547,7 @@ def _empty(*, global_map_view=False, card_language=False,
         "potions": np.zeros(P_MAX, _CAT),
         "gold": np.zeros(1, _SCALAR),
         "run_hp": np.zeros(RUN_HP_SCALARS, _SCALAR),
+        "run_keys": np.zeros(3, _SCALAR),
         "deck_ids": np.zeros(DECK_SLOTS, _CAT),
         "deck_upgrades": np.zeros(DECK_SLOTS, _SCALAR),
         "offer_card_ids": np.zeros(OFFER_SLOTS, _CAT),
@@ -417,6 +555,7 @@ def _empty(*, global_map_view=False, card_language=False,
         "reward_gold": np.zeros(2, _SCALAR),
         "reward_relic_ids": np.zeros(3, _CAT),
         "reward_potion_ids": np.zeros(5, _CAT),
+        "reward_keys": np.zeros(2, _SCALAR),
         "select_card_ids": np.zeros(G_MAX, _CAT),
         "select_card_upgrades": np.zeros(G_MAX, _SCALAR),
         "select_card_costs": np.zeros(G_MAX, _SCALAR),
@@ -513,6 +652,7 @@ def _empty_combat(*, card_language=False, combat_language=False):
         "draw_counts": np.zeros(N_CARDS, _SCALAR),
         "exhaust_counts": np.zeros(N_CARDS, _SCALAR),
         "gold": np.zeros(1, _SCALAR),
+        "run_keys": np.zeros(3, _SCALAR),
         "hand_block": np.zeros(HAND_SLOTS, _SCALAR),
         "hand_costs": np.zeros(HAND_SLOTS, _SCALAR),
         "hand_damage": np.zeros(HAND_SLOTS, _SCALAR),
@@ -579,9 +719,8 @@ def _encode_combat(o, canon):
         (hp / max_hp) if max_hp else 0.0,
     )
     for name, amt in p["powers"].items():
-        j = V.PLAYER_BUFF_VOCAB_INDEX.get(name)
-        if j is not None:
-            o["player_buffs"][j] = amt / BUFF_SCALE
+        j = _idx(V.PLAYER_BUFF_VOCAB_INDEX, name)
+        o["player_buffs"][j] = amt / BUFF_SCALE
     counters = p.get("combat_counters", {})
     for i, name in enumerate(COMBAT_COUNTER_KEYS):
         value = counters.get(name, 0)
@@ -591,8 +730,10 @@ def _encode_combat(o, canon):
         )
     if "player_status_language" in o:
         program = CL.status_program("PLAYER", hp, max_hp, p["block"], p["powers"])
-        ids = [CL.TOKEN_INDEX.get(token, 0) for token in program]
-        ids = ids[:CL.MAX_PLAYER_STATUS_TOKENS]
+        _require_capacity(
+            "player status language", program, CL.MAX_PLAYER_STATUS_TOKENS
+        )
+        ids = [_idx(CL.TOKEN_INDEX, token) for token in program]
         o["player_status_language"][:len(ids)] = ids
 
     # Monsters keep FIXED slots (obs_design.md §2.2): monster i stays in slot i;
@@ -600,6 +741,7 @@ def _encode_combat(o, canon):
     # and breaks the slot<->action-target correspondence). We therefore index by
     # position, not by a "live" filter.
     monsters = canon.get("monsters", [])
+    _require_capacity("monsters", monsters, MAX_MONSTERS)
     for i in range(MAX_MONSTERS):
         if i >= len(monsters):
             break
@@ -608,7 +750,25 @@ def _encode_combat(o, canon):
             continue
         present = 0.0 if m["gone"] else 1.0
         o["monster_id"][i] = _idx(V.MONSTER_VOCAB_INDEX, m["id"])
-        o["monster_move"][i] = m.get("move_id", 0) or 0
+        move = m.get("move")
+        if move == "INVALID" and (
+            m["gone"] or canon.get("post_enemy_turn_boundary", False)
+        ):
+            move_id = 0
+        else:
+            move_id = _idx(V.MOVE_VOCAB_INDEX, move)
+            if move_id == 0:
+                raise ValueError(
+                    f"live monster {m['id']!r} cannot use PAD as its move"
+                )
+        if "move_id" not in m:
+            raise ValueError(f"monster {m['id']!r} is missing move_id")
+        if int(m["move_id"]) != move_id:
+            raise ValueError(
+                f"monster move index mismatch for {move!r}: "
+                f"got {m['move_id']!r}, expected {move_id}"
+            )
+        o["monster_move"][i] = move_id
         o["monster_intent_cat"][i] = V.INTENT_CATEGORY_INDEX[
             intents.derive(m.get("move"), m["base_damage"])
         ]
@@ -622,26 +782,34 @@ def _encode_combat(o, canon):
             m["hits"] / HITS_SCALE,
         )
         for name, amt in m["powers"].items():
-            j = V.MONSTER_BUFF_VOCAB_INDEX.get(name)
-            if j is not None:
-                o["monster_buffs"][i, j] = amt / BUFF_SCALE
+            j = _idx(V.MONSTER_BUFF_VOCAB_INDEX, name)
+            o["monster_buffs"][i, j] = amt / BUFF_SCALE
         if "monster_status_language" in o:
             status = CL.status_program(
                 "MONSTER", mhp, mmax, m["block"], m["powers"]
             )
-            status_ids = [CL.TOKEN_INDEX.get(token, 0) for token in status]
-            status_ids = status_ids[:CL.MAX_MONSTER_STATUS_TOKENS]
+            _require_capacity(
+                f"monster[{i}] status language",
+                status,
+                CL.MAX_MONSTER_STATUS_TOKENS,
+            )
+            status_ids = [_idx(CL.TOKEN_INDEX, token) for token in status]
             o["monster_status_language"][i, :len(status_ids)] = status_ids
             intent = CL.live_intent_program(
                 m.get("move", "PAD"),
                 m.get("adjusted_damage", m["base_damage"]),
                 m["hits"],
             )
-            intent_ids = [CL.TOKEN_INDEX.get(token, 0) for token in intent]
-            intent_ids = intent_ids[:CL.MAX_LIVE_INTENT_TOKENS]
+            _require_capacity(
+                f"monster[{i}] intent language",
+                intent,
+                CL.MAX_LIVE_INTENT_TOKENS,
+            )
+            intent_ids = [_idx(CL.TOKEN_INDEX, token) for token in intent]
             o["monster_intent_language"][i, :len(intent_ids)] = intent_ids
 
     hand = canon.get("hand", [])
+    _require_capacity("hand", hand, HAND_SLOTS)
     for i in range(HAND_SLOTS):
         if i < len(hand):
             o["hand_ids"][i] = _card_idx(hand[i])
@@ -668,21 +836,27 @@ def _encode_combat_global(o, canon):
     o["post_enemy_turn_boundary"][0] = float(
         bool(canon.get("post_enemy_turn_boundary", False))
     )
-    o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(
-        canon.get("arg_step", "root"), 0
+    o["arg_step"][0] = _idx(
+        V.ARG_STEP_VOCAB_INDEX, canon.get("arg_step", "root")
     )
     g = canon.get("global")
     o["combat_is_boss"][0] = float(bool((g or {}).get("combat_is_boss", False)))
     if g is None:
         return
-    o["character"][0] = V.CHARACTER_VOCAB_INDEX.get(
-        g.get("character", "INVALID"), 0
+    o["character"][0] = _idx(
+        V.CHARACTER_VOCAB_INDEX, g.get("character", "INVALID")
     )
     o["ascension"][0] = g.get("ascension", 0) / ASCENSION_SCALE
     gold = g.get("gold", 0)
     if canon.get("phase") == "combat" and canon.get("player") is not None:
         gold = canon["player"].get("gold", gold)
     o["gold"][0] = gold / GOLD_SCALE
+    keys = g.get("keys")
+    if keys is not None and "run_keys" in o:
+        _require_keys(keys, ("ruby", "emerald", "sapphire"), "global keys")
+        o["run_keys"][:] = tuple(
+            float(bool(keys[name])) for name in ("ruby", "emerald", "sapphire")
+        )
 
     relics = g.get("relics", [])
     relic_counters = g.get("relic_counters", [])
@@ -705,25 +879,33 @@ def _encode_combat_global(o, canon):
                 if rid in _BINARY_LIVE_RELICS
                 else live_value / COUNTER_SCALE
             )
-    for i, pid in enumerate(g.get("potions", [])[:P_MAX]):
+    potions = g.get("potions", [])
+    _require_capacity("global.potions", potions, P_MAX)
+    for i, pid in enumerate(potions):
         o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
 
 
 def _encode_global(o, canon):
     """Fill the run-global groups from canon['global'] (present every phase)."""
-    o["phase"][0] = V.PHASE_VOCAB_INDEX.get(canon.get("phase", "none"), 0)
+    o["phase"][0] = _idx(
+        V.PHASE_VOCAB_INDEX, canon.get("phase", "none")
+    )
     if "post_enemy_turn_boundary" in o:
         o["post_enemy_turn_boundary"][0] = float(
             bool(canon.get("post_enemy_turn_boundary", False))
         )
     # arg_step rides at top level (the thin env sets it; combat-only canonicals
     # omit it -> root, index 0). Kept here so it is filled every phase.
-    o["arg_step"][0] = V.ARG_STEP_VOCAB_INDEX.get(canon.get("arg_step", "root"), 0)
+    o["arg_step"][0] = _idx(
+        V.ARG_STEP_VOCAB_INDEX, canon.get("arg_step", "root")
+    )
     g = canon.get("global")
     o["combat_is_boss"][0] = float(bool((g or {}).get("combat_is_boss", False)))
     if g is None:
         return
-    o["character"][0] = V.CHARACTER_VOCAB_INDEX.get(g.get("character", "INVALID"), 0)
+    o["character"][0] = _idx(
+        V.CHARACTER_VOCAB_INDEX, g.get("character", "INVALID")
+    )
     o["ascension"][0] = g.get("ascension", 0) / ASCENSION_SCALE
     o["act"][0] = g.get("act", 0) / ACT_SCALE
     o["floor"][0] = g.get("floor", 0) / FLOOR_SCALE
@@ -742,6 +924,12 @@ def _encode_global(o, canon):
         min(max_hp, HP_SCALE) / HP_SCALE,
         (hp / max_hp) if max_hp else 0.0,
     )
+    keys = g.get("keys")
+    if keys is not None:
+        _require_keys(keys, ("ruby", "emerald", "sapphire"), "global keys")
+        o["run_keys"][:] = tuple(
+            float(bool(keys[name])) for name in ("ruby", "emerald", "sapphire")
+        )
     # Relic ids and persistent counters share slots. During combat, overwrite
     # the counters that live in BattleContext with their current values.
     relics = g.get("relics", [])
@@ -766,13 +954,15 @@ def _encode_global(o, canon):
                 else live_value / COUNTER_SCALE
             )
     # potions: slot-aligned ids; empty/INVALID names -> PAD 0.
-    for i, pid in enumerate(g.get("potions", [])[:P_MAX]):
+    potions = g.get("potions", [])
+    _require_capacity("global.potions", potions, P_MAX)
+    for i, pid in enumerate(potions):
         o["potions"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
     deck = g.get("deck", [])
     _require_capacity("global.deck", deck, DECK_SLOTS)
     for i, card in enumerate(deck):
         cid, up = _card_tuple(card)
-        o["deck_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+        o["deck_ids"][i] = _card_id_idx(cid)
         o["deck_upgrades"][i] = up / UPGRADE_SCALE
     if "deck_size" in o:
         o["deck_size"][0] = min(
@@ -793,24 +983,41 @@ def _encode_options(o, canon):
         _require_capacity("options.cards", cards, OFFER_SLOTS)
         for j, card in enumerate(cards):
             cid, up = _card_tuple(card)
-            o["offer_card_ids"][j] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+            o["offer_card_ids"][j] = _card_id_idx(cid)
             o["offer_card_upgrades"][j] = up / UPGRADE_SCALE
-        for j, amount in enumerate(opts.get("gold", [])[:2]):
+        gold = opts.get("gold", [])
+        relics = opts.get("relics", [])
+        potions = opts.get("potions", [])
+        keys = opts.get("keys", [])
+        _require_capacity("options.gold", gold, 2)
+        _require_capacity("options.relics", relics, 3)
+        _require_capacity("options.potions", potions, 5)
+        _require_capacity("options.keys", keys, 1)
+        for j, amount in enumerate(gold):
             o["reward_gold"][j] = amount / GOLD_SCALE
-        for j, rid in enumerate(opts.get("relics", [])[:3]):
+        for j, rid in enumerate(relics):
             o["reward_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
-        for j, pid in enumerate(opts.get("potions", [])[:5]):
+        for j, pid in enumerate(potions):
             o["reward_potion_ids"][j] = _idx(V.POTION_VOCAB_INDEX, pid)
+        for key in keys:
+            if key == "EMERALD_KEY":
+                o["reward_keys"][0] = 1.0
+            elif key == "SAPPHIRE_KEY":
+                o["reward_keys"][1] = 1.0
+            else:
+                raise ValueError(f"unknown reward key identity: {key!r}")
     elif phase == "event" and opts.get("neow") and "neow_bonus_ids" in o:
-        for i, option in enumerate(opts.get("neow", [])[:NEOW_SLOTS]):
+        neow = opts.get("neow", [])
+        _require_capacity("options.neow", neow, NEOW_SLOTS)
+        for i, option in enumerate(neow):
             bonus_id = int(option.get("bonus_id", 0))
             drawback_id = int(option.get("drawback_id", 0))
-            o["neow_bonus_ids"][i] = max(
-                0, min(NEOW_BONUS_CAPACITY - 1, bonus_id)
-            )
-            o["neow_drawback_ids"][i] = max(
-                0, min(NEOW_DRAWBACK_CAPACITY - 1, drawback_id)
-            )
+            if not 0 <= bonus_id < NEOW_BONUS_CAPACITY:
+                raise ValueError(f"invalid Neow bonus id: {bonus_id}")
+            if not 0 <= drawback_id < NEOW_DRAWBACK_CAPACITY:
+                raise ValueError(f"invalid Neow drawback id: {drawback_id}")
+            o["neow_bonus_ids"][i] = bonus_id
+            o["neow_drawback_ids"][i] = drawback_id
             o["neow_features"][i] = (
                 i / max(1, NEOW_SLOTS - 1),
                 1.0 if drawback_id > 1 else 0.0,
@@ -821,21 +1028,23 @@ def _encode_options(o, canon):
         o["select_zone"][0] = 6
         for k, card in enumerate(cards):
             cid, up = _card_tuple(card)
-            o["select_card_ids"][k] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+            o["select_card_ids"][k] = _card_id_idx(cid)
             o["select_card_upgrades"][k] = up / UPGRADE_SCALE
             o["select_native_indices"][k] = k + 1
     elif phase == "map":
-        for j, (x, room) in enumerate(opts.get("nodes", [])[:MAP_EDGES]):
-            o["map_node_rooms"][j] = V.ROOM_VOCAB_INDEX.get(room, 0)
+        nodes = opts.get("nodes", [])
+        _require_capacity("options.nodes", nodes, MAP_EDGES)
+        for j, (x, room) in enumerate(nodes):
+            o["map_node_rooms"][j] = _idx(V.ROOM_VOCAB_INDEX, room)
             o["map_node_x"][j] = x / MAP_X_SCALE
         if "map_full_rooms" in o:
             for node in opts.get("full_map", []):
                 x, y = int(node["x"]), int(node["y"])
                 if not (0 <= x < MAP_COLS and 0 <= y < MAP_ROWS):
-                    continue
+                    raise ValueError(f"map node outside observation grid: {(x, y)!r}")
                 slot = y * MAP_COLS + x
-                o["map_full_rooms"][slot] = V.ROOM_VOCAB_INDEX.get(
-                    node["room"], 0
+                o["map_full_rooms"][slot] = _idx(
+                    V.ROOM_VOCAB_INDEX, node["room"]
                 )
                 features = o["map_full_features"][slot]
                 features[:5] = (
@@ -846,18 +1055,23 @@ def _encode_options(o, canon):
                     float(bool(node.get("reachable"))),
                 )
                 for child_x in node.get("children", []):
-                    if 0 <= child_x < MAP_COLS:
-                        features[5 + child_x] = 1.0
+                    if not 0 <= child_x < MAP_COLS:
+                        raise ValueError(f"map child outside observation grid: {child_x!r}")
+                    features[5 + child_x] = 1.0
     elif phase == "event":
         g = canon.get("global") or {}
         # event id lives in the options (env reads gc.cur_event_name into it)
         event_id = _idx(V.EVENT_VOCAB_INDEX, opts.get("event", "PAD"))
         o["event_id"][0] = event_id
         if "event_option_ids" in o:
-            for option_idx in opts.get("event_options", [])[:EVENT_OPTION_SLOTS]:
+            event_options = opts.get("event_options", [])
+            _require_capacity(
+                "options.event_options", event_options, EVENT_OPTION_SLOTS
+            )
+            for option_idx in event_options:
                 option_idx = int(option_idx)
                 if not (0 <= option_idx < EVENT_OPTION_SLOTS):
-                    continue
+                    raise ValueError(f"invalid event option index: {option_idx}")
                 o["event_option_ids"][option_idx] = option_idx + 1
                 o["event_option_event_ids"][option_idx] = event_id
                 o["event_option_features"][option_idx] = (
@@ -872,14 +1086,18 @@ def _encode_options(o, canon):
         _require_capacity("options.shop_cards", shop_cards, SHOP_CARD_SLOTS)
         for i, (cid, up, price) in enumerate(shop_cards):
             if price != -1:
-                o["shop_card_ids"][i] = CARD_INDEX.get(cid, CARD_INDEX[EMPTY])
+                o["shop_card_ids"][i] = _card_id_idx(cid)
                 o["shop_card_upgrades"][i] = up / UPGRADE_SCALE
                 o["shop_card_prices"][i] = price / GOLD_SCALE
-        for i, (rid, price) in enumerate(opts.get("shop_relics", [])[:SHOP_RELIC_SLOTS]):
+        shop_relics = opts.get("shop_relics", [])
+        shop_potions = opts.get("shop_potions", [])
+        _require_capacity("options.shop_relics", shop_relics, SHOP_RELIC_SLOTS)
+        _require_capacity("options.shop_potions", shop_potions, SHOP_POTION_SLOTS)
+        for i, (rid, price) in enumerate(shop_relics):
             if price != -1:
                 o["shop_relic_ids"][i] = _idx(V.RELIC_VOCAB_INDEX, rid)
                 o["shop_relic_prices"][i] = price / GOLD_SCALE
-        for i, (pid, price) in enumerate(opts.get("shop_potions", [])[:SHOP_POTION_SLOTS]):
+        for i, (pid, price) in enumerate(shop_potions):
             if price != -1:
                 o["shop_potion_ids"][i] = _idx(V.POTION_VOCAB_INDEX, pid)
                 o["shop_potion_prices"][i] = price / GOLD_SCALE
@@ -889,7 +1107,9 @@ def _encode_options(o, canon):
 
     if phase == "boss_relic":
         g = canon.get("global") or {}
-        for j, rid in enumerate(g.get("boss_relics", [])[:BOSS_RELIC_SLOTS]):
+        boss_relics = g.get("boss_relics", [])
+        _require_capacity("global.boss_relics", boss_relics, BOSS_RELIC_SLOTS)
+        for j, rid in enumerate(boss_relics):
             o["boss_relic_ids"][j] = _idx(V.RELIC_VOCAB_INDEX, rid)
 
 
@@ -902,6 +1122,8 @@ def encode(
 
     `canon` may carry only the combat block (a normalize_sim result), only the
     overworld block, or the full assembled dict — absent groups encode to PAD."""
+    if canon.get("strict_complete"):
+        _validate_complete_canonical(canon)
     o = _empty(
         global_map_view=global_map_view,
         card_language=card_language,
@@ -928,6 +1150,8 @@ def encode_combat(canon, *, card_language=False, combat_language=False):
     leaves. Fields follow the same versioned public schema. Inference adapters
     project onto a historical checkpoint's declared observation space.
     """
+    if canon.get("strict_complete"):
+        _validate_complete_canonical(canon)
     o = _empty_combat(
         card_language=card_language,
         combat_language=combat_language,
@@ -968,9 +1192,7 @@ def _encode_select(o, sel):
     if "selected_card_ids" in o:
         for i, card in enumerate(selected):
             cid, up = _card_tuple(card)
-            o["selected_card_ids"][i] = CARD_INDEX.get(
-                cid, CARD_INDEX[EMPTY]
-            )
+            o["selected_card_ids"][i] = _card_id_idx(cid)
             o["selected_card_upgrades"][i] = up / UPGRADE_SCALE
     # combat MULTI screen: thin-env selected hand indices -> hand-aligned 0/1.
     for h in sel.get("hand_selected", []):
