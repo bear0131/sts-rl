@@ -554,6 +554,45 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
     return combat["turn"] <= pending["combat_state"]["turn"]
 
 
+class MapCommandAck:
+    """Do not reissue a map click or ignore its Wing Boots charge effect."""
+
+    def __init__(self):
+        self.pending = None
+
+    def arm(self, frame, decision, now, adapter):
+        if not decision.semantic or decision.semantic[0] != ga.MAP:
+            return
+        if self.pending is not None:
+            raise RuntimeError('map move already awaiting acknowledgement')
+        if adapter.screen_type() != 'MAP':
+            raise ValueError('map move receipt armed outside MAP')
+        expected_command = adapter.command_for_semantic(decision.semantic)
+        if decision.command != expected_command:
+            raise ValueError('map move command disagrees with its semantic destination')
+        self.pending = (adapter.map_move_expectation(decision.semantic[1]), now)
+
+    def waiting(self, frame, now):
+        if self.pending is None:
+            return False
+        expected, since = self.pending
+        gs = frame.get('game_state') or {}
+        if (gs.get('seed') != expected['seed'] or gs.get('act') != expected['act']
+                or type(gs.get('floor')) is not int):
+            raise ValueError('map move receipt changed run or lacks floor')
+        counter = RealGameAdapter.map_flight_counter(gs)
+        if gs['floor'] == expected['floor']:
+            if counter != expected['flight_counter']:
+                raise ValueError('map move Wing Boots counter differs from its connection cost')
+            self.pending = None
+            return False
+        if gs['floor'] != expected['floor'] - 1:
+            raise ValueError('map move advanced to an unexpected floor')
+        if now - since > 10.0:
+            raise RuntimeError('map move did not advance for 10 seconds')
+        return True
+
+
 class RewardCommandAck:
     """One in-flight reward mutation; UI retries must never become card picks."""
 
@@ -837,6 +876,7 @@ def main() -> None:
         combat_stability = CombatFrameStability()
         reward_ack = RewardCommandAck()
         event_ack = EventEffectAck()
+        map_ack = MapCommandAck()
         unsent_search = None
         pause_clock = UiPauseClock()
         attach_pending = args.attach_existing_seed is not None
@@ -861,6 +901,7 @@ def main() -> None:
                         combat_stability = CombatFrameStability()
                         reward_ack = RewardCommandAck()
                         event_ack = EventEffectAck()
+                        map_ack = MapCommandAck()
                         pause_clock = UiPauseClock()
                         log.info('save reload boundary: discarded pending commands and acknowledgements')
                     time.sleep(0.1)
@@ -894,6 +935,10 @@ def main() -> None:
                     send('STATE')
                     continue
                 if event_ack.waiting(frame, now):
+                    time.sleep(0.1)
+                    send("STATE")
+                    continue
+                if map_ack.waiting(frame, now):
                     time.sleep(0.1)
                     send("STATE")
                     continue
@@ -941,6 +986,7 @@ def main() -> None:
                     send("STATE")
                     continue
                 event_ack.arm(frame, decision, now)
+                map_ack.arm(frame, decision, now, adapter)
                 send_decision(frame, decision)
                 reward_ack.arm(frame, decision, now)
                 if combat_command_needs_ack(frame, decision.command):

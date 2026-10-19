@@ -267,6 +267,9 @@ namespace sts {
 
         // room setup
         void transitionToAct(int act);
+        [[nodiscard]] bool isNormalMapConnection(int mapNodeX) const;
+        [[nodiscard]] bool canTransitionToMapNode(int mapNodeX) const;
+        [[nodiscard]] std::vector<int> getMapChoices() const;
         void transitionToMapNode(int mapNodeX);
         void setupEvent();
         void setupTreasureRoom();

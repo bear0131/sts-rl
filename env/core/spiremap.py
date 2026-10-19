@@ -2,14 +2,13 @@
 
 Why this exists
 ---------------
-SimGameEnv drives a whole run through GameContext, but the gc does NOT expose
-"from the node I'm on, which next-row nodes can I move to?" — only
-transition_to_map_node(x) to actually move. The standalone sts.SpireMap class
+SimGameEnv obtains live legal choices from GameContext. The standalone sts.SpireMap class
 (constructed from the same seed/ascension/act) DOES expose edges + room types,
 and a probe confirmed it reconstructs the SAME map the gc walks: SpireMap's
 has_edge / get_room_type agree with where gc.transition_to_map_node actually
 lands. So we rebuild a SpireMap alongside the gc purely to enumerate legal map
-moves. This keeps the sim a black box — no binding changes.
+moves for the physical DAG. Relic-assisted choices come from the live native
+legal_map_options, not this static topology wrapper.
 
 Map geometry (sim Map.h): nodes are a 15-row (y=0..14) x 7-col (x=0..6) grid.
 Row 0 is the first room you pick; row 14's edges point at the act boss. Not
@@ -63,11 +62,12 @@ class RunMap:
 
         For the first move pass (x, y) = (-1, -1): has_edge(-1, _, x2) reports
         whether first-row node x2 exists, so this returns the openable first-row
-        columns. boss row (y == MAX_Y): edges point at the boss; the gc accepts
-        transition_to_map_node(any x), so we surface the current column."""
+        columns. boss row (y == MAX_Y): edges point at the boss; surface the
+        current column, matching the native action codec."""
         if y >= MAX_Y:
-            # boss row: any x works for transition; surface current col (or 0).
-            return [x if x >= 0 else 0]
+            if y != MAX_Y or not 0 <= x < N_COLS:
+                raise ValueError('boss map choice needs its actual final-row coordinate')
+            return [x]
         return [x2 for x2 in range(N_COLS) if self._m.has_edge(x, y, x2)]
 
     def room_type(self, x, y):
@@ -75,13 +75,15 @@ class RunMap:
         out of range."""
         return _room_name(self._m.get_room_type(x, y))
 
-    def full_view(self, current_x, current_y):
+    def full_view(self, current_x, current_y, *, next_columns=None):
         """Return the visible act map as a fixed-grid-friendly DAG description.
 
         Each node carries its outgoing child columns plus three positional
         flags. ``reachable`` means the node lies downstream of the player's
         current position; ``choice`` marks a legal next map choice. The game
         displays the complete act map, so this contains no hidden information.
+        ``next_columns`` comes from the live GameContext (including Wing Boots).
+        Children remain physical map edges, not hypothetical relic-assisted jumps.
         """
         if current_y >= MAX_Y:
             # The action after row 14 enters the act boss.  MAP_NODE still uses
@@ -91,7 +93,8 @@ class RunMap:
         else:
             choices = {
                 (x, 0 if current_y < 0 else current_y + 1)
-                for x in self.reachable(current_x, current_y)
+                for x in (self.reachable(current_x, current_y)
+                          if next_columns is None else next_columns)
             }
         downstream = set(choices)
         frontier = list(choices)

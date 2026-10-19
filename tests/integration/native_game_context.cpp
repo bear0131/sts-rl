@@ -830,6 +830,71 @@ static void checkShopPrice(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown shop-price fixture"); }
 }
 
+static void checkWingBootsMap(int charges, int ascension) {
+    GameContext root(CharacterClass::IRONCLAD, 42, ascension);
+    root.map = std::make_shared<Map>();
+    for (int y = 0; y < 15; ++y) for (int x = 0; x < 7; ++x) {
+        auto &n = root.map->getNode(x, y);
+        n.x = x; n.y = y;
+    }
+    // One physical edge, three rooms on the next row and a real empty slot.
+    auto &source = root.map->getNode(1, 5);
+    source.room = Room::REST; source.edges[0] = 1; source.edgeCount = 1;
+    for (int x : {1, 3, 6}) {
+        auto &n = root.map->getNode(x, 6);
+        n.room = Room::REST; n.edges[0] = x; n.edgeCount = 1;
+    }
+    root.curMapNodeX = 1; root.curMapNodeY = 5; root.floorNum = 6;
+    root.screenState = ScreenState::MAP_SCREEN;
+    if (charges >= 0) root.relics.add({RelicId::WING_BOOTS, charges});
+    const auto expected = charges > 0 ? std::vector<int>{1, 3, 6} : std::vector<int>{1};
+    require(root.getMapChoices() == expected, "Wing Boots map choices differ");
+    const auto actions = search::GameAction::getAllActionsInState(root);
+    require(actions.size() == expected.size(), "native action enumeration lost map choices");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        require(actions[i].getIdx1() == expected[i] && actions[i].isValidAction(root),
+                "native map enumeration and legality disagree");
+        auto child = root;
+        actions[i].execute(child);
+        require(child.curMapNodeX == expected[i] && child.curMapNodeY == 6,
+                "map action did not enter the chosen destination");
+        if (charges >= 0)
+            require(child.relics.getRelicValue(RelicId::WING_BOOTS)
+                    == charges - (expected[i] != 1), "map move consumed wrong charge count");
+    }
+    for (int x : {-1, 0, 2, 7}) {
+        auto child = root;
+        bool rejected = false;
+        try { child.transitionToMapNode(x); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        require(rejected && child.curMapNodeX == 1 && child.curMapNodeY == 5
+                && child.floorNum == root.floorNum && sameRng(child.miscRng, root.miscRng),
+                "invalid map transition mutated position or RNG");
+        if (charges >= 0)
+            require(child.relics.getRelicValue(RelicId::WING_BOOTS) == charges,
+                    "invalid destination consumed a charge");
+    }
+    // First row and boss are ordinary connections, regardless of charges.
+    root.map->getNode(4, 0).room = Room::REST;
+    root.map->getNode(4, 0).edges[0] = 4;
+    root.map->getNode(4, 0).edgeCount = 1;
+    auto first = root;
+    first.curMapNodeX = first.curMapNodeY = -1;
+    require(first.getMapChoices() == std::vector<int>{4}, "first row fabricated flight choices");
+    first.transitionToMapNode(4);
+    auto boss = root;
+    boss.curMapNodeX = 3; boss.curMapNodeY = 14;
+    require(boss.getMapChoices() == std::vector<int>{3}, "boss action column is inconsistent");
+    search::GameAction(3).execute(boss);
+    require(boss.curRoom == Room::BOSS, "boss action failed");
+    if (charges >= 0)
+        require(first.relics.getRelicValue(RelicId::WING_BOOTS) == charges
+                && boss.relics.getRelicValue(RelicId::WING_BOOTS) == charges,
+                "first/boss room consumed a flight charge");
+    root.map->getNode(1, 5).edgeCount = 0;
+    require(root.getMapChoices().empty(), "wing connection invented an absent outgoing row");
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -838,6 +903,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "wing-boots-map") {
+            checkWingBootsMap(std::stoi(argv[2]), std::stoi(argv[3]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "augmenter-reward") {
             checkAugmenterRewards(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

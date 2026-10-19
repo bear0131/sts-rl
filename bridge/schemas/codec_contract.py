@@ -207,7 +207,7 @@ def complete_word_tables():
                 "mapped_display_sentinel"
             ),
             "phase_audit_status": (
-                "pending_map_action_support" if relic == "WingedGreaves" else
+                "mapped_map_choices_and_charge_receipt" if relic == "WingedGreaves" else
                 "legacy_use_not_supported" if relic == "CeramicFish" else
                 "numeric_transport_reviewed_not_full_effect_acceptance"
             ),
@@ -267,8 +267,8 @@ def complete_word_tables():
             "x": "MAP_NODE action column 0..6; unique within the candidate row",
             "y": "row 0..14; all next_nodes must be in one row",
             "symbol": "exact ROOM_ALIASES room identity; no absent-room fallback",
-            "children": "complete next-row DAG edges; absent/nonadjacent targets rejected",
-            "current_node": "actual current coordinate; before first choice explicitly (-1,-1)",
+            "children": "game_state.map complete physical DAG edges; required, never invented by Wing Boots",
+            "current_node": "actual current coordinate/room only; Java first node is (0,-1); edges are looked up in full map",
             "boss_available": "sole boss action uses current column/final-row DAG slot",
             "map_full_rooms": "105 physical slots, room absent only at genuine empty coordinates",
             "map_full_features": "x/y/current/choice/reachable plus all seven outgoing columns",

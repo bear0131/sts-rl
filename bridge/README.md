@@ -111,6 +111,8 @@ Match and Keep 的板面传输仍待接入，动态事件必须携带明确的�
 
 ## 奖励、商店与房间回放
 
+地图候选由原生 `GameContext.legal_map_options()`、动作 validator 和实际 transition 共用连接规则。飞靴有剩余次数时可选同下一行的其他有效房间，只在非正常连线移动时扣一次；首行/正常连接/Boss不耗次，Java耗尽值-2明确映射到native0。更新此路径须重建扩展，不兼容缺少该接口的旧构建，但OBS20/ACTION8/layout9和冻结参数形状不变。全图的children仍是真实连线，choice/reachable从实际可选节点展开；不可把飞靴跳跃伪造成永久边。真实current_node只有坐标/房型，边从game_state.map查取；缺children明确拒绝。移动命令收据等待同seed/act的下一层及精确飞靴次数，迟到帧不能再次点击，错误扣次/超时保持拒绝。该收据不声称校验传输未提供的入房坐标或完整入房副作用。
+
 奖励领取以当前 `COMBAT_REWARD` 的合法项及按种类计数的索引生成命令；满物理药水槽或持 Sozu 时不可领取药水。直接调用 `command_for_semantic` 也拒绝不可领取项和错误画面，不只依赖策略 mask。模拟器侧 `SimGameEnv` 使用原生 `GameContext.legal_reward_options()` 的 `(kind, reward_group_index, item_index)` 过滤领取动作；更新 Python 后必须同步重建本 checkout 的扩展，旧扩展缺少此接口时不可混用。已有 action/observation 张量布局和 checkpoint 参数形状不变。
 
 商店原生 Python 入口 `shop_buy_*`、`shop_remove`、`shop_proceed` 要求当前为 `SHOP_ROOM`；购买索引在编码前按实际货架范围检查，售罄/余额不足/已使用删牌服务抛 `ValueError` 且不修改状态。`legal_shop_options()` 在其他画面返回空。保留既有满槽或 Sozu 阻止取得药水时，对有效且可支付的药水槽直接调用为无副作用返回；枚举和validator均不将其视为可购买。需要重建本checkout扩展；不改变动作/观测张量布局。

@@ -753,7 +753,42 @@ void GameContext::transitionToAct(int targetAct) {
     screenState = ScreenState::MAP_SCREEN;
 }
 
+bool GameContext::isNormalMapConnection(int mapNodeX) const {
+    if (!map || mapNodeX < 0 || mapNodeX >= 7 || curMapNodeY < -1 || curMapNodeY > 14)
+        return false;
+    if (curMapNodeY == 14) return mapNodeX == curMapNodeX;
+    if (curMapNodeY == -1) return map->getNode(mapNodeX, 0).edgeCount > 0;
+    if (curMapNodeX < 0 || curMapNodeX >= 7) return false;
+    const auto &node = map->getNode(curMapNodeX, curMapNodeY);
+    for (int i = 0; i < node.edgeCount; ++i)
+        if (node.edges[i] == mapNodeX) return true;
+    return false;
+}
+
+bool GameContext::canTransitionToMapNode(int mapNodeX) const {
+    if (isNormalMapConnection(mapNodeX)) return true;
+    if (!map || mapNodeX < 0 || mapNodeX >= 7 || curMapNodeY < 0 || curMapNodeY >= 14
+        || curMapNodeX < 0 || curMapNodeX >= 7 || !hasRelic(RelicId::WING_BOOTS)
+        || relics.getRelicValue(RelicId::WING_BOOTS) <= 0)
+        return false;
+    const auto &from = map->getNode(curMapNodeX, curMapNodeY);
+    const auto room = map->getNode(mapNodeX, curMapNodeY + 1).room;
+    return from.edgeCount > 0 && room != Room::NONE && room != Room::INVALID;
+}
+
+std::vector<int> GameContext::getMapChoices() const {
+    std::vector<int> choices;
+    for (int x = 0; x < 7; ++x)
+        if (canTransitionToMapNode(x)) choices.push_back(x);
+    return choices;
+}
+
 void GameContext::transitionToMapNode(int mapNodeX) {
+    // Validate before changing position, RNG or charges, including direct callers.
+    if (!canTransitionToMapNode(mapNodeX))
+        throw std::invalid_argument("map destination is not connected or has no Wing Boots charge");
+    if (!isNormalMapConnection(mapNodeX))
+        --relics.getRelicValueRef(RelicId::WING_BOOTS);
     lastRoom = curRoom;
     curMapNodeX = mapNodeX;
     ++floorNum;
@@ -3300,7 +3335,7 @@ void GameContext::chooseEventOption(int idx) {
         case Event::SECRET_PORTAL: {
             if (idx == 0) {
                 curMapNodeY = 14;
-                transitionToMapNode(0);
+                transitionToMapNode(curMapNodeX);
 
             } else if (idx == 1) {
                 regainControl();

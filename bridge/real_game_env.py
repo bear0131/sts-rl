@@ -528,7 +528,7 @@ def _node_room(node: dict[str, Any]) -> str:
 
 def _node_children(node: dict[str, Any]) -> list[tuple[int, int]]:
     out = []
-    children = _list_value(node, "children", context="map node", required=False)
+    children = _list_value(node, "children", context="map node")
     for child_index, child in enumerate(children):
         if isinstance(child, dict):
             xy = _node_xy(child)
@@ -2313,6 +2313,59 @@ class RealGameAdapter:
             if choice_x == x:
                 return idx
         raise ValueError(f"map x={x} is not in current choices {self.choices()!r}")
+
+    @staticmethod
+    def map_flight_counter(gs):
+        relics = _dict_records(_list_value(gs, 'relics', context='map receipt'),
+                              context='map receipt relics')
+        boots = [r for r in relics if _relic_id(r) == 'WingedGreaves']
+        if len(boots) > 1:
+            raise ValueError('map receipt has duplicate Wing Boots')
+        if not boots:
+            return None  # Explicit absence, not a guessed counter for a live relic.
+        return native_relic_counter('WingedGreaves',
+            _required(boots[0], 'counter', context='Wing Boots map receipt'))
+
+    def map_move_expectation(self, column):
+        """Validate the chosen connection and record its visible charge effect."""
+        ss = _screen_state(self.gs)
+        index = self._map_command_index(column)
+        counter = self.map_flight_counter(self.gs)
+        first = _required(ss, 'first_node_chosen', context='map receipt')
+        boss = _required(ss, 'boss_available', context='map receipt')
+        if type(first) is not bool or type(boss) is not bool:
+            raise ValueError('map receipt needs boolean first-node/boss flags')
+        current = _required(ss, 'current_node', context='map receipt')
+        current_xy = _node_xy(current)
+        if current_xy is None:
+            raise ValueError('map receipt needs the explicit current coordinate')
+        if not boss:
+            nodes = _dict_records(_list_value(ss, 'next_nodes', context='map receipt'),
+                                  context='map receipt next nodes')
+            target = _node_xy(nodes[index])
+            if target is None or target[1] != (current_xy[1] + 1 if first else 0):
+                raise ValueError('map destination is not on the next row')
+            if first:
+                # CommunicationMod current_node/next_nodes only carry x/y/symbol.
+                # Edges are exported separately in game_state.map, not there.
+                graph = self._full_map_nodes(ss)
+                sources = [n for n in graph if (n['x'], n['y']) == current_xy]
+                if len(sources) != 1:
+                    raise ValueError('map receipt current node is absent from the full map')
+                edges = [(x, current_xy[1] + 1) for x in sources[0]['children']]
+                if target not in edges:
+                    if counter is None or counter <= 0 or not any(y == target[1] for _, y in edges):
+                        raise ValueError('disconnected map destination requires a Wing Boots charge')
+                    counter -= 1
+        expectation = {}
+        for field in ('seed', 'act', 'floor'):
+            value = _required(self.gs, field, context='map receipt')
+            if type(value) is not int:
+                raise ValueError(f'map receipt requires integer {field}')
+            expectation[field] = value
+        expectation['floor'] += 1
+        expectation['flight_counter'] = counter
+        return expectation
 
     def _claim_command_index(self, kind: str, occurrence: int) -> int:
         aliases = {

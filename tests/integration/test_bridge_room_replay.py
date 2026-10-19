@@ -21,6 +21,10 @@ def room_driver(request):
                     if env.thick.rmap.room_type(x, y) == room)
         gc.set_relics(list(relics))
         gc.cur_map_node_y = y - 1
+        gc.cur_map_node_x = next(parent for parent in range(7)
+                                if x in env.thick.rmap.reachable(parent, y - 1))
+        gc.floor_num = y
+        gc.screen_state = sts.ScreenState.MAP_SCREEN
         gc.transition_to_map_node(x)
         return Driver(gc)
 

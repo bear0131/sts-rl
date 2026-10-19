@@ -60,9 +60,12 @@ def test_astrolabe_exports_upgraded_colorless_cards(ascension, count, eggs):
 
     # Controlled boss entry, not a natural run: seed 25 offers Astrolabe in slot 2.
     gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 25, ascension)
+    from env.core.spiremap import RunMap
+    rmap = RunMap(25, ascension, 1)
+    gc.cur_map_node_x = next(x for x in range(7) if rmap.room_type(x, 14) == 'REST')
     gc.skip_battles = True
     gc.cur_map_node_y = 14
-    gc.transition_to_map_node(0)
+    gc.transition_to_map_node(gc.cur_map_node_x)
     gc.reward_proceed()
     assert gc.boss_relic_ids()[2] == 'Astrolabe'
     gc.set_deck([('FLASH_OF_STEEL', 0)] * count + [('ASCENDERS_BANE', 0)])

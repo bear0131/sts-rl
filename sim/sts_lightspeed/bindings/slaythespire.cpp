@@ -2760,6 +2760,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("transition_to_map_node",
              [](GameContext &gc, int x) { gc.transitionToMapNode(x); },
              "advance to the map node at column x on the next row (enters that room)")
+        .def("legal_map_options", &GameContext::getMapChoices,
+             "next map columns, including charged Wing Boots choices; boss uses the current column")
         .def("_dbg_set_card_rng", [](GameContext &gc, int n) { gc.cardRng = sts::Random(gc.seed, n); })
         .def("_dbg_card_reward", [](GameContext &gc) {
             auto cr = gc.createCardReward(sts::Room::MONSTER);
