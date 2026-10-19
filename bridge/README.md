@@ -8,6 +8,8 @@
 
 canonical怪物列表保留来源后端的位置：模拟器的INVALID槽成为PAD占位，真实列表保留死亡实体及客户端索引。只有差分报告的存活实体比较过滤gone槽，不将该视图传给策略。真实策略的观测/mask/PLAY命令使用同一个客户端槽位；这不等于录制回放已经建立客户端到native的目标映射，后者单列TODO BRIDGE31。
 
+本地简化编辑器的 `BattleContext.apply_custom_state` 在空spec、空player/monster记录（含空powers/counters）时保持全部状态；显式空牌堆仍表示清空牌堆。有内容的修改先在副本完成，解析失败不留下部分写入；不存在的怪物槽不能凭hp等字段创建。有效非空编辑仍沿用编辑器的重置为玩家回合语义，不能用于恢复排队动作或完整真实快照。回归 `tests/integration/test_custom_combat_edits.py`；需要同步重建原生扩展，接口shape/观测/动作版本未改变。
+
 战斗GRID/CARD_REWARD单选使用实际候选索引，经SELECT映射到CHOOSE命令，覆盖181动作的全部96个选牌槽，不再截到10张或压缩索引；超过96个候选明确拒绝。HAND_SELECT仍遵守十张手牌限制。动作容量与原生完整动作边界见 `env/README.md`，合成帧回归见 `tests/unit/test_bridge_selection_indices.py`；这不代表真实客户端验收。
 
 奖励领取以当前 `COMBAT_REWARD` 的合法项及按种类计数的索引生成命令；满物理药水槽或持 Sozu 时不可领取药水。直接调用 `command_for_semantic` 也拒绝不可领取项和错误画面，不只依赖策略 mask。模拟器侧 `SimGameEnv` 使用原生 `GameContext.legal_reward_options()` 的 `(kind, reward_group_index, item_index)` 过滤领取动作；更新 Python 后必须同步重建本 checkout 的扩展，旧扩展缺少此接口时不可混用。已有 action/observation 张量布局和 checkpoint 参数形状不变。

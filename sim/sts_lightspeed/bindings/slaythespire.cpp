@@ -638,7 +638,17 @@ inline Row pack(const sts::BattleContext &bc) {
 // dashboard's custom-state editor; it never advances the simulator or touches
 // RNG streams.  Card piles are rebuilt with normal CardInstance bookkeeping so
 // subsequent draws/discards remain authoritative.
-void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+bool hasCustomEntityEdits(const py::dict &record) {
+    for (auto item : record) {
+        const auto key = item.first.cast<std::string>();
+        if (key == "powers" && item.second.cast<py::list>().empty()) continue;
+        if (key == "counters" && item.second.cast<py::dict>().empty()) continue;
+        return true;
+    }
+    return false;
+}
+
+void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
     auto getInt = [](const py::dict &d, const char *key, int current) {
         return d.contains(key) ? d[key].cast<int>() : current;
     };
@@ -684,6 +694,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
         const int n = std::min<int>(static_cast<int>(mons.size()), bc.monsters.monsterCount);
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
+            if (!hasCustomEntityEdits(m)) continue;
             auto &monster = bc.monsters.arr[i];
             monster.curHp = std::clamp(getInt(m, "hp", monster.curHp), 0, monster.maxHp);
             monster.maxHp = std::max(1, getInt(m, "max_hp", monster.maxHp));
@@ -769,6 +780,37 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     bc.postEnemyTurnBoundary = false;
     bc.boundaryCardsPlayed = 0;
     bc.monsterTurnIdx = bc.monsters.monsterCount;
+}
+
+void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
+    bool hasEdits = false;
+    for (auto item : spec) {
+        const auto key = item.first.cast<std::string>();
+        if (key == "player") {
+            hasEdits |= hasCustomEntityEdits(item.second.cast<py::dict>());
+        } else if (key == "monsters") {
+            int slot = 0;
+            for (auto item : item.second.cast<py::list>()) {
+                if (hasCustomEntityEdits(item.cast<py::dict>())) {
+                    if (slot >= bc.monsters.monsterCount ||
+                            bc.monsters.arr[slot].id == sts::MonsterId::INVALID) {
+                        throw std::invalid_argument("cannot edit an absent monster slot");
+                    }
+                    hasEdits = true;
+                }
+                ++slot;
+            }
+        } else {
+            // An explicitly empty card pile means clear the pile, not no-op.
+            hasEdits = true;
+        }
+    }
+    if (!hasEdits) return;
+    // Parsing may fail after earlier fields have been applied. Commit only a
+    // complete edit; keep the original queues, selection and RNG on failure.
+    auto updated = bc;
+    applyCustomCombatStateImpl(updated, spec);
+    bc = std::move(updated);
 }
 
 std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc) {

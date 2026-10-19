@@ -105,10 +105,12 @@ def test_native_terminal_matches_post_exit_training_value(combat_factory):
 @pytest.mark.parametrize("batch_size", [1, 4])
 def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_size):
     env = combat_factory(["STRIKE_RED"] * 5, encounter, relics=("Akabeko",))
+    first_live = next(i for i, m in enumerate(env.thick.bc.to_dict()['monsters'])
+                      if m['id'] != 'INVALID = 0')
     env.thick.bc.apply_custom_state({
         "player": {"powers": [("STRENGTH", 3), ("ARTIFACT", 2)],
                    "counters": {"happy_flower": 2, "pen_nib": 3}},
-        "monsters": [{"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}],
+        "monsters": [{}] * first_live + [{"powers": [("STRENGTH", 4), ("VULNERABLE", 2)]}],
     })
     env._nosl_cpp_global_template = normalize_sim_global(env.thick.gc)
     logits = np.zeros(181)
