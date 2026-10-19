@@ -298,7 +298,7 @@ def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict
             elif kind == "lose_hp":
                 detail["hp"] = int(raw["hp"])
             elif kind in {"upgrade_card", "upgrade_random_cards", "remove_card",
-                          "transform_random_cards", "remove_card_upgrade_random"}:
+                          "transform_cards", "transform_random_cards", "remove_card_upgrade_random"}:
                 detail["gold"] = int(raw["gold"])
                 if "count" in raw:
                     detail["count"] = int(raw["count"])

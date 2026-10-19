@@ -2701,6 +2701,7 @@ void GameContext::chooseEventOption(int idx) {
                     break;
 
                 case 1:
+                    loseGold(unfavorable ? 50 : 40);
                     deck.upgradeRandomCards(miscRng, 2);
                     regainControl();
                     break;
@@ -2712,16 +2713,18 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 3:
                     loseGold(unfavorable ? 75 : 60);
-                    deck.transformRandomCards(miscRng, 2); // TODO
-                    regainControl();
+                    info.transformRng = MISC_RNG;
+                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2);
+                    break;
 
                 case 4:
                     loseGold(unfavorable ? 110 : 90);
-                    regainControlAction = [=](GameContext &gc) {
-                        gc.deck.upgradeRandomCards(miscRng, 1);
+                    regainControlAction = [](GameContext &gc) {
+                        gc.deck.upgradeRandomCards(gc.miscRng, 1);
                         returnToMapAction(gc);
                     };
                     openCardSelectScreen(CardSelectScreenType::REMOVE, 1);
+                    break;
 
                 case 5:
                     playerLoseHp(unfavorable ? 5 : 3);

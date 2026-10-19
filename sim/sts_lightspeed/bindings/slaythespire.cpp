@@ -1199,7 +1199,7 @@ py::list eventOptionDetails(const sts::GameContext &gc) {
                     detail["kind"] = "remove_card";
                     detail["gold"] = unfavorable ? 75 : 60;
                 } else if (idx == 3) {
-                    detail["kind"] = "transform_random_cards";
+                    detail["kind"] = "transform_cards";
                     detail["gold"] = unfavorable ? 75 : 60;
                     detail["count"] = 2;
                 } else if (idx == 4) {

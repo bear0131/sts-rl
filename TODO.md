@@ -61,7 +61,7 @@
 | [F16](docs/2026-09-13/codebase-audit.md#f16) | 部分完成 | episode eval/dashboard 共用 strategy/runner/outcome，step_limit 独立、合作式 timeout；仍需完整固定评测集、有效 solver manifest 和进程级硬超时 |
 | [F17](docs/2026-09-13/codebase-audit.md#f17) | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
-| F20 | 待修；v3规则规避 | `GameContext::chooseEventOption` 的 Designer option1 未扣界面显示的金币，option3/4 缺 `break` 并贯穿后续 case，导致 transition 与公开按钮语义不一致。验收须逐 option 对照金币/HP/牌组、后续 CARD_SELECT/回图状态及真实游戏语义；修复前 `ironclad-overworld-v3` 不选择 1/3/4。 |
+| F20 | main源码与本地构建已修 | 同步 `febc7fa` 的Designer费用、TRANSFORM两张选牌、case3/4分支隔离及复制状态回调RNG修复；并移植 `5296c6c` 中多选删除必须按原deck索引降序执行的一行修复，避免选牌顺序改变实际删除对象。公开kind更正为 `transform_cards`，bridge识别新kind并兼容旧metadata；规则上层保持既有保守评分。A0/A15六分支金币/HP/牌组/选牌/回图和全部两张选择顺序回归见 `tests/integration/test_designer_event.py`，复制后RNG隔离探针见 `worklog/2026-10-19.md#f20-designer-事件修复同步`。未部署Linux生产或连接真实客户端。 |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | VAL01 | 部分完成 | 真实执行路径的 End-Turn boundary 与战斗胜利 terminal 已无条件采为 value-only 样本，policy mask/target/weight 均不参与 policy 监督；搜索截断与采样已分离并覆盖开关两态，新增 policy root/boundary/terminal 计数。仍需固定边界语料按怪物身份及 HP/分裂阶段验证校准及 near-terminal 覆盖，禁止用所选路线回报标注假想叶子 |
 | VAL02 | 待实验；已有单状态反例 | 在固定 combat corpus 上审计 policy prior → Full-Gumbel 搜索 → improved-policy target 的反馈：按合法完整动作数/候选裁剪分层，统计未访问动作、prior/Q 排名冲突、搜索前后 TV/KL、低 prior 高 Q 翻转率；以只改根 prior 且保留内部 policy 的 matched-nonce 消融判断根部影响，不能用全树 uniform 冒充根部消融。seed0/step8 的 Bash 固定未来反例已证明搜索可在后继直出 V 不低时通过早期不可逆淘汰独立制造错误，完整 corpus 审计仍待实验。 |

@@ -325,7 +325,8 @@ def test_note_for_yourself_uses_the_displayed_card_and_removal_opportunity():
     assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT + 1
 
 
-def test_designer_uses_visible_service_mode_and_avoids_broken_fallthroughs():
+@pytest.mark.parametrize("transform_kind", ["transform_cards", "transform_random_cards"])
+def test_designer_uses_visible_service_mode_and_preserves_conservative_scores(transform_kind):
     s = state('event')
     s['options'].update(event='Designer', event_choices=[
         {'index': 0, 'kind': 'upgrade_card', 'gold': 40},
@@ -335,7 +336,7 @@ def test_designer_uses_visible_service_mode_and_avoids_broken_fallthroughs():
     assert choose(s, A._EVENT, A._EVENT + 4, A._EVENT + 5) == A._EVENT
     s['options']['event_choices'] = [
         {'index': 1, 'kind': 'upgrade_random_cards', 'gold': 40, 'count': 2},
-        {'index': 3, 'kind': 'transform_random_cards', 'gold': 60, 'count': 2},
+        {'index': 3, 'kind': transform_kind, 'gold': 60, 'count': 2},
         {'index': 4, 'kind': 'remove_card_upgrade_random', 'gold': 90, 'count': 1},
         {'index': 5, 'kind': 'lose_hp', 'hp': 3},
     ]
@@ -492,3 +493,25 @@ def test_real_reward_claim_requires_an_actual_empty_potion_slot(slots):
     frame["game_state"]["potions"][-1] = {"id": "Potion Slot"}
     adapter.update(frame)
     assert ga.claim(ga.CLAIM_POTION, 0) in adapter.legal_semantic_actions()
+
+
+def test_real_bridge_preserves_designer_transform_selection_metadata():
+    adapter = RealGameAdapter()
+    adapter.update({
+        'in_game': True,
+        'game_state': {
+            'screen_type': 'EVENT',
+            'choice_list': ['clean up', 'leave'],
+            'screen_state': {
+                'event_id': 'Designer',
+                'options': [
+                    {'choice_index': 0, 'kind': 'transform_cards', 'gold': 60, 'count': 2},
+                    {'choice_index': 1, 'kind': 'lose_hp', 'hp': 3},
+                ],
+            },
+        },
+    })
+    assert adapter._options('event')['event_choices'] == [
+        {'index': 0, 'kind': 'transform_cards', 'gold': 60, 'count': 2},
+        {'index': 1, 'kind': 'lose_hp', 'hp': 3},
+    ]

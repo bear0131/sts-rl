@@ -294,7 +294,7 @@ void Deck::removeSelected(GameContext &gc, const fixed_list<SelectScreenCard, 3>
     std::sort(removeIdx, removeIdx+selectList.size());
 
     for (int i = selectList.size() - 1; i >= 0; --i) {
-        remove(gc, selectList[i].deckIdx);
+        remove(gc, removeIdx[i]);
     }
 }
 
