@@ -105,9 +105,8 @@ bool CardInstance::usesSpecialData() const {
 void CardInstance::upgradeBaseCost(int newBaseCost) {
     int diff = costForTurn - cost;
     cost = static_cast<int8_t>(newBaseCost);
-    if (costForTurn > 0) {
-        costForTurn = static_cast<int8_t>(std::max(0, cost + diff));
-    }
+    const int currentCost = costForTurn > 0 ? cost + diff : costForTurn;
+    costForTurn = static_cast<int8_t>(std::max(0, currentCost));
 }
 
 void CardInstance::updateCost(int amount) {
@@ -148,9 +147,11 @@ void CardInstance::upgrade() {
             ++specialData;
             break;
 
-        case CardId::BLOOD_FOR_BLOOD: // the game upgrades the cost to 3 if the cost is over 4 but would it ever be higher?
-            if (!isUpgraded() && cost < 4 && cost > 0) {
-                upgradeBaseCost(cost-1);
+        case CardId::BLOOD_FOR_BLOOD:
+            if (!isUpgraded()) {
+                // Damage reductions are already part of the current combat cost.
+                upgradeBaseCost(cost < 4 ? cost - 1 : 3);
+                cost = std::max<std::int8_t>(0, cost);
             }
             break;
 
@@ -169,10 +170,9 @@ void CardInstance::upgrade() {
         if (doesCardExhaust(id, false) != doesCardExhaust(id, true))
             exhaust = doesCardExhaust(id, true);
         upgraded = true;
-        // TODO(dmz) is this logic right?
         int newcost = getEnergyCost(id, true);
-        if (getEnergyCost(id, false) != newcost) {
-            cost = costForTurn = newcost;
+        if (id != CardId::BLOOD_FOR_BLOOD && getEnergyCost(id, false) != newcost) {
+            upgradeBaseCost(newcost);
         }
     }
 }
