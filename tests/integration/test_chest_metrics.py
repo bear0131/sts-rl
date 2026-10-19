@@ -51,6 +51,24 @@ def test_skip_chest_and_reset_do_not_count_as_relic_refusal(chest_env_type):
         env.close()
 
 
+def test_claiming_sapphire_linked_relic_removes_key_choice(chest_env_type):
+    env = chest_env_type()
+    try:
+        env.reset(seed=0)
+        env.thick.step(ga.chest(True))
+        assert any(kind == 'key' for kind, _reward_idx, _item_idx
+                   in env.thick.gc.legal_reward_options())
+        env.thick.gc.claim_relic(0)
+        if env.thick.phase() == 'card_select':
+            env.thick.gc.choose_select_card_option(0)
+        assert env.thick.phase() == 'combat_reward'
+        assert not env.thick.gc.blue_key
+        assert not any(kind == 'key' for kind, _reward_idx, _item_idx
+                       in env.thick.gc.legal_reward_options())
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize('relic,offers', [('Matryoshka', 2), ('NlothsMask', 0)])
 def test_multiple_or_empty_chest_counts_at_most_once(chest_env_type, relic, offers):
     env = chest_env_type()

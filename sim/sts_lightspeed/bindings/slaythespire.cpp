@@ -1479,6 +1479,38 @@ py::dict rewardInfo(const sts::GameContext &gc) {
     return d;
 }
 
+void requireValidGameAction(
+    const sts::GameContext &gc,
+    const sts::search::GameAction &action,
+    const char *operation
+) {
+    if (!action.isValidAction(gc)) {
+        throw std::invalid_argument(std::string(operation) + " requires a legal action in the current game state");
+    }
+}
+
+// Full simulator-authoritative action list for a REWARDS screen.  Keep the
+// reward-group and item indices intact: several callers need to distinguish
+// multiple gold/card/potion entries rather than treating the kind as unique.
+py::list legalRewardOptions(const sts::GameContext &gc) {
+    using RAT = sts::search::GameAction::RewardsActionType;
+    py::list out;
+    for (const auto &action : sts::search::GameAction::getAllActionsInState(gc)) {
+        const char *kind;
+        switch (action.getRewardsActionType()) {
+            case RAT::CARD:   kind = action.getIdx2() == 5 ? "skip_card" : "card"; break;
+            case RAT::GOLD:   kind = "gold"; break;
+            case RAT::KEY:    kind = "key"; break;
+            case RAT::POTION: kind = "potion"; break;
+            case RAT::RELIC:  kind = "relic"; break;
+            case RAT::SKIP:   kind = "skip"; break;
+            default:          continue;
+        }
+        out.append(py::make_tuple(kind, action.getIdx1(), action.getIdx2()));
+    }
+    return out;
+}
+
 // The current shop's shelf, read POSITIONALLY (slot index is the buy key the
 // shop_buy_* methods expect): cards[7], relics[3], potions[3]. A price of -1
 // marks a sold/empty slot (Shop::cardPrice etc. return -1 after a purchase).
@@ -2100,9 +2132,19 @@ PYBIND11_MODULE(slaythespire, m) {
              "name), pick_count, have_selected, selected:[card ids already picked this screen]}")
         // combat-reward screen
         .def("get_reward_info", &rewardInfo, "claimable items on the current REWARDS screen")
-        .def("claim_gold", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainGold(r.gold[idx]); r.removeGoldReward(idx); })
+        .def("legal_reward_options", &legalRewardOptions,
+             "authoritative REWARDS actions as (kind, reward_idx, item_idx); kind in "
+             "{card,skip_card,gold,key,potion,relic,skip}")
+        .def("claim_gold", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::GOLD, idx);
+            requireValidGameAction(gc, action, "claim_gold");
+            action.execute(gc);
+        })
         .def("claim_relic", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::RELIC, idx);
+            requireValidGameAction(gc, action, "claim_relic");
             auto &r = gc.info.rewardsContainer;
+            const bool takesSapphireRelic = r.sapphireKey && idx == r.relicCount - 1;
             // Some relics open a screen when obtained (e.g. Bottled Tornado's
             // "pick a Power to bottle"). That screen's confirm calls
             // regainControl(), which would otherwise run -- and consume -- the
@@ -2117,9 +2159,14 @@ PYBIND11_MODULE(slaythespire, m) {
             };
             bool opened = gc.obtainRelic(r.relics[idx]);
             r.removeRelicReward(idx);
+            if (takesSapphireRelic) r.sapphireKey = false;
             if (!opened) gc.regainControlAction = saved;
         })
-        .def("claim_potion", [](GameContext &gc, int idx) { auto &r = gc.info.rewardsContainer; gc.obtainPotion(r.potions[idx]); r.removePotionReward(idx); })
+        .def("claim_potion", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::POTION, idx);
+            requireValidGameAction(gc, action, "claim_potion");
+            action.execute(gc);
+        })
         .def("discard_potion", [](GameContext &gc, int slot) {
             if (slot >= 0 && slot < gc.potionCapacity && gc.potions[slot] != sts::Potion::EMPTY_POTION_SLOT) {
                 gc.potions[slot] = sts::Potion::EMPTY_POTION_SLOT;
@@ -2139,13 +2186,37 @@ PYBIND11_MODULE(slaythespire, m) {
             for (int i = 0; i < gc.potionCapacity; ++i) lst.append(std::string(sts::getPotionName(gc.potions[i])));
             return lst;
         }, "held potion slots out of combat")
-        .def("reward_proceed", [](GameContext &gc) { gc.regainControl(); })
+        .def("reward_proceed", [](GameContext &gc) {
+            search::GameAction action(search::GameAction::RewardsActionType::SKIP);
+            requireValidGameAction(gc, action, "reward_proceed");
+            action.execute(gc);
+        })
         // shop
-        .def("shop_buy_card", [](GameContext &gc, int idx) { gc.info.shop.buyCard(gc, idx); })
-        .def("shop_buy_relic", [](GameContext &gc, int idx) { gc.info.shop.buyRelic(gc, idx); })
-        .def("shop_buy_potion", [](GameContext &gc, int idx) { gc.info.shop.buyPotion(gc, idx); })
-        .def("shop_remove", [](GameContext &gc) { gc.info.shop.buyCardRemove(gc); })
-        .def("shop_proceed", [](GameContext &gc) { gc.screenState = ScreenState::MAP_SCREEN; })
+        .def("shop_buy_card", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::CARD, idx);
+            requireValidGameAction(gc, action, "shop_buy_card");
+            action.execute(gc);
+        })
+        .def("shop_buy_relic", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::RELIC, idx);
+            requireValidGameAction(gc, action, "shop_buy_relic");
+            action.execute(gc);
+        })
+        .def("shop_buy_potion", [](GameContext &gc, int idx) {
+            search::GameAction action(search::GameAction::RewardsActionType::POTION, idx);
+            requireValidGameAction(gc, action, "shop_buy_potion");
+            action.execute(gc);
+        })
+        .def("shop_remove", [](GameContext &gc) {
+            search::GameAction action(search::GameAction::RewardsActionType::CARD_REMOVE);
+            requireValidGameAction(gc, action, "shop_remove");
+            action.execute(gc);
+        })
+        .def("shop_proceed", [](GameContext &gc) {
+            search::GameAction action(search::GameAction::RewardsActionType::SKIP);
+            requireValidGameAction(gc, action, "shop_proceed");
+            action.execute(gc);
+        })
         .def("shop_contents", &shopContents,
              "the current shop shelf, positional: {cards:[{id,upgrades,price}x7], "
              "relics:[{id,price}x3], potions:[{id,price}x3], remove_cost}. price -1 == sold/empty")

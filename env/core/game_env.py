@@ -326,10 +326,17 @@ class SimGameEnv:
             return [ga.map_node(x2) for x2 in self.rmap.reachable(x, y)] + pots
         if phase == "combat_reward":
             info = self.gc.get_reward_info()
+            legal_reward_options = {
+                (str(kind), int(reward_idx))
+                for kind, reward_idx, _item_idx in self.gc.legal_reward_options()
+            }
             acts = []
-            acts += [ga.claim(ga.CLAIM_GOLD, i) for i in range(len(info["gold"]))]
-            acts += [ga.claim(ga.CLAIM_RELIC, i) for i in range(len(info["relics"]))]
-            acts += [ga.claim(ga.CLAIM_POTION, i) for i in range(len(info["potions"]))]
+            acts += [ga.claim(ga.CLAIM_GOLD, i) for i in range(len(info["gold"]))
+                     if ("gold", i) in legal_reward_options]
+            acts += [ga.claim(ga.CLAIM_RELIC, i) for i in range(len(info["relics"]))
+                     if ("relic", i) in legal_reward_options]
+            acts += [ga.claim(ga.CLAIM_POTION, i) for i in range(len(info["potions"]))
+                     if ("potion", i) in legal_reward_options]
             if int(info["card_count"]) and _has_card_rewards(self.gc):
                 n = len(self.gc.get_card_reward())
                 acts += [ga.reward_card(j) for j in range(n)]
