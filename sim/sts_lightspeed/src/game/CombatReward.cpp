@@ -35,7 +35,7 @@ void Rewards::removeGoldReward(int idx) {
 }
 
 void Rewards::removeCardReward(int removeIdx) {
-    for (int i = removeIdx; i < cardRewardCount; ++i) {
+    for (int i = removeIdx; i < cardRewardCount-1; ++i) {
         cardRewards[i] = cardRewards[i+1];
     }
     --cardRewardCount;
@@ -69,6 +69,7 @@ int Rewards::getTotalCount() const {
     return goldRewardCount +
         potionCount +
         cardRewardCount +
+        relicCount +
         (sapphireKey ? 1 : 0) +
         (emeraldKey ? 1 : 0);
 }

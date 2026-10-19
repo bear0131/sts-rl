@@ -24,6 +24,72 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 23) {
+        // ShopScreen applies existing eggs to every initial shelf card. Courier
+        // restocks a colored purchase with the same card type, reprices relics,
+        // and applies the purchased (not replacement) relic to the shelf.
+        root.deck = Deck();
+        root.obtainRelic(RelicId::THE_COURIER);
+        root.obtainRelic(RelicId::MOLTEN_EGG);
+        root.info.shop.setupCards(root);
+        for (const auto &card : root.info.shop.cards) {
+            if (card.getType() == CardType::ATTACK && card.canUpgrade() && !card.isUpgraded()) return 30;
+        }
+
+        root.info.shop.cards[0] = Card(CardId::STRIKE_RED);
+        root.info.shop.cardPrice(0) = 0;
+        root.info.shop.buyCard(root, 0);
+        if (root.info.shop.cards[0].getType() != CardType::ATTACK) return 30;
+
+        root.info.shop.relics[0] = RelicId::TOXIC_EGG;
+        root.info.shop.relicPrice(0) = 1;
+        for (auto &card : root.info.shop.cards) card = Card(CardId::DEFEND_RED);
+        root.info.shop.buyRelic(root, 0);
+        if (root.info.shop.relicPrice(0) <= 1) return 30;
+        for (const auto &card : root.info.shop.cards) {
+            if (card.getType() == CardType::SKILL && card.canUpgrade() && !card.isUpgraded()) return 30;
+        }
+
+        auto membershipOnly = root;
+        membershipOnly.relics = RelicContainer();
+        membershipOnly.obtainRelic(RelicId::MEMBERSHIP_CARD);
+        auto noDiscount = membershipOnly;
+        noDiscount.relics = RelicContainer();
+        const int memberPrice = Shop::getNewCardPrice(membershipOnly, CardRarity::RARE, false);
+        const int plainPrice = Shop::getNewCardPrice(noDiscount, CardRarity::RARE, false);
+        if (memberPrice != static_cast<int>(plainPrice * Shop::MEMBERSHIP_CARD_FACTOR)) return 30;
+
+        auto mask = root;
+        mask.relics = RelicContainer();
+        mask.info.shop.removeCost = 125;
+        mask.info.shop.relics[0] = RelicId::SMILING_MASK;
+        mask.info.shop.relicPrice(0) = 0;
+        mask.info.shop.buyRelic(mask, 0);
+        if (mask.info.shop.removeCost != Shop::SMILING_MASK_PRICE) return 30;
+        std::cout << "shop_restock_discount_and_preview_match_java" << std::endl;
+        return 0;
+    }
+    if (variant == 22) {
+        Rewards reward;
+        reward.addRelic(RelicId::ANCHOR);
+        reward.addGold(11);
+        reward.addPotion(Potion::BLOOD_POTION);
+        CardReward cards;
+        cards.push_back(Card(CardId::STRIKE_RED));
+        reward.addCardReward(cards);
+        reward.sapphireKey = true;
+        reward.emeraldKey = true;
+        if (reward.getTotalCount() != 6) return 29;
+        for (int i = 1; i < 5; ++i) {
+            CardReward extra;
+            extra.push_back(Card(CardId::DEFEND_RED));
+            reward.addCardReward(extra);
+        }
+        reward.removeCardReward(4);
+        if (reward.cardRewardCount != 4) return 29;
+        std::cout << "reward_count_includes_relic_and_card_remove_stays_bounded" << std::endl;
+        return 0;
+    }
     if (variant == 19) {
         Rewards reward;
         CardReward cards;
