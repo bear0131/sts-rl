@@ -637,6 +637,22 @@ HIT_REACTION_CONTRACTS = {
 }
 
 
+# Source-level damage timing for the current Ironclad/colorless batch. These
+# contracts do not imply complete dynamic baseDamage/pending transport (BRIDGE28)
+# or completed behavior regression (BRIDGE35).
+CARD_DAMAGE_TIMING_CONTRACTS = {
+    'CLEAVE': {'java': 'Cleave.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; no settlement recalculation'},
+    'DRAMATIC_ENTRANCE': {'java': 'DramaticEntrance.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; no settlement recalculation'},
+    'IMMOLATE': {'java': 'Immolate.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; Burn generation remains after damage'},
+    'THUNDERCLAP': {'java': 'ThunderClap.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; Vulnerable applied after damage'},
+    'REAPER': {'java': 'Reaper.use / VampireDamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / ReaperAction', 'capture': 'per-slot multiDamage at use; heal actual HP loss; enqueue heal before victory filtering'},
+    'WHIRLWIND': {'java': 'Whirlwind.use / WhirlwindAction', 'native': 'calculateCardDamageMatrix / AttackAllMonsterRecursive', 'capture': 'one matrix at use for all waves; Vigor included once'},
+    'DROPKICK': {'java': 'Dropkick.use / DropkickAction', 'native': 'calculateCardDamage / DropkickAction', 'capture': 'DamageInfo at use; Vulnerable checked at action update, even for a non-null dead target'},
+    'SWORD_BOOMERANG': {'java': 'SwordBoomerang.use / AttackDamageRandomEnemyAction', 'native': 'SwordBoomerangAction', 'capture': 'choose target and recalculate each hit with actual card instance; queued Vigor removal follows hits'},
+    'FIEND_FIRE': {'java': 'FiendFire.use / FiendFireAction / ExhaustAction', 'native': 'FiendFireAction / ExhaustRandomCardInHand', 'capture': 'damage at use, hit count from hand at action update; exhaust each random card before hits, anyNumber=true even for the last card'},
+}
+
+
 def native_power_enum(value):
     """Map one already-canonical power token to its declared native enum."""
     text = str(value).strip().upper().replace(" ", "_").replace("-", "_")

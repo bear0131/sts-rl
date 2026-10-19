@@ -1098,8 +1098,7 @@ void BattleContext::useAttackCard() {
             break;
 
         case CardId::CLEAVE:  {
-            int baseDamage = (up ? 11 : 8) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::AttackAllEnemy(baseDamage) );
+            addToBot(Actions::AttackAllEnemy(calculateCardDamageMatrix(c, up ? 11 : 8)));
             break;
         }
 
@@ -1109,13 +1108,12 @@ void BattleContext::useAttackCard() {
             break;
 
         case CardId::DRAMATIC_ENTRANCE: {
-            int baseDamage = (up ? 12 : 8) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::AttackAllEnemy(baseDamage) );
+            addToBot(Actions::AttackAllEnemy(calculateCardDamageMatrix(c, up ? 12 : 8)));
             break;
         }
 
         case CardId::DROPKICK:
-            addToBot( Actions::DropkickAction(t) );
+            addToBot(Actions::DropkickAction(t, calculateCardDamage(c, t, up ? 8 : 5)));
             break;
 
         case CardId::FEED:
@@ -1155,8 +1153,7 @@ void BattleContext::useAttackCard() {
             break;
 
         case CardId::IMMOLATE: {
-            int baseDamage = (up ? 28 : 21) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::AttackAllEnemy(baseDamage) );
+            addToBot(Actions::AttackAllEnemy(calculateCardDamageMatrix(c, up ? 28 : 21)));
             addToBot( Actions::MakeTempCardInDiscard({CardId::BURN}, 1) );
             break;
         }
@@ -1205,8 +1202,7 @@ void BattleContext::useAttackCard() {
         }
 
         case CardId::REAPER: {
-            const auto baseDamage = (up ? 5 : 4) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::ReaperAction(baseDamage) );
+            addToBot(Actions::ReaperAction(calculateCardDamageMatrix(c, up ? 5 : 4)));
             break;
         }
 
@@ -1238,13 +1234,12 @@ void BattleContext::useAttackCard() {
 
         case CardId::SWORD_BOOMERANG:
             for (int i = 0; i < (up ? 4 : 3); ++i) {
-                addToBot(Actions::SwordBoomerangAction(3+player.getStatus<PS::VIGOR>())); // vigor is removed afterwards so this is a necessary (maybe not 100% accurate) hack
+                addToBot(Actions::SwordBoomerangAction(c));
             }
             break;
 
         case CardId::THUNDERCLAP: {
-            int baseDamage = (up ? 7 : 4) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::AttackAllEnemy(baseDamage));
+            addToBot(Actions::AttackAllEnemy(calculateCardDamageMatrix(c, up ? 7 : 4)));
             addToBot( Actions::DebuffAllEnemy<MS::VULNERABLE>(1, false) );
             break;
         }
@@ -1266,14 +1261,9 @@ void BattleContext::useAttackCard() {
             if (!item.ignoreEnergyTotal && player.energy < item.energyOnUse) {
                 item.energyOnUse = player.energy;
             }
-            const auto baseDamage = (up ? 8 : 5) + player.getStatus<PS::VIGOR>();
             // Java passes the card's current multiDamage into WhirlwindAction,
             // before onUse/onAfterUse callbacks can change powers or piles.
-            DamageMatrix damageMatrix{};
-            for (int i = 0; i < monsters.monsterCount; ++i) {
-                if (!monsters.arr[i].isDeadOrEscaped())
-                    damageMatrix[i] = calculateCardDamage(c, i, baseDamage);
-            }
+            const auto damageMatrix = calculateCardDamageMatrix(c, up ? 8 : 5);
             addToBot(Actions::WhirlwindAction(damageMatrix, item.energyOnUse,
                                              !(item.freeToPlay || c.freeToPlayOnce)));
             break;
@@ -1740,7 +1730,7 @@ void BattleContext::onUseAttackCard() {
     }
 
     if (p.hasStatus<PS::VIGOR>()) {
-        p.removeStatus<PS::VIGOR>();
+        addToBot(Actions::RemoveStatus<PS::VIGOR>());
     }
 
     if (p.hasStatus<PS::FREE_ATTACK_POWER>()) {
@@ -2839,7 +2829,8 @@ int BattleContext::calculateCardDamage(const CardInstance &card, int targetIdx, 
         damage += 3;
     }
 
-    if (player.hasRelic<R::WRIST_BLADE>() && card.costForTurn == 0) {
+    if (player.hasRelic<R::WRIST_BLADE>() &&
+        (card.costForTurn == 0 || (card.freeToPlayOnce && card.cost != -1))) {
         damage += 4;
     }
 
@@ -2896,10 +2887,19 @@ int BattleContext::calculateCardDamage(const CardInstance &card, int targetIdx, 
     }
 
     if (monster.hasStatus<MS::INTANGIBLE>()) {
-        damage = std::max(damage, 1.0f);
+        damage = std::min(damage, 1.0f);
     }
 
     return std::max(0, static_cast<int>(damage));
+}
+
+DamageMatrix BattleContext::calculateCardDamageMatrix(const CardInstance &card, int baseDamage) const {
+    DamageMatrix result{};
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        if (!monsters.arr[i].isDeadOrEscaped())
+            result[i] = calculateCardDamage(card, i, baseDamage);
+    }
+    return result;
 }
 
 int BattleContext::calculateCardBlock(int baseBlock) const {

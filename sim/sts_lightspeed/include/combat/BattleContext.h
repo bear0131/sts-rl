@@ -197,6 +197,7 @@ namespace sts {
         void debuffEnemy(int idx, int amount, bool isSourceMonster=true);
 
         [[nodiscard]] int calculateCardDamage(const CardInstance &card, int targetIdx, int baseDamage) const;
+        [[nodiscard]] DamageMatrix calculateCardDamageMatrix(const CardInstance &card, int baseDamage) const;
         [[nodiscard]] int calculateCardBlock(int baseBlock) const;
 
         void queuePurgeCard(const CardInstance &c, int target, bool inLimbo = true);

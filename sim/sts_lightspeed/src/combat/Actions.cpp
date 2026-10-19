@@ -26,34 +26,11 @@ Action Actions::AttackEnemy(int idx, int damage) {
     }};
 }
 
-Action Actions::AttackAllEnemy(int baseDamage) {
+Action Actions::AttackAllEnemy(DamageMatrix damageMatrix) {
     return {[=] (BattleContext &bc) {
-        // assume bc.curCard is the card being used
-
-        int damageMatrix[5];
-        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
-            if (!bc.monsters.arr[i].isDeadOrEscaped()) {
-                damageMatrix[i] = bc.calculateCardDamage(bc.curCardQueueItem.card, i, baseDamage);
-            }
-        }
-
         for (int i = 0; i < bc.monsters.monsterCount; ++i) {
             if (!bc.monsters.arr[i].isDeadOrEscaped()) {
                 bc.monsters.arr[i].attacked(bc, damageMatrix[i]);
-            }
-        }
-
-        bc.checkCombat();
-    }};
-}
-
-Action Actions::AttackAllEnemy(DamageMatrix damageMatrix) {
-    return {[=] (BattleContext &bc) {
-        // assume bc.curCard is the card being used
-
-        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
-            if (!bc.monsters.arr[i].isDeadOrEscaped()) {
-                bc.monsters.arr[i].attacked(bc, static_cast<int>(damageMatrix[i]));
             }
         }
 
@@ -1021,16 +998,15 @@ Action Actions::ApotheosisAction() {
     }};
 }
 
-Action Actions::DropkickAction(int targetIdx) {
-    // assume bc.curCard is the card being used
+Action Actions::DropkickAction(int targetIdx, int damage) {
     return {[=](BattleContext &bc) {
-        if (bc.monsters.arr[targetIdx].isTargetable() && bc.monsters.arr[targetIdx].hasStatus<MS::VULNERABLE>()) {
+        // Java tests the target's power at update, but DamageInfo was captured
+        // by the card at use. A non-null dead target can still have Vulnerable.
+        if (bc.monsters.arr[targetIdx].hasStatus<MS::VULNERABLE>()) {
             bc.addToTop(Actions::DrawCards(1));
             bc.addToTop(Actions::GainEnergy(1));
         }
 
-        const auto &c = bc.curCardQueueItem.card;
-        const int damage = bc.calculateCardDamage(c, targetIdx, c.isUpgraded() ? 8 : 5);
         bc.addToTop(Actions::AttackEnemy(targetIdx, damage));
     }};
 }
@@ -1117,7 +1093,7 @@ Action Actions::LimitBreakAction() {
     }};
 }
 
-Action Actions::ReaperAction(int baseDamage) {
+Action Actions::ReaperAction(DamageMatrix damageMatrix) {
     return {[=] (BattleContext &bc) {
 
         int healAmount = 0;
@@ -1127,7 +1103,7 @@ Action Actions::ReaperAction(int baseDamage) {
                 continue;
             }
             int preDamageHp = m.curHp;
-            m.attacked(bc, bc.calculateCardDamage(bc.curCardQueueItem.card, i, baseDamage));
+            m.attacked(bc, damageMatrix[i]);
             healAmount += preDamageHp-m.curHp;
         }
 
@@ -1135,9 +1111,8 @@ Action Actions::ReaperAction(int baseDamage) {
             bc.addToBot( Actions::HealPlayer(healAmount) );
         }
 
-        //if (AbstractDungeon.getCurrRoom().monsters.areMonstersBasicallyDead()) {
-        //                AbstractDungeon.actionManager.clearPostCombatActions();
-        //            }
+        // The heal is enqueued before victory filtering and must survive it.
+        bc.checkCombat();
     }};
 }
 
@@ -1199,15 +1174,16 @@ Action Actions::SeverSoulExhaustAction() {
     }};
 }
 
-Action Actions::SwordBoomerangAction(int baseDamage) { // pretty hacky until I can figure out a better solution
+Action Actions::SwordBoomerangAction(const CardInstance &card) {
     return {[=](BattleContext &bc) {
-        const static CardInstance swordBoomerang {CardId::SWORD_BOOMERANG};
         const auto idx = bc.monsters.getRandomMonsterIdx(bc.cardRandomRng, true);
         if (idx == -1) {
             return;
         }
 
-        int damage = bc.calculateCardDamage(swordBoomerang, idx, baseDamage);
+        // Unlike a captured multiDamage array, this Java action calculates
+        // against its randomly chosen target on every hit, using the real card.
+        const int damage = bc.calculateCardDamage(card, idx, 3);
         bc.addToTop(Actions::AttackEnemy(idx, damage));
     }};
 }

@@ -45,10 +45,7 @@ namespace sts {
         // todo, action and damage actions should clear certain actions from the queue if the player kills all enemies
         static Action AttackEnemy(int idx, int damage);
 
-        // for cards that do one hit, like cleave
-        static Action AttackAllEnemy(int baseDamage);
-
-        // for cards like whirlwind, where damage is calculated once
+        // Card multiDamage is captured at use, not recalculated at settlement.
         static Action AttackAllEnemy(DamageMatrix damageMatrix);
 
         static Action DamageEnemy(int idx, int damage);
@@ -126,7 +123,7 @@ namespace sts {
         static Action GambleAction();
         static Action ToolboxAction();
         static Action FiendFireAction(int targetIdx, int calculatedDamage); // Fiend Fire Card
-        static Action SwordBoomerangAction(int baseDamage); // Sword Boomerang
+        static Action SwordBoomerangAction(const CardInstance &card); // AttackDamageRandomEnemyAction
 
         static Action PutRandomCardsInDrawPile(CardType type, int count); // used by chrysalis and metamorphosis
         static Action DiscoveryAction(CardType type, int amount); // attack potion, skill potion
@@ -160,13 +157,13 @@ namespace sts {
         static Action DualityAction(); // Duality Relic
 
         static Action ApotheosisAction();
-        static Action DropkickAction(int targetIdx);
+        static Action DropkickAction(int targetIdx, int damage);
         static Action EnlightenmentAction(bool upgraded);
         static Action EntrenchAction();
         static Action FeedAction(int idx, int damage, bool upgraded);
         static Action HandOfGreedAction(int idx, int damage, bool upgraded);
         static Action LimitBreakAction();
-        static Action ReaperAction(int baseDamage);
+        static Action ReaperAction(DamageMatrix damageMatrix);
         static Action RitualDaggerAction(int idx, int damage, std::int16_t uniqueId, int increaseAmount);
         static Action IncreaseCardSpecialData(std::int16_t uniqueId, int amount);
         static Action SecondWindAction(int blockPerCard);
