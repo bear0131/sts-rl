@@ -3,6 +3,8 @@
 #include "game/Game.h"
 #include "combat/BattleContext.h"
 #include "sim/search/GameAction.h"
+#include "sim/search/NoslCombatTrainer.h"
+#include "sim/search/BattleScumSearcher2.h"
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -234,6 +236,44 @@ static void checkReward(int variant, int ascension) {
         A(T::SKIP).execute(gc);
         require(gc.screenState == ScreenState::MAP_SCREEN, "nested reward return lost continuation");
     } else { throw std::invalid_argument("unknown reward fixture"); }
+}
+
+static void checkDynamicExhaustSearch(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    BattleContext bc;
+    bc.init(gc, MonsterEncounter::CULTIST);
+    bc.cards.cardsInHand = 2;
+    bc.cards.hand[0] = CardInstance(CardId::STRIKE_RED);
+    bc.cards.hand[1] = CardInstance(CardId::STRIKE_RED);
+    bc.cards.hand[0].uniqueId = 0;
+    bc.cards.hand[1].uniqueId = 1;
+    bc.cards.drawPile.clear(); bc.cards.discardPile.clear(); bc.cards.exhaustPile.clear();
+    CardInstance *changed = &bc.cards.hand[1];
+    if (variant > 0 && variant < 4) {
+        auto &pile = variant == 1 ? bc.cards.drawPile : (variant == 2 ? bc.cards.discardPile : bc.cards.exhaustPile);
+        pile.push_back(CardInstance(CardId::STRIKE_RED));
+        pile.back().uniqueId = 2;
+        changed = &pile.back();
+    }
+    bc.cards.recomputeDerivedState();
+    if (variant == 4) {
+        search::BattleScumSearcher2 searcher(bc);
+        search::BattleScumSearcher2::Node same, different;
+        searcher.enumerateCardActions(same, bc);
+        changed->exhaust = true;
+        searcher.enumerateCardActions(different, bc);
+        require(same.edges.size() == 1 && different.edges.size() == 2,
+                "scum search merged cards with different exhaustion futures");
+    } else {
+        search::NoslCombatSearchConfig config;
+        config.simulations = 1; config.maxDepth = 1;
+        search::NoslCombatTrainer trainer(config);
+        const auto baseline = trainer.search(bc, 42).stateKey;
+        changed->exhaust = true;
+        require(trainer.search(bc, 42).stateKey != baseline, "NOSL merged different dynamic exhaustion states");
+        changed->exhaust = false;
+        require(trainer.search(bc, 42).stateKey == baseline, "restoring printed exhaustion changed state key");
+    }
 }
 
 static void checkTransformUpgrade(int variant, int ascension) {
@@ -778,7 +818,7 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade" || mode == "dynamic-exhaust-search") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
@@ -786,6 +826,7 @@ int main(int argc, char **argv) {
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "deck-upgrade") checkDeckUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "dynamic-exhaust-search") checkDynamicExhaustSearch(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "transform-upgrade") checkTransformUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "relic-selection") checkRelicSelection(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "bottle-transform") checkBottleTransform(std::stoi(argv[2]), std::stoi(argv[3]));

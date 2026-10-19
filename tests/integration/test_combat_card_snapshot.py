@@ -8,21 +8,13 @@ import slaythespire as sts
 pytestmark = [pytest.mark.native, pytest.mark.timeout(30)]
 
 
-def _row(card_id, uid, *, upgrades=0, special=0, base_cost=1, cost=1,
-         free=False, retain=False):
-    return dict(id=card_id, uid=uid, upgrades=upgrades, special_data=special,
-                base_cost=base_cost, cost=cost, free_to_play_once=free, retain=retain)
-
-
-def _state(*, hand=(), draw=(), discard=(), exhaust=(), stasis=(None, None), next_uid=100):
-    return dict(version=1, next_uid=next_uid, hand=list(hand), draw=list(draw),
-                discard=list(discard), exhaust=list(exhaust), stasis=list(stasis))
+from tests.bridge_fixtures import native_card as _row, native_card_state as _state
 
 
 def test_snapshot_preserves_all_native_instance_fields_and_stasis_slots(combat_factory):
     env = combat_factory(['STRIKE_RED'] * 5)
     state = _state(
-        hand=[_row('RITUAL_DAGGER', 3, special=39, free=True, retain=True)],
+        hand=[_row('RITUAL_DAGGER', 3, special=39, exhaust=True, free=True, retain=True)],
         draw=[_row('SEARING_BLOW', 7, upgrades=3, special=3, base_cost=2, cost=0)],
         discard=[_row('RAMPAGE', 11, special=16, base_cost=0, cost=0)],
         exhaust=[_row('BLOOD_FOR_BLOOD', 20, base_cost=2, cost=0)],
@@ -37,7 +29,7 @@ def test_restore_preserves_model_inputs_action_masks_and_packed_state(combat_fac
                          combat_action_contract='native-v1')
     battle = env.thick.bc
     state = _state(hand=[_row('BASH', 8, base_cost=0, cost=0),
-                         _row('RITUAL_DAGGER', 5, special=39, free=True)],
+                         _row('RITUAL_DAGGER', 5, special=39, exhaust=True, free=True)],
                    draw=[_row('RAMPAGE', 4, special=21, base_cost=0, cost=0)],
                    discard=[_row('DEFEND_RED', 9, base_cost=0, cost=0)])
     battle.set_card_state(state)

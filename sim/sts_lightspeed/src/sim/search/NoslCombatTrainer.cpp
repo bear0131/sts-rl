@@ -66,6 +66,12 @@ inline void hashValue(std::uint64_t &hash, T value) {
     hashCombine(hash, static_cast<std::uint64_t>(value));
 }
 
+int cardRetentionExhaustSignature(const CardInstance &card) {
+    // Preserve ordinary-card hashes; distinguish a mutation with the spare bit.
+    return (card.retain ? 1 : 0)
+        | (card.exhaust != doesCardExhaust(card.id, card.upgraded) ? 2 : 0);
+}
+
 using CardSignature = std::tuple<int, int, int, int, int, int, int>;
 
 template <typename Pile>
@@ -93,7 +99,7 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
             static_cast<int>(card.costForTurn),
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0);
+            cardRetentionExhaustSignature(card));
     }
     std::sort(cards.begin(), cards.end());
     hashValue(hash, cards.size());
@@ -124,7 +130,7 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc) {
             currentCost,
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0);
+            cardRetentionExhaustSignature(card));
     }
     std::sort(cards.begin(), cards.begin() + count);
     hashValue(hash, count);
@@ -362,7 +368,7 @@ void hashActionCard(std::uint64_t &hash, const CardInstance &card,
     hashValue(hash, static_cast<int>(card.costForTurn));
     hashValue(hash, card.upgraded ? 1 : 0);
     hashValue(hash, card.freeToPlayOnce ? 1 : 0);
-    hashValue(hash, card.retain ? 1 : 0);
+    hashValue(hash, cardRetentionExhaustSignature(card));
     if (includeCost) {
         hashValue(hash, card.freeToPlayOnce ? 0 : card.costForTurn);
     }

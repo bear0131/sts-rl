@@ -2001,11 +2001,13 @@ void BattleContext::onUseStatusOrCurseCard() {
     if (c.getType() == CardType::CURSE) {
         if (p.hasRelic<R::BLUE_CANDLE>()) {
             addToBot( Actions::PlayerLoseHp(1, true) );
+            c.exhaust = true;
             item.exhaustOnUse = true;
         }
 
     } else if (c.getType() == CardType::STATUS) {
         if (p.hasRelic<R::MEDICAL_KIT>()) {
+            c.exhaust = true;
             item.exhaustOnUse = true;
         }
     }
@@ -3088,6 +3090,8 @@ void BattleContext::chooseDualWieldCard(int handIdx) {
 
     const int copyCount = cardSelectInfo.dualWield_CopyCount();
     CardInstance dualWieldCard = cards.hand[handIdx];
+    // makeStatEquivalentCopy does not copy instance-level exhaust mutations.
+    dualWieldCard.exhaust = doesCardExhaust(dualWieldCard.id, dualWieldCard.upgraded);
 
     // todo cleaner solution
 

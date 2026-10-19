@@ -13,6 +13,7 @@ CardInstance::CardInstance(CardId id, bool upgraded) : id(id), upgraded(upgraded
     specialData = id == CardId::SEARING_BLOW ? int(upgraded) : Card::initialMisc(id);
     cost = getEnergyCost(id, upgraded);
     costForTurn = cost;
+    exhaust = doesCardExhaust(id, upgraded);
 }
 
 CardInstance::CardInstance(const Card &card) : CardInstance(card.getId(), card.isUpgraded()) {
@@ -69,7 +70,7 @@ bool CardInstance::isStrikeCard() const {
 }
 
 bool CardInstance::doesExhaust() const {
-    return doesCardExhaust(id, upgraded);
+    return exhaust;
 }
 
 bool CardInstance::hasSelfRetain() const {
@@ -165,6 +166,8 @@ void CardInstance::upgrade() {
             break;
     }
     if (!isUpgraded()) {
+        if (doesCardExhaust(id, false) != doesCardExhaust(id, true))
+            exhaust = doesCardExhaust(id, true);
         upgraded = true;
         // TODO(dmz) is this logic right?
         int newcost = getEnergyCost(id, true);

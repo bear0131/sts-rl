@@ -735,6 +735,7 @@ Action Actions::DualWieldAction(int copyCount) {
         if (validCount == 1) {
             for (int i = 0; i < copyCount; ++i) {
                 auto c = bc.cards.hand[lastValidIdx];
+                c.exhaust = doesCardExhaust(c.id, c.upgraded);
                 if (bc.cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {
                     bc.cards.createTempCardInHand(c);
 

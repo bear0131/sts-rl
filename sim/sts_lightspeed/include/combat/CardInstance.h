@@ -34,6 +34,7 @@ namespace sts {
         bool upgraded = false;
         bool freeToPlayOnce = false;
         bool retain = false;
+        bool exhaust = false; // Persistent instance property; separate from queue.exhaustOnUse.
 
         CardInstance() = default;
         CardInstance(CardId id, bool upgraded=false);
