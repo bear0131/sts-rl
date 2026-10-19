@@ -42,6 +42,7 @@ from .entity_ids import (
     FRESH_CARD_MISC,
     JSON_PRESENCE_CONTRACTS,
     REAL_ANONYMOUS_ACTION_CONTRACTS,
+    THIEF_STATE_FIELDS,
     REAL_CARD_WIRE_FIELDS,
     CARD_STATE_FIELD_CONTRACTS,
     CARD_SPECIAL_DATA_FIELDS,
@@ -224,6 +225,7 @@ def complete_word_tables():
         "real_act_boss_keys": REAL_ACT_BOSS_KEYS,
         "json_presence_contracts": JSON_PRESENCE_CONTRACTS,
         "anonymous_action_contracts": REAL_ANONYMOUS_ACTION_CONTRACTS,
+        "thief_private_state_fields": THIEF_STATE_FIELDS,
         "turn_start_power_effect_contracts": {
             "Magnetism": {
                 "java": "MagnetismPower.atStartOfTurn / MakeTempCardInHandAction constructor",

@@ -103,6 +103,10 @@ struct Monster {
         // time eater has used haste
         // awakened one isPhase2
         int miscInfo = 0;
+        // Looter/Mugger: miscInfo is the actual stolenGold ledger. These are
+        // separate Java fields, not inferred from turn or ThieveryPower.
+        int thiefSlashCount = 0;
+        int thiefGoldAmount = 0;
 
         Monster() = default;
         Monster(const Monster& rhs) = default;

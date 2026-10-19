@@ -591,6 +591,7 @@ class RealCombatSearch:
                 "escape_next": monster["escape_next"],
                 "unawakened": bool(monster["unawakened"]),
                 "reactive": bool(monster["reactive"]),
+                "thief_state": monster['thief_state'],
                 "move_history": [move, last_move, second_last_move],
                 "base_damage": int(monster["base_damage"]),
                 "adjusted_damage": int(monster["adjusted_damage"]),

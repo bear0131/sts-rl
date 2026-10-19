@@ -370,6 +370,11 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, monster.uniquePower0);
         hashValue(hash, monster.uniquePower1);
         hashValue(hash, monster.miscInfo);
+        if (monster.id == MonsterId::LOOTER || monster.id == MonsterId::MUGGER) {
+            hashValue(hash, 0x54484946); // THIF: private future state, not a model token.
+            hashValue(hash, monster.thiefSlashCount);
+            hashValue(hash, monster.thiefGoldAmount);
+        }
         const auto damage = monster.getMoveBaseDamage(bc);
         hashValue(hash, damage.damage);
         hashValue(hash, damage.attackCount);

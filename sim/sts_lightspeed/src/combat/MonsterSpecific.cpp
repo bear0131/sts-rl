@@ -234,7 +234,7 @@ void Monster::preBattleAction(BattleContext &bc) {
 
         case MonsterId::LOOTER:
         case MonsterId::MUGGER:
-            buff<MS::THIEVERY>(asc17 ? 20 : 15);
+            buff<MS::THIEVERY>(thiefGoldAmount);
             break;
 
         case MonsterId::REPTOMANCER:
@@ -903,35 +903,38 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
       assert(curHp > 0);
 #endif
             bc.addToBot(Actions::EscapeAction(idx));
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::LOOTER_ESCAPE));
             break;
         }
 
         case MMID::LOOTER_LUNGE: {// 4
+            ++thiefSlashCount;
             queueThiefAttack(bc, asc2 ? 14 : 12);
             setMove(MMID::LOOTER_SMOKE_BOMB);
             break;
         }
 
         case MMID::LOOTER_MUG: { // 1
-            if (bc.getMonsterTurnNumber() == 1) {
+            if (thiefSlashCount == 0) {
                 bc.aiRng.randomBoolean(0.6f); // for a dialog message in game
             }
             queueThiefAttack(bc, asc2 ? 11 : 10);
-            if (bc.getMonsterTurnNumber() == 1) {
-                setMove(MMID::LOOTER_MUG);
-
+            ++thiefSlashCount;
+            if (thiefSlashCount == 2) {
+                if (bc.aiRng.randomBoolean(0.5f)) {
+                    setMove(MMID::LOOTER_SMOKE_BOMB);
+                } else {
+                    bc.addToBot(Actions::SetMonsterMove(idx, MMID::LOOTER_LUNGE));
+                }
             } else {
-                const auto nextMove = bc.aiRng.randomBoolean(0.5f) ?
-                                      MMID::LOOTER_SMOKE_BOMB : MMID::LOOTER_LUNGE;
-
-                setMove(nextMove);
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::LOOTER_MUG));
             }
             break;
         }
 
         case MMID::LOOTER_SMOKE_BOMB: { // 2
-            addBlock(6);
-            setMove(MMID::LOOTER_ESCAPE);
+            bc.addToBot(Actions::MonsterGainBlock(idx, 6));
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::LOOTER_ESCAPE));
             break;
         }
 
@@ -942,11 +945,13 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             assert(curHp > 0);
 #endif
             bc.addToBot(Actions::EscapeAction(idx));
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::MUGGER_ESCAPE));
             break;
         }
 
         case MMID::MUGGER_LUNGE: { // 4
             bc.aiRng.random(2); // for a dialog message in gam
+            ++thiefSlashCount;
             queueThiefAttack(bc, asc2 ? 18 : 16);
             setMove(MMID::MUGGER_SMOKE_BOMB);
             break;
@@ -954,26 +959,26 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::MUGGER_MUG: { // 1
             bc.aiRng.random(2); // for a dialog message in game
-            if (bc.getMonsterTurnNumber() == 2) {
+            if (thiefSlashCount == 1) {
                 bc.aiRng.randomBoolean(0.6f); // for a dialog message in game
             }
             queueThiefAttack(bc, asc2 ? 11 : 10);
-
-            if (bc.getMonsterTurnNumber() == 2) {
-                const auto nextMove = bc.aiRng.randomBoolean(0.5f) ?
-                        MMID::MUGGER_SMOKE_BOMB : MMID::MUGGER_LUNGE;
-
-                setMove(nextMove);
-
+            ++thiefSlashCount;
+            if (thiefSlashCount == 2) {
+                if (bc.aiRng.randomBoolean(0.5f)) {
+                    setMove(MMID::MUGGER_SMOKE_BOMB);
+                } else {
+                    bc.addToBot(Actions::SetMonsterMove(idx, MMID::MUGGER_LUNGE));
+                }
             } else {
-                setMove(MMID::MUGGER_MUG);
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::MUGGER_MUG));
             }
             break;
         }
 
         case MMID::MUGGER_SMOKE_BOMB: { // 2
-            addBlock(asc17 ? 17 : 11);
-            setMove(MMID::MUGGER_ESCAPE);
+            bc.addToBot(Actions::MonsterGainBlock(idx, asc17 ? 17 : 11));
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::MUGGER_ESCAPE));
             break;
         }
 
@@ -3329,9 +3334,11 @@ void Monster::initSpawnedMonster(BattleContext &bc, const MonsterId monsterId, c
 }
 
 void Monster::queueThiefAttack(BattleContext &bc, int baseDamage) {
-    // Both stock thieves initialize their private goldAmt from ascension.
-    // It is not the removable display ThieveryPower's current amount.
-    const int goldAmount = bc.ascension >= 17 ? 20 : 15;
+    // Read the actual constructor/imported private goldAmt, never the removable
+    // display ThieveryPower or a fresh ascension-derived substitute on restore.
+    const int goldAmount = thiefGoldAmount;
+    if (goldAmount != 15 && goldAmount != 20)
+        throw std::invalid_argument("thief attack requires explicit stock goldAmt");
     const int damage = calculateDamageToPlayer(bc, baseDamage);
     bc.addToBot(Actions::RecordStolenGold(idx, goldAmount));
     bc.addToBot(Actions::StealingAttackPlayer(idx, damage, goldAmount));

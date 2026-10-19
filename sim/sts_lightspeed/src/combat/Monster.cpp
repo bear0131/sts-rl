@@ -116,6 +116,11 @@ void Monster::construct(BattleContext &bc, MonsterId monsterId, int monsterIdx) 
     initHp(bc.monsterHpRng, bc.ascension);
 
     switch (id) {
+        case MonsterId::LOOTER:
+        case MonsterId::MUGGER:
+            thiefGoldAmount = bc.ascension >= 17 ? 20 : 15;
+            break;
+
         case MonsterId::GREEN_LOUSE:
         case MonsterId::RED_LOUSE:
             if (bc.ascension >= 2) {
@@ -332,6 +337,9 @@ void Monster::finishDeath(BattleContext &bc, bool triggerRelics, bool removeFrom
 
 void Monster::die(BattleContext &bc) {
     if (isDying() || isHalfDead()) return;
+    if (id == MonsterId::MUGGER) {
+        bc.aiRng.random(2); // Mugger.playDeathSfx, unlike Looter's MathUtils RNG.
+    }
     if (id == MonsterId::AWAKENED_ONE && !miscInfo) {
         if (!isEscaping()) --bc.monsters.monstersAlive;
         halfDead = true;

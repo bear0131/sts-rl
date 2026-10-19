@@ -11,6 +11,7 @@
 
 #include "constants/PlayerStatusEffects.h"
 #include "constants/MonsterStatusEffects.h"
+#include "constants/MonsterMoves.h"
 #include "constants/Cards.h"
 #include "constants/Potions.h"
 
@@ -65,6 +66,7 @@ namespace sts {
         static Action HealMonster(int idx, int amount);
 
         static Action MonsterGainBlock(int idx, int amount);
+        static Action SetMonsterMove(int idx, MonsterMoveId move);
         static Action RollMove(int monsterIdx);
         static Action ReactiveRollMove(int monsterIdx); // one queued reactive hit
 

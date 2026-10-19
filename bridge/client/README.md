@@ -126,7 +126,7 @@ It patches seven `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v14`.
+`current_intent_export: simulator-parity-v15`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -170,8 +170,18 @@ native counterpart and audit status. Unknown identities, mismatched flags,
 deprecated/custom unsupported semantics and stock wrappers claiming a selection
 are rejected explicitly. A `settle` entry only permits waiting for its real
 completion; it does not certify pending native effect/root-restore gaps.
-Do not mix v14 Python with an older jar. Model tensor layouts and
-checkpoint parameters are unchanged; this is a transport change.
+Since v15 every monster also has `simulator_thief_state`: Looter/Mugger export
+their actual `stolenGold`, `slashCount`, and `goldAmt`, including dead/escaping
+entities; other species export explicit null. Missing state, invented counters,
+or a non-thief with thief state are rejected. Canonical state, strict native
+root restore, full dict comparison and future search keys retain these fields.
+Attack count is not the room turn number; theft amount is not the removable
+ThieveryPower. The compact leaf observation remains the frozen model projection,
+not a complete restorable combat state.
+Do not mix v15 Python with an older jar or native extension. Model tensor layouts
+and checkpoint parameters are unchanged; these private fields affect simulation
+and search, not the dimensions of the policy input. Source changes are not a
+claim of a rebuilt or behavior-verified runtime.
 Two read-only game hooks track the last monster attack damage and reset it at
 combat entry. Gameplay, UI and RNG are untouched.
 The bridge fails on a live Dome monster whose current move is still missing;

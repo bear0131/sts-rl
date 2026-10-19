@@ -3,6 +3,8 @@
 //
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 #include "combat/Actions.h"
 #include "combat/BattleContext.h"
 #include "game/Game.h"
@@ -75,6 +77,8 @@ Action Actions::RecordStolenGold(int idx, int goldAmount) {
     return {[=] (BattleContext &bc) {
         const int amount = std::min(static_cast<int>(bc.player.gold), goldAmount);
         if (amount > 0) {
+            if (bc.monsters.arr[idx].miscInfo > std::numeric_limits<int>::max() - amount)
+                throw std::overflow_error("thief stolen-gold ledger exceeds native integer range");
             bc.monsters.arr[idx].miscInfo += amount;
             bc.setRequiresStolenGoldCheck(true);
         }
@@ -134,6 +138,13 @@ Action Actions::MonsterGainBlock(int idx, int amount) {
             m.addBlock(amount);
         }
     }, false};
+}
+
+Action Actions::SetMonsterMove(int idx, MonsterMoveId move) {
+    return {[=] (BattleContext &bc) {
+        // SetMoveAction has no dead/escaping guard and is not a DAMAGE action.
+        bc.monsters.arr[idx].setMove(move);
+    }};
 }
 
 Action Actions::RollMove(int monsterIdx) {

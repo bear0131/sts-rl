@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v14"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v15"
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -23,9 +23,16 @@ JSON_PRESENCE_CONTRACTS = {
     'deck/relics/potions/map': 'required in-game lists; empty is data, missing/null is not an empty inventory',
     'combat_state': 'required object while room_phase=COMBAT; absent outside combat per stock serializer',
     'simulator_stasis_card': 'required key for every monster; actual held-card object or explicit null; never infer null from a missing key',
+    'simulator_thief_state': 'required key for every monster; Looter/Mugger actual stolenGold/slashCount/goldAmt including dead/escaping entities; explicit null only for other species',
     'card/relic_list_aliases': 'if multiple aliases are present, complete lists must be equal, including empty lists; no nonempty-wins fallback',
     'screen_inventories': 'card/relic/potion/reward screens require their structured lists; explicit lists must agree with coexisting reward records; labels do not replace entities',
     'conditional_exports': 'Neow typed offers only on screen3; private power overrides only for a present matching power; unknown reflection fields must not be invented',
+}
+
+THIEF_STATE_FIELDS = {
+    'stolen_gold': {'java': 'Looter/Mugger.stolenGold', 'native': 'Monster::miscInfo', 'domain': 'nonnegative signed int; cumulative ledger, not current player gold'},
+    'slash_count': {'java': 'Looter/Mugger.slashCount', 'native': 'Monster::thiefSlashCount', 'domain': '0..3 stock attack executions; does not advance on skipped monster turns'},
+    'gold_amount': {'java': 'Looter/Mugger.goldAmt', 'native': 'Monster::thiefGoldAmount', 'domain': '15 or 20 from actual field; never restore from ThieveryPower or ascension'},
 }
 
 # Exhaustive classfile ancestry + InnerClasses/EnclosingMethod inventory of the
@@ -40,28 +47,28 @@ REAL_ANONYMOUS_ACTION_CONTRACTS = {
         'source': 'Looter.takeTurn, MUG (1)',
         'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
         'native_source': 'Monster::queueThiefAttack / RecordStolenGold / StealingAttackPlayer / LOOTER_MUG',
-        'native_audit': 'queue stages source-corrected, untested; BRIDGE54 private stolenGold/slashCount root transport remains incomplete',
+        'native_audit': 'v15 explicit stolenGold/slashCount/goldAmt root, dict and search key; queued ledger/damage/SetMove source-corrected, unbuilt and untested; full pending/death-reward capture remains BRIDGE54/28',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.monsters.exordium.Looter$2': {
         'source': 'Looter.takeTurn, LUNGE (4)',
         'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
         'native_source': 'Monster::queueThiefAttack / RecordStolenGold / StealingAttackPlayer / LOOTER_LUNGE',
-        'native_audit': 'queue stages source-corrected, untested; BRIDGE54 private stolenGold/slashCount root transport remains incomplete',
+        'native_audit': 'v15 explicit stolenGold/slashCount/goldAmt root, dict and search key; queued ledger/damage/SetMove source-corrected, unbuilt and untested; full pending/death-reward capture remains BRIDGE54/28',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.monsters.city.Mugger$1': {
         'source': 'Mugger.takeTurn, MUG (1)',
         'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
         'native_source': 'Monster::queueThiefAttack / RecordStolenGold / StealingAttackPlayer / MUGGER_MUG',
-        'native_audit': 'queue stages source-corrected, untested; BRIDGE54 private stolenGold/slashCount root transport remains incomplete',
+        'native_audit': 'v15 explicit stolenGold/slashCount/goldAmt root, dict and search key; queued ledger/damage/SetMove source-corrected, unbuilt and untested; full pending/death-reward capture remains BRIDGE54/28',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.monsters.city.Mugger$2': {
         'source': 'Mugger.takeTurn, LUNGE (4)',
         'effect': 'at queue execution add min(goldAmt, current player gold) to this thief stolenGold; following DamageAction separately steals gold and attacks',
         'native_source': 'Monster::queueThiefAttack / RecordStolenGold / StealingAttackPlayer / MUGGER_LUNGE',
-        'native_audit': 'queue stages source-corrected, untested; BRIDGE54 private stolenGold/slashCount root transport remains incomplete',
+        'native_audit': 'v15 explicit stolenGold/slashCount/goldAmt root, dict and search key; queued ledger/damage/SetMove source-corrected, unbuilt and untested; full pending/death-reward capture remains BRIDGE54/28',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.powers.MayhemPower$1': {
@@ -790,6 +797,7 @@ CARD_DAMAGE_TIMING_CONTRACTS = {
 # action-name or general BLOCK rule. This is the source-audited BRIDGE36 batch;
 # the full Java action-queue transport is still incomplete (BRIDGE28).
 COMBAT_VICTORY_ACTION_CONTRACTS = {
+    'SetMoveAction': {'native': 'SetMonsterMove', 'keep': False, 'reason': 'default action type; no target lifecycle guard, deferred exactly where Java enqueues it'},
     'PoisonLoseHpAction': {'native': 'PoisonLoseHpAction(target, amount)', 'keep': True, 'reason': 'DAMAGE; capture poison at turn start, HP_LOSS bypasses block, decrement surviving power after death callbacks'},
     'DamageAction': {'native': 'AttackEnemy/DamageEnemy/AttackPlayer/StealingAttackPlayer/DamagePlayer', 'keep': True, 'reason': 'ActionType.DAMAGE; stealing variant guards source before gold deduction and then applies damage'},
     'Looter$1/$2/Mugger$1/$2': {'native': 'RecordStolenGold', 'keep': False, 'reason': 'anonymous default type bookkeeping, separate from the following DamageAction'},

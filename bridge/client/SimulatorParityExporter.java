@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v14";
+    public static final String VERSION = "simulator-parity-v15";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -36,6 +36,20 @@ public final class SimulatorParityExporter {
         state.put("is_dead", Boolean.valueOf(monster.isDead));
         state.put("is_escaping", Boolean.valueOf(monster.isEscaping));
         state.put("escape_next", Boolean.valueOf(monster.escapeNext));
+        Class<?> thiefClass = null;
+        if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.Looter)
+            thiefClass = com.megacrit.cardcrawl.monsters.exordium.Looter.class;
+        else if (monster instanceof com.megacrit.cardcrawl.monsters.city.Mugger)
+            thiefClass = com.megacrit.cardcrawl.monsters.city.Mugger.class;
+        HashMap<String, Object> thief = null;
+        if (thiefClass != null) {
+            thief = new HashMap<String, Object>();
+            thief.put("stolen_gold", Integer.valueOf(privateInt(monster, thiefClass, "stolenGold")));
+            thief.put("slash_count", Integer.valueOf(privateInt(monster, thiefClass, "slashCount")));
+            thief.put("gold_amount", Integer.valueOf(privateInt(monster, thiefClass, "goldAmt")));
+        }
+        // Corpses retain their ledger; only a genuinely non-thief has null.
+        state.put("simulator_thief_state", thief);
         // UnawakenedPower is removed at the first lethal hit, while the room's
         // death protection remains until the queued CanLoseAction executes.
         state.put("unawakened", Boolean.valueOf(

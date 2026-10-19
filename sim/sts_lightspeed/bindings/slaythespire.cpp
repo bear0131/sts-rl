@@ -125,10 +125,10 @@ py::dict combatCardState(const sts::BattleContext &bc) {
 
 int snapshotInteger(const py::dict &row, const char *key, int low, int high) {
     if (!row.contains(key) || !py::isinstance<py::int_>(row[key]) || py::isinstance<py::bool_>(row[key]))
-        throw std::invalid_argument(std::string("card snapshot requires explicit integer ") + key);
+        throw std::invalid_argument(std::string("snapshot requires explicit integer ") + key);
     const auto value = row[key].cast<std::int64_t>();
     if (value < low || value > high)
-        throw std::invalid_argument(std::string("card snapshot integer outside native domain: ") + key);
+        throw std::invalid_argument(std::string("snapshot integer outside native domain: ") + key);
     return static_cast<int>(value);
 }
 
@@ -307,6 +307,15 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         md["is_dead"] = m.isDeadB;
         md["is_escaping"] = m.isEscapingB;
         md["escape_next"] = m.escapeNext;
+        if (m.id == sts::MonsterId::LOOTER || m.id == sts::MonsterId::MUGGER) {
+            py::dict thief;
+            thief["stolen_gold"] = m.miscInfo;
+            thief["slash_count"] = m.thiefSlashCount;
+            thief["gold_amount"] = m.thiefGoldAmount;
+            md["thief_state"] = thief;
+        } else {
+            md["thief_state"] = py::none();
+        }
         // This is the first-life death protection, not UnawakenedPower's
         // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
@@ -980,6 +989,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     "id", "max_hp", "hp", "block", "half_dead",
                     "is_dying", "is_dead", "is_escaping", "escape_next",
                     "unawakened", "reactive", "move_history", "powers", "adjusted_damage",
+                    "thief_state",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1007,6 +1017,32 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             }
             if (monster.id == sts::MonsterId::INVALID) {
                 throw std::invalid_argument("cannot edit an absent monster without an explicit species");
+            }
+            if (m.contains("thief_state")) {
+                const bool isThief = monster.id == sts::MonsterId::LOOTER
+                    || monster.id == sts::MonsterId::MUGGER;
+                if (!isThief) {
+                    if (!m["thief_state"].is_none()) throw std::invalid_argument(
+                        "non-thief cannot have thief private state");
+                } else {
+                    if (!py::isinstance<py::dict>(m["thief_state"]))
+                        throw std::invalid_argument("thief requires an explicit private state object");
+                    const auto thief = m["thief_state"].cast<py::dict>();
+                    if (thief.size() != 3 || !thief.contains("stolen_gold")
+                        || !thief.contains("slash_count") || !thief.contains("gold_amount"))
+                        throw std::invalid_argument("thief private state requires exactly three fields");
+                    const int stolen = snapshotInteger(thief, "stolen_gold", 0, std::numeric_limits<int>::max());
+                    const int slashes = snapshotInteger(thief, "slash_count", 0, 3);
+                    const int amount = snapshotInteger(thief, "gold_amount", 15, 20);
+                    if (amount != 15 && amount != 20)
+                        throw std::invalid_argument("thief private state outside stock/native domain");
+                    monster.miscInfo = stolen;
+                    monster.thiefSlashCount = slashes;
+                    monster.thiefGoldAmount = amount;
+                }
+            } else if ((monster.id == sts::MonsterId::LOOTER || monster.id == sts::MonsterId::MUGGER)
+                       && monster.thiefGoldAmount == 0) {
+                throw std::invalid_argument("new custom thief requires explicit private state");
             }
             monster.maxHp = getBoundedInt(
                 m, "max_hp", monster.maxHp, 1, std::numeric_limits<int>::max());
@@ -1159,9 +1195,14 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             }
         }
         bc.monsters.monstersAlive = 0;
+        bool hasStolenGold = false;
         for (int i = 0; i < bc.monsters.monsterCount; ++i) {
-            if (bc.monsters.arr[i].isTargetable()) ++bc.monsters.monstersAlive;
+            const auto &monster = bc.monsters.arr[i];
+            if (monster.isTargetable()) ++bc.monsters.monstersAlive;
+            if ((monster.id == sts::MonsterId::LOOTER || monster.id == sts::MonsterId::MUGGER)
+                && monster.miscInfo > 0) hasStolenGold = true;
         }
+        bc.setRequiresStolenGoldCheck(hasStolenGold);
     }
     if (spec.contains("card_state")) {
         restoreCombatCardState(bc, spec["card_state"].cast<py::dict>());
