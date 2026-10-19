@@ -1088,7 +1088,7 @@ def canonical_sim_potion(value):
     return name
 
 
-def normalize_sim_global(gc):
+def normalize_sim_global(gc, *, combat=None):
     """Run-global obs block (obs_design.md §3/§4). Backend-agnostic shape; the
     sim fills it from gc. `boss_relics` is only meaningful on a boss-relic
     screen (empty/duplicate otherwise) — callers gate on phase."""
@@ -1105,6 +1105,16 @@ def normalize_sim_global(gc):
             )
         boss_relics = list(gc.boss_relic_ids())
     relic_state = list(gc.relic_state())
+    if combat is None:
+        combat = sim_phase(gc) == "combat"
+    # Native persistence is committed on battle exit; Java consumes Tea Set
+    # at the first turn start. Its observable pending charge is already spent
+    # throughout combat, even while native GC retains the exit-time journal.
+    if combat:
+        relic_state = [
+            dict(item, counter=0) if item["id"] == "Ancient Tea Set" else item
+            for item in relic_state
+        ]
     potions = [canonical_sim_potion(potion) for potion in gc.overworld_potions]
     return {
         # True only for the search-only state immediately after the final

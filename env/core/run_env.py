@@ -1437,7 +1437,7 @@ class SlayTheSpireEnv(gym.Env):
                 sel['hand_selected'] = [i for i in range(10) if prefix >> i & 1]
                 sel['pick_remaining'] = max(0, int(sel.get('pick_remaining', sel.get('pick_max', 0))) - prefix.bit_count())
         global_state = dict(self._nosl_cpp_global_template or
-                            normalize_sim_global(self.thick.gc))
+                            normalize_sim_global(self.thick.gc, combat=True))
         # The branch is a hypothetical world line.  Persistent metadata comes
         # from the live run, while combat HP/potions come from this branch.
         global_state["hp"] = int(raw_state["player"]["hp"])
@@ -1491,7 +1491,7 @@ class SlayTheSpireEnv(gym.Env):
                         _nosl_compact_empty(card_language=self._card_language).items()}
             encode._encode_combat_global(template, {
                 "phase": "combat", "arg_step": "root",
-                "global": global_state or normalize_sim_global(self.thick.gc),
+                "global": global_state or normalize_sim_global(self.thick.gc, combat=True),
             })
             cached = (global_state, {
                 key: template[key] for key in (
@@ -2043,7 +2043,7 @@ class SlayTheSpireEnv(gym.Env):
         # Relics/deck/map metadata is invariant across hypothetical combat
         # branches.  Compute it once per root; only branch HP/potions are
         # overlaid in _native_leaf_observation().
-        self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc)
+        self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc, combat=True)
         self._nosl_cpp_encoded_global_template = None
         begin_seconds = time.perf_counter() - begin_started
         if _defer_leaf_selection:

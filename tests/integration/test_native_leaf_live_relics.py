@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from env.search.native_batch import NativeSearchBatch
-from bridge.schemas.combat_state import normalize_sim
+from bridge.schemas.combat_state import normalize_sim, normalize_sim_global
 from bridge.schemas.entity_ids import native_relic_counter
 from rl.search.native import NativeSearchConfig
 
@@ -90,3 +90,33 @@ def test_pen_nib_armed_native_counter_is_importable(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, relics=["Pen Nib"])
     env.thick.bc.apply_custom_state({"player": {"counters": {"pen_nib": -1}}})
     assert normalize_sim(env.thick.bc.to_dict())["player"]["combat_counters"]["pen_nib"] == -1
+
+
+def test_java_relic_sentinel_word_table_matches_native_save_conversion():
+    import slaythespire as sts
+    from bridge.schemas.entity_ids import RELIC_COUNTER_SENTINELS
+    for relic_id, values in RELIC_COUNTER_SENTINELS.items():
+        for raw in range(-3, 11):
+            if raw in values:
+                assert sts.java_relic_counter(relic_id, raw) == native_relic_counter(relic_id, raw) == values[raw]
+            else:
+                with pytest.raises(ValueError, match="counter"):
+                    native_relic_counter(relic_id, raw)
+                with pytest.raises(ValueError, match="counter"):
+                    sts.java_relic_counter(relic_id, raw)
+
+
+def test_tea_set_pending_charge_is_spent_in_combat_observation(combat_factory):
+    import slaythespire as sts
+    env = combat_factory(["STRIKE_RED"] * 5)
+    env.thick.gc.set_relic_state([{"id": "Ancient Tea Set", "counter": 1}])
+    assert normalize_sim_global(env.thick.gc, combat=False)["relic_counters"] == [1]
+    env.thick.bc = sts.create_battle(env.thick.gc, "Cultist")
+    env._invalidate_backend_cache()
+    assert env.thick.bc.to_dict()["player"]["energy"] == 5
+    assert env.thick.obs_canonical()["global"]["relic_counters"] == [0]
+    assert env._obs()["relic_counters"][0] == 0
+    raw = env.thick.bc.compact_leaf_arrays()
+    packed = {"categorical": np.asarray(raw["categorical"])[None],
+              "scalars": np.asarray(raw["scalars"])[None]}
+    assert env._native_packed_observation_batch(packed)["relic_counters"][0, 0] == 0

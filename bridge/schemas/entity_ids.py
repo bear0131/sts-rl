@@ -16,8 +16,14 @@ LIVE_RELIC_STATE_FIELDS = {
 # Java counter sentinel -> native persistent RelicInstance.data.  The mapping
 # is explicit so a used-up relic cannot become true merely because -2 != 0.
 RELIC_COUNTER_SENTINELS = {
+    "Ancient Tea Set": {-1: 0, -2: 1},
     "Lizard Tail": {-1: 1, -2: 0},
     "MawBank": {-1: 1, -2: 0},
+    "Matryoshka": {-2: 0, 1: 1, 2: 2},
+    "NlothsMask": {-2: 0, 1: 1},
+    "NeowsBlessing": {-2: 0, 0: 0, 1: 1, 2: 2, 3: 3},
+    "Omamori": {0: 0, 1: 1, 2: 2},
+    "WingedGreaves": {-2: 0, 0: 0, 1: 1, 2: 2, 3: 3},
 }
 
 # Native combat uses -1 for the armed tenth attack; persistent native and

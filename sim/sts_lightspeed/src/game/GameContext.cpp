@@ -226,16 +226,12 @@ void GameContext::initFromSave(const SaveFile &s) {
 }
 
 void GameContext::initRelicsFromSave(const SaveFile &s) {
+    if (s.relics.size() != s.relic_counters.size()) {
+        throw std::invalid_argument("save relic identities and counters have different lengths");
+    }
     for (int i = 0; i < s.relics.size(); ++i) {
         auto r = s.relics[i];
-//        std::cout << getRelicName(r) << " " << s.relic_counters[i] << '\n';
-
-        // todo lizard tail, and others
-        switch (r) {
-            default:
-                RelicInstance relic {r, s.relic_counters[i]};
-                relics.add(relic);
-        }
+        relics.add({r, RelicInstance::fromJavaCounter(r, s.relic_counters[i])});
     }
 }
 
@@ -1138,6 +1134,9 @@ void GameContext::enterBattle(MonsterEncounter encounter) {
                 --charges;
             }
         }
+        if (hasRelic(RelicId::ANCIENT_TEA_SET)) {
+            relics.getRelicValueRef(RelicId::ANCIENT_TEA_SET) = 0;
+        }
         afterBattle();
     }
 }
@@ -1414,6 +1413,18 @@ bool GameContext::obtainRelic(RelicId r) {
             break;
         }
 
+        case RelicId::MATRYOSHKA:
+            relicData = 2;
+            break;
+
+        case RelicId::NLOTHS_HUNGRY_FACE:
+            relicData = 1;
+            break;
+
+        case RelicId::WING_BOOTS:
+            relicData = 3;
+            break;
+
         case RelicId::NEOWS_LAMENT: {
             relicData = 3;
             break;
@@ -1632,6 +1643,9 @@ void GameContext::relicsOnEnterRoom(Room room) {
 
     switch (room) {
         case Room::REST:
+            if (hasRelic(RelicId::ANCIENT_TEA_SET)) {
+                relics.getRelicValueRef(RelicId::ANCIENT_TEA_SET) = 1;
+            }
             if (hasRelic(RelicId::ETERNAL_FEATHER)) {
                 playerHeal(deck.size() / 5 * 3);
             }

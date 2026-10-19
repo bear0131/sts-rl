@@ -183,7 +183,7 @@ class SimCombatEnv(gym.Env):
         obs_design.md §3 — so the global block rides along even in combat."""
         d = self._canon()
         d["phase"] = "combat"
-        d["global"] = normalize_sim_global(self.gc)
+        d["global"] = normalize_sim_global(self.gc, combat=True)
         # in-combat card-select sub-screen -> carry the select block (obs_design
         # §4.1) so select_context/pick_remaining reach the obs.
         if self.bc.input_state == _CARD_SELECT:

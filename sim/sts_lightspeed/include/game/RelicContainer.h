@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <stdexcept>
 
 #include "sts_common.h"
 #include "constants/Relics.h"
@@ -16,6 +17,41 @@ namespace sts {
     struct RelicInstance {
         RelicId id;
         int data;
+
+        // Native persistence uses nonnegative charges/flags, not Java's
+        // display sentinels. Keep save import distinct from native snapshots.
+        static int fromJavaCounter(RelicId id, int value) {
+            switch (id) {
+                case RelicId::ANCIENT_TEA_SET:
+                    if (value == -1) return 0;
+                    if (value == -2) return 1;
+                    break;
+                case RelicId::LIZARD_TAIL:
+                case RelicId::MAW_BANK:
+                    if (value == -1) return 1;
+                    if (value == -2) return 0;
+                    break;
+                case RelicId::MATRYOSHKA:
+                    if (value == -2) return 0;
+                    if (value >= 1 && value <= 2) return value;
+                    break;
+                case RelicId::NLOTHS_HUNGRY_FACE:
+                    if (value == -2) return 0;
+                    if (value == 1) return 1;
+                    break;
+                case RelicId::NEOWS_LAMENT:
+                case RelicId::WING_BOOTS:
+                    if (value == -2) return 0;
+                    if (value >= 0 && value <= 3) return value;
+                    break;
+                case RelicId::OMAMORI:
+                    if (value >= 0 && value <= 2) return value;
+                    break;
+                default:
+                    return value;
+            }
+            throw std::invalid_argument("Java relic counter outside its declared sentinel/charge domain");
+        }
     };
 
     class GameContext;

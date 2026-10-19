@@ -228,7 +228,7 @@ class SimGameEnv:
         _canonical(), plus the run-global block (present every phase, §3/§4).
         This is what encode.encode() consumes."""
         d = self._canonical()
-        d["global"] = normalize_sim_global(self.gc)
+        d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None)
         if self.bc is not None:
             d["global"]["potions"] = [
                 canonical_sim_potion(potion) for potion in self.bc.potions

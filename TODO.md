@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE23 | 书籍池和实时遗物传输阶段已修，未部署；存档/其他计数继续审查 | `GameContext.cpp::CURSED_TOME`按真机排除已有书籍，variant24的256个拥有集合/seed/难度组合旧exit31、新0。OBS20/ACTION8/layout5/parity-v5追加Centennial Puzzle/Lizard Tail实时标志，九件遗物叶观测覆盖根计数；真机Tail/MawBank -1/-2→native1/0，Pen Nib永久9与战斗-1显式区分。216定向/批量原生、375桥接单元通过；固定TRAIN47 CUDA加载/预测/一步环境接入通过。下一步：`GameContext::initRelicsFromSave`原始counter导入、Ancient Tea Set跨非战斗房间保持、Matryoshka/Nloth/Omamori/Neow耗尽哨兵与初始数量、其他遗物显示/派生/回合计数完整对接。不能把原始counter直接当native布尔，不宣称全遗物语义已闭环。 |
+| BRIDGE23 | 书籍池、实时传输、持久充能/存档阶段已修，未部署；派生/回合计数继续审查 | OBS20/ACTION8/layout5/parity-v5配套，书籍池variant24的256组合旧exit31/新0；九件遗物叶计数、Tail/MawBank哨兵、Pen Nib永久9/战斗-1已修。原生save import与桥接8件哨兵表逐值一致且拒绝越界；Ancient Tea Set进入休息室置待用、跨事件保留、下场战斗消费，skipBattles同样消费，战斗观测显示已花费；修Matryoshka2/NlothsMask1/WingedGreaves3初值。variants25/26旧exit32/33，新A0/A15均0，相邻22..26全过；410定向单元/原生通过。下一步：Du-Vu Doll随诅咒牌变化、Circlet重复领取与收据、无计数Java-1/native0、所有回合/派生计数的完整词表与观测、WingedGreaves地图能力。不得将初始数量修正当整件遗物完整支持，其他动态事件/效果收据仍见BRIDGE22。 |
 
 | BRIDGE22 | 词表与严格传输阶段已修，效果审查/实机未完成；未部署 | `bridge/schemas/codec_contract.py::complete_word_tables` 展开1089个真机/1045个原生身份、198行动映射、38选择来源、52事件处置及17意图/14屏幕/15命令和其他Java枚举；禁止未知或缺失字段填PAD。OBS20/ACTION8/layout4/parity-v4配套重建，修正钥匙、行动历史、状态/计数导入和压缩观测越界截断/类型/单选计数/单行全局复制等错误。410单元、111原生定向及90兼容/同步通过，97搜索批次一致性通过；固定TRAIN47 CUDA加载/一步预测/环境动作通过。下一步：`bridge/event_contract.py` 中 pending_* 效果收据、动态事件typed导出、Match and Keep板面传输、其余默认值与跨层副作用继续源码核对；词表识别不等于事件全支持。完成后可恢复部署并按授权显式`--continuous-test --auto-start`实机测试。 |
 

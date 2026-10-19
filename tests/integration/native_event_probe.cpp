@@ -1,6 +1,8 @@
 // Bounded diagnostic probe, not a real-game oracle. Link against the frozen
 // native build objects; never rebuild/replace the production Python extension.
 #include "game/GameContext.h"
+#include "game/SaveFile.h"
+#include "combat/BattleContext.h"
 #include "sim/search/GameAction.h"
 #include <iostream>
 #include <cstdlib>
@@ -24,6 +26,51 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 25) {
+        // Tea Set is armed by a rest room until the next combat, even when
+        // other noncombat rooms intervene. It is consumed exactly once.
+        root.relics = RelicContainer();
+        root.obtainRelic(RelicId::ANCIENT_TEA_SET);
+        root.relicsOnEnterRoom(Room::REST);
+        root.relicsOnEnterRoom(Room::EVENT);
+        root.lastRoom = Room::EVENT;
+        BattleContext first;
+        first.init(root, MonsterEncounter::CULTIST);
+        if (first.player.energy != 5) return 32;
+        first.updateRelicsOnExit(root);
+        if (root.relics.getRelicValue(RelicId::ANCIENT_TEA_SET) != 0) return 32;
+        root.lastRoom = Room::REST; // lastRoom alone must not re-arm it.
+        BattleContext second;
+        second.init(root, MonsterEncounter::CULTIST);
+        if (second.player.energy != 3) return 32;
+        root.relicsOnEnterRoom(Room::REST);
+        BattleContext third;
+        third.init(root, MonsterEncounter::CULTIST);
+        if (third.player.energy != 5) return 32;
+        return 0;
+    }
+    if (variant == 26) {
+        const RelicId ids[] = {RelicId::MATRYOSHKA, RelicId::NLOTHS_HUNGRY_FACE};
+        const int counts[] = {2, 1};
+        for (int index = 0; index < 2; ++index) {
+            auto fixture = root;
+            fixture.relics = RelicContainer();
+            fixture.obtainRelic(ids[index]);
+            if (fixture.relics.getRelicValue(ids[index]) != counts[index]) return 33;
+        }
+        SaveFile save;
+        save.relics = {RelicId::LIZARD_TAIL, RelicId::MAW_BANK,
+            RelicId::ANCIENT_TEA_SET, RelicId::MATRYOSHKA, RelicId::NLOTHS_HUNGRY_FACE,
+            RelicId::NEOWS_LAMENT, RelicId::OMAMORI};
+        save.relic_counters = {-2, -2, -2, -2, -2, -2, 0};
+        auto loaded = root;
+        loaded.relics = RelicContainer();
+        loaded.initRelicsFromSave(save);
+        const int expected[] = {0, 0, 1, 0, 0, 0, 0};
+        for (int index = 0; index < 7; ++index)
+            if (loaded.relics.getRelicValue(save.relics[index]) != expected[index]) return 33;
+        return 0;
+    }
     if (variant == 24) {
         // CursedTome.randomBook filters owned books before its single draw,
         // and falls back to Circlet only when all three are already owned.

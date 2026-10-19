@@ -2375,6 +2375,9 @@ PYBIND11_MODULE(slaythespire, m) {
         out["scalar_width"] = compact_leaf::kFloatSize;
         return out;
     }, "return the versioned native NOSL compact-observation layout");
+    m.def("java_relic_counter", [](const std::string &id, int value) {
+        return sts::RelicInstance::fromJavaCounter(relicIdFromString(id), value);
+    }, "translate a Java relic counter to native persistent data");
 
     pybind11::class_<NNInterface> nnInterface(m, "NNInterface");
     nnInterface.def("getObservation", &NNInterface::getObservation, "get observation array given a GameContext")
