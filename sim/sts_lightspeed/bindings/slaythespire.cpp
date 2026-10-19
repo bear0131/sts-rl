@@ -15,6 +15,7 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -83,6 +84,119 @@ py::list cardPileToList(const Pile &pile) {
 }
 
 py::dict combatSelectInfo(const sts::BattleContext &bc);
+
+py::dict combatCardRecord(const sts::CardInstance &card) {
+    py::dict row;
+    row["id"] = sts::cardEnumStrings[static_cast<int>(card.id)];
+    row["upgrades"] = card.getUpgradeCount();
+    row["uid"] = card.uniqueId;
+    row["special_data"] = card.specialData;
+    row["base_cost"] = card.cost;
+    row["cost"] = card.costForTurn;
+    row["free_to_play_once"] = card.freeToPlayOnce;
+    row["retain"] = card.retain;
+    return row;
+}
+
+py::dict combatCardState(const sts::BattleContext &bc) {
+    py::dict out;
+    out["version"] = 1;
+    out["next_uid"] = bc.cards.nextUniqueCardId;
+    py::list hand;
+    for (int i = 0; i < bc.cards.cardsInHand; ++i) hand.append(combatCardRecord(bc.cards.hand[i]));
+    out["hand"] = hand;
+    auto pile = [](const auto &cards) {
+        py::list rows;
+        for (const auto &card : cards) rows.append(combatCardRecord(card));
+        return rows;
+    };
+    out["draw"] = pile(bc.cards.drawPile);
+    out["discard"] = pile(bc.cards.discardPile);
+    out["exhaust"] = pile(bc.cards.exhaustPile);
+    py::list stasis;
+    for (const auto &card : bc.cards.stasisCards) {
+        if (card.id == sts::CardId::INVALID) stasis.append(py::none());
+        else stasis.append(combatCardRecord(card));
+    }
+    out["stasis"] = stasis;
+    return out;
+}
+
+int snapshotInteger(const py::dict &row, const char *key, int low, int high) {
+    if (!row.contains(key) || !py::isinstance<py::int_>(row[key]) || py::isinstance<py::bool_>(row[key]))
+        throw std::invalid_argument(std::string("card snapshot requires explicit integer ") + key);
+    const auto value = row[key].cast<std::int64_t>();
+    if (value < low || value > high)
+        throw std::invalid_argument(std::string("card snapshot integer outside native domain: ") + key);
+    return static_cast<int>(value);
+}
+
+void restoreCombatCardState(sts::BattleContext &bc, const py::dict &state) {
+    static constexpr const char *fields[] = {
+        "version", "next_uid", "hand", "draw", "discard", "exhaust", "stasis",
+    };
+    if (state.size() != std::size(fields)) throw std::invalid_argument("combat card snapshot has incomplete or unknown fields");
+    for (auto key : fields) if (!state.contains(key)) throw std::invalid_argument("combat card snapshot has incomplete or unknown fields");
+    if (snapshotInteger(state, "version", 1, 1) != 1) throw std::invalid_argument("unsupported combat card snapshot version");
+    const int nextUid = snapshotInteger(state, "next_uid", 0, 32767);
+    std::set<int> identities;
+    auto parse = [&](const py::handle &value) {
+        if (!py::isinstance<py::dict>(value)) throw std::invalid_argument("combat card snapshot needs complete records");
+        const auto row = value.cast<py::dict>();
+        static constexpr const char *cardFields[] = {
+            "id", "upgrades", "uid", "special_data", "base_cost", "cost", "free_to_play_once", "retain",
+        };
+        if (row.size() != std::size(cardFields)) throw std::invalid_argument("combat card record has incomplete or unknown fields");
+        for (auto key : cardFields) if (!row.contains(key)) throw std::invalid_argument("combat card record has incomplete or unknown fields");
+        if (!py::isinstance<py::str>(row["id"])) throw std::invalid_argument("combat card identity must be a native string");
+        const auto id = cardIdFromEnum(row["id"].cast<std::string>());
+        const int up = snapshotInteger(row, "upgrades", 0, id == sts::CardId::SEARING_BLOW ? 32767 : 1);
+        if (id == sts::CardId::INVALID) throw std::invalid_argument("a physical combat card cannot be INVALID");
+        sts::CardInstance card(id, up != 0);
+        card.uniqueId = snapshotInteger(row, "uid", 0, 32767);
+        if (card.uniqueId >= nextUid || !identities.insert(card.uniqueId).second)
+            throw std::invalid_argument("combat card identities must be unique and below next_uid");
+        card.specialData = snapshotInteger(row, "special_data", 0, 32767);
+        if (id == sts::CardId::SEARING_BLOW && card.specialData != up)
+            throw std::invalid_argument("Searing Blow special_data must equal the complete upgrade count");
+        card.cost = snapshotInteger(row, "base_cost", -3, 127);
+        card.costForTurn = snapshotInteger(row, "cost", -3, 127);
+        for (auto key : {"free_to_play_once", "retain"})
+            if (!py::isinstance<py::bool_>(row[key])) throw std::invalid_argument("combat card flags must be explicit booleans");
+        card.freeToPlayOnce = row["free_to_play_once"].cast<bool>();
+        card.retain = row["retain"].cast<bool>();
+        return card;
+    };
+    // Validate the whole replacement before changing any live card or cache.
+    auto replacement = bc.cards;
+    replacement.cardsInHand = 0;
+    replacement.hand = {};
+    auto rows = [&](const char *key) {
+        if (!py::isinstance<py::list>(state[key])) throw std::invalid_argument("combat card piles must be explicit lists");
+        return state[key].cast<py::list>();
+    };
+    const auto hand = rows("hand");
+    if (hand.size() > sts::CardManager::MAX_HAND_SIZE) throw std::invalid_argument("combat hand exceeds native capacity");
+    for (auto value : hand) replacement.hand[replacement.cardsInHand++] = parse(value);
+    auto replacePile = [&](const char *key, auto &pile) {
+        pile.clear();
+        const auto values = rows(key);
+#ifdef sts_card_manager_use_fixed_list
+        if (values.size() > sts::CardManager::MAX_GROUP_SIZE) throw std::invalid_argument("combat pile exceeds fixed native capacity");
+#endif
+        for (auto value : values) pile.push_back(parse(value));
+    };
+    replacePile("draw", replacement.drawPile);
+    replacePile("discard", replacement.discardPile);
+    replacePile("exhaust", replacement.exhaustPile);
+    const auto stasis = rows("stasis");
+    if (stasis.size() != replacement.stasisCards.size()) throw std::invalid_argument("combat stasis snapshot must retain both physical slots");
+    for (int i = 0; i < static_cast<int>(stasis.size()); ++i)
+        replacement.stasisCards[i] = stasis[i].is_none() ? sts::CardInstance() : parse(stasis[i]);
+    replacement.nextUniqueCardId = nextUid;
+    replacement.recomputeDerivedState();
+    bc.cards = std::move(replacement);
+}
 
 int playerPowerObservation(const sts::Player &p, PlayerStatus status) {
     // OBS18: presence powers live in status bits, not necessarily statusMap.
@@ -3944,6 +4058,10 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("apply_custom_state", &applyCustomCombatState,
              pybind11::arg("state"),
              "apply a data-only custom combat state without advancing RNG or simulation")
+        .def("card_state", &combatCardState,
+             "explicit current native card instances in all four piles and both stasis slots")
+        .def("set_card_state", &restoreCombatCardState, pybind11::arg("state"),
+             "atomically restore complete native instance IDs, costs, growth, flags and allocation cursor; does not advance RNG")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
         .def("legal_combat_mask", &legalCombatMask,
              "return the fixed 71-id combat mask, constructed in C++")

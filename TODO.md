@@ -1,12 +1,14 @@
 # 仓库总 TODO
 
+| BRIDGE29 | 战斗升级费用错误已按源码确认，待修 | `CardInstance::upgrade`对BloodForBlood先局部降费又统一重设3费，对其他降基础费用的升级把costForTurn一起覆盖，丢失当回合减费。已核对本机Java BloodForBlood.upgrade/AbstractCard.upgradeBaseCost/Barricade.upgrade；验收须用真实Armaments/Apotheosis升级动作覆盖基础费/回合费/一次免费、普通与已升级牌，并保持无关局面的模型输入/搜索配置。与桥接快照修复分提交，不声称已有权重经过重训。 |
+
 | BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |
 
 | BRIDGE26 | 全局恢复与字段/房型词表已修，未部署 | `bridge/native_state.py`为搜索/replay共用严格根恢复，按15全局字段和11具体房型词表处理，复制真机asc/keys和2/3/4/5药水槽，去掉HP/金币夹取/额外未知字段忽略，支持EVENT战房型；不重放onEquip。原生药水替换原子化，容量收缩不能丢持有药水。replay不再覆盖明确扩展路径。565桥接/同步/根状态/注入检查通过。尚未解决replay隐藏RNG/入战后→入战前时序、异常跳过假成功；原生gold int16超32767明确拒绝而非截断。 |
 
 | BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
 
-| BRIDGE28 | fresh规则、typed导出和主牌组当前misc/瓶装已修；战斗实例仍待修，未部署 | parity-v7第7只读serializer补11项typed字段、misc0也显式导出；16全局字段中的deck_state经搜索/replay共享根入口恢复当前misc/完整升级/物理瓶装槽，验证后原子替换。set_deck只创建fresh牌、清旧瓶装，未知/缺字段/错型/超容量/错瓶装明确拒绝。609定向通过；同阶段174原生含完整109搜索矩阵通过，末次仅补非法内部瓶装类型导出拒绝后未重复完整矩阵。最终TRAIN47在真正GPU环境cuda:0加载/预测/一步通过。此前fresh规则与源码构造扫描见worklog BRIDGE28各节。仍需战斗实例UUID稳定映射、所有牌堆费用/freeOnce/成长/动态标志导入及搜索观测闭环；导出成功或主牌组恢复不等于战斗快照完成，不能部署。 |
+| BRIDGE28 | 主牌组已修；原生实例快照接口已验，真实实例接入待修，未部署 | parity-v7第7只读serializer补11项typed字段、misc0显式导出；16全局字段的deck_state经搜索/replay共享根入口恢复当前misc/完整升级/物理瓶装槽。原生card_state/set_card_state完整8实例字段/7快照字段，保留四牌堆/两暂扣槽/UID/生成cursor，原子恢复；同状态模型输入、动作mask、压缩观测和future key一致。638桥接/原生定向通过、补字段词表后73定向通过；主牌组阶段174原生含109矩阵与真实GPU最终模型一步验收见worklog。仍需真实UUID稳定映射、所有牌堆费用/freeOnce/成长/动态标志及暂扣牌导出接入实时搜索；现有tuple路径未替换，接口验收不等于完整桥接，不能部署。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 

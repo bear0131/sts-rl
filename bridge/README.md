@@ -21,6 +21,11 @@ parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
 `set_deck_state`并核对旧模型的deck投影，不以`set_deck`创建fresh牌代替当前快照。
 后者也改为原子替换，明确清除旧瓶装索引；未知字段/缺值/错型/超容量/重复瓶装类型拒绝，失败不改变原牌组。
+原生`BattleContext.card_state/set_card_state`完整读写8项实例成员和7项牌堆快照字段，
+保留四个牌堆、两个青铜球暂扣槽、稳定UID和后续生成编号；整批验证后替换并重算派生缓存。
+该接口的同状态回灌保持模型输入、合法动作、压缩观测与搜索future key逐项一致。
+真实UUID到native UID、动态卡牌标志及暂扣牌导出仍须完成后，实时搜索才能使用此完整路径；
+现有`apply_custom_state`简化tuple不得被视为实例快照，新增接口本身不代表实时接入完成。
 347个真机卡牌构造字节码中仅GeneticAlgorithm/RitualDagger写非零misc，分别为1/15；
 fresh初值和370个native CardId一一核对，但这不代替当前misc、UUID实例映射、永久/回合费用和瓶装状态的完整对接。
 `pending_transport/pending_mapping` 明确是未完成项，不得解释成可以丢字段的支持路径；

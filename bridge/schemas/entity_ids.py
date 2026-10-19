@@ -365,6 +365,23 @@ COMPACT_PLAYER_SCALAR_FIELDS = {
     "gold": "BattleContext.player.gold -> gold[0], overrides root journal",
 }
 FRESH_CARD_MISC = {'Ritual Dagger': 15, 'Genetic Algorithm': 1}
+NATIVE_CARD_INSTANCE_FIELDS = {
+    'id': 'native CardId spelling; INVALID is not a physical card',
+    'upgrades': 'CardInstance.getUpgradeCount; complete Searing Blow count',
+    'uid': 'CardInstance.uniqueId; stable identity, master cards use physical deck slot',
+    'special_data': 'CardInstance.specialData; current growth, not fresh constructor value',
+    'base_cost': 'CardInstance.cost; survives end-of-turn reset',
+    'cost': 'CardInstance.costForTurn; underlying cost, not effective free-once cost',
+    'free_to_play_once': 'CardInstance.freeToPlayOnce; explicit boolean',
+    'retain': 'CardInstance.retain; explicit boolean',
+}
+NATIVE_CARD_SNAPSHOT_FIELDS = {
+    'version': 'integer 1', 'next_uid': 'allocation cursor; greater than every active uid',
+    'hand': 'ordered complete records; at most 10',
+    'draw': 'ordered complete records', 'discard': 'ordered complete records',
+    'exhaust': 'ordered complete records',
+    'stasis': 'exactly two native physical slots; null only for actual empty slots',
+}
 CARD_STATE_TRANSPORT_FIELDS = {
     'version': 'integer 1', 'base_cost': 'AbstractCard.cost',
     'free_to_play_once': 'AbstractCard.freeToPlayOnce', 'retain': 'AbstractCard.retain',
