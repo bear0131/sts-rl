@@ -688,10 +688,11 @@ class RealGameAdapter:
         # next event/map command in that frame can clear the selection before
         # the callback runs.  Astrolabe then removes three cards without ever
         # adding their transformed replacements.  Hold one real render interval
-        # after every overworld grid closes, and keep the exact Astrolabe deck
-        # cardinality invariant until the game's own callback has settled.
+        # after every overworld grid closes. Astrolabe additionally waits for
+        # the selected UUIDs to disappear and the actual replacements to arrive;
+        # Omamori may legitimately prevent some replacement curses.
         self._post_overworld_grid_wait = False
-        self._astrolabe_expected_deck_size: int | None = None
+        self._astrolabe_receipt = None
         self._last_relic_ids: set[str] = set()
         self._seen_game_frame = False
         self._combat_identity = None
@@ -712,6 +713,7 @@ class RealGameAdapter:
             self.screen_type() == "GRID" and not bool(self.gs.get("combat_state"))
         )
         previous_relic_ids = self._last_relic_ids
+        previous_gs = self.gs
         self.frame = frame
         self.gs = frame["game_state"] if "game_state" in frame else {}
         for key, table in (("room_phase", REAL_ROOM_PHASES),
@@ -737,16 +739,18 @@ class RealGameAdapter:
         current_overworld_grid = (
             self.screen_type() == "GRID" and not bool(self.gs.get("combat_state"))
         )
-        if current_overworld_grid and "Astrolabe" in current_relic_ids:
-            astrolabe_just_appeared = (
-                self._seen_game_frame and "Astrolabe" not in previous_relic_ids
-            )
-            attaching_to_opening_astrolabe = (
-                not self._seen_game_frame
-                and _int_or_none(self.gs.get("floor")) == 0
-            )
-            if astrolabe_just_appeared or attaching_to_opening_astrolabe:
-                self._astrolabe_expected_deck_size = len(self.gs.get("deck") or [])
+        if ("Astrolabe" in current_relic_ids and "Astrolabe" not in previous_relic_ids
+                and self._seen_game_frame):
+            # The relic and its GRID need not first appear in the same packet.
+            # With <=3 eligible cards, onEquip transforms without opening a GRID.
+            self._begin_astrolabe_receipt(previous_gs)
+        if (current_overworld_grid and self._astrolabe_receipt is None
+                and _screen_state(self.gs).get('selection_context') == 'TRANSFORM_UPGRADE'):
+            # An explicit unfinished Astrolabe GRID is also a valid attachment
+            # boundary on any floor, not just the opening Neow room.
+            self._begin_astrolabe_receipt(self.gs)
+            desc = self.select_descriptor()
+            self._astrolabe_receipt['selected'] = [c['uuid'] for c in desc['selected_instances']]
         if previous_overworld_grid and not current_overworld_grid:
             self._post_overworld_grid_wait = True
         self._last_relic_ids = current_relic_ids
@@ -913,14 +917,12 @@ class RealGameAdapter:
                 "settle_overworld_grid",
             )
 
-        if self._astrolabe_expected_deck_size is not None and st != "GRID":
-            current_deck_size = len(self.gs.get("deck") or [])
-            if current_deck_size != self._astrolabe_expected_deck_size:
+        if self._astrolabe_receipt is not None:
+            if self._waiting_astrolabe():
                 return (
                     "WAIT 1" if "WAIT" in self.commands() else self._refresh_command(),
                     "await_astrolabe_transform",
                 )
-            self._astrolabe_expected_deck_size = None
 
         # CommunicationMod moves a chosen combat card from ``hand`` to
         # ``selected`` and then advertises only CONFIRM.  That is an
@@ -2135,6 +2137,67 @@ class RealGameAdapter:
             raise ValueError("GRID acknowledgement is missing its selection descriptor")
         return int(desc["pick_remaining"]) == 0
 
+    @staticmethod
+    def _astrolabe_deck(gs):
+        cards = [real_card_state(c) for c in _list_value(gs, 'deck', context='Astrolabe receipt')]
+        deck = {c['uuid']: c for c in cards}
+        if len(deck) != len(cards):
+            raise ValueError('Astrolabe master deck has duplicate UUIDs')
+        return deck
+
+    @staticmethod
+    def _astrolabe_omamori(gs):
+        relics = _dict_records(_list_value(gs, 'relics', context='Astrolabe receipt'),
+                               context='Astrolabe relics')
+        matches = [r for r in relics if r.get('id') == 'Omamori']
+        if not matches:
+            return 0  # Explicitly absent relic, not a missing counter fallback.
+        if len(matches) != 1:
+            raise ValueError('Astrolabe receipt has duplicate Omamori relics')
+        counter = _required_int(matches[0], 'counter', context='Omamori')
+        if not 0 <= counter <= 2:
+            raise ValueError('Omamori charges are outside 0..2')
+        return counter
+
+    def _begin_astrolabe_receipt(self, gs):
+        before = self._astrolabe_deck(gs)
+        eligible = {u for u, c in before.items()
+                    if c['id'] not in {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}}
+        self._astrolabe_receipt = dict(
+            before=before, eligible=eligible, count=min(3, len(eligible)),
+            selected=[u for u in before if u in eligible] if len(eligible) <= 3 else [],
+            omamori=self._astrolabe_omamori(gs), started=self._wait_clock(),
+            identity=tuple(_required(gs, k, context='Astrolabe receipt')
+                           for k in ('seed', 'act', 'floor')))
+
+    def _waiting_astrolabe(self):
+        receipt = self._astrolabe_receipt
+        if self._wait_clock() - receipt['started'] > 30:
+            raise RuntimeError('Astrolabe transform did not settle for 30 seconds')
+        if tuple(self.gs.get(k) for k in ('seed', 'act', 'floor')) != receipt['identity']:
+            raise RuntimeError('Astrolabe transform crossed a room/run before acknowledgement')
+        current = self._astrolabe_deck(self.gs)
+        before, picked = receipt['before'], receipt['selected']
+        if self.screen_type() == 'GRID':
+            desc = self.select_descriptor()
+            if desc['context'] != 'TRANSFORM_UPGRADE' or desc['pick_max'] != 3:
+                raise ValueError('Astrolabe receipt received a different selection')
+            selected = [c['uuid'] for c in desc['selected_instances']]
+            offered = {c['instance']['uuid'] for c in desc['candidates']} | set(selected)
+            if (offered != receipt['eligible'] or current != before
+                    or selected != picked[:len(selected)]):
+                raise RuntimeError('Astrolabe GRID changed its master cards or selected different instances')
+            return selected != picked  # Wait for the last CHOOSE; never toggle it twice.
+        lost, gained = set(before) - set(current), set(current) - set(before)
+        blocked = receipt['omamori'] - self._astrolabe_omamori(self.gs)
+        if lost - set(picked) or not 0 <= blocked <= len(picked) or len(gained) > len(picked) - blocked:
+            raise RuntimeError('Astrolabe transformed unselected cards or produced an inconsistent result')
+        if (len(picked) != receipt['count'] or lost != set(picked)
+                or len(gained) != len(picked) - blocked):
+            return True  # Callback removal and delayed obtain occur in separate frames.
+        self._astrolabe_receipt = None
+        return False
+
     def _legal_reward_actions(self) -> list[tuple]:
         st = self.screen_type()
         ss = _screen_state(self.gs)
@@ -2390,6 +2453,13 @@ class RealGameAdapter:
                     and desc['context'] == 'LIQUID_MEMORIES_POTION'):
                 self._begin_combat_grid_receipt(
                     desc, desc['candidates'][candidate_index]['instance'])
+            if self._astrolabe_receipt is not None and desc['context'] == 'TRANSFORM_UPGRADE':
+                receipt = self._astrolabe_receipt
+                if ([c['uuid'] for c in desc['selected_instances']] != receipt['selected']
+                        or len(receipt['selected']) >= receipt['count']):
+                    raise RuntimeError('Astrolabe selection is still awaiting acknowledgement')
+                receipt['selected'].append(desc['candidates'][candidate_index]['instance']['uuid'])
+                receipt['started'] = self._wait_clock()
             index = desc["candidates"][candidate_index]["native_index"]
             return f"CHOOSE {index}"
         if verb == ga.MULTI_SELECT:

@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE60 | 静态确认待修：星盘转换等待忽略御守 | RealGameAdapter._astrolabe_expected_deck_size强制转换前后牌数相同；原游戏Astrolabe.giveCards经ShowCardAndObtainEffect构造消耗Omamori并拦截诅咒，合法结果可少1/2张，当前会无限等待。另核对捕获需覆盖遗物出现与GRID非同帧。按真实选中/消耗及延迟入牌完成确认，不能去掉等待直接离开。 |
+| BRIDGE60 | 星盘转换回执源码已修，未实机 | 不再强制牌数不变；记录真实选中UUID、原始牌组及Omamori实际计数，确认选中原牌移除且延迟替换牌全部进入（扣除御守真实消耗）。从新遗物获取或明确TRANSFORM_UPGRADE网格接入，覆盖遗物/GRID非同帧及至多3张可转换牌的无GRID路径；未确认选择不重发、30秒排除设置暂停的界限。原游戏getPurgeableCards/giveCards/obtain及GRID关闭源码已核对，无离线测试/实机。 |
 | BRIDGE61 | 暂停计时源码已统一，未实机 | 主循环UiPauseClock将每次明确SETTINGS暂停增量传入adapter.exclude_wait_time，Liquid Memories两处超时及创建时间、空事件等待统一使用逻辑_wait_clock；包括退出设置的最后一段时长，不改变10秒真实无进展界限。其他覆盖画面不视为暂停；无离线测试、未启动游戏。 |
 | BRIDGE59 | 控制链重读发现三项源码已修，继续审查中未实机 | RewardCommandAck排除room COMBAT的CARD_REWARD，宝典/发现交回战斗选择而非永久卡奖励；同帧防重发扩展到战外商店/对话/药水/选牌及LEAVE/SKIP/PROCEED；商店离开意图保留到MAP/离开ShopRoom，不被旧SHOP_SCREEN清掉，LEAVE→SHOP_ROOM→PROCEED各只发一次。静态调用链发现，无离线测试；完整桥接重读未结束，用户要求优先重读，F25准备目录尚未启动。 |
 | BRIDGE58 | END后选牌被等待屏障误拦，源码已修待F25续测 | bd79d2b实机F25尼利宝典CODEX在turn1 ready选牌时，stale_combat_end_frame只认回合增加而10秒误超时。让ready的CARD_REWARD/HAND_SELECT/GRID交回既有严格选择与搜索合同，不按画面猜动作、不自动选/跳，不放行普通帧flag变化。包括回合结束保留牌等同类选择入口；无离线测试，继续从F25入口存档。 |
