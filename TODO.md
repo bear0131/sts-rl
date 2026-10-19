@@ -4,6 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE52 | 地图Boss真实key全表已补；待实机越过Automaton | 第二轮续档已通过BRIDGE49两种转移与BRIDGE51单次开箱，Act2 MAP的boss=Automaton缺别名触发严格拒绝。逐项读四个dungeon.initializeBoss，把实际10个encounter key登记REAL_ACT_BOSS_KEYS并与canonical全覆盖校验，补Automaton及The Heart（仅身份，不新增四幕行为）。同模型/token不变、不用PAD，无离线测试；从最近F17宝箱档续测。 |
 | BRIDGE51 | 宝箱重复CHOOSE与错误回包误校验已修；待续档实机 | BRIDGE49首轮已过F16→F17，但CHEST旧帧35ms内重发开箱CHOOSE0，迟到指令在BOSS_REWARD误领第一遗物，真正模型指令随即被拒。RewardCommandAck现对四类开箱等待准确奖励画面，发送前先登记；错误帧按实际receivePreUpdate仅error/ready_for_command合同识别，在附着/菜单分支前报告真实拒绝，普通帧仍严格要求available_commands。无离线测试；须实机确认开箱仅一次且遗物由模型命令领取。 |
 | BRIDGE49 | 房间转移回执已按源码修正；待F16战后续档实机 | seed200210 F16已胜利、61HP，PROCEED正常进F17 TreasureRoomBoss被旧floor guard误报。REWARD_ROOM_EXIT_CONTRACTS现区分Boss→宝箱同act/floor+1、宝箱→下一幕EmptyRoom/MAP act+1/同floor；明确源/目标room、节点、完成态和ready回执，其余奖励仍禁止串房串局。词表使用同一合同，覆盖跳过Boss宝箱PROCEED；不改权重/观察/选择。after备份有F16 post_combat存档，可不重打Boss验证；无离线测试。 |
 | BRIDGE50 | F14乐加维林预测转移差异已记录；待修复 | 本轮原始日志出现睡眠→攻击的pre-sync差异；Java私有idleCount/isOut/isOutTriggered与native ASLEEP状态导入/睡眠变招需完整对接，不能只覆盖当前intent就声称未来一致。此项未导致本轮停机，但可能影响搜索；需继续核对用户反编译源并显式传输状态，不用PAD/猜默认值。 |

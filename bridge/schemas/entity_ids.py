@@ -949,6 +949,7 @@ BOSS_ALIASES = {
     "Hexaghost": "HEXAGHOST",
     "Bronze Automaton": "AUTOMATON",
     "BronzeAutomaton": "AUTOMATON",
+    "Automaton": "AUTOMATON",
     "The Collector": "COLLECTOR",
     "Collector": "COLLECTOR",
     "The Champ": "CHAMP",
@@ -962,6 +963,16 @@ BOSS_ALIASES = {
     "DonuDeca": "DONU_AND_DECA",
     "Corrupt Heart": "THE_HEART",
     "CorruptHeart": "THE_HEART",
+    "The Heart": "THE_HEART",
+}
+
+# AbstractDungeon.bossKey values from each stock dungeon.initializeBoss.
+# These are encounter keys, not monster instance IDs or localized labels.
+REAL_ACT_BOSS_KEYS = {
+    1: ("The Guardian", "Hexaghost", "Slime Boss"),
+    2: ("Automaton", "Collector", "Champ"),
+    3: ("Awakened One", "Time Eater", "Donu and Deca"),
+    4: ("The Heart",),
 }
 
 BOSS_CANONICAL_IDS = frozenset({

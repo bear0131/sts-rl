@@ -18,6 +18,7 @@ from . import combat_state as CS
 from .entity_ids import (
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
+    REAL_ACT_BOSS_KEYS,
     CARD_ALIASES,
     COMBAT_SELECTION_SOURCES,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
@@ -219,6 +220,7 @@ def complete_word_tables():
         }
     return {
         "real_to_canonical": REAL_TO_CANONICAL,
+        "real_act_boss_keys": REAL_ACT_BOSS_KEYS,
         "json_presence_contracts": JSON_PRESENCE_CONTRACTS,
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
@@ -456,6 +458,11 @@ def validate_codec_contract() -> dict[str, int]:
         for relic, values in table.items():
             if relic not in canonical_sets["relic"] or not values:
                 raise RuntimeError(f"relic counter sentinel word table is malformed: {relic!r}")
+    boss_keys = [key for keys in REAL_ACT_BOSS_KEYS.values() for key in keys]
+    if (len(boss_keys) != len(set(boss_keys))
+            or any(key not in BOSS_ALIASES for key in boss_keys)
+            or {BOSS_ALIASES[key] for key in boss_keys} != BOSS_CANONICAL_IDS):
+        raise RuntimeError("stock dungeon boss encounter keys are incompletely mapped")
     for semantic, fields in RUN_KEY_FIELDS.items():
         if set(fields) != {"real", "sim"} or not all(fields.values()):
             raise RuntimeError(f"run-key word table is malformed for {semantic!r}")
