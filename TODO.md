@@ -4,6 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| REWARD02 | 宝箱饥饿面具/套娃/蓝钥匙顺序源码已修；未行为验证/部署 | GameContext::openTreasureRoomChest按真实onChestOpen→基础遗物/钥匙→onChestOpenAfter顺序，面具移除第一遗物而非无条件吞基础遗物；仅移除关联遗物时连蓝钥匙一起移除。codec_contract的chest_reward_link_contracts记录来源/关联。按用户要求不做离线测试；需必要构建及后续实机核对无/有套娃、面具未用/用尽、蓝钥匙有/无和实际关联遗物，不将静态修复称完整验收。 |
 | BRIDGE46 | v13已构建并实机；200209到F6无错误，200210打赢F7精英后因BRIDGE47停止 | 实际Gson默认省略Map null导致simulator_stasis_card缺字段；两个JSON出口统一serializeNulls，保留显式null而非Python默认。current_action/choice_list显式导出；普通/错误帧分开校验，画面/牌组/遗物/药水/地图/动作phase缺失不可当空/稳定态。列表别名与reward明细冲突（含空vs非空）拒绝，删除Boss/战斗候选按按钮数兜底。json_presence_contracts记录来源/缺失/空值。按用户要求只做必要构建后直接实机，无本批离线回归；两段均用最终TRAIN47，原jar/config/存档已核验还原。不是完整游戏或正式胜率，BRIDGE28/37与同步12失败未解决。 |
 | BRIDGE47 | 实机复现：最终TRAIN47在绿钥匙奖励处被兼容检查阻断；未修 | bridge/client/agent_orchestrator.py的combat_reward分支遇CLAIM_KEY而checkpoint无reward_keys时拒绝；200210的F7实际奖励有EMERALD_KEY，225.2秒由诊断supervisor主动关闭游戏，不是游戏自行崩溃。最终train47-step-000688914432-eval31输入确无reward_keys/run_keys，动作空间198；最新权重并不等于支持后来新增的钥匙合同。验收须明确前三幕旧权重的奖励兼容边界、保留真实完整状态及奖励互斥，不能简单删guard、填假字段/PAD或暗换参数/策略；读源确定方案后按用户要求继续有限实机，不扩展第四幕。 |
 | BRIDGE42 | JAX三个选项已接通并通过相关回归；未部署/真机验证 | Java/Python parity-v11以DrugDealer实际来源识别通用flag全false的TRANSFORM；共用GRID严格校验完整实例/唯一UUID，去掉战外缺UUID按卡名猜选中对象。EventEffectAck核对两次选择的原UI索引与UUID、等待删除和延迟取得、禁止重复确认/提前Leave，核对Omamori/Parasite/Darkstone/Fish/Egg/Bloom/DuVu副作用；另覆盖取得JAX与突变剂重复改头环。1001项相关回归通过，最终TRAIN47 CUDA加载/预测/一步环境接入通过；不是实际Full-Gumbel或实机验收。实际启动器仍指向旧runtime/Java/native。验收尚需实际双选/确认/返回MAP，不声称预测隐藏RNG变牌结果。关联BRIDGE22/28/43、BOTTLE01。 |

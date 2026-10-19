@@ -2003,14 +2003,22 @@ void GameContext::openTreasureRoomChest() {
     }
 
     auto relic = returnRandomRelic(info.tier, false);
-    if (hasRelic(RelicId::NLOTHS_HUNGRY_FACE) && relics.getRelicValue(RelicId::NLOTHS_HUNGRY_FACE) > 0) {
-        --relics.getRelicValueRef(RelicId::NLOTHS_HUNGRY_FACE);
-    } else {
-        reward.addRelic(relic);
-    }
+    reward.addRelic(relic);
 
     if (!hasKey(Key::SAPPHIRE_KEY)) {
         reward.sapphireKey = true;
+    }
+
+    // NlothsMask runs after the chest has added its base relic and key link.
+    // It removes the FIRST relic (Matryoshka's when present), whereas the key
+    // is linked to the LAST relic. Removing that linked relic removes both.
+    if (hasRelic(RelicId::NLOTHS_HUNGRY_FACE) && relics.getRelicValue(RelicId::NLOTHS_HUNGRY_FACE) > 0) {
+        --relics.getRelicValueRef(RelicId::NLOTHS_HUNGRY_FACE);
+        const bool removesSapphireRelic = reward.sapphireKey && reward.relicCount == 1;
+        reward.removeRelicReward(0);
+        if (removesSapphireRelic) {
+            reward.sapphireKey = false;
+        }
     }
 
     openCombatRewardScreen(reward);

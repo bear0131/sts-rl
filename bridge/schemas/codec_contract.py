@@ -209,6 +209,8 @@ def complete_word_tables():
             ),
             "phase_audit_status": (
                 "mapped_map_choices_and_charge_receipt" if relic == "WingedGreaves" else
+                "chest_reward_order_source_reviewed_not_real_game_verified"
+                if relic in {"Matryoshka", "NlothsMask"} else
                 "legacy_use_not_supported" if relic == "CeramicFish" else
                 "numeric_transport_reviewed_not_full_effect_acceptance"
             ),
@@ -225,6 +227,23 @@ def complete_word_tables():
         "dynamic_event_kind_aliases": DYNAMIC_EVENT_OPTION_KIND_ALIASES,
         "commands": sorted(REAL_COMMAND_IDS),
         "reward_types": dict(REWARD_CHOICE_TYPES),
+        "chest_reward_link_contracts": {
+            "Matryoshka": {
+                "java_source": "Matryoshka.onChestOpen",
+                "native_source": "GameContext::openTreasureRoomChest",
+                "effect": "append extra relic before base chest relic; consume one remaining charge",
+            },
+            "SAPPHIRE_KEY": {
+                "java_source": "AbstractChest.open / RewardItem.relicLink",
+                "native_source": "Rewards::sapphireKey / executeRewardsAction",
+                "effect": "mutually exclusive with last/base chest relic, not first/Matryoshka relic",
+            },
+            "NlothsMask": {
+                "java_source": "NlothsMask.onChestOpenAfter / AbstractRoom.removeOneRelicFromRewards",
+                "native_source": "GameContext::openTreasureRoomChest",
+                "effect": "consume charge after generation; remove first relic and only its linked key",
+            },
+        },
         "run_keys": RUN_KEY_FIELDS,
         "real_room_classes": REAL_ROOM_CLASS_IDS,
         "native_combat_root_fields": NATIVE_GLOBAL_FIELDS,
