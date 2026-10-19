@@ -224,6 +224,27 @@ def complete_word_tables():
         "real_act_boss_keys": REAL_ACT_BOSS_KEYS,
         "json_presence_contracts": JSON_PRESENCE_CONTRACTS,
         "anonymous_action_contracts": REAL_ANONYMOUS_ACTION_CONTRACTS,
+        "turn_start_power_effect_contracts": {
+            "Magnetism": {
+                "java": "MagnetismPower.atStartOfTurn / MakeTempCardInHandAction constructor",
+                "native": "Player::applyStartOfTurnPowers / MakeTempCardInHand",
+                "effect": "if monsters remain, sample one non-healing colorless card per stack now; capture MasterReality upgrade now; enqueue individual creations in sample order, overflow to discard",
+                "audit": "BRIDGE55 source-corrected; full power ordering/pending restore still BRIDGE28; not behavior-verified",
+            },
+            "Mayhem": {
+                "java": "MayhemPower.atStartOfTurn / MayhemPower$1.update",
+                "native": "Player::applyStartOfTurnPowers / MayhemPlayTopCard / PlayTopCard",
+                "effect": "enqueue one wrapper per stack; each wrapper later samples a living target and appends non-exhausting auto-play behind existing actions",
+                "audit": "BRIDGE54 source-corrected; full power ordering/pending restore still BRIDGE28; not behavior-verified",
+            },
+        },
+        "blood_potion_heal_contract": {
+            "java": "BloodPotion.use / AbstractPotion.getPotency",
+            "native": "BattleContext::drinkPotion / GameContext::drinkPotion",
+            "amount": "truncate float(max_hp) * (SacredBark ? 0.40f : 0.20f)",
+            "timing": "combat queues HealPlayer; overworld calls playerHeal; normal healing modifiers remain in their respective heal path",
+            "audit": "BRIDGE55 combat multiplier/source arithmetic corrected, not behavior-verified",
+        },
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,

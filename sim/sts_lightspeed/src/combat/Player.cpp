@@ -9,6 +9,7 @@
 #include <combat/BattleContext.h>
 #include <combat/Actions.h>
 #include "combat/Player.h"
+#include "game/Game.h"
 
 using namespace sts;
 
@@ -629,7 +630,16 @@ void Player::applyStartOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::MAGNETISM:
-//                bc.addToBot( Actions::SetState(InputState::CREATE_RANDOM_CARD_IN_HAND_COLORLESS, pair.second) );
+                if (!bc.monsters.areMonstersBasicallyDead()) {
+                    // Magnetism samples in atStartOfTurn, unlike Mayhem's
+                    // deferred anonymous wrapper. Capture one distinct card
+                    // per stack, then let each queued creation handle full hand.
+                    for (int i = 0; i < pair.second; ++i) {
+                        const auto card = getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
+                        bc.addToBot(Actions::MakeTempCardInHand(
+                            card, hasStatus<PS::MASTER_REALITY>(), 1));
+                    }
+                }
                 break;
 
             case PS::MAYHEM:

@@ -2396,7 +2396,10 @@ void BattleContext::drinkPotion(int idx, int target) {
 
 
         case Potion::BLOOD_POTION: {
-            int healAmt = static_cast<int>((static_cast<float>(player.maxHp * (hasBark ? 20 : 40)) / 100.0f));
+            // BloodPotion.use multiplies maxHealth by the float potency ratio
+            // and truncates; Sacred Bark doubles 20% to 40%, not the reverse.
+            const int healAmt = static_cast<int>(
+                static_cast<float>(player.maxHp) * (hasBark ? 0.40f : 0.20f));
             addToBot(Actions::HealPlayer(healAmt));
             break;
         }
