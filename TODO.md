@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE57 | F24 Cursed Tome入口被未实现回执阻断，待接通 | e8c67b6/v16独立续档从F18到F24，EventEffectAck.arm拒绝pending_tome_read，发生在发送模型选择之前，不是游戏崩溃或金币漏领。须按实际CursedTome分阶段选项/扣血/遗物结果接通有效动作和回执，优先解除执行阻断，不为纯展示细节扩张。F24档及原始帧已保全；完成后优先F24续档，禁止重开。 |
 | BRIDGE56 | 红头骨治疗后力量符号/魔法花取整源码已修，待必要构建实机 | Player::heal越过半血改为debuff<STRENGTH>(-3)，原+3会凭空增加攻击伤害；MagicFlower用Java float×1.5后正数四舍五入，非整数3/2截断，修复奇数治疗少1。按用户效果标准做小范围规则修复，不扩展全部动画/私有时序，不改权重张量或策略选择。源对照RedSkull.onNotBloodied、MagicFlower.onPlayerHeal、原生debuff消费者；无离线行为测试。 |
 | BRIDGE54 | 匿名身份/主要排队/盗贼私有根已修；细粒度捕获与时序后置 | 原游戏8个/BaseMod3个匿名动作逐项登记。Mayhem执行时RNG二阶段排队；盗贼分开记账/DAMAGE，v15实际stolenGold/slashCount/goldAmt到canonical/根/dict/key；计数不猜总回合，变招/格挡保留即时或排队区别，补Mugger死亡aiRng。turnHasEnded/怪物游标延后。按用户效果范围，RedSkull私有isActive/完整时序、盗贼die奖励捕获时点和完整pending后置，不能声称全等价；红头骨明确力量符号错另BRIDGE56已修。7个stock不等于全部行为验收，废弃/自定义4项明确不支持；允许已修主要链路有限续档验证，不以细节全清零阻塞。 |
 | BRIDGE55 | 磁力空实现/战内血药反倍率源码已修，未构建或行为验证 | Magnetism在atStartOfTurn逐层用cardRandomRng抽非治疗无色牌，构造时捕获MasterReality，逐张入队并复用满手入弃牌堆；有别于Mayhem的延迟随机。BloodPotion恢复无树皮20%/有树皮40%，使用Java float(maxHP)*ratio截断顺序，战外路径原已正确。共享词表记录两种回合开始时机和血药治疗来源；权重/观察形状不变。仅源码/diff二次核对，无测试/实机；完整power顺序/pending仍BRIDGE28，不据此称全对齐。 |
