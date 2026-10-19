@@ -278,6 +278,12 @@ class SimGameEnv:
         if self.is_over:
             return []
         if self.bc is not None:
+            if self.bc.input_state == _CARD_SELECT_INPUT:
+                native = self.bc.legal_actions()
+                if native and all(a.action_type == sts.ActionType.SINGLE_CARD_SELECT for a in native):
+                    # Whole-run PICK_CARD has 96 slots; the legacy combat mask
+                    # has only ten. Preserve native pile indices end to end.
+                    return [ga.select(int(a.source_idx)) for a in native]
             # combat: reuse the verified 71-id mask, wrap each set id as COMBAT.
             mask = combat_env.legal_mask(self.bc)
             acts = [ga.combat(i) for i in np.flatnonzero(mask)]
@@ -529,6 +535,8 @@ class SimGameEnv:
         if verb == ga.COMBAT:
             kind = actions.decode(action[1])
             sts_action = combat_env.to_sts_action(kind, self.bc)
+        elif verb == ga.SELECT:
+            sts_action = sts.Action(sts.ActionType.SINGLE_CARD_SELECT, int(action[1]))
         elif verb == ga.MULTI_SELECT:
             mask = 0
             for hand_index in action[1]:
@@ -608,7 +616,11 @@ class SimGameEnv:
                 raise _card_reward_state_error(gc, action)
             gc.skip_reward_cards(); return
         if verb == ga.SELECT:
-            gc.choose_select_card_option(action[1]); return
+            if self.bc is not None:
+                self.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, int(action[1])))
+            else:
+                gc.choose_select_card_option(action[1])
+            return
         if verb == ga.MULTI_SELECT:
             # combat-only: resolve an Exhaust Many / Gamble screen in one shot. The
             # sim reads the low 10 bits of the Action as a hand-index bitset
@@ -730,7 +742,7 @@ class _CombatBranchGameEnv(SimGameEnv):
     def step(self, action):
         if self.is_over:
             raise RuntimeError("combat branch is terminal")
-        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+        if action[0] not in (ga.COMBAT, ga.SELECT, ga.MULTI_SELECT, ga.USE_POTION):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         terminated = self.bc.is_battle_over
@@ -764,7 +776,7 @@ class _CombatBranchGameEnv(SimGameEnv):
         """
         if self.is_over:
             raise RuntimeError("combat branch is terminal")
-        if action[0] not in (ga.COMBAT, ga.MULTI_SELECT, ga.USE_POTION):
+        if action[0] not in (ga.COMBAT, ga.SELECT, ga.MULTI_SELECT, ga.USE_POTION):
             raise ValueError(f"combat branch received overworld action: {action!r}")
         self._apply(action)
         return bool(self.bc.is_battle_over)

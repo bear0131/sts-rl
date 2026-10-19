@@ -31,7 +31,7 @@ COMBAT = "combat"           # (COMBAT, action_id)           delegates to actions
 CLAIM = "claim"             # (CLAIM, kind, idx)            kind in {"gold","relic","potion"}
 REWARD_CARD = "reward_card" # (REWARD_CARD, j)              pick card j on a combat card-reward
 SKIP_CARDS = "skip_cards"   # (SKIP_CARDS,)                 skip the card reward
-SELECT = "select"           # (SELECT, k)                   pick k on a CARD_SELECT/grid screen
+SELECT = "select"           # (SELECT, k)                   pick native/source index k on a combat or overworld grid
 MULTI_SELECT = "multi_select"  # (MULTI_SELECT, (h0,h1,...)) resolve a combat MULTI screen
                             #                               (Exhaust Many / Gamble) with the
                             #                               chosen hand indices in one shot

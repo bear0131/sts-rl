@@ -69,12 +69,7 @@ def test_headbutt_candidates_are_discard_cards(combat_factory):
     ("SECRET_TECHNIQUE", "STRIKE_RED", ["DEFEND_RED", "SHRUG_IT_OFF"]),
     ("SECRET_WEAPON", "DEFEND_RED", ["STRIKE_RED", "BASH"]),
 ])
-@pytest.mark.parametrize("padding", [
-    0,
-    pytest.param(10, marks=pytest.mark.xfail(
-        reason="F03: legal draw-pile choices at native indices >=10 vanish from the thin mask",
-        strict=True, raises=pytest.fail.Exception)),
-])
+@pytest.mark.parametrize("padding", [0, 10])
 def test_draw_selection_remains_actionable_beyond_hand_slots(combat_factory, card, filler, choices, padding):
     env = combat_factory([card] * 5)
     battle = env.thick.bc

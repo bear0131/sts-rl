@@ -520,6 +520,14 @@ class SlayTheSpireEnv(gym.Env):
         then ``legal_ids`` walks that list again.  This preserves the same
         autoregressive root/target semantics without those intermediate lists.
         """
+        if int(self.thick.bc.input_state) == 2:
+            legal = self._legal()
+            if self.combat_action_contract != 'native-v1' and any(
+                    a[0] == ga.SELECT and not 0 <= a[1] < A.G_MAX for a in legal):
+                raise ValueError('combat selection exceeds the 96-slot policy contract; use native-v1 complete actions')
+            mask = np.zeros(A.N_ACTIONS, dtype=bool)
+            mask[A.legal_ids(legal, self._pending, 'combat')] = True
+            return mask
         native = self._combat_native_mask()
         mask = np.zeros(A.N_ACTIONS, dtype=bool)
         for combat_id in np.flatnonzero(native):
@@ -536,6 +544,12 @@ class SlayTheSpireEnv(gym.Env):
 
     def _resolve_search_combat_action(self, aid):
         """Resolve a legal thin combat id without rebuilding semantic actions."""
+        if int(self.thick.bc.input_state) == 2:
+            legal = self._legal()
+            if aid not in A.legal_ids(legal, self._pending, 'combat'):
+                raise ValueError(f'illegal combat search selection: {aid}')
+            semantic, self._pending = A.resolve(aid, legal, self._pending, 'combat')
+            return semantic
         native = self._combat_native_mask()
         if self._pending is not None:
             if self._pending[0] == "play":

@@ -942,10 +942,9 @@ class RealGameAdapter:
         if self._combat_card_choice_screen():
             ss = _screen_state(self.gs)
             n = len(_screen_cards(ss)) or len(self.choices())
-            return [
-                ga.combat(actions.encode_select(i))
-                for i in range(min(n, actions.SELECT_SLOTS))
-            ]
+            if n > A.G_MAX:
+                raise ValueError('combat selection exceeds the 96-slot policy contract')
+            return [ga.select(i) for i in range(n)]
         if self.screen_type() == "HAND_SELECT":
             if A.is_multi_select(self.select_descriptor()):
                 return []

@@ -51,7 +51,7 @@ def test_runic_dome_late_draw_choice_works_without_planner_or_legacy_mask(
     env = _native(combat_factory(['SECRET_TECHNIQUE'] * 5, relics=['Runic Dome']))
     env.thick.bc.apply_custom_state({
         'hand': ['SECRET_TECHNIQUE'],
-        'draw': ['STRIKE_RED'] * 12 + ['DEFEND_RED', 'SHRUG_IT_OFF'],
+        'draw': ['STRIKE_RED'] * 96 + ['DEFEND_RED', 'SHRUG_IT_OFF'],
         'discard': [], 'exhaust': [],
     })
     env._invalidate_backend_cache()

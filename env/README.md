@@ -19,9 +19,11 @@
 ## 完整战斗动作契约 native-v1
 
 新策略可显式创建 `SlayTheSpireEnv(combat_action_contract='native-v1')`。
-默认 `legacy` 不变；71-id combat codec、181-id whole-run mask、神经观测和旧
-checkpoint 的动作含义均未重映射。该模式不为旧神经策略补齐选牌 logits，也
-不修复旧 NOSL 的候选表示；不能把它当作旧训练动作空间的透明升级。
+默认仍为 `legacy`；71-id combat codec、181-id whole-run mask、神经观测和旧
+checkpoint 的布局及已有索引含义均未重映射。整局181动作的单选直接使用原生
+候选索引0..95，经SELECT语义执行，不再经过71动作的十槽适配；普通执行、搜索
+分支及原生搜索共用这个映射。固定181契约遇到超出95的候选明确报错，不能溢出到
+MAP_NODE等动作段。独立71动作接口仍只有十个选牌槽；候选观测缺失仍属F03。
 
 - `native_combat_actions()` 返回完整原生 uint32 动作的 tuple，保留 source/target
   索引，包含卡牌、单选、原生 `rule_actions` 支持的全部 MULTI 子集、结束回合和
@@ -43,11 +45,12 @@ native-v1 仅在完整合法集合也为空时将战斗判作 dead_screen。因�
 已打开的 draw-select 不允许将原环境索引带入重排后的副本；新 planner 应先采样，
 再用 `remap_draw_selection_from` 按原生实体身份映射选择。不能先执行选择，否则排队的
 Dark Embrace 等效果可能读到真实未来。native_index 是执行句柄，不能用来
-推断后续抽牌顺序。此阶段没有修改旧 NOSL/训练语义。
+推断后续抽牌顺序。选牌mask覆盖扩大，但没有补齐旧神经观测的候选表示。
 
-回归入口：`tests/integration/test_native_action_contract.py`。legacy 的 F03 strict
-xfail 保留以记录兼容边界；新增契约的长候选、分支隔离和 71/181 checkpoint 接入
-测试均为正常断言，不能用旧 xfail 掩盖新模式失败。
+回归入口：`tests/integration/test_native_action_contract.py`、
+`tests/integration/test_combat_selection_indices.py`。秘密技法/秘密武器的长候选
+测试已改为正常断言；Headbutt候选观测仍保留F03严格xfail。长候选执行、分支隔离、
+固定预算搜索及71/181 checkpoint接入均独立验证，不把mask修复称为完整F03验收。
 
 ### Native Heart runs
 

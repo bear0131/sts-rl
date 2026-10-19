@@ -58,8 +58,9 @@ def test_native_mode_does_not_relabel_legacy_masks_or_observations(combat_factor
             old = legacy.step(int(np.flatnonzero(legacy.action_masks())[0]))
         if native._pending:
             new = native.step(int(np.flatnonzero(native.action_masks())[0]))
-        assert old[3] and old[4]['dead_screen']
-        assert not new[3] and not native.action_masks().any()
+        assert not old[3] and not new[3]
+        np.testing.assert_array_equal(np.flatnonzero(legacy.action_masks()), [A._PICK + 10, A._PICK + 11])
+        np.testing.assert_array_equal(legacy.action_masks(), native.action_masks())
         assert len(native.native_combat_actions())==2
         with pytest.raises(RuntimeError,match='native-v1'):
             legacy.step_native_combat(native.native_combat_actions()[0])

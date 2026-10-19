@@ -220,7 +220,8 @@ def _combat_select_only(legal_semantic, phase):
     is a reliable signal."""
     if phase != "combat":
         return False
-    kinds = [actions.decode(a[1])[0] for a in legal_semantic if a[0] == ga.COMBAT]
+    kinds = [actions.KIND_SELECT if a[0] == ga.SELECT else actions.decode(a[1])[0]
+             for a in legal_semantic if a[0] in (ga.COMBAT, ga.SELECT)]
     return bool(kinds) and all(k == actions.KIND_SELECT for k in kinds)
 
 
@@ -308,7 +309,10 @@ def legal_ids(legal_semantic, pending, phase):
         elif verb == ga.SKIP_CARDS:
             mark(_RSKIP)
         elif verb == ga.SELECT:
-            mark(_PICK + a[1])                    # overworld grid pick
+            # This segment also addresses combat pile selections. An index
+            # beyond its capacity must never spill into MAP_NODE or rewards.
+            if 0 <= a[1] < G_MAX:
+                mark(_PICK + a[1])
         elif verb == ga.CAMPFIRE:
             mark(_CAMP + ga.CAMPFIRE_OPTIONS[a[1]])
         elif verb == ga.EVENT:
@@ -388,6 +392,8 @@ def resolve(chosen_id, legal_semantic, pending, phase):
 
     if _PICK <= cid < _PICK + G_MAX:
         k = cid - _PICK
+        if ga.select(k) in legal_semantic:
+            return ga.select(k), None
         if phase == "combat":
             return ga.combat(actions.encode_select(k)), None
         return ga.select(k), None                 # overworld grid
