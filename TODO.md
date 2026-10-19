@@ -2,6 +2,11 @@
 
 本轮范围（用户2026-10-19明确更新）：翻牌配对/Match and Keep暂不处理，BRIDGE12断点存档保留；不将其作为其他修复或实机验证的前置条件。遇到该事件须标记本轮未支持，不能猜牌、伪造通过或混入正式胜负成绩。其他桥接/原生对齐目标不缩减。
 
+交接边界（2026-10-19）：249b428为上一已验证阶段；其后的选择候选改动按用户要求立即保存推送，属于WIP，尚未编译/运行测试，不能直接部署。BRIDGE28增加完整候选实例校验、已知UUID匹配、有效费用与单选策略索引映射；不是pending动作完整恢复，旧选择测试夹具尚未同步。接手位置与复现入口见worklog/2026-10-19.md“用户要求立即推送的交接快照”。用户要求先集中读代码、成批修复，再统一测试，不再逐个问题打断加测试。
+
+| BRIDGE30 | 源码确认，未修；交接继续 | `sim/sts_lightspeed/src/combat/Actions.cpp::BetterDiscardPileToHandAction`忽略amount，神圣树皮液态记忆仍只取1张；`BattleContext.cpp::chooseDiscardToHandCard`忽略forZeroCost而读残留选择context，自动取唯一弃牌可能不减费，满手还会先移除再改费，与Java保留原弃牌不同。验收需沿1/2张、自动/选择、满手、实际0费与弃牌守恒核对；固定动作几何下必须保留多选进度，不能假装两张是一张。 |
+| BRIDGE31 | 源码发现，未修；交接继续 | `Actions.cpp`的DualWield/Exhume/DrawToHand/Warcry/Codex/ExhaustMany/Gamble/Toolbox写CardSelectInfo不统一清旧flags/count/data0，可能继承上个选择的语义。`bridge/real_game_env.py::_select_block`仅GAMBLE识别任意张，升级Forethought真机chooseAny也允许任意张，当前会不一致。验收跨选择来源连续动作的context/flags/数量与完整词表；另需按UUID强化`_continue_joint_multi`回执，当前只比id/up不足以证明实际选中实例。 |
+
 | BRIDGE29 | 战斗升级费用规则已修，未部署 | `CardInstance::upgrade`按Java保留costForTurn与基础费的差，BloodForBlood按受伤后的基础费升级并避免被通用分支重设3费。旧56例42失败14通过；新57例全过，含四牌堆Apotheosis、Armaments实际0能量出牌及三次Bloodletting自然减费→升级→22伤害链。195原生含完整109搜索矩阵通过、621桥接/相关定向通过；最终TRAIN47真实GPU加载/预测/一步通过，Full-Gumbel128/G0参数未改。规则差异需与旧冻结成绩分开；实际胜率影响未量化。 |
 
 | BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |

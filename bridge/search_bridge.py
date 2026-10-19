@@ -19,7 +19,9 @@ import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
 from bridge.native_state import make_native_combat_root, native_combat_room
-from bridge.schemas.card_state import CombatCardIdentityMap, real_master_deck_state
+from bridge.schemas.card_state import (
+    CombatCardIdentityMap, native_combat_card_state, real_master_deck_state,
+)
 from env.core import native_actions as C
 from env.core.encounters import ACT_POOLS
 from env.core.run_env import SlayTheSpireEnv
@@ -30,6 +32,7 @@ from rl.search.native import NativeSearchConfig
 from schemas.combat_state import (
     _MONSTER_SIM2REAL,
     _canonical_real_monster_id,
+    combat_select_options,
     diff,
     normalize_real,
     normalize_sim,
@@ -165,6 +168,7 @@ class RealCombatSearch:
         self.decision_index = 0
         self.sim_to_real_targets: dict[int, int] = {}
         self.sim_to_real_selection_handles: dict[int, int] = {}
+        self.sim_to_real_selection_actions: dict[int, int] = {}
         self._rollback_bc = None
         self._rollback_thin = None
         self._awaiting_command = False
@@ -238,6 +242,7 @@ class RealCombatSearch:
         self.decision_index = 0
         self.sim_to_real_targets = {}
         self.sim_to_real_selection_handles = {}
+        self.sim_to_real_selection_actions = {}
         self._rollback_bc = None
         self._rollback_thin = None
         self._awaiting_command = False
@@ -616,6 +621,7 @@ class RealCombatSearch:
             self._reconcile_selection(selection)
             return
         self.sim_to_real_selection_handles = {}
+        self.sim_to_real_selection_actions = {}
         self.sim_to_real_targets = self._target_mapping(real)
         predicted = self._sim_state_in_real_target_order()
         before = diff(real, predicted)
@@ -649,12 +655,13 @@ class RealCombatSearch:
             if not isinstance(candidate, dict) or "native_index" not in candidate or "card" not in candidate:
                 raise RuntimeError(f"malformed combat selection candidate {index}: {candidate!r}")
             card = candidate["card"]
-            if card is not None and ("id" not in card or "up" not in card):
+            if card is not None and not {"id", "up", "cost"} <= set(card):
                 raise RuntimeError(f"incomplete combat selection card {index}: {card!r}")
             rows.append((
                 int(candidate["native_index"]),
                 None if card is None else real_to_sim_card_enum(card["id"]),
                 None if card is None else int(card["up"]),
+                None if card is None else int(card["cost"]),
             ))
         return tuple(rows)
 
@@ -683,12 +690,29 @@ class RealCombatSearch:
             raise RuntimeError(
                 f"combat selection context mismatch real={real_context} sim={sim_context}")
         real_candidates = self._selection_candidates(real_desc)
+        real_instances = []
+        for candidate in real_desc["candidates"]:
+            if "instance" not in candidate:
+                raise ValueError("real selection candidate is missing its complete instance")
+            if (candidate["card"] is None) != (candidate["instance"] is None):
+                raise ValueError("real selection instance/skip mismatch")
+            real_instances.append(candidate["instance"])
+        battle = self.env.thick.bc
         if sim_context in {"CODEX", "DISCOVERY"}:
-            generated = [card for _native, card, _up in real_candidates if card is not None]
+            generated = [card for _native, card, _up, _cost in real_candidates if card is not None]
             if len(generated) != 3:
                 raise RuntimeError("generated combat selection did not expose three real cards")
-            self.env.thick.bc.set_generated_selection_cards(generated)
-            sim_desc = self.env.thick.select_descriptor()
+            # Validate the full transaction before changing the live pending action.
+            battle = battle.clone()
+            battle.set_generated_selection_cards(generated)
+            sim_desc = combat_select_options(battle.select_info())
+            real_instances = [None if card is None else native_combat_card_state(card, None)
+                              for card in real_instances]
+        else:
+            if any(card is None for card in real_instances):
+                raise ValueError("physical selection cannot contain a skip template")
+            real_instances = self.card_identities.selection_records(
+                self.adapter.gs['deck'], real_instances)
         sim_candidates = self._selection_candidates(sim_desc)
         real_handles = tuple(row[0] for row in real_candidates)
         sim_handles = tuple(row[0] for row in sim_candidates)
@@ -698,18 +722,27 @@ class RealCombatSearch:
         if len(set(sim_handles)) != len(sim_handles):
             raise RuntimeError(
                 f"native combat selection contains duplicate handles: {sim_handles!r}")
-        real_cards = tuple(row[1:] for row in real_candidates)
-        sim_cards = tuple(row[1:] for row in sim_candidates)
-        if real_cards != sim_cards:
-            raise RuntimeError(
-                "combat selection candidates differ: "
-                f"real={real_candidates!r} sim={sim_candidates!r}")
-        # CommunicationMod compacts the visible hand after the played card is
-        # moved to card_in_play.  Native selection keeps the pre-play hand
-        # indices as stable execution handles.  Policy pick IDs use the dense
-        # candidate order on both sides, so retain that order and record the
-        # transport-handle relation instead of renumbering policy actions.
-        self.sim_to_real_selection_handles = dict(zip(sim_handles, real_handles))
+        sim_instances = battle.selection_card_state()
+        if len(sim_instances) != len(sim_candidates) or len(sim_candidates) != len(real_candidates):
+            raise RuntimeError("combat selection candidate counts differ")
+        if sim_context in {"CODEX", "DISCOVERY"}:
+            real_order = list(range(len(real_candidates)))
+        else:
+            real_by_uid = {card['uid']: i for i, card in enumerate(real_instances)}
+            if len(real_by_uid) != len(real_instances):
+                raise RuntimeError("real selection contains duplicate physical identities")
+            try:
+                real_order = [real_by_uid[card['uid']] for card in sim_instances]
+            except KeyError as exc:
+                raise RuntimeError("combat selection physical identities differ") from exc
+            if len(set(real_order)) != len(real_order):
+                raise RuntimeError("native selection contains duplicate physical identities")
+        for si, ri in enumerate(real_order):
+            if (sim_candidates[si][1:] != real_candidates[ri][1:]
+                    or sim_instances[si] != real_instances[ri]):
+                raise RuntimeError(
+                    "combat selection instance mismatch: "
+                    f"native={sim_instances[si]!r} real={real_instances[ri]!r}")
         real_multi = bool(real_desc["multi"])
         sim_multi = bool(sim_desc["multi"])
         if real_multi != sim_multi:
@@ -742,6 +775,10 @@ class RealCombatSearch:
                 f"real={real_desc.get('pick_remaining')!r} "
                 f"sim={sim_desc.get('pick_remaining')!r}")
         if real_multi:
+            # Autoregressive MULTI has an increasing-index prefix on both sides.
+            # A permutation needs a whole-plan transport, not per-pick renumbering.
+            if real_order != list(range(len(real_order))) or sim_handles != real_handles:
+                raise RuntimeError("multi-selection physical order differs")
             if semantic_pick_max(real_desc) != semantic_pick_max(sim_desc):
                 raise RuntimeError(
                     "combat selection pick_max mismatch "
@@ -752,11 +789,25 @@ class RealCombatSearch:
                     "combat selection cards_in_hand mismatch "
                     f"real={real_desc.get('cards_in_hand')!r} "
                     f"sim={sim_desc.get('cards_in_hand')!r}")
+        if sim_context in {"CODEX", "DISCOVERY"}:
+            self.env.thick.bc.set_generated_selection_cards(generated)
+        # Armaments/DualWield can remove ineligible cards from Java's displayed
+        # hand, whereas native legal choices retain their original pile handles.
+        # Match known physical identities, then translate dense policy indices.
+        self.sim_to_real_selection_handles = {
+            sim_handles[si]: real_handles[ri] for si, ri in enumerate(real_order)}
+        self.sim_to_real_selection_actions = {} if real_multi else {
+            C.AUTOREGRESSIVE_PICK + si: C.AUTOREGRESSIVE_PICK + ri
+            for si, ri in enumerate(real_order)}
         self.env._invalidate_backend_cache()
         self.run_alignment_checks += 1
 
     def _map_action_to_real(self, action: int) -> int:
         aid = int(action)
+        if C.AUTOREGRESSIVE_PICK <= aid < C.AUTOREGRESSIVE_MULTI:
+            if aid not in self.sim_to_real_selection_actions:
+                raise RuntimeError(f"unmapped native selection action {aid}")
+            return self.sim_to_real_selection_actions[aid]
         bases = (C.AUTOREGRESSIVE_PLAY, C.AUTOREGRESSIVE_POTION)
         limits = (C.AUTOREGRESSIVE_POTION, C.AUTOREGRESSIVE_PICK)
         for base, limit in zip(bases, limits):
@@ -802,6 +853,12 @@ class RealCombatSearch:
         reverse = {real: sim for sim, real in self.sim_to_real_targets.items()}
         for aid in np.flatnonzero(real_mask):
             mapped = int(aid)
+            if C.AUTOREGRESSIVE_PICK <= aid < C.AUTOREGRESSIVE_MULTI:
+                selection_reverse = {real: sim for sim, real in self.sim_to_real_selection_actions.items()}
+                if mapped not in selection_reverse:
+                    raise RuntimeError(f"unmapped real selection action {mapped}")
+                result[selection_reverse[mapped]] = True
+                continue
             for base, limit in ((C.AUTOREGRESSIVE_PLAY, C.AUTOREGRESSIVE_POTION),
                                 (C.AUTOREGRESSIVE_POTION, C.AUTOREGRESSIVE_PICK)):
                 if base <= aid < limit:

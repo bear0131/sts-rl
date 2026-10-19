@@ -2216,6 +2216,25 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     return d;
 }
 
+py::list combatSelectionCardState(const sts::BattleContext &bc) {
+    if (bc.inputState != sts::InputState::CARD_SELECT)
+        throw std::invalid_argument("selection card state requires a live selection");
+    const auto choices = sts::search::combatChoices(bc);
+    py::list result;
+    for (const auto &choice : choices.cards) {
+        if (choice.skip) {
+            result.append(py::none());
+        } else {
+            auto record = combatCardRecord(sts::search::combatChoiceCard(
+                bc, choices.zone, choice.nativeIndex));
+            // Generated options are templates, not assigned combat instances.
+            if (choices.zone == 5) record["uid"] = py::none();
+            result.append(record);
+        }
+    }
+    return result;
+}
+
 void setGeneratedCombatSelectionCards(
     sts::BattleContext &bc, const std::vector<std::string> &names
 ) {
@@ -2228,9 +2247,13 @@ void setGeneratedCombatSelectionCards(
     if (names.size() != bc.cardSelectInfo.cards.size()) {
         throw std::invalid_argument("generated combat choices require exactly three cards");
     }
+    auto cards = bc.cardSelectInfo.cards;
     for (std::size_t i = 0; i < names.size(); ++i) {
-        bc.cardSelectInfo.cards[i] = cardIdFromEnum(names[i]);
+        cards[i] = cardIdFromEnum(names[i]);
+        if (cards[i] == sts::CardId::INVALID)
+            throw std::invalid_argument("unknown generated selection card: " + names[i]);
     }
+    bc.cardSelectInfo.cards = cards;
 }
 
 std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
@@ -4104,6 +4127,8 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("select_info", &combatSelectInfo,
              "combat card-select sub-screen semantics+progress: {context (CardSelectTask name), "
              "pick_count, can_pick_zero, can_pick_any}")
+        .def("selection_card_state", &combatSelectionCardState,
+             "complete live candidate instances in policy order; generated templates have null uid")
         .def("set_generated_selection_cards", &setGeneratedCombatSelectionCards,
              pybind11::arg("cards"),
              "replace the three public CODEX/DISCOVERY candidates without advancing the battle")

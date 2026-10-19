@@ -29,7 +29,7 @@ from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 from bridge import event_contract
-from bridge.schemas.card_state import real_master_deck_state
+from bridge.schemas.card_state import real_card_state, real_master_deck_state
 from bridge.schemas.entity_ids import (
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
@@ -1596,11 +1596,17 @@ class RealGameAdapter:
                 if selected:
                     continue
             card = {"id": cid, "up": up}
-            if "cost" in raw_card:
+            if not overworld:
+                instance = real_card_state(raw_card)
+                card["cost"] = 0 if instance["free_to_play_once"] else instance["cost"]
+            elif "cost" in raw_card:
                 card["cost"] = raw_card["cost"]
-            candidates.append({"native_index": i, "card": card})
+            candidate = {"native_index": i, "card": card}
+            if not overworld:
+                candidate["instance"] = instance
+            candidates.append(candidate)
         if not overworld and context == "CODEX" and "SKIP" in self.commands():
-            candidates.append({"native_index": len(cards), "card": None})
+            candidates.append({"native_index": len(cards), "card": None, "instance": None})
         if len(candidates) > A.G_MAX:
             raise ValueError(
                 f"selection candidate capacity {A.G_MAX} exceeded: {len(candidates)}"

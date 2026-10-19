@@ -22,6 +22,17 @@ struct CombatChoices {
     std::vector<CombatChoice> cards;
 };
 
+inline CardInstance combatChoiceCard(const BattleContext &bc, int zone, int index) {
+    switch (zone) {
+        case 1: return bc.cards.hand[index];
+        case 2: return bc.cards.drawPile[index];
+        case 3: return bc.cards.discardPile[index];
+        case 4: return bc.cards.exhaustPile[index];
+        case 5: return CardInstance(bc.cardSelectInfo.cards[index]);
+        default: throw std::invalid_argument("combat choice has no card zone");
+    }
+}
+
 inline CombatChoices combatChoices(const BattleContext &bc) {
     CombatChoices result;
     if (bc.inputState != InputState::CARD_SELECT) return result;
@@ -50,11 +61,7 @@ inline CombatChoices combatChoices(const BattleContext &bc) {
         default: throw std::runtime_error("unsupported combat selection context");
     }
     auto cardAt = [&](int index) -> CardInstance {
-        return result.zone == 1 ? bc.cards.hand[index] :
-            result.zone == 2 ? bc.cards.drawPile[index] :
-            result.zone == 3 ? bc.cards.discardPile[index] :
-            result.zone == 4 ? bc.cards.exhaustPile[index] :
-            CardInstance(bc.cardSelectInfo.cards[index]);
+        return combatChoiceCard(bc, result.zone, index);
     };
     auto append = [&](int index) {
         if (task == CardSelectTask::CODEX && index == 3) {
