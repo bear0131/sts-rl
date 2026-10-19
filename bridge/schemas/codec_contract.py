@@ -30,6 +30,9 @@ from .entity_ids import (
     PHASE_RELIC_COUNTER_DOMAINS,
     REAL_RELIC_COUNTER_USAGE,
     DERIVED_RELIC_COUNTER_SOURCES,
+    NEOW_BONUS_IDS,
+    NEOW_DRAWBACK_IDS,
+    NEOW_IMPLICIT_DRAWBACK_IDS,
     RELIC_COUNTER_SENTINELS,
     COMBAT_RELIC_COUNTER_SENTINELS,
     EMPTY_REAL_POTION_IDS,
@@ -205,6 +208,9 @@ def complete_word_tables():
         "relic_counter_contracts": relic_counters,
         "combat_counter_fields": {key: key for key in CS._REAL_COMBAT_COUNTER_KEYS},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "neow_bonus_keywords": NEOW_BONUS_IDS,
+        "neow_drawback_keywords": NEOW_DRAWBACK_IDS,
+        "neow_implicit_drawbacks": NEOW_IMPLICIT_DRAWBACK_IDS,
         "intent_components": REAL_INTENT_COMPONENTS,
         "room_phases": sorted(REAL_ROOM_PHASES),
         "action_phases": sorted(REAL_ACTION_PHASES),
@@ -313,6 +319,10 @@ def validate_codec_contract() -> dict[str, int]:
         raise RuntimeError("reward choice word table contains duplicate labels")
     if set(RUN_KEY_FIELDS) != {"ruby", "emerald", "sapphire"}:
         raise RuntimeError("run-key word table is incomplete")
+    if set(NEOW_BONUS_IDS.values()) != set(range(19)) or set(NEOW_DRAWBACK_IDS.values()) != set(range(1, 6)):
+        raise RuntimeError("Neow keyword tables omit or collide native IDs")
+    if NEOW_IMPLICIT_DRAWBACK_IDS != {"BOSS_RELIC": 6}:
+        raise RuntimeError("Neow starting-relic loss must be an explicit bonus implication")
     for relic, field in LIVE_RELIC_STATE_FIELDS.items():
         if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
             raise RuntimeError(f"live relic state word table names unknown field: {relic!r}/{field!r}")
@@ -467,6 +477,8 @@ def validate_codec_contract() -> dict[str, int]:
         "relic_counter_contracts": len(canonical_sets["relic"]),
         "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),
         "combat_counter_fields": len(CS._REAL_COMBAT_COUNTER_KEYS),
+        "neow_bonus_keywords": len(NEOW_BONUS_IDS),
+        "neow_drawback_keywords": len(NEOW_DRAWBACK_IDS),
         "dynamic_event_kinds": sum(len(kinds) for kinds in DYNAMIC_EVENT_OPTION_KINDS.values()),
         "event_option_contracts": len(contract_events),
         "explicit_unsupported_real_ids": (

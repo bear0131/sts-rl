@@ -26,6 +26,37 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 29) {
+        for (const int maximum : {75, 80}) {
+            for (const auto drawback : {Neow::Drawback::NONE, Neow::Drawback::TEN_PERCENT_HP_LOSS}) {
+                for (const auto bonus : {Neow::Bonus::TEN_PERCENT_HP_BONUS, Neow::Bonus::TWENTY_PERCENT_HP_BONUS}) {
+                    auto fixture = root;
+                    fixture.relics = RelicContainer();
+                    fixture.maxHp = maximum;
+                    fixture.curHp = maximum - 5;
+                    const int unit = maximum / 10;
+                    const int afterCost = maximum - (drawback == Neow::Drawback::TEN_PERCENT_HP_LOSS ? unit : 0);
+                    const int gain = unit * (bonus == Neow::Bonus::TWENTY_PERCENT_HP_BONUS ? 2 : 1);
+                    fixture.chooseNeowOption({bonus, drawback});
+                    if (fixture.maxHp != afterCost + gain || fixture.curHp != std::min(maximum - 5, afterCost) + gain) return 36;
+                }
+            }
+        }
+        for (const int hp : {1, 9, 10, 57, 75, 80, 81}) {
+            for (const bool rod : {false, true}) {
+                auto fixture = root;
+                fixture.relics = RelicContainer();
+                if (rod) fixture.obtainRelic(RelicId::TUNGSTEN_ROD);
+                fixture.maxHp = 100;
+                fixture.curHp = hp;
+                const int damage = hp / 10 * 3;
+                const int expected = hp - (rod && damage > 0 ? damage - 1 : damage);
+                fixture.chooseNeowOption({Neow::Bonus::HUNDRED_GOLD, Neow::Drawback::PERCENT_DAMAGE});
+                if (fixture.curHp != expected) return 36;
+            }
+        }
+        return 0;
+    }
     if (variant == 27) {
         root.relics = RelicContainer();
         root.deck = Deck();

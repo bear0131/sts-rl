@@ -53,6 +53,10 @@ from bridge.schemas.entity_ids import (
     SIMULATOR_PARITY_EXPORT_VERSION,
     native_relic_counter,
     native_combat_relic_counter,
+    NEOW_BONUS_IDS,
+    NEOW_DRAWBACK_IDS,
+    NEOW_IMPLICIT_DRAWBACK_IDS,
+    neow_option_from_types,
     UNSUPPORTED_REAL_RELIC_IDS,
     UNSUPPORTED_SELECTION_SOURCES,
 )
@@ -1347,9 +1351,19 @@ class RealGameAdapter:
             )
         out = []
         for item in _dict_records(raw, context="Neow offers"):
-            if "bonus_id" in item and "drawback_id" in item:
-                out.append({"bonus_id": int(item["bonus_id"]),
-                            "drawback_id": int(item["drawback_id"])})
+            if "bonus_type" in item or "drawback_type" in item:
+                out.append(neow_option_from_types(
+                    _required(item, "bonus_type", context="Neow offer"),
+                    _required(item, "drawback_type", context="Neow offer"),
+                ))
+            elif "bonus_id" in item and "drawback_id" in item:
+                bonus, drawback = item["bonus_id"], item["drawback_id"]
+                if (type(bonus) is not int or bonus not in NEOW_BONUS_IDS.values()
+                        or type(drawback) is not int or drawback not in
+                        (*NEOW_DRAWBACK_IDS.values(), *NEOW_IMPLICIT_DRAWBACK_IDS.values())
+                        or (bonus == NEOW_BONUS_IDS["BOSS_RELIC"]) != (drawback == 6)):
+                    raise ValueError(f"Neow IDs outside the explicit word table: {bonus!r}/{drawback!r}")
+                out.append({"bonus_id": bonus, "drawback_id": drawback})
             else:
                 label = _required(item, "text", "label", context="Neow offer")
                 out.append(_neow_option_from_text(str(label)))

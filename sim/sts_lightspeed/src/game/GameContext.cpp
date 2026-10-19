@@ -2312,11 +2312,13 @@ void GameContext::discardPotionAtIdx(int idx) {
 }
 
 void GameContext::chooseNeowOption(const Neow::Option &o) {
+    // NeowReward caches floor(original maxHealth * .1) when offers are
+    // created; both max-HP rewards and max-HP loss use that same unit.
+    const int hpUnit = static_cast<int>(static_cast<float>(maxHp) * 0.1f);
 
     switch (o.d) {
         case Neow::Drawback::TEN_PERCENT_HP_LOSS:
-            maxHp = static_cast<int>(0.9f * static_cast<float>(maxHp));
-            curHp = std::min(curHp, maxHp);
+            loseMaxHp(hpUnit);
             break;
 
         case Neow::Drawback::NO_GOLD:
@@ -2324,7 +2326,7 @@ void GameContext::chooseNeowOption(const Neow::Option &o) {
             break;
 
         case Neow::Drawback::PERCENT_DAMAGE:
-            curHp = curHp / 10 * 7;
+            playerLoseHp(curHp / 10 * 3);
             break;
 
         case Neow::Drawback::LOSE_STARTER_RELIC:
@@ -2396,7 +2398,7 @@ void GameContext::chooseNeowOption(const Neow::Option &o) {
             break;
 
         case Neow::Bonus::TEN_PERCENT_HP_BONUS:
-            maxHp += static_cast<int>(static_cast<float>(maxHp) * 0.1f);
+            playerIncreaseMaxHp(hpUnit);
             regainControlAction(*this);
             break;
 
@@ -2447,7 +2449,7 @@ void GameContext::chooseNeowOption(const Neow::Option &o) {
             break;
 
         case Neow::Bonus::TWENTY_PERCENT_HP_BONUS:
-            maxHp += static_cast<int>(static_cast<float>(maxHp) * 0.2f);
+            playerIncreaseMaxHp(hpUnit * 2);
             regainControlAction(*this);
             break;
 

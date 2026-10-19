@@ -6,6 +6,31 @@ Runtime does not parse simulator headers.
 
 SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v5"
 
+# Java enum order differs from native Neow::Bonus. Never use enum ordinals.
+NEOW_BONUS_IDS = {name: index for index, name in enumerate((
+    "THREE_CARDS", "ONE_RANDOM_RARE_CARD", "REMOVE_CARD", "UPGRADE_CARD",
+    "TRANSFORM_CARD", "RANDOM_COLORLESS", "THREE_SMALL_POTIONS", "RANDOM_COMMON_RELIC",
+    "TEN_PERCENT_HP_BONUS", "THREE_ENEMY_KILL", "HUNDRED_GOLD", "RANDOM_COLORLESS_2",
+    "REMOVE_TWO", "ONE_RARE_RELIC", "THREE_RARE_CARDS", "TWO_FIFTY_GOLD",
+    "TRANSFORM_TWO_CARDS", "TWENTY_PERCENT_HP_BONUS", "BOSS_RELIC",
+))}
+NEOW_DRAWBACK_IDS = {"NONE": 1, "TEN_PERCENT_HP_LOSS": 2, "NO_GOLD": 3, "CURSE": 4, "PERCENT_DAMAGE": 5}
+NEOW_IMPLICIT_DRAWBACK_IDS = {"BOSS_RELIC": 6}
+
+
+def neow_option_from_types(bonus_type, drawback_type):
+    if not isinstance(bonus_type, str) or bonus_type not in NEOW_BONUS_IDS:
+        raise ValueError(f"unknown Neow bonus keyword: {bonus_type!r}")
+    if not isinstance(drawback_type, str) or drawback_type not in NEOW_DRAWBACK_IDS:
+        raise ValueError(f"unknown Neow drawback keyword: {drawback_type!r}")
+    if bonus_type in NEOW_IMPLICIT_DRAWBACK_IDS:
+        if drawback_type != "NONE":
+            raise ValueError("BOSS_RELIC has only its implicit starting-relic loss")
+        drawback_id = NEOW_IMPLICIT_DRAWBACK_IDS[bonus_type]
+    else:
+        drawback_id = NEOW_DRAWBACK_IDS[drawback_type]
+    return {"bonus_id": NEOW_BONUS_IDS[bonus_type], "drawback_id": drawback_id}
+
 # These are active runtime abilities, distinct from the relic's persistent
 # display counter. Both are represented by native Player relic bits.
 LIVE_RELIC_STATE_FIELDS = {

@@ -53,3 +53,40 @@ def test_unknown_neow_offer_fails_instead_of_silent_zeros():
             {'text':'Upgrade a Card'},
             {'text':'unknown offer'},
         ]})
+
+
+def test_typed_neow_keywords_do_not_use_java_enum_ordinals_or_guess_none():
+    from bridge.schemas.entity_ids import NEOW_BONUS_IDS, NEOW_DRAWBACK_IDS, neow_option_from_types
+    assert len(NEOW_BONUS_IDS) == 19 and len(NEOW_DRAWBACK_IDS) == 5
+    assert neow_option_from_types('RANDOM_COLORLESS_2', 'NONE') == {'bonus_id': 11, 'drawback_id': 1}
+    assert neow_option_from_types('BOSS_RELIC', 'NONE') == {'bonus_id': 18, 'drawback_id': 6}
+    with pytest.raises(ValueError, match='unknown Neow drawback'):
+        neow_option_from_types('THREE_CARDS', 'UNKNOWN_COST')
+    with pytest.raises(ValueError, match='implicit'):
+        neow_option_from_types('BOSS_RELIC', 'CURSE')
+    adapter = RealGameAdapter(neow_observation=True)
+    offers = [{'bonus_type': 'THREE_CARDS', 'drawback_type': 'NONE'}] * 4
+    assert adapter._neow_options({'options': offers}) == [{'bonus_id': 0, 'drawback_id': 1}] * 4
+    for invalid in (True, '0', -1, 19):
+        with pytest.raises(ValueError, match='explicit word table'):
+            adapter._neow_options({'options': [{'bonus_id': invalid, 'drawback_id': 1}] * 4})
+
+
+def test_complete_neow_keyword_table_matches_native_named_enums():
+    import re
+    from pathlib import Path
+    from bridge.schemas.entity_ids import NEOW_BONUS_IDS, NEOW_DRAWBACK_IDS, NEOW_IMPLICIT_DRAWBACK_IDS
+    source = (Path(__file__).resolve().parents[2] / 'sim/sts_lightspeed/include/game/Neow.h').read_text()
+    def enums(name):
+        body = re.search(r'enum class ' + name + r'\s*\{(.*?)\};', source, re.S).group(1)
+        result, index = {}, 0
+        for token, value in re.findall(r'\b([A-Z_]+)\s*(?:=\s*(\d+))?\s*,', body):
+            if value:
+                index = int(value)
+            result[token] = index
+            index += 1
+        return result
+    assert NEOW_BONUS_IDS == {key: value for key, value in enums('Bonus').items() if key != 'INVALID'}
+    drawback = enums('Drawback')
+    assert NEOW_DRAWBACK_IDS == {key: value for key, value in drawback.items() if key not in {'INVALID', 'LOSE_STARTER_RELIC'}}
+    assert NEOW_IMPLICIT_DRAWBACK_IDS == {'BOSS_RELIC': drawback['LOSE_STARTER_RELIC']}
