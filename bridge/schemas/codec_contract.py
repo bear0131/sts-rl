@@ -353,6 +353,13 @@ def complete_word_tables():
             for event, (source, phases) in event_contract.EVENT_PROGRESS_CONTRACTS.items()
         },
         "staged_event_effect_receipts": event_contract.STAGED_EFFECTS,
+        "grid_confirmation_contract": {
+            "source": "GridCardSelectScreen.update: single upgrade/transform/purge clears selectedCards until CONFIRM",
+            "confirmation_card_uuid": "v22 exports actual hoveredCard UUID only while confirmScreenUp for these flags; explicit null otherwise; never upgradePreviewCard",
+            "consumer": "shared real_grid_confirmation_card verifies unique original candidate; event receipt matches requested UUID; adapter confirms once and waits for close",
+            "compatibility": "selected_cards remains the actual committed list, not synthetic; multi-select unchanged; no new policy action/observation layout",
+            "audit": "BRIDGE79 natural F12 Bonfire exposed old dead wait; same source applies to Blacksmith/Wing/Wheel and other single previews",
+        },
         "event_progress_transport_fields": {
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",
             "simulator_obtain_pending": "actual unfinished ShowCardAndObtainEffect in all four game effect queues; never a guessed delay",

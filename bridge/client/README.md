@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v21`.
+`current_intent_export: simulator-parity-v22`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -206,7 +206,13 @@ not Constricted/other THORNS. Both sides cap it at HP before damage/revival,
 matching Java lastDamageTaken and Shelled Parasite's actual life-steal amount.
 The matching native build also fixes HP_LOSS Buffer protection, self-damage
 sources and minimum Lizard Tail revival HP. No policy tensor or action IDs change.
-Do not mix v21 Python with an older jar/native extension. Model tensor layouts
+Since v22 GRID exports `confirmation_card_uuid` separately from `selected_cards`:
+single-card upgrade/transform/purge previews temporarily clear that list. The
+UUID comes from the actual original hovered card, never the animated replacement.
+The adapter confirms that preview once; staged events also match the requested
+physical UUID before allowing confirmation. Missing fields are rejected.
+
+Do not mix v22 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

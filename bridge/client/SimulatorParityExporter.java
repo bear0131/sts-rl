@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v21";
+    public static final String VERSION = "simulator-parity-v22";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -596,6 +596,17 @@ public final class SimulatorParityExporter {
     }
 
     public static void augmentGridState(HashMap<String, Object> state) {
+        GridCardSelectScreen screen = AbstractDungeon.gridSelectScreen;
+        // Single-card upgrade/transform/purge previews clear selectedCards.
+        // The actual original is hoveredCard, not the animated replacement or
+        // upgraded preview. Preserve this distinct, not-yet-confirmed identity.
+        AbstractCard confirming = null;
+        if (screen.confirmScreenUp && (screen.forUpgrade || screen.forTransform || screen.forPurge)) {
+            confirming = ReflectionHacks.getPrivate(screen, GridCardSelectScreen.class, "hoveredCard");
+            if (confirming == null || !screen.targetGroup.group.contains(confirming))
+                throw new IllegalStateException("GRID confirmation has no actual source card");
+        }
+        state.put("confirmation_card_uuid", confirming == null ? null : confirming.uuid.toString());
         String context = combatSelectionContext(AbstractDungeon.actionManager.currentAction);
         if (context == null) context = overworldSelectionContext(AbstractDungeon.gridSelectScreen);
         state.put("selection_context", context == null ? "UNMAPPED" : context);

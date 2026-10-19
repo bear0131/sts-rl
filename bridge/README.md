@@ -50,7 +50,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v21`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v22`配套使用。
+v22独立导出GRID确认预览的实际原卡UUID；升级/变牌/单张移除清空selected_cards时，
+确认仍能正确进行，不伪造已选列表、不重复发送确认；旧v21帧拒绝。
 v21将最近一次怪物攻击扣血限定为NORMAL攻击，按受击前HP封顶，缠绕等THORNS不覆盖；
 配套原生包含HP_LOSS的Buffer防护、自伤来源与复活最低生命修正，模型张量/动作编号不变。
 v9新增HAND_SELECT真实`any_number`，v10新增明确的怪物生命周期字段与觉醒者死亡保护状态；

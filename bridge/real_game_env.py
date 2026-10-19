@@ -30,7 +30,7 @@ from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 from bridge import event_contract
-from bridge.schemas.card_state import real_card_state, real_master_deck_state
+from bridge.schemas.card_state import real_card_state, real_master_deck_state, real_grid_confirmation_card
 from bridge.schemas.entity_ids import (
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
@@ -692,6 +692,7 @@ class RealGameAdapter:
         # the selected UUIDs to disappear and the actual replacements to arrive;
         # Omamori may legitimately prevent some replacement curses.
         self._post_overworld_grid_wait = False
+        self._grid_confirmation_sent = None
         self._astrolabe_receipt = None
         self._last_relic_ids: set[str] = set()
         self._seen_game_frame = False
@@ -753,6 +754,8 @@ class RealGameAdapter:
             self._astrolabe_receipt['selected'] = [c['uuid'] for c in desc['selected_instances']]
         if previous_overworld_grid and not current_overworld_grid:
             self._post_overworld_grid_wait = True
+        if self.screen_type() != 'GRID':
+            self._grid_confirmation_sent = None
         self._last_relic_ids = current_relic_ids
         self._seen_game_frame = self._seen_game_frame or bool(frame.get("in_game"))
         self._reconcile_multi()
@@ -942,6 +945,26 @@ class RealGameAdapter:
         if (st == "HAND_SELECT" and "CONFIRM" in self.commands()
                 and "CHOOSE" not in self.commands()):
             return "CONFIRM", "complete_hand_selection"
+
+        if st == 'GRID':
+            preview = real_grid_confirmation_card(ss)
+            if self._grid_confirmation_sent is not None:
+                identity, started = self._grid_confirmation_sent
+                current = tuple(self.gs.get(k) for k in ('seed', 'act', 'floor')) + (
+                    ss.get('selection_source'), preview['uuid'] if preview is not None else None)
+                if current != identity:
+                    raise RuntimeError('GRID confirmation changed source/card before closing')
+                if self._wait_clock() - started > 10:
+                    raise RuntimeError('GRID confirmation did not close within 10 seconds')
+                return self._refresh_command(), 'await_grid_confirmation'
+            if preview is not None:
+                if 'CONFIRM' not in self.commands() or 'CHOOSE' in self.commands():
+                    raise ValueError('GRID preview command inventory is inconsistent')
+                identity = tuple(_required(self.gs, k, context='GRID confirmation')
+                                 for k in ('seed', 'act', 'floor')) + (
+                    _required(ss, 'selection_source', context='GRID confirmation'), preview['uuid'])
+                self._grid_confirmation_sent = (identity, self._wait_clock())
+                return 'CONFIRM', 'confirm_grid_preview'
 
         # Simulator overworld grids settle immediately after the required last
         # pick.  The real UI exposes an extra CONFIRM transport step; execute it

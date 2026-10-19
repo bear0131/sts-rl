@@ -413,6 +413,7 @@ class EventEffectAck:
         event = STAGED_EFFECTS[effect][0]
         progress = event_progress(gs, event)
         if gs.get('screen_type') == 'GRID':
+            from bridge.schemas.card_state import real_grid_confirmation_card
             parts = decision.command.upper().split()
             if parts[:1] == ['CHOOSE']:
                 if self._staged_pick is not None:
@@ -424,7 +425,13 @@ class EventEffectAck:
                 if len(parts) != 2 or selected or not 0 <= index < len(cards):
                     raise ValueError('invalid event grid selection command')
                 self._staged_pick = cards[index]['uuid']
-            elif parts != ['CONFIRM']:
+            elif parts == ['CONFIRM']:
+                preview = real_grid_confirmation_card(gs['screen_state'])
+                if (preview is None or preview['uuid'] != self._staged_pick
+                        or self._staged_confirm_sent):
+                    raise ValueError('event premature/repeated or different-card confirmation')
+                self._staged_confirm_sent = True
+            else:
                 raise ValueError('unexpected command during event card selection')
         else:
             ui = transport_only(gs)
@@ -449,7 +456,7 @@ class EventEffectAck:
                 return False
         progress = event_progress(gs, event)
         phase = progress['phase']
-        if self._staged_transport_sent == progress:
+        if gs.get('screen_type') == 'EVENT' and self._staged_transport_sent == progress:
             return True  # Sent this intermediate page already; never retry it.
         self._staged_transport_sent = None
         if gs.get('screen_type') == 'GRID':
@@ -461,6 +468,12 @@ class EventEffectAck:
                     or ss.get('selection_source') != progress['source'] or ss.get('num_cards') != 1):
                 raise RuntimeError(f'{event} unexpected selection source/context/count')
             if self._staged_pick is not None:
+                from bridge.schemas.card_state import real_grid_confirmation_card
+                preview = real_grid_confirmation_card(ss)
+                if preview is not None:
+                    if preview['uuid'] != self._staged_pick:
+                        raise RuntimeError('event preview acknowledged a different selected instance')
+                    return self._staged_confirm_sent
                 selected = [c['uuid'] for c in ss['selected_cards']]
                 if selected and selected != [self._staged_pick]:
                     raise RuntimeError('event acknowledged a different selected instance')
@@ -753,6 +766,7 @@ class EventEffectAck:
             self.pending = (deepcopy(gs), 'pending_bonfire_offer', now)
             self._staged_transport_sent = None
             self._staged_pick = None
+            self._staged_confirm_sent = False
             return
         if self.pending and self.pending[1].startswith('augmenter_'):
             if self.pending[1] == 'augmenter_transform' and gs.get('screen_type') == 'GRID':
@@ -797,6 +811,7 @@ class EventEffectAck:
                 raise ValueError('staged event source/semantic/command mismatch')
             self._staged_transport_sent = None
             self._staged_pick = None
+            self._staged_confirm_sent = False
         if effect.startswith('tome_'):
             if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
                 raise ValueError('Cursed Tome semantic action and UI command disagree')

@@ -65,6 +65,26 @@ def real_selection_card_states(records, selected_records):
     return cards, selected
 
 
+def real_grid_confirmation_card(screen):
+    """Read the original card in a preview, without fabricating selected_cards."""
+    if type(screen.get('confirm_up')) is not bool or 'confirmation_card_uuid' not in screen:
+        raise ValueError('GRID requires explicit confirmation state and card identity')
+    identity = screen['confirmation_card_uuid']
+    if not screen['confirm_up']:
+        if identity is not None:
+            raise ValueError('GRID confirmation card exists outside a preview')
+        return None
+    if (not isinstance(identity, str) or type(screen.get('num_cards')) is not int
+            or screen['num_cards'] != 1 or screen.get('any_number') is not False
+            or not any(screen.get(flag) is True for flag in ('for_upgrade', 'for_transform', 'for_purge'))):
+        raise ValueError('unsupported GRID preview flags/count/identity')
+    cards, selected = real_selection_card_states(screen.get('cards'), screen.get('selected_cards'))
+    matches = [card for card in cards if card['uuid'] == identity]
+    if selected or len(matches) != 1:
+        raise ValueError('GRID preview must identify one uncommitted original source card')
+    return matches[0]
+
+
 def real_master_deck_state(records):
     if not isinstance(records, list):
         raise ValueError('real master deck must be a list')
