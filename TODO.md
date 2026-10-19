@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE69 | 二→三幕入口回执源码已修，待F34宝箱续档 | c9d711f实机F31 Rage候选已通过、F33铜制机械人获胜；F34领Boss遗物PROCEED后实际Act3 MAP仍引用TreasureRoomBoss(-1,15)，旧合同照搬TheCity而要求EmptyRoom(0,-1)。原TheBeyond构造不重置currMapNode，与TheCity不同；词表按来源幕分别指定目标，额外要求实际first_node_chosen=false，不放宽seed/floor/phase/room/node。F34保存仍是Act2宝箱入口，可直接重验跨幕无需再打Boss，下一搜索index329。 |
 | BRIDGE68 | 实机发现Rage费用错误，同类Trip已源码修复，待构建续档 | F25续测已通过宝典多次选/跳、奖励、休息及F29地精召唤槽，F31宝典真实RAGE 0费与native默认1费严格比较失败。逐项读取外部75战士/39无色卡构造及费用升级表达式，对照getEnergyCost确认仅RAGE遗漏零费、TRIP误列1费；两者改0，ID/形状/权重不变。需重建当前native，从F31/index258入口继续实机；不放宽实例比较、不覆盖真实费用，不将该SL计正式胜率样本。 |
 | BRIDGE67 | 事件零变化与部分奖励提前回执源码已修，未实机 | 泛用事件等待真实ready和四队列obtain完成，避免先拿金币/遗物就离开而漏延迟诅咒。限定已核对结果页或Skull费用选项变化确认Ectoplasm零金币、空钱包付强盗、Library满血/Bloom零治疗、maxHP1封底、Omamori挡单诅咒；不以任意屏幕变化放行。祭坛献祭用同步伤害后的最终页而非净扣血，蘑菇加入Darkstone的6上限/治疗。源码逐支复读与diff检查，无离线行为测试；沿用v20字段/构建，不改变模型输入或策略。 |
 | BRIDGE66 | 三类召唤实际槽/巫师计数源码已修，v20/原生构建完成未实机 | Java读取首领实际引用，分别映到4/3/5原生槽，构造后未入列表对象明确pending；新对象不再按种类/旧下标猜。完整记录保留被替换死体，只有确认死亡、不复活、无Stasis的七类召唤物退出搜索投影；普通根和动作仍严格完整映射。七类完整species恢复不调用RNG，巫师实际currentCharge→canonical/diff/miscInfo/key，A17Blast同步清零计数但不改重复Blast行为。javac/保护打包/native目标构建退出0，未跑离线测试或实机；不宣称BRIDGE37全部复活私有状态已覆盖。 |

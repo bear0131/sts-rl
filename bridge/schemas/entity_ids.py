@@ -496,9 +496,15 @@ REWARD_ROOM_EXIT_CONTRACTS = {
     "TreasureRoomBoss": {
         "source_screens": ("COMBAT_REWARD", "CHEST"), "source_acts": (1, 2),
         "source_node": (-1, 15),
-        "target_room": "EmptyRoom", "target_screen": "MAP",
-        "target_node": (0, -1), "act_delta": 1, "floor_delta": 0,
-        "java_source": "ProceedButton.goToNextDungeon / CardCrawlGame.update / AbstractDungeon.firstRoomLogic",
+        "target_screen": "MAP", "act_delta": 1, "floor_delta": 0,
+        # TheCity explicitly replaces currMapNode; TheBeyond does not. Its
+        # first map still carries the previous boss treasure room reference.
+        "target_by_source_act": {
+            1: {"target_room": "EmptyRoom", "target_node": (0, -1)},
+            2: {"target_room": "TreasureRoomBoss", "target_node": (-1, 15)},
+        },
+        "first_node_chosen": False,
+        "java_source": "ProceedButton.goToNextDungeon / CardCrawlGame.update / TheCity and TheBeyond constructors",
     },
 }
 CHEST_REWARD_SCREEN_CONTRACTS = {

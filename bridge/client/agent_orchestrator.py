@@ -658,11 +658,15 @@ class RewardCommandAck:
                 or (node["x"], node["y"]) != contract["source_node"]
                 or node.get("room_class") != gs["room_type"]):
             raise ValueError("reward room exit lacks its explicit completed source identity")
+        target = (contract["target_by_source_act"][gs["act"]]
+                  if "target_by_source_act" in contract else contract)
         return {
             "act": gs["act"] + contract["act_delta"],
             "floor": gs["floor"] + contract["floor_delta"],
-            "room_type": contract["target_room"], "room_phase": "COMPLETE",
-            "screen_type": contract["target_screen"], "node": contract["target_node"],
+            "room_type": target["target_room"], "room_phase": "COMPLETE",
+            "screen_type": contract["target_screen"], "node": target["target_node"],
+            **({"first_node_chosen": contract["first_node_chosen"]}
+               if "first_node_chosen" in contract else {}),
         }
 
     def arm(self, frame, decision, now):
@@ -768,6 +772,8 @@ class RewardCommandAck:
                 and all(type(node.get(k)) is int for k in ("x", "y"))
                 and (node["x"], node["y"]) == room_exit["node"]
                 and node.get("room_class") == room_exit["room_type"]
+                and ("first_node_chosen" not in room_exit
+                     or gs.get("screen_state", {}).get("first_node_chosen") is room_exit["first_node_chosen"])
             )
             if not acknowledged and any(gs.get(k) != before[k] for k in ("act", "floor", "room_type")):
                 raise RuntimeError(f"reward room exit reached an unexpected destination; expected {room_exit!r}")
