@@ -977,9 +977,18 @@ class RealGameAdapter:
             return None  # Internal prefix decision; no UI command until STOP.
         if semantic[0] != ga.MULTI_SELECT:
             return self.command_for_semantic(semantic)
-        indices = sorted(semantic[1], reverse=True)
+        desc = self.select_descriptor()
+        # Preserve native transition order. Forethought inserts each selected
+        # card at the bottom in ascending source order; exhaust/gamble use
+        # descending order. UUID lookup below handles shifted Java indices.
+        indices = sorted(semantic[1], reverse=desc['context'] != 'FORETHOUGHT')
+        hand = tuple(real_card_state(card) for card in _list_value(
+            self.gs['combat_state'], 'hand', context='multi-selection hand'))
+        if _list_value(_screen_state(self.gs), 'selected', context='HAND_SELECT selection'):
+            raise ValueError('cannot start a multi-selection plan with unacknowledged selected cards')
         self._joint_multi_plan = dict(signature=self._joint_screen_identity(),
-                                      remaining=indices, previous=None, sent=None, selected=0)
+                                      remaining=[hand[index] for index in indices],
+                                      previous=None, sent=None, selected=())
         return self._continue_joint_multi()
 
     def _joint_screen_identity(self):
@@ -988,8 +997,9 @@ class RealGameAdapter:
             if self.screen_type() not in {"HAND_SELECT", "GRID"}:
                 return None
             raise ValueError("multi-selection plan is missing its descriptor")
-        return (self.screen_type(), self.gs.get("floor"),
-                (self.gs.get("combat_state") or {}).get("turn"), desc.get("context"))
+        return (self.screen_type(), self.gs.get("seed"), self.gs.get("floor"),
+                (self.gs.get("combat_state") or {}).get("turn"), desc.get("context"),
+                _screen_state(self.gs).get("selection_source"))
 
     def _continue_joint_multi(self):
         """Expand one subset into acknowledged UI choices without another model call."""
@@ -997,18 +1007,24 @@ class RealGameAdapter:
         if plan["signature"] != self._joint_screen_identity():
             self._joint_multi_plan = None
             return None
-        hand = tuple(self._combat_hand_cards())
+        hand = tuple(real_card_state(card) for card in _list_value(
+            self.gs['combat_state'], 'hand', context='multi-selection hand'))
         screen_state = _screen_state(self.gs)
-        selected = _list_value(
+        selected = tuple(real_card_state(card) for card in _list_value(
             screen_state, "selected", context="HAND_SELECT selection"
-        )
-        count = len(selected)
+        ))
+        identities = [card['uuid'] for card in hand + selected]
+        if len(set(identities)) != len(identities):
+            self._joint_multi_plan = None
+            raise ValueError('multi-selection repeats a physical card UUID')
         if plan["sent"] is not None:
             previous, index = plan["previous"], plan["sent"]
             removed = previous[:index] + previous[index + 1:]
-            if hand == previous and count == plan["selected"]:
+            if hand == previous and selected == plan["selected"]:
                 return self._refresh_command()  # Await acknowledgement; never select twice.
-            if not (hand == removed or (hand == previous and count == plan["selected"] + 1)):
+            # HandCardSelectScreen removes the actual object from hand and
+            # appends it to selectedCards; both sides of that move must agree.
+            if hand != removed or selected != plan["selected"] + (previous[index],):
                 self._joint_multi_plan = None
                 raise ValueError("multi-selection frame changed unexpectedly; discard the pending subset")
         if not plan["remaining"]:
@@ -1016,11 +1032,14 @@ class RealGameAdapter:
                 return self._refresh_command()
             self._joint_multi_plan = None
             return "CONFIRM"
-        index = plan["remaining"].pop(0)
-        if index >= len(hand) or "CHOOSE" not in self.commands():
+        card = plan["remaining"][0]
+        indices = [i for i, current in enumerate(hand) if current['uuid'] == card['uuid']]
+        if len(indices) != 1 or hand[indices[0]] != card or "CHOOSE" not in self.commands():
             self._joint_multi_plan = None
             raise ValueError("multi-selection candidate is no longer available")
-        plan.update(previous=hand, selected=count, sent=index)
+        index = indices[0]
+        plan["remaining"].pop(0)
+        plan.update(previous=hand, selected=selected, sent=index)
         return f"CHOOSE {index}"
 
     # ---------------------------------------------------------- canonical state
@@ -1524,7 +1543,9 @@ class RealGameAdapter:
             can_pick_zero = _required_bool(
                 ss, "can_pick_zero", context="HAND_SELECT selection"
             )
-            can_pick_any = context == "GAMBLE"
+            can_pick_any = _required_bool(
+                ss, "any_number", context="HAND_SELECT selection"
+            )
         elif card_reward_screen:
             # Combat Discovery/Codex screens select exactly one generated card.
             # Codex exposes SKIP as an explicit extra candidate; that is not

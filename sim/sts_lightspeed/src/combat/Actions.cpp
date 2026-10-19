@@ -578,17 +578,6 @@ Action Actions::InfernalBladeAction() {
     }};
 }
 
-Action Actions::JackOfAllTradesAction(bool upgraded) {
-    return {[=] (BattleContext &bc) {
-        const auto c1 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-        bc.addToTop( Actions::MakeTempCardInHand(c1) );
-        if (upgraded) {
-            auto c2 = sts::getTrulyRandomColorlessCardInCombat(bc.cardRandomRng);
-            bc.addToTop( Actions::MakeTempCardInHand(c2) );
-        }
-    }};
-}
-
 Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {
     return {[=] (BattleContext &bc) {
         const auto effectAmount = energy + (bc.player.hasRelic<R::CHEMICAL_X>() ? 2 : 0);
@@ -637,7 +626,9 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
         int i = 0;
         for (; i < count; ++i) {
             if (attackIdxList.size()-i <= 0) {
-                return;
+                // Still remove the cards already transferred. Returning here
+                // leaves the same instances in both draw and hand/discard.
+                break;
             }
 
             java::Collections::shuffle(attackIdxList.begin()+i, attackIdxList.end(), java::Random(bc.shuffleRng.randomLong()));
@@ -732,7 +723,7 @@ Action Actions::DualWieldAction(int copyCount) {
 
         if (validCount == 1) {
             for (int i = 0; i < copyCount; ++i) {
-                auto c = bc.cards.hand[lastValidIdx];
+                auto c = bc.cards.hand[lastValidIdx].makeStatEquivalentCopy();
                 if (bc.cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {
                     bc.cards.createTempCardInHand(c);
 
@@ -743,8 +734,7 @@ Action Actions::DualWieldAction(int copyCount) {
             }
 
         } else {
-            bc.inputState = InputState::CARD_SELECT;
-            bc.cardSelectInfo.cardSelectTask = CardSelectTask::DUAL_WIELD;
+            bc.openSimpleCardSelectScreen(CardSelectTask::DUAL_WIELD, 1);
             bc.cardSelectInfo.dualWield_CopyCount() = copyCount;
 
         }
@@ -775,8 +765,7 @@ Action Actions::ExhumeAction() { // todo this is bugged because the selected car
             bc.chooseExhumeCard(lastNonExhumeIdx);
 
         } else {
-            bc.cardSelectInfo.cardSelectTask = CardSelectTask::EXHUME;
-            bc.inputState = InputState::CARD_SELECT;
+            bc.openSimpleCardSelectScreen(CardSelectTask::EXHUME, 1);
         }
 
     }};
@@ -791,12 +780,10 @@ Action Actions::ForethoughtAction(bool upgraded) {
         if (!upgraded && bc.cards.cardsInHand == 1) {
             bc.chooseForethoughtCard(0);
         } else {
-            bc.cardSelectInfo = CardSelectInfo{};
-            bc.cardSelectInfo.cardSelectTask = CardSelectTask::FORETHOUGHT;
+            bc.openSimpleCardSelectScreen(CardSelectTask::FORETHOUGHT,
+                                          upgraded ? bc.cards.cardsInHand : 1);
             bc.cardSelectInfo.canPickAnyNumber = upgraded;
             bc.cardSelectInfo.canPickZero = upgraded;
-            bc.cardSelectInfo.pickCount = upgraded ? bc.cards.cardsInHand : 1;
-            bc.inputState = InputState::CARD_SELECT;
         }
     }};
 }
@@ -855,8 +842,7 @@ Action Actions::DrawToHandAction(CardSelectTask task, CardType cardType) {
             bc.chooseDrawToHandCards(&idx, 1);
 
         } else {
-            bc.cardSelectInfo.cardSelectTask = task;
-            bc.inputState = InputState::CARD_SELECT;
+            bc.openSimpleCardSelectScreen(task, 1);
         }
 
     }};
@@ -874,8 +860,7 @@ Action Actions::WarcryAction() {
             bc.chooseWarcryCard(0);
 
         } else {
-            bc.inputState = InputState::CARD_SELECT;
-            bc.cardSelectInfo.cardSelectTask = CardSelectTask::WARCRY;
+            bc.openSimpleCardSelectScreen(CardSelectTask::WARCRY, 1);
         }
     }};
 }
@@ -883,7 +868,9 @@ Action Actions::WarcryAction() {
 Action Actions::TimeEaterPlayCardQueueItem(const CardQueueItem &x) {
     return {[=] (BattleContext &bc) {
         auto item = x;
-        item.exhaustOnUse |= bc.curCardQueueItem.card.doesExhaust();
+        // Each cancelled autoplay resolves its own UseCardAction. The last
+        // card processed may have a different persistent exhaust attribute.
+        item.exhaustOnUse |= item.card.doesExhaust();
         item.triggerOnUse = false;
         bc.curCardQueueItem = item;
         bc.onAfterUseCard();
@@ -958,8 +945,7 @@ Action Actions::UpgradeRandomCardAction() {
 
 Action Actions::CodexAction() {
     return {[] (BattleContext &bc) {
-        bc.inputState = InputState::CARD_SELECT;
-        bc.cardSelectInfo.cardSelectTask = CardSelectTask::CODEX;
+        bc.openSimpleCardSelectScreen(CardSelectTask::CODEX, 1);
         bc.cardSelectInfo.codexCards() =
                 generateDiscoveryCards(bc.cardRandomRng, CharacterClass::IRONCLAD, CardType::INVALID);
     }};
@@ -967,23 +953,24 @@ Action Actions::CodexAction() {
 
 Action Actions::ExhaustMany(int limit) {
     return {[=] (BattleContext &bc) {
-        bc.inputState = InputState::CARD_SELECT;
-        bc.cardSelectInfo.cardSelectTask = CardSelectTask::EXHAUST_MANY;
-        bc.cardSelectInfo.pickCount = limit;
+        if (bc.cards.cardsInHand == 0) return;
+        bc.openSimpleCardSelectScreen(CardSelectTask::EXHAUST_MANY, limit);
+        bc.cardSelectInfo.canPickZero = true;
+        bc.cardSelectInfo.canPickAnyNumber = true;
     }};
 }
 
 Action Actions::GambleAction() {
     return {[] (BattleContext &bc) {
-        bc.inputState = InputState::CARD_SELECT;
-        bc.cardSelectInfo.cardSelectTask = CardSelectTask::GAMBLE;
+        bc.openSimpleCardSelectScreen(CardSelectTask::GAMBLE, bc.cards.cardsInHand);
+        bc.cardSelectInfo.canPickZero = true;
+        bc.cardSelectInfo.canPickAnyNumber = true;
     }};
 }
 
 Action Actions::ToolboxAction() {
     return {[] (BattleContext &bc) {
-        bc.inputState = InputState::CARD_SELECT;
-        bc.cardSelectInfo.cardSelectTask = CardSelectTask::DISCOVERY;
+        bc.openSimpleCardSelectScreen(CardSelectTask::DISCOVERY, 1);
         bc.cardSelectInfo.discovery_CopyCount() = 1;
         bc.cardSelectInfo.discovery_Cards() =
                 generateDiscoveryCards(bc.cardRandomRng, bc.player.cc, CardType::STATUS); // status is mapped to colorless
@@ -1049,7 +1036,8 @@ Action Actions::EnlightenmentAction(bool upgraded) {
                 c.costForTurn = 1;
             }
             if (upgraded && c.cost > 1) {
-                c.costForTurn = 1;
+                // Base and turn costs are reduced independently in Java;
+                // a card already at zero for this turn must stay at zero.
                 c.cost = 1;
             }
         }

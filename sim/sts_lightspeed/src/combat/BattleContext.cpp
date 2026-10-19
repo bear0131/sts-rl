@@ -1060,7 +1060,7 @@ void BattleContext::useAttackCard() {
 
         case CardId::ANGER:
             addToBot( Actions::AttackEnemy(t, calculateCardDamage(c, t, up ? 8 : 6)) );
-            addToBot( Actions::MakeTempCardInDiscard( CardInstance(CardId::ANGER, up), 1) );
+            addToBot( Actions::MakeTempCardInDiscard(c.makeStatEquivalentCopy(), 1) );
             break;
 
         case CardId::BASH:
@@ -1448,8 +1448,13 @@ void BattleContext::useSkillCard() {
             addToBot( Actions::DebuffAllEnemy<MS::WEAK>(up ? 2 : 1, false) ); // game justs adds one for each enemy in order
             break;
 
-        case CardId::JACK_OF_ALL_TRADES: // the game decides the random cards here and adds maketempcardtobot
-            addToBot( Actions::JackOfAllTradesAction(up) );
+        case CardId::JACK_OF_ALL_TRADES:
+            // Java samples in use(), before queued card/relic effects, and
+            // resolves generated cards in sample order (also when hand is full).
+            for (int i = 0; i < (up ? 2 : 1); ++i) {
+                const auto id = sts::getTrulyRandomColorlessCardInCombat(cardRandomRng);
+                addToBot(Actions::MakeTempCardInHand(id));
+            }
             break;
 
         case CardId::JAX:
@@ -3023,16 +3028,13 @@ void BattleContext::mummifiedHandOnUsePower() {
 }
 
 void BattleContext::openDiscoveryScreen(std::array<CardId, 3> discoveryCards, int copyCount) {
-    inputState = InputState::CARD_SELECT;
-    cardSelectInfo.cardSelectTask = CardSelectTask::DISCOVERY;
-    cardSelectInfo.pickCount = 1;
-    cardSelectInfo.canPickAnyNumber = false;
-    cardSelectInfo.canPickZero = false;
+    openSimpleCardSelectScreen(CardSelectTask::DISCOVERY, 1);
     cardSelectInfo.cards = discoveryCards;
     cardSelectInfo.discovery_CopyCount() = copyCount;
 }
 
 void BattleContext::openSimpleCardSelectScreen(CardSelectTask task, int count) {
+    cardSelectInfo = CardSelectInfo{};
     inputState = InputState::CARD_SELECT;
     cardSelectInfo.cardSelectTask = task;
     cardSelectInfo.pickCount = count;
@@ -3088,7 +3090,7 @@ void BattleContext::chooseDualWieldCard(int handIdx) {
     // when there **is** a choice on which card to pick, neither will change the card in the deck XDD
 
     const int copyCount = cardSelectInfo.dualWield_CopyCount();
-    CardInstance dualWieldCard = cards.hand[handIdx];
+    CardInstance dualWieldCard = cards.hand[handIdx].makeStatEquivalentCopy();
 
     // todo cleaner solution
 
@@ -3131,9 +3133,14 @@ void BattleContext::chooseDualWieldCard(int handIdx) {
 }
 
 void BattleContext::chooseDiscardToHandCard(int discardIdx, bool forZeroCost) {
+    // Java leaves the chosen card in its original discard slot when full.
+    // No cost mutation or remove-and-reappend is performed in that case.
+    if (cards.cardsInHand >= CardManager::MAX_HAND_SIZE) {
+        return;
+    }
     CardInstance c = cards.discardPile[discardIdx];
     cards.removeFromDiscard(discardIdx);
-    if (cardSelectInfo.cardSelectTask == CardSelectTask::LIQUID_MEMORIES_POTION) {
+    if (forZeroCost) {
         c.setCostForTurn(0);
     }
     moveToHandHelper(c);

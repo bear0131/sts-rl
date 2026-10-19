@@ -24,6 +24,17 @@ CardInstance::CardInstance(const Card &card) : CardInstance(card.getId(), card.i
     }
 }
 
+CardInstance CardInstance::makeStatEquivalentCopy() const {
+    // AbstractCard.makeStatEquivalentCopy preserves upgrades, base/current
+    // cost, growth and freeToPlayOnce, but starts with a new card's retain and
+    // exhaust properties. Physical UID allocation belongs to CardManager.
+    auto copy = *this;
+    copy.uniqueId = -1;
+    copy.retain = false;
+    copy.exhaust = doesCardExhaust(id, upgraded);
+    return copy;
+}
+
 CardId CardInstance::getId() const {
     return id;
 }

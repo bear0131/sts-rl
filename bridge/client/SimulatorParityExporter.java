@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v8";
+    public static final String VERSION = "simulator-parity-v9";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -325,6 +325,9 @@ public final class SimulatorParityExporter {
         String context = combatSelectionContext(action);
         state.put("selection_context", context == null ? "UNMAPPED" : context);
         state.put("selection_source", action == null ? "NONE" : action.getClass().getName());
+        state.put("any_number", Boolean.valueOf(privateBool(
+            AbstractDungeon.handCardSelectScreen,
+            com.megacrit.cardcrawl.screens.select.HandCardSelectScreen.class, "anyNumber")));
         state.put("simulator_parity_export", VERSION);
     }
 

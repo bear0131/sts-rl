@@ -26,6 +26,12 @@ parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0
 该接口的同状态回灌保持模型输入、合法动作、压缩观测与搜索future key逐项一致。
 实时普通决策已接入UUID映射和暂扣牌导出；选择中实例和其他动态字段的剩余审查单列，
 不能将`apply_custom_state`简化tuple视为实例快照，严格真实根必须提供完整`card_state`。
+选择候选通过`instance` sidecar和原生`selection_card_state()`核对完整实例，
+单选重排显式映射策略索引；未知临时UUID、多选候选顺序不一致明确拒绝，不猜测匹配。
+`combat_selection_transport_fields`列选择来源、数量、任意张标志和已选实例的传输合同。
+HAND_SELECT的`any_number`来自Java真实字段，不能仅凭GAMBLE等来源推断；
+joint multi以UUID及完整实例同时校验手牌移除和已选区追加回执。
+这不等于恢复所有pending/limbo/暂存牌或GRID多张进度；这些仍为未完成路径。
 347个真机卡牌构造字节码中仅GeneticAlgorithm/RitualDagger写非零misc，分别为1/15；
 fresh初值和370个native CardId一一核对，但这不代替当前misc、UUID实例映射、永久/回合费用和瓶装状态的完整对接。
 `pending_transport/pending_mapping` 明确是未完成项，不得解释成可以丢字段的支持路径；
@@ -35,7 +41,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-OBS20 / ACTION8 / compact layout8 / `simulator-parity-v8` 配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout8 / `simulator-parity-v9`配套使用。
+v9新增HAND_SELECT真实`any_number`字段，必须重新构建Java补丁；旧v8不能配当前Python。
+原生扩展也必须包含`selection_card_state()`；接口与源码未统一验证前不部署。
 普通战斗决策的实时搜索使用完整 `card_state` 恢复四牌堆和两个青铜球暂扣槽，
 禁止退回只含身份/升级/手牌费用的 fresh tuple。主牌组 UUID 映射当前物理槽；
 临时 UUID 从原生主牌组容量 96 之后分配，战斗内不随牌堆移动重新编号、不复用。

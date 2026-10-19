@@ -60,7 +60,7 @@ namespace sts {
     };
 
     struct CardSelectInfo {
-        std::array<CardId, 3> cards;
+        std::array<CardId, 3> cards{};
         bool canPickZero = false;
         bool canPickAnyNumber = false;
         int pickCount = 0;

@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v8"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v9"
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((
@@ -382,6 +382,17 @@ NATIVE_CARD_SNAPSHOT_FIELDS = {
     'draw': 'ordered complete records', 'discard': 'ordered complete records',
     'exhaust': 'ordered complete records',
     'stasis': 'exactly two native physical slots; null only for actual empty slots',
+}
+COMBAT_SELECTION_TRANSPORT_FIELDS = {
+    'selection_context': 'explicit native semantic task, crosschecked against source class',
+    'selection_source': 'current Java action class; never guessed from hand or text',
+    'any_number': 'HAND_SELECT private HandCardSelectScreen.anyNumber; GRID original serializer; explicit boolean',
+    'max_cards': 'HAND_SELECT.numCardsToSelect; 99 is normalized to actual selectable hand size',
+    'num_cards': 'GRID.numCards; actual requested count, not always one',
+    'can_pick_zero': 'HAND_SELECT.canPickZero; explicit boolean, independent of any_number',
+    'selected': 'HAND_SELECT.selectedCards; complete typed instances; UUID and full instance hand-removal/selected-append acknowledgement',
+    'selected_cards': 'GRID.selectedCards; complete typed instances; sequential discard-selection audit pending',
+    'instance': 'parsed real_card_state sidecar per candidate; native selection_card_state validates all representable members and physical UID',
 }
 CARD_STATE_TRANSPORT_FIELDS = {
     'version': 'integer 1', 'base_cost': 'AbstractCard.cost',

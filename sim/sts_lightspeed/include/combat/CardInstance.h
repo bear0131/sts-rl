@@ -35,6 +35,9 @@ namespace sts {
         CardInstance(CardId id, bool upgraded=false);
         CardInstance(const Card &card);
 
+        // New Java stat-equivalent instance, not a move/restore of this card.
+        [[nodiscard]] CardInstance makeStatEquivalentCopy() const;
+
         [[nodiscard]] CardId getId() const;
         [[nodiscard]] CardType getType() const;
         [[nodiscard]] const char *getName() const;
