@@ -6,6 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE74 | 源码修复并构建，实机分支待覆盖 | Colosseum补阶段0/1/2与首战无展示奖励→第二轮选项、二战稀有/罕见/100金、Smoke首战回事件；保留disableColosseum=true及旧权重布局。DeadAdventurer/Colosseum第二战eliteTrigger作用于昆虫/投石器/颈环，MindBloom实际Boss也触发颈环；昆虫只减不增当前HP。完整词表event_combat_rule_contracts记录来源，未实机覆盖这些组合。 |
+| BRIDGE75 | 源码修复并构建，实机分支待覆盖 | MaskedBandits补药水；强盗/蘑菇已有专属遗物改头环；五类已有事件战补GoldenIdol（战前按合并金币计算），MindBloom减金门槛A15→A13。DeadAdventurer药水先于卡牌；原“会误算四项上限”判断撤回，当前数量不足以证明影响。已复读Smoke：事件预置最多三项，隐藏药水判定等价，首竞技场例外见BRIDGE74；未离线测试或分支行为验收。 |
 | BRIDGE73 | 已修复并构建，实机组合待覆盖 | BattleContext/GameContext补ToyOrnithopter喝药5治疗，战内排在药水效果后，Smoke结束在治疗后；SacredBark不翻倍遗物治疗，Flower/Bloom经原治疗路径。Entropic按容量抽取并顺序填第一个空槽；战外Sozu不抽取，战内仍抽取但阻止获得。战外槽位/上下文/类型消费前拒绝，自动仙女/丢弃不触发Toy；源码复读，无离线测试/实际组合验证。 |
 | BRIDGE72 | 已修复并构建，实机组合待覆盖 | updateRelicsOnExit先Meat后实际遗物顺序，战后仍COMBAT应用MagicFlower四舍五入/Bloom禁疗；Face在此加上限与治疗而不再afterBattle重复。projected_exit_hp复用、legacy boss目标同步规则；最终mode0结算前HP目标不变。源码对照外部endBattle/五遗物并复读消费者，未做离线或实际组合行为验证。 |
 | BRIDGE71 | 源码修复并构建，实机逃跑分支未验收 | canDrinkPotion共享合法性，所有Boss物种含死亡实体禁用，SlimeBoss分裂保留Boss尸体仍禁用；Act4背袭仍不支持。PLAYER_ESCAPE=3独立于win/loss，搜索/评测/监督标签同步；afterEscape保留非Boss房间掉落RNG但不生成卡牌/展示战利品。真实SmokeCommandAck等待药槽消耗与同层非战斗帧。不改OBS20/ACTION8/layout9/权重；特殊事件/Act4不外推，相关治疗见BRIDGE72/73。 |

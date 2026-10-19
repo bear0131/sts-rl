@@ -704,9 +704,10 @@ int search::GameAction::getValidEventSelectBits(const GameContext &gc) {
         case Event::COLOSSEUM:
             if (gc.info.eventData == 0) { // first phase
                 return 0x1;
-            } else {
+            } else if (gc.info.eventData == 1) {
                 return 0x3;
             }
+            return 0;
 
         case Event::CURSED_TOME:
             switch (gc.info.eventData) { // event phase

@@ -15,6 +15,32 @@ namespace sts {
     thread_local BattleContext *g_debug_bc;
 }
 
+namespace {
+bool hasBossMonster(const MonsterGroup &monsters) {
+    // Both Smoke Bomb and Slaver's Collar inspect actual enemy types, not the
+    // room class. Dead Boss entities remain relevant (e.g. Slime Boss split).
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        switch (monsters.arr[i].id) {
+            case MonsterId::SLIME_BOSS:
+            case MonsterId::THE_GUARDIAN:
+            case MonsterId::HEXAGHOST:
+            case MonsterId::BRONZE_AUTOMATON:
+            case MonsterId::THE_CHAMP:
+            case MonsterId::THE_COLLECTOR:
+            case MonsterId::AWAKENED_ONE:
+            case MonsterId::DONU:
+            case MonsterId::DECA:
+            case MonsterId::TIME_EATER:
+            case MonsterId::CORRUPT_HEART:
+                return true;
+            default:
+                break;
+        }
+    }
+    return false;
+}
+}
+
 
 // assume all bc fields have just been initialized by in class member initializers
 void BattleContext::init(const GameContext &gc) {
@@ -92,6 +118,10 @@ void BattleContext::initRelics(const GameContext &gc) {
     fixed_list<RelicId, 2> atTurnStartPostDraw;
 
     auto room = gc.curRoom;
+    const bool eliteTrigger = room == Room::ELITE ||
+        (room == Room::EVENT && (gc.curEvent == Event::DEAD_ADVENTURER ||
+            (gc.curEvent == Event::COLOSSEUM &&
+             encounter == MonsterEncounter::COLOSSEUM_EVENT_NOBS)));
 
     auto &p = player;
     p.neowLamentRemaining = 0;
@@ -322,10 +352,10 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::PRESERVED_INSECT:
-                if (room == Room::ELITE) {
+                if (eliteTrigger) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
-                        m.curHp = static_cast<int>(m.maxHp * .75);
+                        m.curHp = std::min(m.curHp, static_cast<int>(m.maxHp * .75f));
                     }
                 }
                 break;
@@ -340,13 +370,13 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::SLAVERS_COLLAR:
-                if (room == Room::ELITE || room == Room::BOSS) { // todo this needs to be set by eliteTrigger maybe?
+                if (eliteTrigger || hasBossMonster(monsters)) {
                     p.energyPerTurn++;
                 }
                 break;
 
             case R::SLING_OF_COURAGE:
-                if (room == Room::ELITE) {
+                if (eliteTrigger) {
                     p.buff<PS::STRENGTH>(2);
                 }
                 break;
@@ -2394,26 +2424,7 @@ bool BattleContext::canDrinkPotion(int idx) const {
         return false;
     if (p != Potion::SMOKE_BOMB) return true;
 
-    // SmokeBomb.canUse checks every actual type, including dead Boss entities.
-    // Slime Boss's split leaves its corpse in the list, so it still forbids use.
-    for (int i = 0; i < monsters.monsterCount; ++i) {
-        switch (monsters.arr[i].id) {
-            case MonsterId::SLIME_BOSS:
-            case MonsterId::THE_GUARDIAN:
-            case MonsterId::HEXAGHOST:
-            case MonsterId::BRONZE_AUTOMATON:
-            case MonsterId::THE_CHAMP:
-            case MonsterId::THE_COLLECTOR:
-            case MonsterId::AWAKENED_ONE:
-            case MonsterId::DONU:
-            case MonsterId::DECA:
-            case MonsterId::TIME_EATER:
-            case MonsterId::CORRUPT_HEART:
-                return false;
-            default:
-                break;
-        }
-    }
+    if (hasBossMonster(monsters)) return false;
     // Act 4 / BackAttack restoration is explicitly outside the current bridge
     // contract. Do not advertise escape for that unsupported encounter.
     return encounter != MonsterEncounter::SHIELD_AND_SPEAR;

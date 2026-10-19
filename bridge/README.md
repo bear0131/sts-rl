@@ -22,6 +22,9 @@
 区分群攻固定矩阵、飞剑逐段计算及恶魔之火随机消耗；源码核对不等于行为回归或完整pending恢复。
 `combat_victory_action_contracts`按Java类/ActionType列战后保留规则，`monster_death_contracts`
 列首领、小怪、复活边界和死亡回调的排队合同；不能用MINION_LEADER死亡直接替代全部动作结算。
+`event_combat_rule_contracts`列六类事件战的阶段、战前奖励、战后药水/卡牌时序与精英/Boss遗物触发。
+事件精英触发不等于把房间改成ELITE；竞技场第一战无展示奖励，烟雾后也返回第二轮选项。
+默认模拟器仍排除Colosseum，不以补执行函数为由改变旧训练事件池；分支实机覆盖见TODO BRIDGE74/75。
 卡牌词表逐项列原serializer的12字段、11项附加字段合同及原生4种specialData来源。
 parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0也明确导出；
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
