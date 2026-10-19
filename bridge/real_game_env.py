@@ -1084,7 +1084,9 @@ class RealGameAdapter:
         return out
 
     def _has_empty_potion_slot(self) -> bool:
-        return any(pid == "PAD" for pid in self._potions()) or len(self._potions()) < A.P_MAX
+        # CommunicationMod reports physical slots, including empty ones.
+        # The policy vocabulary capacity does not create extra game slots.
+        return any(pid == "PAD" for pid in self._potions())
 
     # ---------------------------------------------------------- command mapping
     def command_for_semantic(self, action: tuple) -> str:
@@ -1192,12 +1194,15 @@ class RealGameAdapter:
         ss = _screen_state(self.gs)
         gold = int(self.gs.get("gold", 0) or 0)
 
+        can_buy_potion = "Sozu" not in self._relics() and self._has_empty_potion_slot()
         affordable: list[tuple[str, int]] = []
         for kind, key in (
             (ga.SHOP_CARD, "cards"),
             (ga.SHOP_RELIC, "relics"),
             (ga.SHOP_POTION, "potions"),
         ):
+            if kind == ga.SHOP_POTION and not can_buy_potion:
+                continue
             for i, item in enumerate(ss.get(key) or []):
                 price = _price(item)
                 if 0 <= price <= gold:

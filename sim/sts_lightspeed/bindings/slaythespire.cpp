@@ -1283,8 +1283,9 @@ py::dict shopContents(const sts::GameContext &gc) {
     return d;
 }
 
-// Authoritative legal shop options, from the sim's own getAllShopActions (gold-
-// and sold-out-gated). Unlike legalEventOptions, idx1 COLLIDES across kinds
+// Authoritative legal shop options, from the sim's own getAllShopActions (gold,
+// sold-out, Sozu, and potion-capacity gated). Unlike legalEventOptions, idx1
+// COLLIDES across kinds
 // (card#0 / relic#0 / potion#0 all have idx1==0), so we return (kind, idx)
 // pairs. kind is a stable string keyed to shop_buy_*/shop_remove/shop_proceed:
 // "card"/"relic"/"potion"/"remove"/"skip". "skip" always present.
@@ -1640,7 +1641,8 @@ PYBIND11_MODULE(slaythespire, m) {
              "relics:[{id,price}x3], potions:[{id,price}x3], remove_cost}. price -1 == sold/empty")
         .def("legal_shop_options", &legalShopOptions,
              "authoritative legal shop actions as (kind, idx) pairs; kind in "
-             "{card,relic,potion,remove,skip} (sim-gated by gold/sold-out)")
+             "{card,relic,potion,remove,skip} (sim-gated by gold, sold-out, "
+             "Sozu, and potion capacity)")
         // obs globals: character + ascension are construction-time, boss_relic_ids
         // are the 3 choices offered on a BOSS_RELIC_REWARDS screen (info.bossRelics).
         .def_property_readonly("character",

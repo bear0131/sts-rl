@@ -11,7 +11,8 @@ asserts the contract:
   - legal_shop_options() returns (kind, idx) pairs, kind in
     {card,relic,potion,remove,skip}, "skip" ALWAYS present;
   - legality is consistent with the shelf: every legal buy points at a slot whose
-    price is in [0, gold]; no affordable, in-stock slot is missing from legal.
+    price is in [0, gold]; no affordable, in-stock slot is missing from legal,
+    except that potion buys are absent under Sozu or with no empty potion slot.
 
 Run from repo root (needs the sim built):
     python -m env.scripts.check_shop_binding --episodes 60 --seed 0
@@ -37,6 +38,10 @@ def _check_shop(gc, report):
     contents = gc.shop_contents()
     legal = gc.legal_shop_options()
     gold = gc.gold
+    can_buy_potion = (
+        "Sozu" not in gc.relic_ids()
+        and "EMPTY_POTION_SLOT" in gc.overworld_potions
+    )
 
     # ---- shape: strictly positional, fixed widths ----
     assert len(contents["cards"]) == 7, contents["cards"]
@@ -65,6 +70,9 @@ def _check_shop(gc, report):
         elif k == "relic":
             price = contents["relics"][idx]["price"]
         elif k == "potion":
+            assert can_buy_potion, (
+                f"potion buy legal without capacity or under Sozu: {legal}"
+            )
             price = contents["potions"][idx]["price"]
         elif k == "remove":
             price = contents["remove_cost"]
@@ -81,7 +89,7 @@ def _check_shop(gc, report):
         if r["price"] != -1 and gold >= r["price"]:
             assert ("relic", i) in legal_set, f"affordable relic#{i} not legal: {r}"
     for i, p in enumerate(contents["potions"]):
-        if p["price"] != -1 and gold >= p["price"]:
+        if can_buy_potion and p["price"] != -1 and gold >= p["price"]:
             assert ("potion", i) in legal_set, f"affordable potion#{i} not legal: {p}"
     rc = contents["remove_cost"]
     if rc != -1 and gold >= rc:

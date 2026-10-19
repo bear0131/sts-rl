@@ -1,4 +1,4 @@
-"""Real shop purchase and known SHOP01 boundaries; no whole-run evaluation."""
+"""Real shop purchase and SHOP01 regression contracts; no whole-run evaluation."""
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -85,13 +85,13 @@ def test_native_courier_restock_does_not_create_second_reserve(shop_factory):
 
 
 @pytest.mark.parametrize('blocked_by',['Sozu','full'])
-def test_supplement_explicitly_rejects_native_legal_but_unobtainable_potion(shop_factory,blocked_by):
+def test_native_and_supplement_reject_unobtainable_potion(shop_factory,blocked_by):
     env=shop_factory(['Sozu'] if blocked_by=='Sozu' else ['The Courier'])
     if blocked_by=='full':
         for _ in range(3):
             env.step(A._SHOP_POTION+2)
     state=env.thick.obs_canonical()
-    assert env.action_masks()[A._SHOP_POTION+2]
+    assert not env.action_masks()[A._SHOP_POTION+2]
     assert rank_potion_shop(state,[A._SHOP_POTION+2,A._PROCEED]) is None
 
 
@@ -110,7 +110,8 @@ def test_a20_upper_decisions_only_buy_obtainable_potions(shop_factory, strategy_
     env._invalidate_backend_cache()
     before = deepcopy(env.thick.obs_canonical())
     assert len(before['global']['potions']) == 2
-    assert env.action_masks()[action] and env.action_masks()[A._PROCEED]
+    assert bool(env.action_masks()[action]) is (belt == 'empty')
+    assert env.action_masks()[A._PROCEED]
     # Compare potion/proceed after other purchases, while preserving the real
     # canonical screen and checking both choices against the actual native mask.
     mask = np.zeros(A.N_ACTIONS, dtype=bool)
@@ -128,8 +129,7 @@ def test_a20_upper_decisions_only_buy_obtainable_potions(shop_factory, strategy_
         assert after['gold'] == before['global']['gold'] - price
         assert potion in after['potions']
         assert after['potions'].count('EMPTY_POTION_SLOT') == 1
-    # The separate strict SHOP01 tests below retain evidence that bypassing
-    # these policy guards still charges without granting the native potion.
+    # The tests below also bypass the legal mask to verify the native mutator.
 
 
 def test_affected_upper_manifests_identify_the_shared_potion_guard():
@@ -147,18 +147,23 @@ def test_affected_upper_manifests_identify_the_shared_potion_guard():
         assert strategy_manifest(strategy_type())['base_events'] == base_version
 
 
-@pytest.mark.parametrize('blocked_by',['Sozu','full'])
-@pytest.mark.xfail(strict=True,raises=AssertionError,reason='SHOP01: native shop charges for unobtainable Sozu/full-belt potion')
-def test_shop_never_charges_without_obtaining_a_potion(shop_factory,blocked_by):
-    env=shop_factory(['Sozu'] if blocked_by=='Sozu' else ['The Courier'], ascension=20)
-    if blocked_by=='full':
-        for _ in range(2):
-            env.step(A._SHOP_POTION+2)
-    before=deepcopy(env.thick.obs_canonical()['global'])
-    action=A._SHOP_POTION+2
-    if not env.action_masks()[action]:
-        return  # Rejecting the purchase is an acceptable SHOP01 fix.
-    env.step(action)
-    after=env.thick.obs_canonical()['global']
-    assert after['potions'] == before['potions']  # Native obtain is genuinely blocked.
-    assert after['gold'] == before['gold'], 'SHOP01: gold deducted with no possible potion obtain'
+@pytest.mark.parametrize('ascension', [0, 20])
+@pytest.mark.parametrize('blocked_by', ['Sozu', 'full'])
+def test_shop_never_charges_without_obtaining_a_potion(shop_factory, blocked_by, ascension):
+    env = shop_factory(['Sozu'] if blocked_by == 'Sozu' else ['The Courier'],
+                       ascension=ascension)
+    gc = env.thick.gc
+    if blocked_by == 'full':
+        for _ in range(2 if ascension >= 11 else 3):
+            env.step(A._SHOP_POTION + 2)
+    before = deepcopy(env.thick.obs_canonical())
+    shelf_before = gc.shop_contents()
+    # A stale command bypassing enumeration must not spend gold or restock.
+    for slot in range(3):
+        gc.shop_buy_potion(slot)
+        env._invalidate_backend_cache()
+        assert env.thick.obs_canonical() == before
+        assert gc.shop_contents() == shelf_before
+    # Both native enumeration and the policy-facing mask must reject the buy.
+    assert not any(kind == 'potion' for kind, _ in gc.legal_shop_options())
+    assert not any(env.action_masks()[A._SHOP_POTION:A._SHOP_POTION + 3])
