@@ -1152,6 +1152,7 @@ def normalize_sim_global(gc, *, combat=None):
         },
         "gold": gc.gold,
         "deck": [(_sim_card_id(n), u) for n, u in gc.deck_ids()],
+        "deck_state": [dict(row, id=_sim_card_id(row['id'])) for row in gc.deck_state()],
         "boss_relics": boss_relics,
     }
 

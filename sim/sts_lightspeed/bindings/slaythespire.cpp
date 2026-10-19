@@ -1625,18 +1625,81 @@ sts::RelicId relicIdFromString(const std::string &name) {
     throw std::runtime_error("unknown relic id: " + name);
 }
 
-void setDeck(sts::GameContext &gc, const std::vector<std::pair<std::string, int>> &cards) {
-    gc.deck.cards.clear();
-    gc.deck.cardTypeCounts = {0, 0, 0, 0};
-    gc.deck.upgradeableCount = 0;
-    gc.deck.transformableCount = 0;
-    for (const auto &[name, up] : cards) {
-        sts::Card card(cardIdFromEnum(name));
-        for (int upgrade = 0; upgrade < up; ++upgrade) {
-            card.upgrade();
-        }
-        gc.deck.obtainRaw(card);
+sts::Card snapshotCard(const py::handle &name, const py::handle &upgrades) {
+    if (!py::isinstance<py::str>(name) || !py::isinstance<py::int_>(upgrades) || py::isinstance<py::bool_>(upgrades))
+        throw std::invalid_argument("deck card requires string id and integer upgrades");
+    const auto id = cardIdFromEnum(name.cast<std::string>());
+    const auto up = upgrades.cast<int>();
+    if (id == sts::CardId::INVALID || up < 0 || up > 32767 || (id != sts::CardId::SEARING_BLOW && up > 1))
+        throw std::invalid_argument("deck card identity/upgrades cannot be represented exactly");
+    return sts::Card(id, up);
+}
+
+void setDeck(sts::GameContext &gc, const py::list &cards) {
+    if (cards.size() > sts::Deck::MAX_SIZE) throw std::invalid_argument("deck exceeds native capacity");
+    sts::Deck replacement;
+    for (auto item : cards) {
+        if (!py::isinstance<py::tuple>(item) || py::len(item) != 2)
+            throw std::invalid_argument("fresh deck requires exactly (native id, upgrades) tuples");
+        const auto row = item.cast<py::tuple>();
+        replacement.obtainRaw(snapshotCard(row[0], row[1]));
     }
+    // A fresh deck has no bottled cards. In particular old bottle indices
+    // must not attach themselves to unrelated replacement cards.
+    gc.deck = std::move(replacement);
+}
+
+void setDeckState(sts::GameContext &gc, const py::list &cards) {
+    if (cards.size() > sts::Deck::MAX_SIZE) throw std::invalid_argument("deck exceeds native capacity");
+    sts::Deck replacement;
+    for (auto item : cards) {
+        if (!py::isinstance<py::dict>(item)) throw std::invalid_argument("deck snapshot requires complete records");
+        const auto row = item.cast<py::dict>();
+        if (row.size() != 4 || !row.contains("id") || !row.contains("upgrades") ||
+            !row.contains("misc") || !row.contains("bottle"))
+            throw std::invalid_argument("deck snapshot requires exactly id/upgrades/misc/bottle");
+        auto card = snapshotCard(row["id"], row["upgrades"]);
+        if (!py::isinstance<py::int_>(row["misc"]) || py::isinstance<py::bool_>(row["misc"]) ||
+            !py::isinstance<py::str>(row["bottle"]))
+            throw std::invalid_argument("deck snapshot requires integer misc and explicit bottle kind");
+        const auto misc = row["misc"].cast<int>();
+        if (misc < 0 || misc > 32767 || (card.id == sts::CardId::SEARING_BLOW && misc != card.getUpgraded()))
+            throw std::invalid_argument("deck snapshot misc is outside its native domain or differs from Searing Blow upgrades");
+        card.misc = static_cast<std::int16_t>(misc);
+        const auto bottle = row["bottle"].cast<std::string>();
+        int bottleType = -1;
+        if (bottle == "ATTACK") bottleType = 0;
+        else if (bottle == "SKILL") bottleType = 1;
+        else if (bottle == "POWER") bottleType = 2;
+        else if (bottle != "NONE") throw std::invalid_argument("unknown deck bottle kind");
+        if (card.getType() == sts::CardType::STATUS)
+            throw std::invalid_argument("stock master-deck snapshots cannot contain status cards");
+        if (bottleType >= 0 && (static_cast<int>(card.getType()) != bottleType || replacement.bottleIdxs[bottleType] != -1))
+            throw std::invalid_argument("bottle type mismatches card or has multiple physical slots");
+        const auto index = replacement.size();
+        replacement.obtainRaw(card);
+        if (bottleType >= 0) replacement.bottleCard(index, card.getType());
+    }
+    gc.deck = std::move(replacement);
+}
+
+py::list deckState(const sts::GameContext &gc) {
+    py::list out;
+    for (int index = 0; index < gc.deck.size(); ++index) {
+        const auto &card = gc.deck.cards[index];
+        const auto kind = card.getType();
+        if (gc.deck.isCardBottled(index) && kind != sts::CardType::ATTACK && kind != sts::CardType::SKILL && kind != sts::CardType::POWER)
+            throw std::invalid_argument("native bottle slot points to an invalid card type");
+        const auto bottle = gc.deck.isCardBottled(index) ?
+            (kind == sts::CardType::ATTACK ? "ATTACK" : kind == sts::CardType::SKILL ? "SKILL" : "POWER") : "NONE";
+        py::dict row;
+        row["id"] = sts::cardEnumStrings[static_cast<int>(card.id)];
+        row["upgrades"] = card.getUpgraded();
+        row["misc"] = card.misc;
+        row["bottle"] = bottle;
+        out.append(row);
+    }
+    return out;
 }
 
 void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
@@ -2469,7 +2532,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("deck_ids", &deckIds, "deck as [(sim_card_enum, upgrade_count), ...]")
         .def("relic_ids", &gcRelicIds, "relics as [stable_id_string, ...]")
         .def("relic_state", &gcRelics, "relics as [{id, counter}, ...]")
-        .def("set_deck", &setDeck, "replace the deck with [(sim_card_enum, upgrade_count), ...]")
+        .def("set_deck", &setDeck, "atomically create fresh cards from [(sim_card_enum, upgrades), ...]; clears old bottle slots")
+        .def("set_deck_state", &setDeckState, "atomically restore complete native id/upgrades/misc/bottle records without on-obtain effects")
+        .def("deck_state", &deckState, "export complete native master-deck id/upgrades/misc/bottle records in physical order")
         .def("set_relics", &setRelics, "replace with fresh unique relic IDs and initial counters, without replaying on-equip effects")
         .def("set_relic_state", &setRelicState, "atomically replace complete native [{id, counter}, ...] snapshots; never accepts Java sentinels")
         .def("set_potion_state", [](GameContext &gc, const std::vector<std::string> &names) {

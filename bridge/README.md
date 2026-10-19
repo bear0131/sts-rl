@@ -16,7 +16,11 @@
 `relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
 29个Java类实际读写counter，其他类继承显示哨兵。数值映射与`phase_audit_status`
 分开：有映射不等于完整效果/阶段已验收；待处理项不是运行时用PAD或0代替缺失状态的许可。
-卡牌词表逐项列原serializer的12字段、7个已确认导出缺口及原生4种specialData来源。
+卡牌词表逐项列原serializer的12字段、7项附加字段合同及原生4种specialData来源。
+parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0也明确导出；
+主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
+`set_deck_state`并核对旧模型的deck投影，不以`set_deck`创建fresh牌代替当前快照。
+后者也改为原子替换，明确清除旧瓶装索引；未知字段/缺值/错型/超容量/重复瓶装类型拒绝，失败不改变原牌组。
 347个真机卡牌构造字节码中仅GeneticAlgorithm/RitualDagger写非零misc，分别为1/15；
 fresh初值和370个native CardId一一核对，但这不代替当前misc、UUID实例映射、永久/回合费用和瓶装状态的完整对接。
 `pending_transport/pending_mapping` 明确是未完成项，不得解释成可以丢字段的支持路径；
@@ -26,7 +30,7 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-OBS20 / ACTION8 / compact layout8 / `simulator-parity-v6` 配套使用。
+OBS20 / ACTION8 / compact layout8 / `simulator-parity-v7` 配套使用。
 layout8 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实时余量；19件实时/回合派生遗物在搜索叶观测中覆盖根计数。
 六项player scalar逐列有名称/来源/消费者词表，实时gold必须覆盖根journal；layout8保持payload宽度、模型输入形状不变，拒绝旧解码合同。
 敌方回合后、下次抽牌前的搜索专用边界保留怀表的上回合出牌数，不能随普通回合计数清零。
@@ -48,6 +52,16 @@ layout8 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实�
 旧 checkpoint 只投影到其原有字段与动作几何，不补造不存在的输入或新动作 logits；
 训练恢复和 replay 不支持跨合同。当前真机原生搜索仅支持 Ironclad 及明确实现的
 卡牌能力集合；不支持的内容明确失败。
+
+## 现役权重的评测保真
+
+桥接验收的目标是保留权重已学对的能力，而非仅确认ZIP可加载。冻结权重、卡向量、
+词表顺序、归一化、动作含义及评测搜索配置；当前最终评测为Full-Gumbel128/Gumbel0，
+不能以checkpoint默认Gumbel1代替实际评测参数。基线源码/native/参数/种子与原成绩一起保留，不覆盖。
+对物理状态和规则等价的局面，逐字段比较checkpoint实际收到的tensor、合法动作与动作还原；
+仅维度一致或一次预测成功不足以证明保真。搜索结果比较还须固定随机身份、worldline、预算和同设备/依赖/精度，
+不伪称能重建真机未公开的未来RNG。真机对齐必须修正的原生规则差异单独列账、单独对照，
+不将旧模拟器成绩写作修正后或实机成绩；先评估差异，再判断是否有训练需求，不擅自重训或改策略配置。
 
 事件词表覆盖 52 个入口（含 Neow），表示每个身份都有显式处置。
 `event_options[*].effect_status=unverified` 的选项已识别但效果确认尚未完成，发送前报错；

@@ -88,10 +88,15 @@ only CommunicationMod commands to stdout.
 Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
-It patches six `GameStateConverter` serializers. The Dome-specific export mask
-is bypassed, and monsters receive `current_intent_export: simulator-parity-v6`.
+It patches seven `GameStateConverter` serializers. The Dome-specific export mask
+is bypassed, and monsters receive `current_intent_export: simulator-parity-v7`.
 The exporter also supplies all three run keys, recurring energy, combat/relic
 counters, private power values, and explicit card-selection source/context.
+Card serialization always includes the actual `misc`, including zero, and a
+versioned `simulator_card_state` object with base cost/damage/block, free-once,
+retention/innate flags and all three bottle flags. Master-deck restore consumes
+the current persistent value and physical bottle slot; runtime instance import
+and UUID mapping are separate work, not implied by exporting the fields.
 Two read-only game hooks track the last monster attack damage and reset it at
 combat entry. Gameplay, UI and RNG are untouched.
 The bridge fails on a live Dome monster whose current move is still missing;

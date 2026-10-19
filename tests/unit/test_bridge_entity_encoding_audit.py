@@ -98,7 +98,7 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert counts['relic_counter_contracts'] == 180
     assert counts['java_relic_counter_users'] == 29
     assert counts['combat_counter_fields'] == 27
-    assert counts['native_combat_root_fields'] == 15
+    assert counts['native_combat_root_fields'] == 16
     assert counts['real_room_classes'] == 11
     assert counts['real_card_wire_fields'] == 12
     assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
@@ -121,10 +121,10 @@ def test_card_field_inventory_declares_transport_gaps_and_all_native_special_dat
     source = (Path(__file__).resolve().parents[2] / 'sim/sts_lightspeed/src/combat/CardInstance.cpp').read_text()
     body = source.split('bool CardInstance::usesSpecialData() const {', 1)[1].split('default:', 1)[0]
     assert set(re.findall(r'case CardId::(\w+):', body)) == set(tables['card_special_data_fields'])
-    assert tables['real_card_wire_fields']['misc']['status'] == 'pending_transport'
+    assert tables['real_card_wire_fields']['misc']['status'] == 'master_restored_runtime_pending'
     assert tables['real_card_wire_fields']['uuid']['status'] == 'pending_mapping'
-    assert 'free_to_play_once' in tables['card_state_export_gaps']
-    assert 'base_cost' in tables['card_state_export_gaps']
+    assert 'free_to_play_once' in tables['card_state_field_contracts']
+    assert 'base_cost' in tables['card_state_field_contracts']
 
 
 def test_all_declared_aliases_preserve_nonzero_tokens():

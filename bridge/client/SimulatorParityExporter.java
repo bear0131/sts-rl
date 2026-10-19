@@ -18,10 +18,28 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v6";
+    public static final String VERSION = "simulator-parity-v7";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
+
+    public static void augmentCardState(HashMap<String, Object> state, AbstractCard card) {
+        // Read actual instance fields only: no RNG, copies, applyPowers, or use.
+        state.put("misc", Integer.valueOf(card.misc));
+        HashMap<String, Object> extra = new HashMap<String, Object>();
+        extra.put("version", Integer.valueOf(1));
+        extra.put("base_cost", Integer.valueOf(card.cost));
+        extra.put("free_to_play_once", Boolean.valueOf(card.freeToPlayOnce));
+        extra.put("retain", Boolean.valueOf(card.retain));
+        extra.put("self_retain", Boolean.valueOf(card.selfRetain));
+        extra.put("innate", Boolean.valueOf(card.isInnate));
+        extra.put("base_damage", Integer.valueOf(card.baseDamage));
+        extra.put("base_block", Integer.valueOf(card.baseBlock));
+        extra.put("bottled_flame", Boolean.valueOf(card.inBottleFlame));
+        extra.put("bottled_lightning", Boolean.valueOf(card.inBottleLightning));
+        extra.put("bottled_tornado", Boolean.valueOf(card.inBottleTornado));
+        state.put("simulator_card_state", extra);
+    }
 
     private static int relicCounter(String id) {
         AbstractRelic relic = AbstractDungeon.player.getRelic(id);

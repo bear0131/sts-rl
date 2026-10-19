@@ -69,6 +69,16 @@ def make_native_combat_root(global_state, *, seed, room_type, seed_nonce=0):
         if native_id != 'SEARING_BLOW' and upgrades > 1:
             raise ValueError("only Searing Blow can preserve multiple upgrades in a native master deck")
         deck.append((native_id, upgrades))
+    state = global_state['deck_state']
+    if not isinstance(state, list):
+        raise ValueError('native master deck state must be an explicit list')
+    snapshots = []
+    for card in state:
+        if not isinstance(card, dict) or set(card) != {'id', 'upgrades', 'misc', 'bottle'}:
+            raise ValueError('native master deck snapshot fields are incomplete or unmapped')
+        snapshots.append(dict(card, id=real_to_sim_card_enum(card['id'])))
+    if [(card['id'], card['upgrades']) for card in snapshots] != deck:
+        raise ValueError('native master deck snapshot differs from ordered deck identities/upgrades')
     capacity = POTION_CAPACITY_RULES['ascension_0_to_10' if ascension < 11 else 'ascension_11_to_20']
     if 'Potion Belt' in relics:
         capacity += POTION_CAPACITY_RULES['Potion Belt']
@@ -83,7 +93,7 @@ def make_native_combat_root(global_state, *, seed, room_type, seed_nonce=0):
     gc = sts.GameContext(sts.CharacterClass.IRONCLAD, (seed + seed_nonce) & ((1 << 64) - 1), ascension)
     gc.act, gc.floor_num = act, floor
     gc.max_hp, gc.cur_hp, gc.gold = max_hp, hp, gold
-    gc.set_deck(deck)
+    gc.set_deck_state(snapshots)
     gc.set_relic_state([{'id': rid, 'counter': counter} for rid, counter in zip(relics, counters)])
     gc.potion_capacity = capacity
     gc.set_potion_state(['EMPTY_POTION_SLOT' if p == 'PAD' else p for p in potions])

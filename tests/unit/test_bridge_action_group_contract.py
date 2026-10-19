@@ -158,7 +158,7 @@ def test_reward_preview_transport_does_not_call_policy_between_commands():
     driver._predict = lambda *_args, **_kwargs: (
         policy_calls.append("predict") or A._RGOLD, ())
     common_state = {
-        "simulator_parity_export": "simulator-parity-v6",
+        "simulator_parity_export": "simulator-parity-v7",
         "floor": 1,
         "current_hp": 80,
         "max_hp": 80,

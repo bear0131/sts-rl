@@ -22,9 +22,10 @@ public final class ExposeCurrentIntent {
         CtMethod gridMethod = converter.getDeclaredMethod("getGridState");
         CtMethod handMethod = converter.getDeclaredMethod("getHandSelectState");
         CtMethod cardRewardMethod = converter.getDeclaredMethod("getCardRewardState");
+        CtMethod cardMethod = converter.getDeclaredMethod("convertCardToJson");
         Set<CtMethod> changedMethods = new HashSet<CtMethod>(Arrays.asList(
             gameMethod, monsterMethod, combatMethod, gridMethod, handMethod,
-            cardRewardMethod));
+            cardRewardMethod, cardMethod));
         Map<String, byte[]> unchanged = new HashMap<>();
         for (CtMethod candidate : converter.getDeclaredMethods()) {
             if (!changedMethods.contains(candidate)) unchanged.put(candidate.getLongName(),
@@ -54,6 +55,8 @@ public final class ExposeCurrentIntent {
             "{ communicationmod.SimulatorParityExporter.augmentHandSelectState($_); }");
         cardRewardMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentCardRewardState($_); }");
+        cardMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentCardState($_, $1); }");
         byte[] patched = converter.toBytecode();
         for (CtMethod candidate : converter.getDeclaredMethods()) {
             if (!changedMethods.contains(candidate) && !Arrays.equals(
@@ -107,6 +110,6 @@ public final class ExposeCurrentIntent {
         }
         if (changed != 1) throw new IllegalStateException("Target count=" + changed);
         System.out.println(
-            "Patched six serializers and added read-only parity exporters; no gameplay or RNG modified");
+            "Patched seven serializers and added read-only parity exporters; no gameplay or RNG modified");
     }
 }

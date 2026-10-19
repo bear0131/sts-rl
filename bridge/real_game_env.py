@@ -29,6 +29,7 @@ from env.core import vocab as V
 from env.core import native_actions as C
 from schemas.combat_state import _card, normalize_real
 from bridge import event_contract
+from bridge.schemas.card_state import real_master_deck_state
 from bridge.schemas.entity_ids import (
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
@@ -1111,6 +1112,7 @@ class RealGameAdapter:
             "hp": _required_int(self.gs, "current_hp", context="game_state"),
             "max_hp": _required_int(self.gs, "max_hp", context="game_state"),
             "deck": self._deck_cards(),
+            "deck_state": real_master_deck_state(_list_value(self.gs, 'deck', context='game_state')),
             "boss_relics": _screen_relics(ss) if self.phase() == "boss_relic" else [],
         }
 

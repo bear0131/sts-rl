@@ -55,13 +55,15 @@ def test_complete_fresh_relic_word_table_matches_native_constructor(combat_facto
 
 def test_replay_restore_keeps_real_relic_counters_instead_of_injecting_fresh_ones():
     from bridge.replay import _sync_gc
+    from tests.bridge_fixtures import real_card
+    from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
     gc = _sync_gc(42, 0, {
-        'simulator_parity_export': 'simulator-parity-v6', 'class': 'IRONCLAD',
+        'simulator_parity_export': SIMULATOR_PARITY_EXPORT_VERSION, 'class': 'IRONCLAD',
         'ascension_level': 0, 'act': 1, 'room_type': 'MonsterRoom', 'act_boss': 'Slime Boss',
         'has_ruby_key': False, 'has_emerald_key': False, 'has_sapphire_key': False,
         'potions': [{'id': 'Potion Slot'}] * 3,
         'floor': 1, 'current_hp': 70, 'max_hp': 80, 'gold': 99,
-        'deck': [{'id': 'Strike_R', 'upgrades': 0}],
+        'deck': [real_card()],
         'relics': [{'id': 'Lizard Tail', 'counter': -2},
                    {'id': 'Happy Flower', 'counter': 2}, {'id': 'Circlet', 'counter': 4}],
     })

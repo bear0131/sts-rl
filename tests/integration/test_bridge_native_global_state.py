@@ -18,6 +18,8 @@ def _global(ascension=0, belt=False):
         'hp': 53, 'max_hp': 87, 'gold': 421, 'boss': 'COLLECTOR',
         'combat_is_boss': False, 'boss_relics': [],
         'deck': [('Strike_R', 0), ('Bash', 1)],
+        'deck_state': [{'id': 'Strike_R', 'upgrades': 0, 'misc': 0, 'bottle': 'NONE'},
+                       {'id': 'Bash', 'upgrades': 1, 'misc': 0, 'bottle': 'NONE'}],
         'relics': ['Potion Belt'] if belt else ['Lizard Tail'],
         'relic_counters': [0],
         'potions': ['Fire Potion'] + ['PAD'] * ((3 if ascension < 11 else 2) + (2 if belt else 0) - 1),
@@ -36,6 +38,15 @@ def test_complete_global_root_preserves_keys_and_actual_potion_capacity(ascensio
     battle = sts.create_battle(gc, 'Cultist')
     assert len(battle.to_dict()['potions']) == capacity
     assert battle.to_dict()['player']['gold'] == state['gold']
+
+
+def test_shared_search_root_restores_current_growth_and_bottled_slot():
+    state = _global()
+    state['deck'] = [('Ritual Dagger', 1)]
+    state['deck_state'] = [{'id': 'Ritual Dagger', 'upgrades': 1, 'misc': 39, 'bottle': 'ATTACK'}]
+    gc = make_native_combat_root(state, seed=42, room_type='MonsterRoom')
+    assert gc.deck[0].misc == 39
+    assert gc.deck_state() == [{'id': 'RITUAL_DAGGER', 'upgrades': 1, 'misc': 39, 'bottle': 'ATTACK'}]
 
 
 @pytest.mark.parametrize('key,value', [

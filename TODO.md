@@ -6,7 +6,7 @@
 
 | BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
 
-| BRIDGE28 | fresh卡数值/升级构造已修；卡牌完整状态仍待修，未部署 | 真机347个具体卡类构造扫描仅GeneticAlgorithm/RitualDagger写misc，fresh1/15已统一Card/CardInstance；带升级SearingBlow构造保留完整次数，原生5旧反例失败、variant30旧exit37，新伤害/成长/exit与370CardId初值一致。原serializer12字段、7导出缺口、4specialData来源逐项词表；590定向、variants22..30各A0/A15通过。当前misc/uuid、牌堆费用、freeOnce/瓶装/Rampage成长等仍未完整导出/映射/导入，不能将fresh初值当当前快照。验收仍要求typed导出、稳定实例身份、native状态/搜索/编码/模型兼容闭环；完成前不部署。 |
+| BRIDGE28 | fresh规则、typed导出和主牌组当前misc/瓶装已修；战斗实例仍待修，未部署 | parity-v7第7只读serializer补11项typed字段、misc0也显式导出；16全局字段中的deck_state经搜索/replay共享根入口恢复当前misc/完整升级/物理瓶装槽，验证后原子替换。set_deck只创建fresh牌、清旧瓶装，未知/缺字段/错型/超容量/错瓶装明确拒绝。609定向通过；同阶段174原生含完整109搜索矩阵通过，末次仅补非法内部瓶装类型导出拒绝后未重复完整矩阵。最终TRAIN47在真正GPU环境cuda:0加载/预测/一步通过。此前fresh规则与源码构造扫描见worklog BRIDGE28各节。仍需战斗实例UUID稳定映射、所有牌堆费用/freeOnce/成长/动态标志导入及搜索观测闭环；导出成功或主牌组恢复不等于战斗快照完成，不能部署。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 
@@ -219,7 +219,7 @@
 | [F16](docs/2026-09-13/codebase-audit.md#f16) | 部分完成 | episode eval/dashboard 共用 strategy/runner/outcome，step_limit 独立、合作式 timeout；仍需完整固定评测集、有效 solver manifest 和进程级硬超时 |
 | [F17](docs/2026-09-13/codebase-audit.md#f17) | 部分完成 | 规范、小提交、正式测试/基准与 CI 已建立；一阶段目录/职责/配置/文档归位；大 artifact 外置与巨型 collector/main 内部拆分仍待做 |
 | [F18](docs/2026-09-13/codebase-audit.md#f18) | 已修 | 共享 additive-field 适配接入 eval/watch/search/dashboard/bridge；旧 schema 保存加载及正式 eval 回归通过（未连接真实游戏） |
-| F20 | P1；Designer事件规则bug未修，下一轮正式训练前修 | sim/sts_lightspeed/src/game/GameContext.cpp::chooseEventOption的Designer option1未扣金币，option3/4缺break贯穿后续扣钱/掉血/选牌流程。2026-10-16生产完整归档与本地此文件SHA相同，静态缺陷仍在；GameAction.cpp合法动作会暴露1/3/4，TRAIN47学习型upper不能依赖旧ironclad-overworld-v3避让，具体触发次数与质量影响未统计。本次未执行事件动态复现。下一轮逐option、A0/A15核对金币/HP/牌组/选择页及回图状态与真实游戏，新增回归后统一修复，不在当前run部署。 |
+| F20 | P1；本地源码已按BRIDGE15修复，训练归档旧规则仍须区分 | Designer免费升级、空变牌、option3/4贯穿、原this回调已按本机Java字节码修正；A0/A15六选项付款/HP/两张选牌/复制RNG隔离旧反例失败、新通过，证据见worklog/2026-10-19.md BRIDGE15两节。2026-10-16冻结生产归档仍含旧缺陷，历史TRAIN47实际触发次数及质量影响未统计。下一轮正式训练前固定Linux构建并跑完整生命周期/奖励副作用验收，不热改既有训练或用本地修复声称已有权重重新训练。 |
 | [F19](docs/2026-09-13/codebase-audit.md#f19) | 已修 | End-Turn value boundary 保留 Ice Cream 能量；普通能量仍归零 |
 | VAL01 | 部分完成 | 真实执行路径的 End-Turn boundary 与战斗胜利 terminal 已无条件采为 value-only 样本，policy mask/target/weight 均不参与 policy 监督；搜索截断与采样已分离并覆盖开关两态，新增 policy root/boundary/terminal 计数。仍需固定边界语料按怪物身份及 HP/分裂阶段验证校准及 near-terminal 覆盖，禁止用所选路线回报标注假想叶子 |
 | VAL02 | 待实验；已有单状态反例 | 在固定 combat corpus 上审计 policy prior → Full-Gumbel 搜索 → improved-policy target 的反馈：按合法完整动作数/候选裁剪分层，统计未访问动作、prior/Q 排名冲突、搜索前后 TV/KL、低 prior 高 Q 翻转率；以只改根 prior 且保留内部 policy 的 matched-nonce 消融判断根部影响，不能用全树 uniform 冒充根部消融。seed0/step8 的 Bash 固定未来反例已证明搜索可在后继直出 V 不低时通过早期不可逆淘汰独立制造错误，完整 corpus 审计仍待实验。 |
