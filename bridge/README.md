@@ -16,6 +16,11 @@
 `relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
 29个Java类实际读写counter，其他类继承显示哨兵。数值映射与`phase_audit_status`
 分开：有映射不等于完整效果/阶段已验收；待处理项不是运行时用PAD或0代替缺失状态的许可。
+卡牌词表逐项列原serializer的12字段、7个已确认导出缺口及原生4种specialData来源。
+347个真机卡牌构造字节码中仅GeneticAlgorithm/RitualDagger写非零misc，分别为1/15；
+fresh初值和370个native CardId一一核对，但这不代替当前misc、UUID实例映射、永久/回合费用和瓶装状态的完整对接。
+`pending_transport/pending_mapping` 明确是未完成项，不得解释成可以丢字段的支持路径；
+解决这些已知卡牌缺口前，不部署此分支或宣称实机环境已全部对齐。
 
 PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip 候选；未知身份、
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，

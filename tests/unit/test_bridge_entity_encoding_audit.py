@@ -98,12 +98,33 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert counts['relic_counter_contracts'] == 180
     assert counts['java_relic_counter_users'] == 29
     assert counts['combat_counter_fields'] == 27
+    assert counts['native_combat_root_fields'] == 15
+    assert counts['real_room_classes'] == 11
+    assert counts['real_card_wire_fields'] == 12
     assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
     assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_derived'
     assert tables['relic_counter_contracts']['Kunai']['combat_modulo'] == 3
     assert tables['relic_counter_contracts']['HornCleat']['combat_stop_turn'] == 2
     assert tables['relic_counter_contracts']['Burning Blood']['inherited_display_value_map'] == {-1: 0}
     assert json.loads(json.dumps(tables))['rejected_real_ids']['cards']
+
+
+def test_card_field_inventory_declares_transport_gaps_and_all_native_special_data_users():
+    import re
+    from pathlib import Path
+    from bridge.schemas.codec_contract import complete_word_tables
+    tables = complete_word_tables()
+    assert set(tables['real_card_wire_fields']) == {
+        'id', 'name', 'uuid', 'misc', 'is_playable', 'cost', 'upgrades',
+        'type', 'rarity', 'has_target', 'exhausts', 'ethereal',
+    }
+    source = (Path(__file__).resolve().parents[2] / 'sim/sts_lightspeed/src/combat/CardInstance.cpp').read_text()
+    body = source.split('bool CardInstance::usesSpecialData() const {', 1)[1].split('default:', 1)[0]
+    assert set(re.findall(r'case CardId::(\w+):', body)) == set(tables['card_special_data_fields'])
+    assert tables['real_card_wire_fields']['misc']['status'] == 'pending_transport'
+    assert tables['real_card_wire_fields']['uuid']['status'] == 'pending_mapping'
+    assert 'free_to_play_once' in tables['card_state_export_gaps']
+    assert 'base_cost' in tables['card_state_export_gaps']
 
 
 def test_all_declared_aliases_preserve_nonzero_tokens():

@@ -35,6 +35,10 @@ from .entity_ids import (
     NATIVE_GLOBAL_FIELDS,
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
+    FRESH_CARD_MISC,
+    REAL_CARD_WIRE_FIELDS,
+    CARD_STATE_EXPORT_GAPS,
+    CARD_SPECIAL_DATA_FIELDS,
     NEOW_BONUS_IDS,
     NEOW_DRAWBACK_IDS,
     NEOW_IMPLICIT_DRAWBACK_IDS,
@@ -221,6 +225,14 @@ def complete_word_tables():
         "relic_counter_contracts": relic_counters,
         "combat_counter_fields": {key: key for key in CS._REAL_COMBAT_COUNTER_KEYS},
         "native_relic_snapshot_fields": {"id": "required stable identity", "counter": "required native integer; no Java sentinel/default"},
+        "fresh_card_misc": FRESH_CARD_MISC,
+        "native_fresh_card_misc": {
+            native: {"canonical": canonical, "initial_misc": FRESH_CARD_MISC.get(canonical, 0)}
+            for native, canonical in SIM_TO_CANONICAL['card'].items()
+        },
+        "real_card_wire_fields": REAL_CARD_WIRE_FIELDS,
+        "card_state_export_gaps": CARD_STATE_EXPORT_GAPS,
+        "card_special_data_fields": CARD_SPECIAL_DATA_FIELDS,
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
         "neow_bonus_keywords": NEOW_BONUS_IDS,
         "neow_drawback_keywords": NEOW_DRAWBACK_IDS,
@@ -355,6 +367,10 @@ def validate_codec_contract() -> dict[str, int]:
         type(value) is not int or value <= 0 for value in FRESH_RELIC_INITIAL_DATA.values()
     ):
         raise RuntimeError("fresh relic initial-data word table is malformed")
+    if set(FRESH_CARD_MISC) - canonical_sets['card'] or any(
+        type(value) is not int or value <= 0 for value in FRESH_CARD_MISC.values()
+    ):
+        raise RuntimeError('fresh card misc word table is malformed')
     classified_counters = (set(RELIC_COUNTER_SENTINELS) | set(RELIC_COUNTER_DOMAINS)
                            | set(PHASE_RELIC_COUNTER_DOMAINS) | {"CeramicFish"})
     if classified_counters != set(REAL_RELIC_COUNTER_USAGE):
@@ -498,6 +514,12 @@ def validate_codec_contract() -> dict[str, int]:
         "card_rarity_keywords": len(REAL_CARD_RARITY_IDS),
         "card_target_keywords": len(REAL_CARD_TARGET_IDS),
         "run_key_fields": len(RUN_KEY_FIELDS),
+        "native_combat_root_fields": len(NATIVE_GLOBAL_FIELDS),
+        "real_room_classes": len(REAL_ROOM_CLASS_IDS),
+        "compact_player_scalar_fields": len(COMPACT_PLAYER_SCALAR_FIELDS),
+        "real_card_wire_fields": len(REAL_CARD_WIRE_FIELDS),
+        "card_state_export_gaps": len(CARD_STATE_EXPORT_GAPS),
+        "card_special_data_fields": len(CARD_SPECIAL_DATA_FIELDS),
         "relic_counter_contracts": len(canonical_sets["relic"]),
         "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),
         "combat_counter_fields": len(CS._REAL_COMBAT_COUNTER_KEYS),

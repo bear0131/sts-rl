@@ -364,6 +364,38 @@ COMPACT_PLAYER_SCALAR_FIELDS = {
     "turn": "BattleContext.turn (zero-based) -> player_scalars[4] (one-based)",
     "gold": "BattleContext.player.gold -> gold[0], overrides root journal",
 }
+FRESH_CARD_MISC = {'Ritual Dagger': 15, 'Genetic Algorithm': 1}
+# Every stock convertCardToJson key has a disposition, even when its consumer
+# is still missing. Missing transport is not permission to substitute zero.
+REAL_CARD_WIRE_FIELDS = {
+    'name': {'source': 'AbstractCard.name', 'consumer': 'presentation only; never identity', 'status': 'display_only'},
+    'uuid': {'source': 'AbstractCard.uuid', 'consumer': 'pending stable combat/master-deck identity mapping', 'status': 'pending_mapping'},
+    'misc': {'source': 'AbstractCard.misc; original exporter omits zero', 'consumer': 'Card.misc / CardInstance.specialData', 'status': 'pending_transport'},
+    'is_playable': {'source': 'AbstractCard.canUse(player,null)', 'consumer': 'real legal mask crosschecked against native action mask', 'status': 'action_validation'},
+    'cost': {'source': 'AbstractCard.costForTurn', 'consumer': 'hand cost only; other piles currently drop it', 'status': 'pending_all_piles'},
+    'upgrades': {'source': 'AbstractCard.timesUpgraded', 'consumer': 'Card.getUpgraded / CardInstance.getUpgradeCount', 'status': 'transported'},
+    'id': {'source': 'AbstractCard.cardID', 'consumer': 'card identity word tables', 'status': 'transported'},
+    'type': {'source': 'AbstractCard.type.name()', 'consumer': 'native card-type metadata', 'status': 'identity_metadata'},
+    'rarity': {'source': 'AbstractCard.rarity.name()', 'consumer': 'native card-rarity metadata', 'status': 'identity_metadata'},
+    'has_target': {'source': 'AbstractCard.target ENEMY/SELF_AND_ENEMY', 'consumer': 'real/native legal target masks', 'status': 'action_validation'},
+    'exhausts': {'source': 'AbstractCard.exhaust', 'consumer': 'CardInstance.doesExhaust; dynamic changes need verification', 'status': 'pending_dynamic_state'},
+    'ethereal': {'source': 'AbstractCard.isEthereal', 'consumer': 'CardInstance.isEthereal; dynamic changes need verification', 'status': 'pending_dynamic_state'},
+}
+CARD_STATE_EXPORT_GAPS = {
+    'base_cost': {'source': 'AbstractCard.cost', 'native': 'CardInstance.cost', 'reason': 'Madness/combat-permanent cost must survive turn reset'},
+    'free_to_play_once': {'source': 'AbstractCard.freeToPlayOnce', 'native': 'CardInstance.freeToPlayOnce', 'reason': 'costForTurn alone is not the effective cost'},
+    'bottled_flame': {'source': 'AbstractCard.inBottleFlame', 'native': 'Deck.bottleIdxs[ATTACK]', 'reason': 'master deck candidate eligibility and initial draw'},
+    'bottled_lightning': {'source': 'AbstractCard.inBottleLightning', 'native': 'Deck.bottleIdxs[SKILL]', 'reason': 'master deck candidate eligibility and initial draw'},
+    'bottled_tornado': {'source': 'AbstractCard.inBottleTornado', 'native': 'Deck.bottleIdxs[POWER]', 'reason': 'master deck candidate eligibility and initial draw'},
+    'retain': {'source': 'AbstractCard.retain', 'native': 'CardInstance.retain', 'reason': 'turn-end retention is separate from printed self-retain'},
+    'rampage_growth': {'source': 'Rampage.baseDamage - printed base damage', 'native': 'CardInstance.specialData', 'reason': 'not encoded in AbstractCard.misc'},
+}
+CARD_SPECIAL_DATA_FIELDS = {
+    'SEARING_BLOW': {'real': 'AbstractCard.timesUpgraded (not misc)', 'native': 'Card.misc / CardInstance.specialData', 'status': 'upgrade_count_transported'},
+    'RAMPAGE': {'real': 'baseDamage minus printed damage (not misc)', 'native': 'CardInstance.specialData', 'status': 'pending_transport'},
+    'RITUAL_DAGGER': {'real': 'AbstractCard.misc, fresh15, fatal growth3/5', 'native': 'Card.misc / CardInstance.specialData', 'status': 'fresh_rule_fixed_snapshot_pending'},
+    'GENETIC_ALGORITHM': {'real': 'AbstractCard.misc, fresh1', 'native': 'Card.misc / CardInstance.specialData', 'status': 'fresh_rule_fixed_combat_unsupported'},
+}
 NATIVE_GLOBAL_FIELDS = {
     "character": {"real": "class", "native": "cc", "support": "IRONCLAD only"},
     "ascension": {"real": "ascension_level", "native": "ascension", "domain": "integer 0..20"},

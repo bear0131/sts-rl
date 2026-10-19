@@ -26,6 +26,21 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 30) {
+        for (int count : {0, 1, 3}) {
+            const Card card(CardId::SEARING_BLOW, count);
+            if (card.getUpgraded() != count || card.isUpgraded() != (count != 0)) return 37;
+            const CardInstance instance(card);
+            if (instance.getUpgradeCount() != count) return 37;
+        }
+        const CardInstance freshUpgraded(CardId::SEARING_BLOW, true);
+        if (freshUpgraded.getUpgradeCount() != 1) return 37;
+        if (Card(CardId::RITUAL_DAGGER, true).misc != 15 ||
+            CardInstance(CardId::RITUAL_DAGGER, true).specialData != 15 ||
+            Card(CardId::GENETIC_ALGORITHM, true).misc != 1) return 37;
+        std::cout << "fresh_card_misc_and_searing_upgrade_constructors" << std::endl;
+        return 0;
+    }
     if (variant == 29) {
         for (const int maximum : {75, 80}) {
             for (const auto drawback : {Neow::Drawback::NONE, Neow::Drawback::TEN_PERCENT_HP_LOSS}) {

@@ -6,7 +6,7 @@
 
 | BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
 
-| BRIDGE28 | 卡牌附加状态源码已确认遗漏，待修 | 原CommunicationMod.convertCardToJson导出uuid、非零misc、costForTurn、exhaust/ethereal；桥接_cards_real/_real_card_tuple/_card_rows丢misc/uuid及牌堆费用，native完整导入重建牌卡specialData0/baseCost原价并按牌堆顺序重编uniqueId。Madness永久降费下回合恢复、Rampage累计伤害、RitualDagger当前/永久成长、瓶装主牌组映射均须逐项闭环。另Java RitualDagger构造misc15，但native新Card.misc默认0且获得不设，属于原生规则错误。验收：逐字段/lifecycle/词表明确覆盖，Java typed导出/身份映射/native导入/搜索/编码/模型兼容完整检查；不以少量测试代替所有消费者审查。 |
+| BRIDGE28 | fresh卡数值/升级构造已修；卡牌完整状态仍待修，未部署 | 真机347个具体卡类构造扫描仅GeneticAlgorithm/RitualDagger写misc，fresh1/15已统一Card/CardInstance；带升级SearingBlow构造保留完整次数，原生5旧反例失败、variant30旧exit37，新伤害/成长/exit与370CardId初值一致。原serializer12字段、7导出缺口、4specialData来源逐项词表；590定向、variants22..30各A0/A15通过。当前misc/uuid、牌堆费用、freeOnce/瓶装/Rampage成长等仍未完整导出/映射/导入，不能将fresh初值当当前快照。验收仍要求typed导出、稳定实例身份、native状态/搜索/编码/模型兼容闭环；完成前不部署。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 
