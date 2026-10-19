@@ -7,7 +7,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BRIDGE80 | 源码已修，特殊复活分支未实机覆盖 | ScrapOoze失败按实际同步伤害之后的费用+1/成功率+10确认，不要求净HP下降；仅允许单槽FairyPotion→Potion Slot自动复活药水变化，其余资源约束保留。适用bridge/event_contract.py，词表登记；验收需自然失败及复活变体，不以当前883f266运行替代新源码验收，无离线测试。 |
-| BRIDGE79 | 预览确认源码已修并构建，待F12续档 | F12篝火已复现selected_cards为空但confirm_up=true时事件回执与adapter同时死等。v22导出真实hoveredCard UUID，独立于已选数组；共享验证原实例，事件核对请求，通用流程单次CONFIRM等关闭。适用升级/变牌/单张移除（Blacksmith/Wing/Wheel等），不改模型动作、不填假selected/PAD。验收需自然F12选牌/确认/实际移除/离开及后续链路，其他组合未实机覆盖；无离线测试。 |
+| BRIDGE79 | 篝火/营火/铁匠三类预览确认实机通过，其他组合未覆盖 | v22导出真实hoveredCard UUID，独立于selected_cards；共享验证原实例，事件核对请求，通用流程单次CONFIRM等关闭。883f266自然F12移除打击、F15营火升级Uppercut、F19AccursedBlacksmith升级SpotWeakness，均实际回读牌组变化并离开；原死等消除。Wing/Wheel/变牌等其余组合仍未逐项实机覆盖，不改模型动作、不填假selected/PAD，无离线测试。 |
 | BRIDGE78 | 已部署F6→F12，特殊组合未自然覆盖 | HP_LOSS补Buffer先于Tungsten，Intangible不将0变1，零伤不触发受伤收益；Pain/Brutality补玩家来源→Rupture，Brutality先抽后伤；Tail最低回1HP。正常怪物攻击lastDamageTaken按受击前HP封顶，防过量吸血；v21起导出仅NORMAL不被缠绕THORNS覆盖。750d67a/v21/native真实运行至F12，因独立BRIDGE79确认死等停止，非本批伤害验证；OBS20/ACTION8/layout9/权重不变，无逐bug离线测试。 |
 | BRIDGE77 | 已部署实机至三幕胜利，特殊组合仍未覆盖 | executeActions移除三牌区全空的假判负，保留药水/回合/被动及原预算。Anger→ENRAGE按全部实际怪物槽技能触发TOP，Curiosity能力触发BOTTOM，执行时拒绝dead/halfDead/escaping；避免漏竞技场Nob与觉醒者倒地后的额外力量。SharpHide同类槽遍历。ef57158从seed200206 F42续至F51胜利83/115，桥接ERROR0；空牌区/竞技场Nob/能力与Panache同时击倒觉醒者未自然覆盖，不冒充组合验证。无离线测试/权重布局变化。 |
 | BRIDGE76 | F46实机阻断已消除，续跑至自然终局 | 06a9dc6修复PhilosophersStone/Neow/燃烧精英/昆虫向预留空槽写状态；保留固定槽/严格校验，不吞异常。F46同档nonce4正确匹配四Shapes并胜利，随后黑暗虫半死复活、颚虫均走通；617.4秒至F50自然战败，桥接ERROR0。Neow/燃烧精英组合仍未实机覆盖；证据worklog“F46续档终局审计”。 |
