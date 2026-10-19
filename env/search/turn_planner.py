@@ -203,6 +203,8 @@ def state_value(raw, *, partial=False, public_relics=None, horizon=None,
     value += 5 * sum(x not in ('INVALID', 'EMPTY_POTION_SLOT') for x in raw['potions'])
     if raw['outcome'] == 1:
         return value + 1000
+    if raw['outcome'] == 3:
+        return value  # Escaped enemies/powers have no remaining combat effect.
     if no_remaining_damage_source(raw, public_relics):
         # Losing every remaining output channel is worse than ordinary HP or
         # damage differences, but remains separate from an actual native death.
@@ -329,6 +331,7 @@ class NativeTurnPlanner:
         values = {bits: [] for bits in roots}
         unresolved = {bits: 0 for bits in roots}
         winning_steps = {bits: 0 for bits in roots}
+        escapes = {bits: 0 for bits in roots}
         stats = dict(native_transitions=0, expanded_nodes=0, worlds_completed=0,
             budget_exhausted=False, effective_node_budget=budget, root_actions=len(roots),
             effective_total_budget=budget * self.config.worlds, fallback_leaves=0,
@@ -344,6 +347,7 @@ class NativeTurnPlanner:
                 values[bits].append(score)
                 unresolved[bits] += counts['fallback_leaves']
                 winning_steps[bits] += counts['winning_steps']
+                escapes[bits] += counts['best_escaped']
                 for key in ('native_transitions', 'expanded_nodes', 'fallback_leaves',
                             'second_turn_entries', 'completed_horizon_leaves'):
                     stats[key] += counts[key]
@@ -357,9 +361,9 @@ class NativeTurnPlanner:
         # Nonwinning roots have zero winning steps, preserving their old tie.
         selected = max(roots, key=lambda bits: (priorities[bits], -winning_steps[bits], -bits))
         stats.update(root_values={str(k): v[2] for k, v in priorities.items()},
-            root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], live=self.config.worlds+v[0]-v[1],
+            root_outcomes={str(k): dict(deaths=-v[0], wins=v[1], escapes=escapes[k], live=self.config.worlds+v[0]-v[1]-escapes[k],
                                        unresolved=unresolved[k],
-                                       boundary_live=self.config.worlds+v[0]-v[1]-unresolved[k],
+                                       boundary_live=self.config.worlds+v[0]-v[1]-escapes[k]-unresolved[k],
                                        heuristic_mean=v[2], winning_steps_total=winning_steps[k],
                                        winning_steps_mean=winning_steps[k]/v[1] if v[1] else 0.)
                            for k, v in priorities.items()},
@@ -369,7 +373,7 @@ class NativeTurnPlanner:
     def _root(self, branch, bits, quota, check, public_relics, horizon, final_player_turn):
         stats = dict(native_transitions=0, expanded_nodes=0, fallback_leaves=0,
                      budget_exhausted=False, second_turn_entries=0,
-                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0)
+                     completed_horizon_leaves=0, max_action_depth=0, winning_steps=0, best_escaped=False)
         frontier = []
         serial = 0
         best = None
@@ -401,6 +405,7 @@ class NativeTurnPlanner:
                                    leaf_profile=self.config.leaf_profile)
                 if best is None or value > best:
                     best = value
+                    stats['best_escaped'] = raw['outcome'] == 3
                     stats['winning_steps'] = depth if value[0] == 1 else 0
                 elif value == best and value[0] == 1:
                     stats['winning_steps'] = min(stats['winning_steps'], depth)

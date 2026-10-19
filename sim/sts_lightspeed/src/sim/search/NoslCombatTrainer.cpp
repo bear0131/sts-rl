@@ -28,7 +28,7 @@ double bossTransitionTerminalValue(const BattleContext &bc, int mode, double win
         const double hp = std::clamp(static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
         return bc.outcome == Outcome::PLAYER_VICTORY ? winWeight + (1.0 - winWeight) * hp : hp;
     }
-    if (mode == 0 || bc.outcome == Outcome::UNDECIDED) {
+    if (mode == 0 || bc.outcome == Outcome::UNDECIDED || bc.outcome == Outcome::PLAYER_ESCAPE) {
         return std::clamp(
             static_cast<double>(bc.player.curHp) / HP_VALUE_SCALE, 0.0, 1.0);
     }

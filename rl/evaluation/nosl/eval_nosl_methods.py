@@ -129,7 +129,7 @@ def _run_random(branch, *, sampler, state_nonce: int, max_steps: int) -> dict[st
     return {
         "terminal_hp": int(raw["player"]["hp"]),
         "projected_exit_hp": int(branch.thick.bc.projected_exit_hp(branch.thick.gc)),
-        "outcome": {1: "victory", 2: "loss"}.get(int(raw.get("outcome", 0)), "undecided"),
+        "outcome": {1: "victory", 2: "loss", 3: "escape"}.get(int(raw.get("outcome", 0)), "undecided"),
         "steps": steps,
         "timeout": not terminated,
     }
@@ -193,7 +193,7 @@ def _run_search_method(
     return {
         "terminal_hp": int(raw["player"]["hp"]),
         "projected_exit_hp": int(branch.thick.bc.projected_exit_hp(branch.thick.gc)),
-        "outcome": {1: "victory", 2: "loss"}.get(int(raw.get("outcome", 0)), "undecided"),
+        "outcome": {1: "victory", 2: "loss", 3: "escape"}.get(int(raw.get("outcome", 0)), "undecided"),
         "steps": steps,
         "timeout": not terminated,
         "search_decisions": decisions,

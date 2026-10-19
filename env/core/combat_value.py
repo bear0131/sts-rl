@@ -11,7 +11,7 @@ def combat_terminal_outcome(battle):
     state = battle if isinstance(battle, dict) else battle.to_dict()
     if state.get('escaped', False):
         return 'escape'
-    return {1:'win', 2:'loss'}.get(int(state['outcome']), 'unknown')
+    return {1:'win', 2:'loss', 3:'escape'}.get(int(state['outcome']), 'unknown')
 
 
 def combat_end_hp(battle) -> float:

@@ -277,6 +277,7 @@ namespace sts {
         void enterAct3VictoryRoom();
         void enterBattle(MonsterEncounter encounter);
         void afterBattle();
+        void afterEscape();
 
         // actions
         void obtainCard(Card c, int count=1);
@@ -308,8 +309,8 @@ namespace sts {
         CardReward createCardReward(Room room);
         CardReward createColorlessCardReward();
 
-        Rewards createCombatReward();
-        Rewards createEliteCombatReward();
+        Rewards createCombatReward(bool includeCards = true);
+        Rewards createEliteCombatReward(bool includeCards = true);
         Rewards createBossCombatReward();
 
         Event getShrine(Random &eventRngCopy);

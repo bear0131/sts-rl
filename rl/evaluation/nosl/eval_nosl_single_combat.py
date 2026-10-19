@@ -62,9 +62,9 @@ def _paired_branch(source, sampler: NOSLSampler, state_nonce: int, trial: int):
 
 def _outcome(branch) -> str:
     raw = branch.thick.bc.to_dict()
-    # BattleContext outcomes are UNDECIDED=0, VICTORY=1, LOSS=2.
+    # BattleContext outcomes are UNDECIDED=0, VICTORY=1, LOSS=2, ESCAPE=3.
     value = int(raw.get("outcome", 0))
-    return {1: "victory", 2: "loss"}.get(value, "undecided")
+    return {1: "victory", 2: "loss", 3: "escape"}.get(value, "undecided")
 
 
 def _terminal_stats(branch, steps: int, timeout: bool) -> dict[str, Any]:

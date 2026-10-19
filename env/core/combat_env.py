@@ -30,12 +30,13 @@ from . import render
 _PLAYER_NORMAL = 1
 _CARD_SELECT = 2
 # BattleContext.to_dict()["outcome"] uses the combat-side Outcome enum
-# (BattleContext.h): UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2. This is NOT
+# (BattleContext.h): UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2, PLAYER_ESCAPE=3. This is NOT
 # the same as the module-level sts.GameOutcome enum, whose ints are different
 # (UNDECIDED=1, VICTORY=2, LOSS=0) — do not compare the two.
 _OUTCOME_UNDECIDED = 0
 _OUTCOME_VICTORY = 1
 _OUTCOME_LOSS = 2
+_OUTCOME_ESCAPE = 3
 
 
 # ---- combat sts-glue, shared with SimGameEnv ----
@@ -169,7 +170,10 @@ class SimCombatEnv(gym.Env):
         reward = float(hp - self._prev_hp) / encode.HP_SCALE
         self._prev_hp = hp
         if terminated:
-            reward += 1.0 if raw["outcome"] == _OUTCOME_VICTORY else -1.0
+            if raw["outcome"] == _OUTCOME_VICTORY:
+                reward += 1.0
+            elif raw["outcome"] == _OUTCOME_LOSS:
+                reward -= 1.0
         return self._obs(), reward, terminated, False, self._info()
 
     # ---- helpers ----

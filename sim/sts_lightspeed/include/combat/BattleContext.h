@@ -36,12 +36,14 @@ namespace sts {
         UNDECIDED=0,
         PLAYER_VICTORY,
         PLAYER_LOSS,
+        PLAYER_ESCAPE,
     };
 
     static constexpr const char * battleOutcomeStrings[] {
             "UNDECIDED",
             "PLAYER_VICTORY",
             "PLAYER_LOSS",
+            "PLAYER_ESCAPE",
     };
 
     class GameContext;
@@ -176,6 +178,7 @@ namespace sts {
 
         void obtainPotion(Potion p);
         void discardPotion(int idx);
+        [[nodiscard]] bool canDrinkPotion(int idx) const;
         void drinkPotion(int idx, int target=0);
 
         void drawCards(int count);

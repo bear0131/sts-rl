@@ -97,7 +97,8 @@ bool isValidPotionAction(const BattleContext &bc, const search::Action &a) {
         return false;
     }
 
-    if (a.getSourceIdx() < 0 || a.getSourceIdx() > 5) {
+    if (a.getSourceIdx() < 0 || a.getSourceIdx() >= bc.potionCapacity ||
+            a.getSourceIdx() >= static_cast<int>(bc.potions.size())) {
         return false;
     }
 
@@ -112,7 +113,7 @@ bool isValidPotionAction(const BattleContext &bc, const search::Action &a) {
 
     } else {
 
-        if (p == sts::Potion::FAIRY_POTION) {
+        if (!bc.canDrinkPotion(a.getSourceIdx())) {
             return false;
         }
 
@@ -120,7 +121,8 @@ bool isValidPotionAction(const BattleContext &bc, const search::Action &a) {
             return true;
         }
 
-        if (a.getTargetIdx() < 0) {
+        if (a.getTargetIdx() < 0 || a.getTargetIdx() >= bc.monsters.monsterCount ||
+                a.getTargetIdx() >= 5) {
             return false;
         }
 
@@ -316,7 +318,7 @@ std::vector<search::Action> search::Action::enumerateCombatActions(const BattleC
                 if (potion == Potion::INVALID || potion == Potion::EMPTY_POTION_SLOT) {
                     continue;
                 }
-                if (potion == Potion::FAIRY_POTION ||
+                if (!bc.canDrinkPotion(potionIdx) ||
                     (potionRequiresTarget(potion) && !hasValidTarget)) {
                     actions.emplace_back(ActionType::POTION, potionIdx, -1);
                 } else if (!potionRequiresTarget(potion)) {

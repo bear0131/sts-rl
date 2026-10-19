@@ -418,6 +418,11 @@ double search::BattleScumSearcher2::evaluateEndState(const BattleContext &bc) {
     if (bc.outcome == Outcome::PLAYER_VICTORY) {
         return 100 * (35 + bc.player.curHp + potionScore - (bc.turn * 0.01));
 
+    } else if (bc.outcome == Outcome::PLAYER_ESCAPE) {
+        // Surviving HP/potions remain useful, but there was no cleared fight.
+        // Escaped enemies no longer contribute a live-board heuristic.
+        return 100 * (bc.player.curHp + potionScore - (bc.turn * 0.01));
+
     } else {
 //        double statusScore =
 //                (bc.player.getStatus<PS::STRENGTH>() * .5);

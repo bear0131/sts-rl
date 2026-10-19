@@ -59,7 +59,7 @@ struct Config { int worlds=2, nodes=8192, beam=8, depth=16, turns=1; bool timeCl
 struct Stats {
     int nativeTransitions=0, expandedNodes=0, fallbackLeaves=0, secondTurnEntries=0;
     int completedHorizonLeaves=0, maxDepth=0, winningSteps=0;
-    bool budgetExhausted=false;
+    bool budgetExhausted=false, bestEscaped=false;
     void add(const Stats &s) {
         nativeTransitions+=s.nativeTransitions; expandedNodes+=s.expandedNodes;
         fallbackLeaves+=s.fallbackLeaves; secondTurnEntries+=s.secondTurnEntries;
@@ -67,7 +67,7 @@ struct Stats {
         maxDepth=std::max(maxDepth,s.maxDepth); budgetExhausted|=s.budgetExhausted;
     }
 };
-struct RootResult { std::uint32_t bits; int deaths=0,wins=0,unresolved=0,winningSteps=0; double mean=0; };
+struct RootResult { std::uint32_t bits; int deaths=0,wins=0,escapes=0,unresolved=0,winningSteps=0; double mean=0; };
 struct Result { std::uint32_t action=0; Stats stats; std::vector<RootResult> roots; int budget=0; double seconds=0; };
 using Score=std::pair<int,double>;
 
@@ -130,6 +130,7 @@ struct Planner {
         for (int i=0;i<b.potionCapacity;++i) potions+=b.potions[i]!=Potion::INVALID && b.potions[i]!=Potion::EMPTY_POTION_SLOT;
         v+=5*potions;
         if (b.outcome==Outcome::PLAYER_VICTORY) return v+1000;
+        if (b.outcome==Outcome::PLAYER_ESCAPE) return v;
         if (noDamage(b,outputRelic)) v-=10000;
         v-=.26*remaining+10*bodies;
         for (int i=0;i<b.monsters.monsterCount;++i) {
@@ -187,7 +188,7 @@ struct Planner {
                 stats.completedHorizonLeaves+=child->postEnemyTurnBoundary;
                 const int rank=child->player.curHp<=0 || child->outcome==Outcome::PLAYER_LOSS ? -1 : child->outcome==Outcome::PLAYER_VICTORY ? 1 : 0;
                 Score score{rank,value(*child,false,outputRelic,h)};
-                if (!hasBest || score>best) {best=score; hasBest=true; stats.winningSteps=rank==1?depth:0;}
+                if (!hasBest || score>best) {best=score; hasBest=true; stats.winningSteps=rank==1?depth:0; stats.bestEscaped=child->outcome==Outcome::PLAYER_ESCAPE;}
                 else if (score==best && rank==1) stats.winningSteps=std::min(stats.winningSteps,depth);
                 return;
             }
@@ -245,6 +246,7 @@ struct Planner {
                 const auto action=selectDraw ? Action(remap(sample,battle,actions[i].bits)):actions[i];
                 auto result=root(sample,action,quota,outputRelic,h,finalTurn); auto &r=out.roots[i];
                 r.deaths+=result.first.first==-1; r.wins+=result.first.first==1;
+                r.escapes+=result.second.bestEscaped;
                 r.mean+=result.first.second; r.unresolved+=result.second.fallbackLeaves;
                 r.winningSteps+=result.second.winningSteps; out.stats.add(result.second);
             }

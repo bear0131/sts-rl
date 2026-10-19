@@ -31,7 +31,7 @@ import slaythespire as sts
 from .game_env import SimGameEnv, _GC_UNDECIDED
 
 # BattleContext.to_dict()["outcome"] uses the combat-side Outcome enum:
-# UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2 (see combat_env._OUTCOME_*).
+# UNDECIDED=0, PLAYER_VICTORY=1, PLAYER_LOSS=2, PLAYER_ESCAPE=3.
 _OUTCOME_LOSS = 2
 
 
@@ -78,13 +78,21 @@ class SimCombatBackend(SimGameEnv):
         return self.bc.to_dict()["outcome"] == _OUTCOME_LOSS
 
     def _settle(self):
-        # After a step: if the current fight just ended in VICTORY (player alive),
+        # After a step: if the current fight ended with the player alive,
         # carry HP onto the gc and roll the NEXT random encounter on the same
         # loadout. On a loss we leave the finished bc in place so is_over -> True
         # and the terminal obs/reward read the death.
         if self.bc is None or not self.bc.is_battle_over or self._lost():
             return
-        self.combats_won += 1
+        state = self.bc.to_dict()
+        if state['outcome'] == 1:
+            self.combats_won += 1
+        elif state['outcome'] == 3:
+            # Escaping advances the gauntlet but is not a cleared fight. Keep
+            # the consumed smoke consumed rather than recreating it forever.
+            self.gc.set_potion_state(state['potions'])
+        else:
+            raise ValueError('unclassified gauntlet combat terminal')
         # gc.cur_hp is stale mid-run; the bc owns the player's HP. Carry the live
         # post-fight HP onto the gc so create_battle starts the next fight there.
         self.gc.cur_hp = self.bc.to_dict()["player"]["hp"]
@@ -93,6 +101,6 @@ class SimCombatBackend(SimGameEnv):
 
     def combat_state(self):
         """(player_hp, outcome_int) off the live BattleContext. outcome: 0 undecided
-        / 1 victory / 2 loss (combat-side Outcome enum; see combat_env._OUTCOME_*)."""
+        / 1 victory / 2 loss / 3 escape (combat-side Outcome enum)."""
         raw = self.bc.to_dict()
         return raw["player"]["hp"], raw["outcome"]

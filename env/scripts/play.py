@@ -88,7 +88,7 @@ def main(argv=None):
         if term or trunc:
             print(env.render())
             outcome = env.bc.to_dict()["outcome"]
-            result = "VICTORY" if outcome == 1 else ("DEFEAT" if outcome == 2 else "UNDECIDED")
+            result = {1: "VICTORY", 2: "DEFEAT", 3: "ESCAPE"}.get(outcome, "UNDECIDED")
             print(f"\n=== {result} after {step} actions, total reward {total_r:+.3f} ===")
             return
 

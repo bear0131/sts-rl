@@ -90,7 +90,7 @@ class CombatAuditStrategy:
             def outcome(env, info, terminated, truncated):
                 raw = env.unwrapped.thick.bc.to_dict()
                 won = env.unwrapped.thick.bc.outcome == _OUTCOME_VICTORY
-                return dict(result='win' if won else 'other_truncation' if truncated else 'death',
+                return dict(result='win' if won else 'other_truncation' if truncated else 'escape' if raw['outcome'] == 3 else 'death',
                             floor=context['floor'], final_hp=raw['player']['hp'],
                             final_potions=raw['potions'])
             scenario = Scenario('matched-combat-start', lambda: branch, outcome,

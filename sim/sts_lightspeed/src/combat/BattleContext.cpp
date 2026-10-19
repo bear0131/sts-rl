@@ -3,6 +3,7 @@
 //
 
 #include <algorithm>
+#include <stdexcept>
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
 #include "game/Game.h"
@@ -499,7 +500,7 @@ void BattleContext::exitBattle(GameContext &g) const {
     updateCardsOnExit(g.deck);
 
     g.info.stolenGold = 0;
-    if (requiresStolenGoldCheck()) {
+    if (outcome != Outcome::PLAYER_ESCAPE && requiresStolenGoldCheck()) {
         for (int i = 0; i < monsters.monsterCount; ++i) {
             const auto &m = monsters.arr[i];
 
@@ -515,6 +516,8 @@ void BattleContext::exitBattle(GameContext &g) const {
 
     if (outcome == Outcome::PLAYER_LOSS) {
         g.outcome = GameOutcome::PLAYER_LOSS;
+    } else if (outcome == Outcome::PLAYER_ESCAPE) {
+        g.afterEscape();
     } else {
         // player victory
         g.regainControl();
@@ -526,6 +529,7 @@ void BattleContext::exitBattle(GameContext &g) const {
 }
 
 void BattleContext::updateRelicsOnExit(GameContext &g) const {
+    const bool survived = outcome == Outcome::PLAYER_VICTORY || outcome == Outcome::PLAYER_ESCAPE;
     for (auto &r : g.relics.relics) {
         switch (r.id) {
             case RelicId::ANCIENT_TEA_SET:
@@ -575,19 +579,19 @@ void BattleContext::updateRelicsOnExit(GameContext &g) const {
                 break;
 
             case RelicId::BURNING_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
+                if (survived) {
                     g.playerHeal(6);
                 }
                 break;
 
             case RelicId::BLACK_BLOOD:
-                if (outcome == Outcome::PLAYER_VICTORY) {
+                if (survived) {
                     g.playerHeal(12);
                 }
                 break;
 
             case RelicId::MEAT_ON_THE_BONE:
-                if (outcome == Outcome::PLAYER_VICTORY && g.curHp <= g.maxHp / 2) {
+                if (survived && g.curHp <= g.maxHp / 2) {
                     g.playerHeal(12);
                 }
                 break;
@@ -760,7 +764,7 @@ void BattleContext::executeActions() {
             break;
         }
 
-        if (outcome == Outcome::PLAYER_LOSS) {
+        if (outcome == Outcome::PLAYER_LOSS || outcome == Outcome::PLAYER_ESCAPE) {
             break;
         }
 
@@ -2366,7 +2370,47 @@ void BattleContext::discardPotion(int idx) {
     --potionCount;
 }
 
+bool BattleContext::canDrinkPotion(int idx) const {
+    if (outcome != Outcome::UNDECIDED || inputState != InputState::PLAYER_NORMAL ||
+            idx < 0 || idx >= potionCapacity || idx >= static_cast<int>(potions.size())) {
+        return false;
+    }
+    const auto p = potions[idx];
+    if (p == Potion::INVALID || p == Potion::EMPTY_POTION_SLOT || p == Potion::FAIRY_POTION)
+        return false;
+    if (p != Potion::SMOKE_BOMB) return true;
+
+    // SmokeBomb.canUse checks actual monster types, not the room/encounter.
+    // In particular the Slime Boss can split into non-BOSS slimes.
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        switch (monsters.arr[i].id) {
+            case MonsterId::SLIME_BOSS:
+            case MonsterId::THE_GUARDIAN:
+            case MonsterId::HEXAGHOST:
+            case MonsterId::BRONZE_AUTOMATON:
+            case MonsterId::THE_CHAMP:
+            case MonsterId::THE_COLLECTOR:
+            case MonsterId::AWAKENED_ONE:
+            case MonsterId::DONU:
+            case MonsterId::DECA:
+            case MonsterId::TIME_EATER:
+            case MonsterId::CORRUPT_HEART:
+                return false;
+            default:
+                break;
+        }
+    }
+    // Act 4 / BackAttack restoration is explicitly outside the current bridge
+    // contract. Do not advertise escape for that unsupported encounter.
+    return encounter != MonsterEncounter::SHIELD_AND_SPEAR;
+}
+
 void BattleContext::drinkPotion(int idx, int target) {
+    if (!canDrinkPotion(idx) || (potionRequiresTarget(potions[idx]) &&
+            (target < 0 || target >= monsters.monsterCount || target >= 5 ||
+             !monsters.arr[target].isTargetable()))) {
+        throw std::invalid_argument("illegal combat potion use");
+    }
     const bool hasBark = player.hasRelic<R::SACRED_BARK>();
     const Potion p = potions[idx];
     discardPotion(idx);
@@ -2529,7 +2573,13 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::SMOKE_BOMB:
-            // todo
+            // The real escape animation ends the room without killing any
+            // monster. Keep a distinct outcome and settle onVictory effects
+            // through exitBattle, but never award ordinary combat loot.
+            outcome = Outcome::PLAYER_ESCAPE;
+            isBattleOver = true;
+            actionQueue.clear();
+            cardQueue.clear();
             break;
 
         case Potion::SNECKO_OIL:

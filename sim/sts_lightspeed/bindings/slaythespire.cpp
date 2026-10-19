@@ -250,6 +250,7 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     d["post_enemy_turn_boundary"] = bc.postEnemyTurnBoundary;
     d["pocketwatch_cards_at_boundary"] = bc.pocketwatchCardsAtBoundary;
     d["outcome"] = static_cast<int>(bc.outcome);
+    d["escaped"] = bc.outcome == sts::Outcome::PLAYER_ESCAPE;
     d["input_state"] = static_cast<int>(bc.inputState);
 
     py::dict player;
@@ -2622,9 +2623,9 @@ py::dict ruleTurnResult(const search::ruleturn::Result &r,int worlds) {
         const auto key=std::to_string(root.bits);
         values[py::str(key)]=root.mean;
         py::dict o;
-        o["deaths"]=root.deaths; o["wins"]=root.wins;
-        o["live"]=worlds-root.deaths-root.wins; o["unresolved"]=root.unresolved;
-        o["boundary_live"]=worlds-root.deaths-root.wins-root.unresolved;
+        o["deaths"]=root.deaths; o["wins"]=root.wins; o["escapes"]=root.escapes;
+        o["live"]=worlds-root.deaths-root.wins-root.escapes; o["unresolved"]=root.unresolved;
+        o["boundary_live"]=worlds-root.deaths-root.wins-root.escapes-root.unresolved;
         o["heuristic_mean"]=root.mean; o["winning_steps_total"]=root.winningSteps;
         o["winning_steps_mean"]=root.wins ? double(root.winningSteps)/root.wins:0.;
         outcomes[py::str(key)]=o;

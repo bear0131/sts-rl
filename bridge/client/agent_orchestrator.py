@@ -572,6 +572,53 @@ def stale_combat_end_frame(frame: dict[str, Any], pending: dict[str, Any] | None
     return combat["turn"] <= pending["combat_state"]["turn"]
 
 
+class SmokeCommandAck:
+    """Do not search a new combat root while the player is still escaping."""
+    def __init__(self):
+        self.pending = None
+
+    def arm(self, frame, decision, now):
+        parts = decision.command.split()
+        gs = frame.get('game_state') or {}
+        if (len(parts) < 3 or [s.upper() for s in parts[:2]] != ['POTION', 'USE']
+                or gs.get('room_phase') != 'COMBAT'):
+            return
+        slot = int(parts[2])
+        potions = gs['potions']
+        if not 0 <= slot < len(potions):
+            raise ValueError('potion command slot is outside the real inventory')
+        if potions[slot]['id'] != 'SmokeBomb':
+            return
+        if self.pending is not None:
+            raise RuntimeError('smoke command already awaits its room exit')
+        self.pending = dict(identity=tuple(gs[k] for k in ('seed', 'act', 'floor')),
+                            slot=slot, capacity=len(potions), since=now)
+
+    def waiting(self, frame, now):
+        pending = self.pending
+        if pending is None:
+            return False
+        gs = frame.get('game_state') or {}
+        if gs.get('screen_type') == 'GAME_OVER':
+            self.pending = None  # Let the real terminal, not an inferred win, decide.
+            return False
+        if tuple(gs.get(k) for k in ('seed', 'act', 'floor')) != pending['identity']:
+            raise RuntimeError('smoke acknowledgement crossed a run/room boundary')
+        if (frame.get('ready_for_command') is True
+                and gs.get('room_phase') in {'COMPLETE', 'EVENT'}
+                and gs.get('screen_type') in {'COMBAT_REWARD', 'EVENT', 'NONE'}):
+            potions = gs['potions']
+            if (len(potions) != pending['capacity']
+                    or potions[pending['slot']]['id'] != 'Potion Slot'):
+                raise RuntimeError('smoke ended combat without consuming the actual potion slot')
+            self.pending = None
+            log.info('smoke room exit acknowledged seed/act/floor=%s', pending['identity'])
+            return False
+        if now - pending['since'] > 10.0:
+            raise RuntimeError('smoke command did not finish escaping within 10 active seconds')
+        return True
+
+
 class MapCommandAck:
     """Do not reissue a map click or ignore its Wing Boots charge effect."""
 
@@ -975,6 +1022,7 @@ def main() -> None:
         pending_end_frame = None
         pending_end_since = 0.0
         combat_stability = CombatFrameStability()
+        smoke_ack = SmokeCommandAck()
         reward_ack = RewardCommandAck()
         event_ack = EventEffectAck()
         map_ack = MapCommandAck()
@@ -1003,6 +1051,7 @@ def main() -> None:
                         pending_play_frame = pending_end_frame = unsent_search = None
                         pending_play_since = pending_end_since = 0.0
                         combat_stability = CombatFrameStability()
+                        smoke_ack = SmokeCommandAck()
                         reward_ack = RewardCommandAck()
                         event_ack = EventEffectAck()
                         map_ack = MapCommandAck()
@@ -1044,6 +1093,10 @@ def main() -> None:
                     time.sleep(0.1)
                     send("STATE")
                     continue
+                if smoke_ack.waiting(frame, now):
+                    time.sleep(0.1)
+                    send("STATE")
+                    continue
                 if map_ack.waiting(frame, now):
                     time.sleep(0.1)
                     send("STATE")
@@ -1056,6 +1109,7 @@ def main() -> None:
                     original, prepared = unsent_search
                     unsent_search = None
                     if searched_command_still_current(frame, original, prepared.command):
+                        smoke_ack.arm(frame, prepared, now)
                         reward_ack.arm(frame, prepared, now)
                         send_decision(frame, prepared)
                         if combat_command_needs_ack(frame, prepared.command):
@@ -1093,6 +1147,7 @@ def main() -> None:
                     continue
                 event_ack.arm(frame, decision, now)
                 map_ack.arm(frame, decision, now, adapter)
+                smoke_ack.arm(frame, decision, now)
                 reward_ack.arm(frame, decision, now)
                 send_decision(frame, decision)
                 if combat_command_needs_ack(frame, decision.command):
