@@ -265,3 +265,28 @@ def test_shop_remove_is_single_use_and_returns_to_shop(shop_factory):
     assert _shop_snapshot(gc) == before
     gc.shop_proceed()
     assert str(gc.screen_state) == 'ScreenState.MAP_SCREEN'
+
+
+@pytest.mark.parametrize('ascension', [0, 20])
+@pytest.mark.parametrize('egg,upgraded_types', [
+    ('Molten Egg 2', [sts.CardType.ATTACK]),
+    ('Toxic Egg 2', [sts.CardType.SKILL]),
+    ('Frozen Egg 2', [sts.CardType.POWER]),
+    ('all', [sts.CardType.ATTACK, sts.CardType.SKILL, sts.CardType.POWER]),
+])
+def test_shop_egg_preview_matches_purchased_card(shop_factory, ascension, egg, upgraded_types):
+    relics = ['Molten Egg 2', 'Toxic Egg 2', 'Frozen Egg 2'] if egg == 'all' else [egg]
+    env = shop_factory(relics, ascension=ascension)
+    gc = env.thick.gc
+    gc.gold = 10000
+    shelf = gc.shop_contents()['cards']
+    before = env.thick.obs_canonical()
+    for i, item in enumerate(shelf):
+        card = sts.Card(getattr(sts.CardId, item['id']))
+        expected = int(card.type in upgraded_types)
+        assert item['upgrades'] == expected
+        assert before['options']['shop_cards'][i][1] == expected
+        gold = gc.gold
+        gc.shop_buy_card(i)
+        assert gc.deck_ids()[-1] == (item['id'], expected)
+        assert gc.gold == gold - item['price']

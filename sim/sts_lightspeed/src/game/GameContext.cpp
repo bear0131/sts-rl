@@ -1587,6 +1587,9 @@ RelicId GameContext::returnRandomScreenlessRelic(RelicTier tier, bool shopRoom) 
 }
 
 Card GameContext::previewObtainCard(Card card) {
+    // Eggs only upgrade a fresh, upgradeable card. In particular, repeated
+    // previews and obtaining a previewed Searing Blow must not add upgrades.
+    if (!card.canUpgrade() || card.isUpgraded()) return card;
     switch (card.getType()) {
         case CardType::ATTACK:
             if (hasRelic(RelicId::MOLTEN_EGG)) {

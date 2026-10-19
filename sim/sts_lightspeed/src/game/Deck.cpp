@@ -120,37 +120,17 @@ void Deck::transformRandomCards(Random &miscRng, int count) {
 }
 
 void Deck::obtain(GameContext &gc, Card card, int count) {
+    card = gc.previewObtainCard(card);
     const auto type = card.getType();
 
     switch (type) {
         case CardType::ATTACK:
-            transformableCount += count;
-            cardTypeCounts[static_cast<int>(CardType::ATTACK)] += count;
-            if (gc.hasRelic(RelicId::MOLTEN_EGG)) {
-                card.upgrade();
-            } else if (card.canUpgrade()) {
-                upgradeableCount += count;
-            }
-            break;
-
         case CardType::SKILL:
-            transformableCount += count;
-            cardTypeCounts[static_cast<int>(CardType::SKILL)] += count;
-            if (gc.hasRelic(RelicId::TOXIC_EGG)) {
-                card.upgrade();
-            } else if (card.canUpgrade()) {
-                upgradeableCount += count;
-            }
-            break;
-
         case CardType::POWER:
             transformableCount += count;
-            cardTypeCounts[static_cast<int>(CardType::POWER)] += count;
-            if (gc.hasRelic(RelicId::FROZEN_EGG)) {
-                card.upgrade();
-            } else if (card.canUpgrade()) {
-                upgradeableCount += count;
-            }
+            cardTypeCounts[static_cast<int>(type)] += count;
+            // Searing Blow remains upgradeable even after its first upgrade.
+            if (card.canUpgrade()) upgradeableCount += count;
             break;
 
         case CardType::CURSE:

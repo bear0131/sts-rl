@@ -89,3 +89,19 @@ def test_existing_ritual_dagger_growth_is_not_reset_to_fresh_value(combat_factor
     battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
     assert battle.to_dict()['monsters'][0]['hp'] == 10
     assert gc.deck[0].misc == 30
+
+
+@pytest.mark.parametrize('initial_upgrades,expected,damage', [(0, 1, 16), (1, 1, 16), (3, 3, 27)])
+def test_molten_egg_obtain_preserves_existing_searing_upgrades(initial_upgrades, expected, damage):
+    gc = sts.GameContext(sts.CharacterClass.IRONCLAD, 42, 0)
+    gc.set_deck([])
+    gc.set_relics(['Molten Egg 2'])
+    card = sts.Card(sts.CardId.SEARING_BLOW)
+    for _ in range(initial_upgrades):
+        card.upgrade()
+    gc.obtain_card(card)
+    assert gc.deck_ids() == [('SEARING_BLOW', expected)]
+    battle = sts.create_battle(gc, 'Cultist')
+    battle.apply_custom_state({'monsters': [{'hp': 40, 'block': 0}]})
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    assert battle.to_dict()['monsters'][0]['hp'] == 40 - damage

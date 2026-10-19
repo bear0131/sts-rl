@@ -234,6 +234,79 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkShopEgg(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.screenState = ScreenState::SHOP_ROOM;
+    gc.gold = 10000;
+    auto &s = gc.info.shop;
+    if (variant == 0) {
+        auto plain = gc;
+        plain.info.shop.setupCards(plain);
+        for (auto egg : {RelicId::MOLTEN_EGG, RelicId::TOXIC_EGG, RelicId::FROZEN_EGG}) gc.obtainRelic(egg);
+        s.setupCards(gc);
+        for (int i = 0; i < 7; ++i) {
+            require(s.cards[i].getId() == plain.info.shop.cards[i].getId(), "egg changed generated card identity");
+            require(s.cardPrice(i) == plain.info.shop.cardPrice(i), "egg changed card price");
+            require(s.cards[i].getUpgraded() == 1, "egg missing from initial shelf preview");
+        }
+        require(sameRng(gc.cardRng, plain.cardRng) && sameRng(gc.merchantRng, plain.merchantRng), "egg preview changed RNG");
+    } else if (variant >= 1 && variant <= 3) {
+        const RelicId egg = variant == 1 ? RelicId::MOLTEN_EGG :
+                            variant == 2 ? RelicId::TOXIC_EGG : RelicId::FROZEN_EGG;
+        const CardType type = variant == 1 ? CardType::ATTACK :
+                              variant == 2 ? CardType::SKILL : CardType::POWER;
+        for (bool courier : {false, true}) {
+            auto child = gc;
+            if (courier) child.obtainRelic(RelicId::THE_COURIER);
+            child.commonRelicPool = {RelicId::ANCHOR};
+            child.uncommonRelicPool = {RelicId::KUNAI};
+            child.rareRelicPool = {RelicId::GINGER};
+            auto &shop = child.info.shop;
+            const CardId ids[] = {CardId::SEARING_BLOW, CardId::ANGER, CardId::SHRUG_IT_OFF,
+                CardId::DEFEND_RED, CardId::INFLAME, CardId::FLASH_OF_STEEL, CardId::APOTHEOSIS};
+            for (int i = 0; i < 7; ++i) {
+                shop.cards[i] = Card(ids[i]);
+                shop.cardPrice(i) = 50;
+            }
+            shop.relics[0] = egg;
+            shop.relicPrice(0) = 200;
+            shop.buyRelic(child, 0);
+            require(child.hasRelic(egg) && child.gold == 9800, "egg purchase not completed");
+            if (courier) require(!isEggRelic(shop.relics[0]), "fixture must restock a non-egg relic");
+            for (int i = 0; i < 7; ++i) {
+                const int expected = shop.cards[i].getType() == type ? 1 : 0;
+                require(shop.cards[i].getUpgraded() == expected, "purchased egg did not refresh matching shelf cards");
+                require(shop.cardPrice(i) == 50, "egg purchase changed card prices");
+            }
+            shop.buyCard(child, 0);
+            require(child.deck.cards[child.deck.size() - 1].getUpgraded() == (type == CardType::ATTACK ? 1 : 0),
+                    "buying previewed Searing Blow upgraded it again");
+        }
+    } else if (variant == 4) {
+        gc.obtainRelic(RelicId::MOLTEN_EGG);
+        for (int upgrades : {0, 1, 3}) {
+            Card card(CardId::SEARING_BLOW);
+            for (int i = 0; i < upgrades; ++i) card.upgrade();
+            for (int i = 0; i < 3; ++i) card = gc.previewObtainCard(card);
+            const int expected = upgrades == 0 ? 1 : upgrades;
+            require(card.getUpgraded() == expected, "repeated egg preview added upgrades");
+            const int before = gc.deck.getUpgradeableCount();
+            gc.deck.obtain(gc, card, 2);
+            require(gc.deck.getUpgradeableCount() == before + 2, "Searing Blow remains upgradeable after egg");
+            require(gc.deck.cards[gc.deck.size() - 1].getUpgraded() == expected, "obtain added another egg upgrade");
+        }
+    } else if (variant == 5) {
+        for (auto egg : {RelicId::MOLTEN_EGG, RelicId::TOXIC_EGG, RelicId::FROZEN_EGG}) gc.obtainRelic(egg);
+        for (auto id : {CardId::SEARING_BLOW, CardId::ANGER, CardId::SHRUG_IT_OFF, CardId::INFLAME}) {
+            gc.deck.obtain(gc, Card(id), 2);
+            require(gc.deck.cards[gc.deck.size() - 1].getUpgraded() == 1, "direct obtain must upgrade exactly once");
+        }
+        int actual = 0;
+        for (const auto &card : gc.deck.cards) actual += card.canUpgrade();
+        require(gc.deck.getUpgradeableCount() == actual, "egg obtain corrupted cached upgradeable count");
+    } else { throw std::invalid_argument("unknown shop-egg fixture"); }
+}
+
 static void checkShopLegality(int variant, int ascension) {
     using RAT = search::GameAction::RewardsActionType;
     GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
@@ -368,11 +441,12 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-legality") checkShopLegality(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;

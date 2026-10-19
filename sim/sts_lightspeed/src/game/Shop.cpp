@@ -45,6 +45,8 @@ void Shop::setupCards(GameContext &gc) {
     cards[5] = getColorlessCardFromPool(gc.cardRng, CardRarity::UNCOMMON);
     cards[6] = getColorlessCardFromPool(gc.cardRng, CardRarity::RARE);
 
+    for (auto &card : cards) card = gc.previewObtainCard(card);
+
     for (int i = 0; i < 5; ++i) {
 
         float tmpPrice = cardRarityPrices[(int)rarities[i]] * gc.merchantRng.random(0.9f, 1.1f);
@@ -135,7 +137,7 @@ void Shop::buyRelic(GameContext &gc, int idx) {
         relicPrice(idx) = -1;
     }
 
-    if (isEggRelic(relics[idx])) {
+    if (isEggRelic(r)) {
         for (auto &c : cards) {
             c = gc.previewObtainCard(c);
         }
