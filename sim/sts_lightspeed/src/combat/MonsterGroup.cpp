@@ -3,6 +3,7 @@
 //
 
 #include <cassert>
+#include <stdexcept>
 
 #include "combat/MonsterGroup.h"
 #include "combat/BattleContext.h"
@@ -11,7 +12,15 @@
 using namespace sts;
 
 bool MonsterGroup::areMonstersBasicallyDead() const {
-    return monstersAlive <= 0;
+    for (int i = 0; i < monsterCount; ++i) {
+        const auto &m = arr[i];
+        if (m.isEscaping()) continue;
+        if (m.isAlive()) return false;
+        // No living targets does not mean victory while Awakened One is
+        // awaiting rebirth. Darklings, in contrast, finish when all are down.
+        if (m.id == MonsterId::AWAKENED_ONE && m.isHalfDead() && !m.miscInfo) return false;
+    }
+    return true;
 }
 
 int MonsterGroup::getTargetableCount() const {
@@ -38,58 +47,18 @@ int MonsterGroup::getAliveCount() const {
 }
 
 int MonsterGroup::getRandomMonsterIdx(Random &rng, bool aliveOnly) const {
-    if (aliveOnly) {
-        if (monstersAlive == 0) {
-            return -1;
-        } else {
-            int aliveIdx = rng.random(monstersAlive-1);
+    if (areMonstersBasicallyDead()) return -1;
+    if (!aliveOnly) return rng.random(monsterCount - 1);
 
-            int i = 0;
-            int aliveEncountered = 0;
-            while (true) {
-#ifdef sts_asserts
-                // seed 11195
-                if (i >= monsterCount) {
-                    std::cerr << monsterIdStrings[static_cast<int>(arr[0].id)] << " "
-                    << monsterIdStrings[static_cast<int>(arr[1].id)] << " "
-                    << "count:" << monsterCount << " "
-                    << "alive:" << monstersAlive << std::endl;
-                    assert(false);
-                }
-#endif
-                // SAFETY GUARD (do NOT remove without the root-cause fix):
-                // monstersAlive can disagree with the actual alive count in arr[]
-                // after a slime split (largeSlimeSplit / slimeBossSplit bump
-                // monstersAlive but the dead parent lingers in arr[]). When that
-                // happens this loop never finds the aliveIdx-th alive monster and
-                // i runs past monsterCount, reading garbage past arr[] -> the
-                // worker segfaults and (under SubprocVecEnv) deadlocks the whole
-                // run. Falling back to the last real slot keeps us in bounds. This
-                // does NOT touch rng (the random() call above already happened), so
-                // the normal path stays bit-exact with the real game. Tracked in
-                // doc/day_0623 — remove once monstersAlive bookkeeping is fixed.
-                if (i >= monsterCount) {
-                    for (int j = monsterCount - 1; j >= 0; --j) {
-                        if (!arr[j].isDeadOrEscaped()) {
-                            return j;
-                        }
-                    }
-                    return monsterCount - 1;
-                }
-                if (!arr[i].isDeadOrEscaped()) {
-                    if (aliveEncountered == aliveIdx) {
-                        return i;
-                    } else {
-                        ++aliveEncountered;
-                    }
-                }
-                ++i;
-            }
-
-        }
-    } else {
-        return rng.random(monsterCount - 1);
+    // Sample the actual eligible group, as Java does. Never disguise a stale
+    // cached living count by silently choosing a different (or dead) slot.
+    const int targetCount = getTargetableCount();
+    if (targetCount == 0) return -1;
+    int remaining = rng.random(targetCount - 1);
+    for (int i = 0; i < monsterCount; ++i) {
+        if (arr[i].isTargetable() && remaining-- == 0) return i;
     }
+    throw std::logic_error("random monster target count changed while selecting");
 }
 
 void MonsterGroup::init(BattleContext &bc, MonsterEncounter encounter) {

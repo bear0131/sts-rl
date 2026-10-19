@@ -149,7 +149,8 @@ struct Monster {
         void heal(int amount);
         void addBlock(int amount);
         void die(BattleContext &bc);
-        void suicideAction(BattleContext &bc);
+        void suicideAction(BattleContext &bc, bool triggerRelics = false);
+        void escape(BattleContext &bc);
 
         void attackedUnblockedHelper(BattleContext &bc, int damage);
         void attacked(BattleContext &bc, int damage);

@@ -23,7 +23,7 @@ Action Actions::AttackEnemy(int idx, int damage) {
 
         bc.monsters.arr[idx].attacked(bc, damage);
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::AttackAllEnemy(DamageMatrix damageMatrix) {
@@ -35,7 +35,7 @@ Action Actions::AttackAllEnemy(DamageMatrix damageMatrix) {
         }
 
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::DamageEnemy(int idx, int damage) {
@@ -46,7 +46,7 @@ Action Actions::DamageEnemy(int idx, int damage) {
 
         bc.monsters.arr[idx].damage(bc, damage);
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::DamageAllEnemy(int damage) { // todo this is probably broken
@@ -57,7 +57,7 @@ Action Actions::DamageAllEnemy(int damage) { // todo this is probably broken
             }
         }
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::AttackPlayer(int idx, int damage) {
@@ -83,7 +83,7 @@ Action Actions::VampireAttack(int damage) {
         if (m.isAlive()) {
             m.heal(std::min(damage, static_cast<int>(bc.player.lastAttackUnblockedDamage)));
         }
-    }};
+    }, false};
 }
 
 Action Actions::PlayerLoseHp(int hp, bool selfDamage) { // TODO this doesn't take into account intangible or relics
@@ -100,8 +100,13 @@ Action Actions::HealPlayer(int amount) {
 
 Action Actions::MonsterGainBlock(int idx, int amount) {
     return {[=] (BattleContext &bc) {
-        bc.monsters.arr[idx].addBlock(amount);
-    }};
+        auto &m = bc.monsters.arr[idx];
+        // GainBlockAction rejects dying/dead targets, but not escaping ones.
+        // A pending rebirth is halfDead rather than dying in Java.
+        if (m.isAlive() || (m.isHalfDead() && !bc.monsters.areMonstersBasicallyDead())) {
+            m.addBlock(amount);
+        }
+    }, false};
 }
 
 Action Actions::RollMove(int monsterIdx) {
@@ -325,9 +330,8 @@ Action Actions::DamageRandomEnemy(int damage) {
         if (idx == -1) {
             return;
         }
-        bc.monsters.arr[idx].damage(bc, damage);
-        bc.checkCombat();
-    }};
+        bc.addToTop(Actions::DamageEnemy(idx, damage));
+    }, false};
 }
 
 Action Actions::ExhaustRandomCardInHand(int count) {
@@ -882,14 +886,15 @@ Action Actions::IncreaseOrbSlots(int count) {
 
 Action Actions::SuicideAction(int monsterIdx, bool triggerRelics) {
     return {[=] (BattleContext &bc) {
-        auto &m = bc.monsters.arr[monsterIdx];
-        if (triggerRelics) {
-            if (m.isAlive()) {
-                m.damage(bc, m.curHp);
-            }
-        } else {
-            bc.monsters.arr[monsterIdx].suicideAction(bc);
-        }
+        // Java sets HP to zero and calls die; block, Intangible and damage
+        // callbacks must not prevent a suicide. It does not filter the queue.
+        bc.monsters.arr[monsterIdx].suicideAction(bc, triggerRelics);
+    }, false};
+}
+
+Action Actions::EscapeAction(int monsterIdx) {
+    return {[=] (BattleContext &bc) {
+        bc.monsters.arr[monsterIdx].escape(bc);
     }};
 }
 
@@ -1051,7 +1056,7 @@ Action Actions::FeedAction(int idx, int damage, bool upgraded) {
         }
 
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::FiendFireAction(int targetIdx, int calculatedDamage) {
@@ -1084,7 +1089,7 @@ Action Actions::HandOfGreedAction(int idx, int damage, bool upgraded) {
         }
 
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::LimitBreakAction() {
@@ -1113,7 +1118,7 @@ Action Actions::ReaperAction(DamageMatrix damageMatrix) {
 
         // The heal is enqueued before victory filtering and must survive it.
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::IncreaseCardSpecialData(std::int16_t uniqueId, int amount) {
@@ -1138,7 +1143,7 @@ Action Actions::RitualDaggerAction(int idx, int damage, std::int16_t uniqueId, i
         }
 
         bc.checkCombat();
-    }};
+    }, false};
 }
 
 Action Actions::SecondWindAction(int blockPerCard) {
@@ -1220,5 +1225,5 @@ Action Actions::AttackAllMonsterRecursive(DamageMatrix matrix, int timesRemainin
             bc.addToTop(AttackAllMonsterRecursive(matrix, timesRemaining-1));
         }
         Actions::AttackAllEnemy(matrix).actFunc(bc);
-    }};
+    }, false};
 }

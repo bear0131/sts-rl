@@ -810,32 +810,11 @@ void BattleContext::executeActions() {
             break;
         }
 
-        // SAFETY RECONCILE (temporary; see doc/day_0623): monstersAlive is the
-        // authoritative victory counter (die() decrements it and declares
-        // PLAYER_VICTORY at 0). A slime split can leave it out of sync with the
-        // real alive count in arr[] — it sticks above 0 while every monster is
-        // actually dead, so victory never fires and the engine spins forever
-        // damaging corpses (-> "was dead when damaged" dump spam -> a worker
-        // segfault that deadlocks SubprocVecEnv). When the queues are idle and
-        // NOTHING in arr[] is still in play, declare the win we missed. A
-        // monster counts as "in play" if it still has HP, or is halfDead and so
-        // pending a rebirth (Awakened One stage 1 / Darkling REGROW) — we must
-        // NOT steal victory during that window. In a healthy combat this is
-        // unreachable (die() would already have ended it), so the normal path —
-        // and its RNG stream — is untouched.
-        {
-            bool anyInPlay = false;
-            for (int i = 0; i < monsters.monsterCount; ++i) {
-                if (monsters.arr[i].isAlive() || monsters.arr[i].isHalfDead()) {
-                    anyInPlay = true;
-                    break;
-                }
-            }
-            if (!anyInPlay) {
-                monsters.monstersAlive = 0;
-                outcome = Outcome::PLAYER_VICTORY;
-                break;
-            }
+        // Use the same explicit death/escape/rebirth predicate as damage and
+        // target selection; do not silently rewrite a cached count to win.
+        if (monsters.areMonstersBasicallyDead()) {
+            outcome = Outcome::PLAYER_VICTORY;
+            break;
         }
 
         if (monsterTurnIdx < monsters.monsterCount) {

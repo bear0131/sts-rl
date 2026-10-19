@@ -627,7 +627,7 @@ HIT_REACTION_CONTRACTS = {
     'DamageAction.update': {
         'native': 'Actions::AttackPlayer / DamagePlayer; VampireDamageAction is a separate implementation',
         'guard': 'NORMAL attack cancels for dying/halfDead source; THORNS retaliation does not use that source guard',
-        'queue': 'each hit checked when executed; other damage/block victory-filter classifications still BRIDGE34',
+        'queue': 'each hit checked when executed; DAMAGE victory-filter classification in COMBAT_VICTORY_ACTION_CONTRACTS',
     },
     'Whirlwind.use/WhirlwindAction.update': {
         'native': 'BattleContext::useAttackCard / Actions::WhirlwindAction / AttackAllMonsterRecursive',
@@ -650,6 +650,44 @@ CARD_DAMAGE_TIMING_CONTRACTS = {
     'DROPKICK': {'java': 'Dropkick.use / DropkickAction', 'native': 'calculateCardDamage / DropkickAction', 'capture': 'DamageInfo at use; Vulnerable checked at action update, even for a non-null dead target'},
     'SWORD_BOOMERANG': {'java': 'SwordBoomerang.use / AttackDamageRandomEnemyAction', 'native': 'SwordBoomerangAction', 'capture': 'choose target and recalculate each hit with actual card instance; queued Vigor removal follows hits'},
     'FIEND_FIRE': {'java': 'FiendFire.use / FiendFireAction / ExhaustAction', 'native': 'FiendFireAction / ExhaustRandomCardInHand', 'capture': 'damage at use, hit count from hand at action update; exhaust each random card before hits, anyNumber=true even for the last card'},
+}
+
+
+# Java GameActionManager.clearPostCombatActions is a class/type rule, not an
+# action-name or general BLOCK rule. This is the source-audited BRIDGE36 batch;
+# the full Java action-queue transport is still incomplete (BRIDGE28).
+COMBAT_VICTORY_ACTION_CONTRACTS = {
+    'DamageAction': {'native': 'AttackEnemy/DamageEnemy/AttackPlayer/DamagePlayer', 'keep': True, 'reason': 'ActionType.DAMAGE'},
+    'DamageAllEnemiesAction': {'native': 'AttackAllEnemy/DamageAllEnemy/AttackAllMonsterRecursive', 'keep': True, 'reason': 'ActionType.DAMAGE; recursive helper represents already-enqueued waves'},
+    'DamageRandomEnemyAction': {'native': 'DamageRandomEnemy', 'keep': True, 'reason': 'ActionType.DAMAGE; select target then queue DamageEnemy at top'},
+    'VampireDamageAction': {'native': 'VampireAttack', 'keep': True, 'reason': 'ActionType.DAMAGE, distinct from NORMAL DamageAction source guard'},
+    'VampireDamageAllEnemiesAction': {'native': 'ReaperAction', 'keep': True, 'reason': 'ActionType.DAMAGE'},
+    'FeedAction': {'native': 'FeedAction', 'keep': True, 'reason': 'ActionType.DAMAGE'},
+    'GreedAction': {'native': 'HandOfGreedAction', 'keep': True, 'reason': 'ActionType.DAMAGE'},
+    'RitualDaggerAction': {'native': 'RitualDaggerAction', 'keep': True, 'reason': 'ActionType.DAMAGE'},
+    'SuicideAction': {'native': 'SuicideAction', 'keep': True, 'reason': 'ActionType.DAMAGE; bypass damage and do not itself filter queue'},
+    'GainBlockAction': {'native': 'GainBlock/MonsterGainBlock', 'keep': True, 'reason': 'explicit class exception; dying/dead recipient rejects block at execution'},
+    'HealAction': {'native': 'HealPlayer', 'keep': True, 'reason': 'explicit class exception'},
+    'UseCardAction': {'native': 'OnAfterCardUsed/TimeEaterPlayCardQueueItem', 'keep': True, 'reason': 'explicit class exception'},
+    'DropkickAction': {'native': 'DropkickAction', 'keep': False, 'reason': 'BLOCK type is not the GainBlockAction class'},
+    'FiendFireAction': {'native': 'FiendFireAction', 'keep': False, 'reason': 'WAIT setup; already-enqueued DamageAction hits are different'},
+    'WhirlwindAction': {'native': 'WhirlwindAction', 'keep': False, 'reason': 'SPECIAL setup; already-enqueued AOE waves are different'},
+    'AttackDamageRandomEnemyAction': {'native': 'SwordBoomerangAction', 'keep': False, 'reason': 'default action type; not DamageRandomEnemyAction'},
+    'EscapeAction': {'native': 'EscapeAction', 'keep': False, 'reason': 'TEXT; no independent victory filtering'},
+    'ApplyPowerToRandomEnemyAction': {'native': 'The Specimen queued random-target callback', 'keep': False, 'reason': 'default type; captured Poison then cardRandomRng and top ApplyPower'},
+    'MakeTempCardInHandAction/MakeTempCardInDiscardAction': {'native': 'returnStasisCard queued callback', 'keep': False, 'reason': 'CARD_MANIPULATION; no immediate card return from onDeath'},
+}
+
+MONSTER_DEATH_CONTRACTS = {
+    'BRONZE_AUTOMATON': {'java': 'BronzeAutomaton.die', 'queue': 'top Suicide for each not-dead/not-dying slot after base death callbacks'},
+    'THE_COLLECTOR': {'java': 'TheCollector.die', 'queue': 'top Suicide for each not-dead/not-dying slot after base death callbacks'},
+    'REPTOMANCER': {'java': 'Reptomancer.die', 'queue': 'top Suicide for each not-dead/not-dying slot after base death callbacks'},
+    'GREMLIN_LEADER': {'java': 'GremlinLeader.die', 'queue': 'bottom Escape for each not-dying slot; preserve intervening effects'},
+    'AWAKENED_ONE': {'java': 'AwakenedOne.damage/die', 'queue': 'first life prevents victory and queues top ClearCardQueue; final death queues bottom Escape for remaining Cultists; full revival/root flags still BRIDGE37'},
+    'target_group': {'java': 'MonsterGroup.getRandomMonster', 'queue': 'sample actual non-halfDead/non-dying/non-escaping slots; none means no target and no RNG, never fallback to last slot'},
+    'StasisPower': {'java': 'StasisPower.onDeath / MakeTempCard actions', 'queue': 'choose hand-vs-discard at death; return same-UID stat-equivalent copy later; hand action may overflow at execution'},
+    'TheSpecimen': {'java': 'TheSpecimen.onMonsterDeath / ApplyPowerToRandomEnemyAction', 'queue': 'only actual Poison and remaining battle; capture amount, later random target; never open player selection'},
+    'GremlinHorn/SporeCloud/CorpseExplosion': {'java': 'onMonsterDeath/onDeath', 'queue': 'guard actual battle-ending condition; do not stop all death processing solely on MINION_LEADER'},
 }
 
 

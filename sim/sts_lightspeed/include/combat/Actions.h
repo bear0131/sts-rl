@@ -42,7 +42,7 @@ namespace sts {
         template <MonsterStatus> static Action DebuffAllEnemy(int amount, bool isSourceMonster=true);
 
 
-        // todo, action and damage actions should clear certain actions from the queue if the player kills all enemies
+        // Java DAMAGE actions survive clearPostCombatActions.
         static Action AttackEnemy(int idx, int damage);
 
         // Card multiDamage is captured at use, not recalculated at settlement.
@@ -150,6 +150,7 @@ namespace sts {
         static Action IncreaseOrbSlots(int count);
 
         static Action SuicideAction(int monsterIdx, bool triggerRelics);
+        static Action EscapeAction(int monsterIdx);
 
         static Action PoisonLoseHpAction();
         static Action RemovePlayerDebuffs(); // Orange Pellets Relic

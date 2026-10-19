@@ -286,57 +286,103 @@ void Monster::addBlock(int amount) {
 }
 
 void Monster::die(BattleContext &bc) {
-    --bc.monsters.monstersAlive;
+    if (!isEscaping()) --bc.monsters.monstersAlive;
 
     if (id == MonsterId::AWAKENED_ONE && !miscInfo) { // is awakened one stage 1 // todo change to status
         halfDead = true;
-        removeDebuffs();
-        removeStatus<MS::CURIOSITY>();
-        setMove(MonsterMoveId::AWAKENED_ONE_REBIRTH);
-        bc.cardQueue.clear();
-
-    } else if (bc.monsters.monstersAlive == 0 || hasStatus<MS::MINION_LEADER>()) {
-//            bc.cleanCardQueue(); // todo should this really return like this?
-        bc.outcome = Outcome::PLAYER_VICTORY;
-        return;
     }
 
-    if (hasStatus<MS::SPORE_CLOUD>()) {
-        // spore cloud always has a value of 2 in game
-        bc.addToTop( Actions::DebuffPlayer<PS::VULNERABLE>(2, bc.turnHasEnded) );
+    const bool battleEnding = bc.monsters.areMonstersBasicallyDead();
+    if (battleEnding && bc.outcome == Outcome::UNDECIDED) {
+        bc.outcome = Outcome::PLAYER_VICTORY;
+    }
 
-    } else if (hasStatus<MS::REGROW>()) {
-        resetAllStatusEffects();
-        setMove(MMID::DARKLING_REGROW);
-        halfDead = true;
+    if (hasStatus<MS::SPORE_CLOUD>() && !battleEnding) {
+        bc.addToTop(Actions::DebuffPlayer<PS::VULNERABLE>(getStatus<MS::SPORE_CLOUD>(), true));
+    }
 
-    } else if (hasStatus<MS::STASIS>()) {
+    if (hasStatus<MS::STASIS>()) {
         returnStasisCard(bc);
     }
 
-    if (hasStatus<MS::CORPSE_EXPLOSION>()) {
+    if (hasStatus<MS::CORPSE_EXPLOSION>() && !battleEnding) {
         int damage = maxHp * getStatus<MS::CORPSE_EXPLOSION>();
         bc.addToBot( Actions::DamageAllEnemy(damage) );
     }
 
-    if (bc.player.hasRelic<RelicId::GREMLIN_HORN>()) {
+    if (bc.player.hasRelic<RelicId::GREMLIN_HORN>() && !battleEnding) {
         bc.addToBot( Actions::GainEnergy(1) );
         bc.addToBot( Actions::DrawCards(1) );
     }
 
-    if (bc.player.hasRelic<RelicId::THE_SPECIMEN>()) {
-        bc.addToBot( Actions::SetState(InputState::SELECT_ENEMY_THE_SPECIMEN_APPLY_POISON) );
+    if (bc.player.hasRelic<RelicId::THE_SPECIMEN>() && hasStatus<MS::POISON>() && !battleEnding) {
+        const int poisonAmount = getStatus<MS::POISON>();
+        bc.addToBot({[poisonAmount](BattleContext &ctx) {
+            const int target = ctx.monsters.getRandomMonsterIdx(ctx.cardRandomRng, true);
+            if (target >= 0) ctx.addToTop(Actions::DebuffEnemy<MS::POISON>(target, poisonAmount, false));
+        }});
+    }
+
+    // Darkling invokes death callbacks before removing its powers.
+    if (hasStatus<MS::REGROW>() && !battleEnding) {
+        resetAllStatusEffects();
+        setMove(MMID::DARKLING_REGROW);
+        halfDead = true;
+    }
+
+    if (id == MonsterId::AWAKENED_ONE && !miscInfo) {
+        // The first-life death callbacks see the original Poison/debuffs.
+        // ClearCardQueue is queued at top, not executed inside the hit.
+        bc.addToTop(Actions::ClearCardQueue());
+        removeDebuffs();
+        removeStatus<MS::CURIOSITY>();
+        setMove(MonsterMoveId::AWAKENED_ONE_REBIRTH);
+    }
+
+    // These callbacks enqueue effects after the current damage action. In
+    // particular, an AOE still hits the remaining slots before these execute.
+    if (id == MonsterId::BRONZE_AUTOMATON || id == MonsterId::THE_COLLECTOR ||
+        id == MonsterId::REPTOMANCER) {
+        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+            if (!bc.monsters.arr[i].isDying()) {
+                bc.addToTop(Actions::SuicideAction(i, true));
+            }
+        }
+    } else if (id == MonsterId::GREMLIN_LEADER ||
+               (id == MonsterId::AWAKENED_ONE && miscInfo)) {
+        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+            const auto &other = bc.monsters.arr[i];
+            if (!other.isDying() &&
+                (id == MonsterId::GREMLIN_LEADER || other.id == MonsterId::CULTIST)) {
+                bc.addToBot(Actions::EscapeAction(i));
+            }
+        }
     }
 }
 
-void Monster::suicideAction(BattleContext &bc) {
+void Monster::suicideAction(BattleContext &bc, bool triggerRelics) {
     if (!isAlive()) {
         return;
     }
 
-    --bc.monsters.monstersAlive;
     curHp = 0;
-    if (bc.monsters.monstersAlive == 0) {
+    if (triggerRelics) {
+        die(bc);
+        return;
+    }
+    if (!isEscaping()) --bc.monsters.monstersAlive;
+    if (bc.monsters.areMonstersBasicallyDead() && bc.outcome == Outcome::UNDECIDED) {
+        bc.outcome = Outcome::PLAYER_VICTORY;
+    }
+}
+
+void Monster::escape(BattleContext &bc) {
+    // A previously queued escape can execute after another action killed its
+    // target. Mark escaping, but never decrement the living count twice.
+    const bool wasTargetable = isTargetable();
+    isEscapingB = true;
+    if (wasTargetable) --bc.monsters.monstersAlive;
+    if (bc.monsters.areMonstersBasicallyDead() && bc.outcome == Outcome::UNDECIDED) {
         bc.outcome = Outcome::PLAYER_VICTORY;
     }
 }

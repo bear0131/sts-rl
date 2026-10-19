@@ -3,6 +3,7 @@
 //
 
 #include <algorithm>
+#include <stdexcept>
 #include "combat/Monster.h"
 #include "game/Random.h"
 #include "combat/BattleContext.h"
@@ -181,7 +182,7 @@ void Monster::preBattleAction(BattleContext &bc) {
             break;
 
         case MonsterId::FUNGI_BEAST:    // game adds SporeCloudPower
-            buff<MS::SPORE_CLOUD>(2); // the value here isn't used. it is always 2
+            buff<MS::SPORE_CLOUD>(2);
             break;
 
         case MonsterId::AWAKENED_ONE:
@@ -901,11 +902,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 #ifdef sts_asserts
       assert(curHp > 0);
 #endif
-            isEscapingB = true;
-            bc.monsters.monstersAlive--;
-            if (bc.monsters.getAliveCount() == 0) {
-                bc.outcome = Outcome::PLAYER_VICTORY;
-            }
+            bc.addToBot(Actions::EscapeAction(idx));
             break;
         }
 
@@ -946,11 +943,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 #ifdef sts_asserts
             assert(curHp > 0);
 #endif
-            isEscapingB = true;
-            bc.monsters.monstersAlive--;
-            if (bc.monsters.getAliveCount() == 0) {
-                bc.outcome = Outcome::PLAYER_VICTORY;
-            }
+            bc.addToBot(Actions::EscapeAction(idx));
             break;
         }
 
@@ -1875,6 +1868,8 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         }
 #endif
         case MMID::GENERIC_ESCAPE_MOVE:
+            bc.addToBot(Actions::EscapeAction(idx));
+            break;
         default:
             break;
     }
@@ -3558,18 +3553,26 @@ void Monster::stasisAction(BattleContext &bc) {
 
 
 void Monster::returnStasisCard(BattleContext &bc) {
-    auto &stasisCard = bc.cards.stasisCards[std::min(idx,1)];
-
-#ifdef sts_asserts
-    if (stasisCard.id == CardId::INVALID) {
-        std::cerr << bc.seed << " " << bc.loopCount << " stasis card invalid" << idx << "\n" << bc << std::endl;
+    const int slot = std::min(idx, 1);
+    if (bc.cards.stasisCards[slot].id == CardId::INVALID) {
+        throw std::logic_error("Stasis death callback has no captured card");
     }
-    assert(stasisCard.id != CardId::INVALID);
-#endif
-
-    bc.cards.notifyAddCardToCombat(stasisCard);
-    bc.moveToHandHelper(stasisCard);
-    stasisCard = {CardId::INVALID};
+    // StasisPower chooses the action at death, but MakeTempCard copies and
+    // returns it later. A hand action may overflow then; a discard action
+    // chosen for an initially full hand must remain a discard action.
+    const bool toDiscard = bc.cards.cardsInHand == 10;
+    bc.addToBot({[slot, toDiscard](BattleContext &ctx) {
+        auto &original = ctx.cards.stasisCards[slot];
+        if (original.id == CardId::INVALID) {
+            throw std::logic_error("pending Stasis return lost its captured card");
+        }
+        auto card = original.makeStatEquivalentCopy();
+        card.uniqueId = original.uniqueId;
+        original = {CardId::INVALID};
+        ctx.cards.notifyAddCardToCombat(card);
+        if (toDiscard) ctx.cards.moveToDiscardPile(card);
+        else ctx.moveToHandHelper(card);
+    }});
 }
 
 void reptoSummonHelper(const BattleContext &bc, int daggerIdxs[2], int daggerCount) {
