@@ -9,6 +9,23 @@ from copy import deepcopy
 
 
 # native semantic ID, public label aliases, expected effect type
+def first_two_match_slots(available_slots):
+    """User-authorized fixed helper; takes public slot availability, never faces.
+
+    Slot numbers retain board order even when matched cards disappear. The
+    caller must wait for the previous pair's ACK before requesting another pair.
+    This is not a model action and does not enable the unsupported Mod transport.
+    """
+    slots = list(available_slots)
+    if any(type(slot) is not int or not 0 <= slot < 12 for slot in slots):
+        raise ValueError('Match slots must be integer board positions 0..11')
+    if len(set(slots)) != len(slots):
+        raise ValueError('Duplicate Match slot')
+    if len(slots) < 2:
+        raise ValueError('Match pair requires two available slots')
+    return tuple(sorted(slots)[:2])
+
+
 CONTRACTS = {
     "The Woman in Blue": [(0, '买1瓶药水|Buy 1 Potion', 'woman_potions_1'),
                           (1, '买2瓶药水|Buy 2 Potions', 'woman_potions_2'),
