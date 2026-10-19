@@ -54,6 +54,8 @@ namespace sts {
         static Action DamageAllEnemy(int damage); // todo maybe need to add boolean isPlayerOwner
 
         static Action AttackPlayer(int idx, int damage);
+        static Action RecordStolenGold(int idx, int goldAmount);
+        static Action StealingAttackPlayer(int idx, int damage, int goldAmount);
         static Action DamagePlayer(int damage, bool selfDamage=false);
         
         static Action VampireAttack(int damage); // only used by shelled parasite
@@ -84,6 +86,7 @@ namespace sts {
         static Action ShuffleTempCardIntoDrawPile(CardId id, int count=1);
 
         static Action PlayTopCard(int monsterTargetIdx, bool exhausts);
+        static Action MayhemPlayTopCard();
         static Action MakeTempCardInHand(CardId card, bool upgraded= false, int amount = 1);
         static Action MakeTempCardInHand(CardInstance c, int amount = 1);
         static Action MakeTempCardInDrawPile(const CardInstance &c, int amount, bool shuffleInto);
@@ -99,6 +102,7 @@ namespace sts {
         static Action RestoreRetainedCards(int count);
 
         static Action UnnamedEndOfTurnAction();
+        static Action EndTurnAction();
         static Action MonsterStartTurnAction();
         static Action TriggerEndOfTurnOrbsAction();
 

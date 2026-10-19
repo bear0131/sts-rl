@@ -907,8 +907,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         }
 
         case MMID::LOOTER_LUNGE: {// 4
-            stealGoldFromPlayer(bc, getStatus<MS::THIEVERY>());
-            attackPlayerHelper(bc, asc2 ? 14 : 12);
+            queueThiefAttack(bc, asc2 ? 14 : 12);
             setMove(MMID::LOOTER_SMOKE_BOMB);
             break;
         }
@@ -917,8 +916,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             if (bc.getMonsterTurnNumber() == 1) {
                 bc.aiRng.randomBoolean(0.6f); // for a dialog message in game
             }
-            stealGoldFromPlayer(bc, getStatus<MS::THIEVERY>());
-            attackPlayerHelper(bc, asc2 ? 11 : 10);
+            queueThiefAttack(bc, asc2 ? 11 : 10);
             if (bc.getMonsterTurnNumber() == 1) {
                 setMove(MMID::LOOTER_MUG);
 
@@ -949,8 +947,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::MUGGER_LUNGE: { // 4
             bc.aiRng.random(2); // for a dialog message in gam
-            stealGoldFromPlayer(bc, getStatus<MS::THIEVERY>());
-            attackPlayerHelper(bc, asc2 ? 18 : 16);
+            queueThiefAttack(bc, asc2 ? 18 : 16);
             setMove(MMID::MUGGER_SMOKE_BOMB);
             break;
         }
@@ -960,8 +957,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             if (bc.getMonsterTurnNumber() == 2) {
                 bc.aiRng.randomBoolean(0.6f); // for a dialog message in game
             }
-            stealGoldFromPlayer(bc, getStatus<MS::THIEVERY>());
-            attackPlayerHelper(bc, asc2 ? 11 : 10);
+            queueThiefAttack(bc, asc2 ? 11 : 10);
 
             if (bc.getMonsterTurnNumber() == 2) {
                 const auto nextMove = bc.aiRng.randomBoolean(0.5f) ?
@@ -3332,13 +3328,13 @@ void Monster::initSpawnedMonster(BattleContext &bc, const MonsterId monsterId, c
     rollMove(bc);
 }
 
-void Monster::stealGoldFromPlayer(BattleContext &bc, int amount) {
-    const auto theftAmount = std::min(static_cast<int>(bc.player.gold), amount);
-    if (theftAmount > 0) {
-        miscInfo += theftAmount;
-        bc.player.gold -= theftAmount;
-        bc.setRequiresStolenGoldCheck(true);
-    }
+void Monster::queueThiefAttack(BattleContext &bc, int baseDamage) {
+    // Both stock thieves initialize their private goldAmt from ascension.
+    // It is not the removable display ThieveryPower's current amount.
+    const int goldAmount = bc.ascension >= 17 ? 20 : 15;
+    const int damage = calculateDamageToPlayer(bc, baseDamage);
+    bc.addToBot(Actions::RecordStolenGold(idx, goldAmount));
+    bc.addToBot(Actions::StealingAttackPlayer(idx, damage, goldAmount));
 }
 
 void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType, int placeIdx, const int hp) {

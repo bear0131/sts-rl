@@ -187,7 +187,7 @@ struct Monster {
 
         // monster specific functions
 
-        void stealGoldFromPlayer(BattleContext &bc, int amount);
+        void queueThiefAttack(BattleContext &bc, int baseDamage);
         static void largeSlimeSplit(BattleContext &bc, MonsterId mediumSlimeType, int placeIdx, int hp);
         static void slimeBossSplit(BattleContext &bc, int hp);
         void spawnBronzeOrbs(BattleContext &bc); // Bronze Automaton

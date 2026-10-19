@@ -69,6 +69,28 @@ Action Actions::AttackPlayer(int idx, int damage) {
     }, false};
 }
 
+Action Actions::RecordStolenGold(int idx, int goldAmount) {
+    // Looter$1/$2 and Mugger$1/$2 do bookkeeping only. It is evaluated
+    // after earlier queued effects, and is not the DAMAGE action below.
+    return {[=] (BattleContext &bc) {
+        const int amount = std::min(static_cast<int>(bc.player.gold), goldAmount);
+        if (amount > 0) {
+            bc.monsters.arr[idx].miscInfo += amount;
+            bc.setRequiresStolenGoldCheck(true);
+        }
+    }};
+}
+
+Action Actions::StealingAttackPlayer(int idx, int damage, int goldAmount) {
+    return {[=] (BattleContext &bc) {
+        // DamageAction cancels before stealing if its source is gone. Its
+        // anonymous predecessor has no such source guard and can have run.
+        if (bc.monsters.arr[idx].isDeadOrEscaped()) return;
+        bc.player.gold -= std::min(static_cast<int>(bc.player.gold), goldAmount);
+        bc.player.attacked(bc, idx, damage);
+    }, false}; // DamageAction survives clearPostCombatActions.
+}
+
 Action Actions::DamagePlayer(int damage, bool selfDamage) {
     return {[=] (BattleContext &bc) {
         bc.player.damage(bc, damage, selfDamage);
@@ -205,6 +227,16 @@ Action Actions::PlayTopCard(int monsterTargetIdx, bool exhausts) {
     }};
 }
 
+Action Actions::MayhemPlayTopCard() {
+    return {[] (BattleContext &bc) {
+        // MayhemPower$1 samples only when this wrapper executes, then appends
+        // PlayTopCardAction behind the remaining start-of-turn actions. Do not
+        // move the RNG call to power activation or play the card immediately.
+        const int target = bc.monsters.getRandomMonsterIdx(bc.cardRandomRng, true);
+        bc.addToBot(Actions::PlayTopCard(target, false));
+    }};
+}
+
 
 // todo fix the arguments are used wrongly all over ? what did this mean
 // todo check for master reality
@@ -291,22 +323,26 @@ Action Actions::RestoreRetainedCards(int count) {
 }
 
 Action Actions::UnnamedEndOfTurnAction() {
-    // EndTurnAction does this:
-    //        AbstractDungeon.player.resetControllerValues();
-    //        this.turnHasEnded = true;
-    //        playerHpLastTurn = AbstractDungeon.player.currentHealth;
-
-    return {[=] (BattleContext &bc) {
-        bc.turnHasEnded = true;
+    return {[] (BattleContext &bc) {
+        // AbstractRoom$1 appends EndTurnAction. Existing queued callbacks
+        // must still see turnHasEnded=false until that second action runs.
+        bc.addToBot(Actions::EndTurnAction());
+        // Java's intervening WaitAction has no simulation-state effect.
         if (!bc.skipMonsterTurn) {
             bc.addToBot(Actions::MonsterStartTurnAction());
-            bc.monsterTurnIdx = 0; // monstergroup preincrements this
         }
+    }};
+}
+
+Action Actions::EndTurnAction() {
+    return {[] (BattleContext &bc) {
+        bc.turnHasEnded = true;
     }};
 }
 
 Action Actions::MonsterStartTurnAction() {
     return {[] (BattleContext &bc) {
+        bc.monsterTurnIdx = 0;
         bc.monsters.applyPreTurnLogic(bc);
     }};
 }
