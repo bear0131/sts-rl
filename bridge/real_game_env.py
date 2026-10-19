@@ -53,61 +53,13 @@ from bridge.schemas.entity_ids import (
     SIMULATOR_PARITY_EXPORT_VERSION,
     native_relic_counter,
     native_combat_relic_counter,
-    NEOW_BONUS_IDS,
-    NEOW_DRAWBACK_IDS,
-    NEOW_IMPLICIT_DRAWBACK_IDS,
     neow_option_from_types,
+    NEOW_SCREEN_CONTRACTS,
     UNSUPPORTED_REAL_RELIC_IDS,
     UNSUPPORTED_SELECTION_SOURCES,
 )
 
 LOG = logging.getLogger(__name__)
-
-
-def _neow_option_from_text(text: str) -> dict[str, int]:
-    """Decode stock English/zh-CN Neow labels into the native enum contract.
-
-    CommunicationMod exports text, not the simulator's bonus/drawback IDs.
-    Unknown translations must fail rather than become a valid all-zero offer.
-    """
-    s = re.sub(r'\s+', '', re.sub(r'#[a-zA-Z]', '', text)).lower()
-    if any(x in s for x in ('loseyourstartingrelic', 'loseyourstarterrelic', '失去你的初始遗物')):
-        drawback = 6
-    elif 'loseallgold' in s or '失去所有金币' in s:
-        drawback = 3
-    elif 'obtainacurse' in s or '得到一张诅咒' in s:
-        drawback = 4
-    elif re.search(r'lose\d+maxhp|失去\d+最大生命', s):
-        drawback = 2
-    elif re.search(r'take\d+damage|受到\d+点伤害', s):
-        drawback = 5
-    else:
-        drawback = 1
-    patterns = (
-        (18, r'bossrelic|boss遗物'),
-        (11, r'rarecolorlesscard|稀有无色牌'),
-        (5, r'colorlesscard|无色牌'),
-        (12, r'remove(?:2|two)cards|去除2张牌'),
-        (16, r'transform(?:2|two)cards|变化2张牌'),
-        (14, r'chooseararecard|选择并获得一张稀有牌'),
-        (1, r'randomrarecard|随机获得一张稀有牌'),
-        (13, r'rarerelic|稀有遗物'),
-        (7, r'commonrelic|普通遗物'),
-        (6, r'(?:3|three)(?:random)?potions|3瓶药水'),
-        (9, r'nextthreecombats|neow.s lament|接下来3场战斗'),
-        (15, r'(?:obtain|gain)250gold|获得250金币'),
-        (10, r'(?:obtain|gain)100gold|获得100金币'),
-        (2, r'removeacard|从牌组中移除一张牌'),
-        (3, r'upgradeacard|升级一张牌'),
-        (4, r'transformacard|变化一张牌'),
-        (0, r'chooseacard|选择并获得一张牌'),
-    )
-    bonus = next((value for value, pattern in patterns if re.search(pattern, s)), None)
-    if bonus is None and re.search(r'maxhp\+|最大生命(?:值)?\+', s):
-        bonus = 8 if drawback == 1 else 17
-    if bonus is None or (bonus == 18) != (drawback == 6):
-        raise ValueError(f'unsupported Neow option text: {text!r}')
-    return {'bonus_id': bonus, 'drawback_id': drawback}
 
 
 _SCREEN_PHASE = SCREEN_PHASES
@@ -319,6 +271,7 @@ _COMBAT_COUNTER_KEYS = {
     "Nunchaku": "nunchaku",
     "Pen Nib": "pen_nib",
     "Sundial": "sundial",
+    "NeowsBlessing": "neow_lament",
 }
 
 
@@ -883,8 +836,17 @@ class RealGameAdapter:
             dialogue = event_contract.transport_only(self.gs)
             if dialogue is not None:
                 return f"CHOOSE {dialogue}", "event_dialogue_transport"
-            if _normalize_event(ss.get("event_id")) == "NEOW" and len(cl) == 1:
-                return "CHOOSE 0", "neow_intro"
+            if _normalize_event(ss.get("event_id")) == "NEOW":
+                stage = _required(self.gs, "simulator_neow_screen", context="Neow screen")
+                if type(stage) is not int or stage not in NEOW_SCREEN_CONTRACTS:
+                    raise ValueError(f"unknown Neow screen keyword: {stage!r}")
+                role = NEOW_SCREEN_CONTRACTS[stage]
+                if role.startswith("unsupported_"):
+                    raise ValueError(f"Neow screen is explicitly unsupported: {stage}/{role}")
+                if role.endswith("_transport"):
+                    if len(cl) != 1:
+                        raise ValueError("Neow dialogue transport requires exactly one choice")
+                    return "CHOOSE 0", "neow_intro"
 
         if auto_enter_shop and st == "SHOP_ROOM":
             if self._leaving_shop:
@@ -1344,29 +1306,25 @@ class RealGameAdapter:
         return actual
 
     def _neow_options(self, ss: dict[str, Any]) -> list[dict[str, int]]:
-        raw = _list_alias_value(ss, "options", "rewards", context="Neow screen")
-        if len(raw) != A.NEOW_W:
-            raise ValueError(
-                f"Neow must expose exactly {A.NEOW_W} offers, got {len(raw)}"
-            )
+        if _required(self.gs, "simulator_neow_screen", context="Neow screen") != 3:
+            raise ValueError("Neow policy offers requested outside the blessing screen")
+        raw = _list_value(self.gs, "simulator_neow_options", context="Neow screen")
+        if len(raw) not in (2, A.NEOW_W) or len(raw) != len(self.choices()):
+            raise ValueError("Neow typed offers do not exactly cover the two/four UI choices")
         out = []
-        for item in _dict_records(raw, context="Neow offers"):
-            if "bonus_type" in item or "drawback_type" in item:
-                out.append(neow_option_from_types(
-                    _required(item, "bonus_type", context="Neow offer"),
-                    _required(item, "drawback_type", context="Neow offer"),
-                ))
-            elif "bonus_id" in item and "drawback_id" in item:
-                bonus, drawback = item["bonus_id"], item["drawback_id"]
-                if (type(bonus) is not int or bonus not in NEOW_BONUS_IDS.values()
-                        or type(drawback) is not int or drawback not in
-                        (*NEOW_DRAWBACK_IDS.values(), *NEOW_IMPLICIT_DRAWBACK_IDS.values())
-                        or (bonus == NEOW_BONUS_IDS["BOSS_RELIC"]) != (drawback == 6)):
-                    raise ValueError(f"Neow IDs outside the explicit word table: {bonus!r}/{drawback!r}")
-                out.append({"bonus_id": bonus, "drawback_id": drawback})
-            else:
-                label = _required(item, "text", "label", context="Neow offer")
-                out.append(_neow_option_from_text(str(label)))
+        for index, item in enumerate(_dict_records(raw, context="Neow offers")):
+            if type(item.get("choice_index")) is not int or item["choice_index"] != index:
+                raise ValueError("Neow typed choice index is missing, reordered or duplicated")
+            option = neow_option_from_types(
+                _required(item, "bonus_type", context="Neow offer"),
+                _required(item, "drawback_type", context="Neow offer"),
+            )
+            unit = _required(item, "hp_unit", context="Neow offer")
+            maximum = _required(self.gs, "max_hp", context="game_state")
+            if type(unit) is not int or type(maximum) is not int or unit != maximum // 10:
+                raise ValueError("Neow cached HP unit differs from the supported current-maxHP contract")
+            option["hp_unit"] = unit
+            out.append(option)
         return out
 
     def _map_nodes(self) -> list[tuple[int, str]]:
@@ -1885,8 +1843,8 @@ class RealGameAdapter:
             ss, "event_id", context="event screen"
         ))
         n = len(self.choices())
-        if event == "NEOW" and n >= A.NEOW_W:
-            return [ga.neow(i) for i in range(A.NEOW_W)]
+        if event == "NEOW":
+            return [ga.neow(i) for i in range(len(self._neow_options(ss)))]
         return [ga.event(i) for i in sorted(self._event_option_mapping())]
 
     def _legal_card_select_actions(self) -> list[tuple]:

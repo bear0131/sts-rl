@@ -115,8 +115,8 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 6 or layout.get("observation_version") != encode.OBS_VERSION:
-        raise RuntimeError("observation v20 requires matching native compact layout v6; rebuild the simulator")
+    if layout.get("version") != 7 or layout.get("observation_version") != encode.OBS_VERSION:
+        raise RuntimeError("observation v20 requires matching native compact layout v7; rebuild the simulator")
     from bridge.schemas.entity_ids import (
         LIVE_RELIC_STATE_FIELDS, LIVE_RELIC_COUNTER_MODULI, LIVE_RELIC_COUNTER_STOP_TURNS,
     )
@@ -125,7 +125,7 @@ def _nosl_compact_lut():
         raise RuntimeError("native live-relic flag word table is incomplete or reordered")
     live_relics = tuple(encode._LIVE_RELIC_COUNTER)
     live_counter_columns = tuple(
-        -4 if name == "Pocketwatch" else encode.COMBAT_COUNTER_KEYS.index(encode._LIVE_RELIC_COUNTER[name])
+        -5 if name == "NeowsBlessing" else -4 if name == "Pocketwatch" else encode.COMBAT_COUNTER_KEYS.index(encode._LIVE_RELIC_COUNTER[name])
         if name not in live_relic_names and encode._LIVE_RELIC_COUNTER[name] != "$turn" else
         -3 if encode._LIVE_RELIC_COUNTER[name] == "$turn" else -1 - live_relic_names.index(name)
         for name in live_relics
@@ -1530,7 +1530,7 @@ class SlayTheSpireEnv(gym.Env):
         ms = int(layout["monster_status_count"])
         card_count = int(layout["card_count"])
         expected_cat = 10 + 5 + 5 + 5 + 5 + 1 + 193
-        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192 + 3
+        expected_scalar = 6 + ps + encode.COMBAT_COUNTERS + 1 + 5 * 6 + 5 * ms + 10 * 2 + card_count * 3 + 4 + 192 + 4
         if (categorical.shape[1] != expected_cat or
                 scalars.shape[1] != expected_scalar):
             raise RuntimeError(
@@ -1620,23 +1620,25 @@ class SlayTheSpireEnv(gym.Env):
         out["player_buffs"][:, target] = player_status[:, native] / encode.BUFF_SCALE
         counter_start = 6 + ps
         counters = f[:, counter_start:counter_start + encode.COMBAT_COUNTERS]
-        live_flags = f[:, -3:-1]
+        live_flags = f[:, -4:-2]
         if np.any((live_flags != 0.0) & (live_flags != 1.0)):
             raise RuntimeError("native packed live-relic flag is not boolean")
-        pocketwatch = f[:, -1]
+        pocketwatch = f[:, -2]
         if (not np.all(np.isfinite(pocketwatch)) or np.any(pocketwatch < 0)
                 or np.any(pocketwatch != np.rint(pocketwatch))):
             raise RuntimeError("native packed Pocketwatch counter is not a nonnegative integer")
+        if np.any(~np.isin(f[:, -1], np.arange(4))):
+            raise RuntimeError("native packed Neow remainder is outside 0..3")
         for relic_id, column, modulo, stop in zip(lut["live_relic_ids"], lut["live_relic_counter_columns"],
                                                 lut["live_relic_counter_moduli"], lut["live_relic_counter_stop_turns"]):
             matches = out["relics"] == relic_id
-            values = (f[:, -1] if column == -4 else f[:, 4] + 1 if column == -3 else live_flags[:, -1 - column] if column < 0
+            values = (f[:, -1] if column == -5 else f[:, -2] if column == -4 else f[:, 4] + 1 if column == -3 else live_flags[:, -1 - column] if column < 0
                       else counters[:, column])
             if modulo:
                 values = values % modulo
             if stop:
                 values = np.where(values >= stop, 0, values)
-            if column in (-1, -2) and np.any((values != 0) & ~matches.any(axis=1)):
+            if column in (-1, -2, -5) and np.any((values != 0) & ~matches.any(axis=1)):
                 raise RuntimeError("native packed active relic flag has no owned relic")
             if column not in (-1, -2):
                 values = values / encode.COUNTER_SCALE

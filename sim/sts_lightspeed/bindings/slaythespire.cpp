@@ -154,6 +154,7 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     counters["nunchaku"] = bc.player.nunchakuCounter;
     counters["pen_nib"] = bc.player.penNibCounter;
     counters["sundial"] = bc.player.sundialCounter;
+    counters["neow_lament"] = bc.player.neowLamentRemaining;
     counters["necronomicon_used"] = bc.player.haveUsedNecronomiconThisTurn;
     counters["cards_played"] = bc.player.cardsPlayedThisTurn;
     counters["attacks_played"] = bc.player.attacksPlayedThisTurn;
@@ -298,7 +299,7 @@ constexpr int kCatSize = kHandSlots + kMaxMonsters + kMaxMonsters +
 // and card-select metadata.
 constexpr int kFloatSize = 6 + kPlayerStatus + kCombatCounters + 1 +
                            kMaxMonsters * 6 + kMaxMonsters * kMonsterStatus +
-                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + 3;
+                           kHandSlots * 2 + kCardIds * 3 + 4 + 96 * 2 + 4;
 
 struct Row {
     std::array<std::int32_t, kCatSize> categorical{};
@@ -591,9 +592,10 @@ inline Row pack(const sts::BattleContext &bc) {
         row.scalars[f + i] = static_cast<float>(choices.cards[i].upgrades);
         row.scalars[f + 96 + i] = static_cast<float>(choices.cards[i].cost);
     }
-    row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
-    row.scalars[kFloatSize - 2] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
-    row.scalars[kFloatSize - 1] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
+    row.scalars[kFloatSize - 4] = bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE) ? 1.0f : 0.0f;
+    row.scalars[kFloatSize - 3] = bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL) ? 1.0f : 0.0f;
+    row.scalars[kFloatSize - 2] = bc.postEnemyTurnBoundary ? bc.pocketwatchCardsAtBoundary : bc.player.cardsPlayedThisTurn;
+    row.scalars[kFloatSize - 1] = bc.player.neowLamentRemaining;
     return row;
 }
 
@@ -715,6 +717,7 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
                     "cards_discarded", "times_damaged",
                     "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
                     "centennial_puzzle_active", "lizard_tail_active",
+                    "neow_lament",
                 };
                 for (const auto *key : kCounterKeys) {
                     if (!c.contains(key)) {
@@ -777,6 +780,8 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
             bc.player.setHasRelic<sts::RelicId::LIZARD_TAIL>(
                 getBoundedInt(c, "lizard_tail_active",
                     bc.player.hasRelicRuntime(sts::RelicId::LIZARD_TAIL), 0, 1) != 0);
+            bc.player.neowLamentRemaining = static_cast<int8_t>(getBoundedInt(
+                c, "neow_lament", bc.player.neowLamentRemaining, 0, 3));
         }
         if (p.contains("powers")) {
             // Clear the complete enum.  A shadow battle is random state; leaving
@@ -2363,7 +2368,7 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["live_relic_names"] = pybind11::make_tuple("Centennial Puzzle", "Lizard Tail");
-        out["version"] = 6;
+        out["version"] = 7;
         // OBS20 adds run-global/reward key fields in Python. Compact combat
         // transport bytes are unchanged; root-global key ownership is overlaid
         // by run_env exactly like relic metadata.

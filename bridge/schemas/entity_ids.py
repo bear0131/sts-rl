@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v5"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v6"
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((
@@ -16,6 +16,11 @@ NEOW_BONUS_IDS = {name: index for index, name in enumerate((
 ))}
 NEOW_DRAWBACK_IDS = {"NONE": 1, "TEN_PERCENT_HP_LOSS": 2, "NO_GOLD": 3, "CURSE": 4, "PERCENT_DAMAGE": 5}
 NEOW_IMPLICIT_DRAWBACK_IDS = {"BOSS_RELIC": 6}
+NEOW_SCREEN_CONTRACTS = {
+    0: "intro_transport", 1: "intro_transport", 2: "unsupported_blessing_or_skip",
+    3: "typed_offers", 10: "unsupported_daily", 99: "completion_transport",
+    999: "unsupported_endless",
+}
 
 
 def neow_option_from_types(bonus_type, drawback_type):
@@ -57,6 +62,7 @@ LIVE_RELIC_COUNTER_FIELDS = {
     "CaptainsWheel": "$turn",
     "HornCleat": "$turn",
     "StoneCalendar": "$turn",
+    "NeowsBlessing": "neow_lament",
 }
 LIVE_RELIC_COUNTER_MODULI = {"Kunai": 3, "Letter Opener": 3, "Ornamental Fan": 3, "Shuriken": 3}
 LIVE_RELIC_COUNTER_STOP_TURNS = {"CaptainsWheel": 3, "HornCleat": 2}

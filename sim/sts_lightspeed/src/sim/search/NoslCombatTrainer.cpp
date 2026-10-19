@@ -220,6 +220,7 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, player.nunchakuCounter);
     hashValue(hash, player.penNibCounter);
     hashValue(hash, player.sundialCounter);
+    if (player.neowLamentRemaining != 0) hashValue(hash, player.neowLamentRemaining);
     hashValue(hash, player.haveUsedNecronomiconThisTurn ? 1 : 0);
     hashValue(hash, player.combustHpLoss);
     hashValue(hash, player.devaFormEnergyPerTurn);

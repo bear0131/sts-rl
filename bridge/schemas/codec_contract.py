@@ -33,6 +33,7 @@ from .entity_ids import (
     NEOW_BONUS_IDS,
     NEOW_DRAWBACK_IDS,
     NEOW_IMPLICIT_DRAWBACK_IDS,
+    NEOW_SCREEN_CONTRACTS,
     RELIC_COUNTER_SENTINELS,
     COMBAT_RELIC_COUNTER_SENTINELS,
     EMPTY_REAL_POTION_IDS,
@@ -185,7 +186,6 @@ def complete_word_tables():
                 "mapped_display_sentinel"
             ),
             "phase_audit_status": (
-                "pending_combat_entry_charge_timing" if relic == "NeowsBlessing" else
                 "pending_map_action_support" if relic == "WingedGreaves" else
                 "legacy_use_not_supported" if relic == "CeramicFish" else
                 "numeric_transport_reviewed_not_full_effect_acceptance"
@@ -211,6 +211,12 @@ def complete_word_tables():
         "neow_bonus_keywords": NEOW_BONUS_IDS,
         "neow_drawback_keywords": NEOW_DRAWBACK_IDS,
         "neow_implicit_drawbacks": NEOW_IMPLICIT_DRAWBACK_IDS,
+        "neow_screen_contracts": NEOW_SCREEN_CONTRACTS,
+        "neow_transport_fields": {
+            "screen": "simulator_neow_screen", "offers": "simulator_neow_options",
+            "choice_index": "choice_index", "bonus": "bonus_type", "drawback": "drawback_type",
+            "cached_hp_unit": "hp_unit", "absent_offer_marker": "drawback_id=0 only in unoffered slots",
+        },
         "intent_components": REAL_INTENT_COMPONENTS,
         "room_phases": sorted(REAL_ROOM_PHASES),
         "action_phases": sorted(REAL_ACTION_PHASES),
@@ -477,8 +483,10 @@ def validate_codec_contract() -> dict[str, int]:
         "relic_counter_contracts": len(canonical_sets["relic"]),
         "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),
         "combat_counter_fields": len(CS._REAL_COMBAT_COUNTER_KEYS),
+        "live_relic_counter_fields": len(LIVE_RELIC_COUNTER_FIELDS),
         "neow_bonus_keywords": len(NEOW_BONUS_IDS),
         "neow_drawback_keywords": len(NEOW_DRAWBACK_IDS),
+        "neow_screen_keywords": len(NEOW_SCREEN_CONTRACTS),
         "dynamic_event_kinds": sum(len(kinds) for kinds in DYNAMIC_EVENT_OPTION_KINDS.values()),
         "event_option_contracts": len(contract_events),
         "explicit_unsupported_real_ids": (

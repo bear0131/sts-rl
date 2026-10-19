@@ -85,7 +85,7 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert set(tables['relic_counter_contracts']) == set(encode.V.RELIC_VOCAB) - {'PAD'}
     assert counts['relic_counter_contracts'] == 180
     assert counts['java_relic_counter_users'] == 29
-    assert counts['combat_counter_fields'] == 26
+    assert counts['combat_counter_fields'] == 27
     assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
     assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_derived'
     assert tables['relic_counter_contracts']['Kunai']['combat_modulo'] == 3

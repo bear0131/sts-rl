@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v5";
+    public static final String VERSION = "simulator-parity-v6";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -48,6 +48,34 @@ public final class SimulatorParityExporter {
         state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
         state.put("has_sapphire_key", Boolean.valueOf(Settings.hasSapphireKey));
         state.put("simulator_parity_export", VERSION);
+        AbstractEvent event = AbstractDungeon.getCurrRoom().event;
+        if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
+            com.megacrit.cardcrawl.neow.NeowEvent neow = (com.megacrit.cardcrawl.neow.NeowEvent)event;
+            int screen = privateInt(neow, com.megacrit.cardcrawl.neow.NeowEvent.class, "screenNum");
+            state.put("simulator_neow_screen", Integer.valueOf(screen));
+            if (screen == 3) {
+                java.util.ArrayList<com.megacrit.cardcrawl.neow.NeowReward> rewards =
+                    ReflectionHacks.getPrivate(neow, com.megacrit.cardcrawl.neow.NeowEvent.class, "rewards");
+                if (rewards == null || (rewards.size() != 2 && rewards.size() != 4)) {
+                    throw new IllegalStateException("Neow must have two or four typed rewards");
+                }
+                java.util.ArrayList<HashMap<String, Object>> offers = new java.util.ArrayList<HashMap<String, Object>>();
+                for (int index = 0; index < rewards.size(); index++) {
+                    com.megacrit.cardcrawl.neow.NeowReward reward = rewards.get(index);
+                    if (reward.type == null || reward.drawback == null) {
+                        throw new IllegalStateException("Neow reward is missing its enum identity");
+                    }
+                    HashMap<String, Object> offer = new HashMap<String, Object>();
+                    offer.put("choice_index", Integer.valueOf(index));
+                    offer.put("bonus_type", reward.type.name());
+                    offer.put("drawback_type", reward.drawback.name());
+                    offer.put("hp_unit", Integer.valueOf(privateInt(reward,
+                        com.megacrit.cardcrawl.neow.NeowReward.class, "hp_bonus")));
+                    offers.add(offer);
+                }
+                state.put("simulator_neow_options", offers);
+            }
+        }
     }
 
     public static void augmentCombatState(HashMap<String, Object> state) {
@@ -60,6 +88,10 @@ public final class SimulatorParityExporter {
         counters.put("nunchaku", Integer.valueOf(relicCounter("Nunchaku")));
         counters.put("pen_nib", Integer.valueOf(relicCounter("Pen Nib")));
         counters.put("sundial", Integer.valueOf(relicCounter("Sundial")));
+        int neow = relicCounter("NeowsBlessing");
+        if (neow == -2) neow = 0;
+        if (neow < 0 || neow > 3) throw new IllegalStateException("Neow remainder outside 0..3");
+        counters.put("neow_lament", Integer.valueOf(neow));
         AbstractRelic puzzle = player.getRelic("Centennial Puzzle");
         counters.put("centennial_puzzle_active", Boolean.valueOf(puzzle != null &&
             !((Boolean)ReflectionHacks.getPrivateStatic(

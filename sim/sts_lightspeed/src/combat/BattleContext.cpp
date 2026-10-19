@@ -92,6 +92,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     auto room = gc.curRoom;
 
     auto &p = player;
+    p.neowLamentRemaining = 0;
 
     for (const auto &r : gc.relics.relics) {
         switch (r.id) {
@@ -294,7 +295,8 @@ void BattleContext::initRelics(const GameContext &gc) {
                 p.debuff<PS::LOSE_STRENGTH>(3);
                 break;
 
-            case R::NEOWS_LAMENT: // remember to decrement somewhere else
+            case R::NEOWS_LAMENT:
+                p.neowLamentRemaining = std::max(0, r.data - 1);
                 if (r.data > 0) {
                     for (int i = 0; i < monsters.monsterCount; ++i) {
                         Monster &m = monsters.arr[i];
@@ -546,9 +548,7 @@ void BattleContext::updateRelicsOnExit(GameContext &g) const {
                 break;
 
             case RelicId::NEOWS_LAMENT:
-                if (r.data > 0) {
-                    --r.data;
-                }
+                r.data = player.neowLamentRemaining;
                 break;
 
             case RelicId::NUNCHAKU:

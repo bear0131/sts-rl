@@ -196,3 +196,46 @@ def test_pocketwatch_future_key_keeps_three_and_four_card_boundaries_distinct(co
         assert branch.to_dict()["player"]["combat_counters"]["cards_played"] == 0
         keys.append(branch.nosl_future_key())
     assert keys[0] != keys[1], "Pocketwatch's future extra draw must not be merged"
+
+
+@pytest.mark.parametrize("before,remaining", [(0, 0), (1, 0), (2, 1), (3, 2)])
+def test_neow_real_time_remainder_is_consumed_at_entry_and_committed_once(combat_factory, short_combat_env_type, before, remaining):
+    import slaythespire as sts
+    env = combat_factory(["STRIKE_RED"] * 10)
+    env.thick.gc.set_relic_state([{"id": "NeowsBlessing", "counter": before}])
+    env.thick.bc = sts.create_battle(env.thick.gc, "Cultist")
+    env._invalidate_backend_cache()
+    canonical = env.thick.obs_canonical()
+    assert canonical["player"]["combat_counters"]["neow_lament"] == remaining
+    expected = np.float32(remaining / 10)
+    assert env._obs()["relic_counters"][0] == expected
+    raw = env.thick.bc.compact_leaf_arrays()
+    packed = {"categorical": np.asarray(raw["categorical"])[None],
+              "scalars": np.asarray(raw["scalars"])[None]}
+    assert env._native_packed_observation_batch(packed)["relic_counters"][0, 0] == expected
+    # A real bridge root is already post-entry: its explicit runtime counter
+    # must override the local initializer, and exit must not subtract again.
+    pool = NativeSearchBatch([env], 1)
+    try:
+        packed.update(owners=np.array([0], dtype=np.int64),
+                      selection_prefix=np.array([0], dtype=np.int32),
+                      legal_policy_ids=np.empty((1, 0), dtype=np.int32))
+        globals = {key: value[None] for key, value in env._native_packed_global_fields().items()}
+        assert pool.decoder.decode(packed, globals)["relic_counters"][0, 0] == expected
+    finally:
+        pool.close()
+    # Use the shared real-run fixture so GameContext has its actual exit
+    # callback; a manually attached combat_factory root deliberately has none.
+    live = short_combat_env_type()
+    try:
+        live.reset(seed=901)
+        live.thick.gc.set_relic_state([{"id": "NeowsBlessing", "counter": before}])
+        battle = sts.create_battle(live.thick.gc, "Cultist")
+        battle.apply_custom_state({"player": {"counters": {"neow_lament": remaining}}})
+        battle.set_player_strength(999)
+        battle.apply_custom_state({"hand": ["STRIKE_RED"]})
+        battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+        battle.exit_battle(live.thick.gc)
+        assert live.thick.gc.relic_state()[0]["counter"] == remaining
+    finally:
+        live.close()

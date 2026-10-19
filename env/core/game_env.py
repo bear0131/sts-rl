@@ -109,8 +109,8 @@ class SimGameEnv:
                  interactive_reasoning=False,
                  nosl_is_az_boss_transition_target=False,
                  emit_step_observation=True):
-        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 6:
-            raise RuntimeError("observation v20 requires native layout v6; rebuild the simulator")
+        if not hasattr(sts, "nosl_compact_layout") or sts.nosl_compact_layout().get("version") != 7:
+            raise RuntimeError("observation v20 requires native layout v7; rebuild the simulator")
         self._character = character or sts.CharacterClass.IRONCLAD
         self._ascension = ascension
         self._global_map_view = global_map_view

@@ -464,6 +464,9 @@ def test_upgrade_counts_are_required_for_overworld_cards():
 
 def test_complete_relic_sequence():
     canon = _fake_combat()
+    # This test checks persistent slot retention, not combat-time counters
+    # derived from the current turn (Wheel/Cleat, etc.).
+    canon["phase"] = "map"
     canon["player"]["combat_counters"] = {}
     held = list(V.RELIC_VOCAB[1:42])
     assert len(held) > 30

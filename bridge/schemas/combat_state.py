@@ -74,6 +74,7 @@ _REAL_COMBAT_COUNTER_KEYS = (
     "cards_discarded", "times_damaged",
     "bomb_1", "bomb_2", "bomb_3", "last_attack_unblocked_damage",
     *LIVE_RELIC_STATE_FIELDS.values(),
+    "neow_lament",
 )
 
 

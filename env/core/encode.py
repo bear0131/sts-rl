@@ -39,7 +39,10 @@ overworld-only canonical both encode):
 
 import numpy as np
 from gymnasium import spaces
-from bridge.schemas.entity_ids import LIVE_RELIC_COUNTER_FIELDS, live_relic_counter_value
+from bridge.schemas.entity_ids import (
+    LIVE_RELIC_COUNTER_FIELDS, live_relic_counter_value,
+    NEOW_BONUS_IDS, NEOW_DRAWBACK_IDS, NEOW_IMPLICIT_DRAWBACK_IDS,
+)
 
 from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 from .ironclad_cards import card_numbers
@@ -1001,11 +1004,14 @@ def _encode_options(o, canon):
         neow = opts.get("neow", [])
         _require_capacity("options.neow", neow, NEOW_SLOTS)
         for i, option in enumerate(neow):
-            bonus_id = int(option.get("bonus_id", 0))
-            drawback_id = int(option.get("drawback_id", 0))
-            if not 0 <= bonus_id < NEOW_BONUS_CAPACITY:
+            _require_keys(option, ("bonus_id", "drawback_id"), "Neow offer")
+            bonus_id = option["bonus_id"]
+            drawback_id = option["drawback_id"]
+            if type(bonus_id) is not int or bonus_id not in NEOW_BONUS_IDS.values():
                 raise ValueError(f"invalid Neow bonus id: {bonus_id}")
-            if not 0 <= drawback_id < NEOW_DRAWBACK_CAPACITY:
+            if (type(drawback_id) is not int or drawback_id not in
+                    (*NEOW_DRAWBACK_IDS.values(), *NEOW_IMPLICIT_DRAWBACK_IDS.values())
+                    or (bonus_id == 18) != (drawback_id == 6)):
                 raise ValueError(f"invalid Neow drawback id: {drawback_id}")
             o["neow_bonus_ids"][i] = bonus_id
             o["neow_drawback_ids"][i] = drawback_id

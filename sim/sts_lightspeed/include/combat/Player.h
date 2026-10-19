@@ -81,6 +81,7 @@ struct Player {
         int8_t  nunchakuCounter = 0;
         int8_t  penNibCounter = 0;
         int8_t  sundialCounter = 0;
+        int8_t  neowLamentRemaining = 0;
         bool haveUsedNecronomiconThisTurn = false;
 
         int8_t  combustHpLoss = 0;
