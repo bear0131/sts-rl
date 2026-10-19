@@ -1,5 +1,9 @@
 """Shared deterministic native fixtures; missing native builds are errors."""
 import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
     os.environ.setdefault(key, "1")
@@ -8,6 +12,7 @@ import pytest
 import torch
 import numpy as np
 
+from env.core import _BUILD
 from env.core.run_env import SlayTheSpireEnv
 import slaythespire as sts
 
@@ -104,3 +109,30 @@ def designer_factory():
         assert option in gc.legal_event_options()
         return gc
     return make
+
+
+@pytest.fixture(scope='session')
+def game_context_executable():
+    build = Path(_BUILD).resolve()
+    source = Path(__file__).resolve().parents[1] / 'sim' / 'sts_lightspeed'
+    cache = (build / 'CMakeCache.txt').read_text()
+    home = next(line.split('=', 1)[1] for line in cache.splitlines()
+                if line.startswith('CMAKE_HOME_DIRECTORY:INTERNAL='))
+    assert Path(home).resolve() == source, 'native tests require a build of this checkout'
+    cmake = Path(sys.executable).parent / ('cmake.exe' if sys.platform == 'win32' else 'cmake')
+    command = str(cmake) if cmake.exists() else shutil.which('cmake')
+    assert command, 'install the locked test dependencies (CMake is required)'
+    result = subprocess.run([command, '--build', str(build), '--target', 'game-context-contract',
+                             '--config', 'Release', '--parallel', '2'],
+                            capture_output=True, text=True, timeout=180)
+    assert result.returncode == 0, result.stdout + result.stderr
+    name = 'game-context-contract' + ('.exe' if sys.platform == 'win32' else '')
+    executable = next((p for p in (build / name, build / 'Release' / name) if p.is_file()), None)
+    assert executable, 'CMake did not produce the contract executable'
+    run_env = os.environ.copy()
+    if sys.platform == 'win32':
+        compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
+                        if line.startswith('CMAKE_CXX_COMPILER:FILEPATH='))
+        # add_dll_directory handles in the Python parent do not reach a native child.
+        run_env['PATH'] = str(Path(compiler).parent) + os.pathsep + run_env.get('PATH', '')
+    return executable, run_env

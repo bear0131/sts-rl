@@ -1,42 +1,9 @@
 """RELICPOOL01: native empty-pool faults must fail a bounded child, not pytest."""
 
-from pathlib import Path
-import os
-import shutil
 import subprocess
 import sys
 
 import pytest
-
-from env.core import _BUILD
-
-
-@pytest.fixture(scope='module')
-def relic_pool_executable():
-    build = Path(_BUILD).resolve()
-    source = Path(__file__).resolve().parents[2] / 'sim' / 'sts_lightspeed'
-    cache = (build / 'CMakeCache.txt').read_text()
-    home = next(line.split('=', 1)[1] for line in cache.splitlines()
-                if line.startswith('CMAKE_HOME_DIRECTORY:INTERNAL='))
-    assert Path(home).resolve() == source, 'native tests require a build of this checkout'
-    cmake = Path(sys.executable).parent / ('cmake.exe' if sys.platform == 'win32' else 'cmake')
-    command = str(cmake) if cmake.exists() else shutil.which('cmake')
-    assert command, 'install the locked test dependencies (CMake is required)'
-    result = subprocess.run([command, '--build', str(build), '--target', 'relic-pool-contract',
-                             '--config', 'Release', '--parallel', '2'],
-                            capture_output=True, text=True, timeout=180)
-    assert result.returncode == 0, result.stdout + result.stderr
-    name = 'relic-pool-contract' + ('.exe' if sys.platform == 'win32' else '')
-    executable = next((p for p in (build / name, build / 'Release' / name) if p.is_file()), None)
-    assert executable, 'CMake did not produce the contract executable'
-    run_env = os.environ.copy()
-    if sys.platform == 'win32':
-        compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
-                        if line.startswith('CMAKE_CXX_COMPILER:FILEPATH='))
-        # add_dll_directory handles in the Python parent do not reach a native child.
-        run_env['PATH'] = str(Path(compiler).parent) + os.pathsep + run_env.get('PATH', '')
-    return executable, run_env
-
 
 _CASES = (
     [(mode, tier, front) for mode in ('nonempty', 'exhausted', 'filtered')
@@ -50,8 +17,8 @@ _CASES = (
 
 @pytest.mark.timeout(240)  # The first case also builds the isolated C++ executable.
 @pytest.mark.parametrize('mode,tier,front', _CASES)
-def test_relic_pool_boundaries(relic_pool_executable, mode, tier, front):
-    executable, run_env = relic_pool_executable
+def test_relic_pool_boundaries(game_context_executable, mode, tier, front):
+    executable, run_env = game_context_executable
     result = subprocess.run([str(executable), mode, str(tier), str(front)],
                             env=run_env, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stdout + result.stderr
