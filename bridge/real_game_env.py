@@ -110,7 +110,7 @@ def _norm_label(value: Any) -> str:
 def _commands(frame: dict[str, Any]) -> set[str]:
     raw = frame.get("available_commands")
     if raw is None:
-        return set()
+        raise ValueError("frame is missing its explicit available_commands list")
     if not isinstance(raw, list):
         raise ValueError(f"available_commands must be a list, got {raw!r}")
     commands = set()
@@ -127,21 +127,71 @@ def _commands(frame: dict[str, Any]) -> set[str]:
 
 
 def _choice_list(gs: dict[str, Any]) -> list[Any]:
-    raw = gs.get("choice_list")
-    if raw is None:
+    if not gs:  # No game state on a genuine main-menu/error response.
         return []
+    raw = gs.get("choice_list")
     if not isinstance(raw, list):
         raise ValueError(f"choice_list must be a list, got {raw!r}")
     return list(raw)
 
 
 def _screen_state(gs: dict[str, Any]) -> dict[str, Any]:
-    ss = gs.get("screen_state")
-    if ss is None:
+    if not gs:  # This is not an in-game missing-payload fallback.
         return {}
+    ss = gs.get("screen_state")
     if not isinstance(ss, dict):
         raise ValueError(f"screen_state must be an object, got {ss!r}")
     return ss
+
+
+def validate_transport_frame(frame: dict[str, Any]) -> None:
+    """Check presence before ACKs/menu handling can turn missing data into actions.
+
+    Error replies deliberately have no in_game/game_state. Normal in-game
+    frames have explicit collections and an explicitly nullable current action.
+    Detailed identity/value checks remain in their existing phase codecs.
+    """
+    if not isinstance(frame, dict):
+        raise ValueError("CommunicationMod frame must be an object")
+    _commands(frame)
+    _required_bool(frame, "ready_for_command", context="frame")
+    if "error" in frame:
+        if not isinstance(frame["error"], str) or not frame["error"]:
+            raise ValueError("error response requires a nonempty message")
+        if "in_game" in frame or "game_state" in frame:
+            raise ValueError("error response must not impersonate a normal game/menu frame")
+        return
+    if not _required_bool(frame, "in_game", context="frame"):
+        if "game_state" in frame:
+            raise ValueError("main-menu response must not carry a game_state")
+        return
+    gs = _required(frame, "game_state", context="in-game frame")
+    if not isinstance(gs, dict) or not gs:
+        raise ValueError("in-game frame requires a nonempty game_state object")
+    if gs.get("simulator_parity_export") != SIMULATOR_PARITY_EXPORT_VERSION:
+        raise ValueError("in-game frame requires the current parity wire protocol")
+    _required_bool(gs, "is_screen_up", context="game_state")
+    action_phase = _required(gs, "action_phase", context="game_state")
+    if action_phase not in REAL_ACTION_PHASES:
+        raise ValueError(f"unknown real-game action_phase keyword: {action_phase!r}")
+    _screen_state(gs)
+    _choice_list(gs)
+    for key in ("deck", "relics", "potions", "map"):
+        _list_value(gs, key, context="game_state")
+    if "current_action" not in gs:
+        raise ValueError("game_state requires an explicit nullable current_action")
+    action = gs["current_action"]
+    if action is not None and (not isinstance(action, str) or not action.strip()):
+        raise ValueError("current_action must be null or a nonempty action class name")
+    room_phase = _required(gs, "room_phase", context="game_state")
+    if room_phase not in REAL_ROOM_PHASES:
+        raise ValueError(f"unknown real-game room_phase keyword: {room_phase!r}")
+    if room_phase == "COMBAT":
+        combat = _required(gs, "combat_state", context="combat room")
+        if not isinstance(combat, dict) or not combat:
+            raise ValueError("combat room requires an explicit combat_state object")
+    elif "combat_state" in gs:
+        raise ValueError("noncombat room unexpectedly carries combat_state")
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -197,7 +247,7 @@ def _list_alias_value(
     context: str,
     required: bool = True,
 ) -> list[Any]:
-    """Read schema aliases without letting an earlier empty field hide data."""
+    """Multiple aliases must agree; an explicit empty list is still data."""
     present = []
     for key in keys:
         if key not in mapping:
@@ -210,15 +260,13 @@ def _list_alias_value(
         if required:
             raise ValueError(f"{context} is missing required list {keys!r}")
         return []
-    nonempty = [(key, value) for key, value in present if value]
-    if len(nonempty) > 1:
-        first = nonempty[0][1]
-        if any(value != first for _key, value in nonempty[1:]):
-            raise ValueError(
-                f"{context} contains conflicting list aliases: "
-                f"{[key for key, _value in nonempty]!r}"
-            )
-    return nonempty[0][1] if nonempty else present[0][1]
+    first = present[0][1]
+    if any(value != first for _key, value in present[1:]):
+        raise ValueError(
+            f"{context} contains conflicting list aliases: "
+            f"{[key for key, _value in present]!r}"
+        )
+    return first
 
 
 def _dict_records(values: list[Any], *, context: str) -> list[dict[str, Any]]:
@@ -351,13 +399,13 @@ def _normalize_event(value: Any) -> str:
 def _screen_cards(ss: dict[str, Any]) -> list[tuple[str, int]]:
     cards = _list_alias_value(
         ss, "cards", "card_reward", "cardRewards",
-        context="screen_state", required=False,
+        context="screen_state",
     )
     return [_real_card_tuple(card) for card in _dict_records(cards, context="screen cards")]
 
 
 def _reward_records(ss: dict[str, Any]) -> list[dict[str, Any]]:
-    rewards = _list_value(ss, "rewards", context="screen_state", required=False)
+    rewards = _list_value(ss, "rewards", context="screen_state")
     return _dict_records(rewards, context="screen rewards")
 
 
@@ -403,15 +451,21 @@ def _screen_reward_keys(ss: dict[str, Any]) -> list[str]:
 
 
 def _screen_relics(ss: dict[str, Any]) -> list[str]:
+    direct = any(key in ss for key in ("relics", "boss_relics"))
     relics = _list_alias_value(
         ss, "relics", "boss_relics", context="screen_state", required=False
     )
-    if not relics:
-        relics = [
+    if "rewards" in ss:
+        reward_relics = [
             reward["relic"]
             for reward in _reward_records(ss)
             if _reward_type(reward) == "RELIC"
         ]
+        if direct and relics != reward_relics:
+            raise ValueError("explicit relic list conflicts with reward records")
+        relics = reward_relics
+    elif not direct:
+        raise ValueError("screen has neither an explicit relic list nor reward records")
     return [_relic_id(r) for r in relics]
 
 
@@ -419,12 +473,19 @@ def _screen_potions(
     ss: dict[str, Any], *, require_price: bool = False
 ) -> list[tuple[str, int | None]]:
     potions = _list_value(ss, "potions", context="screen_state", required=False)
-    if not potions:
-        potions = [
+    if require_price and "potions" not in ss:
+        raise ValueError("shop screen is missing its explicit potion inventory")
+    if "rewards" in ss:
+        reward_potions = [
             reward["potion"]
             for reward in _reward_records(ss)
             if _reward_type(reward) == "POTION"
         ]
+        if "potions" in ss and potions != reward_potions:
+            raise ValueError("explicit potion list conflicts with reward records")
+        potions = reward_potions
+    elif "potions" not in ss:
+        raise ValueError("screen has neither an explicit potion list nor reward records")
     return [(_potion_id(p), _price(p, required=require_price)) for p in potions]
 
 
@@ -615,12 +676,13 @@ class RealGameAdapter:
         self._combat_initialized = False
 
     def update(self, frame: dict[str, Any]) -> None:
+        validate_transport_frame(frame)
         previous_overworld_grid = (
             self.screen_type() == "GRID" and not bool(self.gs.get("combat_state"))
         )
         previous_relic_ids = self._last_relic_ids
         self.frame = frame
-        self.gs = frame.get("game_state") or {}
+        self.gs = frame["game_state"] if "game_state" in frame else {}
         for key, table in (("room_phase", REAL_ROOM_PHASES),
                            ("action_phase", REAL_ACTION_PHASES)):
             if key in self.gs and self.gs[key] not in table:
@@ -1281,7 +1343,7 @@ class RealGameAdapter:
         opts: dict[str, Any] = {}
 
         if phase == "combat_reward":
-            cards = _screen_cards(ss)
+            cards = _screen_cards(ss) if st == "CARD_REWARD" else []
             has_card = not self._skipped_combat_card_reward
             outer = (
                 self._combat_reward_outer_options
@@ -1936,7 +1998,9 @@ class RealGameAdapter:
                 acts.append(ga.chest(False))
             return acts + pots
         if phase == "boss_relic":
-            n = len(_screen_relics(_screen_state(self.gs))) or len(self.choices())
+            n = len(_screen_relics(_screen_state(self.gs)))
+            if n != len(self.choices()):
+                raise ValueError("boss relic identities and choice handles disagree")
             if n > A.BOSS_RELIC_W:
                 raise ValueError(
                     f"boss relic capacity {A.BOSS_RELIC_W} exceeded: {n}"
@@ -1950,11 +2014,10 @@ class RealGameAdapter:
         if not self._combat_ready_for_policy():
             return []
         if self._combat_card_choice_screen():
-            ss = _screen_state(self.gs)
-            n = len(_screen_cards(ss)) or len(self.choices())
             desc = self.select_descriptor()
-            if desc and desc["candidates"]:
-                n = len(desc["candidates"])
+            if not desc or not desc["candidates"]:
+                raise ValueError("combat card choice requires explicit selection candidates")
+            n = len(desc["candidates"])
             if n > A.G_MAX:
                 raise ValueError("combat candidate capacity 96 exceeded")
             return [ga.select(i) for i in range(n)]

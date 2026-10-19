@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v12";
+    public static final String VERSION = "simulator-parity-v13";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -101,6 +101,17 @@ public final class SimulatorParityExporter {
         state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
         state.put("has_sapphire_key", Boolean.valueOf(Settings.hasSapphireKey));
         state.put("simulator_parity_export", VERSION);
+        // Stock export omits this key outside an action. Emit observed absence
+        // explicitly; the patched wire serializer must preserve the null.
+        AbstractGameAction currentAction = AbstractDungeon.actionManager.currentAction;
+        state.put("current_action", currentAction == null ? null : currentAction.getClass().getSimpleName());
+        if (CommandExecutor.isChooseCommandAvailable()) {
+            if (!(state.get("choice_list") instanceof java.util.ArrayList))
+                throw new IllegalStateException("Available CHOOSE requires the actual choice list");
+        } else {
+            // This is a known unavailable command, not a missing list fallback.
+            state.put("choice_list", new java.util.ArrayList<String>());
+        }
         state.put("simulator_current_node", mapNodeIdentity(AbstractDungeon.getCurrMapNode()));
         java.util.ArrayList<HashMap<String, Object>> leaves = new java.util.ArrayList<HashMap<String, Object>>();
         for (java.util.ArrayList<com.megacrit.cardcrawl.map.MapRoomNode> row : AbstractDungeon.map) {

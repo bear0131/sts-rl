@@ -4,7 +4,28 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v12"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v13"
+
+# Presence is part of the wire contract, independently of vocabulary tokens.
+# None/empty collections are observations, not substitutes for missing fields.
+JSON_PRESENCE_CONTRACTS = {
+    'serialization': 'GameStateConverter.getCommunicationState and CommunicationMod.receivePreUpdate use shaded GsonBuilder.serializeNulls; no change to gameplay',
+    'error': 'error responses carry a nonempty error string, ready_for_command and available_commands; in_game/game_state can be absent, never infer main menu',
+    'in_game': 'normal response requires explicit boolean; missing/null cannot authorize START',
+    'ready_for_command': 'explicit boolean, including false',
+    'action_phase/is_screen_up': 'required phase enum and explicit boolean; missing cannot be treated as a settled actionable screen',
+    'available_commands': 'required list; [] means no commands, missing/null is invalid',
+    'game_state': 'required nonempty object when in_game=true; absent at main menu',
+    'screen_state': 'required object in a game; {} means no screen payload, missing/null is invalid',
+    'current_action': 'required in-game key; null means actionManager.currentAction is actually absent, nonempty string is its class name',
+    'choice_list': 'required in-game list; exporter emits [] only when CHOOSE is actually unavailable',
+    'deck/relics/potions/map': 'required in-game lists; empty is data, missing/null is not an empty inventory',
+    'combat_state': 'required object while room_phase=COMBAT; absent outside combat per stock serializer',
+    'simulator_stasis_card': 'required key for every monster; actual held-card object or explicit null; never infer null from a missing key',
+    'card/relic_list_aliases': 'if multiple aliases are present, complete lists must be equal, including empty lists; no nonempty-wins fallback',
+    'screen_inventories': 'card/relic/potion/reward screens require their structured lists; explicit lists must agree with coexisting reward records; labels do not replace entities',
+    'conditional_exports': 'Neow typed offers only on screen3; private power overrides only for a present matching power; unknown reflection fields must not be invented',
+}
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((

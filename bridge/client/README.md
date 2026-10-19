@@ -88,8 +88,12 @@ only CommunicationMod commands to stdout.
 Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
-It patches seven `GameStateConverter` serializers. The Dome-specific export mask
-is bypassed, and monsters receive `current_intent_export: simulator-parity-v12`.
+It patches seven `GameStateConverter` serializers and both actual JSON writers
+(`getCommunicationState` and `CommunicationMod.receivePreUpdate`) to use the
+bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
+is insufficient: Gson's default would remove that field from the wire.
+The Dome-specific export mask is bypassed, and monsters receive
+`current_intent_export: simulator-parity-v13`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -116,6 +120,13 @@ null when none is held. Master-deck restore consumes current persistent values
 and physical bottle slots. Settled combat roots restore complete native card
 instances with UUID mapping; in-progress selection and independent dynamic
 attributes still require their own alignment audit.
+The v13 wire also always includes `current_action` (explicit null when none)
+and `choice_list` (explicit [] when CHOOSE is unavailable). Normal frames and
+error replies have separate presence contracts; missing/null screen payloads,
+inventories, command lists or contradictory aliases fail before menu actions,
+ACK handling or policy inference. See `json_presence_contracts` in the complete
+word tables. Do not mix v13 Python with an older jar. Model tensor layouts and
+checkpoint parameters are unchanged; this is a transport change.
 Two read-only game hooks track the last monster attack damage and reset it at
 combat entry. Gameplay, UI and RNG are untouched.
 The bridge fails on a live Dome monster whose current move is still missing;
@@ -124,10 +135,11 @@ hypothetical, not the real game's hidden future.
 
 Compile with Java 8 target and ModTheSpire.jar on the classpath; run the class
 with arguments `original.jar patched.jar desktop-1.0.jar BaseMod.jar ModTheSpire.jar`.
-The output must not exist. The patcher checks exactly one target call and checks
-that other converter methods retain identical bytecode. Keep originals and
+The output must not exist. The patcher checks exactly one Dome call and one Gson
+constructor per wire writer, and checks that other methods in both modified
+classes retain identical bytecode. Keep originals and
 SHA256s outside Git, stop the game before deployment, and verify that only the
-converter class differs among existing classes; the exporter and its two hook
+converter and CommunicationMod classes differ among existing classes; the exporter and its two hook
 classes are added. This is an explicit evaluation protocol
 change, not a claim of complete game/simulator equivalence.
 

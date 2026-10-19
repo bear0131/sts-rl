@@ -37,6 +37,7 @@ from .entity_ids import (
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
     FRESH_CARD_MISC,
+    JSON_PRESENCE_CONTRACTS,
     REAL_CARD_WIRE_FIELDS,
     CARD_STATE_FIELD_CONTRACTS,
     CARD_SPECIAL_DATA_FIELDS,
@@ -214,6 +215,7 @@ def complete_word_tables():
         }
     return {
         "real_to_canonical": REAL_TO_CANONICAL,
+        "json_presence_contracts": JSON_PRESENCE_CONTRACTS,
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,

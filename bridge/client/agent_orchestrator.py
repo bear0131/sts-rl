@@ -27,7 +27,7 @@ from zipfile import BadZipFile, ZipFile
 from env.core import native_actions as C
 import numpy as np
 
-from bridge.real_game_env import RealDecision, RealGameAdapter
+from bridge.real_game_env import RealDecision, RealGameAdapter, validate_transport_frame
 from bridge.campaign import SeedCampaign
 from bridge.event_contract import EventEffectAck
 from env.core import action_space as A
@@ -898,6 +898,7 @@ def main() -> None:
             log.debug("RECV %s", line)
             try:
                 frame = json.loads(line)
+                validate_transport_frame(frame)
                 if frame.get('in_game') is False and args.attach_existing_seed is not None:
                     if attached_live:
                         # Menu round-trip is a save-load boundary, not an overlay.

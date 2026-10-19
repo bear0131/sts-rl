@@ -8,6 +8,20 @@ import java.util.zip.*;
 import java.io.*;
 
 public final class ExposeCurrentIntent {
+    private static void preserveJsonNulls(CtMethod method) throws CannotCompileException {
+        final int[] count = {0};
+        method.instrument(new ExprEditor() {
+            public void edit(NewExpr expression) throws CannotCompileException {
+                if (expression.getClassName().equals("com.autoplay.gson.Gson")) {
+                    count[0]++;
+                    expression.replace("{ $_ = new com.autoplay.gson.GsonBuilder().serializeNulls().create(); }");
+                }
+            }
+        });
+        if (count[0] != 1) throw new IllegalStateException(
+            "Unexpected JSON writer in " + method.getLongName() + ": Gson constructors=" + count[0]);
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length != 5) throw new IllegalArgumentException(
             "input.jar output.jar desktop-1.0.jar BaseMod.jar ModTheSpire.jar");
@@ -16,6 +30,9 @@ public final class ExposeCurrentIntent {
         ClassPool pool = new ClassPool(true);
         for (int i : new int[]{0, 2, 3, 4}) pool.appendClassPath(args[i]);
         CtClass converter = pool.get("communicationmod.GameStateConverter");
+        CtClass communication = pool.get("communicationmod.CommunicationMod");
+        CtMethod stateWriter = converter.getDeclaredMethod("getCommunicationState");
+        CtMethod errorWriter = communication.getDeclaredMethod("receivePreUpdate");
         CtMethod gameMethod = converter.getDeclaredMethod("getGameState");
         CtMethod monsterMethod = converter.getDeclaredMethod("convertMonsterToJson");
         CtMethod combatMethod = converter.getDeclaredMethod("getCombatState");
@@ -25,12 +42,19 @@ public final class ExposeCurrentIntent {
         CtMethod cardMethod = converter.getDeclaredMethod("convertCardToJson");
         Set<CtMethod> changedMethods = new HashSet<CtMethod>(Arrays.asList(
             gameMethod, monsterMethod, combatMethod, gridMethod, handMethod,
-            cardRewardMethod, cardMethod));
+            cardRewardMethod, cardMethod, stateWriter, errorWriter));
         Map<String, byte[]> unchanged = new HashMap<>();
-        for (CtMethod candidate : converter.getDeclaredMethods()) {
-            if (!changedMethods.contains(candidate)) unchanged.put(candidate.getLongName(),
-                candidate.getMethodInfo().getCodeAttribute().getCode().clone());
+        for (CtClass owner : new CtClass[]{converter, communication}) {
+            for (CtMethod candidate : owner.getDeclaredMethods()) {
+                if (!changedMethods.contains(candidate)) unchanged.put(candidate.getLongName(),
+                    candidate.getMethodInfo().getCodeAttribute().getCode().clone());
+            }
         }
+        // Patch the actual wire writers, not just the intermediate HashMap.
+        // Gson's default discards Map entries whose value is null, losing the
+        // distinction between an observed empty slot and a missing export.
+        preserveJsonNulls(stateWriter);
+        preserveJsonNulls(errorWriter);
         final int[] replacements = {0};
         monsterMethod.instrument(new ExprEditor() {
             public void edit(MethodCall call) throws CannotCompileException {
@@ -61,14 +85,17 @@ public final class ExposeCurrentIntent {
             "{ communicationmod.SimulatorParityExporter.augmentCardRewardState($_); }");
         cardMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentCardState($_, $1); }");
-        byte[] patched = converter.toBytecode();
-        for (CtMethod candidate : converter.getDeclaredMethods()) {
-            if (!changedMethods.contains(candidate) && !Arrays.equals(
-                    unchanged.get(candidate.getLongName()),
-                    candidate.getMethodInfo2().getCodeAttribute().getCode()))
-                throw new IllegalStateException("Unexpected method change: " + candidate.getLongName());
+        Map<String, byte[]> patched = new LinkedHashMap<String, byte[]>();
+        patched.put("communicationmod/GameStateConverter.class", converter.toBytecode());
+        patched.put("communicationmod/CommunicationMod.class", communication.toBytecode());
+        for (CtClass owner : new CtClass[]{converter, communication}) {
+            for (CtMethod candidate : owner.getDeclaredMethods()) {
+                if (!changedMethods.contains(candidate) && !Arrays.equals(
+                        unchanged.get(candidate.getLongName()),
+                        candidate.getMethodInfo2().getCodeAttribute().getCode()))
+                    throw new IllegalStateException("Unexpected method change: " + candidate.getLongName());
+            }
         }
-        String target = "communicationmod/GameStateConverter.class";
         String[] helperTargets = new String[] {
             "communicationmod/SimulatorParityExporter.class",
             "communicationmod/SimulatorParityExporter$DamagePatch.class",
@@ -86,7 +113,7 @@ public final class ExposeCurrentIntent {
                 helpers.put(helperTarget, bytes.toByteArray());
             }
         }
-        int changed = 0;
+        Set<String> changed = new HashSet<String>();
         try (ZipFile source = new ZipFile(input.toFile());
              ZipOutputStream dest = new ZipOutputStream(Files.newOutputStream(output))) {
             Enumeration<? extends ZipEntry> entries = source.entries();
@@ -99,7 +126,10 @@ public final class ExposeCurrentIntent {
                 ZipEntry copy = new ZipEntry(entry.getName());
                 copy.setTime(entry.getTime());
                 dest.putNextEntry(copy);
-                if (entry.getName().equals(target)) { dest.write(patched); changed++; }
+                if (patched.containsKey(entry.getName())) {
+                    if (!changed.add(entry.getName())) throw new IllegalStateException("Duplicate target entry");
+                    dest.write(patched.get(entry.getName()));
+                }
                 else try (InputStream stream = source.getInputStream(entry)) {
                     int n; while ((n = stream.read(buffer)) != -1) dest.write(buffer, 0, n);
                 }
@@ -112,8 +142,8 @@ public final class ExposeCurrentIntent {
                 dest.closeEntry();
             }
         }
-        if (changed != 1) throw new IllegalStateException("Target count=" + changed);
+        if (!changed.equals(patched.keySet())) throw new IllegalStateException("Target entries=" + changed);
         System.out.println(
-            "Patched seven serializers and added read-only parity exporters; no gameplay or RNG modified");
+            "Patched seven serializers and two null-preserving JSON writers; no gameplay or RNG modified");
     }
 }
