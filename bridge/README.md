@@ -6,7 +6,9 @@
 策略导入 canonical rl/policies，禁止在客户端复制动作/观测规则。真实帧兼容、错误分类和有界重试仍见 TODO F15。CI 的合成 checkpoint/模拟器验证不代表真实游戏端到端通过。
 原始帧/log 放忽略的本地输出，不进入核心模块目录。
 
-canonical怪物列表保留来源后端的位置：模拟器的INVALID槽成为PAD占位，真实列表保留死亡实体及客户端索引。只有差分报告的存活实体比较过滤gone槽，不将该视图传给策略。真实策略的观测/mask/PLAY命令使用同一个客户端槽位；这不等于录制回放已经建立客户端到native的目标映射，后者单列TODO BRIDGE31。
+canonical怪物列表保留来源后端的位置：模拟器的INVALID槽成为PAD占位，真实列表保留死亡实体及客户端索引。只有差分报告的存活实体比较过滤gone槽，不将该视图传给策略。真实策略的观测/mask/PLAY命令使用同一个客户端槽位。
+
+录制回放的自然/独立战斗入口共用 `_combat_cmd`，针对怪物的命令必须传入命令前真实帧 `pre`。执行前核对存活怪物的ID、HP、最大HP、格挡、基础意图伤害/次数与powers多重集，再将客户端目标唯一对应到native槽；缺帧、状态分歧或同名同状态歧义报错并停在原状态，不猜测实体。两个循环每条命令后更新pre，药水也实际执行；卡牌与单选索引先匹配合法动作再执行，避免位编码回绕。旧录制缺共享怪物UUID仍有无法解析的情形，手牌/选择区域的完整实体恢复及实机验收不在本轮完成范围；见TODO BRIDGE31和 `tests/integration/test_bridge_replay_targets.py`。
 
 本地简化编辑器的 `BattleContext.apply_custom_state` 在空spec、空player/monster记录（含空powers/counters）时保持全部状态；显式空牌堆仍表示清空牌堆。有内容的修改先在副本完成，解析失败不留下部分写入；不存在的怪物槽不能凭hp等字段创建。有效非空编辑仍沿用编辑器的重置为玩家回合语义，不能用于恢复排队动作或完整真实快照。回归 `tests/integration/test_custom_combat_edits.py`；需要同步重建原生扩展，接口shape/观测/动作版本未改变。
 

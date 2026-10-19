@@ -13,6 +13,7 @@ actual choice (which node, which card, which option) as replay input.
 Usage: python replay.py <orchestrator.log>
 """
 
+from collections import Counter
 import json
 import os
 import re
@@ -31,7 +32,7 @@ import slaythespire as sts  # noqa: E402
 from schemas.combat_state import (  # noqa: E402
     normalize_real, normalize_sim, diff,
     normalize_real_overworld, normalize_sim_overworld, diff_overworld,
-    real_to_sim_card_enum, _sim_monster_id,
+    real_to_sim_card_enum, _monster_real, _norm_sim_monster,
 )
 from schemas.card_state import real_master_deck_state  # noqa: E402
 
@@ -115,40 +116,8 @@ class Driver:
     def start_battle(self):
         self.bc = sts.create_battle(self.gc, _encounter_name(self.gc))
 
-    def combat_cmd(self, cmd):
-        parts = cmd.split()
-        verb = parts[0].lower()
-        if verb == "play":
-            src = int(parts[1]) - 1
-            if len(parts) >= 3:
-                self.bc.execute(sts.Action(sts.ActionType.CARD, src, int(parts[2])))
-            else:
-                self.bc.execute(sts.Action(sts.ActionType.CARD, src))
-        elif verb == "end":
-            self.bc.execute(sts.Action(sts.ActionType.END_TURN))
-        elif verb == "choose":  # HAND_SELECT (single-card select)
-            self.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, int(parts[1])))
-        elif verb == "potion":
-            # POTION <use|discard> <slot> [target]; slot/target are 0-based.
-            # The real game rejects out-of-range slots (CommunicationMod logs a
-            # "Potion index out of bounds" error and the command is a no-op);
-            # mirror that here so a bad slot doesn't desync the sim.
-            action, slot = parts[1].lower(), int(parts[2])
-            if slot < 0 or slot >= len(self.bc.potions):
-                pass
-            elif action == "discard":
-                # target > 5 signals a discard (see Action::execute POTION case)
-                self.bc.execute(sts.Action(sts.ActionType.POTION, slot, 6))
-            else:
-                # Go through execute() so the potion's queued actions (e.g. Swift
-                # Potion's draw) are pumped immediately, like the real game --
-                # the bare drink_potion binding queues without draining.
-                target = int(parts[3]) if len(parts) > 3 else 0
-                self.bc.execute(sts.Action(sts.ActionType.POTION, slot, target))
-        elif verb in ("confirm", "wait"):
-            pass  # confirm auto-resolves; wait is a re-request
-        else:
-            raise ValueError(f"unhandled combat command: {cmd!r}")
+    def combat_cmd(self, cmd, pre=None):
+        return _combat_cmd(self.bc, cmd, pre=pre)
 
     # ---- overworld ----
     def overworld_cmd(self, pre, cmd, post=None):
@@ -336,7 +305,8 @@ def build_encounter_map(tmpgc):
     for name in sts.encounter_names():
         try:
             bc = sts.create_battle(tmpgc, name)
-            ids = tuple(sorted(_sim_monster_id(m["id"]) for m in bc.to_dict()["monsters"]))
+            ids = tuple(sorted(m["id"] for m in normalize_sim(bc.to_dict())["monsters"]
+                               if m["id"] != "PAD"))
         except Exception:
             continue
         emap.setdefault(ids, name)
@@ -394,9 +364,10 @@ def validate_combats(events, verbose):
             continue
         n = _report(f"floor {floor} {encounter!r} start", start_diff, verbose)
         steps_ok = 0
+        pre = init
         for cmd, post in c["steps"]:
             try:
-                _combat_cmd(bc, cmd)
+                _combat_cmd(bc, cmd, pre=pre)
             except Exception as e:
                 print(f"  floor {floor}: error on {cmd!r}: {e}")
                 n += 1
@@ -409,26 +380,89 @@ def validate_combats(events, verbose):
                 n += _report(f"floor {floor} after {cmd!r}",
                              diff(normalize_real(post), normalize_sim(bc.to_dict())), verbose)
                 steps_ok += 1
+            pre = post
         status = "OK" if n == 0 else f"{n} DIFF"
         print(f"floor {floor:>2} {encounter:<16} [{status}]  ({steps_ok} steps)")
         total_diff += n
     print(f"\ndone. {total_diff} total diffs across {len(combats)} combats.")
 
 
-def _combat_cmd(bc, cmd):
+def _replay_target(bc, pre, wire_index):
+    """Resolve a client handle by matching the complete live entity multiset.
+
+    Neither backend guarantees the same physical slots. Legacy recordings have
+    no shared monster UUID, so indistinguishable targets must fail explicitly.
+    """
+    if not pre or not isinstance(pre.get("combat_state"), dict):
+        raise ValueError("targeted replay requires the pre-command combat frame")
+    records = pre["combat_state"].get("monsters")
+    if not isinstance(records, list) or not 0 <= wire_index < len(records):
+        raise ValueError(f"invalid client monster target: {wire_index}")
+    real = [_monster_real(m) for m in records]
+    native = [_norm_sim_monster(m) for m in bc.to_dict()["monsters"]]
+    def alive(m):
+        return not m["gone"] and m["hp"] > 0
+    def identity(m):
+        return (m["id"], m["hp"], m["max_hp"], m["block"],
+                m["base_damage"], m["hits"], tuple(sorted(m["powers"].items())))
+    if not alive(real[wire_index]):
+        raise ValueError(f"client target {wire_index} is not a live monster")
+    if Counter(identity(m) for m in real if alive(m)) != Counter(
+            identity(m) for m in native if alive(m)):
+        raise ValueError("client/native monster states disagree before targeted replay")
+    target = identity(real[wire_index])
+    matches = [i for i, m in enumerate(native) if alive(m) and identity(m) == target]
+    if len(matches) != 1:
+        raise ValueError(f"ambiguous client monster target {wire_index}; shared entity identity required")
+    return matches[0]
+
+
+def _combat_cmd(bc, cmd, pre=None):
     parts = cmd.split()
+    if not parts:
+        raise ValueError("empty combat command")
     verb = parts[0].lower()
+    if verb in ("confirm", "wait", "state"):
+        return
+    if verb == "potion":
+        operation, slot = parts[1].lower(), int(parts[2])
+        if operation not in ("use", "discard"):
+            raise ValueError(f"unknown potion operation: {operation}")
+        # Historical recordings may contain a rejected out-of-range command.
+        if slot < 0 or slot >= len(bc.potions):
+            return
+        if operation == "discard":
+            bc.execute(sts.Action(sts.ActionType.POTION, slot, 6))
+            return
+        option = next((p for p in bc.legal_potions() if p["slot"] == slot), None)
+        if option is None:
+            raise ValueError(f"potion {slot} cannot be used in the current state")
+        target = 0
+        if option["requires_target"]:
+            if len(parts) != 4:
+                raise ValueError("targeted potion replay requires a client target")
+            target = _replay_target(bc, pre, int(parts[3]))
+            if target not in option["targets"]:
+                raise ValueError("mapped potion target is not legal")
+        bc.execute(sts.Action(sts.ActionType.POTION, slot, target))
+        return
     if verb == "play":
         src = int(parts[1]) - 1
-        if len(parts) >= 3:
-            bc.execute(sts.Action(sts.ActionType.CARD, src, int(parts[2])))
-        else:
-            bc.execute(sts.Action(sts.ActionType.CARD, src))
+        target = _replay_target(bc, pre, int(parts[2])) if len(parts) >= 3 else 0
+        requested = (sts.ActionType.CARD, src, target)
     elif verb == "end":
-        bc.execute(sts.Action(sts.ActionType.END_TURN))
+        requested = (sts.ActionType.END_TURN, 0, 0)
     elif verb == "choose":
-        bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, int(parts[1])))
-    # confirm / potion / wait: no-op
+        requested = (sts.ActionType.SINGLE_CARD_SELECT, int(parts[1]), 0)
+    else:
+        raise ValueError(f"unhandled combat command: {cmd!r}")
+    def signature(a):
+        return (a.action_type, a.source_idx, a.target_idx)
+    # Match before constructing an Action: its packed integers can wrap.
+    action = next((a for a in bc.legal_actions() if signature(a) == requested), None)
+    if action is None:
+        raise ValueError(f"recorded combat action is not legal: {cmd!r}")
+    bc.execute(action)
 
 
 def run_natural(events, verbose):
@@ -454,7 +488,7 @@ def run_natural(events, verbose):
             continue
         try:
             if drv.bc is not None:
-                drv.combat_cmd(cmd)
+                drv.combat_cmd(cmd, pre=pre)
             else:
                 drv.overworld_cmd(pre, cmd, post)
         except Exception as e:
