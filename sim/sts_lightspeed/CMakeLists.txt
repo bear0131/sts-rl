@@ -50,6 +50,15 @@ target_link_directories(nosl-combat-train PRIVATE json::nlohmann_json)
 target_include_directories(nosl-combat-train PUBLIC include)
 target_include_directories(nosl-combat-train PUBLIC json/include)
 
-foreach(target slaythespire main test small-test nosl-combat-train)
+# Internal state and pending callbacks are not exposed through the Python API.
+# pytest builds this isolated regression executable only when those tests run.
+add_executable(game-context-contract EXCLUDE_FROM_ALL
+        ../../tests/integration/native_game_context.cpp ${sts_lightspeed_SOURCES})
+target_include_directories(game-context-contract PRIVATE include json/single_include)
+if (STS_ENABLE_RULE_TRACE)
+    target_compile_definitions(game-context-contract PRIVATE STS_ENABLE_RULE_TRACE)
+endif()
+
+foreach(target slaythespire main test small-test nosl-combat-train game-context-contract)
     target_link_libraries(${target} PRIVATE Threads::Threads)
 endforeach()

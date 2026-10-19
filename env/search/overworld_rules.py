@@ -266,12 +266,12 @@ def _dynamic_event_scores(state, event):
                     score = max(upgrades, default=0) - gold_cost
                 elif kind == 'remove_card':
                     score = max(removals, default=0) - gold_cost
-                elif kind in ('upgrade_random_cards', 'transform_random_cards',
+                elif kind in ('upgrade_random_cards', 'transform_cards', 'transform_random_cards',
                               'remove_card_upgrade_random'):
-                    # The simulator's random-upgrade branch omits its displayed
-                    # gold loss, while the latter two fall through later switch
-                    # cases. Keep the public choices represented, but do not
-                    # select a transition whose implementation is unsound.
+                    # Retain the existing conservative score until a separate
+                    # strategy evaluation covers these services. F20 fixed the
+                    # native transitions; transform_random_cards is accepted
+                    # only for compatibility with older event metadata.
                     score = -90.0
                 elif kind == 'lose_hp':
                     hp_cost = max(0, int(choice['hp']))

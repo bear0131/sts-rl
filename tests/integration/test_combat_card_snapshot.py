@@ -134,3 +134,75 @@ def test_incomplete_or_inconsistent_snapshot_cannot_replace_cards(combat_factory
     with pytest.raises((ValueError, TypeError, RuntimeError)):
         env.thick.bc.set_card_state(invalid)
     assert env.thick.bc.card_state() == before
+
+
+def test_restored_pain_and_strike_counts_drive_real_effects(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    battle.set_card_state(_state(
+        hand=[_row('PERFECTED_STRIKE', 10, base_cost=2, cost=2), _row('PAIN', 11, base_cost=-2, cost=-2)],
+        draw=[_row('STRIKE_RED', 12)], discard=[_row('POMMEL_STRIKE', 13)],
+        exhaust=[_row('STRIKE_RED', 14)]))
+    before = battle.to_dict()
+    battle.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    after = battle.to_dict()
+    assert after['player']['hp'] == before['player']['hp'] - 1
+    # Perfected Strike counts itself plus draw/discard Strikes, not exhausted ones.
+    assert after['monsters'][0]['hp'] == before['monsters'][0]['hp'] - 12
+
+
+def test_restored_normality_limits_actual_plays(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    battle.set_card_state(_state(hand=[_row('DEFEND_RED', i, base_cost=0, cost=0) for i in range(4)]
+                                + [_row('NORMALITY', 5, base_cost=-2, cost=-2)]))
+    for _ in range(3):
+        assert any(a.action_type == sts.ActionType.CARD for a in battle.legal_actions())
+        battle.execute(sts.Action(sts.ActionType.CARD, 0))
+    assert not any(a.action_type == sts.ActionType.CARD for a in battle.legal_actions())
+    assert len(battle.card_state()['hand']) == 2
+
+
+@pytest.mark.parametrize('pile', ['hand', 'draw', 'discard'])
+def test_restored_blood_card_cache_handles_damage(combat_factory, pile):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    state = _state(hand=[_row('BLOODLETTING', 1, base_cost=0, cost=0)],
+                   **({pile: [_row('BLOOD_FOR_BLOOD', 4, base_cost=4, cost=4)]} if pile != 'hand' else {}))
+    if pile == 'hand':
+        state['hand'].append(_row('BLOOD_FOR_BLOOD', 4, base_cost=4, cost=4))
+    battle.set_card_state(state)
+    battle.execute(sts.Action(sts.ActionType.CARD, 0))
+    cards = [c for key in ('hand', 'draw', 'discard') for c in battle.card_state()[key] if c['uid'] == 4]
+    assert len(cards) == 1
+    assert cards[0]['base_cost'] == cards[0]['cost'] == 3
+
+
+def test_snapshot_restore_rejects_pending_selection_atomically(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    battle.set_card_state(_state(hand=[_row('BURNING_PACT', 1), _row('STRIKE_RED', 2), _row('BASH', 4)],
+                                draw=[_row('DEFEND_RED', 3)]))
+    battle.execute(sts.Action(sts.ActionType.CARD, 0))
+    before, cards = battle.to_dict(), battle.card_state()
+    with pytest.raises(ValueError, match='settled player turn'):
+        battle.set_card_state(cards)
+    assert battle.to_dict() == before
+    assert battle.card_state() == cards
+
+
+def test_restore_preserves_rng_and_native_search_decision(combat_factory):
+    env = combat_factory(['STRIKE_RED'] * 5, 'Cultist')
+    battle = env.thick.bc
+    battle.set_card_state(_state(hand=[_row('BASH', 8, base_cost=0, cost=0)],
+                                draw=[_row('DEFEND_RED', 2), _row('STRIKE_RED', 3)],
+                                discard=[_row('ANGER', 4, base_cost=0, cost=0)]))
+    expected = battle.clone()
+    cards = battle.card_state()
+    battle.set_card_state(_state(hand=[_row('RAMPAGE', 1)]))
+    battle.set_card_state(cards)
+    assert battle.nosl_native_search(8, 2, 1.5, 42) == expected.nosl_native_search(8, 2, 1.5, 42)
+    for b in (battle, expected):
+        b.execute(sts.Action(sts.ActionType.END_TURN))
+    assert battle.card_state() == expected.card_state()
+    assert battle.to_dict() == expected.to_dict()

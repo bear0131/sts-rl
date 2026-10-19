@@ -15,7 +15,8 @@ void Shop::setup(GameContext &gc) {
     setupPotions(gc);
 
     if (gc.ascension >= 16) {
-        applyDiscount(0.80f);
+        // A16 inflation applies to the initial stock, not Courier restocks.
+        applyDiscount(1.10f);
     }
     if (gc.hasRelic(RelicId::THE_COURIER)) {
         applyDiscount(0.80f);
@@ -99,10 +100,17 @@ void Shop::buyCard(GameContext &gc, int idx) {
             cards[idx] = gc.previewObtainCard(getColorlessCardFromPool(gc.cardRng, rarity));
             cardPrice(idx) = getNewCardPrice(gc, rarity, true);
         } else {
-            CardRarity rarity = gc.rollCardRarity(Room::SHOP);
+            CardRarity rarity = rollCardRarityShop(gc.cardRng, gc.cardRarityFactor);
+            // The base game has no common powers; getCardFromPool falls back
+            // to uncommon without another rarity roll or an empty-pool draw.
+            if (purchasedType == CardType::POWER && rarity == CardRarity::COMMON) {
+                rarity = CardRarity::UNCOMMON;
+            }
+            // ShopScreen uses getCardFromPool(..., type, false): MathUtils
+            // chooses the card, while cardRng above only rolls its rarity.
             cards[idx] = gc.previewObtainCard(
-                getRandomClassCardOfTypeAndRarity(gc.cardRng, gc.cc, purchasedType, rarity));
-            cardPrice(idx) = getNewCardPrice(gc, rarity, false);
+                getRandomClassCardOfTypeAndRarity(gc.mathUtilRng, gc.cc, purchasedType, rarity));
+            cardPrice(idx) = getNewCardPrice(gc, cards[idx].getRarity(), false);
         }
 
     } else {
@@ -127,7 +135,9 @@ void Shop::buyRelic(GameContext &gc, int idx) {
 
     if (r == RelicId::MEMBERSHIP_CARD) {
         applyDiscount(MEMBERSHIP_CARD_FACTOR);
-        removeCost = static_cast<int>(std::round(static_cast<float>(removeCost) * MEMBERSHIP_CARD_FACTOR));
+        if (removeCost >= 0) {
+            removeCost = getRemoveCost(gc);
+        }
     }
     if (r == RelicId::SMILING_MASK) {
         removeCost = SMILING_MASK_PRICE;
@@ -233,21 +243,17 @@ int Shop::getNewPrice(GameContext &gc, int basePrice) {
 }
 
 int Shop::getRemoveCost(const GameContext &gc) {
-    int cost;
     if (gc.hasRelic(RelicId::SMILING_MASK)) {
-        cost = SMILING_MASK_PRICE;
-    } else {
-        cost = BASE_REMOVE_PRICE+(REMOVE_PRICE_INCREASE*gc.shopRemoveCount);
+        return SMILING_MASK_PRICE;
     }
+    int cost = BASE_REMOVE_PRICE+(REMOVE_PRICE_INCREASE*gc.shopRemoveCount);
 
-    if (gc.hasRelic(RelicId::THE_COURIER) && gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
-        cost = std::round(static_cast<float>(cost) * COURIER_FACTOR * MEMBERSHIP_CARD_FACTOR);
-
+    // ShopScreen.applyDiscount recalculates removal from the undiscounted base
+    // each time. Membership is applied last, unlike the cumulative item prices.
+    if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
+        cost = std::round(static_cast<float>(cost) * MEMBERSHIP_CARD_FACTOR);
     } else if (gc.hasRelic(RelicId::THE_COURIER)) {
         cost = std::round(static_cast<float>(cost) * COURIER_FACTOR);
-
-    } else if (gc.hasRelic(RelicId::MEMBERSHIP_CARD)) {
-        cost = std::round(static_cast<float>(cost) * MEMBERSHIP_CARD_FACTOR);
     }
     return cost;
 }

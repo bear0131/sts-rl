@@ -1344,7 +1344,20 @@ bool GameContext::obtainRelic(RelicId r) {
                 break; // if we have no cards at all
             }
 
-            openCardSelectScreen(CardSelectScreenType::TRANSFORM_UPGRADE, std::min(info.toSelectCards.size(), 3), false);
+            if (info.toSelectCards.size() <= 3) {
+                // onEquip's temporary CardGroup uses addToTop: process in reverse deck order.
+                const auto selected = info.toSelectCards;
+                for (int i = selected.size() - 1; i >= 0; --i) {
+                    deck.remove(*this, selected[i].deckIdx);
+                }
+                for (int i = selected.size() - 1; i >= 0; --i) {
+                    deck.obtain(*this, getTransformedCard(miscRng, selected[i].card.id, true));
+                }
+                info.toSelectCards.clear();
+                break;
+            }
+
+            openCardSelectScreen(CardSelectScreenType::TRANSFORM_UPGRADE, 3, false);
             opensScreen = true;
             break;
         }
@@ -1400,7 +1413,17 @@ bool GameContext::obtainRelic(RelicId r) {
         }
 
         case RelicId::EMPTY_CAGE: {
-            openCardSelectScreen(CardSelectScreenType::REMOVE, 2);
+            // Empty Cage uses purgeable cards, including bottles, unlike ordinary removal.
+            info.toSelectCards.clear();
+            deck.addMatchingToSelectList(info.toSelectCards, [](auto c) { return c.canTransform(); });
+            if (info.toSelectCards.size() <= 2) {
+                for (int i = info.toSelectCards.size() - 1; i >= 0; --i) {
+                    deck.remove(*this, info.toSelectCards[i].deckIdx);
+                }
+                info.toSelectCards.clear();
+                break;
+            }
+            openCardSelectScreen(CardSelectScreenType::REMOVE, 2, false);
             opensScreen = true;
             break;
         }                                    
@@ -1502,7 +1525,7 @@ RelicId GameContext::returnRandomRelic(RelicTier tier, bool shopRoom, bool fromF
 
         case RelicTier::COMMON:
             if (commonRelicPool.empty()) {
-                retVal = returnRandomRelic(RelicTier::UNCOMMON, shopRoom);
+                return returnRandomRelic(RelicTier::UNCOMMON, shopRoom);
             } else {
                 vec = &commonRelicPool;
             }
@@ -1510,7 +1533,7 @@ RelicId GameContext::returnRandomRelic(RelicTier tier, bool shopRoom, bool fromF
 
         case RelicTier::UNCOMMON:
             if (uncommonRelicPool.empty()) {
-                retVal = returnRandomRelic(RelicTier::RARE, shopRoom);
+                return returnRandomRelic(RelicTier::RARE, shopRoom);
             } else {
                 vec = &uncommonRelicPool;
             }
@@ -1518,7 +1541,7 @@ RelicId GameContext::returnRandomRelic(RelicTier tier, bool shopRoom, bool fromF
 
         case RelicTier::RARE:
             if (rareRelicPool.empty()) {
-                retVal = RelicId::CIRCLET;
+                return RelicId::CIRCLET;
             } else {
                 vec = &rareRelicPool;
             }
@@ -1526,7 +1549,7 @@ RelicId GameContext::returnRandomRelic(RelicTier tier, bool shopRoom, bool fromF
 
         case RelicTier::SHOP:
             if (shopRelicPool.empty()) {
-                retVal = returnRandomRelic(RelicTier::UNCOMMON, shopRoom);
+                return returnRandomRelic(RelicTier::UNCOMMON, shopRoom);
             } else {
                 vec = &shopRelicPool;
             }
@@ -1534,14 +1557,16 @@ RelicId GameContext::returnRandomRelic(RelicTier tier, bool shopRoom, bool fromF
 
         case RelicTier::BOSS:
             if (bossRelicPool.empty()) {
-                retVal = RelicId::RED_CIRCLET;
+                // Vanilla falls back to the ordinary Circlet. Red Circlet is
+                // unobtainable without mods, despite its intended purpose.
+                return RelicId::CIRCLET;
             } else {
                 vec = &bossRelicPool;
             }
             break;
 
         default:
-            break;
+            throw std::invalid_argument("returnRandomRelic requires a pool-backed tier");
     };
 
     if (fromFront) {
@@ -1582,6 +1607,9 @@ RelicId GameContext::returnRandomScreenlessRelic(RelicTier tier, bool shopRoom) 
 }
 
 Card GameContext::previewObtainCard(Card card) {
+    // Eggs only upgrade a fresh, upgradeable card. In particular, repeated
+    // previews and obtaining a previewed Searing Blow must not add upgrades.
+    if (!card.canUpgrade() || card.isUpgraded()) return card;
     switch (card.getType()) {
         case CardType::ATTACK:
             if (hasRelic(RelicId::MOLTEN_EGG)) {
@@ -1697,15 +1725,18 @@ CardId GameContext::returnTrulyRandomCardFromAvailable(Random &rng, CardId exclu
 
 Card GameContext::getTransformedCard(Random &rng, CardId exclude, bool autoUpgrade) {
     auto color = getCardColor(exclude);
-
+    Card transformed;
     if (color == CardColor::CURSE) {
-        return getRandomCurse(rng, exclude);
-    } else  if (color == CardColor::COLORLESS) {
-        return returnTrulyRandomColorlessCardFromAvailable(rng, exclude);
+        transformed = getRandomCurse(rng, exclude);
+    } else if (color == CardColor::COLORLESS) {
+        transformed = returnTrulyRandomColorlessCardFromAvailable(rng, exclude);
+    } else {
+        transformed = returnTrulyRandomCardFromAvailable(rng, exclude);
     }
-
-    CardId transformCard = returnTrulyRandomCardFromAvailable(rng, exclude);
-    return Card(transformCard, autoUpgrade ? 1 : 0);
+    if (autoUpgrade && transformed.canUpgrade()) {
+        transformed.upgrade();
+    }
+    return transformed;
 }
 
 CardId GameContext::returnColorlessCard(CardRarity rarity) {
@@ -2766,7 +2797,10 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 1:
                     info.transformRng = MISC_RNG;
-                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2);
+                    // Augmenter permits bottled cards, unlike ordinary transform events.
+                    info.toSelectCards.clear();
+                    deck.addMatchingToSelectList(info.toSelectCards, [](auto c) { return c.canTransform(); });
+                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2, false);
                     break;
 
                 case 2:

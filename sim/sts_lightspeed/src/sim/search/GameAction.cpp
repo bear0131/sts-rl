@@ -370,12 +370,22 @@ void executeRewardsAction(GameContext &gc, const search::GameAction a) {
             break;
 
         case search::GameAction::RewardsActionType::RELIC: {
-            const bool takesSapphireRelic = r.sapphireKey && a.getIdx1() == r.relicCount-1;
-            gc.obtainRelic(r.relics[a.getIdx1()]);
+            // Remove from the original offer before a relic can replace it
+            // with a nested reward screen. Preserve both the remaining offer
+            // and continuation by value, so copied contexts stay independent.
+            const bool takesSapphireRelic = r.sapphireKey && a.getIdx1() == r.relicCount - 1;
+            const auto relic = r.relics[a.getIdx1()];
             r.removeRelicReward(a.getIdx1());
-            if (takesSapphireRelic) {
-                r.sapphireKey = false;
-            }
+            if (takesSapphireRelic) r.sapphireKey = false;
+            const auto remaining = r;
+            const auto saved = gc.regainControlAction;
+            gc.regainControlAction = [remaining, saved](GameContext &g) {
+                g.info.rewardsContainer = remaining;
+                g.screenState = ScreenState::REWARDS;
+                g.regainControlAction = saved;
+            };
+            const bool opened = gc.obtainRelic(relic);
+            if (!opened) gc.regainControlAction = saved;
             break;
         }
 
@@ -785,7 +795,7 @@ int search::GameAction::getValidEventSelectBits(const GameContext &gc) {
         }
 
         case Event::AUGMENTER:
-            if (gc.deck.getTransformableCount(2) >= 2) {
+            if (gc.deck.getTransformableCount(2, true) >= 2) {
                 return 0x7;
             } else {
                 return 0b101;

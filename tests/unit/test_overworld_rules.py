@@ -351,7 +351,8 @@ def test_note_for_yourself_uses_the_displayed_card_and_removal_opportunity():
     assert choose(s, A._EVENT, A._EVENT + 1) == A._EVENT + 1
 
 
-def test_designer_uses_visible_service_mode_and_avoids_broken_fallthroughs():
+@pytest.mark.parametrize("transform_kind", ["transform_cards", "transform_random_cards"])
+def test_designer_uses_visible_service_mode_and_preserves_conservative_scores(transform_kind):
     s = state('event')
     s['options'].update(event='Designer', event_choices=[
         {'index': 0, 'kind': 'upgrade_card', 'gold': 40},
@@ -361,7 +362,7 @@ def test_designer_uses_visible_service_mode_and_avoids_broken_fallthroughs():
     assert choose(s, A._EVENT, A._EVENT + 4, A._EVENT + 5) == A._EVENT
     s['options']['event_choices'] = [
         {'index': 1, 'kind': 'upgrade_random_cards', 'gold': 40, 'count': 2},
-        {'index': 3, 'kind': 'transform_random_cards', 'gold': 60, 'count': 2},
+        {'index': 3, 'kind': transform_kind, 'gold': 60, 'count': 2},
         {'index': 4, 'kind': 'remove_card_upgrade_random', 'gold': 90, 'count': 1},
         {'index': 5, 'kind': 'lose_hp', 'hp': 3},
     ]
@@ -485,6 +486,7 @@ def test_real_reward_claim_requires_an_actual_empty_potion_slot(slots):
         "game_state": {
             "screen_type": "COMBAT_REWARD",
             "choice_list": ["potion"],
+            "relics": [],
             "screen_state": {"rewards": [{
                 "reward_type": "POTION",
                 "potion": {"id": "Fire Potion"},
@@ -532,3 +534,28 @@ def test_real_shop_potions_require_capacity_and_no_sozu(relics, potions, can_buy
     assert ga.shop_proceed() in legal
     if can_buy:
         assert adapter.command_for_semantic(buy) == "CHOOSE 0"
+
+
+@pytest.mark.parametrize('kind', ['transform_cards', 'transform_random_cards'])
+def test_real_bridge_preserves_designer_transform_selection_metadata(kind):
+    adapter = RealGameAdapter()
+    adapter.update({
+        'in_game': True,
+        'game_state': {
+            'screen_type': 'EVENT',
+            'choice_list': ['clean up', 'leave'],
+            'screen_state': {
+                'event_id': 'Designer',
+                'options': [
+                    {'choice_index': 0, 'kind': kind, 'gold': 60, 'count': 2},
+                    {'choice_index': 1, 'kind': 'lose_hp', 'hp': 3},
+                ],
+            },
+        },
+    })
+    assert adapter._options('event')['event_choices'] == [
+        {'index': 3, 'kind': 'transform_cards', 'gold': 60, 'count': 2},
+        {'index': 5, 'kind': 'lose_hp', 'hp': 3},
+    ]
+    from env.core import game_actions as ga
+    assert adapter.command_for_semantic(ga.event(3)) == 'CHOOSE 0'

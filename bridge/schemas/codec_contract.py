@@ -22,6 +22,7 @@ from .entity_ids import (
     COMBAT_SELECTION_SOURCES,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
+    DYNAMIC_EVENT_OPTION_KIND_ALIASES,
     LIVE_RELIC_STATE_FIELDS,
     LIVE_RELIC_COUNTER_FIELDS,
     LIVE_RELIC_COUNTER_MODULI,
@@ -219,6 +220,7 @@ def complete_word_tables():
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),
         "dynamic_event_kinds": DYNAMIC_EVENT_OPTION_KINDS,
+        "dynamic_event_kind_aliases": DYNAMIC_EVENT_OPTION_KIND_ALIASES,
         "commands": sorted(REAL_COMMAND_IDS),
         "reward_types": dict(REWARD_CHOICE_TYPES),
         "run_keys": RUN_KEY_FIELDS,
@@ -412,6 +414,10 @@ def validate_codec_contract() -> dict[str, int]:
             raise RuntimeError(f"dynamic event word table is empty/colliding for {event!r}")
         if any(type(index) is not int or not 0 <= index < 8 for index in kinds.values()):
             raise RuntimeError(f"dynamic event word table has invalid index for {event!r}")
+    for event, aliases in DYNAMIC_EVENT_OPTION_KIND_ALIASES.items():
+        kinds = DYNAMIC_EVENT_OPTION_KINDS.get(event, {})
+        if any(alias in kinds or target not in kinds for alias, target in aliases.items()):
+            raise RuntimeError(f"dynamic event aliases are malformed for {event!r}")
     # Import lazily to keep the low-level identity module independent from the
     # event effect verifier.  Every canonical event has exactly one declared
     # static, structured/dynamic, or Neow option contract.

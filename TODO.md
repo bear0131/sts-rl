@@ -1,5 +1,26 @@
 # 仓库总 TODO
 
+同步来源固定为main 2a7eafc..26bcb97；下列新增项的原验证记录已并入worklog/2026-10-19.md，当前分支合并后的结果单独记录，不能沿用来源的通过数量。main的BRIDGE29与本分支战斗升级费用编号冲突，房间回放统一记为BRIDGE39；既有BRIDGE17/28/F20实现保留，采用新增回归复验而不降级合同。
+
+| ID | 状态 | 范围 / 验收 |
+|---|---|---|
+| BRIDGE42 | JAX药贩子变两张：原生通过，真机桥接未接通 | `GameContext::chooseEventOption(AUGMENTER)`已支持含瓶装候选、两次选择和正确删牌/返回；明确当前构建A0/A20六例通过。`bridge/event_contract.py::CONTRACTS[Drug Dealer]`仍为pending_augmenter_transform，`EventEffectAck.arm`在发送CHOOSE前拒绝；已部署runtime甚至没有Drug Dealer合同。验收须核对真实GRID两次选择/选中UUID/确认、恰好移除所选两张并取得两张新牌、瓶装与取得/移除副作用、返回事件确认及后续MAP；不得删除pending检查、屏蔽模型选项或填PAD来声称支持。关联BRIDGE22/28与BOTTLE01；本次用户问诊只检查，没有放行或实机启动。 |
+| SHOP01 | 近期main修复已接入，595项同步回归通过；未部署 | Sozu/实际药水满槽禁止购买，公开有效可支付药水入口因容量阻断时无副作用；验证2/3/5物理槽、扣款/库存/Courier，见tests/integration/test_overworld_potion_shop.py。生产未部署。 |
+| SHOP02 | 近期main修复已接入，595项同步回归通过；未部署 | A16初始库存加价、Courier/会员补货价格与删牌优先级、微笑面具固定50；见tests/integration/test_shop_prices.py。旧错误定价成绩不可用作当前规则验收。 |
+| SHOP03 | 近期main修复已接入，595项同步回归通过；未部署 | 升级蛋预览只升级一次、买蛋后货架刷新；Courier彩色补货保留类型，cardRng抽商店稀有度、mathUtilRng选牌、merchantRng定价，COMMON能力转UNCOMMON。见test_shop_eggs.py、test_shop_restock.py及test_overworld_potion_shop.py。 |
+| SHOP04 | 近期main修复已接入，595项同步回归通过；未部署 | Python商店入口先校验当前画面和原始索引，避免8位编码别名；售罄/金币不足拒绝且不改状态，合法枚举与实际执行一致。见tests/integration/test_overworld_potion_shop.py。 |
+| DECK02 | 近期main修复已接入，595项同步回归通过；未部署 | 灼热攻击反复升级继续可升级，普通牌重复升级不重复减计数，随机升级复用同一入口；篝火/磨刀石/心灵绽放/移除计数见tests/integration/test_deck_upgrades.py。 |
+| BOTTLE01 | 近期main修复已接入，595项同步回归通过；未部署 | 药贩子与星盘允许瓶装卡，普通TRANSFORM仍排除；验证候选与实际删除/变牌身份、瓶装索引、真实首抽。见tests/integration/test_bottle_transforms.py。 |
+| BOTTLE02 | 近期main修复已接入，595项同步回归通过；未部署 | 空鸟笼包含瓶装候选且≤2自动处理，星盘≤3自动处理，零候选返回；星盘按逆序使用miscRng，Boss/奖励continuation不得重复推进。见tests/integration/test_bottle_transforms.py及native_game_context.cpp。 |
+| BOTTLE03 | 近期main修复已接入，595项同步回归通过；未部署 | 星盘无色牌按autoUpgrade且canUpgrade升级，普通变牌/诅咒及随机流不变；按颜色/升级蛋与自动或手动路径验证，见tests/integration/test_bottle_transforms.py。 |
+| REWARD01 | 近期main修复已接入，595项同步回归通过；未部署 | 奖励raw索引/画面先验证，嵌套遗物奖励保存原offer和continuation，保留本分支蓝钥匙互斥；卡组/金币/药水组索引不丢失。见tests/integration/test_reward_transactions.py与tests/unit/test_bridge_reward_legality.py。 |
+| CALLBACK01 | 既有本地修复保留，main同步回归通过；未部署 | DeadAdventurer/MindBloom/Mushrooms与Boss幕间回调不捕获旧this，复制/原对象销毁后使用接收者状态和RNG；见tests/integration/test_event_callbacks.py。 |
+| RELICPOOL01 | 近期main修复已接入，595项同步回归通过；未部署 | 空遗物池必须立即返回回退值，rare/boss耗尽返回普通Circlet，非法tier拒绝；隔离原生探针及实际200次补货见tests/integration/test_relic_pool.py。 |
+| BRIDGE39 | main BRIDGE29房间回放已接入，595项同步回归通过；未部署 | REST/CHEST proceed依据实际原生画面推进，已回图不重复执行，未决选择拒绝；见tests/integration/test_bridge_room_replay.py。本分支BRIDGE29仍指战斗升级费用，两个问题不得覆盖。 |
+| REPLAY01 | 来源main已知限制；本轮不迁移整局历史 | main旧A20无限回放依赖错误定价，第223步余额不足；保留其历史版本含义，不还原错误规则/注资/静默skip。本次仅接入近期修复与直接回归，不额外引入main A20策略和整局回放历史。 |
+| BRIDGE40 | 验证中复现；待定位模型地图合同 | wrapper reset seed1经首个动作会出现4个options.nodes，而当前MAP_EDGES容量3明确拒绝。同步奖励测试改为真实backend语义步进至战斗，避免用地图编码作为奖励夹具前提；没有扩大/截断模型输入或静默PAD，不能据奖励通过称全局地图已兼容。须核对初始可选行/普通边/飞靴来源及冻结权重投影，保留全部真实候选和动作身份。 |
+| BRIDGE41 | 同步前既有12项搜索失败待修 | 非strict apply_custom_state的空字典疑似把实际空怪物槽maxHP夹至1；GremlinLeader/Automaton/Collector的packed/canonical矩阵拒绝有状态的INVALID。禁止放宽PAD校验；修复空override不变性并验证整个搜索矩阵。见tests/integration/test_search_contracts.py::test_packed_leaf_matches_canonical_bitwise。 |
+
 | BRIDGE35 | 伤害捕获源码批量实现，未统一验证/部署 | 顺劈斩/闪亮登场/燔祭/闪电霹雳/死亡收割与旋风斩统一use时捕获整数伤害矩阵，去掉晚算和Vigor重复加成；Vigor按Java排队移除，飞剑逐段用实际牌实例重新计算，飞踢保存use时伤害。Intangible修正min上限，WristBlade支持freeOnce且按实例cost排除X；Reaper治疗入队后执行胜利过滤。9张攻击的来源/捕获时点加入对接词表，恶魔之火随机消耗已核对正确不改。验收包含出牌触发改变力量/Vigor、每段随机目标、费用/零伤、致命后的治疗与冻结权重接入；完整dynamic baseDamage/pending仍为BRIDGE28。 |
 | BRIDGE36 | 首领/动作清理源码批量实现，未统一验证/部署 | 移除MINION_LEADER死亡直接胜利；青铜自动机/收藏家/蛇女排SuicideTop，地精首领/觉醒者第二阶段排EscapeBottom，保留当前AOE内部次序。Suicide直接置HP0再死亡，不走伤害；DAMAGE与真实GainBlock类正确保留。随机目标按实际可用槽采样，无目标不抽RNG，删除静默末槽回退；目标索引先验范围。战斗结束谓词保留觉醒者第一阶段，统一逃跑计数；Stasis延后same-UID副本返还/满手分支，标本捕获毒量后随机传递、不打开虚假玩家选择。19类动作/9项死亡合同入词表。验收须统一覆盖群攻/多段/反伤、致命后治疗/返牌取消、复活保护、随机流/槽位/固定权重；完整复活与消失实体根恢复仍见BRIDGE37，全部pending仍BRIDGE28。 |
 | BRIDGE37 | 生命周期字段/部分复活源码批量实现，未统一验证/部署；私有状态与槽复用待补 | 原生明确isDying/isDead，群体结束按dying/escaping而非HP；Darkling半死/最终死亡计数、最终二次回调、Heal→REVIVE→Regrow→Roll排队，Regen半死guard、GainBlock与新建/分裂标志同步。parity-v10导出dying/dead/escaping/escapeNext和Awakened room.cannotLose，并按实际history长度明确空历史。canonical保留零HP powers/三项move，根恢复不走gone捷径且整批原子回滚；OBS20固定投影显式mask gone powers而非删原状态，双packed解码器和search key接通。10项字段词表已登记。完整实体映射发现尸体丢失/别名或strict种类替换缺私有状态时拒绝，不随机初始化/PAD。仍须补完整动态槽映射、初次中途接入、Awakened form1/firstTurn/CanLose排队、Darkling firstMove、Stasis死亡后引用/全部pending；验收零HP待复活、逃跑HP>0、完整死体、重复回调/历史、槽位/读档、两编码器/固定模型接入，统一回归后才可部署。 |

@@ -36,6 +36,7 @@ from bridge.schemas.entity_ids import (
     COMBAT_SELECTION_SOURCES,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
+    DYNAMIC_EVENT_OPTION_KIND_ALIASES,
     EMPTY_REAL_POTION_IDS,
     EVENT_ALIASES,
     OVERWORLD_SELECTION_EVENTS,
@@ -459,6 +460,8 @@ def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict
         kind = raw.get("kind")
         if not isinstance(kind, str) or not kind:
             raise ValueError(f"typed event option {index} has no kind")
+        aliases = DYNAMIC_EVENT_OPTION_KIND_ALIASES.get(ss.get("event_id"), {})
+        kind = aliases.get(kind, kind)
         detail: dict[str, Any] = {"index": index, "kind": kind}
         try:
             if kind in {"lose_card", "gain_card_then_remove"}:
@@ -475,7 +478,7 @@ def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict
             elif kind == "lose_hp":
                 detail["hp"] = int(raw["hp"])
             elif kind in {"upgrade_card", "upgrade_random_cards", "remove_card",
-                          "transform_random_cards", "remove_card_upgrade_random"}:
+                          "transform_cards", "transform_random_cards", "remove_card_upgrade_random"}:
                 detail["gold"] = int(raw["gold"])
                 if "count" in raw:
                     detail["count"] = int(raw["count"])
@@ -2079,7 +2082,7 @@ class RealGameAdapter:
                 acts.append(ga.claim(ga.CLAIM_RELIC, counts[ga.CLAIM_RELIC]))
                 counts[ga.CLAIM_RELIC] += 1
             elif reward_type == "POTION":
-                if self._has_empty_potion_slot():
+                if "Sozu" not in self._relics() and self._has_empty_potion_slot():
                     acts.append(ga.claim(ga.CLAIM_POTION, counts[ga.CLAIM_POTION]))
                 counts[ga.CLAIM_POTION] += 1
             elif reward_type in {"EMERALD_KEY", "SAPPHIRE_KEY"}:
@@ -2230,6 +2233,8 @@ class RealGameAdapter:
             idx = self._map_command_index(action[1])
             return f"CHOOSE {idx}"
         if verb == ga.CLAIM:
+            if self.screen_type() != "COMBAT_REWARD" or action not in self._legal_reward_actions():
+                raise ValueError(f"claim is unavailable on the current reward screen: {action!r}")
             idx = self._claim_command_index(action[1], action[2])
             return f"CHOOSE {idx}"
         if verb == ga.REWARD_CARD:

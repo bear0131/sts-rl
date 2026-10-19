@@ -2008,7 +2008,7 @@ py::list eventOptionDetails(const sts::GameContext &gc) {
                     detail["kind"] = "remove_card";
                     detail["gold"] = unfavorable ? 75 : 60;
                 } else if (idx == 3) {
-                    detail["kind"] = "transform_random_cards";
+                    detail["kind"] = "transform_cards";
                     detail["gold"] = unfavorable ? 75 : 60;
                     detail["count"] = 2;
                 } else if (idx == 4) {
@@ -2059,14 +2059,18 @@ py::dict rewardInfo(const sts::GameContext &gc) {
     return d;
 }
 
-void requireValidGameAction(
-    const sts::GameContext &gc,
-    const sts::search::GameAction &action,
-    const char *operation
-) {
-    if (!action.isValidAction(gc)) {
-        throw std::invalid_argument(std::string(operation) + " requires a legal action in the current game state");
+// Bindings must reject stale screens and raw indices before the 8-bit codec
+// can alias them to a different valid action.
+void executeRewardClaim(sts::GameContext &gc, sts::search::GameAction::RewardsActionType type,
+                        int idx, const char *operation) {
+    if (gc.screenState != sts::ScreenState::REWARDS || idx < 0 || idx > 0xff) {
+        throw std::invalid_argument(std::string(operation) + " requires a valid reward index on the REWARDS screen");
     }
+    const sts::search::GameAction action(type, idx);
+    if (!action.isValidAction(gc)) {
+        throw std::invalid_argument(std::string(operation) + " is not a legal reward action");
+    }
+    action.execute(gc);
 }
 
 // Full simulator-authoritative action list for a REWARDS screen.  Keep the
@@ -2075,6 +2079,7 @@ void requireValidGameAction(
 py::list legalRewardOptions(const sts::GameContext &gc) {
     using RAT = sts::search::GameAction::RewardsActionType;
     py::list out;
+    if (gc.screenState != sts::ScreenState::REWARDS) return out;
     for (const auto &action : sts::search::GameAction::getAllActionsInState(gc)) {
         const char *kind;
         switch (action.getRewardsActionType()) {
@@ -2125,6 +2130,26 @@ py::dict shopContents(const sts::GameContext &gc) {
     return d;
 }
 
+// Validate the public operation before encoding its index or accessing shop data.
+void executeShopPurchase(sts::GameContext &gc, sts::search::GameAction::RewardsActionType type,
+                         int idx, const char *operation) {
+    using RAT = sts::search::GameAction::RewardsActionType;
+    const int count = type == RAT::CARD ? 7 : (type == RAT::RELIC || type == RAT::POTION ? 3 : 1);
+    if (gc.screenState != sts::ScreenState::SHOP_ROOM || idx < 0 || idx >= count) {
+        throw std::invalid_argument(std::string(operation) + " requires a valid shop index on the SHOP_ROOM screen");
+    }
+    const sts::search::GameAction action(type, idx);
+    if (!action.isValidAction(gc)) {
+        // Preserve SHOP01's public no-op for an otherwise affordable, in-stock
+        // potion blocked only by Sozu/capacity. Invalid slots/screens still fail.
+        if (gc.outcome == sts::GameOutcome::UNDECIDED && type == RAT::POTION &&
+            gc.info.shop.potionPrice(idx) >= 0 && gc.gold >= gc.info.shop.potionPrice(idx) &&
+            (gc.hasRelic(sts::RelicId::SOZU) || gc.potionCount >= gc.potionCapacity)) return;
+        throw std::invalid_argument(std::string(operation) + " is not a legal shop action");
+    }
+    action.execute(gc);
+}
+
 // Authoritative legal shop options, from the sim's own getAllShopActions (gold,
 // sold-out, Sozu, and potion-capacity gated). Unlike legalEventOptions, idx1
 // COLLIDES across kinds
@@ -2134,6 +2159,7 @@ py::dict shopContents(const sts::GameContext &gc) {
 py::list legalShopOptions(const sts::GameContext &gc) {
     using RAT = sts::search::GameAction::RewardsActionType;
     py::list out;
+    if (gc.screenState != sts::ScreenState::SHOP_ROOM) return out;
     for (const auto &a : sts::search::GameAction::getAllActionsInState(gc)) {
         const char *kind;
         switch (a.getRewardsActionType()) {
@@ -2802,41 +2828,16 @@ PYBIND11_MODULE(slaythespire, m) {
              "authoritative REWARDS actions as (kind, reward_idx, item_idx); kind in "
              "{card,skip_card,gold,key,potion,relic,skip}")
         .def("claim_gold", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::GOLD, idx);
-            requireValidGameAction(gc, action, "claim_gold");
-            action.execute(gc);
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::GOLD, idx, "claim_gold");
         })
         .def("claim_relic", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::RELIC, idx);
-            requireValidGameAction(gc, action, "claim_relic");
-            auto &r = gc.info.rewardsContainer;
-            const bool takesSapphireRelic = r.sapphireKey && idx == r.relicCount - 1;
-            // Some relics open a screen when obtained (e.g. Bottled Tornado's
-            // "pick a Power to bottle"). That screen's confirm calls
-            // regainControl(), which would otherwise run -- and consume -- the
-            // combat's return-to-map action, leaving it null and crashing the
-            // later PROCEED. Redirect the screen's regainControl back to the
-            // REWARDS screen (more rewards may remain) and restore the original
-            // action so the final PROCEED still returns to the map.
-            auto saved = gc.regainControlAction;
-            gc.regainControlAction = [saved](GameContext &g) {
-                g.screenState = ScreenState::REWARDS;
-                g.regainControlAction = saved;
-            };
-            bool opened = gc.obtainRelic(r.relics[idx]);
-            r.removeRelicReward(idx);
-            if (takesSapphireRelic) r.sapphireKey = false;
-            if (!opened) gc.regainControlAction = saved;
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::RELIC, idx, "claim_relic");
         })
         .def("claim_potion", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::POTION, idx);
-            requireValidGameAction(gc, action, "claim_potion");
-            action.execute(gc);
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::POTION, idx, "claim_potion");
         })
         .def("claim_key", [](GameContext &gc) {
-            search::GameAction action(search::GameAction::RewardsActionType::KEY);
-            requireValidGameAction(gc, action, "claim_key");
-            action.execute(gc);
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::KEY, 0, "claim_key");
         })
         .def("discard_potion", [](GameContext &gc, int slot) {
             if (slot >= 0 && slot < gc.potionCapacity && gc.potions[slot] != sts::Potion::EMPTY_POTION_SLOT) {
@@ -2858,35 +2859,23 @@ PYBIND11_MODULE(slaythespire, m) {
             return lst;
         }, "held potion slots out of combat")
         .def("reward_proceed", [](GameContext &gc) {
-            search::GameAction action(search::GameAction::RewardsActionType::SKIP);
-            requireValidGameAction(gc, action, "reward_proceed");
-            action.execute(gc);
+            executeRewardClaim(gc, search::GameAction::RewardsActionType::SKIP, 0, "reward_proceed");
         })
         // shop
         .def("shop_buy_card", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::CARD, idx);
-            requireValidGameAction(gc, action, "shop_buy_card");
-            action.execute(gc);
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::CARD, idx, "shop_buy_card");
         })
         .def("shop_buy_relic", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::RELIC, idx);
-            requireValidGameAction(gc, action, "shop_buy_relic");
-            action.execute(gc);
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::RELIC, idx, "shop_buy_relic");
         })
         .def("shop_buy_potion", [](GameContext &gc, int idx) {
-            search::GameAction action(search::GameAction::RewardsActionType::POTION, idx);
-            requireValidGameAction(gc, action, "shop_buy_potion");
-            action.execute(gc);
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::POTION, idx, "shop_buy_potion");
         })
         .def("shop_remove", [](GameContext &gc) {
-            search::GameAction action(search::GameAction::RewardsActionType::CARD_REMOVE);
-            requireValidGameAction(gc, action, "shop_remove");
-            action.execute(gc);
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::CARD_REMOVE, 0, "shop_remove");
         })
         .def("shop_proceed", [](GameContext &gc) {
-            search::GameAction action(search::GameAction::RewardsActionType::SKIP);
-            requireValidGameAction(gc, action, "shop_proceed");
-            action.execute(gc);
+            executeShopPurchase(gc, search::GameAction::RewardsActionType::SKIP, 0, "shop_proceed");
         })
         .def("shop_contents", &shopContents,
              "the current shop shelf, positional: {cards:[{id,upgrades,price}x7], "
@@ -4160,7 +4149,12 @@ PYBIND11_MODULE(slaythespire, m) {
              "apply a data-only custom combat state without advancing RNG or simulation")
         .def("card_state", &combatCardState,
              "explicit current native card instances in all four piles and both stasis slots")
-        .def("set_card_state", &restoreCombatCardState, pybind11::arg("state"),
+        .def("set_card_state", [](BattleContext &bc, const pybind11::dict &state) {
+            if (bc.inputState != InputState::PLAYER_NORMAL || bc.actionQueue.size != 0 || bc.cardQueue.size != 0) {
+                throw std::invalid_argument("card snapshot restore requires a settled player turn without pending actions");
+            }
+            restoreCombatCardState(bc, state);
+        }, pybind11::arg("state"),
              "atomically restore complete native instance IDs, costs, growth, flags and allocation cursor; does not advance RNG")
         .def("legal_actions", &legalCombatActions, "list the legal actions in the current state")
         .def("legal_combat_mask", &legalCombatMask,

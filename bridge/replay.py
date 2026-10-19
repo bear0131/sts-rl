@@ -221,13 +221,24 @@ class Driver:
             gc.choose_select_card_option(_find_select_idx(gc, card["id"], card["upgrades"]))
         elif st == "REST":
             if verb == "proceed":
-                if gc.screen_state_name.endswith("REST_ROOM"):
+                if gc.screen_state == sts.ScreenState.REST_ROOM:
+                    if 6 not in gc.legal_campfire_options():
+                        raise ValueError("rest proceed while campfire actions remain available")
+                    gc.choose_campfire_option(6)
+                elif gc.screen_state == sts.ScreenState.REWARDS:
                     gc.reward_proceed()
+                elif gc.screen_state != sts.ScreenState.MAP_SCREEN:
+                    raise ValueError(f"rest proceed with pending sim screen {gc.screen_state_name}")
             else:
                 gc.choose_campfire_option(_CAMPFIRE[cl[idx]])
         elif st == "CHEST":
             if verb == "proceed":
-                gc.reward_proceed()
+                if gc.screen_state == sts.ScreenState.TREASURE_ROOM:
+                    gc.choose_treasure_room(False)
+                elif gc.screen_state == sts.ScreenState.REWARDS:
+                    gc.reward_proceed()
+                elif gc.screen_state != sts.ScreenState.MAP_SCREEN:
+                    raise ValueError(f"chest proceed with pending sim screen {gc.screen_state_name}")
             else:
                 gc.choose_treasure_room(True)
         elif st == "BOSS_REWARD":

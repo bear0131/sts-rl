@@ -959,10 +959,15 @@ DYNAMIC_EVENT_OPTION_KINDS = {
         "upgrade_card": 0,
         "upgrade_random_cards": 1,
         "remove_card": 2,
-        "transform_random_cards": 3,
+        "transform_cards": 3,
         "remove_card_upgrade_random": 4,
         "lose_hp": 5,
     },
+}
+
+# Explicit legacy transport aliases; canonical event semantics remain unique.
+DYNAMIC_EVENT_OPTION_KIND_ALIASES = {
+    "Designer": {"transform_random_cards": "transform_cards"},
 }
 
 # Stock screens that reuse the event transport but are not policy events and
