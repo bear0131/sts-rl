@@ -4,7 +4,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE42 | JAX药贩子变两张：原生通过，真机桥接未接通 | `GameContext::chooseEventOption(AUGMENTER)`已支持含瓶装候选、两次选择和正确删牌/返回；明确当前构建A0/A20六例通过。`bridge/event_contract.py::CONTRACTS[Drug Dealer]`仍为pending_augmenter_transform，`EventEffectAck.arm`在发送CHOOSE前拒绝；已部署runtime甚至没有Drug Dealer合同。验收须核对真实GRID两次选择/选中UUID/确认、恰好移除所选两张并取得两张新牌、瓶装与取得/移除副作用、返回事件确认及后续MAP；不得删除pending检查、屏蔽模型选项或填PAD来声称支持。关联BRIDGE22/28与BOTTLE01；本次用户问诊只检查，没有放行或实机启动。 |
+| BRIDGE42 | JAX三个选项已接通并通过相关回归；未部署/真机验证 | Java/Python parity-v11以DrugDealer实际来源识别通用flag全false的TRANSFORM；共用GRID严格校验完整实例/唯一UUID，去掉战外缺UUID按卡名猜选中对象。EventEffectAck核对两次选择的原UI索引与UUID、等待删除和延迟取得、禁止重复确认/提前Leave，核对Omamori/Parasite/Darkstone/Fish/Egg/Bloom/DuVu副作用；另覆盖取得JAX与突变剂重复改头环。1001项相关回归通过，最终TRAIN47 CUDA加载/预测/一步环境接入通过；不是实际Full-Gumbel或实机验收。实际启动器仍指向旧runtime/Java/native。验收尚需实际双选/确认/返回MAP，不声称预测隐藏RNG变牌结果。关联BRIDGE22/28/43、BOTTLE01。 |
 | SHOP01 | 近期main修复已接入，595项同步回归通过；未部署 | Sozu/实际药水满槽禁止购买，公开有效可支付药水入口因容量阻断时无副作用；验证2/3/5物理槽、扣款/库存/Courier，见tests/integration/test_overworld_potion_shop.py。生产未部署。 |
 | SHOP02 | 近期main修复已接入，595项同步回归通过；未部署 | A16初始库存加价、Courier/会员补货价格与删牌优先级、微笑面具固定50；见tests/integration/test_shop_prices.py。旧错误定价成绩不可用作当前规则验收。 |
 | SHOP03 | 近期main修复已接入，595项同步回归通过；未部署 | 升级蛋预览只升级一次、买蛋后货架刷新；Courier彩色补货保留类型，cardRng抽商店稀有度、mathUtilRng选牌、merchantRng定价，COMMON能力转UNCOMMON。见test_shop_eggs.py、test_shop_restock.py及test_overworld_potion_shop.py。 |
@@ -19,8 +19,8 @@
 | BRIDGE39 | main BRIDGE29房间回放已接入，595项同步回归通过；未部署 | REST/CHEST proceed依据实际原生画面推进，已回图不重复执行，未决选择拒绝；见tests/integration/test_bridge_room_replay.py。本分支BRIDGE29仍指战斗升级费用，两个问题不得覆盖。 |
 | REPLAY01 | 来源main已知限制；本轮不迁移整局历史 | main旧A20无限回放依赖错误定价，第223步余额不足；保留其历史版本含义，不还原错误规则/注资/静默skip。本次仅接入近期修复与直接回归，不额外引入main A20策略和整局回放历史。 |
 | BRIDGE40 | 验证中复现；待定位模型地图合同 | wrapper reset seed1经首个动作会出现4个options.nodes，而当前MAP_EDGES容量3明确拒绝。同步奖励测试改为真实backend语义步进至战斗，避免用地图编码作为奖励夹具前提；没有扩大/截断模型输入或静默PAD，不能据奖励通过称全局地图已兼容。须核对初始可选行/普通边/飞靴来源及冻结权重投影，保留全部真实候选和动作身份。 |
-| BRIDGE41 | 已修，146项搜索/快照/全局状态通过；未部署 | 非strict空字典必须保持实际空槽maxHP=0，纯空编辑也不能重置回合生命周期；对无实体槽作非空修改必须显式给species，不能凭hp制造假实体。严格快照仍要求present=false，不放宽PAD校验。原12项packed/canonical失败已恢复通过，另3个真实召唤空槽验证完整状态与future key不变及错误编辑原子拒绝。见tests/integration/test_search_contracts.py；当前最终模型/实机接入尚待验证。 |
-| BRIDGE43 | 源码确认，待修复获得诅咒与降最大HP副作用 | `Deck::obtain`漏掉Darkstone Periapt取得实际诅咒后+6最大HP/治疗，需在Omamori挡咒后按实际取得数量处理，并验证Mark of the Bloom/陶瓷小鱼/批量取得；`GameContext::loseMaxHp`没有Java的最小1限制，寄生移除可能产生负上限。来源用户cardcrawl.zip DarkstonePeriapt.onObtainCard / AbstractCreature.decreaseMaxHealth；与BRIDGE42两张变牌有关，也影响其余事件和奖励，不能仅放行ACK掩盖原生差异。 |
+| BRIDGE41 | 已修，146项搜索/快照/全局状态及后续1001项相关回归通过；未部署 | 非strict空字典必须保持实际空槽maxHP=0，纯空编辑也不能重置回合生命周期；对无实体槽作非空修改必须显式给species，不能凭hp制造假实体。严格快照仍要求present=false，不放宽PAD校验。原12项packed/canonical失败已恢复通过，另3个真实召唤空槽验证完整状态与future key不变及错误编辑原子拒绝。见tests/integration/test_search_contracts.py；最终TRAIN47 CUDA加载/预测/一步环境已通过，完整实机搜索接入尚待验证。 |
+| BRIDGE43 | 原生取得诅咒/最低最大HP/重复突变剂已修；未部署 | `Deck::obtain`在Omamori过滤后按实际取得诅咒数执行Darkstone Periapt的+6最大HP/治疗，兼容Bloom/陶瓷小鱼/批量取得；`GameContext::loseMaxHp`下限为1；AUGMENTER重复突变剂改给可叠加Circlet。新增13组A0/A20共26例，包含JAX/升级蛋/小鱼、Omamori0/1/2×Bloom、寄生低HP及批量取得；已包含在1001项通过结果中。来源用户cardcrawl.zip，仅记录事实/hash，不提交反编译源码；与BRIDGE42及其余事件/奖励共用。 |
 
 | BRIDGE35 | 伤害捕获源码批量实现，未统一验证/部署 | 顺劈斩/闪亮登场/燔祭/闪电霹雳/死亡收割与旋风斩统一use时捕获整数伤害矩阵，去掉晚算和Vigor重复加成；Vigor按Java排队移除，飞剑逐段用实际牌实例重新计算，飞踢保存use时伤害。Intangible修正min上限，WristBlade支持freeOnce且按实例cost排除X；Reaper治疗入队后执行胜利过滤。9张攻击的来源/捕获时点加入对接词表，恶魔之火随机消耗已核对正确不改。验收包含出牌触发改变力量/Vigor、每段随机目标、费用/零伤、致命后的治疗与冻结权重接入；完整dynamic baseDamage/pending仍为BRIDGE28。 |
 | BRIDGE36 | 首领/动作清理源码批量实现，未统一验证/部署 | 移除MINION_LEADER死亡直接胜利；青铜自动机/收藏家/蛇女排SuicideTop，地精首领/觉醒者第二阶段排EscapeBottom，保留当前AOE内部次序。Suicide直接置HP0再死亡，不走伤害；DAMAGE与真实GainBlock类正确保留。随机目标按实际可用槽采样，无目标不抽RNG，删除静默末槽回退；目标索引先验范围。战斗结束谓词保留觉醒者第一阶段，统一逃跑计数；Stasis延后same-UID副本返还/满手分支，标本捕获毒量后随机传递、不打开虚假玩家选择。19类动作/9项死亡合同入词表。验收须统一覆盖群攻/多段/反伤、致命后治疗/返牌取消、复活保护、随机流/槽位/固定权重；完整复活与消失实体根恢复仍见BRIDGE37，全部pending仍BRIDGE28。 |

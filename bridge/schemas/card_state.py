@@ -51,6 +51,20 @@ def real_card_state(record):
     return card
 
 
+def real_selection_card_states(records, selected_records):
+    """Preserve physical GRID identities, including identical printed cards."""
+    if not isinstance(records, list) or not isinstance(selected_records, list):
+        raise ValueError('GRID cards and selected_cards must be explicit lists')
+    cards = [real_card_state(record) for record in records]
+    selected = [real_card_state(record) for record in selected_records]
+    by_uuid = {card['uuid']: card for card in cards}
+    chosen = [card['uuid'] for card in selected]
+    if (len(by_uuid) != len(cards) or len(set(chosen)) != len(chosen)
+            or any(by_uuid.get(card['uuid']) != card for card in selected)):
+        raise ValueError('GRID selected instances do not match their unique source cards')
+    return cards, selected
+
+
 def real_master_deck_state(records):
     if not isinstance(records, list):
         raise ValueError('real master deck must be a list')

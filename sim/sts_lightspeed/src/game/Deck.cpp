@@ -157,6 +157,11 @@ void Deck::obtain(GameContext &gc, Card card, int count) {
                 transformableCount += count;
                 cardTypeCounts[static_cast<int>(CardType::CURSE)] += count;
             }
+            // onObtainCard runs only for curses not consumed by Omamori.
+            // playerIncreaseMaxHp also respects Mark of the Bloom healing.
+            if (gc.hasRelic(RelicId::DARKSTONE_PERIAPT)) {
+                gc.playerIncreaseMaxHp(6 * count);
+            }
             break;
 
         case CardType::STATUS:

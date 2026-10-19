@@ -46,3 +46,28 @@ def test_unknown_card_state_and_multiple_bottles_are_not_discarded():
     record['simulator_card_state']['bottled_lightning'] = True
     with pytest.raises(ValueError, match='multiple bottle'):
         real_master_deck_state([record])
+
+
+def test_grid_identity_is_not_printed_card_identity():
+    from bridge.schemas.card_state import real_selection_card_states
+    records = [real_card(index=0), real_card(index=1)]
+    cards, chosen = real_selection_card_states(records, [records[1]])
+    assert chosen == [cards[1]] and chosen[0]['uuid'] != cards[0]['uuid']
+
+
+@pytest.mark.parametrize('case', ['missing_uuid', 'duplicate_uuid', 'wrong_instance', 'duplicate_pick'])
+def test_grid_rejects_missing_or_ambiguous_physical_identity(case):
+    from copy import deepcopy
+    from bridge.schemas.card_state import real_selection_card_states
+    records = [real_card(index=0), real_card(index=1)]
+    chosen = [deepcopy(records[1])]
+    if case == 'missing_uuid':
+        del records[0]['uuid']
+    elif case == 'duplicate_uuid':
+        records[0]['uuid'] = records[1]['uuid']
+    elif case == 'wrong_instance':
+        chosen[0]['misc'] = 9
+    else:
+        chosen *= 2
+    with pytest.raises(ValueError):
+        real_selection_card_states(records, chosen)

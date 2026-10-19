@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v10";
+    public static final String VERSION = "simulator-parity-v11";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -320,6 +320,9 @@ public final class SimulatorParityExporter {
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
         if (event != null) {
             String name = event.getClass().getSimpleName();
+            // DrugDealer opens a two-card grid with every generic flag false;
+            // the event, not GridCardSelectScreen, performs the transforms.
+            if ("DrugDealer".equals(name)) return "TRANSFORM";
             if ("Bonfire".equals(name)) return "BONFIRE_SPIRITS";
             if ("Duplicator".equals(name)) return "DUPLICATE";
             if ("TheLibrary".equals(name) || "NoteForYourself".equals(name)

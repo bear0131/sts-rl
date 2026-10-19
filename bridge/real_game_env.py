@@ -1698,49 +1698,24 @@ class RealGameAdapter:
                 f"{len(raw_cards)} != {len(cards)}"
             )
         selected_instances = []
-        if not overworld and grid_screen:
-            selected_instances = [real_card_state(card) for card in selected_raw]
-            grid_instances = [real_card_state(card) for card in raw_cards]
-            by_uuid = {card['uuid']: card for card in grid_instances}
-            chosen_uuids = [card['uuid'] for card in selected_instances]
-            if (len(by_uuid) != len(grid_instances)
-                    or len(set(chosen_uuids)) != len(chosen_uuids)
-                    or any(by_uuid.get(card['uuid']) != card for card in selected_instances)):
-                raise ValueError('combat GRID selected instances do not match their source cards')
+        if grid_screen:
+            from bridge.schemas.card_state import real_selection_card_states
+            grid_instances, selected_instances = real_selection_card_states(raw_cards, selected_raw)
             if have_selected > pick_count:
-                raise ValueError('combat GRID has more selected cards than requested')
-        selected_uuids = {
-            str(card["uuid"])
-            for card in selected_raw
-            if isinstance(card, dict) and card.get("uuid")
-        }
-        selected_without_uuid = Counter(
-            _real_card_tuple(card)
-            for card in selected_raw
-            if isinstance(card, dict) and not card.get("uuid")
-        )
+                raise ValueError('GRID has more selected cards than requested')
+        selected_uuids = {card['uuid'] for card in selected_instances}
         candidates = []
         for i, (cid, up) in enumerate(cards):
             raw_card = raw_cards[i]
-            if overworld:
-                raw_uuid = str(raw_card.get("uuid") or "")
-                selected = bool(raw_uuid and raw_uuid in selected_uuids)
-                if not raw_uuid and selected_without_uuid[(cid, up)] > 0:
-                    selected_without_uuid[(cid, up)] -= 1
-                    selected = True
-                if selected:
-                    continue
+            instance = grid_instances[i] if grid_screen else real_card_state(raw_card)
+            if grid_screen and instance['uuid'] in selected_uuids:
+                continue
             card = {"id": cid, "up": up}
             if not overworld:
-                instance = real_card_state(raw_card)
-                if grid_screen and instance['uuid'] in selected_uuids:
-                    continue
                 card["cost"] = 0 if instance["free_to_play_once"] else instance["cost"]
-            elif "cost" in raw_card:
-                card["cost"] = raw_card["cost"]
-            candidate = {"native_index": i, "card": card}
-            if not overworld:
-                candidate["instance"] = instance
+            else:
+                card["cost"] = instance["cost"]
+            candidate = {"native_index": i, "card": card, "instance": instance}
             candidates.append(candidate)
         if not overworld and context == "CODEX" and "SKIP" in self.commands():
             candidates.append({"native_index": len(cards), "card": None, "instance": None})

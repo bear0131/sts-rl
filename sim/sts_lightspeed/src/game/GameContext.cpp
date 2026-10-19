@@ -2249,7 +2249,7 @@ void GameContext::loseGold(int amount, bool inShop) {
 }
 
 void GameContext::loseMaxHp(int amount) {
-    maxHp -= amount;
+    maxHp = std::max(1, maxHp - amount);
     curHp = std::min(curHp, maxHp);
 }
 
@@ -2804,7 +2804,8 @@ void GameContext::chooseEventOption(int idx) {
                     break;
 
                 case 2:
-                    obtainRelic(RelicId::MUTAGENIC_STRENGTH);
+                    obtainRelic(hasRelic(RelicId::MUTAGENIC_STRENGTH)
+                        ? RelicId::CIRCLET : RelicId::MUTAGENIC_STRENGTH);
                     regainControl();
                     break;
 

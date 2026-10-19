@@ -8,6 +8,7 @@ from collections import Counter
 from copy import deepcopy
 
 from bridge.schemas.entity_ids import (
+    CARD_ALIASES,
     DYNAMIC_EVENT_OPTION_KINDS,
     EVENT_ALIASES,
 )
@@ -57,9 +58,9 @@ CONTRACTS = {
                      (6, '停止|Stop', 'pending_tome_stop')],
     "Dead Adventurer": [(0, '搜索|继续|Search|Continue', 'pending_dead_search'),
                         (1, '离开|Leave', 'leave')],
-    "Drug Dealer": [(0, '试一下J.A.X.|Test J.A.X.', 'pending_augmenter_jax'),
-                     (1, '当一下实验对象|Become Test Subject', 'pending_augmenter_transform'),
-                     (2, '喝一下突变剂|Ingest Mutagens', 'pending_augmenter_relic')],
+    "Drug Dealer": [(0, '试一下J.A.X.|Test J.A.X.', 'augmenter_jax'),
+                     (1, '当一下实验对象|Become Test Subject', 'augmenter_transform'),
+                     (2, '喝一下突变剂|Ingest Mutagens', 'augmenter_relic')],
     "SecretPortal": [(0, '进入传送门|Enter the Portal', 'portal_boss'),
                      (1, '离开|Leave', 'leave')],
     "Fountain of Cleansing": [(0, '喝水|Drink', 'remove_curses'),
@@ -324,8 +325,180 @@ class EventEffectAck:
     def __init__(self):
         self.pending = None
 
+    @staticmethod
+    def _augmenter_deck(gs):
+        from bridge.schemas.card_state import real_card_state
+        records = gs.get('deck')
+        if not isinstance(records, list):
+            raise ValueError('Augmenter requires an explicit master deck')
+        cards = []
+        for record in records:
+            card = real_card_state(record)
+            if record.get('type') not in {'ATTACK', 'SKILL', 'POWER', 'CURSE'}:
+                raise ValueError('Augmenter master card type is missing/unsupported')
+            cards.append(dict(card, type=record['type']))
+        if len({c['uuid'] for c in cards}) != len(cards):
+            raise ValueError('Augmenter master deck has duplicate UUIDs')
+        return cards
+
+    @staticmethod
+    def _augmenter_relics(gs):
+        rows = gs.get('relics')
+        if (not isinstance(rows, list) or any(not isinstance(r, dict)
+                or not isinstance(r.get('id'), str) or type(r.get('counter')) is not int for r in rows)):
+            raise ValueError('Augmenter requires explicit relic IDs/counters')
+        result = {r['id']: r['counter'] for r in rows}
+        if len(result) != len(rows):
+            raise ValueError('Augmenter has duplicate relic IDs')
+        return result
+
+    def _augmenter_grid(self, gs):
+        from bridge.schemas.card_state import real_selection_card_states
+        from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
+        ss = gs.get('screen_state') or {}
+        if (ss.get('simulator_parity_export') != SIMULATOR_PARITY_EXPORT_VERSION
+                or ss.get('selection_source') != 'com.megacrit.cardcrawl.events.city.DrugDealer'
+                or ss.get('selection_context') != 'TRANSFORM'
+                or type(ss.get('num_cards')) is not int or ss['num_cards'] != 2
+                or any(ss.get(key) is not False for key in
+                       ('any_number', 'for_upgrade', 'for_purge', 'for_transform'))):
+            raise ValueError('Augmenter GRID source/count/flags mismatch')
+        cards, chosen = real_selection_card_states(ss.get('cards'), ss.get('selected_cards'))
+        expected = {c['uuid']: {k: v for k, v in c.items() if k != 'type'}
+                    for c in self._augmenter_original
+                    if c['id'] not in {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}}
+        if {c['uuid']: c for c in cards} != expected:
+            raise RuntimeError('Augmenter GRID candidates differ from purgeable master instances')
+        if len(chosen) > 2:
+            raise RuntimeError('Augmenter GRID selected more than two cards')
+        return cards, [c['uuid'] for c in chosen]
+
+    def _arm_augmenter_grid(self, gs, decision):
+        cards, selected = self._augmenter_grid(gs)
+        if selected != self._augmenter_picks:
+            raise RuntimeError('Augmenter previous selection is still unacknowledged')
+        command = decision.command.upper().split()
+        if command == ['CONFIRM']:
+            if len(selected) != 2 or self._augmenter_confirm_sent:
+                raise ValueError('Augmenter premature/repeated confirmation')
+            self._augmenter_confirm_sent = True
+        elif len(command) == 2 and command[0] == 'CHOOSE':
+            if len(selected) >= 2:
+                raise ValueError('Augmenter already selected two cards')
+            index = int(command[1])
+            if not 0 <= index < len(cards) or cards[index]['uuid'] in selected:
+                raise ValueError('Augmenter invalid/repeated physical card selection')
+            remaining = [i for i, c in enumerate(cards) if c['uuid'] not in selected]
+            semantic = decision.semantic
+            if (not semantic or semantic[0] != 'select' or len(semantic) != 2
+                    or type(semantic[1]) is not int or not 0 <= semantic[1] < len(remaining)
+                    or index != remaining[semantic[1]]):
+                raise ValueError('Augmenter policy candidate and UI command disagree')
+            self._augmenter_picks.append(cards[index]['uuid'])
+        elif command[:1] not in (['STATE'], ['WAIT']):
+            raise ValueError('Augmenter unexpected command during selection')
+
+    def _waiting_augmenter(self, old, gs, effect):
+        for key in ('seed', 'floor', 'act', 'potions'):
+            if key not in old or key not in gs or gs[key] != old[key]:
+                raise RuntimeError(f'Augmenter changed/missing {key} before settlement')
+        current = self._augmenter_deck(gs)
+        relics = self._augmenter_relics(gs)
+        before = {c['uuid']: c for c in self._augmenter_original}
+        after = {c['uuid']: c for c in current}
+        lost = set(before) - set(after)
+        if (lost - set(self._augmenter_picks)
+                or any(after[u] != before[u] for u in set(before) & set(after))):
+            raise RuntimeError('Augmenter removed or changed an unselected master instance')
+        if effect != 'augmenter_transform':
+            if gs.get('screen_type') != 'EVENT' or gs.get('screen_state', {}).get('event_id') != 'Drug Dealer':
+                raise RuntimeError('Augmenter reward left its event before verification')
+            gained = [c for c in current if c['uuid'] not in before]
+            expected_relics = dict(self._augmenter_initial_relics)
+            gold = old['gold']
+            if effect == 'augmenter_jax':
+                up = int('Toxic Egg 2' in expected_relics)
+                if len(gained) > 1 or any(c['id'] != CARD_ALIASES['J.A.X.'] or c['up'] != up for c in gained):
+                    raise RuntimeError('Augmenter JAX identity/upgrade mismatch')
+                if len(gained) != 1:
+                    return True
+                if 'CeramicFish' in expected_relics and 'Ectoplasm' not in expected_relics:
+                    gold += 9
+            else:
+                if gained:
+                    raise RuntimeError('Augmenter relic choice unexpectedly added cards')
+                if 'MutagenicStrength' in expected_relics:
+                    expected_relics['Circlet'] = expected_relics.get('Circlet', 0) + 1
+                else:
+                    expected_relics['MutagenicStrength'] = -1
+            if (transport_only(gs) is not None and relics == expected_relics
+                    and (gs['gold'], gs['current_hp'], gs['max_hp']) ==
+                    (gold, old['current_hp'], old['max_hp'])):
+                self.pending = None
+                return False
+            return True
+        if gs.get('screen_type') == 'GRID':
+            if current != self._augmenter_original or relics != self._augmenter_initial_relics:
+                raise RuntimeError('Augmenter mutated resources before selection closed')
+            _, selected = self._augmenter_grid(gs)
+            if selected != self._augmenter_picks[:len(selected)]:
+                raise RuntimeError('Augmenter acknowledged a different physical selection')
+            return (selected != self._augmenter_picks or self._augmenter_confirm_sent)
+        complete = (gs.get('screen_type') == 'EVENT'
+                    and gs.get('screen_state', {}).get('event_id') == 'Drug Dealer'
+                    and transport_only(gs) is not None)
+        if gs.get('screen_type') != 'EVENT' or gs.get('screen_state', {}).get('event_id') != 'Drug Dealer':
+            raise RuntimeError('Augmenter left its event before effect verification')
+        if len(self._augmenter_picks) != 2:
+            if current != self._augmenter_original:
+                raise RuntimeError('Augmenter changed deck before two requested picks')
+            return True  # Stale event frame before the GRID opens, never click Leave.
+        picked = [before[u] for u in self._augmenter_picks]
+        initial_relics = self._augmenter_initial_relics
+        curse_count = sum(c['type'] == 'CURSE' for c in picked)
+        blocked = min(curse_count, max(0, initial_relics.get('Omamori', 0)))
+        gained = [c for c in current if c['uuid'] not in before]
+        if len(gained) > 2 - blocked:
+            raise RuntimeError('Augmenter obtained too many replacement cards')
+        expected_relics = dict(initial_relics)
+        if blocked:
+            expected_relics['Omamori'] -= blocked
+        if 'Du-Vu Doll' in expected_relics:
+            expected_relics['Du-Vu Doll'] = sum(c['type'] == 'CURSE' for c in current)
+        eggs = {'ATTACK': 'Molten Egg 2', 'SKILL': 'Toxic Egg 2', 'POWER': 'Frozen Egg 2'}
+        for card in gained:
+            upgrades = int(eggs.get(card['type']) in initial_relics)
+            if card['up'] != upgrades or any(card[k] for k in
+                    ('bottled_flame', 'bottled_lightning', 'bottled_tornado')):
+                raise RuntimeError('Augmenter replacement upgrade/bottle state mismatch')
+        if lost != set(self._augmenter_picks) or len(gained) != 2 - blocked:
+            return True  # Removal and delayed ShowCardAndObtainEffect are separate frames.
+        if sum(c['type'] == 'CURSE' for c in gained) != curse_count - blocked:
+            raise RuntimeError('Augmenter replacement curse count mismatch')
+        hp, max_hp = old['current_hp'], old['max_hp']
+        for card in picked:
+            if card['id'] == 'Parasite':
+                max_hp = max(1, max_hp - 3)
+                hp = min(hp, max_hp)
+        if 'Darkstone Periapt' in initial_relics:
+            bonus = 6 * (curse_count - blocked)
+            max_hp += bonus
+            if 'Mark of the Bloom' not in initial_relics:
+                hp = min(hp + bonus, max_hp)
+        gold = old['gold'] + (9 * len(gained) if 'CeramicFish' in initial_relics
+                              and 'Ectoplasm' not in initial_relics else 0)
+        if complete and (relics, gs['current_hp'], gs['max_hp'], gs['gold']) == (expected_relics, hp, max_hp, gold):
+            self.pending = None
+            return False
+        return True
+
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if self.pending and self.pending[1].startswith('augmenter_'):
+            if self.pending[1] == 'augmenter_transform' and gs.get('screen_type') == 'GRID':
+                self._arm_augmenter_grid(gs, decision)
+                return
+            raise RuntimeError('Augmenter result still unverified; cannot leave or retry')
         if (gs.get('screen_type') == 'EVENT' and gs.get('screen_state', {}).get('event_id') == 'Lab'
                 and transport_only(gs) is not None
                 and decision.command == f'CHOOSE {transport_only(gs)}'):
@@ -357,6 +530,25 @@ class EventEffectAck:
             raise ValueError(
                 f'recognized event option has no audited effect receipt: {effect}'
             )
+        if effect.startswith('augmenter_'):
+            if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
+                raise ValueError('Augmenter event action and UI command disagree')
+            self._augmenter_original = self._augmenter_deck(gs)
+            self._augmenter_initial_relics = self._augmenter_relics(gs)
+            if effect == 'augmenter_transform' and sum(
+                    c['id'] not in {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
+                    for c in self._augmenter_original) < 2:
+                raise ValueError('Augmenter requires two purgeable cards')
+            for key in ('seed', 'floor', 'act', 'potions', 'current_hp', 'max_hp', 'gold'):
+                if key not in gs:
+                    raise ValueError(f'Augmenter missing {key}')
+            if (any(type(gs[k]) is not int or gs[k] < 0 for k in ('floor', 'act', 'current_hp', 'max_hp', 'gold'))
+                    or not 0 < gs['current_hp'] <= gs['max_hp'] or not isinstance(gs['potions'], list)):
+                raise ValueError('Augmenter invalid public resource state')
+            if 'Omamori' in self._augmenter_initial_relics and not 0 <= self._augmenter_initial_relics['Omamori'] <= 2:
+                raise ValueError('Augmenter invalid Omamori charge count')
+            self._augmenter_picks = []
+            self._augmenter_confirm_sent = False
         if effect == 'woman_leave' and gs.get('ascension_level', 0) >= 15:
             raise ValueError('Woman in Blue A15 leave damage variants not yet audited')
         if effect.startswith('woman_potions_'):
@@ -404,6 +596,8 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect.startswith('augmenter_'):
+            return self._waiting_augmenter(old, g, effect)
         if effect in {'portal_boss', 'portal_boss_confirmed'}:
             if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
                 if g.get('room_type') != 'MonsterRoomBoss':

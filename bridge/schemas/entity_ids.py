@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v10"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v11"
 
 # Java enum order differs from native Neow::Bonus. Never use enum ordinals.
 NEOW_BONUS_IDS = {name: index for index, name in enumerate((
@@ -1025,6 +1025,7 @@ OVERWORLD_SELECTION_RELICS = {
 }
 
 OVERWORLD_SELECTION_EVENTS = {
+    "DrugDealer": "TRANSFORM",
     "Bonfire": "BONFIRE_SPIRITS",
     "Duplicator": "DUPLICATE",
     "TheLibrary": "OBTAIN",
