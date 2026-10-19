@@ -21,7 +21,7 @@ parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
 `set_deck_state`并核对旧模型的deck投影，不以`set_deck`创建fresh牌代替当前快照。
 后者也改为原子替换，明确清除旧瓶装索引；未知字段/缺值/错型/超容量/重复瓶装类型拒绝，失败不改变原牌组。
-原生`BattleContext.card_state/set_card_state`完整读写8项实例成员和7项牌堆快照字段，
+原生`BattleContext.card_state/set_card_state`快照v2完整读写9项实例成员和7项牌堆快照字段，
 保留四个牌堆、两个青铜球暂扣槽、稳定UID和后续生成编号；整批验证后替换并重算派生缓存。
 该接口的同状态回灌保持模型输入、合法动作、压缩观测与搜索future key逐项一致。
 实时普通决策已接入UUID映射和暂扣牌导出；选择中实例和其他动态字段的剩余审查单列，
@@ -39,9 +39,9 @@ OBS20 / ACTION8 / compact layout8 / `simulator-parity-v8` 配套使用。
 普通战斗决策的实时搜索使用完整 `card_state` 恢复四牌堆和两个青铜球暂扣槽，
 禁止退回只含身份/升级/手牌费用的 fresh tuple。主牌组 UUID 映射当前物理槽；
 临时 UUID 从原生主牌组容量 96 之后分配，战斗内不随牌堆移动重新编号、不复用。
-保留 base/current cost、freeOnce、retain、成长与生成游标；每个 settled 根核对原生快照，
+保留 base/current cost、freeOnce、retain、实际exhaust、成长与生成游标；每个 settled 根核对原生快照，
 同时刷新主牌组当前成长值。Java 每个怪物明确导出 `simulator_stasis_card`（确实未暂扣才是 null）。
-动态 exhaust/ethereal/selfRetain 与原生固有语义不一致时拒绝；其他数值变更和选择中实例
+实际exhaust独立保存，包含蓝蜡烛/医疗箱使用后的修改；ethereal/selfRetain与原生固有语义不一致时拒绝。其他数值变更和选择中实例
 仍须完成审查，不能将普通根恢复视为所有卡牌/所有选择路径已经对齐。
 layout8 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实时余量；19件实时/回合派生遗物在搜索叶观测中覆盖根计数。
 六项player scalar逐列有名称/来源/消费者词表，实时gold必须覆盖根journal；layout8保持payload宽度、模型输入形状不变，拒绝旧解码合同。

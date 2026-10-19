@@ -18,12 +18,7 @@ namespace sts {
     class Card;
 
     struct CardInstance  {
-        // bytes
-        // 2*2
-        // 3*1
-        // bitset 1 byte
-        // total bytes: 8
-
+        // Persistent instance state; transported by the versioned card snapshot.
         CardId id = CardId::INVALID;
         std::int16_t uniqueId = -1;
         std::int16_t specialData = 0;
@@ -34,6 +29,7 @@ namespace sts {
         bool upgraded = false;
         bool freeToPlayOnce = false;
         bool retain = false;
+        bool exhaust = false; // Actual instance property, not the one-use queue flag.
 
         CardInstance() = default;
         CardInstance(CardId id, bool upgraded=false);

@@ -374,9 +374,10 @@ NATIVE_CARD_INSTANCE_FIELDS = {
     'cost': 'CardInstance.costForTurn; underlying cost, not effective free-once cost',
     'free_to_play_once': 'CardInstance.freeToPlayOnce; explicit boolean',
     'retain': 'CardInstance.retain; explicit boolean',
+    'exhausts': 'CardInstance.exhaust; actual persistent instance property, separate from one-use queue flag',
 }
 NATIVE_CARD_SNAPSHOT_FIELDS = {
-    'version': 'integer 1', 'next_uid': 'allocation cursor; greater than every active uid',
+    'version': 'integer 2', 'next_uid': 'allocation cursor; greater than every active uid',
     'hand': 'ordered complete records; at most 10',
     'draw': 'ordered complete records', 'discard': 'ordered complete records',
     'exhaust': 'ordered complete records',
@@ -404,7 +405,7 @@ REAL_CARD_WIRE_FIELDS = {
     'type': {'source': 'AbstractCard.type.name()', 'consumer': 'native card-type metadata', 'status': 'identity_metadata'},
     'rarity': {'source': 'AbstractCard.rarity.name()', 'consumer': 'native card-rarity metadata', 'status': 'identity_metadata'},
     'has_target': {'source': 'AbstractCard.target ENEMY/SELF_AND_ENEMY', 'consumer': 'real/native legal target masks', 'status': 'action_validation'},
-    'exhausts': {'source': 'AbstractCard.exhaust', 'consumer': 'checked against CardInstance.doesExhaust; different dynamic values rejected', 'status': 'printed_validated_dynamic_pending'},
+    'exhausts': {'source': 'AbstractCard.exhaust', 'consumer': 'CardInstance.exhaust; includes Blue Candle / Medical Kit mutations', 'status': 'settled_root_restored'},
     'ethereal': {'source': 'AbstractCard.isEthereal', 'consumer': 'checked against CardInstance.isEthereal; different dynamic values rejected', 'status': 'printed_validated_dynamic_pending'},
 }
 CARD_STATE_FIELD_CONTRACTS = {

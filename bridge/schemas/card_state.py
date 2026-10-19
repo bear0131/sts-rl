@@ -124,7 +124,7 @@ class CombatCardIdentityMap:
             else:
                 uid = temporary[identity]
             traits = sts.card_instance_traits(native_id, card['up'])
-            for field in ('exhausts', 'ethereal', 'self_retain'):
+            for field in ('ethereal', 'self_retain'):
                 if card[field] != traits[field]:
                     raise ValueError(f'{native_id} dynamic {field} is not representable in native state')
             special = card['misc']
@@ -148,9 +148,10 @@ class CombatCardIdentityMap:
 
             return dict(id=native_id, upgrades=card['up'], uid=uid, special_data=special,
                         base_cost=cost('base_cost'), cost=cost('cost'),
-                        free_to_play_once=card['free_to_play_once'], retain=card['retain'])
+                        free_to_play_once=card['free_to_play_once'], retain=card['retain'],
+                        exhausts=card['exhausts'])
 
-        result = dict(version=1, next_uid=next_uid,
+        result = dict(version=2, next_uid=next_uid,
                       **{name: [convert(card) for card in pile] for name, pile in piles.items()},
                       stasis=[convert(card) for card in stasis])
         self._temporary = temporary  # Failed conversion never consumes an identity.

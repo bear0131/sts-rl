@@ -117,7 +117,7 @@ def test_live_curse_cost_has_explicit_native_sentinel_translation(combat_factory
     assert normalize_real(search.adapter.gs)['hand'][0]['cost'] == -2
 
 
-@pytest.mark.parametrize('field', ['exhausts', 'ethereal', 'self_retain'])
+@pytest.mark.parametrize('field', ['ethereal', 'self_retain'])
 def test_unrepresentable_dynamic_card_flags_are_not_silently_dropped(field):
     card = real_card_state(real_card())
     card[field] = True

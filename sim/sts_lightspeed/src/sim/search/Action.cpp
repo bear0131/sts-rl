@@ -15,7 +15,8 @@ bool search::Action::equivalentCards(const CardInstance &a, const CardInstance &
     return a.id == b.id && a.upgraded == b.upgraded &&
         a.specialData == b.specialData && a.cost == b.cost &&
         a.costForTurn == b.costForTurn &&
-        a.freeToPlayOnce == b.freeToPlayOnce && a.retain == b.retain;
+          a.freeToPlayOnce == b.freeToPlayOnce && a.retain == b.retain &&
+          a.exhaust == b.exhaust;
 }
 
 std::array<int, 10> search::Action::equivalentPlaySlots(const BattleContext &bc) {

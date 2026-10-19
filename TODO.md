@@ -10,7 +10,7 @@
 
 | BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
 
-| BRIDGE28 | 主牌组/普通战斗根实例已接入；选择与动态字段待审，未部署 | parity-v8七serializer显式导出11typed字段、misc0、每怪物Stasis私有卡或真实空槽。实时搜索已移除lossy tuple，使用完整四牌堆/两暂扣槽/base-current费用/freeOnce/retain/成长快照；主牌组UUID按当前物理槽、临时UUID独立稳定分配，整根核对并刷新master当前值。原生strict_complete必须card_state，禁止混用fresh piles；动态exhaust/ethereal/selfRetain不符则拒绝。555相关回归、211原生含完整109搜索矩阵、最终词表61项通过；真实CUDA最终TRAIN47加载/预测/一步通过。还需选择画面实例身份/费用对接、baseDamage/baseBlock/其他动态独立字段审计；不将已导出或普通根可恢复称作所有选择/卡牌已支持，不能部署已知不完整路径。 |
+| BRIDGE28 | 主牌组/普通根完整实例及动态exhaust已修；选择与其他动态字段待审，未部署 | parity-v8七serializer显式导出11typed字段、misc0、每怪物Stasis私有卡或真实空槽。实时搜索已移除lossy tuple；完整快照v2含9实例字段/7快照字段，保留四牌堆/两暂扣槽、base-current费用/freeOnce/retain/exhaust/成长、UUID↔物理槽与临时身份。BlueCandle/MedicalKit自然使用保留exhaust，和Havoc单次消耗分开；动作合并/采样重映射/搜索key消费实际属性，旧280普通状态key逐项不变。662相关/原生含完整109搜索矩阵通过，新增Havoc后14动态消耗例通过；真实CUDA最终TRAIN47加载/预测/一步通过。ethereal/selfRetain不符仍拒绝；还需选择画面完整实例与待执行动作对接、baseDamage/baseBlock/其他独立字段审计；普通根支持不等于所有选择/卡牌已支持，不能部署已知不完整路径。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 

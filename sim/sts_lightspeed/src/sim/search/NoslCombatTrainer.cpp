@@ -74,6 +74,14 @@ inline void hashValue(std::uint64_t &hash, T value) {
 
 using CardSignature = std::tuple<int, int, int, int, int, int, int, int>;
 
+int cardRetentionExhaustSignature(const CardInstance &card) {
+    // Keep the exact old hash input for ordinary printed cards. The spare bit
+    // distinguishes an independent exhaust mutation without changing normal
+    // search tie-breaking / determinization identities for existing weights.
+    return (card.retain ? 1 : 0)
+        | (card.exhaust != doesCardExhaust(card.id, card.upgraded) ? 2 : 0);
+}
+
 int persistentCardIdentity(const CardInstance &card) {
     return card.id == CardId::RITUAL_DAGGER || card.id == CardId::GENETIC_ALGORITHM
         ? card.uniqueId : -1;
@@ -104,7 +112,7 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
             static_cast<int>(card.costForTurn),
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0, persistentCardIdentity(card));
+            cardRetentionExhaustSignature(card), persistentCardIdentity(card));
     }
     std::sort(cards.begin(), cards.end());
     hashValue(hash, cards.size());
@@ -136,7 +144,7 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equi
             currentCost,
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            card.retain ? 1 : 0, persistentCardIdentity(card));
+            cardRetentionExhaustSignature(card), persistentCardIdentity(card));
     }
     std::sort(cards.begin(), cards.begin() + count);
     hashValue(hash, count);
@@ -384,7 +392,7 @@ void hashActionCard(std::uint64_t &hash, const CardInstance &card,
     hashValue(hash, static_cast<int>(card.costForTurn));
     hashValue(hash, card.upgraded ? 1 : 0);
     hashValue(hash, card.freeToPlayOnce ? 1 : 0);
-    hashValue(hash, card.retain ? 1 : 0);
+    hashValue(hash, cardRetentionExhaustSignature(card));
     hashValue(hash, persistentCardIdentity(card));
     if (includeCost) {
         hashValue(hash, card.freeToPlayOnce ? 0 : card.costForTurn);

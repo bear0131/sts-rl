@@ -13,6 +13,7 @@ CardInstance::CardInstance(CardId id, bool upgraded) : id(id), upgraded(upgraded
     specialData = id == CardId::SEARING_BLOW ? int(upgraded) : Card::initialMisc(id);
     cost = getEnergyCost(id, upgraded);
     costForTurn = cost;
+    exhaust = doesCardExhaust(id, upgraded);
 }
 
 CardInstance::CardInstance(const Card &card) : CardInstance(card.getId(), card.isUpgraded()) {
@@ -69,7 +70,7 @@ bool CardInstance::isStrikeCard() const {
 }
 
 bool CardInstance::doesExhaust() const {
-    return doesCardExhaust(id, upgraded);
+    return exhaust;
 }
 
 bool CardInstance::hasSelfRetain() const {
@@ -167,6 +168,10 @@ void CardInstance::upgrade() {
             break;
     }
     if (!isUpgraded()) {
+        // Only upgrades that actually change the printed exhaust property
+        // overwrite it. Other upgrades retain any instance-level change.
+        if (doesCardExhaust(id, false) != doesCardExhaust(id, true))
+            exhaust = doesCardExhaust(id, true);
         upgraded = true;
         int newcost = getEnergyCost(id, true);
         if (id != CardId::BLOOD_FOR_BLOOD && getEnergyCost(id, false) != newcost) {

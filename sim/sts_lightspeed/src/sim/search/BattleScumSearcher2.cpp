@@ -227,6 +227,7 @@ void search::BattleScumSearcher2::enumerateCardActions(search::BattleScumSearche
                     c.costForTurn == lastCard.costForTurn &&
                     c.cost == lastCard.cost &&
                     c.freeToPlayOnce == lastCard.freeToPlayOnce &&
+                    c.exhaust == lastCard.exhaust &&
                     c.specialData == lastCard.specialData;
 
             if (isEqualToLastCard) {
