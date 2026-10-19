@@ -46,3 +46,12 @@ add_executable(nosl-combat-train apps/nosl-combat-train.cpp ${sts_lightspeed_SOU
 target_link_directories(nosl-combat-train PRIVATE json::nlohmann_json)
 target_include_directories(nosl-combat-train PUBLIC include)
 target_include_directories(nosl-combat-train PUBLIC json/include)
+
+# Internal pool boundaries are deliberately not exposed through the Python API.
+# pytest builds this isolated regression executable only when those tests run.
+add_executable(relic-pool-contract EXCLUDE_FROM_ALL
+        ../../tests/integration/native_relic_pool.cpp ${sts_lightspeed_SOURCES})
+target_include_directories(relic-pool-contract PRIVATE include json/single_include)
+if (STS_ENABLE_RULE_TRACE)
+    target_compile_definitions(relic-pool-contract PRIVATE STS_ENABLE_RULE_TRACE)
+endif()

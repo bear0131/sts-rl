@@ -51,6 +51,14 @@ require the native extension: a missing native build is an error, not a skipped
 success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
 
+`tests/integration/test_relic_pool.py` also builds the test-only CMake target
+`relic-pool-contract` inside the explicit build directory. This gives isolated
+subprocess coverage of private pool boundaries without adding debug APIs to the
+Python runtime. The first case allows up to 180 seconds for compilation; each
+native case has a 10-second limit. Missing CMake, a build from another checkout,
+or a failed native child is a test failure, not a skip. A separate 200-purchase,
+20-second Courier case exercises the loaded Python extension itself.
+
 Known defects have strict xfail markers restricted to their expected assertion
 type and a TODO ID. XPASS fails CI: remove the marker when fixing the contract.
 Do not expand an xfail to hide setup/import failures.
