@@ -1371,6 +1371,9 @@ class RealGameAdapter:
             opts["nodes"] = self._map_nodes()
             if self.global_map_view:
                 opts["full_map"] = self._full_map_nodes(ss)
+            if self.gs.get('act') == 4:
+                opts['terminal_map_nodes'] = [dict(n) for n in self._map_leaf_nodes()
+                                             if n['room_class'] == 'TrueVictoryRoom']
         elif phase == "shop":
             opts.update(self._shop_options(ss))
         return opts
@@ -1483,6 +1486,30 @@ class RealGameAdapter:
             raise ValueError(f"map choices have mixed rows or duplicate columns: {nodes!r}")
         return nodes
 
+    def _map_leaf_nodes(self):
+        if self.gs.get('simulator_parity_export') != SIMULATOR_PARITY_EXPORT_VERSION:
+            raise ValueError('complete map leaf data requires the current parity exporter')
+        leaves = _dict_records(_list_value(self.gs, 'simulator_map_leaf_nodes',
+                               context='complete map'), context='map leaf nodes')
+        seen = set()
+        for node in leaves:
+            xy = _node_xy(node)
+            if xy is None or xy in seen:
+                raise ValueError('map leaf identity is absent or duplicated')
+            seen.add(xy)
+            if _node_children(node):
+                raise ValueError('map leaf export contains an outgoing edge')
+            room_class = _required(node, 'room_class', context='map leaf')
+            if self.gs.get('act') != 4 or (xy, room_class) not in {
+                ((3, 3), 'MonsterRoomBoss'), ((3, 4), 'TrueVictoryRoom')
+            }:
+                raise ValueError(f'unsupported actual map leaf: {xy}/{room_class}')
+            if room_class == 'MonsterRoomBoss' and _node_room(node) != 'BOSS':
+                raise ValueError('map Boss leaf class and symbol disagree')
+        if self.gs.get('act') == 4 and seen != {(3, 3), (3, 4)}:
+            raise ValueError('TheEnding map is missing actual Boss/victory leaf nodes')
+        return leaves
+
     def _full_map_nodes(self, ss: dict[str, Any]) -> list[dict[str, Any]]:
         raw = _list_value(
             self.gs, "map", context="game_state", required=False
@@ -1491,6 +1518,9 @@ class RealGameAdapter:
         )
         if not raw:
             raise ValueError("global map observation requires the structured full map")
+        if self.gs.get('act') == 4:
+            raw = list(raw) + [n for n in self._map_leaf_nodes()
+                              if n['room_class'] == 'MonsterRoomBoss']
 
         raw_nodes: dict[tuple[int, int], dict[str, Any]] = {}
         for node in _dict_records(raw, context="full map"):
@@ -1519,8 +1549,13 @@ class RealGameAdapter:
             current = (-1, -1)
 
         choices: set[tuple[int, int]] = set()
-        if ss.get("boss_available") and current is not None and current[1] >= _MAP_MAX_Y:
-            choices.add(current)
+        if ss.get("boss_available"):
+            if self.gs.get('act') == 4 and current == (3, 2):
+                choices.add((3, 3))
+            elif current is not None and current[1] == _MAP_MAX_Y:
+                choices.add(current)
+            else:
+                raise ValueError('boss map choice has an unsupported current position')
         else:
             for node in _dict_records(
                 _list_value(ss, "next_nodes", context="map screen"),
@@ -2328,6 +2363,8 @@ class RealGameAdapter:
 
     def map_move_expectation(self, column):
         """Validate the chosen connection and record its visible charge effect."""
+        if self.gs.get('simulator_parity_export') != SIMULATOR_PARITY_EXPORT_VERSION:
+            raise ValueError('map move acknowledgement requires the current parity exporter')
         ss = _screen_state(self.gs)
         index = self._map_command_index(column)
         counter = self.map_flight_counter(self.gs)
@@ -2365,6 +2402,7 @@ class RealGameAdapter:
             expectation[field] = value
         expectation['floor'] += 1
         expectation['flight_counter'] = counter
+        expectation['position'] = (-1, 15) if boss else target
         return expectation
 
     def _claim_command_index(self, kind: str, occurrence: int) -> int:

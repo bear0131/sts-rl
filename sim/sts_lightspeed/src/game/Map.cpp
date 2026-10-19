@@ -54,6 +54,7 @@ void initNodes(Map &map) {
 }
 
 Map Map::fromSeed(std::uint64_t seed, int ascension, int act, bool setBurning) {
+    if (act == 4) return act4Map();
     Map map;
     auto offset = act == 1 ? 1 : act*(100*(act-1));
     Random mapRng(seed+offset);

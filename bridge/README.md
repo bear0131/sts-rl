@@ -111,7 +111,9 @@ Match and Keep 的板面传输仍待接入，动态事件必须携带明确的�
 
 ## 奖励、商店与房间回放
 
-地图候选由原生 `GameContext.legal_map_options()`、动作 validator 和实际 transition 共用连接规则。飞靴有剩余次数时可选同下一行的其他有效房间，只在非正常连线移动时扣一次；首行/正常连接/Boss不耗次，Java耗尽值-2明确映射到native0。更新此路径须重建扩展，不兼容缺少该接口的旧构建，但OBS20/ACTION8/layout9和冻结参数形状不变。全图的children仍是真实连线，choice/reachable从实际可选节点展开；不可把飞靴跳跃伪造成永久边。真实current_node只有坐标/房型，边从game_state.map查取；缺children明确拒绝。移动命令收据等待同seed/act的下一层及精确飞靴次数，迟到帧不能再次点击，错误扣次/超时保持拒绝。该收据不声称校验传输未提供的入房坐标或完整入房副作用。
+parity-v12新增 `simulator_current_node`（每个画面的真实坐标/房间类型）与 `simulator_map_leaf_nodes`（原版hasEdges过滤遗漏的实际叶节点）。第四幕心脏(3,3)回到全图原位，胜利展示节点(3,4)保留为 `terminal_map_nodes`，不伪造为可行动房间/PAD；Boss按钮真实入房位置(-1,15)与地图图标坐标显式区分。地图移动收据在ready稳定帧同时确认落点、楼层和飞靴次数；缺新协议/字段拒绝。`Map.fromSeed(..., act=4)`现在返回实际固定终幕图，而非随机15行图。现役SimGameEnv训练/评测仍在第三幕结束；这些辅助地图修复不延长episode、不改变reward/终局定义，也不把第四幕作为前三幕实机启动门槛。
+
+地图候选由原生 `GameContext.legal_map_options()`、动作 validator 和实际 transition 共用连接规则。飞靴有剩余次数时可选同下一行的其他有效房间，只在非正常连线移动时扣一次；首行/正常连接/Boss不耗次，Java耗尽值-2明确映射到native0。更新此路径须重建扩展，不兼容缺少该接口的旧构建，但OBS20/ACTION8/layout9和冻结参数形状不变。全图的children仍是真实连线，choice/reachable从实际可选节点展开；不可把飞靴跳跃伪造成永久边。真实current_node只有坐标/房型，边从game_state.map查取；缺children明确拒绝。移动命令收据等待同seed/act的下一层及精确飞靴次数，迟到帧不能再次点击，错误扣次/超时保持拒绝；不声称仅靠这些字段验证全部入房副作用。
 
 奖励领取以当前 `COMBAT_REWARD` 的合法项及按种类计数的索引生成命令；满物理药水槽或持 Sozu 时不可领取药水。直接调用 `command_for_semantic` 也拒绝不可领取项和错误画面，不只依赖策略 mask。模拟器侧 `SimGameEnv` 使用原生 `GameContext.legal_reward_options()` 的 `(kind, reward_group_index, item_index)` 过滤领取动作；更新 Python 后必须同步重建本 checkout 的扩展，旧扩展缺少此接口时不可混用。已有 action/observation 张量布局和 checkpoint 参数形状不变。
 

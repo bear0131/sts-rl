@@ -580,8 +580,17 @@ class MapCommandAck:
         if (gs.get('seed') != expected['seed'] or gs.get('act') != expected['act']
                 or type(gs.get('floor')) is not int):
             raise ValueError('map move receipt changed run or lacks floor')
+        if frame.get('ready_for_command') is not True:
+            if now - since > 10.0:
+                raise RuntimeError('map move did not settle for 10 seconds')
+            return True
         counter = RealGameAdapter.map_flight_counter(gs)
         if gs['floor'] == expected['floor']:
+            position = gs.get('simulator_current_node')
+            if (not isinstance(position, dict)
+                    or any(type(position.get(k)) is not int for k in ('x', 'y'))
+                    or (position['x'], position['y']) != expected['position']):
+                raise ValueError('map move receipt lacks or differs from the actual destination')
             if counter != expected['flight_counter']:
                 raise ValueError('map move Wing Boots counter differs from its connection cost')
             self.pending = None

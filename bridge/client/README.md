@@ -89,7 +89,7 @@ Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
 It patches seven `GameStateConverter` serializers. The Dome-specific export mask
-is bypassed, and monsters receive `current_intent_export: simulator-parity-v11`.
+is bypassed, and monsters receive `current_intent_export: simulator-parity-v12`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.

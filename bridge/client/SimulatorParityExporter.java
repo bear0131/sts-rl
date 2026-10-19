@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v11";
+    public static final String VERSION = "simulator-parity-v12";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -101,6 +101,20 @@ public final class SimulatorParityExporter {
         state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
         state.put("has_sapphire_key", Boolean.valueOf(Settings.hasSapphireKey));
         state.put("simulator_parity_export", VERSION);
+        state.put("simulator_current_node", mapNodeIdentity(AbstractDungeon.getCurrMapNode()));
+        java.util.ArrayList<HashMap<String, Object>> leaves = new java.util.ArrayList<HashMap<String, Object>>();
+        for (java.util.ArrayList<com.megacrit.cardcrawl.map.MapRoomNode> row : AbstractDungeon.map) {
+            for (com.megacrit.cardcrawl.map.MapRoomNode node : row) {
+                // Stock convertMapToJson filters out every node without edges,
+                // including the actual Heart and victory rooms in TheEnding.
+                if (node.room != null && !node.hasEdges()) {
+                    HashMap<String, Object> leaf = mapNodeIdentity(node);
+                    leaf.put("children", new java.util.ArrayList<Object>());
+                    leaves.add(leaf);
+                }
+            }
+        }
+        state.put("simulator_map_leaf_nodes", leaves);
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
             com.megacrit.cardcrawl.neow.NeowEvent neow = (com.megacrit.cardcrawl.neow.NeowEvent)event;
@@ -129,6 +143,17 @@ public final class SimulatorParityExporter {
                 state.put("simulator_neow_options", offers);
             }
         }
+    }
+
+    private static HashMap<String, Object> mapNodeIdentity(com.megacrit.cardcrawl.map.MapRoomNode node) {
+        if (node == null || node.room == null)
+            throw new IllegalStateException("Map identity requires the actual node and room");
+        HashMap<String, Object> result = new HashMap<String, Object>();
+        result.put("x", Integer.valueOf(node.x));
+        result.put("y", Integer.valueOf(node.y));
+        result.put("room_class", node.room.getClass().getSimpleName());
+        result.put("symbol", node.getRoomSymbol(Boolean.TRUE));
+        return result;
     }
 
     public static void augmentCombatState(HashMap<String, Object> state) {

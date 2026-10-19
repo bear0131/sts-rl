@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from bridge.real_game_env import RealDecision, RealGameAdapter
+from bridge.schemas.entity_ids import SIMULATOR_PARITY_EXPORT_VERSION
 from env.core import action_space as A, encode, game_actions as ga, vocab as V
 
 
@@ -80,6 +81,7 @@ def test_map_word_table_documents_preview_vs_complete_candidates():
     fields = complete_word_tables()['map_transport_fields']
     assert set(fields) == {'next_nodes', 'next_nodes_order', 'x', 'y', 'symbol',
                            'children', 'current_node', 'boss_available',
+                           'simulator_current_node', 'simulator_map_leaf_nodes', 'terminal_map_nodes',
                            'map_full_rooms', 'map_full_features', 'map_node_rooms', 'map_node_x'}
 
 
@@ -105,8 +107,9 @@ def test_bridge_keeps_all_columns_and_original_ui_order(count):
 
 def flight_map_frame(counter=1):
     nodes = [dict(x=x, y=6, symbol='R') for x in (6, 1)]
-    return dict(in_game=True, available_commands=['choose'], game_state=dict(
+    return dict(in_game=True, ready_for_command=True, available_commands=['choose'], game_state=dict(
         seed=42, act=1, floor=6, screen_type='MAP', room_phase='COMPLETE', potions=[],
+        simulator_parity_export=SIMULATOR_PARITY_EXPORT_VERSION,
         relics=[] if counter is None else [dict(id='WingedGreaves', counter=counter)],
         map=[dict(x=1, y=5, symbol='R', children=[dict(x=1, y=6)])]
             + [dict(n, children=[]) for n in nodes],
@@ -129,6 +132,7 @@ def test_map_receipt_waits_for_move_and_exact_charge_effect(counter, column, aft
     assert ack.waiting(frame, 1)  # Never click twice on a delayed old frame.
     post = deepcopy(frame)
     post['game_state'].update(floor=7, screen_type='REST')
+    post['game_state']['simulator_current_node'] = dict(x=column, y=6, room_class='RestRoom')
     if after is not None:
         post['game_state']['relics'][0]['counter'] = after
     assert not ack.waiting(post, 2)
@@ -178,6 +182,7 @@ def test_map_receipt_rejects_wrong_ui_index_wrong_cost_and_timeout():
     ack.arm(frame, RealDecision('CHOOSE 0', 'test', semantic=ga.map_node(6)), 0, adapter)
     post = deepcopy(frame)
     post['game_state']['floor'] += 1
+    post['game_state']['simulator_current_node'] = dict(x=6, y=6, room_class='RestRoom')
     with pytest.raises(ValueError, match='connection cost'):
         ack.waiting(post, 1)
     assert ack.pending is not None
@@ -198,3 +203,91 @@ def test_first_room_and_boss_move_never_charge_wing_boots(boss):
     adapter = RealGameAdapter()
     adapter.update(frame)
     assert adapter.map_move_expectation(1)['flight_counter'] == 1
+
+
+def ending_map_frame(current_y):
+    rooms = ['R', '$', 'E']
+    graph = [dict(x=3, y=y, symbol=room, children=[dict(x=3, y=y + 1)])
+             for y, room in enumerate(rooms)]
+    leaves = [dict(x=3, y=3, symbol='B', room_class='MonsterRoomBoss', children=[]),
+              dict(x=3, y=4, symbol=None, room_class='TrueVictoryRoom', children=[])]
+    return dict(in_game=True, ready_for_command=True, available_commands=['choose'],
+        game_state=dict(seed=42, act=4, floor=52 + current_y,
+            simulator_parity_export=SIMULATOR_PARITY_EXPORT_VERSION,
+            screen_type='MAP', room_phase='COMPLETE', relics=[], potions=[],
+            map=graph, simulator_map_leaf_nodes=leaves,
+            choice_list=['boss' if current_y == 2 else 'x=3'],
+            screen_state=dict(first_node_chosen=current_y >= 0, boss_available=current_y == 2,
+                current_node=dict(x=0 if current_y < 0 else 3, y=current_y,
+                                  symbol='?' if current_y < 0 else rooms[current_y]),
+                next_nodes=[] if current_y == 2 else [dict(x=3, y=current_y + 1,
+                                                          symbol=rooms[current_y + 1])])))
+
+
+@pytest.mark.parametrize('current_y', [-1, 0, 1, 2])
+def test_ending_uses_actual_heart_leaf_and_retains_terminal_identity(current_y):
+    from env.core.spiremap import RunMap
+    adapter = RealGameAdapter(global_map_view=True)
+    frame = ending_map_frame(current_y)
+    adapter.update(frame)
+    options = adapter._options('map')
+    expected_room = ['REST', 'SHOP', 'ELITE', 'BOSS'][current_y + 1]
+    assert options['nodes'] == [(3, expected_room)]
+    assert [(n['x'], n['y']) for n in options['full_map'] if n['choice']] == [(3, current_y + 1)]
+    assert options['terminal_map_nodes'] == frame['game_state']['simulator_map_leaf_nodes'][1:]
+    actual = encode.encode(dict(phase='map', options=options), global_map_view=True)
+    native_map = RunMap(42, 0, 4)
+    native_options = dict(nodes=[(3, expected_room)],
+                         full_map=native_map.full_view(-1 if current_y < 0 else 3, current_y))
+    reference = encode.encode(dict(phase='map', options=native_options), global_map_view=True)
+    for key in actual:
+        np.testing.assert_array_equal(actual[key], reference[key], err_msg=key)
+    assert adapter.command_for_semantic(ga.map_node(3)) == 'CHOOSE 0'
+
+
+@pytest.mark.parametrize('mutation', ['missing_export', 'missing_boss', 'missing_victory',
+    'duplicate', 'wrong_room', 'wrong_edge', 'wrong_symbol'])
+def test_ending_missing_or_inconsistent_leaf_is_never_guessed(mutation):
+    frame = ending_map_frame(2)
+    leaves = frame['game_state']['simulator_map_leaf_nodes']
+    if mutation == 'missing_export':
+        del frame['game_state']['simulator_map_leaf_nodes']
+    elif mutation == 'missing_boss':
+        leaves.pop(0)
+    elif mutation == 'missing_victory':
+        leaves.pop(1)
+    elif mutation == 'duplicate':
+        leaves.append(deepcopy(leaves[0]))
+    elif mutation == 'wrong_room':
+        leaves[0]['room_class'] = 'RestRoom'
+    elif mutation == 'wrong_edge':
+        leaves[0]['children'] = [dict(x=3, y=4)]
+    else:
+        leaves[0]['symbol'] = 'R'
+    adapter = RealGameAdapter(global_map_view=True)
+    adapter.update(frame)
+    with pytest.raises(ValueError):
+        options = adapter._options('map')
+        encode.encode(dict(phase='map', options=options), global_map_view=True)
+
+
+def test_map_receipt_checks_actual_landing_after_transient_and_boss_click():
+    from bridge.client.agent_orchestrator import MapCommandAck
+    frame = ending_map_frame(2)
+    adapter = RealGameAdapter(global_map_view=True)
+    adapter.update(frame)
+    ack = MapCommandAck()
+    ack.arm(frame, RealDecision('CHOOSE 0', 'test', semantic=ga.map_node(3)), 0, adapter)
+    post = deepcopy(frame)
+    post['game_state']['floor'] += 1
+    post['ready_for_command'] = False
+    assert ack.waiting(post, 1)
+    post['ready_for_command'] = True
+    with pytest.raises(ValueError, match='actual destination'):
+        ack.waiting(post, 2)
+    post['game_state']['simulator_current_node'] = dict(x=3, y=3, room_class='MonsterRoomBoss')
+    with pytest.raises(ValueError, match='actual destination'):
+        ack.waiting(post, 2)
+    # Java's boss button enters the separate (-1,15) battle node, not the icon.
+    post['game_state']['simulator_current_node'] = dict(x=-1, y=15, room_class='MonsterRoomBoss')
+    assert not ack.waiting(post, 3)

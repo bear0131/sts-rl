@@ -116,3 +116,50 @@ def test_native_boss_entry_has_real_room_identity_and_enters_boss(full_map):
         assert env.thick.bc is not None
     finally:
         env.close()
+
+
+@pytest.mark.parametrize('ascension', [0, 20])
+def test_fourth_act_native_map_matches_rooms_without_extending_training_outcome(ascension):
+    from env.core.spiremap import RunMap
+    env = SlayTheSpireEnv(global_map_view=True, ascension=ascension)
+    try:
+        env.reset(seed=42)
+        gc = env.thick.gc
+        # Controlled victory entry: skip the earlier bosses, not their callbacks.
+        gc.act = 3
+        gc.red_key = gc.blue_key = gc.green_key = True
+        gc.cur_map_node_x = next(x for x in range(7) if env.thick.rmap.room_type(x, 14) == 'REST')
+        gc.cur_map_node_y, gc.floor_num = 14, 50
+        gc.skip_battles = True
+        gc.transition_to_map_node(gc.cur_map_node_x)
+        env.thick._settle()
+        assert gc.act == 4
+        # The existing policy's whole-run contract ends after Act 3. Do not
+        # change that reward/terminal definition to exercise an auxiliary map.
+        assert env.thick.is_over and env.thick.legal_semantic_actions() == []
+        rmap = RunMap(gc.seed, ascension, 4)
+        expected = ['REST', 'SHOP', 'ELITE', 'BOSS']
+        for y, room in enumerate(expected):
+            assert gc.legal_map_options() == [3]
+            graph = rmap.full_view(gc.cur_map_node_x, gc.cur_map_node_y)
+            assert [(n['x'], n['y'], n['room']) for n in graph] == [
+                (3, row, label) for row, label in enumerate(expected)]
+            assert [(n['x'], n['y']) for n in graph if n['choice']] == [(3, y)]
+            options = dict(nodes=[(3, room)], full_map=graph)
+            assert encode.obs_space(global_map_view=True).contains(
+                encode.encode(dict(phase='map', options=options), global_map_view=True))
+            if y == 3:
+                gc.skip_battles = False
+            gc.transition_to_map_node(3)
+            assert (gc.cur_map_node_x, gc.cur_map_node_y) == (3, y)
+            assert gc.cur_room == getattr(sts.Room, room)
+            if y == 0:
+                gc.choose_campfire_option(0)
+            elif y == 1:
+                gc.shop_proceed()
+            elif y == 2:
+                gc.reward_proceed()
+        assert gc.screen_state == sts.ScreenState.BATTLE
+        assert gc.encounter.name == 'THE_HEART'
+    finally:
+        env.close()
