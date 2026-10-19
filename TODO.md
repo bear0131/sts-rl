@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE77 | 源码已修并构建，待自然实机覆盖 | executeActions移除三牌区全空的假判负，保留药水/回合/被动及原预算。Anger→ENRAGE按全部实际怪物槽技能触发TOP，Curiosity能力触发BOTTOM，执行时拒绝dead/halfDead/escaping；避免漏竞技场Nob与觉醒者倒地后的额外力量。SharpHide同类槽遍历。源码消费者复读、构建通过，无逐bug离线测试；权重/观察/动作布局不变。 |
+| BRIDGE77 | 已部署实机至三幕胜利，特殊组合仍未覆盖 | executeActions移除三牌区全空的假判负，保留药水/回合/被动及原预算。Anger→ENRAGE按全部实际怪物槽技能触发TOP，Curiosity能力触发BOTTOM，执行时拒绝dead/halfDead/escaping；避免漏竞技场Nob与觉醒者倒地后的额外力量。SharpHide同类槽遍历。ef57158从seed200206 F42续至F51胜利83/115，桥接ERROR0；空牌区/竞技场Nob/能力与Panache同时击倒觉醒者未自然覆盖，不冒充组合验证。无离线测试/权重布局变化。 |
 | BRIDGE76 | F46实机阻断已消除，续跑至自然终局 | 06a9dc6修复PhilosophersStone/Neow/燃烧精英/昆虫向预留空槽写状态；保留固定槽/严格校验，不吞异常。F46同档nonce4正确匹配四Shapes并胜利，随后黑暗虫半死复活、颚虫均走通；617.4秒至F50自然战败，桥接ERROR0。Neow/燃烧精英组合仍未实机覆盖；证据worklog“F46续档终局审计”。 |
 | BRIDGE74 | 源码修复并构建，实机分支待覆盖 | Colosseum补阶段0/1/2与首战无展示奖励→第二轮选项、二战稀有/罕见/100金、Smoke首战回事件；保留disableColosseum=true及旧权重布局。DeadAdventurer/Colosseum第二战eliteTrigger作用于昆虫/投石器/颈环，MindBloom实际Boss也触发颈环；昆虫只减不增当前HP。完整词表event_combat_rule_contracts记录来源，未实机覆盖这些组合。 |
 | BRIDGE75 | 源码修复；MindBloom一般链实机通过，特殊分支待覆盖 | MaskedBandits补药水；强盗/蘑菇已有专属遗物改头环；五类已有事件战补GoldenIdol，MindBloom减金门槛A15→A13。DeadAdventurer药水先于卡牌（撤回未经证明的四项上限影响）。F39自然MindBloom战斗→四类奖励→颂钵→金币→地图已走通；无Idol/Collar，不能代替新增组合验证。无离线测试；首竞技场Smoke例外见BRIDGE74。 |

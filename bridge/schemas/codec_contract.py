@@ -330,7 +330,7 @@ def complete_word_tables():
             "Curiosity": "Java CuriosityPower -> native CURIOSITY; every occupied monster slot, power use, queued BOTTOM Strength; dead/halfDead/escaping owner rejected after any earlier Panache form transition",
             "Sharp Hide": "Java SharpHidePower -> native SHARP_HIDE; attack use queues damage for each actual owner, no slot0 assumption",
             "consumers": "BattleContext outcome -> native search terminal/value and GameContext; existing status IDs, observation/action layout and checkpoint stay unchanged",
-            "audit": "BRIDGE77 source review; special combinations not yet observed in real play",
+            "audit": "BRIDGE77 deployed in natural seed200206 F42-to-F51 real victory with zero bridge errors; empty-pile/Nob/power-Panache lethal combinations still not specifically observed",
         },
         "sim_to_canonical": SIM_TO_CANONICAL,
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
