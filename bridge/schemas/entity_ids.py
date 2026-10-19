@@ -376,6 +376,25 @@ REAL_ROOM_CLASS_IDS = {
     "TrueVictoryRoom": None, "VictoryRoom": None,
 }
 NATIVE_COMBAT_ROOM_IDS = frozenset({"MONSTER", "ELITE", "BOSS", "EVENT"})
+# ProceedButton.goToTreasureRoom / goToNextDungeon. Opening the next act's
+# initial map does not increment floorNum; choosing its first node does.
+# Only stock Act 1/2 exits are represented here, not Act 3 victory/double boss.
+REWARD_ROOM_EXIT_CONTRACTS = {
+    "MonsterRoomBoss": {
+        "source_screens": ("COMBAT_REWARD",), "source_acts": (1, 2),
+        "source_node": (-1, 15),
+        "target_room": "TreasureRoomBoss", "target_screen": "CHEST",
+        "target_node": (-1, 15), "act_delta": 0, "floor_delta": 1,
+        "java_source": "ProceedButton.goToTreasureRoom / AbstractDungeon.nextRoomTransition",
+    },
+    "TreasureRoomBoss": {
+        "source_screens": ("COMBAT_REWARD", "CHEST"), "source_acts": (1, 2),
+        "source_node": (-1, 15),
+        "target_room": "EmptyRoom", "target_screen": "MAP",
+        "target_node": (0, -1), "act_delta": 1, "floor_delta": 0,
+        "java_source": "ProceedButton.goToNextDungeon / CardCrawlGame.update / AbstractDungeon.firstRoomLogic",
+    },
+}
 POTION_CAPACITY_RULES = {"ascension_0_to_10": 3, "ascension_11_to_20": 2, "Potion Belt": 2, "native_max": 5}
 COMPACT_PLAYER_SCALAR_FIELDS = {
     "hp": "BattleContext.player.curHp -> player_scalars[0,5]",

@@ -30,6 +30,7 @@ import numpy as np
 from bridge.real_game_env import RealDecision, RealGameAdapter, validate_transport_frame
 from bridge.campaign import SeedCampaign
 from bridge.event_contract import EventEffectAck
+from bridge.schemas.entity_ids import REWARD_ROOM_EXIT_CONTRACTS
 from env.core import action_space as A
 from env.core import game_actions as ga
 
@@ -627,14 +628,40 @@ class RewardCommandAck:
     @staticmethod
     def snapshot(gs):
         return {k: deepcopy(gs.get(k)) for k in (
-            "seed", "floor", "screen_type", "screen_state", "choice_list",
+            "seed", "act", "floor", "room_type", "room_phase", "simulator_current_node",
+            "screen_type", "screen_state", "choice_list",
             "deck", "gold", "relics", "potions", "max_hp",
             "has_ruby_key", "has_emerald_key", "has_sapphire_key",
         )}
 
+    @staticmethod
+    def room_exit_expectation(gs, command):
+        if command.upper() != "PROCEED":
+            return None
+        contract = REWARD_ROOM_EXIT_CONTRACTS.get(gs.get("room_type"))
+        if (contract is None or gs.get("act") not in contract["source_acts"]
+                or gs.get("screen_type") not in contract["source_screens"]):
+            return None
+        node = gs.get("simulator_current_node")
+        if (any(type(gs.get(k)) is not int for k in ("seed", "act", "floor"))
+                or gs.get("room_phase") != "COMPLETE"
+                or not isinstance(node, dict)
+                or any(type(node.get(k)) is not int for k in ("x", "y"))
+                or (node["x"], node["y"]) != contract["source_node"]
+                or node.get("room_class") != gs["room_type"]):
+            raise ValueError("reward room exit lacks its explicit completed source identity")
+        return {
+            "act": gs["act"] + contract["act_delta"],
+            "floor": gs["floor"] + contract["floor_delta"],
+            "room_type": contract["target_room"], "room_phase": "COMPLETE",
+            "screen_type": contract["target_screen"], "node": contract["target_node"],
+        }
+
     def arm(self, frame, decision, now):
         gs = frame.get("game_state") or {}
-        if gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD"}:
+        room_exit = self.room_exit_expectation(gs, decision.command)
+        if (gs.get("screen_type") not in {"COMBAT_REWARD", "CARD_REWARD", "BOSS_REWARD"}
+                and room_exit is None):
             return
         if decision.command.split()[0].upper() not in {"CHOOSE", "SKIP", "PROCEED", "RETURN"}:
             return
@@ -688,24 +715,44 @@ class RewardCommandAck:
                 claim = ("relic", relics[index], None)
             else:
                 raise ValueError("reward CHOOSE has no explicit effect receipt")
-        self.pending = (self.snapshot(gs), decision.reason, expected, now, claim)
+        if self.pending is not None:
+            raise RuntimeError("reward command already awaiting acknowledgement")
+        self.pending = (self.snapshot(gs), decision.reason, expected, now, claim, room_exit)
 
     def waiting(self, frame, now):
         if self.pending is None:
             return False
         if "error" in frame:
             raise RuntimeError(f"reward command rejected before acknowledgement: {frame['error']}")
-        before, reason, expected, since, claim = self.pending
+        before, reason, expected, since, claim, room_exit = self.pending
         gs = frame.get("game_state") or {}
         after = self.snapshot(gs)
+        if gs and gs.get("seed") != before["seed"]:
+            raise RuntimeError("reward receipt crossed a different run")
+        # A fade can expose a partially switched room. Do not release the
+        # transaction or send another action until its destination is ready.
+        if not gs or frame.get("ready_for_command") is not True:
+            if now - since > 10.0:
+                raise RuntimeError("reward command did not settle for 10 seconds; not resending")
+            return True
         # A gold animation or changing choice label does not acknowledge a
         # SKIP/RETURN/PROCEED transaction.  Its addressed screen must close.
         acknowledged = bool(gs) and gs.get("screen_type") != before["screen_type"]
-        if not gs:
-            acknowledged = False
-        elif any(gs.get(key) != before[key] for key in ("seed", "floor")
+        if room_exit is not None:
+            node = gs.get("simulator_current_node")
+            acknowledged = (
+                all(gs.get(k) == room_exit[k] for k in
+                    ("act", "floor", "room_type", "room_phase", "screen_type"))
+                and isinstance(node, dict)
+                and all(type(node.get(k)) is int for k in ("x", "y"))
+                and (node["x"], node["y"]) == room_exit["node"]
+                and node.get("room_class") == room_exit["room_type"]
+            )
+            if not acknowledged and any(gs.get(k) != before[k] for k in ("act", "floor", "room_type")):
+                raise RuntimeError(f"reward room exit reached an unexpected destination; expected {room_exit!r}")
+        elif any(gs.get(key) != before[key] for key in ("act", "floor", "room_type")
                  if before[key] is not None):
-            raise RuntimeError("reward receipt crossed a different run/floor")
+            raise RuntimeError("reward receipt crossed a different act/floor/room")
         if reason == "open_card_reward":
             acknowledged = gs.get("screen_type") == "CARD_REWARD"
         elif expected is not None:
@@ -759,6 +806,10 @@ class RewardCommandAck:
             else:
                 raise ValueError(f"unsupported reward claim acknowledgement: {kind}")
         if acknowledged:
+            if room_exit is not None:
+                log.info("reward room exit acknowledged source=%s/%s/%s target=%s/%s/%s",
+                         before["act"], before["floor"], before["room_type"],
+                         gs["act"], gs["floor"], gs["room_type"])
             self.pending = None
             return False
         if now - since > 10.0:
