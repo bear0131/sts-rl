@@ -110,8 +110,7 @@ void Deck::upgradeRandomCards(Random &miscRng, int count) {
     java::Collections::shuffle(list.begin(), list.end(), java::Random(miscRng.randomLong()));
     const int end = std::min(list.size(), count);
     for (int i = 0; i < end; ++i) {
-        --upgradeableCount;
-        cards[list[i]].upgrade();
+        upgrade(list[i]);
     }
 }
 
@@ -250,8 +249,12 @@ void Deck::remove(GameContext &gc, int idx) {
 }
 
 void Deck::upgrade(int idx) {
-    cards[idx].upgrade();
-    --upgradeableCount;
+    auto &card = cards[idx];
+    const bool wasUpgradeable = card.canUpgrade();
+    card.upgrade();
+    // Searing Blow remains eligible; repeated calls on an already upgraded
+    // ordinary card must not decrement this derived count again either.
+    if (wasUpgradeable && !card.canUpgrade()) --upgradeableCount;
 }
 
 void Deck::addMatchingToSelectList(fixed_list<SelectScreenCard, Deck::MAX_SIZE> &selectList, const CardPredicate &p) const {

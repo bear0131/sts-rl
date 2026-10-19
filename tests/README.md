@@ -52,8 +52,8 @@ success. pytest-timeout bounds each test to 120 seconds; native deadlocks can
 terminate the test process, so CI also has a job timeout.
 
 `tests/integration/test_relic_pool.py`, `test_event_callbacks.py`,
-`test_reward_transactions.py`, `test_shop_prices.py`, `test_shop_eggs.py` and
-`test_shop_restock.py` use the shared
+`test_reward_transactions.py`, `test_shop_prices.py`, `test_shop_eggs.py`,
+`test_shop_restock.py` and `test_deck_upgrades.py` use the shared
 fixture to build the test-only CMake target `game-context-contract` inside the
 explicit build directory. This gives isolated subprocess coverage of private pool
 boundaries, copied event callbacks, reward transactions and shop pricing without

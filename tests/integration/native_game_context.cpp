@@ -235,6 +235,61 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkDeckUpgrade(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.deck = Deck{};
+    gc.screenState = ScreenState::REST_ROOM;
+    auto &deck = gc.deck;
+    if (variant == 0) {
+        deck.obtainRaw(Card(CardId::SEARING_BLOW));
+        for (int i = 1; i <= 8; ++i) {
+            deck.upgrade(0);
+            require(deck.cards[0].getUpgraded() == i, "Searing Blow lost repeated upgrades");
+            require(deck.getUpgradeableCount() == 1, "Searing Blow upgrade removed eligibility");
+            require(search::GameAction(1).isValidAction(gc), "smith validator lost Searing Blow");
+        }
+        deck.remove(gc, 0);
+        require(deck.getUpgradeableCount() == 0, "removing upgraded Searing Blow corrupted count");
+    } else if (variant == 1) {
+        for (auto id : {CardId::SEARING_BLOW, CardId::STRIKE_RED, CardId::DEFEND_RED}) deck.obtainRaw(Card(id));
+        Random expected = gc.miscRng;
+        expected.randomLong();
+        deck.upgradeRandomCards(gc.miscRng, 99);
+        require(sameRng(expected, gc.miscRng), "random upgrades changed shuffle seed consumption");
+        for (const auto &c : deck.cards) require(c.getUpgraded() == 1, "random upgrade did not upgrade each candidate once");
+        require(deck.getUpgradeableCount() == 1, "random upgrades lost remaining Searing Blow");
+        for (int i = 2; i <= 6; ++i) {
+            deck.upgradeRandomCards(gc.miscRng, 2);
+            require(deck.cards[0].getUpgraded() == i && deck.getUpgradeableCount() == 1,
+                    "repeated random upgrades corrupted Searing Blow count");
+        }
+        deck.remove(gc, 0);
+        deck.upgradeRandomCards(gc.miscRng, 2);
+        require(deck.getUpgradeableCount() == 0, "empty candidate upgrade changed count");
+    } else if (variant == 2) {
+        deck.obtainRaw(Card(CardId::BASH));
+        deck.upgrade(0);
+        require(deck.getUpgradeableCount() == 0, "normal card should lose upgrade eligibility");
+        deck.upgrade(0);
+        require(deck.getUpgradeableCount() == 0, "already upgraded card was counted twice");
+        deck.remove(gc, 0);
+        require(deck.getUpgradeableCount() == 0, "removing ordinary upgraded card corrupted count");
+    } else if (variant == 3 || variant == 4) {
+        for (auto id : {CardId::SEARING_BLOW, CardId::STRIKE_RED, CardId::DEFEND_RED}) deck.obtainRaw(Card(id));
+        if (variant == 3) gc.obtainRelic(RelicId::WHETSTONE);
+        else {
+            gc.curEvent = Event::MINDBLOOM;
+            gc.screenState = ScreenState::EVENT_SCREEN;
+            gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+            gc.chooseEventOption(1);
+        }
+        require(deck.cards[0].getUpgraded() == 1 && deck.cards[1].getUpgraded() == 1,
+                "relic/event did not upgrade attack cards");
+        require(deck.cards[2].getUpgraded() == (variant == 4 ? 1 : 0), "relic/event upgraded wrong card types");
+        require(deck.getUpgradeableCount() == (variant == 4 ? 1 : 2), "relic/event upgrade corrupted eligibility count");
+    } else { throw std::invalid_argument("unknown deck-upgrade fixture"); }
+}
+
 static Random rngForRoll(int wanted) {
     for (int seed = 1; seed <= 10000; ++seed) {
         Random rng(seed);
@@ -536,13 +591,14 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-legality") checkShopLegality(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "deck-upgrade") checkDeckUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;
