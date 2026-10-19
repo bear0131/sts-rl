@@ -24,6 +24,29 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 8 && (root.curEvent == Event::DEAD_ADVENTURER
+                        || root.curEvent == Event::MINDBLOOM
+                        || root.curEvent == Event::HYPNOTIZING_COLORED_MUSHROOMS)) {
+        if (root.curEvent == Event::DEAD_ADVENTURER) root.info.phase = 3; // guaranteed fight
+        root.chooseEventOption(0);
+        auto child = root;
+        const auto cardBefore = root.cardRng;
+        const auto potionBefore = root.potionRng;
+        // Execute the already constructed post-combat callback on a search
+        // copy. The origin must remain unchanged and copies must replay alike.
+        child.regainControl();
+        if (root.cardRng.counter != cardBefore.counter
+            || root.potionRng.counter != potionBefore.counter) return 14;
+        auto sibling = root;
+        sibling.regainControl();
+        if (child.cardRng.seed0 != sibling.cardRng.seed0
+            || child.cardRng.seed1 != sibling.cardRng.seed1
+            || child.potionRng.seed0 != sibling.potionRng.seed0
+            || child.potionRng.seed1 != sibling.potionRng.seed1
+            || child.cardRng.counter <= cardBefore.counter) return 14;
+        std::cout << "reward_callback_copy_isolated=" << eventIdStrings[event] << std::endl;
+        return 0;
+    }
     if (variant == 7 && root.curEvent == Event::DESIGNER_IN_SPIRE) {
         for (int option = 0; option < 6; ++option) {
             auto child = root;
