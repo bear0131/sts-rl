@@ -2329,14 +2329,12 @@ void GameContext::drinkPotion(Potion p) {
             break;
 
         case Potion::ENTROPIC_BREW: {
-            Potion randPotions[5];
+            // Unlike combat's queued ObtainPotionActions, the overworld
+            // Sozu branch does not even generate the random potions.
+            if (hasRelic(RelicId::SOZU)) break;
             for (int i = 0 ; i < potionCapacity; ++i) {
-                randPotions[i] = returnRandomPotion(potionRng, cc);
-                if (potions[i] == Potion::EMPTY_POTION_SLOT) {
-                    potions[i] = randPotions[i];
-                }
+                obtainPotion(returnRandomPotion(potionRng, cc));
             }
-            potionCount = potionCapacity;
             break;
         }
 
@@ -2347,20 +2345,22 @@ void GameContext::drinkPotion(Potion p) {
         case Potion::INVALID:
         case Potion::EMPTY_POTION_SLOT:
         default:
-#ifdef sts_asserts
-            assert(false);
-#endif
-            break;
+            throw std::invalid_argument("potion cannot be used outside combat");
+    }
+    if (hasRelic(RelicId::TOY_ORNITHOPTER)) {
+        playerHeal(5);
     }
 }
 
 void GameContext::drinkPotionAtIdx(int idx) {
-#ifdef sts_asserts
-    assert(!(curEvent == Event::WE_MEET_AGAIN && screenState == ScreenState::EVENT_SCREEN));
-    assert(potions[idx] != Potion::EMPTY_POTION_SLOT);
-    assert(potions[idx] != Potion::INVALID);
-#endif
+    if (idx < 0 || idx >= potionCapacity || idx >= static_cast<int>(potions.size()) ||
+            (curEvent == Event::WE_MEET_AGAIN && screenState == ScreenState::EVENT_SCREEN)) {
+        throw std::invalid_argument("illegal overworld potion slot/context");
+    }
     const Potion p = potions[idx];
+    if (p != Potion::BLOOD_POTION && p != Potion::ENTROPIC_BREW && p != Potion::FRUIT_JUICE) {
+        throw std::invalid_argument("potion cannot be used outside combat");
+    }
     discardPotionAtIdx(idx);
     drinkPotion(p);
 }

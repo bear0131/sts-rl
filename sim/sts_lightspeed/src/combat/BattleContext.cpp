@@ -2505,7 +2505,9 @@ void BattleContext::drinkPotion(int idx, int target) {
         case Potion::ENTROPIC_BREW: {
             for (int i = 0; i < potionCapacity; ++i) {
                 Potion randomPotion = returnRandomPotion(potionRng, player.cc, true);
-                obtainPotion(randomPotion);
+                addToBot({[randomPotion](BattleContext &bc) {
+                    bc.obtainPotion(randomPotion);
+                }});
             }
             break;
         }
@@ -2587,13 +2589,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::SMOKE_BOMB:
-            // The real escape animation ends the room without killing any
-            // monster. Keep a distinct outcome and settle onVictory effects
-            // through exitBattle, but never award ordinary combat loot.
-            outcome = Outcome::PLAYER_ESCAPE;
-            isBattleOver = true;
-            actionQueue.clear();
-            cardQueue.clear();
+            // Escape finishes below, after the onUsePotion healing action.
             break;
 
         case Potion::SNECKO_OIL:
@@ -2631,6 +2627,19 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
     }
 
+    // PotionPopUp calls onUsePotion after potion.use. Automatic Fairy revival
+    // and discarding a potion never go through this callback.
+    if (player.hasRelic<R::TOY_ORNITHOPTER>()) {
+        addToBot(Actions::HealPlayer(5));
+    }
+    if (p == Potion::SMOKE_BOMB) {
+        addToBot({[](BattleContext &bc) {
+            bc.outcome = Outcome::PLAYER_ESCAPE;
+            bc.isBattleOver = true;
+            bc.actionQueue.clear();
+            bc.cardQueue.clear();
+        }});
+    }
 }
 
 void BattleContext::drawCards(int count) {
