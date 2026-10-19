@@ -890,10 +890,15 @@ void GameContext::setupEvent() { // todo necronomicon event
             info.hpAmount0 = std::max(1, fractionMaxHp(.10f, FLOOR));
             break;
 
-        case Event::FALLING: { // todo test and CANNOT BE BOTTLED
+        case Event::FALLING: {
             int counts[3] {0,0,0};
-            for (const auto &c : deck.cards) {
-                ++counts[static_cast<int>(c.getType())];
+            for (int i = 0; i < deck.size(); ++i) {
+                const auto type = static_cast<int>(deck.cards[i].getType());
+                // Java CardHelper filters bottled cards before both existence
+                // checks and random selection. Curse/status are not candidates.
+                if (!deck.isCardBottled(i) && type >= 0 && type < 3) {
+                    ++counts[type];
+                }
             }
 
             int attacksIdx = counts[0] > 0 ? miscRng.random(counts[0] - 1) : -1;
@@ -909,6 +914,7 @@ void GameContext::setupEvent() { // todo necronomicon event
             info.powerCardDeckIdx = -1;
 
             for (int i = 0; i < deck.cards.size(); ++i) {
+                if (deck.isCardBottled(i)) continue;
                 switch (deck.cards[i].getType()) {
                     case CardType::ATTACK:
                         if (attackCount++ == attacksIdx) {

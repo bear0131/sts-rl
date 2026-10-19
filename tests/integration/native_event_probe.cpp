@@ -24,6 +24,29 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 9 && root.curEvent == Event::FALLING) {
+        root.deck = Deck();
+        root.deck.obtain(root, CardId::STRIKE_RED);
+        root.deck.obtain(root, CardId::DEFEND_RED);
+        root.deck.obtain(root, CardId::INFLAME);
+        root.deck.bottleCard(0, CardType::ATTACK);
+        root.deck.bottleCard(1, CardType::SKILL);
+        root.deck.bottleCard(2, CardType::POWER);
+        const auto before = root.miscRng.counter;
+        root.setupEvent();
+        if (root.info.attackCardDeckIdx != -1 || root.info.skillCardDeckIdx != -1
+            || root.info.powerCardDeckIdx != -1 || root.miscRng.counter != before) return 15;
+        root.deck.obtain(root, CardId::REGRET);
+        root.deck.obtain(root, CardId::BASH);
+        root.setupEvent();
+        if (root.info.attackCardDeckIdx != 4 || root.info.skillCardDeckIdx != -1
+            || root.info.powerCardDeckIdx != -1 || root.miscRng.counter != before + 1) return 15;
+        root.chooseEventOption(2);
+        if (root.deck.size() != 4 || !root.deck.isCardBottled(0)
+            || !root.deck.isCardBottled(1) || !root.deck.isCardBottled(2)) return 15;
+        std::cout << "falling_bottles_excluded_curse_safe" << std::endl;
+        return 0;
+    }
     if (variant == 8 && (root.curEvent == Event::DEAD_ADVENTURER
                         || root.curEvent == Event::MINDBLOOM
                         || root.curEvent == Event::HYPNOTIZING_COLORED_MUSHROOMS)) {
