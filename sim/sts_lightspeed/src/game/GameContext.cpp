@@ -2752,7 +2752,10 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 1:
                     info.transformRng = MISC_RNG;
-                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2);
+                    // Augmenter permits bottled cards, unlike ordinary transform events.
+                    info.toSelectCards.clear();
+                    deck.addMatchingToSelectList(info.toSelectCards, [](auto c) { return c.canTransform(); });
+                    openCardSelectScreen(CardSelectScreenType::TRANSFORM, 2, false);
                     break;
 
                 case 2:

@@ -791,7 +791,7 @@ int search::GameAction::getValidEventSelectBits(const GameContext &gc) {
         }
 
         case Event::AUGMENTER:
-            if (gc.deck.getTransformableCount(2) >= 2) {
+            if (gc.deck.getTransformableCount(2, true) >= 2) {
                 return 0x7;
             } else {
                 return 0b101;

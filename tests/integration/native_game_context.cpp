@@ -1,6 +1,7 @@
 // Internal GameContext contracts, isolated by pytest so native faults are reported.
 #include "game/GameContext.h"
 #include "game/Game.h"
+#include "combat/BattleContext.h"
 #include "sim/search/GameAction.h"
 #include <iostream>
 #include <stdexcept>
@@ -233,6 +234,73 @@ static void checkReward(int variant, int ascension) {
         A(T::SKIP).execute(gc);
         require(gc.screenState == ScreenState::MAP_SCREEN, "nested reward return lost continuation");
     } else { throw std::invalid_argument("unknown reward fixture"); }
+}
+
+static void checkBottleTransform(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.deck = Deck{};
+    gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+    for (auto id : {CardId::ANGER, CardId::SHRUG_IT_OFF, CardId::INFLAME, CardId::ASCENDERS_BANE}) gc.deck.obtainRaw(Card(id));
+    for (auto relic : {RelicId::BOTTLED_FLAME, RelicId::BOTTLED_LIGHTNING, RelicId::BOTTLED_TORNADO}) {
+        require(gc.obtainRelic(relic), "bottle fixture did not open selection");
+        require(gc.info.toSelectCards.size() == 1, "bottle fixture target was ambiguous");
+        gc.chooseSelectCardScreenOption(0);
+    }
+    require(gc.deck.getTransformableCount() == 0, "bottle fixture must have no ordinary removable cards");
+    gc.curEvent = Event::AUGMENTER;
+    gc.screenState = ScreenState::EVENT_SCREEN;
+    if (variant == 0 || variant == 1) {
+        if (variant == 0) require(search::GameAction(1).isValidAction(gc), "Augmenter excludes otherwise transformable bottled cards");
+        gc.chooseEventOption(1);
+        require(gc.info.toSelectCards.size() == 3, "Augmenter must offer all three bottled cards but not permanent curse");
+        if (variant == 0) return;
+        gc.chooseSelectCardScreenOption(2); // Power, then attack; original deck indices must survive.
+        gc.chooseSelectCardScreenOption(0);
+        require(gc.screenState == ScreenState::MAP_SCREEN && gc.deck.size() == 4, "Augmenter did not complete exactly two transforms");
+        require(gc.deck.cards[0].id == CardId::SHRUG_IT_OFF && gc.deck.cards[1].id == CardId::ASCENDERS_BANE,
+                "transform removed an unselected card");
+        require(gc.deck.bottleIdxs[0] == -1 && gc.deck.bottleIdxs[1] == 0 && gc.deck.bottleIdxs[2] == -1,
+                "transform did not clear selected bottles and shift surviving bottle");
+        require(gc.deck.getTransformableCount() == 2, "transformable count lost bottle removal/shift");
+        for (int i = 0; i < 6; ++i) gc.deck.obtainRaw(Card(CardId::DEFEND_RED));
+        for (int seed = 1; seed <= 8; ++seed) {
+            gc.seed = seed;
+            auto withoutEmptyBottles = gc;
+            withoutEmptyBottles.relics.remove(RelicId::BOTTLED_FLAME);
+            withoutEmptyBottles.relics.remove(RelicId::BOTTLED_TORNADO);
+            BattleContext withRelics, withoutRelics;
+            withRelics.init(gc, MonsterEncounter::CULTIST);
+            withoutRelics.init(withoutEmptyBottles, MonsterEncounter::CULTIST);
+            require(withRelics.cards.cardsInHand == withoutRelics.cards.cardsInHand, "empty bottle changed opening hand size");
+            bool survivingBottleDrawn = false;
+            for (int i = 0; i < withRelics.cards.cardsInHand; ++i) {
+                const auto uid = withRelics.cards.hand[i].getUniqueId();
+                survivingBottleDrawn |= uid == 0;
+                require(uid == withoutRelics.cards.hand[i].getUniqueId(), "empty bottle changed opening draw identities");
+            }
+            require(survivingBottleDrawn, "surviving bottle lost opening hand effect");
+        }
+    } else if (variant == 2 || variant == 3) {
+        gc.openCardSelectScreen(variant == 2 ? CardSelectScreenType::TRANSFORM : CardSelectScreenType::REMOVE, 1);
+        require(gc.info.toSelectCards.empty(), "ordinary transform/remove must exclude bottles and permanent curses");
+    } else if (variant == 4) {
+        gc.deck.obtainRaw(Card(CardId::STRIKE_RED));
+        gc.deck.obtainRaw(Card(CardId::DEFEND_RED));
+        require(gc.obtainRelic(RelicId::ASTROLABE), "Astrolabe should open five-candidate selection");
+        require(gc.info.toSelectCards.size() == 5, "Astrolabe must include bottled cards");
+        gc.chooseSelectCardScreenOption(0);
+        gc.chooseSelectCardScreenOption(0);
+        gc.chooseSelectCardScreenOption(0);
+        require(!gc.deck.anyCardBottled() && gc.deck.cards[0].id == CardId::ASCENDERS_BANE,
+                "Astrolabe failed to clear selected bottles or preserve permanent curse");
+        for (int i = 3; i < gc.deck.size(); ++i) require(gc.deck.cards[i].getUpgraded() == 1, "Astrolabe did not upgrade transformed cards");
+    } else if (variant == 5) {
+        gc.deck.remove(gc, 2);
+        gc.deck.remove(gc, 1);
+        require(!search::GameAction(1).isValidAction(gc), "Augmenter offered two transforms with only one eligible card");
+        gc.deck.obtainRaw(Card(CardId::DEFEND_RED));
+        require(search::GameAction(1).isValidAction(gc), "Augmenter ignored bottled plus ordinary eligible pair");
+    } else { throw std::invalid_argument("unknown bottle-transform fixture"); }
 }
 
 static void checkDeckUpgrade(int variant, int ascension) {
@@ -591,7 +659,7 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
@@ -599,6 +667,7 @@ int main(int argc, char **argv) {
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "deck-upgrade") checkDeckUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "bottle-transform") checkBottleTransform(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;
