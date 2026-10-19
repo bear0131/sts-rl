@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -654,6 +655,7 @@ class RealGameAdapter:
         self.combat_action_contract = combat_action_contract
         self._joint_multi_plan = None
         self._combat_grid_receipt = None
+        self._paused_wait_seconds = 0.0
         self.character = character
         self.ascension = int(ascension)
         self.global_map_view = bool(global_map_view)
@@ -694,6 +696,15 @@ class RealGameAdapter:
         self._seen_game_frame = False
         self._combat_identity = None
         self._combat_initialized = False
+
+    def exclude_wait_time(self, seconds: float) -> None:
+        """Share only the caller's explicitly observed settings-pause duration."""
+        if seconds < 0:
+            raise ValueError('paused wait duration cannot be negative')
+        self._paused_wait_seconds += seconds
+
+    def _wait_clock(self) -> float:
+        return time.monotonic() - self._paused_wait_seconds
 
     def update(self, frame: dict[str, Any]) -> None:
         validate_transport_frame(frame)
@@ -837,8 +848,7 @@ class RealGameAdapter:
     def auto_command(self, *, auto_enter_shop: bool = True) -> tuple[str, str] | None:
         """Commands that should bypass the policy to match the sim state model."""
         if self._combat_grid_receipt is not None:
-            import time
-            if time.monotonic() - self._combat_grid_receipt['started'] > 10:
+            if self._wait_clock() - self._combat_grid_receipt['started'] > 10:
                 raise RuntimeError('Liquid Memories GRID acknowledgement timed out')
         if "error" in self.frame:
             return "STATE", "mod_error_state_refresh"
@@ -873,12 +883,11 @@ class RealGameAdapter:
         cl = self.choices()
 
         if st == "EVENT" and not ss.get('options') and not cl:
-            import time
             identity = (self.gs.get('seed'), self.gs.get('floor'), ss.get('event_id'))
             pending = getattr(self, '_empty_event_wait', None)
             if pending is None or pending[0] != identity:
-                self._empty_event_wait = (identity, time.monotonic())
-            elif time.monotonic() - pending[1] > 10:
+                self._empty_event_wait = (identity, self._wait_clock())
+            elif self._wait_clock() - pending[1] > 10:
                 raise RuntimeError('event options did not load within 10 seconds')
             return self._refresh_command(), 'await_event_options'
         self._empty_event_wait = None
@@ -1151,7 +1160,6 @@ class RealGameAdapter:
         }
 
     def _begin_combat_grid_receipt(self, desc, instance):
-        import time
         if self._combat_grid_receipt is not None:
             raise RuntimeError('cannot choose another GRID card before acknowledgement')
         previous = tuple(desc['selected_instances'])
@@ -1196,12 +1204,11 @@ class RealGameAdapter:
         self._combat_grid_receipt = dict(
             signature=self._joint_screen_identity(), previous=previous, chosen=chosen,
             remaining=int(desc['pick_remaining']) - 1, piles=piles, expected=expected,
-            confirmed=False, started=time.monotonic())
+            confirmed=False, started=self._wait_clock())
 
     def _continue_combat_grid(self):
-        import time
         receipt = self._combat_grid_receipt
-        if time.monotonic() - receipt['started'] > 10:
+        if self._wait_clock() - receipt['started'] > 10:
             raise RuntimeError('Liquid Memories GRID acknowledgement timed out')
         identity = (self.gs.get('seed'), self.gs.get('floor'),
                     (self.gs.get('combat_state') or {}).get('turn'))

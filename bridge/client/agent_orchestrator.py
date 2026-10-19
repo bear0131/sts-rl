@@ -1027,7 +1027,9 @@ def main() -> None:
                         attach_pending = False
                         attached_live = True
                         log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
+                excluded_before = pause_clock.excluded
                 now, paused = pause_clock.update(frame, time.monotonic())
+                adapter.exclude_wait_time(pause_clock.excluded - excluded_before)
                 if paused:
                     time.sleep(0.1)
                     send('STATE')

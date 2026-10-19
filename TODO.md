@@ -7,7 +7,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BRIDGE60 | 静态确认待修：星盘转换等待忽略御守 | RealGameAdapter._astrolabe_expected_deck_size强制转换前后牌数相同；原游戏Astrolabe.giveCards经ShowCardAndObtainEffect构造消耗Omamori并拦截诅咒，合法结果可少1/2张，当前会无限等待。另核对捕获需覆盖遗物出现与GRID非同帧。按真实选中/消耗及延迟入牌完成确认，不能去掉等待直接离开。 |
-| BRIDGE61 | 静态确认待修：适配器内部超时不排除设置暂停 | 主循环UiPauseClock会排除SETTINGS停留，但Liquid Memories GRID和空事件等待用独立time.monotonic；设置停留超过10秒后恢复即误超时。须统一排除明确暂停时间，保留真实无进展超时，不把所有覆盖画面当暂停。 |
+| BRIDGE61 | 暂停计时源码已统一，未实机 | 主循环UiPauseClock将每次明确SETTINGS暂停增量传入adapter.exclude_wait_time，Liquid Memories两处超时及创建时间、空事件等待统一使用逻辑_wait_clock；包括退出设置的最后一段时长，不改变10秒真实无进展界限。其他覆盖画面不视为暂停；无离线测试、未启动游戏。 |
 | BRIDGE59 | 控制链重读发现三项源码已修，继续审查中未实机 | RewardCommandAck排除room COMBAT的CARD_REWARD，宝典/发现交回战斗选择而非永久卡奖励；同帧防重发扩展到战外商店/对话/药水/选牌及LEAVE/SKIP/PROCEED；商店离开意图保留到MAP/离开ShopRoom，不被旧SHOP_SCREEN清掉，LEAVE→SHOP_ROOM→PROCEED各只发一次。静态调用链发现，无离线测试；完整桥接重读未结束，用户要求优先重读，F25准备目录尚未启动。 |
 | BRIDGE58 | END后选牌被等待屏障误拦，源码已修待F25续测 | bd79d2b实机F25尼利宝典CODEX在turn1 ready选牌时，stale_combat_end_frame只认回合增加而10秒误超时。让ready的CARD_REWARD/HAND_SELECT/GRID交回既有严格选择与搜索合同，不按画面猜动作、不自动选/跳，不放行普通帧flag变化。包括回合结束保留牌等同类选择入口；无离线测试，继续从F25入口存档。 |
 | BRIDGE57 | F24阅读/三次继续/拿书奖励/领取/离开已实机通过 | bd79d2b/v16续档真实84→83→81→78→68，单本Nilry's Codex奖励经模型claim取得、PROCEED再Leave回MAP进入F25，无旧指令重发。EventEffectAck按0..6语义核对UI命令/同局层/下一页，take仅确认未持有书籍/Circlet奖励，不自动领取；stop、致死/复活及全书Circlet分支仅源码核对、未实机覆盖。 |
