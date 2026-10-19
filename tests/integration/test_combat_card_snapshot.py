@@ -4,19 +4,9 @@ from copy import deepcopy
 import numpy as np
 import pytest
 import slaythespire as sts
+from tests.bridge_fixtures import native_card as _row, native_card_state as _state
 
 pytestmark = [pytest.mark.native, pytest.mark.timeout(30)]
-
-
-def _row(card_id, uid, *, upgrades=0, special=0, base_cost=1, cost=1,
-         free=False, retain=False):
-    return dict(id=card_id, uid=uid, upgrades=upgrades, special_data=special,
-                base_cost=base_cost, cost=cost, free_to_play_once=free, retain=retain)
-
-
-def _state(*, hand=(), draw=(), discard=(), exhaust=(), stasis=(None, None), next_uid=100):
-    return dict(version=1, next_uid=next_uid, hand=list(hand), draw=list(draw),
-                discard=list(discard), exhaust=list(exhaust), stasis=list(stasis))
 
 
 def test_snapshot_preserves_all_native_instance_fields_and_stasis_slots(combat_factory):

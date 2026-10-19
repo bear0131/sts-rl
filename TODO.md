@@ -1,6 +1,6 @@
 # 仓库总 TODO
 
-| BRIDGE29 | 战斗升级费用错误已按源码确认，待修 | `CardInstance::upgrade`对BloodForBlood先局部降费又统一重设3费，对其他降基础费用的升级把costForTurn一起覆盖，丢失当回合减费。已核对本机Java BloodForBlood.upgrade/AbstractCard.upgradeBaseCost/Barricade.upgrade；验收须用真实Armaments/Apotheosis升级动作覆盖基础费/回合费/一次免费、普通与已升级牌，并保持无关局面的模型输入/搜索配置。与桥接快照修复分提交，不声称已有权重经过重训。 |
+| BRIDGE29 | 战斗升级费用规则已修，未部署 | `CardInstance::upgrade`按Java保留costForTurn与基础费的差，BloodForBlood按受伤后的基础费升级并避免被通用分支重设3费。旧56例42失败14通过；新57例全过，含四牌堆Apotheosis、Armaments实际0能量出牌及三次Bloodletting自然减费→升级→22伤害链。195原生含完整109搜索矩阵通过、621桥接/相关定向通过；最终TRAIN47真实GPU加载/预测/一步通过，Full-Gumbel128/G0参数未改。规则差异需与旧冻结成绩分开；实际胜率影响未量化。 |
 
 | BRIDGE25 | fresh遗物/完整快照合同已修，未部署 | `RelicInstance::initialData`统一8件充能初值与获得/注入消费者，180行词表逐项给初值；`set_relic_state`必须完整显式id/counter、拒绝缺失/重复/额外字段/负数Java哨兵，整批验证后原子替换；Du-Vu须匹配主牌组。replay恢复计数而非重新创建fresh遗物；两编码器缺counter不能填0。411单元、51遗物/宝箱原生通过；旧注入反例16失败2通过，新均通过。后续全局根状态、动态事件、卡牌状态仍未验收。 |
 
