@@ -782,9 +782,9 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         }
 
         case MMID::GREMLIN_WIZARD_ULTIMATE_BLAST: { // 1
+            miscInfo = 0; // Java resets currentCharge even when A17 repeats Blast.
             attackPlayerHelper(bc, asc2 ? 30 : 25);
             if (!asc17) {
-                miscInfo = 0; // gremlin wizard charge
                 setMove(MMID::GREMLIN_WIZARD_CHARGING);
             }
             break;

@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v19";
+    public static final String VERSION = "simulator-parity-v20";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -168,6 +168,8 @@ public final class SimulatorParityExporter {
             lagavulin.put("idle_count", Integer.valueOf(privateInt(monster, type, "idleCount")));
         }
         state.put("simulator_lagavulin_state", lagavulin);
+        state.put("simulator_wizard_charge", monster instanceof com.megacrit.cardcrawl.monsters.exordium.GremlinWizard
+            ? Integer.valueOf(privateInt(monster, com.megacrit.cardcrawl.monsters.exordium.GremlinWizard.class, "currentCharge")) : null);
         // UnawakenedPower is removed at the first lethal hit, while the room's
         // death protection remains until the queued CanLoseAction executes.
         state.put("unawakened", Boolean.valueOf(
@@ -350,7 +352,46 @@ public final class SimulatorParityExporter {
         return result;
     }
 
+    private static Object summonSlots() {
+        ArrayList<AbstractMonster> monsters = AbstractDungeon.getMonsters().monsters;
+        HashMap<String, Object> result = null;
+        for (AbstractMonster leader : monsters) {
+            AbstractMonster[] slots;
+            if (leader instanceof com.megacrit.cardcrawl.monsters.city.GremlinLeader) {
+                AbstractMonster[] gremlins = ((com.megacrit.cardcrawl.monsters.city.GremlinLeader)leader).gremlins;
+                slots = new AbstractMonster[]{gremlins[2], gremlins[0], gremlins[1], leader};
+            } else if (leader instanceof com.megacrit.cardcrawl.monsters.city.TheCollector) {
+                HashMap<Integer, AbstractMonster> heads = ReflectionHacks.getPrivate(
+                    leader, com.megacrit.cardcrawl.monsters.city.TheCollector.class, "enemySlots");
+                slots = new AbstractMonster[]{heads.get(1), heads.get(0), leader};
+            } else if (leader instanceof com.megacrit.cardcrawl.monsters.beyond.Reptomancer) {
+                AbstractMonster[] daggers = ReflectionHacks.getPrivate(
+                    leader, com.megacrit.cardcrawl.monsters.beyond.Reptomancer.class, "daggers");
+                slots = new AbstractMonster[]{daggers[3], daggers[1], leader, daggers[2], daggers[0]};
+            } else continue;
+            if (result != null) throw new IllegalStateException("Multiple summon leaders in one encounter");
+            result = new HashMap<String, Object>();
+            result.put("leader", leader.id);
+            ArrayList<Integer> indices = new ArrayList<Integer>();
+            boolean pending = false;
+            for (AbstractMonster monster : slots) {
+                if (monster == null) indices.add(null); // Actual unoccupied slot.
+                else {
+                    int index = monsters.indexOf(monster);
+                    // Constructors reserve the object before the queued spawn
+                    // inserts it. Explicit pending prevents a settled restore.
+                    indices.add(Integer.valueOf(index));
+                    if (index < 0) pending = true;
+                }
+            }
+            result.put("slots", indices);
+            result.put("pending", pending);
+        }
+        return result;
+    }
+
     public static void augmentCombatState(HashMap<String, Object> state) {
+        state.put("simulator_summon_slots", summonSlots());
         AbstractPlayer player = AbstractDungeon.player;
         HashMap<String, Object> counters = new HashMap<String, Object>();
         counters.put("happy_flower", Integer.valueOf(relicCounter("Happy Flower")));

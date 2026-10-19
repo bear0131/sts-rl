@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE66 | 三类召唤实际槽/巫师计数源码已修，v20/原生构建完成未实机 | Java读取首领实际引用，分别映到4/3/5原生槽，构造后未入列表对象明确pending；新对象不再按种类/旧下标猜。完整记录保留被替换死体，只有确认死亡、不复活、无Stasis的七类召唤物退出搜索投影；普通根和动作仍严格完整映射。七类完整species恢复不调用RNG，巫师实际currentCharge→canonical/diff/miscInfo/key，A17Blast同步清零计数但不改重复Blast行为。javac/保护打包/native目标构建退出0，未跑离线测试或实机；不宣称BRIDGE37全部复活私有状态已覆盖。 |
 | BRIDGE65 | 目标mask缺映射静默保留旧编号已修，未行为验证 | search_bridge._remap_real_mask内层continue会在找不到真实目标时走到result[mapped]=True，保留未转换动作编号。改为明确拒绝，不把UI序号当原生目标。正常完整映射不变，不能将此防线当BRIDGE37完整生命周期实现。 |
 | BRIDGE64 | 20项事件回执与Bonfire上下文源码已修，v19构建完成未实机 | BRIDGE22的明确pending效果按实际Java阶段逐项接入，不再在发送前拒绝；保留多页确认、轮盘spin、选中UUID与延迟获得完成等待。Bonfire实际for_purge=true不能覆盖BONFIRE_SPIRITS奖励语义，两次Java对话不是新的策略选择。v19新增只读阶段/延迟获得字段，不导出未揭示随机结果，不改权重。源码及本机事件文本/CommunicationMod来源复核、javac/保护打包退出0，无行为测试，不称全事件验收。 |
 | BRIDGE63 | 商店槽位/售出状态源码已修，v18已编译未实机 | 原Java卡牌购买后remove、遗物/药水先isPurchased后列表移除，旧桥接直接压缩编号/未识别已购帧，会改变货架模型输入及购买mask。v18只读初始化/购买钩子保留7张牌槽与Courier替换，Store实际slot/isPurchased和已售证据完整导出；Python以7/3/3固定槽观察及动作映回UI，未知缺槽拒绝。purge_available=false对应价格-1。javac/保护打包退出0，未部署/开游戏，未做行为测试。 |

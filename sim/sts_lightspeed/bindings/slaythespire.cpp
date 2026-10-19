@@ -324,6 +324,8 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         } else {
             md["lagavulin_state"] = py::none();
         }
+        md["wizard_charge"] = m.id == sts::MonsterId::GREMLIN_WIZARD
+            ? py::cast(m.miscInfo) : py::none();
         // This is the first-life death protection, not UnawakenedPower's
         // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
@@ -999,6 +1001,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     "unawakened", "reactive", "move_history", "powers", "adjusted_damage",
                     "thief_state",
                     "lagavulin_state",
+                    "wizard_charge",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1014,7 +1017,17 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     throw std::invalid_argument("unknown custom monster id");
                 }
                 if (monster.id != requestedId) {
-                    if (strictComplete) throw std::invalid_argument(
+                    // These summon species have no independent gameplay
+                    // state beyond the complete public snapshot and Wizard's
+                    // explicitly restored charge. Never run construct()/RNG.
+                    const bool supportedSummon = requestedId == sts::MonsterId::MAD_GREMLIN
+                        || requestedId == sts::MonsterId::SNEAKY_GREMLIN
+                        || requestedId == sts::MonsterId::FAT_GREMLIN
+                        || requestedId == sts::MonsterId::SHIELD_GREMLIN
+                        || requestedId == sts::MonsterId::GREMLIN_WIZARD
+                        || requestedId == sts::MonsterId::TORCH_HEAD
+                        || requestedId == sts::MonsterId::DAGGER;
+                    if (strictComplete && !supportedSummon) throw std::invalid_argument(
                         "monster species replacement requires complete private state (BRIDGE37)");
                     // Restoring an entity is not spawning one. Do not sample
                     // HP/hidden values and advance RNG while injecting a root.
@@ -1192,6 +1205,13 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         throw std::invalid_argument("incomplete Lagavulin gameplay state");
                     monster.setHasStatus<sts::MonsterStatus::ASLEEP>(getBool(sleep, "sleeping", false));
                     monster.miscInfo = snapshotInteger(sleep, "idle_count", 0, 3);
+                }
+            }
+            if (m.contains("wizard_charge")) {
+                if (monster.id == sts::MonsterId::GREMLIN_WIZARD) {
+                    monster.miscInfo = snapshotInteger(m, "wizard_charge", 0, 3);
+                } else if (!m["wizard_charge"].is_none()) {
+                    throw std::invalid_argument("non-wizard cannot carry charge state");
                 }
             }
             if (m.contains("reactive")) {

@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v19`.
+`current_intent_export: simulator-parity-v20`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -195,8 +195,13 @@ card-obtain status, including zero-gain results and forced multi-page dialogue.
 Wheel spin is the stock CommunicationMod transport handle, not a new policy
 choice. Hidden random outcomes are not exported. Bonfire's rarity-reward
 selection context takes precedence over the generic purge UI flag.
-Do not mix v19 Python with an older jar. The native extension must include the
-earlier instance/counter/sleep fixes; v17-v19 add no native interface. Model tensor layouts
+Since v20, summon leaders export their actual minion-reference slots. Retired
+replaced corpses remain in full raw records and an explicit historical snapshot;
+only confirmed inert deaths leave the bounded search projection. Target commands
+still use actual current UI indices. Wizard charge is restored explicitly, never
+inferred from a new random template. The matching native extension must be rebuilt
+for this full-state field and strict audited-minion replacement support.
+Do not mix v20 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

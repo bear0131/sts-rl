@@ -366,6 +366,21 @@ def complete_word_tables():
         "combat_victory_action_contracts": COMBAT_VICTORY_ACTION_CONTRACTS,
         "monster_death_contracts": MONSTER_DEATH_CONTRACTS,
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
+        "summon_slot_transport": {
+            "source": "actual GremlinLeader.gremlins / TheCollector.enemySlots / Reptomancer.daggers object references",
+            "native_order": {"GremlinLeader": ["gremlins[2]", "gremlins[0]", "gremlins[1]", "leader"],
+                             "TheCollector": ["enemySlots[1]", "enemySlots[0]", "leader"],
+                             "Reptomancer": ["daggers[3]", "daggers[1]", "leader", "daggers[2]", "daggers[0]"]},
+            "wire": "combat_state.simulator_summon_slots: leader/slots/pending; actual empty reference=null, not-yet-inserted object=-1 and pending=true; non-summon encounter=null",
+            "history": "unreferenced minions require is_dead/gone/hp0/not-half_dead/no-stasis; preserved in full raw records and _retired_monsters, explicitly excluded only from finite search projection",
+            "restore": "only seven audited minion species can replace a strict root slot without RNG; every public field and explicit Wizard charge is restored",
+        },
+        "wizard_charge_transport": {
+            "java": "GremlinWizard.currentCharge in 0..3; non-wizard explicit null",
+            "canonical": "wizard_charge in real/native full state and diff",
+            "native": "Monster.miscInfo, already part of search key; no new policy tensor",
+            "timing": "increment on charge, reset on every Blast including A17",
+        },
         "monster_intent_damage_contract": {
             "java_source": "AbstractMonster.getIntentDmg / intentDmg",
             "wire": "move_adjusted_damage",

@@ -58,6 +58,11 @@ _GREMLIN_LEADER_MINIONS = frozenset({
     "GremlinFat", "GremlinWarrior", "GremlinTsundere", "GremlinThief",
     "GremlinWizard",
 })
+_SUMMON_ROSTERS = {
+    'GremlinLeader': (4, 3, _GREMLIN_LEADER_MINIONS),
+    'TheCollector': (3, 2, frozenset({'TorchHead'})),
+    'Reptomancer': (5, 2, frozenset({'Dagger'})),
+}
 _SUPPORTED_PLAYER_POWERS = frozenset(NATIVE_PLAYER_STATUS_IDS) - {"THE_BOMB"}
 _SUPPORTED_MONSTER_POWERS = frozenset(NATIVE_MONSTER_STATUS_IDS)
 
@@ -97,13 +102,16 @@ def _monster_ids(raw: dict[str, Any]) -> tuple[str, ...]:
 
 def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
                         *, max_seed_nonces: int = 64,
-                        allow_gremlin_leader_dynamic: bool = False):
+                        allow_gremlin_leader_dynamic: bool = False,
+                        summon_leader: str | None = None):
     """Find a deterministic native encounter instance with the public roster.
 
     A few encounter templates choose their concrete monsters from combat RNG.
     CommunicationMod does not expose that RNG state, so a bounded shadow seed
     nonce supplies a matching template instance before public state injection.
     """
+    if allow_gremlin_leader_dynamic:
+        summon_leader = 'GremlinLeader'
     for seed_nonce in range(max_seed_nonces):
         for encounter in encounters:
             gc = make_gc(seed_nonce)
@@ -113,10 +121,10 @@ def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
                 continue
             found = _monster_ids(battle.to_dict())
             if found == wanted or (
-                allow_gremlin_leader_dynamic
-                and found.count("GremlinLeader") == 1
-                and all(monster == "GremlinLeader"
-                        or monster in _GREMLIN_LEADER_MINIONS
+                summon_leader in _SUMMON_ROSTERS
+                and found.count(summon_leader) == 1
+                and all(monster == summon_leader
+                        or monster in _SUMMON_ROSTERS[summon_leader][2]
                         for monster in found)
             ):
                 return gc, battle, encounter, seed_nonce
@@ -167,6 +175,7 @@ class RealCombatSearch:
         self.card_identities = CombatCardIdentityMap()
         self.decision_index = 0
         self.sim_to_real_targets: dict[int, int] = {}
+        self._retired_monsters: dict[int, dict[str, Any]] = {}
         self.sim_to_real_selection_handles: dict[int, int] = {}
         self.sim_to_real_selection_actions: dict[int, int] = {}
         self._rollback_bc = None
@@ -243,6 +252,7 @@ class RealCombatSearch:
         self.card_identities = CombatCardIdentityMap()
         self.decision_index = 0
         self.sim_to_real_targets = {}
+        self._retired_monsters = {}
         self.sim_to_real_selection_handles = {}
         self.sim_to_real_selection_actions = {}
         self._rollback_bc = None
@@ -378,12 +388,9 @@ class RealCombatSearch:
             make_gc,
             wanted,
             encounters,
-            allow_gremlin_leader_dynamic=(
-                wanted.count("GremlinLeader") == 1
-                and all(monster == "GremlinLeader"
-                        or monster in _GREMLIN_LEADER_MINIONS
-                        for monster in wanted)
-            ),
+            summon_leader=next((leader for leader, (_, _, minions) in _SUMMON_ROSTERS.items()
+                                if wanted.count(leader) == 1 and all(
+                                    monster == leader or monster in minions for monster in wanted)), None),
         )
         self.env.thick.gc = gc
         self.env.thick.bc = battle
@@ -412,6 +419,49 @@ class RealCombatSearch:
 
     def _target_mapping(self, real: dict[str, Any]) -> dict[int, int]:
         sim = normalize_sim(self.env.thick.bc.to_dict())
+        self._retired_monsters = {}
+        cs = self.adapter.gs['combat_state']
+        if 'simulator_summon_slots' not in cs:
+            raise ValueError('combat state is missing explicit summon-slot presence')
+        roster = cs['simulator_summon_slots']
+        leaders = [m['id'] for m in real['monsters'] if m['id'] in _SUMMON_ROSTERS]
+        if roster is not None:
+            if not isinstance(roster, dict) or roster.get('leader') not in _SUMMON_ROSTERS:
+                raise ValueError('unknown actual summon roster')
+            leader = roster['leader']
+            count, leader_slot, minions = _SUMMON_ROSTERS[leader]
+            slots = roster.get('slots')
+            if (leaders != [leader] or roster.get('pending') is not False
+                    or not isinstance(slots, list) or len(slots) != count
+                    or len(sim['monsters']) != count):
+                raise RuntimeError('summon roster is incomplete or still queued')
+            mapping = {}
+            for si, ri in enumerate(slots):
+                if ri is None:
+                    if si == leader_slot:
+                        raise ValueError('summon leader slot is absent')
+                    continue
+                if type(ri) is not int or not 0 <= ri < len(real['monsters']) or ri in mapping.values():
+                    raise ValueError('summon slot indices alias or are outside the actual list')
+                monster = real['monsters'][ri]
+                if (monster['id'] != leader if si == leader_slot else monster['id'] not in minions):
+                    raise ValueError('summon object slot has the wrong species')
+                mapping[si] = ri
+            # Java retains replaced objects. Preserve them in the raw frame and
+            # this explicit historical ledger, not as fake native PAD/monsters.
+            # Only completed, non-reviving deaths of these exact minion species
+            # can leave the native search projection.
+            retired = {ri: monster for ri, monster in enumerate(real['monsters'])
+                       if ri not in mapping.values()}
+            for ri, monster in retired.items():
+                if (monster['id'] not in minions or not monster['is_dead']
+                        or not monster['gone'] or monster['half_dead'] or monster['hp'] != 0
+                        or real['stasis_cards'][ri] is not None):
+                    raise RuntimeError('unreferenced summon is not an inert completed death')
+            self._retired_monsters = deepcopy(retired)
+            return mapping
+        if leaders:
+            raise ValueError('summon leader has no actual object-slot roster')
         unused = {
             index for index, monster in enumerate(real["monsters"])
             if monster["id"] != "PAD"
@@ -459,68 +509,7 @@ class RealCombatSearch:
             mapping[sim_index] = real_index
             unused.remove(real_index)
 
-        # Gremlin Leader chooses summoned minion species through engine-private
-        # RNG.  The real game is authoritative when that draw differs from the
-        # native shadow.  Reuse the leader's three native minion slots, map the
-        # public live entities onto them, and let root-state injection rebuild
-        # any species that changed.  Other encounters still require exact IDs.
-        leader_id = ("TheCollector" if any(
-            m["id"] == "TheCollector" and not m["gone"]
-            for m in real["monsters"]) else "GremlinLeader")
-        minion_ids = ({"TorchHead"} if leader_id == "TheCollector"
-                      else _GREMLIN_LEADER_MINIONS)
-        real_leaders = [
-            i for i, monster in enumerate(real["monsters"])
-            if not monster["gone"] and monster["id"] == leader_id
-        ]
-        sim_leaders = [
-            i for i, monster in enumerate(sim["monsters"])
-            if not monster["gone"] and monster["id"] == leader_id
-        ]
-        dynamic_minions = (
-            len(real_leaders) == 1
-            and len(sim_leaders) == 1
-            and all(real["monsters"][i]["id"] in minion_ids
-                    for i in unused)
-            and all(sim["monsters"][i]["id"] in minion_ids
-                    for i in unmatched_live_sim)
-        )
-        if dynamic_minions and unused:
-            # Dead Java summon slots remain in the transport list, while native
-            # summon slots are reused. Release only confirmed minion corpses.
-            for si in confirmed_dead:
-                if sim["monsters"][si]["id"] in minion_ids:
-                    mapping.pop(si, None)
-            available = [
-                i for i, monster in enumerate(sim["monsters"])
-                if i not in mapping and monster["id"] != leader_id
-            ]
-            previous = dict(self.sim_to_real_targets)
-            for sim_index, real_index in sorted(previous.items()):
-                if (sim_index in available and real_index in unused
-                        and real["monsters"][real_index]["id"]
-                        in minion_ids):
-                    mapping[sim_index] = real_index
-                    available.remove(sim_index)
-                    unused.remove(real_index)
-            for real_index in sorted(tuple(unused)):
-                exact = [
-                    i for i in available
-                    if sim["monsters"][i]["id"]
-                    == real["monsters"][real_index]["id"]
-                ]
-                if exact:
-                    sim_index = exact[0]
-                    mapping[sim_index] = real_index
-                    available.remove(sim_index)
-                    unused.remove(real_index)
-            for real_index, sim_index in zip(
-                sorted(tuple(unused)),
-                sorted(available, key=lambda i: (sim["monsters"][i]["gone"], i)),
-            ):
-                mapping[sim_index] = real_index
-                unused.remove(real_index)
-        if unmatched_live_sim and not dynamic_minions:
+        if unmatched_live_sim:
             sim_index = unmatched_live_sim[0]
             monster = sim["monsters"][sim_index]
             raise RuntimeError(
@@ -546,6 +535,15 @@ class RealCombatSearch:
         ]
         return sim
 
+    def _active_real_projection(self, real: dict[str, Any]) -> dict[str, Any]:
+        # Historical replaced summons remain available in _retired_monsters and
+        # complete RECV logs. Do not claim they were injected into finite native
+        # slots or compare real copies to themselves as a fake successful sync.
+        active = dict(real)
+        active['monsters'] = [monster for ri, monster in enumerate(real['monsters'])
+                              if ri not in self._retired_monsters]
+        return active
+
     def _card_state(self, real: dict[str, Any]) -> dict[str, Any]:
         stasis = [None, None]
         covered = set()
@@ -564,8 +562,8 @@ class RealCombatSearch:
     def _state_spec(self, real: dict[str, Any]) -> dict[str, Any]:
         self.sim_to_real_targets = self._target_mapping(real)
         native_count = len(self.env.thick.bc.to_dict()["monsters"])
-        # _target_mapping proved coverage of every real entity. An unpaired
-        # native slot is explicitly absent, not a fabricated dead entity.
+        # _target_mapping covered every current entity or explicitly preserved
+        # an inert replaced summon. An unpaired native slot is actually vacant.
         monsters: list[dict[str, Any]] = [
             {"present": False} for _ in range(native_count)
         ]
@@ -593,6 +591,7 @@ class RealCombatSearch:
                 "reactive": bool(monster["reactive"]),
                 "thief_state": monster['thief_state'],
                 "lagavulin_state": monster['lagavulin_state'],
+                "wizard_charge": monster['wizard_charge'],
                 "move_history": [move, last_move, second_last_move],
                 "base_damage": int(monster["base_damage"]),
                 "adjusted_damage": int(monster["adjusted_damage"]),
@@ -636,7 +635,7 @@ class RealCombatSearch:
         self.sim_to_real_selection_actions = {}
         self.sim_to_real_targets = self._target_mapping(real)
         predicted = self._sim_state_in_real_target_order()
-        before = diff(real, predicted)
+        before = diff(self._active_real_projection(real), predicted)
         if before:
             LOG.warning("native shadow pre-sync differs count=%s sample=%s", len(before), before[:8])
         spec = self._state_spec(real)
@@ -653,7 +652,7 @@ class RealCombatSearch:
         self.env._multi = None
         self.env._nosl_cpp_pending = None
         self.env._invalidate_backend_cache()
-        after = diff(real, self._sim_state_in_real_target_order())
+        after = diff(self._active_real_projection(real), self._sim_state_in_real_target_order())
         if after:
             raise RuntimeError(f"native real-game state alignment failed: {after[:12]!r}")
         self.run_alignment_checks += 1

@@ -247,6 +247,16 @@ def _validated_lagavulin_state(monster_id, state):
     return dict(state)
 
 
+def _validated_wizard_charge(monster_id, value):
+    if monster_id != 'GremlinWizard':
+        if value is not None:
+            raise ValueError('non-wizard carries a charge counter')
+        return None
+    if type(value) is not int or not 0 <= value <= 3:
+        raise ValueError('GremlinWizard requires actual currentCharge in 0..3')
+    return value
+
+
 def _monster_real(m, *, intents_hidden=False):
     required = {
         "id", "current_hp", "max_hp", "block", "is_gone", "powers",
@@ -255,6 +265,7 @@ def _monster_real(m, *, intents_hidden=False):
         "current_intent_export", "intent", "unawakened",
         "simulator_thief_state",
         "simulator_lagavulin_state",
+        "simulator_wizard_charge",
     }
     missing = required - set(m)
     if missing:
@@ -307,6 +318,7 @@ def _monster_real(m, *, intents_hidden=False):
         "unawakened": m["unawakened"],
         "thief_state": _validated_thief_state(canonical_id, m['simulator_thief_state']),
         "lagavulin_state": _validated_lagavulin_state(canonical_id, m['simulator_lagavulin_state']),
+        "wizard_charge": _validated_wizard_charge(canonical_id, m['simulator_wizard_charge']),
         # Java exposes Writhing Mass's attack-triggered intent reroll as the
         # presence power Compulsive. The native simulator stores the same
         # mechanism in the REACTIVE status bit while reusing its numeric slot
@@ -665,6 +677,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         "second_last_move_id", "unawakened", "reactive",
         "thief_state",
         "lagavulin_state",
+        "wizard_charge",
     }
     missing = required - set(m)
     if missing:
@@ -678,6 +691,8 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         _sim_monster_id(m['id']) if m['id'] != _SIM_MONSTER_INVALID else 'PAD',
         m['lagavulin_state'],
     )
+    wizard_charge = _validated_wizard_charge(
+        _sim_monster_id(m['id']) if m['id'] != _SIM_MONSTER_INVALID else 'PAD', m['wizard_charge'])
     if m["id"] == _SIM_MONSTER_INVALID:
         if (any(m[key] != 0 for key in ("hp", "max_hp", "block"))
                 or m["powers"] or not m["gone"] or not m["is_dying"]
@@ -691,7 +706,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
                     move="INVALID", move_id=0, last_move="INVALID",
                     last_move_id=0, second_last_move="INVALID",
                     second_last_move_id=0, unawakened=False,
-                    reactive=False, thief_state=None, lagavulin_state=None, **lifecycle)
+                    reactive=False, thief_state=None, lagavulin_state=None, wizard_charge=None, **lifecycle)
     try:
         move = m["move"]
         move_id = int(m["move_id"])
@@ -767,6 +782,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         "reactive": bool(m["reactive"]),
         "thief_state": thief_state,
         "lagavulin_state": lagavulin_state,
+        "wizard_charge": wizard_charge,
         "powers": _powers_sim(m["powers"], MONSTER_BUFF_VOCAB_INDEX),
         "move": move,
         "move_id": move_id,
@@ -1209,7 +1225,7 @@ _MONSTER_CMP_FIELDS = (
     "is_dying", "is_dead", "is_escaping", "escape_next",
     "adjusted_damage", "hits", "move", "move_id", "last_move",
     "last_move_id", "second_last_move", "second_last_move_id", "unawakened",
-    "reactive", "powers", "thief_state", "lagavulin_state",
+    "reactive", "powers", "thief_state", "lagavulin_state", "wizard_charge",
 )
 
 
