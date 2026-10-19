@@ -86,7 +86,7 @@ public:
              *draw=f("draw_counts"), *discard=f("discard_counts"), *exhaust=f("exhaust_counts"),
              *pick=f("pick_remaining"), *zero=f("can_pick_zero"), *any=f("can_pick_any"),
              *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
-             *relicCounters=f("relic_counters");
+             *relicCounters=f("relic_counters"), *gold=f("gold");
         const auto relicWidth=arrays.at("relics").shape(1);
         const auto pbWidth=arrays.at("player_buffs").shape(1), mbWidth=arrays.at("monster_buffs").shape(2);
         Array<std::int64_t> cardMap(lut_["card"]), monsterMap(lut_["monster"]),
@@ -103,7 +103,7 @@ public:
         auto scale=[&](const char *key) { return py::cast<float>(scales_[key]); };
         const float hpScale=scale("HP"), blockScale=scale("BLOCK"), energyScale=scale("ENERGY"),
             turnScale=scale("TURN"), buffScale=scale("BUFF"), counterScale=scale("COUNTER"),
-            dmgScale=scale("DMG"), hitsScale=scale("HITS"), upgradeScale=scale("UPGRADE"), pickScale=scale("PICK");
+            dmgScale=scale("DMG"), hitsScale=scale("HITS"), upgradeScale=scale("UPGRADE"), pickScale=scale("PICK"), goldScale=scale("GOLD");
         const int moveLimit=py::cast<int>(limits_["moves"]), intentLimit=py::cast<int>(limits_["intents"]), contextLimit=py::cast<int>(limits_["contexts"]);
         const bool language=packed.contains("language_ids");
         Array<std::int32_t> languageIds;
@@ -156,6 +156,9 @@ public:
         };
         for (py::ssize_t r=0; r<n; ++r) {
             const auto *c=cat.data()+r*cat.shape(1); const auto *s=scalar.data()+r*scalar.shape(1);
+            if (!std::isfinite(s[5]) || s[5]<0 || s[5]>32767 || s[5]!=std::nearbyint(s[5]))
+                throw std::invalid_argument("native packed gold is outside the explicit integer domain 0..32767");
+            gold[r]=s[5]/goldScale;
             for (int k=0; k<2; ++k)
                 if (s[selectStart+196+k]!=0.0f && s[selectStart+196+k]!=1.0f)
                     throw std::invalid_argument("native live relic flag is not boolean");

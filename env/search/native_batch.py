@@ -36,7 +36,7 @@ class NativeSearchBatch:
         self.decoder = sts.NeuralObservationDecoder(
             shapes, _nosl_compact_lut(), self._card_stats,
             {key: getattr(encode, key+'_SCALE') for key in
-                ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK')},
+                ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK','GOLD')},
             dict(counters=encode.COMBAT_COUNTERS, moves=encode.V.MOVE_VOCAB_CAPACITY,
                  intents=len(encode.V.INTENT_CATEGORY), contexts=encode.V.SELECT_CONTEXT_VOCAB_CAPACITY),
             first._policy_offset, first._neural_width if first._joint_actions else 0,

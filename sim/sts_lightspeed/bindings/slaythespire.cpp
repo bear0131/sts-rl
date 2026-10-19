@@ -2378,7 +2378,8 @@ PYBIND11_MODULE(slaythespire, m) {
         out["monster_status_count"] = compact_leaf::kMonsterStatus;
         out["card_count"] = compact_leaf::kCardIds;
         out["live_relic_names"] = pybind11::make_tuple("Centennial Puzzle", "Lizard Tail");
-        out["version"] = 7;
+        out["version"] = 8;
+        out["player_scalar_fields"] = pybind11::make_tuple("hp", "max_hp", "block", "energy", "turn", "gold");
         // OBS20 adds run-global/reward key fields in Python. Compact combat
         // transport bytes are unchanged; root-global key ownership is overlaid
         // by run_env exactly like relic metadata.

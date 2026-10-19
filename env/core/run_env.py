@@ -115,11 +115,14 @@ def _nosl_compact_lut():
     if layout is None:
         _NOSL_COMPACT_LUT = None
         return None
-    if layout.get("version") != 7 or layout.get("observation_version") != encode.OBS_VERSION:
-        raise RuntimeError("observation v20 requires matching native compact layout v7; rebuild the simulator")
+    if layout.get("version") != 8 or layout.get("observation_version") != encode.OBS_VERSION:
+        raise RuntimeError("observation v20 requires matching native compact layout v8; rebuild the simulator")
     from bridge.schemas.entity_ids import (
         LIVE_RELIC_STATE_FIELDS, LIVE_RELIC_COUNTER_MODULI, LIVE_RELIC_COUNTER_STOP_TURNS,
+        COMPACT_PLAYER_SCALAR_FIELDS,
     )
+    if tuple(layout.get('player_scalar_fields', ())) != tuple(COMPACT_PLAYER_SCALAR_FIELDS):
+        raise RuntimeError("native player scalar field word table is incomplete or reordered")
     live_relic_names = tuple(layout.get("live_relic_names", ()))
     if live_relic_names != tuple(LIVE_RELIC_STATE_FIELDS):
         raise RuntimeError("native live-relic flag word table is incomplete or reordered")
@@ -1512,7 +1515,7 @@ class SlayTheSpireEnv(gym.Env):
 
         This path deliberately avoids constructing a canonical dict per leaf.
         The optional language extension carries first-occurrence grouped card-pile fields.
-        Persistent global metadata is invariant within a root search; live
+        Persistent metadata is shared within a root search; live gold and
         relic counters are replaced with this branch's runtime state.
         """
         lut = _nosl_compact_lut()
@@ -1606,6 +1609,11 @@ class SlayTheSpireEnv(gym.Env):
         out["select_zone"][:, 0] = zones
 
         f = scalars
+        gold = f[:, 5]
+        if (not np.all(np.isfinite(gold)) or np.any(gold < 0)
+                or np.any(gold > 32767) or np.any(gold != np.rint(gold))):
+            raise RuntimeError("native packed gold is outside the explicit integer domain 0..32767")
+        out['gold'][:, 0] = gold / encode.GOLD_SCALE
         hp, max_hp = f[:, 0], f[:, 1]
         out["player_scalars"][:, :] = np.stack((
             np.minimum(hp, encode.HP_SCALE) / encode.HP_SCALE,

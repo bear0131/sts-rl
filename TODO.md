@@ -4,7 +4,9 @@
 
 | BRIDGE26 | 全局恢复与字段/房型词表已修，未部署 | `bridge/native_state.py`为搜索/replay共用严格根恢复，按15全局字段和11具体房型词表处理，复制真机asc/keys和2/3/4/5药水槽，去掉HP/金币夹取/额外未知字段忽略，支持EVENT战房型；不重放onEquip。原生药水替换原子化，容量收缩不能丢持有药水。replay不再覆盖明确扩展路径。565桥接/同步/根状态/注入检查通过。尚未解决replay隐藏RNG/入战后→入战前时序、异常跳过假成功；原生gold int16超32767明确拒绝而非截断。 |
 
-| BRIDGE27 | 源码确认待修：搜索叶金币；卡牌附加状态继续审查 | compact scalar[5]已有BattleContext.player.gold，但Python/native两个decoder未消费，直接复制根gold，HandOfGreed分支可错。验收：字段位置词表、逐分支当前金币覆盖，canonical/Python/native三者一致且与根不同反例。另`_deck_cards/_card_rows`对misc、永久/回合费用、瓶装等信息的保留需对照实际Java导出和原生存储逐项证明，不把尚未核实者称已修。 |
+| BRIDGE27 | 搜索叶实时金币已修，未部署 | canonical原先正确读player.gold；Python/native compact decoder改消费已有scalar[5]覆盖root journal。六列基础数值完整名称/位置/来源/消费者词表，layout8显式配套，OBS20/ACTION8/parity-v6形状不变。8个旧反例全部失败，新17项含非法数字拒绝通过；完整109批次+遗物/能力共164原生、565桥接/同步通过，固定TRAIN47 CUDA加载/预测/一步通过。 |
+
+| BRIDGE28 | 卡牌附加状态源码已确认遗漏，待修 | 原CommunicationMod.convertCardToJson导出uuid、非零misc、costForTurn、exhaust/ethereal；桥接_cards_real/_real_card_tuple/_card_rows丢misc/uuid及牌堆费用，native完整导入重建牌卡specialData0/baseCost原价并按牌堆顺序重编uniqueId。Madness永久降费下回合恢复、Rampage累计伤害、RitualDagger当前/永久成长、瓶装主牌组映射均须逐项闭环。另Java RitualDagger构造misc15，但native新Card.misc默认0且获得不设，属于原生规则错误。验收：逐字段/lifecycle/词表明确覆盖，Java typed导出/身份映射/native导入/搜索/编码/模型兼容完整检查；不以少量测试代替所有消费者审查。 |
 
 | BRIDGE24 | 涅奥HP规则、typed导出/候选/阶段/余量已修；未部署 | 当前OBS20/ACTION8/layout7/parity-v6。19奖励/5Java代价/Boss隐含代价6及7内部画面都有词表处置；从NeowEvent.rewards导出类型、原UI索引、缓存HP单位，删掉文字猜NONE路径，真实2/4选项只开放对应动作；缺字段/非法枚举/错序/未知HP单位明确拒绝。0/1/99仅单按钮对话传输，2祝福/跳过分叉、10每日、999无尽尚无native路径并显式拒绝。实时Neow余量入27字段、19件实时遗物观测与layout7尾段；入战3→2而非观测3、严格导入当前余量、退出直接提交避免再次扣次。405桥接/纯编码、73原生定向、109批量矩阵通过，F07既有strict xfail另列；Java v6六serializer离线编译/验证通过；固定TRAIN47 CUDA加载/预测/一步通过。HP规则与44个variant29组合、枚举读法修复历史见worklog/2026-10-19.md BRIDGE24各节。下一步：原生fresh遗物注入的初始充能及set_relic_state缺counter默认0；继续BRIDGE22动态候选/收据/Match板面与BRIDGE23地图能力。不宣称全游戏已对齐。 |
 

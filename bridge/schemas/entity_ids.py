@@ -356,6 +356,14 @@ REAL_ROOM_CLASS_IDS = {
 }
 NATIVE_COMBAT_ROOM_IDS = frozenset({"MONSTER", "ELITE", "BOSS", "EVENT"})
 POTION_CAPACITY_RULES = {"ascension_0_to_10": 3, "ascension_11_to_20": 2, "Potion Belt": 2, "native_max": 5}
+COMPACT_PLAYER_SCALAR_FIELDS = {
+    "hp": "BattleContext.player.curHp -> player_scalars[0,5]",
+    "max_hp": "BattleContext.player.maxHp -> player_scalars[1,5]",
+    "block": "BattleContext.player.block -> player_scalars[2]",
+    "energy": "BattleContext.player.energy -> player_scalars[3]",
+    "turn": "BattleContext.turn (zero-based) -> player_scalars[4] (one-based)",
+    "gold": "BattleContext.player.gold -> gold[0], overrides root journal",
+}
 NATIVE_GLOBAL_FIELDS = {
     "character": {"real": "class", "native": "cc", "support": "IRONCLAD only"},
     "ascension": {"real": "ascension_level", "native": "ascension", "domain": "integer 0..20"},

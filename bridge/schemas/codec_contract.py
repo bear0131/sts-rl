@@ -34,6 +34,7 @@ from .entity_ids import (
     REAL_ROOM_CLASS_IDS,
     NATIVE_GLOBAL_FIELDS,
     POTION_CAPACITY_RULES,
+    COMPACT_PLAYER_SCALAR_FIELDS,
     NEOW_BONUS_IDS,
     NEOW_DRAWBACK_IDS,
     NEOW_IMPLICIT_DRAWBACK_IDS,
@@ -210,6 +211,10 @@ def complete_word_tables():
         "real_room_classes": REAL_ROOM_CLASS_IDS,
         "native_combat_root_fields": NATIVE_GLOBAL_FIELDS,
         "potion_capacity_rules": POTION_CAPACITY_RULES,
+        "compact_player_scalar_fields": {
+            name: {"index": index, "source_and_consumer": meaning}
+            for index, (name, meaning) in enumerate(COMPACT_PLAYER_SCALAR_FIELDS.items())
+        },
         "live_relic_state_fields": LIVE_RELIC_STATE_FIELDS,
         "persistent_relic_counter_sentinels": RELIC_COUNTER_SENTINELS,
         "combat_relic_counter_sentinels": COMBAT_RELIC_COUNTER_SENTINELS,
