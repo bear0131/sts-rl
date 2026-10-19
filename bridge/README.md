@@ -13,6 +13,9 @@
 意图、角色、房间/动作阶段、卡牌类型/稀有度/目标关键词及明确拒绝的身份集合。
 `validate_codec_contract()` 检查目标存在、全集覆盖、哨兵隔离和能力/选择来源的完整性。
 它们复用 `entity_ids.py` 与 `event_contract.py` 的运行时数据，不另维护一份文档副本。
+`relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
+29个Java类实际读写counter，其他类继承显示哨兵。`pending_phase_and_numeric_review`
+明确表示数值/阶段尚未核实，不是运行时用PAD或0代替缺失状态的许可。
 
 PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip 候选；未知身份、
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，

@@ -1319,6 +1319,9 @@ bool GameContext::obtainRelic(RelicId r) {
 //    std::cout << *this << std::endl;
 
     if (relics.has(r)) {
+        if (r == RelicId::CIRCLET) {
+            ++relics.getRelicValueRef(r);
+        }
         return false;
     }
 
@@ -1332,6 +1335,10 @@ bool GameContext::obtainRelic(RelicId r) {
     bool opensScreen = false;
 
     switch (r) {
+
+        case RelicId::CIRCLET:
+            relicData = 1;
+            break;
 
         case RelicId::ASTROLABE: {
             info.toSelectCards.clear();

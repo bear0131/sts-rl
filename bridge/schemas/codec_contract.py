@@ -23,6 +23,9 @@ from .entity_ids import (
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
     LIVE_RELIC_STATE_FIELDS,
+    LIVE_RELIC_COUNTER_FIELDS,
+    REAL_RELIC_COUNTER_USAGE,
+    DERIVED_RELIC_COUNTER_SOURCES,
     RELIC_COUNTER_SENTINELS,
     COMBAT_RELIC_COUNTER_SENTINELS,
     EMPTY_REAL_POTION_IDS,
@@ -153,6 +156,24 @@ def complete_word_tables():
              "effect_status": "unverified" if effect.startswith('pending_') else "implemented"}
             for index, labels, effect in rules
         ]
+    relic_counters = {}
+    for relic in REAL_TO_CANONICAL["relic"]:
+        usage = REAL_RELIC_COUNTER_USAGE.get(relic)
+        relic_counters[relic] = {
+            "java_field": "AbstractRelic.counter",
+            "native_persistent_field": DERIVED_RELIC_COUNTER_SOURCES.get(relic, "RelicInstance.data"),
+            "java_class_with_counter_usage": usage[0] if usage else "AbstractRelic (inherited)",
+            "meaning": usage[1] if usage else "inherited_display_sentinel",
+            "persistent_value_map": RELIC_COUNTER_SENTINELS.get(relic, {}),
+            "combat_value_map": COMBAT_RELIC_COUNTER_SENTINELS.get(relic, {}),
+            "combat_runtime_field": LIVE_RELIC_COUNTER_FIELDS.get(relic),
+            "numeric_audit_status": (
+                "mapped_runtime" if relic in LIVE_RELIC_COUNTER_FIELDS else
+                "mapped_derived" if relic in DERIVED_RELIC_COUNTER_SOURCES else
+                "mapped_persistent" if relic in RELIC_COUNTER_SENTINELS else
+                "pending_phase_and_numeric_review"
+            ),
+        }
     return {
         "real_to_canonical": REAL_TO_CANONICAL,
         "sim_to_canonical": SIM_TO_CANONICAL,
@@ -167,6 +188,8 @@ def complete_word_tables():
         "live_relic_state_fields": LIVE_RELIC_STATE_FIELDS,
         "persistent_relic_counter_sentinels": RELIC_COUNTER_SENTINELS,
         "combat_relic_counter_sentinels": COMBAT_RELIC_COUNTER_SENTINELS,
+        "relic_counter_contracts": relic_counters,
+        "combat_counter_fields": {key: key for key in CS._REAL_COMBAT_COUNTER_KEYS},
         "intent_components": REAL_INTENT_COMPONENTS,
         "room_phases": sorted(REAL_ROOM_PHASES),
         "action_phases": sorted(REAL_ACTION_PHASES),
@@ -278,6 +301,11 @@ def validate_codec_contract() -> dict[str, int]:
     for relic, field in LIVE_RELIC_STATE_FIELDS.items():
         if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
             raise RuntimeError(f"live relic state word table names unknown field: {relic!r}/{field!r}")
+    for relic, field in LIVE_RELIC_COUNTER_FIELDS.items():
+        if relic not in canonical_sets["relic"] or field not in CS._REAL_COMBAT_COUNTER_KEYS:
+            raise RuntimeError(f"live relic counter table names unknown field: {relic!r}/{field!r}")
+    if (set(REAL_RELIC_COUNTER_USAGE) | set(DERIVED_RELIC_COUNTER_SOURCES)) - canonical_sets["relic"]:
+        raise RuntimeError("relic counter source inventory names unknown relics")
     for table in (RELIC_COUNTER_SENTINELS, COMBAT_RELIC_COUNTER_SENTINELS):
         for relic, values in table.items():
             if relic not in canonical_sets["relic"] or not values:
@@ -415,6 +443,9 @@ def validate_codec_contract() -> dict[str, int]:
         "card_rarity_keywords": len(REAL_CARD_RARITY_IDS),
         "card_target_keywords": len(REAL_CARD_TARGET_IDS),
         "run_key_fields": len(RUN_KEY_FIELDS),
+        "relic_counter_contracts": len(canonical_sets["relic"]),
+        "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),
+        "combat_counter_fields": len(CS._REAL_COMBAT_COUNTER_KEYS),
         "dynamic_event_kinds": sum(len(kinds) for kinds in DYNAMIC_EVENT_OPTION_KINDS.values()),
         "event_option_contracts": len(contract_events),
         "explicit_unsupported_real_ids": (

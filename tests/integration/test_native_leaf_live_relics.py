@@ -120,3 +120,17 @@ def test_tea_set_pending_charge_is_spent_in_combat_observation(combat_factory):
     packed = {"categorical": np.asarray(raw["categorical"])[None],
               "scalars": np.asarray(raw["scalars"])[None]}
     assert env._native_packed_observation_batch(packed)["relic_counters"][0, 0] == 0
+
+
+def test_du_vu_observation_and_strength_derive_from_all_master_deck_curses(combat_factory):
+    import slaythespire as sts
+    env = combat_factory(["STRIKE_RED"], relics=["Du-Vu Doll"])
+    for cards, expected in [(["ASCENDERS_BANE", "CURSE_OF_THE_BELL", "PAIN"], 3),
+                            (["ASCENDERS_BANE", "CURSE_OF_THE_BELL"], 2),
+                            (["STRIKE_RED"], 0)]:
+        env.thick.gc.set_deck([(card, 0) for card in cards])
+        env.thick.bc = sts.create_battle(env.thick.gc, "Cultist")
+        env._invalidate_backend_cache()
+        assert env.thick.gc.relic_state()[0]["counter"] == expected
+        assert dict(env.thick.bc.to_dict()["player"]["powers"]).get("Strength", 0) == expected
+        assert env._obs()["relic_counters"][0] == np.float32(expected / 10)

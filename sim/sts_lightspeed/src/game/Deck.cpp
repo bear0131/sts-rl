@@ -73,6 +73,14 @@ bool Deck::hasCardForWingStatue() const {
     return false;
 }
 
+int Deck::getCurseCount() const {
+    // Du-Vu Doll counts every curse, including non-removable ones omitted
+    // from cardTypeCounts (Ascender's Bane, Curse of the Bell, etc.).
+    int count = 0;
+    for (const auto &card : cards) count += card.getType() == CardType::CURSE;
+    return count;
+}
+
 int Deck::getCountMatching(const std::function<bool(const Card &)> &predicate, const int limit) const {
     int count = 0;
     for (const auto &card : cards) {

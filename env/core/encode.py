@@ -39,6 +39,7 @@ overworld-only canonical both encode):
 
 import numpy as np
 from gymnasium import spaces
+from bridge.schemas.entity_ids import LIVE_RELIC_COUNTER_FIELDS
 
 from .cards_vocab import CARD_VOCAB, CARD_INDEX, EMPTY
 from .ironclad_cards import card_numbers
@@ -139,17 +140,7 @@ _BINARY_COMBAT_COUNTERS = frozenset({
     "necronomicon_used", "orange_attack", "orange_skill", "orange_power",
 })
 
-_LIVE_RELIC_COUNTER = {
-    "Centennial Puzzle": "centennial_puzzle_active",
-    "Happy Flower": "happy_flower",
-    "Incense Burner": "incense_burner",
-    "InkBottle": "ink_bottle",
-    "Inserter": "inserter",
-    "Lizard Tail": "lizard_tail_active",
-    "Nunchaku": "nunchaku",
-    "Pen Nib": "pen_nib",
-    "Sundial": "sundial",
-}
+_LIVE_RELIC_COUNTER = LIVE_RELIC_COUNTER_FIELDS
 
 _BINARY_LIVE_RELICS = frozenset({
     "Centennial Puzzle",

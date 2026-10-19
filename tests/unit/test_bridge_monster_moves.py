@@ -67,6 +67,10 @@ def test_real_relic_sentinels_and_live_flags_are_explicit():
     counters["lizard_tail_active"] = -2
     with pytest.raises(ValueError, match="not boolean"):
         normalize_real(frame)
+    counters["lizard_tail_active"] = 0
+    counters["invented_counter"] = 7
+    with pytest.raises(ValueError, match="unknown fields"):
+        normalize_real(frame)
 
 
 def test_real_normalizer_preserves_public_move_history():

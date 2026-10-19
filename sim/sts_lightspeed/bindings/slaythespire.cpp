@@ -1327,7 +1327,7 @@ py::list gcRelics(const sts::GameContext &gc) {
     for (const auto &r : gc.relics.relics) {
         py::dict item;
         item["id"] = std::string(sts::relicIds[static_cast<int>(r.id)]);
-        item["counter"] = r.data;
+        item["counter"] = r.id == sts::RelicId::DU_VU_DOLL ? gc.deck.getCurseCount() : r.data;
         out.append(item);
     }
     return out;

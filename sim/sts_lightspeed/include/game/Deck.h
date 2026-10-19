@@ -37,6 +37,7 @@ namespace sts {
 
         [[nodiscard]] int size() const;
         [[nodiscard]] bool hasCurse() const;
+        [[nodiscard]] int getCurseCount() const;
         [[nodiscard]] bool isCardBottled(int idx) const;
         [[nodiscard]] bool anyCardBottled() const;
 

@@ -78,6 +78,9 @@ _REAL_COMBAT_COUNTER_KEYS = (
 
 
 def _validated_combat_counters(counters):
+    unknown = set(counters) - set(_REAL_COMBAT_COUNTER_KEYS)
+    if unknown:
+        raise ValueError(f"combat counter word table has unknown fields: {sorted(unknown)!r}")
     binary = {"necronomicon_used", "orange_attack", "orange_skill", "orange_power",
               *LIVE_RELIC_STATE_FIELDS.values()}
     result = {}

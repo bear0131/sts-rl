@@ -13,6 +13,56 @@ LIVE_RELIC_STATE_FIELDS = {
     "Lizard Tail": "lizard_tail_active",
 }
 
+LIVE_RELIC_COUNTER_FIELDS = {
+    "Centennial Puzzle": "centennial_puzzle_active",
+    "Happy Flower": "happy_flower",
+    "Incense Burner": "incense_burner",
+    "InkBottle": "ink_bottle",
+    "Inserter": "inserter",
+    "Lizard Tail": "lizard_tail_active",
+    "Nunchaku": "nunchaku",
+    "Pen Nib": "pen_nib",
+    "Sundial": "sundial",
+}
+
+# Every stock relic class in desktop-1.0.jar was checked for reads/writes of
+# AbstractRelic.counter (including setCounter calls). These 29 classes use it;
+# all other supported identities inherit the display sentinel. This is a
+# source-use inventory, NOT a claim that every phase's semantics is verified.
+REAL_RELIC_COUNTER_USAGE = {
+    "Ancient Tea Set": ("AncientTeaSet", "pending_next_combat_energy"),
+    "CaptainsWheel": ("CaptainsWheel", "combat_turn_until_activation"),
+    "CeramicFish": ("CeramicFish", "legacy_use_method_not_obtain_card_counter"),
+    "Circlet": ("Circlet", "copies_obtained"),
+    "Du-Vu Doll": ("DuVuDoll", "master_deck_curse_count"),
+    "Girya": ("Girya", "lifts_completed"),
+    "Happy Flower": ("HappyFlower", "turns_modulo_three"),
+    "HornCleat": ("HornCleat", "combat_turn_until_activation"),
+    "Incense Burner": ("IncenseBurner", "turns_modulo_six"),
+    "InkBottle": ("InkBottle", "cards_modulo_ten"),
+    "Inserter": ("Inserter", "turns_modulo_two"),
+    "Kunai": ("Kunai", "attacks_this_turn_modulo_three"),
+    "Letter Opener": ("LetterOpener", "skills_this_turn_modulo_three"),
+    "Lizard Tail": ("LizardTail", "revival_available"),
+    "Matryoshka": ("Matryoshka", "extra_chest_relic_charges"),
+    "MawBank": ("MawBank", "floor_gold_available_until_shop_spend"),
+    "NeowsBlessing": ("NeowsLament", "one_hp_combat_charges"),
+    "NlothsMask": ("NlothsMask", "chest_relic_removal_charges"),
+    "Nunchaku": ("Nunchaku", "attacks_modulo_ten"),
+    "Omamori": ("Omamori", "curse_prevention_charges"),
+    "Ornamental Fan": ("OrnamentalFan", "attacks_this_turn_modulo_three"),
+    "Pen Nib": ("PenNib", "attacks_modulo_ten_armed_at_nine"),
+    "Pocketwatch": ("Pocketwatch", "cards_this_turn"),
+    "Shuriken": ("Shuriken", "attacks_this_turn_modulo_three"),
+    "StoneCalendar": ("StoneCalendar", "combat_turn_until_activation"),
+    "Sundial": ("Sundial", "shuffles_modulo_three"),
+    "Tiny Chest": ("TinyChest", "question_rooms_modulo_four"),
+    "Velvet Choker": ("VelvetChoker", "cards_this_turn"),
+    "WingedGreaves": ("WingBoots", "disconnected_map_move_charges"),
+}
+
+DERIVED_RELIC_COUNTER_SOURCES = {"Du-Vu Doll": "Deck::getCurseCount()"}
+
 # Java counter sentinel -> native persistent RelicInstance.data.  The mapping
 # is explicit so a used-up relic cannot become true merely because -2 != 0.
 RELIC_COUNTER_SENTINELS = {

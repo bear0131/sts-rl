@@ -26,6 +26,35 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 27) {
+        root.relics = RelicContainer();
+        root.deck = Deck();
+        root.deck.obtain(root, CardId::ASCENDERS_BANE);
+        root.deck.obtain(root, CardId::CURSE_OF_THE_BELL);
+        root.deck.obtain(root, CardId::PAIN);
+        root.obtainRelic(RelicId::DU_VU_DOLL);
+        BattleContext three;
+        three.init(root, MonsterEncounter::CULTIST);
+        if (three.player.getStatus<PlayerStatus::STRENGTH>() != 3) return 34;
+        root.deck.remove(root, 2);
+        BattleContext two;
+        two.init(root, MonsterEncounter::CULTIST);
+        if (two.player.getStatus<PlayerStatus::STRENGTH>() != 2) return 34;
+        root.obtainRelic(RelicId::OMAMORI);
+        root.deck.obtain(root, CardId::DOUBT);
+        BattleContext blocked;
+        blocked.init(root, MonsterEncounter::CULTIST);
+        if (blocked.player.getStatus<PlayerStatus::STRENGTH>() != 2) return 34;
+        return 0;
+    }
+    if (variant == 28) {
+        root.relics = RelicContainer();
+        for (int copies = 1; copies <= 4; ++copies) {
+            root.obtainRelic(RelicId::CIRCLET);
+            if (root.relics.size() != 1 || root.relics.getRelicValue(RelicId::CIRCLET) != copies) return 35;
+        }
+        return 0;
+    }
     if (variant == 25) {
         // Tea Set is armed by a rest room until the next combat, even when
         // other noncombat rooms intervene. It is consumed exactly once.

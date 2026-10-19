@@ -678,6 +678,17 @@ class RewardCommandAck:
                 key = "potions" if kind == "potion" else "relics"
                 count = lambda items: sum(x.get("id") == entity_id for x in (items or []))
                 acknowledged = count(gs.get(key)) == count(before.get(key)) + 1
+                if kind == "relic" and entity_id == "Circlet":
+                    def circlet_counter(items):
+                        records = [item for item in (items or []) if item.get("id") == "Circlet"]
+                        if len(records) != 1 or type(records[0].get("counter")) is not int:
+                            raise ValueError("Circlet receipt requires exactly one relic and its explicit counter")
+                        return records[0]["counter"]
+                    if count(before.get(key)) == 1:
+                        acknowledged = (count(gs.get(key)) == 1 and
+                            circlet_counter(gs[key]) == circlet_counter(before[key]) + 1)
+                    elif acknowledged:
+                        acknowledged = circlet_counter(gs[key]) == 1
             elif kind == "key":
                 key_field = {
                     "EMERALD_KEY": "has_emerald_key",

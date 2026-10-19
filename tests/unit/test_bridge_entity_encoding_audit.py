@@ -82,6 +82,12 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert counts['screen_types'] == len(tables['real_to_canonical']['screen'])
     assert tables['real_to_canonical']['character']['THE_SILENT'] == 'SILENT'
     assert tables['intent_components']['ATTACK_DEBUFF'] == ('attack', 'debuff')
+    assert set(tables['relic_counter_contracts']) == set(encode.V.RELIC_VOCAB) - {'PAD'}
+    assert counts['relic_counter_contracts'] == 180
+    assert counts['java_relic_counter_users'] == 29
+    assert counts['combat_counter_fields'] == 26
+    assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
+    assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_derived'
     assert json.loads(json.dumps(tables))['rejected_real_ids']['cards']
 
 
@@ -150,3 +156,22 @@ def test_reward_claim_not_acknowledged_by_unrelated_screen_change():
     assert ack.waiting(changed, 1)
     changed['game_state']['potions'] = [{'id': 'SteroidPotion'}]
     assert not ack.waiting(changed, 2)
+
+
+def test_circlet_reward_acknowledges_exact_copy_counter_not_another_relic():
+    from copy import deepcopy
+    from bridge.real_game_env import RealDecision
+    from bridge.client.agent_orchestrator import RewardCommandAck
+    frame = {'game_state': {'screen_type': 'COMBAT_REWARD', 'relics': [
+        {'id': 'Circlet', 'counter': 2}, {'id': 'Girya', 'counter': 0}],
+        'screen_state': {'rewards': [
+            {'reward_type': 'RELIC', 'relic': {'id': 'Circlet'}}]}}}
+    ack = RewardCommandAck()
+    ack.arm(frame, RealDecision('CHOOSE 0', 'policy', semantic=('claim', 'relic', 0)), 0)
+    after = deepcopy(frame)
+    after['game_state']['relics'][1]['counter'] = 1
+    assert ack.waiting(after, 1)
+    after['game_state']['relics'][0]['counter'] = 4
+    assert ack.waiting(after, 2)
+    after['game_state']['relics'][0]['counter'] = 3
+    assert not ack.waiting(after, 3)
