@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE23 | 诅咒之书遗物池已修，未部署；继续审查计数语义 | `GameContext.cpp::CURSED_TOME`按真机randomBook排除已拥有的Necronomicon/Enchiridion/Nilry's Codex，三本齐全时给Circlet。新增native_event_probe variant24，A0/A15各8种拥有集合×16固定随机种子：旧exit31，新0。继续核对`bridge/schemas/combat_state.py::normalize_sim`遗漏的centennial_puzzle_active/lizard_tail_active，以及Java遗物counter与native RelicInstance.data的不同语义；下一步建立遗物计数词表并修复全部消费者，不能把原始counter直接当native布尔。 |
+
 | BRIDGE22 | 词表与严格传输阶段已修，效果审查/实机未完成；未部署 | `bridge/schemas/codec_contract.py::complete_word_tables` 展开1089个真机/1045个原生身份、198行动映射、38选择来源、52事件处置及17意图/14屏幕/15命令和其他Java枚举；禁止未知或缺失字段填PAD。OBS20/ACTION8/layout4/parity-v4配套重建，修正钥匙、行动历史、状态/计数导入和压缩观测越界截断/类型/单选计数/单行全局复制等错误。410单元、111原生定向及90兼容/同步通过，97搜索批次一致性通过；固定TRAIN47 CUDA加载/一步预测/环境动作通过。下一步：`bridge/event_contract.py` 中 pending_* 效果收据、动态事件typed导出、Match and Keep板面传输、其余默认值与跨层副作用继续源码核对；词表识别不等于事件全支持。完成后可恢复部署并按授权显式`--continuous-test --auto-start`实机测试。 |
 
 | BRIDGE21 | 原生奖励容器与商店规则已按真机修复，未部署；桥接静默PAD审查中 | 奖励总数补遗物、移卡边界收紧；商店全部初始牌经过蛋类预览，Courier按原牌类型/cardRng补货并保存遗物新价格，购买蛋类/会员卡/微笑面具即时作用与真机一致。desktop-1.0.jar字节码逐项核对；旧A0/A15反例variants22/23为exit29/30，新17..23全0。生产仍为ff65950b；下一步禁止未知/缺失数据伪装PAD，只有真实空槽可用PAD，映射或导出缺失必须失败关闭。 |

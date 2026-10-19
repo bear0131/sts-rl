@@ -2637,9 +2637,19 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 5: {
                     playerLoseHp(unfavorable ? 15 : 10);
-                    auto res = miscRng.random(2);
-                    auto book = res == 0 ? RelicId::NECRONOMICON :
-                                (res == 1 ? RelicId::ENCHIRIDION : RelicId::NILRYS_CODEX);
+                    // CursedTome.randomBook draws from unowned books in this
+                    // exact order, with Circlet as the all-owned fallback.
+                    // Drawing a fixed three-way index could return a duplicate
+                    // and also changed the bounded RNG draw when books existed.
+                    const RelicId books[] = {RelicId::NECRONOMICON,
+                        RelicId::ENCHIRIDION, RelicId::NILRYS_CODEX};
+                    RelicId available[3];
+                    int count = 0;
+                    for (const auto candidate : books) {
+                        if (!hasRelic(candidate)) available[count++] = candidate;
+                    }
+                    if (count == 0) available[count++] = RelicId::CIRCLET;
+                    const auto book = available[miscRng.random(count - 1)];
 
                     Rewards reward;
                     reward.addRelic(book);

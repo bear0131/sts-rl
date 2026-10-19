@@ -24,6 +24,42 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 24) {
+        // CursedTome.randomBook filters owned books before its single draw,
+        // and falls back to Circlet only when all three are already owned.
+        const RelicId books[] = {RelicId::NECRONOMICON, RelicId::ENCHIRIDION,
+                                 RelicId::NILRYS_CODEX};
+        for (int owned = 0; owned < 8; ++owned) {
+            for (int seed = 0; seed < 16; ++seed) {
+                auto fixture = root;
+                fixture.relics = RelicContainer();
+                for (int index = 0; index < 3; ++index) {
+                    if (owned & (1 << index)) fixture.obtainRelic(books[index]);
+                }
+                fixture.miscRng = Random(91000 + seed);
+                fixture.curEvent = Event::CURSED_TOME;
+                fixture.info.eventData = 4;
+                fixture.screenState = ScreenState::EVENT_SCREEN;
+                const int hp = fixture.curHp;
+                fixture.chooseEventOption(5);
+                const auto &reward = fixture.info.rewardsContainer;
+                if (fixture.screenState != ScreenState::REWARDS || reward.relicCount != 1
+                        || fixture.curHp != hp - (ascension >= 15 ? 15 : 10)) return 31;
+                const auto chosen = reward.relics[0];
+                if (owned == 7) {
+                    if (chosen != RelicId::CIRCLET) return 31;
+                } else {
+                    bool available = false;
+                    for (int index = 0; index < 3; ++index) {
+                        if (!(owned & (1 << index)) && chosen == books[index]) available = true;
+                    }
+                    if (!available) return 31;
+                }
+            }
+        }
+        std::cout << "cursed_tome_draws_only_unowned_books_or_circlet" << std::endl;
+        return 0;
+    }
     if (variant == 23) {
         // ShopScreen applies existing eggs to every initial shelf card. Courier
         // restocks a colored purchase with the same card type, reprices relics,
