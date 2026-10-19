@@ -1464,21 +1464,23 @@ class RealGameAdapter:
         )
         if not next_nodes:
             raise ValueError("actionable map screen has no structured next_nodes")
-        if len(next_nodes) > encode.MAP_EDGES:
+        if len(next_nodes) > A.N_COLS:
             raise ValueError(
-                f"map edge capacity {encode.MAP_EDGES} exceeded: {len(next_nodes)}"
+                f"map column capacity {A.N_COLS} exceeded: {len(next_nodes)}"
             )
         nodes = []
+        rows = set()
         for node in next_nodes:
             xy = _node_xy(node)
             if xy is None:
                 raise ValueError(f"map choice is missing x/y coordinates: {node!r}")
-            x, _y = xy
-            if not 0 <= x < A.N_COLS:
-                raise ValueError(f"map choice x is out of range: {x}")
+            x, y = xy
+            if not (0 <= x < A.N_COLS and 0 <= y <= _MAP_MAX_Y):
+                raise ValueError(f"map choice is out of range: {(x, y)!r}")
+            rows.add(y)
             nodes.append((x, _node_room(node)))
-        if len({x for x, _room in nodes}) != len(nodes):
-            raise ValueError(f"map choices contain duplicate x coordinates: {nodes!r}")
+        if len(rows) != 1 or len({x for x, _room in nodes}) != len(nodes):
+            raise ValueError(f"map choices have mixed rows or duplicate columns: {nodes!r}")
         return nodes
 
     def _full_map_nodes(self, ss: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1554,11 +1556,10 @@ class RealGameAdapter:
         for (x, y), node in sorted(raw_nodes.items(), key=lambda item: (item[0][1], item[0][0])):
             children = []
             if y < _MAP_MAX_Y:
-                children = [
-                    child_x
-                    for child_x, child_y in _node_children(node)
-                    if child_y == y + 1 and 0 <= child_x < A.N_COLS
-                ]
+                for child_x, child_y in _node_children(node):
+                    if child_y != y + 1 or not 0 <= child_x < A.N_COLS:
+                        raise ValueError(f"map edge does not reach the next row: {(x, y)} -> {(child_x, child_y)}")
+                    children.append(child_x)
             out.append({
                 "x": x,
                 "y": y,

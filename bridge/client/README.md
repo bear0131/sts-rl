@@ -102,6 +102,12 @@ event class: all three generic grid operation flags are false in the game.
 All GRID candidates and selected cards require complete instance records and
 unique UUIDs, including outside combat; names and upgrades cannot replace an
 instance identity. This does not by itself enable an unaudited event receipt.
+Map candidates retain all seven possible columns and their original UI indices.
+The frozen three-token local preview is only redundant context: when more than
+three choices exist, the 105-node map input must contain every choice with its
+exact room and choice flag. Missing/contradictory graphs are rejected; older
+checkpoints without the full-map channel cannot handle these wide map screens.
+Neither the action list nor the complete graph is truncated to fit the preview.
 Card serialization always includes the actual `misc`, including zero, and a
 versioned `simulator_card_state` object with base cost/damage/block, free-once,
 retention/innate flags and all three bottle flags. Every monster also exports
