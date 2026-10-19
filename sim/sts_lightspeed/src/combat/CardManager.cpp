@@ -392,6 +392,31 @@ void CardManager::resetAttributesAtEndOfTurn() {
     }
 }
 
+void CardManager::recomputeDerivedState() {
+    handNormalityCount = 0;
+    handPainCount = 0;
+    strikeCount = 0;
+    handBloodCardCount = 0;
+    drawPileBloodCardCount = 0;
+    discardPileBloodCardCount = 0;
+
+    for (int i = 0; i < cardsInHand; ++i) {
+        const auto &card = hand[i];
+        handNormalityCount += card.getId() == CardId::NORMALITY;
+        handPainCount += card.getId() == CardId::PAIN;
+        handBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+    for (const auto &card : drawPile) {
+        drawPileBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+    for (const auto &card : discardPile) {
+        discardPileBloodCardCount += card.isBloodCard();
+        strikeCount += card.isStrikeCard();
+    }
+}
+
 // **************** BEGIN SPECIAL HELPERS ****************
 
 void CardManager::draw(BattleContext &bc, int amount) {
