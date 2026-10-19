@@ -311,6 +311,16 @@ def complete_word_tables():
         "combat_victory_action_contracts": COMBAT_VICTORY_ACTION_CONTRACTS,
         "monster_death_contracts": MONSTER_DEATH_CONTRACTS,
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
+        "monster_intent_damage_contract": {
+            "java_source": "AbstractMonster.getIntentDmg / intentDmg",
+            "wire": "move_adjusted_damage",
+            "native_restore": "strict monster adjusted_damage (required)",
+            "native_inactive_field": "Monster::inactiveIntentDamage",
+            "observation_and_key": "Monster::getIntentDamage; dict, packed and search hash",
+            "active_rule": "derive from actual powers/target; never override attack calculation",
+            "inactive_rule": "preserve explicit cached display after powers disappear; keep entity and lifecycle",
+            "reset": "setMove or fresh construct/spawn; active restored roots clear inactive cache",
+        },
         "rejected_real_ids": {
             "cards": UNSUPPORTED_REAL_CARD_IDS,
             "relics": UNSUPPORTED_REAL_RELIC_IDS,

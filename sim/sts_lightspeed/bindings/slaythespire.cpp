@@ -336,9 +336,7 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         // Use the simulator's actual damage pipeline for the displayed intent.
         // This includes Strength, Weak/Paper Krane, player Vulnerable/Odd
         // Mushroom, Surrounded, Wrath, Intangible, and the game's rounding.
-        md["adjusted_damage"] = dmg.damage > 0
-            ? m.calculateDamageToPlayer(bc, dmg.damage)
-            : 0;
+        md["adjusted_damage"] = m.getIntentDamage(bc, dmg.damage);
         md["hits"] = dmg.attackCount;
         md["powers"] = monsterPowersToList(m);
         monsters.append(md);
@@ -656,8 +654,7 @@ inline Row pack(const sts::BattleContext &bc) {
         const auto &monster = bc.monsters.arr[i];
         if (monster.id == sts::MonsterId::INVALID) { f += 6; continue; }
         const int baseDamage = baseDamages[i];
-        const int adjusted = baseDamage > 0
-            ? monster.calculateDamageToPlayer(bc, baseDamage) : 0;
+        const int adjusted = monster.getIntentDamage(bc, baseDamage);
         row.scalars[f++] = monster.isDeadOrEscaped() ? 0.0f : 1.0f;
         row.scalars[f++] = static_cast<float>(monster.curHp);
         row.scalars[f++] = static_cast<float>(monster.maxHp);
@@ -982,7 +979,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 static constexpr const char *kMonsterKeys[] = {
                     "id", "max_hp", "hp", "block", "half_dead",
                     "is_dying", "is_dead", "is_escaping", "escape_next",
-                    "unawakened", "reactive", "move_history", "powers",
+                    "unawakened", "reactive", "move_history", "powers", "adjusted_damage",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1149,6 +1146,16 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     monster.setStatus<sts::MonsterStatus::REACTIVE>(0);
                     monster.setHasStatus<sts::MonsterStatus::REACTIVE>(reactive);
                 }
+            }
+            if (m.contains("adjusted_damage")) {
+                const int displayedDamage = getBoundedInt(
+                    m, "adjusted_damage", 0, 0, std::numeric_limits<int>::max());
+                monster.inactiveIntentDamage =
+                    (monster.isDeadOrEscaped() || monster.isDeadB) ? displayedDamage : -1;
+                // Live damage is still derived, and checked after every slot
+                // and player field has been restored (e.g. Surrounded targets).
+            } else if (!monster.isDeadOrEscaped() && !monster.isDeadB) {
+                monster.inactiveIntentDamage = -1;
             }
         }
         bc.monsters.monstersAlive = 0;

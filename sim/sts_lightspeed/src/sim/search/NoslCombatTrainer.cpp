@@ -373,9 +373,13 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         const auto damage = monster.getMoveBaseDamage(bc);
         hashValue(hash, damage.damage);
         hashValue(hash, damage.attackCount);
-        hashValue(hash, damage.damage > 0
-            ? monster.calculateDamageToPlayer(bc, damage.damage)
-            : 0);
+        hashValue(hash, monster.getIntentDamage(bc, damage.damage));
+        if ((monster.isDeadOrEscaped() || monster.isDeadB) && monster.inactiveIntentDamage >= 0) {
+            // Cached and recomputed values can currently agree but diverge
+            // after later player-power changes. Preserve that future state.
+            hashValue(hash, 0x494e5444); // INTD
+            hashValue(hash, monster.inactiveIntentDamage);
+        }
         for (int statusId = 0;
              statusId < static_cast<int>(MonsterStatus::INVALID); ++statusId) {
             const auto status = static_cast<MonsterStatus>(statusId);

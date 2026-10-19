@@ -321,6 +321,7 @@ void Monster::finishDeath(BattleContext &bc, bool triggerRelics, bool removeFrom
     // AbstractMonster.die(boolean), also called directly by SuicideAction.
     // It deliberately bypasses subclass damage/revival logic.
     if (isDying()) return;
+    inactiveIntentDamage = getIntentDamage(bc, getMoveBaseDamage(bc).damage);
     isDyingB = true;
     if (removeFromLivingCount && !isEscaping()) --bc.monsters.monstersAlive;
     if (triggerRelics) triggerDeathEffects(bc);
@@ -423,6 +424,7 @@ void Monster::escape(BattleContext &bc) {
     // A previously queued escape can execute after another action killed its
     // target. Mark escaping, but never decrement the living count twice.
     const bool wasTargetable = isTargetable();
+    inactiveIntentDamage = getIntentDamage(bc, getMoveBaseDamage(bc).damage);
     isEscapingB = true;
     if (wasTargetable) --bc.monsters.monstersAlive;
     if (bc.monsters.areMonstersBasicallyDead() && bc.outcome == Outcome::UNDECIDED) {
@@ -675,6 +677,13 @@ void Monster::resetAllStatusEffects() {
 }
 
 // this is calculated at the player when the damage occurs in game, consider testing whether there are any scenarios when it can't be done before
+int Monster::getIntentDamage(const BattleContext &bc, int baseDamage) const {
+    if ((isDeadOrEscaped() || isDeadB) && inactiveIntentDamage >= 0) {
+        return inactiveIntentDamage;
+    }
+    return baseDamage > 0 ? calculateDamageToPlayer(bc, baseDamage) : 0;
+}
+
 int Monster::calculateDamageToPlayer(const BattleContext &bc, int baseDamage) const {
     const auto &p = bc.player;
     auto damage = static_cast<float>(baseDamage + getStatus<MS::STRENGTH>());
@@ -753,6 +762,7 @@ void Monster::rollMove(BattleContext &bc) {
 }
 
 void Monster::setMove(MMID moveId) {
+    inactiveIntentDamage = -1;
     moveHistory[2] = moveHistory[1];
     moveHistory[1] = moveHistory[0];
     moveHistory[0] = moveId;

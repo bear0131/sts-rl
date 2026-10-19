@@ -59,6 +59,9 @@ struct Monster {
         bool isDeadB = false;
         bool halfDead = false;
         bool escapeNext = false;
+        // Java retains intentDmg after death/escape even when powers disappear.
+        // This is display state, never an override of actual attack damage.
+        int inactiveIntentDamage = -1;
         // Current intent plus the two Java move-history entries.  Combat rules
         // currently consume the first two, but the bridge must not discard the
         // authoritative second-last move when mirroring a live battle.
@@ -177,6 +180,7 @@ struct Monster {
         [[nodiscard]] MMID getMoveForRoll(BattleContext &bc, int &monsterData, int roll) const;
 
         [[nodiscard]] int calculateDamageToPlayer(const BattleContext &bc, int baseDamage) const;
+        [[nodiscard]] int getIntentDamage(const BattleContext &bc, int baseDamage) const;
         void attackPlayerHelper(BattleContext &bc, int baseDamage, int times=1);
         void takeTurn(BattleContext &bc);
         [[nodiscard]] DamageInfo getMoveBaseDamage(const BattleContext &bc) const;

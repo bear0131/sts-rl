@@ -593,6 +593,7 @@ class RealCombatSearch:
                 "reactive": bool(monster["reactive"]),
                 "move_history": [move, last_move, second_last_move],
                 "base_damage": int(monster["base_damage"]),
+                "adjusted_damage": int(monster["adjusted_damage"]),
                 "hits": int(monster["hits"]),
                 "powers": _power_rows(monster["powers"], _SUPPORTED_MONSTER_POWERS),
             }
