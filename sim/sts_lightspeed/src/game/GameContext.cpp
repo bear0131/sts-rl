@@ -1327,7 +1327,20 @@ bool GameContext::obtainRelic(RelicId r) {
                 break; // if we have no cards at all
             }
 
-            openCardSelectScreen(CardSelectScreenType::TRANSFORM_UPGRADE, std::min(info.toSelectCards.size(), 3), false);
+            if (info.toSelectCards.size() <= 3) {
+                // onEquip's temporary CardGroup uses addToTop: process in reverse deck order.
+                const auto selected = info.toSelectCards;
+                for (int i = selected.size() - 1; i >= 0; --i) {
+                    deck.remove(*this, selected[i].deckIdx);
+                }
+                for (int i = selected.size() - 1; i >= 0; --i) {
+                    deck.obtain(*this, getTransformedCard(miscRng, selected[i].card.id, true));
+                }
+                info.toSelectCards.clear();
+                break;
+            }
+
+            openCardSelectScreen(CardSelectScreenType::TRANSFORM_UPGRADE, 3, false);
             opensScreen = true;
             break;
         }
@@ -1383,7 +1396,17 @@ bool GameContext::obtainRelic(RelicId r) {
         }
 
         case RelicId::EMPTY_CAGE: {
-            openCardSelectScreen(CardSelectScreenType::REMOVE, 2);
+            // Empty Cage uses purgeable cards, including bottles, unlike ordinary removal.
+            info.toSelectCards.clear();
+            deck.addMatchingToSelectList(info.toSelectCards, [](auto c) { return c.canTransform(); });
+            if (info.toSelectCards.size() <= 2) {
+                for (int i = info.toSelectCards.size() - 1; i >= 0; --i) {
+                    deck.remove(*this, info.toSelectCards[i].deckIdx);
+                }
+                info.toSelectCards.clear();
+                break;
+            }
+            openCardSelectScreen(CardSelectScreenType::REMOVE, 2, false);
             opensScreen = true;
             break;
         }                                    

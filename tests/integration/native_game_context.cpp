@@ -236,6 +236,108 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static void checkRelicSelection(int variant, int ascension) {
+    const bool reward = variant >= 14;
+    const bool boss = variant >= 10 && !reward;
+    const bool astrolabe = reward ? variant >= 16 : (boss ? variant >= 12 : variant >= 5);
+    const int count = variant >= 10 ? (variant % 2 ? 4 : 2) : variant % 5;
+    const int limit = astrolabe ? 3 : 2;
+    const auto relic = astrolabe ? RelicId::ASTROLABE : RelicId::EMPTY_CAGE;
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    gc.deck = Deck{};
+    gc.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
+    gc.deck.obtainRaw(Card(CardId::ASCENDERS_BANE));
+    const CardId ids[] = {CardId::ANGER, CardId::PARASITE, CardId::INFLAME, CardId::SHRUG_IT_OFF};
+    const RelicId bottles[] = {RelicId::BOTTLED_FLAME, RelicId::INVALID, RelicId::BOTTLED_TORNADO, RelicId::BOTTLED_LIGHTNING};
+    for (int i = 0; i < count; ++i) {
+        gc.deck.obtainRaw(Card(ids[i]));
+        if (bottles[i] != RelicId::INVALID) {
+            require(gc.obtainRelic(bottles[i]), "relic selection bottle setup failed");
+            gc.chooseSelectCardScreenOption(0);
+        }
+    }
+    gc.obtainRelic(RelicId::CERAMIC_FISH);
+    if (boss) {
+        gc.enterBossTreasureRoom();
+        gc.info.bossRelics[0] = relic;
+    } else {
+        gc.screenState = ScreenState::REWARDS;
+        gc.regainControlAction = [](GameContext &g) {
+            require(g.hasRelic(RelicId::EMPTY_CAGE) || g.hasRelic(RelicId::ASTROLABE),
+                    "selection resumed before relic acquisition finished");
+            g.screenState = ScreenState::REWARDS;
+            ++g.info.eventData;
+        };
+        gc.info.eventData = 0;
+    }
+    if (reward) {
+        Rewards offer;
+        offer.addRelic(relic);
+        offer.addGold(19);
+        gc.openCombatRewardScreen(offer);
+    }
+    const auto before = gc;
+    std::vector<int> chosen;
+    if (count <= limit) {
+        // onEquip builds a temporary list with addToTop, reversing deck order.
+        for (int i = count; i > 0; --i) chosen.push_back(i);
+    } else {
+        chosen = {count, 1};
+        if (astrolabe) chosen.push_back(2);
+    }
+    auto expected = gc;
+    std::vector<Card> generated;
+    if (astrolabe) for (int i : chosen)
+        generated.push_back(expected.getTransformedCard(expected.miscRng, before.deck.cards[i].id, true));
+    const int hpLoss = std::find(chosen.begin(), chosen.end(), 2) != chosen.end() ? 3 : 0;
+    const bool opens = count > limit;
+    if (boss) gc.chooseBossRelic(0);
+    else if (reward) search::GameAction(search::GameAction::RewardsActionType::RELIC, 0).execute(gc);
+    else require(gc.obtainRelic(relic) == opens, "relic opened selection with no player choice, or skipped required choice");
+    if (opens) {
+        require(gc.screenState == ScreenState::CARD_SELECT && gc.info.toSelectCards.size() == count,
+                "relic selection excluded bottled cards or included permanent curse");
+        require(gc.info.toSelectCount == limit, "wrong relic pick count");
+        gc.chooseSelectCardScreenOption(count - 1);
+        gc.chooseSelectCardScreenOption(0);
+        if (astrolabe) gc.chooseSelectCardScreenOption(0);
+    }
+    require(gc.hasRelic(relic), "relic was not retained");
+    require(gc.screenState == (boss ? ScreenState::MAP_SCREEN : ScreenState::REWARDS), "relic left wrong continuation screen");
+    if (boss) require(gc.act == 2, "boss relic did not advance exactly one act");
+    else {
+        require(gc.info.eventData == (opens && !reward ? 1 : 0), "automatic relic incorrectly invoked continuation");
+        require(sameRng(gc.miscRng, expected.miscRng), "relic consumed wrong misc RNG stream");
+        require(sameRng(gc.cardRng, before.cardRng) && sameRng(gc.merchantRng, before.merchantRng),
+                "relic altered unrelated RNG stream");
+    }
+    require(gc.maxHp == before.maxHp - hpLoss, "relic lost Parasite removal side effect");
+    require(gc.gold == before.gold + 9 * generated.size(), "relic lost obtain effect or acquired a card twice");
+    int dst = 0;
+    for (int i = 0; i <= count; ++i) {
+        if (std::find(chosen.begin(), chosen.end(), i) != chosen.end()) continue;
+        require(gc.deck.cards[dst].id == before.deck.cards[i].id, "relic removed an unselected card");
+        if (before.deck.isCardBottled(i)) require(gc.deck.isCardBottled(dst), "surviving bottle index was lost");
+        ++dst;
+    }
+    for (const auto &card : generated) {
+        require(gc.deck.cards[dst].id == card.id && gc.deck.cards[dst].getUpgraded() == card.getUpgraded(),
+                "Astrolabe transform order or upgrade mismatch");
+        require(!gc.deck.isCardBottled(dst), "transformed card inherited bottle");
+        ++dst;
+    }
+    require(gc.deck.size() == dst, "relic changed wrong number of cards");
+    if (reward) {
+        require(gc.info.rewardsContainer.relicCount == 0 && gc.info.rewardsContainer.goldRewardCount == 1,
+                "relic lost remaining reward or remained claimable");
+        search::GameAction(search::GameAction::RewardsActionType::SKIP).execute(gc);
+        require(gc.info.eventData == 1, "relic did not restore original reward continuation");
+    }
+    for (int i : chosen) if (before.deck.isCardBottled(i))
+        require(gc.deck.bottleIdxs[static_cast<int>(before.deck.cards[i].getType())] == -1,
+                "removed card retained bottle binding");
+}
+
 static void checkBottleTransform(int variant, int ascension) {
     GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
     gc.deck = Deck{};
@@ -659,7 +761,7 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
@@ -667,6 +769,7 @@ int main(int argc, char **argv) {
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "deck-upgrade") checkDeckUpgrade(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "relic-selection") checkRelicSelection(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "bottle-transform") checkBottleTransform(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
