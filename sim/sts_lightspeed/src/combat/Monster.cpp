@@ -341,54 +341,81 @@ void Monster::suicideAction(BattleContext &bc) {
     }
 }
 
-void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) { // todo, is this supposed to be only damage > 0 ????
+void Monster::attackedUnblockedHelper(BattleContext &bc, int damage) {
+    // AbstractMonster.damage dispatches onAttacked even for a fully blocked
+    // hit. Resolve damage modifiers before HP-loss-dependent callbacks.
     if (bc.player.hasRelic<RelicId::THE_BOOT>() && damage > 0 && damage < 5) {
         damage = 5;
-    }
-
-    if (bc.player.hasStatus<PS::ENVENOM>()) {
-        bc.addToTop( Actions::DebuffEnemy<MS::POISON>(this->idx, bc.player.getStatus<PS::ENVENOM>()) );
     }
 
     if (hasStatus<MS::INVINCIBLE>()) {
         damage = std::min(damage, getStatus<MS::INVINCIBLE>());
         setStatus<MS::INVINCIBLE>(getStatus<MS::INVINCIBLE>() - damage);
+    }
 
-    } else if (hasStatus<MS::PLATED_ARMOR>()) {
-        decrementStatus<MS::PLATED_ARMOR>();
-        if(!hasStatus<MS::PLATED_ARMOR>() && id == MonsterId::SHELLED_PARASITE) {
-            setMove(MMID::SHELLED_PARASITE_STUNNED);
-        }
+    if (damage > 0 && bc.player.hasStatus<PS::ENVENOM>()) {
+        bc.addToTop(Actions::DebuffEnemy<MS::POISON>(idx, bc.player.getStatus<PS::ENVENOM>()));
+    }
 
-    } else if (hasStatus<MS::CURL_UP>()) {
+    if (damage > 0 && hasStatus<MS::ANGRY>()) {
+        const int target = idx;
+        const int strength = getStatus<MS::ANGRY>();
+        bc.addToTop({[target, strength](BattleContext &ctx) {
+            auto &monster = ctx.monsters.arr[target];
+            if (!monster.isDeadOrEscaped()) monster.buff<MS::STRENGTH>(strength);
+        }});
+    }
+
+    // Thorns does not require HP loss; it is not an alternative to a damage
+    // modifier. A fatal hit still schedules its retaliation.
+    if (hasStatus<MS::THORNS>()) {
+        bc.addToTop(Actions::DamagePlayer(getStatus<MS::THORNS>()));
+    }
+    if (damage <= 0) return;
+
+    if (hasStatus<MS::PLATED_ARMOR>()) {
+        const int target = idx;
+        bc.addToBot({[target](BattleContext &ctx) {
+            auto &monster = ctx.monsters.arr[target];
+            if (!monster.hasStatus<MS::PLATED_ARMOR>()) return;
+            monster.decrementStatus<MS::PLATED_ARMOR>();
+            if (!monster.hasStatus<MS::PLATED_ARMOR>() && monster.id == MonsterId::SHELLED_PARASITE) {
+                // ReducePower/RemoveSpecificPower enqueue ChangeState at bottom.
+                ctx.addToBot({[target](BattleContext &next) {
+                    next.monsters.arr[target].setMove(MMID::SHELLED_PARASITE_STUNNED);
+                }});
+            }
+        }});
+
+    } else if (hasStatus<MS::CURL_UP>() && damage < curHp) {
         bc.addToBot(Actions::MonsterGainBlock(this->idx, getStatus<MS::CURL_UP>()) );
         setHasStatus<MS::CURL_UP>(false);
 
-    } else if (hasStatus<MS::FLIGHT>() && damage > 0) {
-        auto flight = getStatus<MS::FLIGHT>();
-        if (flight == 1) {
-            setMove(MMID::BYRD_STUNNED);
-        }
-        setStatus<MS::FLIGHT>(flight-1);
+    } else if (hasStatus<MS::FLIGHT>() && static_cast<float>(damage) / 2.0f < curHp) {
+        // FlightPower reuses its final-receive calculation for this guard,
+        // even though damage has already passed through that calculation.
+        const int target = idx;
+        bc.addToBot({[target](BattleContext &ctx) {
+            auto &monster = ctx.monsters.arr[target];
+            if (!monster.hasStatus<MS::FLIGHT>()) return;
+            monster.decrementStatus<MS::FLIGHT>();
+            if (!monster.hasStatus<MS::FLIGHT>() && monster.id == MonsterId::BYRD) {
+                ctx.addToBot({[target](BattleContext &next) {
+                    next.monsters.arr[target].setMove(MMID::BYRD_STUNNED);
+                }});
+            }
+        }});
 
-    } else if (hasStatus<MS::MALLEABLE>() || hasStatus<MS::REACTIVE>()) {
+    } else if (damage < curHp && (hasStatus<MS::MALLEABLE>() || hasStatus<MS::REACTIVE>())) {
         if (hasStatus<MS::MALLEABLE>()) {
             const auto malleable = getStatus<MS::MALLEABLE>();
             bc.addToBot( Actions::MonsterGainBlock(this->idx, malleable) );
             setStatus<MS::MALLEABLE>(malleable+1);
         }
         if (hasStatus<MS::REACTIVE>()) {
-            if (getStatus<MS::REACTIVE>() == 0) {
-                setStatus<MS::REACTIVE>(1);
-                bc.addToBot( Actions::ReactiveRollMove() );
-
-            } else {
-                setStatus<MS::REACTIVE>(getStatus<MS::REACTIVE>()+1);
-            }
+            setStatus<MS::REACTIVE>(getStatus<MS::REACTIVE>() + 1);
+            bc.addToBot(Actions::ReactiveRollMove(idx));
         }
-
-    } else if (hasStatus<MS::THORNS>()) {
-        bc.addToTop( Actions::DamagePlayer(getStatus<MS::THORNS>()) );
 
     } else if (hasStatus<MS::ASLEEP>()) {
         // lagavulin
@@ -426,22 +453,16 @@ void Monster::attacked(BattleContext &bc, int damage) {
         }
     }
 
-    if (hasStatus<MS::ANGRY>()) { // onAttacked
-        buff<MS::STRENGTH>(getStatus<MS::ANGRY>());
-    }
-
     const bool hadBlock = block > 0;
     const int tempDamage = damage;
-    damage -= block;
+    damage = std::max(0, damage - block);
     block = std::max(0, block - tempDamage);
 
     if (hadBlock && block == 0 && bc.player.hasRelic<RelicId::HAND_DRILL>()) {
         bc.addToBot(Actions::DebuffEnemy<MS::VULNERABLE>(idx, 2, false) );
     }
 
-    if (damage > 0) { // todo can damage be zero???
-        attackedUnblockedHelper(bc, damage);
-    }
+    attackedUnblockedHelper(bc, damage);
 }
 
 void Monster::damageUnblockedHelper(BattleContext &bc, int damage) {

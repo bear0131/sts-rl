@@ -4,6 +4,8 @@
 
 当前优先级（用户2026-10-19追加）：先修无色卡和战士卡，以及影响这两类卡的共用药水、遗物、选择与待结算链路；其他职业专属卡后置。后置不等于已支持，未知/未支持仍须明确拒绝，禁止PAD代填。固定TRAIN47权重、向量、动作几何和搜索预算不改；继续先集中源码修复、成批统一验证。
 
+| BRIDGE34 | 受击条件/部分排队已批量修复，未统一验证/部署；底层审查继续 | `Monster.cpp::attacked`在全格挡/零伤也派发Thorns；Angry按最终正伤害排队加力量，Invincible先于Envenom等受伤回调。CurlUp/Malleable/Reactive补非致命条件，Flight保留Java自身二次减半判定，Flight/PlatedArmor减层及眩晕改排队；Reactive逐次原位roll而非合并且保留怪物槽。`Actions.cpp::AttackPlayer`拒绝已死/halfDead来源，防止火焰屏障反杀后仍承受后续段；不误套给Java独立实现的VampireDamageAction。旋风斩在use时捕获整数伤害矩阵、不截为uint16；各段排到已有回调之后且让反伤先于下一段。11项受击/多段回调合同加入词表。验收零伤/全格挡/非致命/致命、Invincible上限、波次多段/反杀、飞行移除时序及RNG/固定权重兼容；仍须审查其他AOE伤害捕获时机、damage/block动作的胜利过滤、CurlUp独立triggered/移除时序、Shifting/Asleep/ModeShift回调与完整pending恢复。 |
+
 交接边界（2026-10-19）：249b428为上一已验证阶段；其后的选择候选改动按用户要求立即保存推送，属于WIP，交接时未编译/运行测试。后续BRIDGE30批次已完成原生编译与Python语法检查，仍未统一回归，不能直接部署。BRIDGE28增加完整候选实例校验、已知UUID匹配、有效费用与单选策略索引映射；不是pending动作完整恢复，旧选择测试夹具尚未同步。接手位置与复现入口见worklog/2026-10-19.md“用户要求立即推送的交接快照”及“BRIDGE30源码批次收尾”。用户要求先集中读代码、成批修复，再统一测试，不再逐个问题打断加测试。
 
 | BRIDGE30 | 两张GRID链路已批量实现，未统一验证/部署 | `Actions.cpp::BetterDiscardPileToHandAction`按amount自动取全或打开1/2张GRID；`BattleContext.cpp::chooseLiquidMemoriesCard`保存物理UID前缀，全部校验后按选择顺序统一结算，满手不移除/改费。已选实例、剩余候选/数量、搜索key、canonical与layout9双解码器接通；真机完整UUID回执处理重复帧/确认/最终四牌堆及明确applyPowers派生字段。验收须覆盖1/2张、自动/选择、只剩一个空位、负费用、候选重排、回滚、延迟/重复帧及两编码器/固定权重兼容；未完成统一构建回归，不声称完整pending根恢复已解决。 |

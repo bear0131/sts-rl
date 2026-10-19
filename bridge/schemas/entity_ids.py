@@ -574,6 +574,68 @@ NATIVE_POWER_ENUM_ALIASES = {
     "GENERIC_STRENGTH_UP_POWER": "GENERIC_STRENGTH_UP",
 }
 
+# Source-audited hit callbacks, not an assertion that every pending Java
+# action can be restored. Behavior regression remains tracked by BRIDGE34;
+# complete action transport remains BRIDGE28. Amount means post-block,
+# post-Boot and post-Invincible damage unless the entry says otherwise.
+HIT_REACTION_CONTRACTS = {
+    'ThornsPower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / THORNS',
+        'guard': 'NORMAL hit from another non-null owner; includes amount0 and fatal hits',
+        'queue': 'top THORNS DamagePlayer; survives combat-victory filtering',
+    },
+    'AngryPower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / ANGRY, not ENRAGE',
+        'guard': 'NORMAL hit from non-null owner, amount>0',
+        'queue': 'top Strength application; reject dead/escaped recipient when it executes',
+    },
+    'InvinciblePower.onAttackedToChangeDamage': {
+        'native': 'Monster attack/damage helpers / INVINCIBLE',
+        'guard': 'cap post-block damage before HP-loss-dependent callbacks',
+        'queue': 'immediate cap and remaining-budget subtraction',
+    },
+    'EnvenomPower.onAttack': {
+        'native': 'Monster::attackedUnblockedHelper / player.ENVENOM',
+        'guard': 'NORMAL hit on another creature, amount>0 after Invincible cap',
+        'queue': 'top Poison application',
+    },
+    'PlatedArmorPower.wasHPLost': {
+        'native': 'Monster::attackedUnblockedHelper / PLATED_ARMOR',
+        'guard': 'NORMAL hit from another non-null owner, amount>0',
+        'queue': 'bottom reduction; last stack queues bottom ARMOR_BREAK for Shelled Parasite',
+    },
+    'CurlUpPower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / CURL_UP',
+        'guard': 'not triggered, NORMAL hit, 0<amount<currentHealth',
+        'queue': 'bottom block; native clears trigger immediately; distinct Java triggered/removal pending state still BRIDGE28',
+    },
+    'FlightPower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / FLIGHT',
+        'guard': 'NORMAL hit, amount>0, float(amount)/2<currentHealth (Java reuses final-receive calculation)',
+        'queue': 'bottom reduction; last stack queues bottom GROUNDED for Byrd',
+    },
+    'MalleablePower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / MALLEABLE',
+        'guard': 'NORMAL hit from non-null owner, 0<amount<currentHealth',
+        'queue': 'monster bottom block; increment next block amount immediately',
+    },
+    'ReactivePower.onAttacked': {
+        'native': 'Monster::attackedUnblockedHelper / REACTIVE; Java ID Compulsive',
+        'guard': 'NORMAL hit from non-null owner, 0<amount<currentHealth',
+        'queue': 'one bottom RollMove per hit at original position and monster slot; native counter is queued roll count',
+    },
+    'DamageAction.update': {
+        'native': 'Actions::AttackPlayer / DamagePlayer; VampireDamageAction is a separate implementation',
+        'guard': 'NORMAL attack cancels for dying/halfDead source; THORNS retaliation does not use that source guard',
+        'queue': 'each hit checked when executed; other damage/block victory-filter classifications still BRIDGE34',
+    },
+    'Whirlwind.use/WhirlwindAction.update': {
+        'native': 'BattleContext::useAttackCard / Actions::WhirlwindAction / AttackAllMonsterRecursive',
+        'guard': 'capture integer multiDamage at use; waves=energyOnUse+Chemical X; no uint16 clipping',
+        'queue': 'append waves behind existing callbacks; each wave permits addToTop retaliation before next wave',
+    },
+}
+
 
 def native_power_enum(value):
     """Map one already-canonical power token to its declared native enum."""

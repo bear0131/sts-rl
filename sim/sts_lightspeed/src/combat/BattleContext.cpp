@@ -1267,7 +1267,15 @@ void BattleContext::useAttackCard() {
                 item.energyOnUse = player.energy;
             }
             const auto baseDamage = (up ? 8 : 5) + player.getStatus<PS::VIGOR>();
-            addToBot( Actions::WhirlwindAction(baseDamage, item.energyOnUse, !(item.freeToPlay || c.freeToPlayOnce)));
+            // Java passes the card's current multiDamage into WhirlwindAction,
+            // before onUse/onAfterUse callbacks can change powers or piles.
+            DamageMatrix damageMatrix{};
+            for (int i = 0; i < monsters.monsterCount; ++i) {
+                if (!monsters.arr[i].isDeadOrEscaped())
+                    damageMatrix[i] = calculateCardDamage(c, i, baseDamage);
+            }
+            addToBot(Actions::WhirlwindAction(damageMatrix, item.energyOnUse,
+                                             !(item.freeToPlay || c.freeToPlayOnce)));
             break;
         }
 

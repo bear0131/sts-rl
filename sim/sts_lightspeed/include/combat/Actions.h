@@ -25,7 +25,7 @@ namespace sts {
     class CardInstance;
     class CardQueueItem;
 
-    typedef std::array<std::uint16_t,5> DamageMatrix;
+    using DamageMatrix = std::array<int, 5>;
 
     struct Actions {
         static Action SetState(InputState state);
@@ -66,7 +66,7 @@ namespace sts {
 
         static Action MonsterGainBlock(int idx, int amount);
         static Action RollMove(int monsterIdx);
-        static Action ReactiveRollMove(); // for writhing mass
+        static Action ReactiveRollMove(int monsterIdx); // one queued reactive hit
 
         static Action NoOpRollMove();
 
@@ -172,7 +172,7 @@ namespace sts {
         static Action SecondWindAction(int blockPerCard);
         static Action SeverSoulExhaustAction();
         static Action SpotWeaknessAction(int target, int strength); // Spot Weakness
-        static Action WhirlwindAction(int baseDamage, int energy, bool useEnergy);
+        static Action WhirlwindAction(DamageMatrix damageMatrix, int energy, bool useEnergy);
 
         static Action AttackAllMonsterRecursive(DamageMatrix matrix, int timesRemaining);
     };

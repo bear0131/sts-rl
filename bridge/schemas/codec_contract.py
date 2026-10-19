@@ -55,6 +55,7 @@ from .entity_ids import (
     MONSTER_ALIASES,
     NATIVE_MONSTER_STATUS_IDS,
     NATIVE_PLAYER_STATUS_IDS,
+    HIT_REACTION_CONTRACTS,
     NATIVE_COMBAT_CARD_ENUM_IDS,
     OVERWORLD_SELECTION_EVENTS,
     OVERWORLD_SELECTION_FLAGS,
@@ -261,6 +262,7 @@ def complete_word_tables():
         "card_rarities": sorted(REAL_CARD_RARITY_IDS),
         "card_targets_require_enemy": REAL_CARD_TARGET_IDS,
         "structural_powers": STRUCTURAL_POWER_FIELDS,
+        "hit_reaction_contracts": HIT_REACTION_CONTRACTS,
         "rejected_real_ids": {
             "cards": UNSUPPORTED_REAL_CARD_IDS,
             "relics": UNSUPPORTED_REAL_RELIC_IDS,
@@ -533,6 +535,7 @@ def validate_codec_contract() -> dict[str, int]:
         "card_state_transport_fields": len(CARD_STATE_TRANSPORT_FIELDS),
         "combat_selection_transport_fields": len(COMBAT_SELECTION_TRANSPORT_FIELDS),
         "native_card_queue_fields": len(NATIVE_CARD_QUEUE_FIELDS),
+        "hit_reaction_contracts": len(HIT_REACTION_CONTRACTS),
         "card_special_data_fields": len(CARD_SPECIAL_DATA_FIELDS),
         "relic_counter_contracts": len(canonical_sets["relic"]),
         "java_relic_counter_users": len(REAL_RELIC_COUNTER_USAGE),

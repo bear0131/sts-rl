@@ -85,6 +85,9 @@ Action Actions::DamageAllEnemy(int damage) { // todo this is probably broken
 
 Action Actions::AttackPlayer(int idx, int damage) {
     return {[=] (BattleContext &bc) {
+        // NORMAL DamageAction cancels when its source dies or becomes halfDead.
+        // In particular, Flame Barrier/Thorns can stop a multi-hit attack.
+        if (bc.monsters.arr[idx].isDeadOrEscaped()) return;
         bc.player.attacked(bc, idx, damage);
     }, false};
 }
@@ -131,15 +134,13 @@ Action Actions::RollMove(int monsterIdx) {
     }};
 }
 
-Action Actions::ReactiveRollMove() {
+Action Actions::ReactiveRollMove(int monsterIdx) {
     return {[=] (BattleContext &bc) {
-        // writhing mass is always monster 0
-        Monster &m = bc.monsters.arr[0];
-
-        for (int i = 0 ; i < m.getStatus<MS::REACTIVE>(); ++i) {
-            m.rollMove(bc);
-        }
-        m.setStatus<MS::REACTIVE>(0);
+        Monster &m = bc.monsters.arr[monsterIdx];
+        // Preserve each RollMoveAction's position relative to block gain and
+        // subsequent hits; do not coalesce all rolls into the first callback.
+        m.rollMove(bc);
+        m.setStatus<MS::REACTIVE>(m.getStatus<MS::REACTIVE>() - 1);
     }};
 }
 
@@ -1219,31 +1220,14 @@ Action Actions::SpotWeaknessAction(int target, int strength) {
     }};
 }
 
-Action Actions::WhirlwindAction(int baseDamage, int energy, bool useEnergy) {
+Action Actions::WhirlwindAction(DamageMatrix damageMatrix, int energy, bool useEnergy) {
     return {[=] (BattleContext &bc) {
-        // assume bc.curCard is the card being used
-
-        if (useEnergy) {
-            bc.player.useEnergy(bc.player.energy);
-        }
-
-        DamageMatrix damageMatrix {0};
-        for (int i = 0; i < bc.monsters.monsterCount; ++i) {
-            if (!bc.monsters.arr[i].isDeadOrEscaped()) {
-                const auto calcDamage = bc.calculateCardDamage(bc.curCardQueueItem.card, i, baseDamage);
-
-                damageMatrix[i] = static_cast<std::uint16_t>( // fit damage into uint16
-                    std::min(
-                        static_cast<int>(std::numeric_limits<std::uint16_t>::max()),
-                        calcDamage
-                    )
-                );
-            }
-        }
-
         const auto effectAmount = energy + (bc.player.hasRelic<R::CHEMICAL_X>() ? 2 : 0);
         if (effectAmount > 0) {
-            Actions::AttackAllMonsterRecursive(damageMatrix, effectAmount).actFunc(bc);
+            // The Java action appends all hits after already-pending callbacks
+            // (including UseCardAction), rather than dealing the first hit now.
+            bc.addToBot(Actions::AttackAllMonsterRecursive(damageMatrix, effectAmount));
+            if (useEnergy) bc.player.useEnergy(bc.player.energy);
         }
     }};
 }
@@ -1254,10 +1238,11 @@ Action Actions::AttackAllMonsterRecursive(DamageMatrix matrix, int timesRemainin
             return;
         }
 
-        Actions::AttackAllEnemy(matrix).actFunc(bc);
-
         if (timesRemaining > 1) {
-            bc.addToTop(AttackAllMonsterRecursive(matrix, timesRemaining-1)); // todo should this be to the top? test with
+            // Reserve the next hit before dispatching this hit's addToTop
+            // reactions, so retaliation can kill the player between waves.
+            bc.addToTop(AttackAllMonsterRecursive(matrix, timesRemaining-1));
         }
+        Actions::AttackAllEnemy(matrix).actFunc(bc);
     }};
 }

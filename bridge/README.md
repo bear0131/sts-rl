@@ -16,6 +16,8 @@
 `relic_counter_contracts` 为180件遗物逐项记录计数来源/含义/数值映射和审查状态；
 29个Java类实际读写counter，其他类继承显示哨兵。数值映射与`phase_audit_status`
 分开：有映射不等于完整效果/阶段已验收；待处理项不是运行时用PAD或0代替缺失状态的许可。
+`hit_reaction_contracts`记录已审受击回调的Java来源、原生入口、触发条件和排队顺序，
+区分Angry/Enrage、攻击/反伤和零伤/非致命条件；其中明确列出的pending缺口仍未解决。
 卡牌词表逐项列原serializer的12字段、11项附加字段合同及原生4种specialData来源。
 parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0也明确导出；
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
