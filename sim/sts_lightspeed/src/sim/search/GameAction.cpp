@@ -157,26 +157,7 @@ bool isValidEventScreenAction(const GameContext &gc, const search::GameAction a)
 }
 
 bool isValidMapAction(const GameContext &gc, const search::GameAction a) {
-    const auto select = a.getIdx1();
-    if (select > 6) {
-        return false;
-    }
-
-    if (gc.curMapNodeY == 14) {
-        return select == 0;
-    }
-
-    if (gc.curMapNodeY == -1) {
-        return gc.map->getNode(select, 0).edgeCount > 0;
-    }
-
-    const auto &curNode = gc.map->getNode(gc.curMapNodeX, gc.curMapNodeY);
-    for (int i = 0; i < curNode.edgeCount; ++i) {
-        if (curNode.edges[i] == select) {
-            return true;
-        }
-    }
-    return false;
+    return gc.getMapMoveCost(a.getIdx1()) >= 0;
 }
 
 bool isValidRewardsAction(const GameContext &gc, const search::GameAction a) {
@@ -462,7 +443,7 @@ void search::GameAction::execute(GameContext &gc) const {
             break;
 
         case ScreenState::MAP_SCREEN:
-            gc.transitionToMapNode(getIdx1());
+            gc.chooseMapNode(getIdx1());
             break;
 
         case ScreenState::TREASURE_ROOM:
@@ -613,22 +594,8 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
 
 std::vector<search::GameAction> getAllMapActions(const sts::GameContext &gc) {
     std::vector<search::GameAction> actions;
-
-    if (gc.curMapNodeY == 14) {
-        actions.emplace_back(0);
-
-    } else if (gc.curMapNodeY == -1) {
-        for (const auto &node : gc.map->nodes[0]) {
-            if (node.edgeCount > 0) {
-                actions.emplace_back(node.x);
-            }
-        }
-
-    } else {
-        auto node = gc.map->getNode(gc.curMapNodeX, gc.curMapNodeY);
-        for (int i = 0; i < node.edgeCount; ++i) {
-            actions.emplace_back(node.edges[i]);
-        }
+    for (int x = 0; x < 7; ++x) {
+        if (gc.getMapMoveCost(x) >= 0) actions.emplace_back(x);
     }
 
     return actions;

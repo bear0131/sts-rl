@@ -267,6 +267,9 @@ namespace sts {
 
         // room setup
         void transitionToAct(int act);
+        // -1: unavailable, 0: ordinary connection, 1: consumes a Wing Boots charge.
+        [[nodiscard]] int getMapMoveCost(int mapNodeX) const;
+        void chooseMapNode(int mapNodeX);
         void transitionToMapNode(int mapNodeX);
         void setupEvent();
         void setupTreasureRoom();

@@ -2,14 +2,11 @@
 
 Why this exists
 ---------------
-SimGameEnv drives a whole run through GameContext, but the gc does NOT expose
-"from the node I'm on, which next-row nodes can I move to?" — only
-transition_to_map_node(x) to actually move. The standalone sts.SpireMap class
-(constructed from the same seed/ascension/act) DOES expose edges + room types,
-and a probe confirmed it reconstructs the SAME map the gc walks: SpireMap's
-has_edge / get_room_type agree with where gc.transition_to_map_node actually
-lands. So we rebuild a SpireMap alongside the gc purely to enumerate legal map
-moves. This keeps the sim a black box — no binding changes.
+GameContext.map_node_options() owns live choices, including charged Wing Boots,
+and choose_map_node(x) validates and executes them. This reconstructed SpireMap
+supplies physical edges and room types for observations and route heuristics.
+Its reachable() describes ordinary edges only. Pass native next_columns to
+full_view() to mark live choices without inventing flight edges in the DAG.
 
 Map geometry (sim Map.h): nodes are a 15-row (y=0..14) x 7-col (x=0..6) grid.
 Row 0 is the first room you pick; row 14's edges point at the act boss. Not
@@ -56,7 +53,7 @@ class RunMap:
         For the first move pass (x, y) = (-1, -1): has_edge(-1, _, x2) reports
         whether first-row node x2 exists, so this returns the openable first-row
         columns. boss row (y == MAX_Y): edges point at the boss; the gc accepts
-        transition_to_map_node(any x), so we surface the current column."""
+        scripted transition_to_map_node(any x); player choice uses the current column."""
         if y >= MAX_Y:
             # boss row: any x works for transition; surface current col (or 0).
             return [x if x >= 0 else 0]
@@ -67,15 +64,20 @@ class RunMap:
         out of range."""
         return _room_name(self._m.get_room_type(x, y))
 
-    def full_view(self, current_x, current_y):
+    def full_view(self, current_x, current_y, *, next_columns=None):
         """Return the visible act map as a fixed-grid-friendly DAG description.
 
         Each node carries its outgoing child columns plus three positional
         flags. ``reachable`` means the node lies downstream of the player's
         current position; ``choice`` marks a legal next map choice. The game
         displays the complete act map, so this contains no hidden information.
+        next_columns overrides only the current choice set (e.g. Wing Boots),
+        while all downstream edges remain the actual physical connections.
         """
-        if current_y >= MAX_Y:
+        if next_columns is not None:
+            choice_y = current_y if current_y >= MAX_Y else max(0, current_y + 1)
+            choices = {(x, choice_y) for x in next_columns}
+        elif current_y >= MAX_Y:
             # The action after row 14 enters the act boss.  MAP_NODE still uses
             # the current column, so expose that row-14 node as the DAG choice
             # even though there is no row-15 map node to encode.

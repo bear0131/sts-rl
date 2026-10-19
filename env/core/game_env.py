@@ -191,14 +191,14 @@ class SimGameEnv:
             d["options"]["event_options"] = list(self.gc.legal_event_options())
         if d["phase"] == "map":
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
-            opts = self.rmap.reachable(x, y)
+            opts = list(self.gc.map_node_options())
             d["options"] = {
                 "nodes": [(x2, "BOSS" if y == spiremap.MAX_Y else
                            self.rmap.room_type(x2, (y + 1) if y >= 0 else 0))
                           for x2 in opts]
             }
             if self._global_map_view:
-                d["options"]["full_map"] = self.rmap.full_view(x, y)
+                d["options"]["full_map"] = self.rmap.full_view(x, y, next_columns=opts)
         return d
 
     def _info(self):
@@ -333,8 +333,7 @@ class SimGameEnv:
             # honestly rather than asserting in the sim.
             return [ga.event(i) for i in self.gc.legal_event_options()] + pots
         if phase == "map":
-            x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
-            return [ga.map_node(x2) for x2 in self.rmap.reachable(x, y)] + pots
+            return [ga.map_node(x2) for x2 in self.gc.map_node_options()] + pots
         if phase == "combat_reward":
             info = self.gc.get_reward_info()
             legal_rewards = {(kind, idx) for kind, idx, _ in self.gc.legal_reward_options()}
@@ -595,7 +594,7 @@ class SimGameEnv:
         if verb == ga.EVENT:
             gc.choose_event_option(action[1]); return
         if verb == ga.MAP:
-            gc.transition_to_map_node(action[1])
+            gc.choose_map_node(action[1])
             # battle start is handled centrally in _settle (covers event combats
             # too), so we don't branch on the destination room type here.
             return

@@ -757,7 +757,40 @@ void GameContext::transitionToAct(int targetAct) {
     screenState = ScreenState::MAP_SCREEN;
 }
 
+int GameContext::getMapMoveCost(int mapNodeX) const {
+    if (!map || mapNodeX < 0 || mapNodeX >= 7 || curMapNodeY < -1 || curMapNodeY > 14) return -1;
+    if (curMapNodeY == -1) {
+        const auto &node = map->getNode(mapNodeX, 0);
+        return node.room != Room::NONE && node.edgeCount > 0 ? 0 : -1;
+    }
+    if (curMapNodeX < 0 || curMapNodeX >= 7) return -1;
+    if (curMapNodeY == 14) return mapNodeX == curMapNodeX ? 0 : -1;
+    const auto &current = map->getNode(curMapNodeX, curMapNodeY);
+    if (current.room == Room::NONE || map->getNode(mapNodeX, curMapNodeY + 1).room == Room::NONE) return -1;
+    for (int i = 0; i < current.edgeCount; ++i) {
+        if (current.edges[i] == mapNodeX) return 0;
+    }
+    return current.edgeCount > 0 && hasRelic(RelicId::WING_BOOTS)
+        && relics.getRelicValue(RelicId::WING_BOOTS) > 0 ? 1 : -1;
+}
+
+void GameContext::chooseMapNode(int mapNodeX) {
+    if (screenState != ScreenState::MAP_SCREEN || getMapMoveCost(mapNodeX) < 0) {
+        throw std::invalid_argument("map choice is not currently legal");
+    }
+    transitionToMapNode(mapNodeX);
+}
+
 void GameContext::transitionToMapNode(int mapNodeX) {
+    // Internal room entry also serves Secret Portal and controlled state setup.
+    // Player choices must go through chooseMapNode.
+    if (!map || mapNodeX < 0 || mapNodeX >= 7 || curMapNodeY < -1 || curMapNodeY > 14) {
+        throw std::invalid_argument("map transition is outside the map bounds");
+    }
+    if (getMapMoveCost(mapNodeX) == 1) {
+        auto &charges = relics.getRelicValueRef(RelicId::WING_BOOTS);
+        charges = charges == 1 ? -2 : charges - 1;
+    }
     lastRoom = curRoom;
     curMapNodeX = mapNodeX;
     ++floorNum;
@@ -1442,6 +1475,11 @@ bool GameContext::obtainRelic(RelicId r) {
 
         case RelicId::OMAMORI: {
             relicData = 2;
+            break;
+        }
+
+        case RelicId::WING_BOOTS: {
+            relicData = 3;
             break;
         }
 

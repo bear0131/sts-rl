@@ -1290,7 +1290,8 @@ void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
     gc.relics.relicBits0 = gc.relics.relicBits1 = gc.relics.relicBits2 = 0;
     for (const auto &id : ids) {
         const auto relicId = relicIdFromString(id);
-        const int data = relicId == sts::RelicId::LIZARD_TAIL ? 1 : 0;
+        const int data = relicId == sts::RelicId::WING_BOOTS ? 3
+            : relicId == sts::RelicId::LIZARD_TAIL ? 1 : 0;
         gc.relics.add(sts::RelicInstance{relicId, data});
     }
 }
@@ -1799,7 +1800,14 @@ PYBIND11_MODULE(slaythespire, m) {
         }, "return the four generated Neow rewards and their drawbacks")
         .def("transition_to_map_node",
              [](GameContext &gc, int x) { gc.transitionToMapNode(x); },
-             "advance to the map node at column x on the next row (enters that room)")
+             "low-level room entry for scripted events/state setup; player choices use choose_map_node")
+        .def("choose_map_node", &GameContext::chooseMapNode,
+             "validate a map-screen choice and enter its room, consuming flight only when needed")
+        .def("map_node_options", [](const GameContext &gc) {
+            std::vector<int> out;
+            for (int x = 0; x < 7; ++x) if (gc.getMapMoveCost(x) >= 0) out.push_back(x);
+            return out;
+        }, "next columns from the current position including charged flight; callers gate on map screen")
         .def("_dbg_set_card_rng", [](GameContext &gc, int n) { gc.cardRng = sts::Random(gc.seed, n); })
         .def("_dbg_card_reward", [](GameContext &gc) {
             auto cr = gc.createCardReward(sts::Room::MONSTER);

@@ -913,6 +913,91 @@ static void checkDuVu(int variant, int ascension) {
     require(gc.deck.hasCurse() == (variant < 2), "transform changed removable-curse semantics");
 }
 
+static void checkWingBoots(int variant, int ascension) {
+    GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+    if (variant != 0) {
+        gc.obtainRelic(RelicId::WING_BOOTS);
+        require(gc.relics.getRelicValue(RelicId::WING_BOOTS) == 3, "Wing Boots must start with three charges");
+    }
+    const int charges[] = {0, 0, -2, 1, 2, 3, 3, 3, 3};
+    if (variant != 0) gc.relics.getRelicValueRef(RelicId::WING_BOOTS) = charges[variant];
+    gc.map = std::make_shared<Map>();
+    for (int y = 0; y < 15; ++y) for (int x = 0; x < 7; ++x) {
+        auto &node = gc.map->getNode(x, y);
+        node.x = x; node.y = y;
+        if (x == 1 || x == 4) {
+            node.room = Room::REST;
+            if (y < 14) { node.edges[0] = x; node.edgeCount = 1; }
+        }
+    }
+    gc.screenState = ScreenState::MAP_SCREEN;
+    gc.curMapNodeX = 1; gc.curMapNodeY = 0;
+    if (variant == 8) {
+        gc.act = 3;
+        gc.boss = MonsterEncounter::TIME_EATER;
+        gc.curEvent = Event::SECRET_PORTAL;
+        gc.screenState = ScreenState::EVENT_SCREEN;
+        gc.chooseEventOption(0);
+        require(gc.curRoom == Room::BOSS && gc.info.encounter == MonsterEncounter::TIME_EATER,
+                "Secret Portal was blocked by player map-choice validation");
+        require(gc.relics.getRelicValue(RelicId::WING_BOOTS) == 3, "Secret Portal consumed flight");
+        return;
+    }
+    if (variant == 6) {
+        gc.curMapNodeX = -1; gc.curMapNodeY = -1;
+        search::GameAction(4).execute(gc);
+        require(gc.relics.getRelicValue(RelicId::WING_BOOTS) == 3, "first row consumed a charge");
+        gc.screenState = ScreenState::MAP_SCREEN;
+        gc.curMapNodeY = 14;
+        const auto options = search::GameAction::getAllActionsInState(gc);
+        require(options.size() == 1 && options[0].getIdx1() == 4, "boss action lost physical current column");
+        options[0].execute(gc);
+        require(gc.curRoom == Room::BOSS && gc.relics.getRelicValue(RelicId::WING_BOOTS) == 3,
+                "boss entry consumed a charge or entered wrong room");
+        return;
+    }
+    if (variant == 7) {
+        gc.transitionToAct(4);
+        for (int y = -1; y < 3; ++y) {
+            gc.curMapNodeX = y < 0 ? -1 : 3; gc.curMapNodeY = y;
+            gc.screenState = ScreenState::MAP_SCREEN;
+            const auto options = search::GameAction::getAllActionsInState(gc);
+            require(options.size() == 1 && options[0].getIdx1() == 3, "Wing Boots invented an Act4 route");
+            auto child = gc;
+            options[0].execute(child);
+            require(child.relics.getRelicValue(RelicId::WING_BOOTS) == 3, "Act4 consumed a charge");
+        }
+        return;
+    }
+    for (int remaining = charges[variant]; ; --remaining) {
+        const int cross = gc.curMapNodeX == 1 ? 4 : 1;
+        require(search::GameAction(cross).isValidAction(gc) == (remaining > 0), "cross-route legality ignores charges");
+        require(!search::GameAction(2).isValidAction(gc), "empty map node became legal");
+        const auto options = search::GameAction::getAllActionsInState(gc);
+        require(options.size() == (remaining > 0 ? 2 : 1), "map enumeration differs from legality");
+        auto ordinary = gc;
+        search::GameAction(gc.curMapNodeX).execute(ordinary);
+        if (variant != 0) require(ordinary.relics.getRelicValue(RelicId::WING_BOOTS) == remaining,
+                                 "ordinary edge consumed a charge");
+        if (remaining <= 0) break;
+        const auto parent = gc;
+        auto child = gc;
+        search::GameAction(cross).execute(child);
+        require(gc.relics.getRelicValue(RelicId::WING_BOOTS) == remaining && sameRng(gc.miscRng, parent.miscRng),
+                "branch consumed parent resources");
+        require(child.curMapNodeX == cross && child.curMapNodeY == gc.curMapNodeY + 1,
+                "cross-route entered the wrong node");
+        require(child.relics.getRelicValue(RelicId::WING_BOOTS) == (remaining == 1 ? -2 : remaining - 1),
+                "cross-route charge/exhausted sentinel mismatch");
+        gc = child;
+        gc.screenState = ScreenState::MAP_SCREEN;
+        if (remaining == 1) {
+            require(!search::GameAction(cross == 1 ? 4 : 1).isValidAction(gc), "exhausted boots still allow jumping");
+            break;
+        }
+    }
+}
+
 int main(int argc, char **argv) {
 #if defined(__unix__) || defined(__APPLE__)
     const rlimit noCore{0, 0};
@@ -921,6 +1006,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "wing-boots") {
+            checkWingBoots(std::stoi(argv[2]), std::stoi(argv[3]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "duvu") {
             checkDuVu(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

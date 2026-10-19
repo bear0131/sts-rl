@@ -173,10 +173,10 @@ class Driver:
             else:
                 gc.pick_reward_card(gc.get_card_reward()[idx])
         elif st == "MAP":
-            if cl[idx] == "boss":  # boss node: any x works (row 15 -> Room::BOSS)
-                gc.transition_to_map_node(gc.cur_map_node_x)
+            if cl[idx] == "boss":
+                gc.choose_map_node(gc.cur_map_node_x)
             else:
-                gc.transition_to_map_node(int(cl[idx].split("=")[1]))  # "x=N"
+                gc.choose_map_node(int(cl[idx].split("=")[1]))  # "x=N"
             if gc.screen_state_name.endswith("BATTLE"):
                 self.start_battle()
         elif st == "COMBAT_REWARD":

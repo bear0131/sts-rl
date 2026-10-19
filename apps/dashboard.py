@@ -2095,7 +2095,8 @@ class WatchSession:
         if not full_map:
             run_map = getattr(thick, "rmap", None)
             if run_map is not None:
-                full_map = run_map.full_view(current_x, current_y)
+                full_map = run_map.full_view(current_x, current_y,
+                                             next_columns=gc.map_node_options())
         if full_map:
             state["nodes"] = [dict(node) for node in full_map]
         if current_x >= 0 and current_y >= 0:
