@@ -2394,8 +2394,8 @@ bool BattleContext::canDrinkPotion(int idx) const {
         return false;
     if (p != Potion::SMOKE_BOMB) return true;
 
-    // SmokeBomb.canUse checks actual monster types, not the room/encounter.
-    // In particular the Slime Boss can split into non-BOSS slimes.
+    // SmokeBomb.canUse checks every actual type, including dead Boss entities.
+    // Slime Boss's split leaves its corpse in the list, so it still forbids use.
     for (int i = 0; i < monsters.monsterCount; ++i) {
         switch (monsters.arr[i].id) {
             case MonsterId::SLIME_BOSS:

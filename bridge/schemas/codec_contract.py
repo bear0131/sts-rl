@@ -252,7 +252,7 @@ def complete_word_tables():
         "smoke_potion_contract": {
             "java": "SmokeBomb.canUse/use -> AbstractPlayer.updateEscapeAnimation -> AbstractRoom.endBattle -> CombatRewardScreen.openCombat(smoked=true)",
             "native": "BattleContext.canDrinkPotion/drinkPotion/exitBattle -> GameContext.afterEscape",
-            "legality": "reject actual BOSS species including event bosses; split Slime Boss is not a BOSS entity; Act4 BackAttack encounter remains unsupported",
+            "legality": "reject all actual BOSS species including dead/event bosses; Slime Boss split retains its BOSS corpse and still forbids smoke; Act4 BackAttack encounter remains unsupported",
             "outcome": "PLAYER_ESCAPE=3, distinct from victory=1/loss=2; pre-settlement HP target retained, win/loss distribution supervision excludes escape",
             "settlement": "consume potion; clear combat queues without killing monsters; ordinary endBattle relic effects; empty displayed rewards, no card reward RNG; preserve room drop RNG/pools and existing player gold/deck",
             "transport": "issued SmokeBomb waits for same seed/act/floor, consumed real slot and settled non-combat frame; no new search during escape animation",

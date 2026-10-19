@@ -1191,18 +1191,11 @@ void GameContext::afterEscape() {
     } else if (curRoom == Room::EVENT) {
         Rewards hidden;
         addPotionRewards(hidden);
-    } else if (curRoom == Room::BOSS) {
-        // Slime Boss's split removes the BOSS-typed entity, making smoke legal.
-        // Preserve room gold RNG without displaying the ordinary battle loot.
-        (void)miscRng.random(-5, 5);
-        if (act < 3) { Rewards hidden; addPotionRewards(hidden); }
     } else {
-        throw std::logic_error("escape settlement requires a combat room");
+        throw std::logic_error("escape settlement requires a non-boss combat room");
     }
     info.stolenGold = 0;
-    regainControlAction = curRoom == Room::BOSS
-        ? GameContextAction([](GameContext &gc) { gc.enterBossTreasureRoom(); })
-        : returnToMapAction;
+    regainControlAction = returnToMapAction;
     openCombatRewardScreen(Rewards{});
 }
 
