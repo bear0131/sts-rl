@@ -24,6 +24,44 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 15) {
+        root.curEvent = Event::BIG_FISH;
+        root.setupEvent();
+        root.curHp = 20;
+        root.maxHp = 80;
+        for (bool discard : {false, true}) {
+            auto child = root;
+            child.potions[0] = Potion::BLOOD_POTION;
+            child.potionCount = 1;
+            search::GameAction action(static_cast<std::uint32_t>(discard ? 0xc0000000U : 0x80000000U));
+            if (!action.isValidAction(child)) return 22;
+            action.execute(child);
+            if (child.screenState != ScreenState::EVENT_SCREEN
+                || child.curHp != (discard ? 20 : 36) || child.potionCount != 0) return 22;
+        }
+        std::cout << "potion_does_not_execute_event_option" << std::endl;
+        return 0;
+    }
+    if (variant == 16) {
+        for (int count : {1, 2}) {
+            auto child = root;
+            Rewards reward;
+            if (count == 2) reward.addRelic(RelicId::ANCHOR);
+            reward.addRelic(RelicId::BAG_OF_MARBLES);
+            reward.sapphireKey = true;
+            child.openCombatRewardScreen(reward);
+            search::GameAction(search::GameAction::RewardsActionType::RELIC, count - 1).execute(child);
+            if (child.info.rewardsContainer.sapphireKey || child.blueKey) return 23;
+            if (count == 2) {
+                child = root;
+                child.openCombatRewardScreen(reward);
+                search::GameAction(search::GameAction::RewardsActionType::RELIC, 0).execute(child);
+                if (!child.info.rewardsContainer.sapphireKey) return 23;
+            }
+        }
+        std::cout << "sapphire_relic_exclusion_uses_pre_remove_index" << std::endl;
+        return 0;
+    }
     if (variant == 14) {
         for (bool bark : {false, true}) {
             auto child = root;

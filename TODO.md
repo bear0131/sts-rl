@@ -1,5 +1,7 @@
 # 仓库总 TODO
 
+| BRIDGE19 | 动作执行隔离与奖励互斥：源码已修，未部署 | GameAction药水执行缺return导致继续执行当前事件/奖励；遗物删除后比较数量导致蓝钥匙互斥错位。旧反例exit22/23，新A0/A15饮用/丢弃和1/2遗物槽位全部通过。继续检查动作枚举、合法性与执行三者一致性，生产不变。 |
+
 | BRIDGE18 | 事件HP/复活底层：源码已修，未部署 | 神圣树皮精灵药水表达式优先级使复活仅1HP；钨杆零HP损失变负数回血，鸟居零伤害也须短路。核对Java FairyPotion/TungstenRod，80上限复活24/48及0/1/2HP损失反例旧exit20新0，仍需全部伤害遗物/复活路径审查。 |
 
 | BRIDGE17 | 事件底层Deck计数/删除/瓶装：源码已修，未部署 | obtainRaw重复计数；removeSelected排序未使用；removeAllMatching访问size槽；anyCardBottled反向；删诅咒未移动瓶装索引。四类旧反例exit16..19，新A0/A15全0；影响存档/桥接set_deck与事件删除消费者，须独立扩展兼容，不替换生产。 |
