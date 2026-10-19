@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v18";
+    public static final String VERSION = "simulator-parity-v19";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -228,6 +228,50 @@ public final class SimulatorParityExporter {
         return ((Boolean)ReflectionHacks.getPrivate(value, owner, field)).booleanValue();
     }
 
+    private static Object eventProgress(AbstractEvent event) {
+        if (event == null) return null;
+        String name = event.getClass().getName(), field;
+        switch (name) {
+            case "com.megacrit.cardcrawl.events.shrines.AccursedBlacksmith":
+            case "com.megacrit.cardcrawl.events.exordium.GoldenIdolEvent":
+            case "com.megacrit.cardcrawl.events.beyond.MoaiHead": field = "screenNum"; break;
+            case "com.megacrit.cardcrawl.events.shrines.Bonfire":
+            case "com.megacrit.cardcrawl.events.city.Colosseum":
+            case "com.megacrit.cardcrawl.events.exordium.DeadAdventurer":
+            case "com.megacrit.cardcrawl.events.exordium.GoldenWing":
+            case "com.megacrit.cardcrawl.events.exordium.Sssserpent":
+            case "com.megacrit.cardcrawl.events.exordium.ShiningLight":
+            case "com.megacrit.cardcrawl.events.city.TheJoust":
+            case "com.megacrit.cardcrawl.events.city.TheMausoleum":
+            case "com.megacrit.cardcrawl.events.shrines.GremlinWheelGame": field = "screen"; break;
+            default: return null;
+        }
+        Object phase = ReflectionHacks.getPrivate(event, event.getClass(), field);
+        HashMap<String, Object> progress = new HashMap<String, Object>();
+        progress.put("source", name);
+        progress.put("phase", phase instanceof Enum ? ((Enum<?>)phase).name() : phase.toString());
+        if (event instanceof com.megacrit.cardcrawl.events.exordium.DeadAdventurer)
+            progress.put("rewards_taken", privateInt(event, event.getClass(), "numRewards"));
+        if (event instanceof com.megacrit.cardcrawl.events.shrines.GremlinWheelGame) {
+            for (String key : new String[]{"startSpin", "buttonPressed", "purgeResult"})
+                progress.put(key, privateBool(event, event.getClass(), key));
+        }
+        // Only current execution progress; never export the wheel's hidden
+        // result or Joust's ownerWins roll to the policy.
+        return progress;
+    }
+
+    private static boolean pendingCardObtain() {
+        for (java.util.ArrayList<com.megacrit.cardcrawl.vfx.AbstractGameEffect> queue :
+                java.util.Arrays.asList(AbstractDungeon.effectList, AbstractDungeon.effectsQueue,
+                    AbstractDungeon.topLevelEffects, AbstractDungeon.topLevelEffectsQueue)) {
+            for (com.megacrit.cardcrawl.vfx.AbstractGameEffect effect : queue)
+                if (!effect.isDone && effect instanceof com.megacrit.cardcrawl.vfx.cardManip.ShowCardAndObtainEffect)
+                    return true;
+        }
+        return false;
+    }
+
     public static void augmentGameState(HashMap<String, Object> state) {
         state.put("has_ruby_key", Boolean.valueOf(Settings.hasRubyKey));
         state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
@@ -264,6 +308,8 @@ public final class SimulatorParityExporter {
         }
         state.put("simulator_map_leaf_nodes", leaves);
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
+        state.put("simulator_event_progress", eventProgress(event));
+        state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
             com.megacrit.cardcrawl.neow.NeowEvent neow = (com.megacrit.cardcrawl.neow.NeowEvent)event;
             int screen = privateInt(neow, com.megacrit.cardcrawl.neow.NeowEvent.class, "screenNum");
@@ -486,6 +532,10 @@ public final class SimulatorParityExporter {
         if (unfinishedRelic("DollysMirror", com.megacrit.cardcrawl.relics.DollysMirror.class,
                             "cardSelected")) return "DUPLICATE";
 
+        // Bonfire uses a purge UI, but the simulator's selection also grants
+        // a rarity-dependent reward. Its context must precede generic flags.
+        if (AbstractDungeon.getCurrRoom().event instanceof com.megacrit.cardcrawl.events.shrines.Bonfire)
+            return "BONFIRE_SPIRITS";
         if (screen.forUpgrade) return "UPGRADE";
         if (screen.forPurge) return "REMOVE";
         if (screen.forTransform) return "TRANSFORM";

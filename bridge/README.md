@@ -47,7 +47,7 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v18`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v19`配套使用。
 v9新增HAND_SELECT真实`any_number`，v10新增明确的怪物生命周期字段与觉醒者死亡保护状态；
 必须重新构建Java补丁，旧v8/v9不能配当前Python。
 `monster_lifecycle_fields`逐项列出死亡、动画结束、半死、逃跑、下回合逃跑及消费者。
@@ -74,6 +74,7 @@ v15的`simulator_thief_state`对两种盗贼携带实际`stolenGold/slashCount/g
 v16只补拉加维林影响行动预测的睡眠状态和已睡回合数：`simulator_lagavulin_state`经严格恢复重新设置ASLEEP，不能被普通powers覆盖清除。自然醒来消除8层Metallicize，零HP伤害不触发醒来；继续使用原权重的sleep/stun合并token，不要求动画内部状态逐项一致。
 v17在CARD_REWARD明确导出`reward_item_present`（实际`CardRewardScreen.rItem != null`）。战外无父奖励项时是独立的一组三选卡，不应读取不存在的外层奖励列表；有父项则必须关联已经观察的奖励页，不能用空库存掩盖缓存缺失。战内宝典/发现仍属于战斗选择。多份奖励的跳过记录按剩余真实卡组数同步，已跳过的卡组不能因领取其他组而重新开放。独立奖励的PROCEED对应真实SKIP，SKIP_CARDS在颂钵可用时对应颂钵，两种模型动作不混同。
 v18补充商店物理槽位和实际售出证据。只读ShopScreen.init/purchaseCard钩子记录7张货架牌原槽位及信使替换；遗物/药水读取Store对象的slot/isPurchased，保留已被UI列表移除的售出对象证据。Python按7/3/3固定槽投影并将SHOP_BUY映回当前CHOOSE句柄，缺槽必须有明确售出记录才为空，不能压缩重排或猜PAD。purge_available=false时删牌价格为原生的-1。词表见shop_transport_fields。本次必须配v18 jar；不改变原生接口/权重形状，编译不是实机验收。
+v19为明确登记的12种事件导出实际阶段/当前执行标志，及四个效果队列中真实未完成的拿牌效果。20项分阶段回执统一登记于`event_contract.STAGED_EFFECTS`，同步到完整词表；不泄露尚未揭示的随机结果、不把阶段新增为策略输入。Bonfire的专用献祭上下文优先于通用删牌标志，Java额外对话只作为传输确认。具体分支仍需实机覆盖，源码核对和编译不是验收。
 实际exhaust独立保存，包含蓝蜡烛/医疗箱使用后的修改；ethereal/selfRetain与原生固有语义不一致时拒绝。其他数值变更和选择中实例
 仍须完成审查，不能将普通根恢复视为所有卡牌/所有选择路径已经对齐。
 layout9 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实时余量；19件实时/回合派生遗物在搜索叶观测中覆盖根计数。

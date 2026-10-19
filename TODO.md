@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE64 | 20项事件回执与Bonfire上下文源码已修，v19构建完成未实机 | BRIDGE22的明确pending效果按实际Java阶段逐项接入，不再在发送前拒绝；保留多页确认、轮盘spin、选中UUID与延迟获得完成等待。Bonfire实际for_purge=true不能覆盖BONFIRE_SPIRITS奖励语义，两次Java对话不是新的策略选择。v19新增只读阶段/延迟获得字段，不导出未揭示随机结果，不改权重。源码及本机事件文本/CommunicationMod来源复核、javac/保护打包退出0，无行为测试，不称全事件验收。 |
 | BRIDGE63 | 商店槽位/售出状态源码已修，v18已编译未实机 | 原Java卡牌购买后remove、遗物/药水先isPurchased后列表移除，旧桥接直接压缩编号/未识别已购帧，会改变货架模型输入及购买mask。v18只读初始化/购买钩子保留7张牌槽与Courier替换，Store实际slot/isPurchased和已售证据完整导出；Python以7/3/3固定槽观察及动作映回UI，未知缺槽拒绝。purge_available=false对应价格-1。javac/保护打包退出0，未部署/开游戏，未做行为测试。 |
 | BRIDGE62 | 两类卡牌奖励生命周期源码已修，已含于v18构建未实机 | 多组奖励先skip后claim另一组时按实际剩余总数重算已跳过状态，防止重新开放已拒绝卡组；Java v17导出真实reward_item_present，区分涅奥独立卡奖励与带外层奖励页的预览，不用空数组遮蔽缓存丢失。独立奖励一组实际候选保留原policy REWARD_CARD/SKIP/PROCEED，后者对应不拿牌SKIP，颂钵对应SKIP_CARDS。卡组/Neow/原生奖励消费者与本机CommunicationMod字节码已核对，仅源码审查，无新测试。 |
 | BRIDGE60 | 星盘转换回执源码已修，未实机 | 不再强制牌数不变；记录真实选中UUID、原始牌组及Omamori实际计数，确认选中原牌移除且延迟替换牌全部进入（扣除御守真实消耗）。从新遗物获取或明确TRANSFORM_UPGRADE网格接入，覆盖遗物/GRID非同帧及至多3张可转换牌的无GRID路径；未确认选择不重发、30秒排除设置暂停的界限。原游戏getPurgeableCards/giveCards/obtain及GRID关闭源码已核对，无离线测试/实机。 |

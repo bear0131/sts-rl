@@ -123,6 +123,69 @@ CONTRACTS = {
     "Wheel of Change": [(0, '玩小游戏|Play', 'pending_wheel_random')],
 }
 
+# Exact Java execution phases, not inferred from HP/gold deltas or translated
+# button ordinals. These fields are transport-only and never policy features.
+EVENT_PROGRESS_CONTRACTS = {
+    'Accursed Blacksmith': ('shrines.AccursedBlacksmith', {'0', '2'}),
+    'Bonfire Elementals': ('shrines.Bonfire', {'INTRO', 'CHOOSE', 'COMPLETE'}),
+    'Colosseum': ('city.Colosseum', {'INTRO', 'FIGHT', 'POST_COMBAT', 'LEAVE'}),
+    'Dead Adventurer': ('exordium.DeadAdventurer', {'INTRO', 'FAIL', 'SUCCESS', 'ESCAPE'}),
+    'Golden Idol': ('exordium.GoldenIdolEvent', {'0', '1', '2'}),
+    'Golden Wing': ('exordium.GoldenWing', {'INTRO', 'PURGE', 'MAP'}),
+    'Liars Game': ('exordium.Sssserpent', {'INTRO', 'AGREE', 'DISAGREE', 'COMPLETE'}),
+    'Shining Light': ('exordium.ShiningLight', {'INTRO', 'COMPLETE'}),
+    'The Joust': ('city.TheJoust', {'HALT', 'EXPLANATION', 'PRE_JOUST', 'JOUST', 'COMPLETE'}),
+    'The Mausoleum': ('city.TheMausoleum', {'INTRO', 'RESULT'}),
+    'The Moai Head': ('beyond.MoaiHead', {'0', '1'}),
+    'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
+}
+
+# (event ID, valid source phase, completion phase); pending_* is the existing
+# stable effect keyword. Only the explicitly audited entries below are enabled.
+STAGED_EFFECTS = {
+    'pending_blacksmith_upgrade': ('Accursed Blacksmith', '0', '2'),
+    'pending_blacksmith_relic_curse': ('Accursed Blacksmith', '0', '2'),
+    'pending_bonfire_offer': ('Bonfire Elementals', 'CHOOSE', 'COMPLETE'),
+    'pending_colosseum_first_combat': ('Colosseum', 'FIGHT', None),
+    'pending_colosseum_second_combat': ('Colosseum', 'POST_COMBAT', None),
+    'pending_dead_search': ('Dead Adventurer', 'INTRO', None),
+    'pending_idol_take': ('Golden Idol', '0', '1'),
+    'pending_idol_curse': ('Golden Idol', '1', '2'),
+    'pending_idol_damage': ('Golden Idol', '1', '2'),
+    'pending_idol_maxhp': ('Golden Idol', '1', '2'),
+    'pending_wing_remove': ('Golden Wing', 'INTRO', 'MAP'),
+    'pending_wing_gold': ('Golden Wing', 'INTRO', 'MAP'),
+    'pending_serpent_gold_curse': ('Liars Game', 'INTRO', 'COMPLETE'),
+    'pending_shining_upgrade_damage': ('Shining Light', 'INTRO', 'COMPLETE'),
+    'pending_joust_murderer': ('The Joust', 'EXPLANATION', 'COMPLETE'),
+    'pending_joust_owner': ('The Joust', 'EXPLANATION', 'COMPLETE'),
+    'pending_mausoleum_relic_curse': ('The Mausoleum', 'INTRO', 'RESULT'),
+    'pending_moai_heal_maxhp': ('The Moai Head', '0', '1'),
+    'pending_moai_idol_gold': ('The Moai Head', '0', '1'),
+    'pending_wheel_random': ('Wheel of Change', 'INTRO', 'LEAVE'),
+}
+
+
+def event_progress(gs, event=None):
+    event = event or gs.get('screen_state', {}).get('event_id')
+    if event not in EVENT_PROGRESS_CONTRACTS:
+        raise ValueError(f'no audited event progress source: {event}')
+    source, phases = EVENT_PROGRESS_CONTRACTS[event]
+    progress = gs.get('simulator_event_progress')
+    if (not isinstance(progress, dict)
+            or progress.get('source') != 'com.megacrit.cardcrawl.events.' + source
+            or progress.get('phase') not in phases):
+        raise ValueError(f'missing/invalid actual event progress: {event}')
+    if type(gs.get('simulator_obtain_pending')) is not bool:
+        raise ValueError('missing actual delayed card-obtain state')
+    if event == 'Dead Adventurer' and (type(progress.get('rewards_taken')) is not int
+                                     or not 0 <= progress['rewards_taken'] <= 3):
+        raise ValueError('invalid Dead Adventurer observed reward count')
+    if event == 'Wheel of Change' and any(type(progress.get(key)) is not bool for key in
+                                        ('startSpin', 'buttonPressed', 'purgeResult')):
+        raise ValueError('missing actual Wheel execution flags')
+    return progress
+
 # Contracts whose semantic identity comes from public per-instance records
 # rather than a static label: exact card, relic, service variant, or board slot.
 # They still belong to the complete event word table and are validated beside
@@ -195,10 +258,28 @@ def _validate_choice_indices(gs):
 def transport_only(gs):
     """An exact one-button dialogue, not a resource-bearing policy option."""
     _validate_choice_indices(gs)
+    event = gs.get('screen_state', {}).get('event_id')
+    if event in EVENT_PROGRESS_CONTRACTS:
+        progress = event_progress(gs)
+        phase = progress['phase']
+        # Stock ChoiceScreenUtils exposes a special spin handle while the
+        # dialogue is hidden. It is not an option in screen_state.options.
+        if (event == 'Wheel of Change' and phase == 'INTRO'
+                and progress['startSpin'] and not progress['buttonPressed']
+                and gs.get('choice_list') == ['spin']):
+            return 0
     opts = [o for o in (gs.get('screen_state') or {}).get('options', []) if not o.get('disabled')]
     if len(opts) != 1:
         return None
     o = opts[0]
+    stages = {
+        'Bonfire Elementals': {'INTRO', 'CHOOSE'}, 'Colosseum': {'INTRO'},
+        'The Joust': {'HALT', 'PRE_JOUST', 'JOUST'},
+        'Golden Wing': {'PURGE'}, 'Liars Game': {'AGREE'},
+        'Dead Adventurer': {'FAIL'}, 'Wheel of Change': {'COMPLETE'},
+    }
+    if event in stages and phase in stages[event]:
+        return o['choice_index']
     text = _text(o.get('text', '')).strip('[]')
     if ((gs.get('screen_state') or {}).get('event_id') == 'Lab'
             and not gs.get('combat_state')
@@ -324,6 +405,131 @@ class EventEffectAck:
     """Check observable effect types; permit selection UI, never stale retries."""
     def __init__(self):
         self.pending = None
+
+    def _arm_staged_command(self, gs, decision):
+        if decision.command.upper().split()[0] in {'STATE', 'WAIT', 'POTION'}:
+            return
+        old, effect, started = self.pending
+        event = STAGED_EFFECTS[effect][0]
+        progress = event_progress(gs, event)
+        if gs.get('screen_type') == 'GRID':
+            parts = decision.command.upper().split()
+            if parts[:1] == ['CHOOSE']:
+                if self._staged_pick is not None:
+                    raise RuntimeError('event already has an uncompleted selection')
+                from bridge.schemas.card_state import real_selection_card_states
+                cards, selected = real_selection_card_states(
+                    gs['screen_state']['cards'], gs['screen_state']['selected_cards'])
+                index = int(parts[1])
+                if len(parts) != 2 or selected or not 0 <= index < len(cards):
+                    raise ValueError('invalid event grid selection command')
+                self._staged_pick = cards[index]['uuid']
+            elif parts != ['CONFIRM']:
+                raise ValueError('unexpected command during event card selection')
+        else:
+            ui = transport_only(gs)
+            if ui is None or decision.command != f'CHOOSE {ui}':
+                raise RuntimeError('event result pending: no new policy/leave command allowed')
+            self._staged_transport_sent = deepcopy(progress)
+        self.pending = (old, effect, started)
+
+    def _waiting_staged(self, old, gs, effect, ready):
+        event, initial, final = STAGED_EFFECTS[effect]
+        for key in ('seed', 'act', 'floor'):
+            if key not in old or key not in gs or old[key] != gs[key]:
+                raise RuntimeError(f'{event} changed/missing {key} before receipt')
+        if not ready:
+            return True
+        if gs.get('screen_type') == 'GAME_OVER' and gs['current_hp'] <= 0:
+            self.pending = None
+            return False
+        if effect in {'pending_colosseum_first_combat', 'pending_colosseum_second_combat', 'pending_dead_search'}:
+            if gs.get('room_phase') == 'COMBAT' and gs.get('combat_state'):
+                self.pending = None
+                return False
+        progress = event_progress(gs, event)
+        phase = progress['phase']
+        if self._staged_transport_sent == progress:
+            return True  # Sent this intermediate page already; never retry it.
+        self._staged_transport_sent = None
+        if gs.get('screen_type') == 'GRID':
+            contexts = {'pending_blacksmith_upgrade': 'UPGRADE',
+                        'pending_bonfire_offer': 'BONFIRE_SPIRITS',
+                        'pending_wing_remove': 'REMOVE', 'pending_wheel_random': 'REMOVE'}
+            ss = gs['screen_state']
+            if (effect not in contexts or ss.get('selection_context') != contexts[effect]
+                    or ss.get('selection_source') != progress['source'] or ss.get('num_cards') != 1):
+                raise RuntimeError(f'{event} unexpected selection source/context/count')
+            if self._staged_pick is not None:
+                selected = [c['uuid'] for c in ss['selected_cards']]
+                if selected and selected != [self._staged_pick]:
+                    raise RuntimeError('event acknowledged a different selected instance')
+                return selected != [self._staged_pick]
+            return False  # The policy still chooses the actual card.
+        if effect == 'pending_wheel_random' and gs.get('screen_type') == 'COMBAT_REWARD':
+            rows = gs['screen_state']['rewards']
+            if phase != 'LEAVE' or len(rows) != 1 or rows[0].get('reward_type') != 'RELIC':
+                raise RuntimeError('Wheel unexpected relic reward receipt')
+            self.pending = None
+            return False  # Claim/skip belongs to the ordinary reward policy.
+        if gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != event:
+            raise RuntimeError(f'{event} unexpected result screen')
+        if effect == 'pending_dead_search':
+            before = event_progress(old, event)['rewards_taken']
+            if phase == 'FAIL':
+                return transport_only(gs) is None  # Explicit Fight confirmation.
+            if progress['rewards_taken'] == before:
+                return True
+            if progress['rewards_taken'] != before + 1 or phase not in {'INTRO', 'SUCCESS'}:
+                raise RuntimeError('Dead Adventurer reward progress mismatch')
+            # All three randomReward outcomes apply synchronously, including
+            # NOTHING. A zero resource delta is not a failed command.
+            self.pending = None
+            return False
+        intermediate = {
+            'pending_wing_remove': {'PURGE'}, 'pending_serpent_gold_curse': {'AGREE'},
+            'pending_joust_murderer': {'PRE_JOUST', 'JOUST'},
+            'pending_joust_owner': {'PRE_JOUST', 'JOUST'},
+            'pending_wheel_random': {'INTRO', 'COMPLETE'},
+        }
+        if phase in intermediate.get(effect, set()):
+            return transport_only(gs) is None
+        if phase != final:
+            if phase == initial:
+                return True
+            raise RuntimeError(f'{event} unexpected phase after {effect}: {phase}')
+        if gs['simulator_obtain_pending']:
+            return True
+        if effect == 'pending_wheel_random' and progress['purgeResult']:
+            return True
+        # Selection effects run in the event update after GRID closes. Verify
+        # the chosen instance, not merely a new dialogue or a shorter deck.
+        before = {c['uuid']: c for c in old['deck']}
+        after = {c['uuid']: c for c in gs['deck']}
+        if effect == 'pending_blacksmith_upgrade':
+            pick = self._staged_pick
+            if pick is None or pick not in after or after[pick]['upgrades'] <= before[pick]['upgrades']:
+                return True
+        if effect in {'pending_bonfire_offer', 'pending_wing_remove', 'pending_wheel_random'}:
+            if self._staged_pick is not None and self._staged_pick in after:
+                return True
+            if effect == 'pending_wing_remove' and self._staged_pick is None:
+                return True
+        if effect in {'pending_blacksmith_relic_curse', 'pending_idol_curse', 'pending_serpent_gold_curse'}:
+            curse = {'pending_blacksmith_relic_curse': 'Pain', 'pending_idol_curse': 'Injury',
+                     'pending_serpent_gold_curse': 'Doubt'}[effect]
+            prior_relics = {r['id']: r['counter'] for r in old['relics']}
+            current_relics = {r['id']: r['counter'] for r in gs['relics']}
+            blocked = prior_relics.get('Omamori', 0) > 0
+            gained = Counter(c['id'] for u, c in after.items() if u not in before)
+            expected = Counter() if blocked else Counter({curse: 1})
+            if gained != expected or (blocked and current_relics.get('Omamori') != prior_relics['Omamori'] - 1):
+                raise RuntimeError(f'{event} delayed curse receipt mismatch')
+        # Other audited terminal pages are set after synchronous damage,
+        # healing, gold, upgrades and relic obtain. Use the real result without
+        # reimplementing relic interactions or requiring nonzero net changes.
+        self.pending = None
+        return False
 
     def _waiting_tome(self, old, gs, effect, ready):
         for key in ('seed', 'act', 'floor'):
@@ -535,6 +741,19 @@ class EventEffectAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if self.pending and self.pending[1] in STAGED_EFFECTS:
+            self._arm_staged_command(gs, decision)
+            return
+        # Native setupEvent opens Bonfire's selection directly. Both Java
+        # dialogue buttons are transport, not an extra upper-policy action.
+        if (not self.pending and gs.get('screen_type') == 'EVENT'
+                and gs.get('screen_state', {}).get('event_id') == 'Bonfire Elementals'
+                and event_progress(gs)['phase'] == 'CHOOSE'
+                and decision.command == f'CHOOSE {transport_only(gs)}'):
+            self.pending = (deepcopy(gs), 'pending_bonfire_offer', now)
+            self._staged_transport_sent = None
+            self._staged_pick = None
+            return
         if self.pending and self.pending[1].startswith('augmenter_'):
             if self.pending[1] == 'augmenter_transform' and gs.get('screen_type') == 'GRID':
                 self._arm_augmenter_grid(gs, decision)
@@ -567,10 +786,17 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
-        if effect.startswith('pending_'):
+        if effect.startswith('pending_') and effect not in STAGED_EFFECTS:
             raise ValueError(
                 f'recognized event option has no audited effect receipt: {effect}'
             )
+        if effect in STAGED_EFFECTS:
+            event, initial, _ = STAGED_EFFECTS[effect]
+            if (gs['screen_state']['event_id'] != event or event_progress(gs)['phase'] != initial
+                    or decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}'):
+                raise ValueError('staged event source/semantic/command mismatch')
+            self._staged_transport_sent = None
+            self._staged_pick = None
         if effect.startswith('tome_'):
             if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
                 raise ValueError('Cursed Tome semantic action and UI command disagree')
@@ -640,6 +866,8 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect in STAGED_EFFECTS:
+            return self._waiting_staged(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('tome_'):
             return self._waiting_tome(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('augmenter_'):

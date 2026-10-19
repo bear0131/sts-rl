@@ -254,6 +254,18 @@ def complete_word_tables():
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),
+        "event_progress_contracts": {
+            event: {"source": "com.megacrit.cardcrawl.events." + source, "phases": sorted(phases)}
+            for event, (source, phases) in event_contract.EVENT_PROGRESS_CONTRACTS.items()
+        },
+        "staged_event_effect_receipts": event_contract.STAGED_EFFECTS,
+        "event_progress_transport_fields": {
+            "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",
+            "simulator_obtain_pending": "actual unfinished ShowCardAndObtainEffect in all four game effect queues; never a guessed delay",
+            "rewards_taken": "DeadAdventurer.numRewards distinguishes a successful NOTHING result from a stale frame",
+            "startSpin/buttonPressed/purgeResult": "actual GremlinWheelGame execution flags; hidden random result is not exported",
+            "Bonfire": "BONFIRE_SPIRITS precedes generic for_purge; native opens selection directly, Java intro/offer are transport",
+        },
         "dynamic_event_kinds": DYNAMIC_EVENT_OPTION_KINDS,
         "dynamic_event_kind_aliases": DYNAMIC_EVENT_OPTION_KIND_ALIASES,
         "commands": sorted(REAL_COMMAND_IDS),
