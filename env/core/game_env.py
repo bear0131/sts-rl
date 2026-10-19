@@ -201,7 +201,8 @@ class SimGameEnv:
             x, y = self.gc.cur_map_node_x, self.gc.cur_map_node_y
             opts = self.rmap.reachable(x, y)
             d["options"] = {
-                "nodes": [(x2, self.rmap.room_type(x2, (y + 1) if y >= 0 else 0))
+                "nodes": [(x2, "BOSS" if y == spiremap.MAX_Y else
+                           self.rmap.room_type(x2, (y + 1) if y >= 0 else 0))
                           for x2 in opts]
             }
             if self._global_map_view:
