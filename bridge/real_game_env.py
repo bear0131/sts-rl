@@ -763,6 +763,12 @@ class RealGameAdapter:
             self._combat_reward_outer_choices = tuple(self.choices())
             self._combat_reward_outer_commands = frozenset(self.commands())
             self._combat_reward_outer_options = self._current_outer_reward_options()
+            total = sum(_reward_choice_type(c) == 'CARD' for c in self.choices())
+            if self._skipped_reward_card_count > total:
+                raise RuntimeError('skipped card reward disappeared without an acknowledged claim')
+            # Claiming another group shrinks the real list, but cancelled groups
+            # remain there. Recompute instead of reviving a previously skipped one.
+            self._skipped_combat_card_reward = self._skipped_reward_card_count == total
         elif self.screen_type() not in {"COMBAT_REWARD", "CARD_REWARD"}:
             self._combat_reward_card_open = False
             self._skipped_combat_card_reward = False
@@ -902,6 +908,11 @@ class RealGameAdapter:
             if "PROCEED" in self.commands():
                 return "PROCEED", "complete_run_transition"
             return self._refresh_command(), "await_complete_run_transition"
+
+        if st == 'CARD_REWARD' and not self.gs.get('combat_state'):
+            parent = self._card_reward_has_parent()
+            if parent != self._combat_reward_card_open:
+                raise RuntimeError('card reward parent does not match its observed outer preview')
 
         if self._deferred_combat_reward_action is not None:
             if st == "COMBAT_REWARD":
@@ -1379,6 +1390,10 @@ class RealGameAdapter:
 
         if phase == "combat_reward":
             cards = _screen_cards(ss) if st == "CARD_REWARD" else []
+            if st == 'CARD_REWARD' and not self._card_reward_has_parent():
+                # Neow opens CardRewardScreen directly, with rItem=null. There
+                # is one real card group and no outer gold/relic/potion reward.
+                return dict(gold=[], relics=[], potions=[], keys=[], card_count=1, cards=cards)
             has_card = not self._skipped_combat_card_reward
             outer = (
                 self._combat_reward_outer_options
@@ -2217,6 +2232,10 @@ class RealGameAdapter:
             acts.extend(ga.reward_card(i) for i in range(n))
             if "SKIP" in self.commands():
                 acts.append(ga.skip_cards())
+                if not self._card_reward_has_parent():
+                    # Native PROCEED abandons the standalone reward. SKIP is
+                    # its Java transport, without Singing Bowl's separate gain.
+                    acts.append(ga.proceed())
             if (self._combat_reward_card_open
                     and "PROCEED" in self._combat_reward_outer_commands):
                 acts.append(ga.proceed())
@@ -2229,6 +2248,12 @@ class RealGameAdapter:
         if "PROCEED" in self.commands():
             acts.append(ga.proceed())
         return acts
+
+    def _card_reward_has_parent(self) -> bool:
+        if self.screen_type() != 'CARD_REWARD' or self.gs.get('combat_state'):
+            raise ValueError('permanent card reward ownership requested outside its screen')
+        return _required_bool(_screen_state(self.gs), 'reward_item_present',
+                              context='CARD_REWARD ownership')
 
     def _outer_reward_claim_actions(self) -> list[tuple]:
         labels = (
@@ -2426,11 +2451,12 @@ class RealGameAdapter:
             self._skipped_combat_card_reward = False
             return f"CHOOSE {action[1]}"
         if verb == ga.SKIP_CARDS:
+            bowl = _choice_index(self.choices(), {"bowl"})
+            if self.screen_type() == 'CARD_REWARD' and bowl is not None:
+                self._combat_reward_card_open = False
+                return f"CHOOSE {bowl}"
             if self.screen_type() == "CARD_REWARD" and self._combat_reward_card_open:
                 self._combat_reward_card_open = False
-                bowl = _choice_index(self.choices(), {"bowl"})
-                if bowl is not None:
-                    return f"CHOOSE {bowl}"
                 self._skipped_reward_card_count += 1
                 total = sum(
                     _reward_choice_type(choice) == "CARD"
@@ -2474,6 +2500,8 @@ class RealGameAdapter:
         if verb == ga.BOSS_RELIC:
             return f"CHOOSE {action[1]}"
         if verb == ga.PROCEED:
+            if self.screen_type() == 'CARD_REWARD' and not self._card_reward_has_parent():
+                return 'SKIP'
             if self.screen_type() == "GRID" and "CONFIRM" in self.commands():
                 return "CONFIRM"
             if self.screen_type() == "COMBAT_REWARD":

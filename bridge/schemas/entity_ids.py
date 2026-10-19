@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v16"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v17"
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -530,6 +530,7 @@ NATIVE_CARD_SNAPSHOT_FIELDS = {
     'stasis': 'exactly two native physical slots; null only for actual empty slots',
 }
 COMBAT_SELECTION_TRANSPORT_FIELDS = {
+    'reward_item_present': 'CARD_REWARD actual CardRewardScreen.rItem != null; noncombat false means one standalone reward (including Neow), true requires cached outer rewards; combat choices remain combat selections',
     'selection_context': 'explicit native semantic task, crosschecked against source class',
     'selection_source': 'current Java action class; never guessed from hand or text',
     'any_number': 'HAND_SELECT private HandCardSelectScreen.anyNumber; GRID original serializer; explicit boolean',

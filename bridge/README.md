@@ -47,7 +47,7 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v10`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v17`配套使用。
 v9新增HAND_SELECT真实`any_number`，v10新增明确的怪物生命周期字段与觉醒者死亡保护状态；
 必须重新构建Java补丁，旧v8/v9不能配当前Python。
 `monster_lifecycle_fields`逐项列出死亡、动画结束、半死、逃跑、下回合逃跑及消费者。
@@ -67,11 +67,12 @@ canonical保留零HP实体的能力和行动历史；OBS20只在固定模型投�
 禁止退回只含身份/升级/手牌费用的 fresh tuple。主牌组 UUID 映射当前物理槽；
 临时 UUID 从原生主牌组容量 96 之后分配，战斗内不随牌堆移动重新编号、不复用。
 保留 base/current cost、freeOnce、retain、实际exhaust、成长与生成游标；每个 settled 根核对原生快照，
-同时刷新主牌组当前成长值。Java 每个怪物明确导出 `simulator_stasis_card`（确实未暂扣才是 null）。正常状态/错误回包两个实际JSON出口保留null，避免Gson默认删除字段；current_action仅在确实没有动作时导出null，v14对现存动作使用真实Java binary class name，保留包名及匿名/嵌套类的`$`后缀，禁止用匿名类的空simple name伪装无动作。未开放CHOOSE时choice_list明确为空列表。接收端在自动动作前区分正常帧与错误帧、实际空集合与缺字段；画面/库存缺失、列表别名或奖励记录冲突直接拒绝，不按非空优先或按钮文字补实体。完整存在性词表见`codec_contract.complete_word_tables()['json_presence_contracts']`。v16 Python必须配套新jar和native，不改变冻结权重张量布局。
+同时刷新主牌组当前成长值。Java 每个怪物明确导出 `simulator_stasis_card`（确实未暂扣才是 null）。正常状态/错误回包两个实际JSON出口保留null，避免Gson默认删除字段；current_action仅在确实没有动作时导出null，v14对现存动作使用真实Java binary class name，保留包名及匿名/嵌套类的`$`后缀，禁止用匿名类的空simple name伪装无动作。未开放CHOOSE时choice_list明确为空列表。接收端在自动动作前区分正常帧与错误帧、实际空集合与缺字段；画面/库存缺失、列表别名或奖励记录冲突直接拒绝，不按非空优先或按钮文字补实体。完整存在性词表见`codec_contract.complete_word_tables()['json_presence_contracts']`。v17 Python必须配套v17 jar；原生要求包含此前实例/计数/睡眠修复，本次v17不改变其接口或冻结权重张量布局。
 
 v15的`simulator_thief_state`对两种盗贼携带实际`stolenGold/slashCount/goldAmt`，保留死亡/逃跑后的账本，非盗贼才明确为null。三项经canonical、严格根恢复、完整dict/差分与搜索状态键传递，不能由玩家金币、房间回合数或显示Thievery能力反推。字段源表见`thief_private_state_fields`；packed叶仍是冻结权重的输入投影，不是完整可恢复状态。源码接通不等于已构建/行为验收，完整pending与死亡奖励捕获仍在TODO。
 
 v16只补拉加维林影响行动预测的睡眠状态和已睡回合数：`simulator_lagavulin_state`经严格恢复重新设置ASLEEP，不能被普通powers覆盖清除。自然醒来消除8层Metallicize，零HP伤害不触发醒来；继续使用原权重的sleep/stun合并token，不要求动画内部状态逐项一致。
+v17在CARD_REWARD明确导出`reward_item_present`（实际`CardRewardScreen.rItem != null`）。战外无父奖励项时是独立的一组三选卡，不应读取不存在的外层奖励列表；有父项则必须关联已经观察的奖励页，不能用空库存掩盖缓存缺失。战内宝典/发现仍属于战斗选择。多份奖励的跳过记录按剩余真实卡组数同步，已跳过的卡组不能因领取其他组而重新开放。独立奖励的PROCEED对应真实SKIP，SKIP_CARDS在颂钵可用时对应颂钵，两种模型动作不混同。
 实际exhaust独立保存，包含蓝蜡烛/医疗箱使用后的修改；ethereal/selfRetain与原生固有语义不一致时拒绝。其他数值变更和选择中实例
 仍须完成审查，不能将普通根恢复视为所有卡牌/所有选择路径已经对齐。
 layout9 携带百年积木/蜥蜴尾巴标志、怀表边界计数和涅奥实时余量；19件实时/回合派生遗物在搜索叶观测中覆盖根计数。

@@ -18,7 +18,7 @@ import java.util.HashMap;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v16";
+    public static final String VERSION = "simulator-parity-v17";
     private static int lastAttackUnblockedDamage = 0;
 
     private SimulatorParityExporter() {}
@@ -421,6 +421,7 @@ public final class SimulatorParityExporter {
     public static void augmentCardRewardState(HashMap<String, Object> state) {
         AbstractGameAction action = AbstractDungeon.actionManager.currentAction;
         String context = combatSelectionContext(action);
+        state.put("reward_item_present", AbstractDungeon.cardRewardScreen.rItem != null);
         state.put("selection_context", context == null ? "UNMAPPED" : context);
         state.put("selection_source", action == null ? "NONE" : action.getClass().getName());
         state.put("simulator_parity_export", VERSION);
