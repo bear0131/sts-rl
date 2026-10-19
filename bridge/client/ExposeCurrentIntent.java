@@ -39,10 +39,11 @@ public final class ExposeCurrentIntent {
         CtMethod gridMethod = converter.getDeclaredMethod("getGridState");
         CtMethod handMethod = converter.getDeclaredMethod("getHandSelectState");
         CtMethod cardRewardMethod = converter.getDeclaredMethod("getCardRewardState");
+        CtMethod shopMethod = converter.getDeclaredMethod("getShopScreenState");
         CtMethod cardMethod = converter.getDeclaredMethod("convertCardToJson");
         Set<CtMethod> changedMethods = new HashSet<CtMethod>(Arrays.asList(
             gameMethod, monsterMethod, combatMethod, gridMethod, handMethod,
-            cardRewardMethod, cardMethod, stateWriter, errorWriter));
+            cardRewardMethod, shopMethod, cardMethod, stateWriter, errorWriter));
         Map<String, byte[]> unchanged = new HashMap<>();
         for (CtClass owner : new CtClass[]{converter, communication}) {
             for (CtMethod candidate : owner.getDeclaredMethods()) {
@@ -83,6 +84,8 @@ public final class ExposeCurrentIntent {
             "{ communicationmod.SimulatorParityExporter.augmentHandSelectState($_); }");
         cardRewardMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentCardRewardState($_); }");
+        shopMethod.insertAfter(
+            "{ communicationmod.SimulatorParityExporter.augmentShopState($_); }");
         cardMethod.insertAfter(
             "{ communicationmod.SimulatorParityExporter.augmentCardState($_, $1); }");
         Map<String, byte[]> patched = new LinkedHashMap<String, byte[]>();
@@ -100,6 +103,8 @@ public final class ExposeCurrentIntent {
             "communicationmod/SimulatorParityExporter.class",
             "communicationmod/SimulatorParityExporter$DamagePatch.class",
             "communicationmod/SimulatorParityExporter$PreBattlePatch.class",
+            "communicationmod/SimulatorParityExporter$ShopInitPatch.class",
+            "communicationmod/SimulatorParityExporter$ShopPurchasePatch.class",
         };
         Map<String, byte[]> helpers = new LinkedHashMap<String, byte[]>();
         for (String helperTarget : helperTargets) {
@@ -144,6 +149,6 @@ public final class ExposeCurrentIntent {
         }
         if (!changed.equals(patched.keySet())) throw new IllegalStateException("Target entries=" + changed);
         System.out.println(
-            "Patched seven serializers and two null-preserving JSON writers; no gameplay or RNG modified");
+            "Patched eight serializers and two null-preserving JSON writers; read-only state hooks, no gameplay or RNG modified");
     }
 }

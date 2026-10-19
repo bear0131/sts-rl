@@ -14,14 +14,123 @@ import com.megacrit.cardcrawl.screens.select.GridCardSelectScreen;
 import com.megacrit.cardcrawl.core.Settings;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePatch;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePostfixPatch;
+import com.evacipated.cardcrawl.modthespire.lib.SpirePrefixPatch;
+import com.megacrit.cardcrawl.shop.ShopScreen;
 import java.util.HashMap;
+import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v17";
+    public static final String VERSION = "simulator-parity-v18";
     private static int lastAttackUnblockedDamage = 0;
+    private static ShopScreen shopOwner;
+    private static final AbstractCard[] shopCards = new AbstractCard[7];
+    private static final com.megacrit.cardcrawl.shop.StoreRelic[] shopRelics = new com.megacrit.cardcrawl.shop.StoreRelic[3];
+    private static final com.megacrit.cardcrawl.shop.StorePotion[] shopPotions = new com.megacrit.cardcrawl.shop.StorePotion[3];
 
     private SimulatorParityExporter() {}
+
+    @SpirePatch(clz = ShopScreen.class, method = "init")
+    public static class ShopInitPatch {
+        @SpirePostfixPatch
+        public static void Postfix(ShopScreen __instance) {
+            if (__instance.coloredCards.size() != 5 || __instance.colorlessCards.size() != 2)
+                throw new IllegalStateException("Unsupported initial shop card shelf");
+            shopOwner = __instance;
+            for (int i = 0; i < 5; i++) shopCards[i] = __instance.coloredCards.get(i);
+            for (int i = 0; i < 2; i++) shopCards[5 + i] = __instance.colorlessCards.get(i);
+            ArrayList<com.megacrit.cardcrawl.shop.StoreRelic> relics = ReflectionHacks.getPrivate(__instance, ShopScreen.class, "relics");
+            ArrayList<com.megacrit.cardcrawl.shop.StorePotion> potions = ReflectionHacks.getPrivate(__instance, ShopScreen.class, "potions");
+            if (relics.size() != 3 || potions.size() != 3)
+                throw new IllegalStateException("Unsupported initial shop item shelf");
+            for (int i = 0; i < 3; i++) {
+                if (privateInt(relics.get(i), com.megacrit.cardcrawl.shop.StoreRelic.class, "slot") != i
+                        || privateInt(potions.get(i), com.megacrit.cardcrawl.shop.StorePotion.class, "slot") != i)
+                    throw new IllegalStateException("Unexpected initial shop item slot order");
+                shopRelics[i] = relics.get(i);
+                shopPotions[i] = potions.get(i);
+            }
+        }
+    }
+
+    private static int shopCardSlot(AbstractCard card) {
+        for (int i = 0; i < shopCards.length; i++) if (shopCards[i] == card) return i;
+        throw new IllegalStateException("Shop card has no observed physical slot");
+    }
+
+    @SpirePatch(clz = ShopScreen.class, method = "purchaseCard")
+    public static class ShopPurchasePatch {
+        private static AbstractCard original;
+        private static ArrayList<AbstractCard> row;
+        private static int slot, index, size;
+
+        @SpirePrefixPatch
+        public static void Prefix(ShopScreen __instance, AbstractCard hoveredCard) {
+            if (shopOwner != __instance) throw new IllegalStateException("Unobserved shop initialization");
+            original = hoveredCard;
+            slot = shopCardSlot(original);
+            row = slot < 5 ? __instance.coloredCards : __instance.colorlessCards;
+            index = row.indexOf(original);
+            size = row.size();
+            if (index < 0) throw new IllegalStateException("Shop purchase source is absent");
+        }
+
+        @SpirePostfixPatch
+        public static void Postfix(ShopScreen __instance) {
+            // The game nulls its parameter locally; keep the actual prefix
+            // object. Only record its removal/replacement, never perform it.
+            if (row.contains(original)) return; // Unaffordable purchase did nothing.
+            if (row.size() == size - 1) shopCards[slot] = null;
+            else if (row.size() == size && AbstractDungeon.player.hasRelic("The Courier"))
+                shopCards[slot] = row.get(index);
+            else throw new IllegalStateException("Unmapped shop card purchase result");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static void augmentShopState(HashMap<String, Object> state) {
+        if (shopOwner != AbstractDungeon.shopScreen)
+            throw new IllegalStateException("Shop shelf was not observed at initialization");
+        ArrayList<HashMap<String, Object>> cards = (ArrayList<HashMap<String, Object>>)state.get("cards");
+        ArrayList<AbstractCard> actualCards = ChoiceScreenUtils.getShopScreenCards();
+        if (cards.size() != actualCards.size()) throw new IllegalStateException("Shop card export count mismatch");
+        for (int i = 0; i < cards.size(); i++) cards.get(i).put("shop_slot", shopCardSlot(actualCards.get(i)));
+        ArrayList<Integer> sold = new ArrayList<Integer>();
+        for (int i = 0; i < shopCards.length; i++) if (shopCards[i] == null) sold.add(i);
+        if (cards.size() + sold.size() != 7) throw new IllegalStateException("Incomplete shop card shelf");
+        state.put("sold_card_slots", sold);
+        ArrayList<HashMap<String, Object>> relics = (ArrayList<HashMap<String, Object>>)state.get("relics");
+        ArrayList<com.megacrit.cardcrawl.shop.StoreRelic> actualRelics = ChoiceScreenUtils.getShopScreenRelics();
+        if (relics.size() != actualRelics.size()) throw new IllegalStateException("Shop relic export count mismatch");
+        for (int i = 0; i < relics.size(); i++) {
+            com.megacrit.cardcrawl.shop.StoreRelic item = actualRelics.get(i);
+            int slot = privateInt(item, com.megacrit.cardcrawl.shop.StoreRelic.class, "slot");
+            if (slot < 0 || slot >= 3 || shopRelics[slot] != item)
+                throw new IllegalStateException("Unobserved shop relic slot");
+            relics.get(i).put("shop_slot", slot);
+            relics.get(i).put("is_purchased", item.isPurchased);
+        }
+        ArrayList<HashMap<String, Object>> potions = (ArrayList<HashMap<String, Object>>)state.get("potions");
+        ArrayList<com.megacrit.cardcrawl.shop.StorePotion> actualPotions = ChoiceScreenUtils.getShopScreenPotions();
+        if (potions.size() != actualPotions.size()) throw new IllegalStateException("Shop potion export count mismatch");
+        for (int i = 0; i < potions.size(); i++) {
+            com.megacrit.cardcrawl.shop.StorePotion item = actualPotions.get(i);
+            int slot = privateInt(item, com.megacrit.cardcrawl.shop.StorePotion.class, "slot");
+            if (slot < 0 || slot >= 3 || shopPotions[slot] != item)
+                throw new IllegalStateException("Unobserved shop potion slot");
+            potions.get(i).put("shop_slot", slot);
+            potions.get(i).put("is_purchased", item.isPurchased);
+        }
+        ArrayList<Integer> soldRelics = new ArrayList<Integer>(), soldPotions = new ArrayList<Integer>();
+        for (int i = 0; i < 3; i++) {
+            if (shopRelics[i].isPurchased) soldRelics.add(i);
+            else if (!actualRelics.contains(shopRelics[i])) throw new IllegalStateException("Unsold relic disappeared");
+            if (shopPotions[i].isPurchased) soldPotions.add(i);
+            else if (!actualPotions.contains(shopPotions[i])) throw new IllegalStateException("Unsold potion disappeared");
+        }
+        state.put("sold_relic_slots", soldRelics);
+        state.put("sold_potion_slots", soldPotions);
+    }
 
     public static void augmentMonsterState(HashMap<String, Object> state, AbstractMonster monster) {
         // Stock CommunicationMod omits short history, whereas the strict

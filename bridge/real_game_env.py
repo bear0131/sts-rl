@@ -1719,30 +1719,52 @@ class RealGameAdapter:
         return out
 
     def _shop_options(self, ss: dict[str, Any]) -> dict[str, Any]:
-        card_records = _dict_records(
-            _list_value(ss, "cards", context="shop screen"), context="shop cards"
-        )
-        cards = []
-        for card in card_records:
-            cid, up = _real_card_tuple(card)
-            cards.append((cid, up, int(_price(card))))
-        relics = [
-            (_relic_id(relic), int(_price(relic)))
-            for relic in _dict_records(
-                _list_value(ss, "relics", context="shop screen"),
-                context="shop relics",
-            )
-        ]
-        potions = _screen_potions(ss, require_price=True)
-        remove_cost = int(_required(
-            ss, "purge_cost", "remove_cost", context="shop screen"
-        ))
+        shelves = self._shop_shelves(ss)
+        # None means explicitly observed sold, not missing/unknown inventory.
+        cards = [('EMPTY', 0, -1) if card is None else (*_real_card_tuple(card), _price(card))
+                 for card in shelves[ga.SHOP_CARD]]
+        relics = [('PAD', -1) if item is None else (_relic_id(item), _price(item))
+                  for item in shelves[ga.SHOP_RELIC]]
+        potions = [('PAD', -1) if item is None else (_potion_id(item), _price(item))
+                   for item in shelves[ga.SHOP_POTION]]
+        remove_cost = (_required_int(ss, "purge_cost", context="shop screen")
+                       if _required_bool(ss, 'purge_available', context='shop screen') else -1)
         return {
             "shop_cards": cards,
             "shop_relics": relics,
             "shop_potions": potions,
             "shop_remove_cost": remove_cost,
         }
+
+    @staticmethod
+    def _shop_shelves(ss):
+        shelves = {}
+        for kind, key, sold_key, capacity in (
+                (ga.SHOP_CARD, 'cards', 'sold_card_slots', A.SHOP_CARD),
+                (ga.SHOP_RELIC, 'relics', 'sold_relic_slots', A.SHOP_RELIC),
+                (ga.SHOP_POTION, 'potions', 'sold_potion_slots', A.SHOP_POTION)):
+            sold = _list_value(ss, sold_key, context='shop shelf')
+            if (any(type(i) is not int or not 0 <= i < capacity for i in sold)
+                    or len(set(sold)) != len(sold)):
+                raise ValueError(f'invalid explicit sold shop slots: {sold_key}')
+            slots, seen = [None] * capacity, set()
+            for item in _dict_records(_list_value(ss, key, context='shop shelf'), context=key):
+                index = _required_int(item, 'shop_slot', context='shop item')
+                if not 0 <= index < capacity or index in seen:
+                    raise ValueError(f'duplicate/out-of-range physical shop slot: {key}/{index}')
+                seen.add(index)
+                purchased = (False if kind == ga.SHOP_CARD else
+                             _required_bool(item, 'is_purchased', context='shop item'))
+                if purchased != (index in sold):
+                    raise ValueError(f'shop item and sold-slot evidence disagree: {key}/{index}')
+                if not purchased:
+                    if _required_int(item, 'price', context='shop item') < 0:
+                        raise ValueError('unsold shop item has a negative price')
+                    slots[index] = item
+            if (seen | set(sold)) != set(range(capacity)):
+                raise ValueError(f'shop shelf is missing slots without sale evidence: {key}')
+            shelves[kind] = slots
+        return shelves
 
     # --------------------------------------------------------------- selectors
     def select_descriptor(self) -> dict[str, Any] | None:
@@ -2628,18 +2650,14 @@ class RealGameAdapter:
         )
 
         affordable = []
-        for kind, key in (
-            (ga.SHOP_CARD, "cards"),
-            (ga.SHOP_RELIC, "relics"),
-            (ga.SHOP_POTION, "potions"),
-        ):
+        shelves = self._shop_shelves(ss)
+        for kind in (ga.SHOP_CARD, ga.SHOP_RELIC, ga.SHOP_POTION):
             if kind == ga.SHOP_POTION and not can_buy_potion:
                 continue
-            items = _dict_records(
-                _list_value(ss, key, context="shop screen"),
-                context=f"shop {key}",
-            )
+            items = shelves[kind]
             for i, item in enumerate(items):
+                if item is None:
+                    continue
                 price = int(_price(item))
                 if 0 <= price <= gold:
                     affordable.append((kind, i, {_norm_label(item.get("name", "")),
@@ -2658,8 +2676,7 @@ class RealGameAdapter:
                 # Stock shops may offer the same potion twice at different
                 # prices. CommunicationMod preserves shelf order for these
                 # indistinguishable labels; never use this for different IDs.
-                keys = {ga.SHOP_CARD: "cards", ga.SHOP_RELIC: "relics", ga.SHOP_POTION: "potions"}
-                identities = {(kind, ss[keys[kind]][i].get("id")) for kind, i in matches}
+                identities = {(kind, shelves[kind][i].get("id")) for kind, i in matches}
                 if len(identities) == 1:
                     matches = matches[:1]
             if len(matches) != 1:

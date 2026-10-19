@@ -121,12 +121,12 @@ whole-run evaluation; do not silently fall back to START if attachment fails.
 Neural simulation exposes the current native monster move even with Runic Dome.
 For the same current-state information in real-game evaluation, use
 `ExposeCurrentIntent.java` to patch a backed-up CommunicationMod jar offline.
-It patches seven `GameStateConverter` serializers and both actual JSON writers
+It patches eight `GameStateConverter` serializers and both actual JSON writers
 (`getCommunicationState` and `CommunicationMod.receivePreUpdate`) to use the
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v17`.
+`current_intent_export: simulator-parity-v18`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -186,8 +186,12 @@ Since v17 CARD_REWARD exports `reward_item_present` from the actual `rItem`
 reference. Noncombat standalone offers (including Neow) contain one card group,
 not a missing outer reward inventory. Parent-owned offers require an observed
 outer reward snapshot. Combat Discovery/Codex remain combat selections.
-Do not mix v17 Python with an older jar. The native extension must include the
-earlier instance/counter/sleep fixes; v17 adds no native interface. Model tensor layouts
+Since v18 the shop serializer preserves physical shelf slots and actual sold
+status. Two read-only ShopScreen hooks retain initial card slots and Courier
+replacement identities; StoreRelic/StorePotion supply their real slot/purchased
+fields. Missing slots require explicit sale evidence, never inferred padding.
+Do not mix v18 Python with an older jar. The native extension must include the
+earlier instance/counter/sleep fixes; v17/v18 add no native interface. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.
