@@ -872,6 +872,14 @@ class EventEffectAck:
             return self._waiting_tome(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('augmenter_'):
             return self._waiting_augmenter(old, g, effect)
+        if frame.get('ready_for_command') is not True:
+            return True
+        if type(g.get('simulator_obtain_pending')) is not bool:
+            raise ValueError('event receipt missing actual obtain-effect status')
+        if g['simulator_obtain_pending']:
+            # Gold/relic/max-HP can change before the associated curse/cards
+            # enter the deck. Do not release a partially completed reward.
+            return True
         if effect in {'portal_boss', 'portal_boss_confirmed'}:
             if g.get('combat_state') or g.get('room_phase') == 'COMBAT':
                 if g.get('room_type') != 'MonsterRoomBoss':
@@ -932,6 +940,18 @@ class EventEffectAck:
         delta = lambda k: g.get(k, 0) - old.get(k, 0)
         potion_changed = [p.get('id') for p in g.get('potions', [])] != [p.get('id') for p in old.get('potions', [])]
         relic_changed = [r.get('id') for r in g.get('relics', [])] != [r.get('id') for r in old.get('relics', [])]
+        event = old.get('screen_state', {}).get('event_id')
+        same_event = (g.get('screen_type') == 'EVENT'
+                      and g.get('screen_state', {}).get('event_id') == event)
+        current_options = [o for o in g.get('screen_state', {}).get('options', [])
+                           if not o.get('disabled')]
+        final_leave = (same_event and len(current_options) == 1
+                       and _text(current_options[0].get('text', '')).strip('[]') in {'离开', 'leave'})
+        old_relics = {r['id']: r for r in old.get('relics', [])}
+        new_relics = {r['id']: r for r in g.get('relics', [])}
+        skull_paid = (same_event and event == 'Knowing Skull'
+                      and len(current_options) == 4
+                      and g['screen_state']['options'] != old['screen_state']['options'])
         if effect.startswith('woman_potions_') or effect == 'woman_leave':
             count = 0 if effect == 'woman_leave' else int(effect.rsplit('_', 1)[1])
             cost = min(old.get('gold', 0), 10 + 10 * count) if count else 0
@@ -1074,11 +1094,11 @@ class EventEffectAck:
             before = {r['id']: r for r in old.get('relics', [])}
             after = {r['id']: r for r in g.get('relics', [])}
             if effect == 'altar_sacrifice':
-                # Verify both effect types, not max-HP gain alone. Damage relic
-                # interactions are not claimed to have exact numeric coverage.
+                # The final dialogue follows synchronous damage. Revival can
+                # make net HP positive; net loss is not a damage receipt.
                 if gained or lost or delta('max_hp') not in (0, 5):
                     raise RuntimeError('Altar sacrifice effect mismatch')
-                done = delta('max_hp') == 5 and delta('current_hp') < 0
+                done = delta('max_hp') == 5 and final_leave
             elif effect == 'altar_decay':
                 blocked = before.get('Omamori', {}).get('counter', 0) > 0
                 expected = Counter() if blocked else Counter({('Decay', 0): 1})
@@ -1123,11 +1143,14 @@ class EventEffectAck:
             blocked = relics.get('Omamori', {}).get('counter', 0) > 0
             expected = Counter() if blocked else Counter({('Parasite', 0): 1})
             heal = 0 if 'Mark of the Bloom' in relics else min(old['max_hp'] // 4, old['max_hp'] - old['current_hp'])
+            maxhp = 6 if not blocked and 'Darkstone Periapt' in relics else 0
+            if 'Mark of the Bloom' not in relics:
+                heal += maxhp
             if gained and gained != expected or lost:
                 raise RuntimeError('Mushrooms curse identity/count mismatch')
             curse_done = (after_relics.get('Omamori', {}).get('counter') == relics['Omamori']['counter'] - 1
                           if blocked else gained == expected)
-            if curse_done and delta('current_hp') == heal:
+            if curse_done and delta('current_hp') == heal and delta('max_hp') == maxhp and final_leave:
                 self.pending = None
                 return False
             return True
@@ -1152,19 +1175,34 @@ class EventEffectAck:
                 self.pending = None
                 return False
             return True
+        # Only audited completed pages/cost progression can prove a legitimate
+        # zero delta. A changed arbitrary frame or a stale Leave is not enough.
+        blocked_gold = ('Ectoplasm' in old_relics and delta('gold') == 0
+                        and ((final_leave and event in {'Golden Shrine', 'Tomb of Lord Red Mask', 'MindBloom', 'Nest'})
+                             or skull_paid))
+        paid_empty = (event == 'Masked Bandits' and effect == 'gold_loss'
+                      and old['gold'] == g['gold'] == 0 and same_event
+                      and transport_only(g) is not None
+                      and g['screen_state']['options'] != old['screen_state']['options'])
+        blocked_card = (final_leave and event in {'MindBloom', 'Winding Halls'}
+                        and not gained and 'Omamori' in old_relics
+                        and new_relics.get('Omamori', {}).get('counter') == old_relics['Omamori']['counter'] - 1)
         success = {
-            'gold': delta('gold') > 0, 'gold_loss': delta('gold') < 0,
-            'card': bool(gained), 'remove': bool(lost) and not gained,
+            'gold': delta('gold') > 0 or blocked_gold, 'gold_loss': delta('gold') < 0 or paid_empty,
+            'card': bool(gained) or blocked_card, 'remove': bool(lost) and not gained,
             'transform': bool(gained) and bool(lost),
             'upgrade': bool(gained) and bool(lost) and Counter(c['id'] for c in g.get('deck', [])) == Counter(c['id'] for c in old.get('deck', [])),
             'potion': potion_changed, 'relic': relic_changed,
-            'blocked_skull_potion': (delta('current_hp') < 0 and not potion_changed
+            'blocked_skull_potion': (skull_paid and not potion_changed
                                      and not gained and not lost and not relic_changed
-                                     and delta('gold') == 0 and delta('max_hp') == 0
-                                     and g.get('screen_state') != old.get('screen_state')),
-            'heal': delta('current_hp') > 0 or (old.get('current_hp') == old.get('max_hp') and g.get('screen_state') != old.get('screen_state')),
-            'maxhp_gain': delta('max_hp') > 0, 'maxhp_loss': delta('max_hp') < 0,
-            'vial_bites': relic_changed and bool(gained), 'hp_loss': delta('current_hp') < 0,
+                                     and delta('gold') == 0 and delta('max_hp') == 0),
+            'heal': delta('current_hp') > 0 or (final_leave and event == 'The Library'
+                                              and (old['current_hp'] == old['max_hp'] or 'Mark of the Bloom' in old_relics)),
+            'maxhp_gain': delta('max_hp') > 0,
+            'maxhp_loss': delta('max_hp') < 0 or (final_leave and old['max_hp'] == g['max_hp'] == 1
+                                                and event in {'Vampires', 'Ghosts', 'Winding Halls'}),
+            'vial_bites': relic_changed and bool(gained),
+            'hp_loss': delta('current_hp') < 0 or (event == 'Knowing Skull' and final_leave),
             'combat': bool(g.get('combat_state')) or g.get('room_phase') == 'COMBAT',
             'leave': g.get('screen_state') != old.get('screen_state') or g.get('screen_type') != 'EVENT',
         }[effect]
