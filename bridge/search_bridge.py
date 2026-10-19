@@ -889,7 +889,8 @@ class RealCombatSearch:
                     if target < 5:
                         real_target = self.adapter.real_target_index(target)
                         if real_target not in reverse:
-                            continue
+                            raise RuntimeError(
+                                f'legal real action {aid} targets unmapped monster {real_target}')
                         target = reverse[real_target]
                     mapped = base + source * 6 + target
                     break
