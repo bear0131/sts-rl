@@ -87,6 +87,7 @@ void Shop::applyDiscount(float factor) {
 }
 
 void Shop::buyCard(GameContext &gc, int idx) {
+    const CardType purchasedType = cards[idx].getType();
     gc.deck.obtain(gc, cards[idx], 1);
     gc.loseGold(cardPrice(idx), true);
 
@@ -98,9 +99,17 @@ void Shop::buyCard(GameContext &gc, int idx) {
             cards[idx] = gc.previewObtainCard(getColorlessCardFromPool(gc.cardRng, rarity));
             cardPrice(idx) = getNewCardPrice(gc, rarity, true);
         } else {
-            CardRarity rarity = gc.rollCardRarity(Room::SHOP);
-            cards[idx] = gc.previewObtainCard(getRandomClassCardOfRarity(gc.mathUtilRng, gc.cc, rarity));
-            cardPrice(idx) = getNewCardPrice(gc, rarity, false);
+            CardRarity rarity = rollCardRarityShop(gc.cardRng, gc.cardRarityFactor);
+            // The base game has no common powers; getCardFromPool falls back
+            // to uncommon without another rarity roll or an empty-pool draw.
+            if (purchasedType == CardType::POWER && rarity == CardRarity::COMMON) {
+                rarity = CardRarity::UNCOMMON;
+            }
+            // ShopScreen uses getCardFromPool(..., type, false): MathUtils
+            // chooses the card, while cardRng above only rolls its rarity.
+            cards[idx] = gc.previewObtainCard(
+                getRandomClassCardOfTypeAndRarity(gc.mathUtilRng, gc.cc, purchasedType, rarity));
+            cardPrice(idx) = getNewCardPrice(gc, cards[idx].getRarity(), false);
         }
 
     } else {

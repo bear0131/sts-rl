@@ -1,5 +1,6 @@
 // Internal GameContext contracts, isolated by pytest so native faults are reported.
 #include "game/GameContext.h"
+#include "game/Game.h"
 #include "sim/search/GameAction.h"
 #include <iostream>
 #include <stdexcept>
@@ -234,6 +235,100 @@ static void checkReward(int variant, int ascension) {
     } else { throw std::invalid_argument("unknown reward fixture"); }
 }
 
+static Random rngForRoll(int wanted) {
+    for (int seed = 1; seed <= 10000; ++seed) {
+        Random rng(seed);
+        if (rng.random(99) == wanted) return Random(seed);
+    }
+    throw std::runtime_error("no bounded RNG fixture found");
+}
+
+static void checkShopRestock(int variant, int ascension) {
+    if (variant == 4) {
+        GameContext base(CharacterClass::IRONCLAD, 42, ascension);
+        base.screenState = ScreenState::SHOP_ROOM;
+        base.gold = 10000;
+        base.obtainRelic(RelicId::THE_COURIER);
+        base.cardRng = rngForRoll(46);
+        base.cardRarityFactor = 0;
+        base.info.shop.cards[4] = Card(CardId::INFLAME);
+        base.info.shop.cardPrice(4) = 31;
+        auto reference = base;
+        reference.info.shop.buyCard(reference, 4);
+        bool changedCard = false, changedPrice = false;
+        for (int seed = 100; seed < 116; ++seed) {
+            auto mathChild = base;
+            mathChild.mathUtilRng = Random(seed);
+            mathChild.info.shop.buyCard(mathChild, 4);
+            require(sameRng(mathChild.cardRng, reference.cardRng) &&
+                    sameRng(mathChild.merchantRng, reference.merchantRng), "math RNG perturbation leaked into rarity/price RNG");
+            require(mathChild.info.shop.cardPrice(4) == reference.info.shop.cardPrice(4), "math RNG changed price");
+            require(mathChild.info.shop.cards[4].getRarity() == CardRarity::UNCOMMON, "math RNG changed rarity");
+            changedCard |= mathChild.info.shop.cards[4].getId() != reference.info.shop.cards[4].getId();
+            auto priceChild = base;
+            priceChild.merchantRng = Random(seed);
+            priceChild.info.shop.buyCard(priceChild, 4);
+            require(sameRng(priceChild.cardRng, reference.cardRng) &&
+                    sameRng(priceChild.mathUtilRng, reference.mathUtilRng), "price RNG perturbation leaked into card RNGs");
+            require(priceChild.info.shop.cards[4].getId() == reference.info.shop.cards[4].getId(), "merchant RNG changed card identity");
+            changedPrice |= priceChild.info.shop.cardPrice(4) != reference.info.shop.cardPrice(4);
+        }
+        require(changedCard && changedPrice, "RNG fixture failed to vary the intended outputs");
+        return;
+    }
+    for (int roll : {8, 9, 45, 46}) {
+        for (bool memberAndGift : {false, true}) {
+            GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
+            gc.screenState = ScreenState::SHOP_ROOM;
+            gc.gold = 10000;
+            gc.obtainRelic(RelicId::THE_COURIER);
+            for (auto egg : {RelicId::MOLTEN_EGG, RelicId::TOXIC_EGG, RelicId::FROZEN_EGG}) gc.obtainRelic(egg);
+            if (memberAndGift) {
+                gc.obtainRelic(RelicId::MEMBERSHIP_CARD);
+                gc.obtainRelic(RelicId::NLOTHS_GIFT);
+            }
+            gc.cardRng = rngForRoll(roll);
+            gc.cardRarityFactor = 0;
+            gc.mathUtilRng = Random(817);
+            auto expectedCard = gc.cardRng;
+            auto expectedMath = gc.mathUtilRng;
+            auto expectedMerchant = gc.merchantRng;
+            auto &shop = gc.info.shop;
+            const CardId ids[] = {CardId::ANGER, CardId::SHRUG_IT_OFF, CardId::INFLAME, CardId::FLASH_OF_STEEL};
+            const int slot = variant == 3 ? 5 : variant * 2;
+            shop.cards[slot] = Card(ids[variant]);
+            shop.cardPrice(slot) = 31;
+            const auto type = shop.cards[slot].getType();
+            CardRarity expectedRarity;
+            if (variant == 3) {
+                expectedRarity = expectedMerchant.random() < 0.3f ? CardRarity::RARE : CardRarity::UNCOMMON;
+                expectedCard.random(ColorlessRarityCardPool::getGroupSize(expectedRarity) - 1);
+            } else {
+                require(expectedCard.random(99) == roll, "bad rarity RNG fixture");
+                expectedRarity = roll < 9 ? CardRarity::RARE : roll < 46 ? CardRarity::UNCOMMON : CardRarity::COMMON;
+                if (type == CardType::POWER && expectedRarity == CardRarity::COMMON) expectedRarity = CardRarity::UNCOMMON;
+                expectedMath.random(TypeRarityCardPool::getPoolSize(gc.cc, type, expectedRarity) - 1);
+            }
+            const int basePrice = expectedRarity == CardRarity::RARE ? 150 : expectedRarity == CardRarity::UNCOMMON ? 75 : 50;
+            float price = basePrice * expectedMerchant.random(0.9f, 1.1f);
+            if (variant == 3) price *= 1.2f;
+            price *= 0.8f;
+            if (memberAndGift) price *= 0.5f;
+            shop.buyCard(gc, slot);
+            require(gc.gold == 9969 && gc.deck.cards[gc.deck.size() - 1].getId() == ids[variant], "restock charged or granted wrong original card");
+            require(shop.cards[slot].getRarity() == expectedRarity, "restock rarity/fallback differs from shop thresholds");
+            if (variant == 3) require(getCardColor(shop.cards[slot].getId()) == CardColor::COLORLESS, "colorless slot became colored");
+            else require(shop.cards[slot].getType() == type, "restock changed purchased card type");
+            require(shop.cards[slot].getUpgraded() == 1, "restock lost egg preview");
+            require(shop.cardPrice(slot) == static_cast<int>(price), "restock price not based on resulting rarity");
+            require(sameRng(gc.cardRng, expectedCard), "restock consumed wrong card RNG draws");
+            require(sameRng(gc.mathUtilRng, expectedMath), "restock consumed wrong math RNG draws");
+            require(sameRng(gc.merchantRng, expectedMerchant), "restock consumed wrong merchant RNG draws");
+            require(gc.cardRarityFactor == 0, "restock changed rarity adjustment");
+        }
+    }
+}
+
 static void checkShopEgg(int variant, int ascension) {
     GameContext gc(CharacterClass::IRONCLAD, 42, ascension);
     gc.screenState = ScreenState::SHOP_ROOM;
@@ -441,12 +536,13 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg") {
+        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock") {
             if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-legality") checkShopLegality(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-egg") checkShopEgg(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "shop-restock") checkShopRestock(std::stoi(argv[2]), std::stoi(argv[3]));
             else checkBossCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;
             return 0;

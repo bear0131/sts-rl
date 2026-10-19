@@ -290,3 +290,26 @@ def test_shop_egg_preview_matches_purchased_card(shop_factory, ascension, egg, u
         gc.shop_buy_card(i)
         assert gc.deck_ids()[-1] == (item['id'], expected)
         assert gc.gold == gold - item['price']
+
+
+@pytest.mark.parametrize('ascension', [0, 20])
+@pytest.mark.parametrize('slot,type_', [(0, sts.CardType.ATTACK), (2, sts.CardType.SKILL),
+                                      (4, sts.CardType.POWER)])
+def test_courier_repeated_public_buys_keep_shelf_type(shop_factory, ascension, slot, type_):
+    env = shop_factory(['The Courier', 'Molten Egg 2', 'Toxic Egg 2', 'Frozen Egg 2'],
+                       ascension=ascension)
+    gc = env.thick.gc
+    gc.gold = 10000
+    for _ in range(8):
+        before = gc.shop_contents()['cards'][slot]
+        gold = gc.gold
+        gc.shop_buy_card(slot)
+        assert gc.gold == gold - before['price']
+        assert gc.deck_ids()[-1] == (before['id'], before['upgrades'])
+        after = gc.shop_contents()['cards'][slot]
+        card = sts.Card(getattr(sts.CardId, after['id']))
+        assert card.type == type_
+        assert after['upgrades'] == 1
+        env._invalidate_backend_cache()
+        assert env.action_masks()[A._SHOP_CARD + slot]
+        assert env.thick.obs_canonical()['options']['shop_cards'][slot][1] == 1
