@@ -343,6 +343,25 @@ def test_packed_leaf_matches_canonical_bitwise(combat_factory, encounter, batch_
 
 
 @pytest.mark.native
+@pytest.mark.parametrize('encounter', ['Gremlin Leader', 'Automaton', 'Collector'])
+def test_partial_empty_monster_override_preserves_real_empty_slots(combat_factory, encounter):
+    env = combat_factory(['STRIKE_RED'] * 5, encounter)
+    bc = env.thick.bc
+    before = bc.to_dict()
+    key = bc.nosl_future_key()
+    assert any(m['id'] == 'INVALID = 0' for m in before['monsters'])
+    bc.apply_custom_state({'monsters': [{} for _ in before['monsters']]})
+    assert bc.to_dict() == before
+    assert bc.nosl_future_key() == key
+    empty_slot = next(i for i, m in enumerate(before['monsters']) if m['id'] == 'INVALID = 0')
+    edits = [{} for _ in before['monsters']]
+    edits[empty_slot] = {'hp': 1}
+    with pytest.raises(ValueError, match='absent monster'):
+        bc.apply_custom_state({'monsters': edits})
+    assert bc.to_dict() == before
+
+
+@pytest.mark.native
 def test_packed_leaf_global_cache_is_root_scoped(combat_factory, monkeypatch):
     from env.core import encode
 

@@ -772,6 +772,21 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         auto validation = bc;
         restoreCombatCardState(validation, spec["card_state"].cast<py::dict>());
     }
+    if (!strictComplete) {
+        bool hasEdits = false;
+        for (auto item : spec) {
+            const auto name = item.first.cast<std::string>();
+            if (name == "strict_complete") continue;
+            if (name == "player" && item.second.cast<py::dict>().empty()) continue;
+            if (name == "monsters") {
+                for (auto monster : item.second.cast<py::list>()) {
+                    if (!monster.cast<py::dict>().empty()) hasEdits = true;
+                }
+            } else hasEdits = true;
+        }
+        // An empty partial edit must not reset selection/turn lifecycle either.
+        if (!hasEdits) return;
+    }
     if (spec.contains("potions")) {
         const auto names = spec["potions"].cast<std::vector<std::string>>();
         if (names.size() > static_cast<std::size_t>(bc.potionCapacity))
@@ -949,6 +964,10 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         for (int i = 0; i < n; ++i) {
             auto m = mons[i].cast<py::dict>();
             auto &monster = bc.monsters.arr[i];
+            // Partial editors use {} to leave a physical slot unchanged.
+            // In particular an absent summon slot must keep maxHp == 0.
+            // Strict wire snapshots still require explicit present=false.
+            if (!strictComplete && m.empty()) continue;
             if (m.contains("present") && !getBool(m, "present", true)) {
                 if (m.size() != 1) throw std::invalid_argument(
                     "absent monster slot must contain only present=false");
@@ -988,6 +1007,9 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     monster.idx = i;
                     monster.isDyingB = false;
                 }
+            }
+            if (monster.id == sts::MonsterId::INVALID) {
+                throw std::invalid_argument("cannot edit an absent monster without an explicit species");
             }
             monster.maxHp = getBoundedInt(
                 m, "max_hp", monster.maxHp, 1, std::numeric_limits<int>::max());
