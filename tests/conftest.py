@@ -79,3 +79,28 @@ def gauntlet_factory():
         return env
 
     return make
+
+
+_DESIGNER_DECK = [('STRIKE_RED', 0), ('DEFEND_RED', 0), ('BASH', 0),
+         ('ANGER', 0), ('INFLAME', 0)]
+# Public map entry fixtures, not a claim of naturally reaching Act 2.
+_DESIGNER_ENTRIES = {
+    (0, False): (165, 5, 1), (0, True): (284, 4, 1),
+    (15, False): (164, 3, 2), (15, True): (235, 4, 1),
+}
+
+
+@pytest.fixture
+def designer_factory():
+    def make(ascension, option):
+        seed, x, y = _DESIGNER_ENTRIES[ascension, option in (1, 3)]
+        gc = sts.GameContext(sts.CharacterClass.IRONCLAD, seed, ascension)
+        gc.act, gc.floor_num, gc.gold, gc.cur_hp = 2, 20, 500, 60
+        gc.monster_chance = gc.shop_chance = gc.treasure_chance = 0
+        gc.cur_map_node_y = y - 1
+        gc.transition_to_map_node(x)
+        gc.set_deck(_DESIGNER_DECK)
+        assert gc.cur_event_name == 'Designer'
+        assert option in gc.legal_event_options()
+        return gc
+    return make
