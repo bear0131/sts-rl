@@ -49,13 +49,13 @@ CONTRACTS = {
     "Colosseum": [(0, '战斗|Fight', 'pending_colosseum_first_combat'),
                    (0, '怂了|Cowardice', 'leave'),
                    (1, '战斗到底|Victory', 'pending_colosseum_second_combat')],
-    "Cursed Tome": [(0, '阅读|Read', 'pending_tome_read'),
+    "Cursed Tome": [(0, '阅读|Read', 'tome_read'),
                      (1, '离开|Leave', 'leave'),
-                     (2, '继续|Continue', 'pending_tome_continue_1'),
-                     (3, '继续|Continue', 'pending_tome_continue_2'),
-                     (4, '继续|Continue', 'pending_tome_continue_3'),
-                     (5, '拿走|Take', 'pending_tome_take'),
-                     (6, '停止|Stop', 'pending_tome_stop')],
+                     (2, '继续|Continue', 'tome_continue_1'),
+                     (3, '继续|Continue', 'tome_continue_2'),
+                     (4, '继续|Continue', 'tome_continue_3'),
+                     (5, '拿走|Take', 'tome_take'),
+                     (6, '停止|Stop', 'tome_stop')],
     "Dead Adventurer": [(0, '搜索|继续|Search|Continue', 'pending_dead_search'),
                         (1, '离开|Leave', 'leave')],
     "Drug Dealer": [(0, '试一下J.A.X.|Test J.A.X.', 'augmenter_jax'),
@@ -154,7 +154,7 @@ def _rule_matches(event, text, labels, effect):
         return re.fullmatch(r'(?:献上[:：]?\d+金币|offer:\d+gold)', match[1]) is not None
     if match[1] not in {_text(label) for label in labels.split('|')}:
         return False
-    if event == 'Cursed Tome' and effect.startswith('pending_tome_continue_'):
+    if event == 'Cursed Tome' and effect.startswith('tome_continue_'):
         cost = int(effect.rsplit('_', 1)[1])
         return re.fullmatch(
             r'\[(?:继续|continue)\](?:失去|lose)' + str(cost) + r'(?:生命。|hp\.)',
@@ -324,6 +324,47 @@ class EventEffectAck:
     """Check observable effect types; permit selection UI, never stale retries."""
     def __init__(self):
         self.pending = None
+
+    def _waiting_tome(self, old, gs, effect, ready):
+        for key in ('seed', 'act', 'floor'):
+            if key not in old or key not in gs or old[key] != gs[key]:
+                raise RuntimeError(f'Cursed Tome changed/missing {key} before settlement')
+        if not ready:
+            return True
+        if gs.get('screen_type') == 'GAME_OVER' and effect != 'tome_read' and gs['current_hp'] <= 0:
+            self.pending = None
+            return False
+        if effect == 'tome_take' and gs.get('screen_type') == 'COMBAT_REWARD':
+            owned = {r['id'] for r in old['relics']}
+            eligible = {'Necronomicon', 'Enchiridion', "Nilry's Codex"} - owned
+            if not eligible:
+                eligible = {'Circlet'}
+            rewards = gs['screen_state']['rewards']
+            if (len(rewards) != 1 or rewards[0].get('reward_type') != 'RELIC'
+                    or rewards[0].get('relic', {}).get('id') not in eligible):
+                raise RuntimeError('Cursed Tome book reward identity/count mismatch')
+            # randomBook opens rewards; it does not obtain the relic. The model
+            # still owns the later claim/skip decision through RewardCommandAck.
+            self.pending = None
+            return False
+        if (gs.get('screen_type') != 'EVENT'
+                or gs.get('screen_state', {}).get('event_id') != 'Cursed Tome'):
+            raise RuntimeError('Cursed Tome unexpected result screen')
+        before, after = set(options(old)), set(options(gs))
+        if after == before:
+            return True  # Do not resend while observing the previous page.
+        expected = {
+            'tome_read': {2}, 'tome_continue_1': {3},
+            'tome_continue_2': {4}, 'tome_continue_3': {5, 6},
+            'tome_stop': {1},
+        }
+        if after != expected.get(effect):
+            raise RuntimeError(f'Cursed Tome wrong next page after {effect}: {after}')
+        # Java buttonEffect applies HP_LOSS synchronously before changing the
+        # page. Read back actual HP/revival state rather than equating net HP
+        # loss with nominal damage (Tungsten Rod/Fairy/Lizard Tail can alter it).
+        self.pending = None
+        return False
 
     @staticmethod
     def _augmenter_deck(gs):
@@ -530,6 +571,9 @@ class EventEffectAck:
             raise ValueError(
                 f'recognized event option has no audited effect receipt: {effect}'
             )
+        if effect.startswith('tome_'):
+            if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
+                raise ValueError('Cursed Tome semantic action and UI command disagree')
         if effect.startswith('augmenter_'):
             if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
                 raise ValueError('Augmenter event action and UI command disagree')
@@ -596,6 +640,8 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        if effect.startswith('tome_'):
+            return self._waiting_tome(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('augmenter_'):
             return self._waiting_augmenter(old, g, effect)
         if effect in {'portal_boss', 'portal_boss_confirmed'}:
