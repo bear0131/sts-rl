@@ -198,7 +198,9 @@ bool isValidRewardsAction(const GameContext &gc, const search::GameAction a) {
             return r.sapphireKey || r.emeraldKey;
 
         case search::GameAction::RewardsActionType::POTION:
-            return a.getIdx1() < r.potionCount;
+            return a.getIdx1() < r.potionCount
+                && !gc.relics.has(RelicId::SOZU)
+                && gc.potionCount < gc.potionCapacity;
 
         case search::GameAction::RewardsActionType::GOLD:
             return a.getIdx1() < r.goldRewardCount;
@@ -229,7 +231,10 @@ bool isValidShopAction(const GameContext &gc, const search::GameAction a) {
             if (select > 2) {
                 return false;
             }
-            return s.potionPrice(select) != -1 && gc.gold >= s.potionPrice(select);
+            return !gc.relics.has(RelicId::SOZU)
+                && gc.potionCount < gc.potionCapacity
+                && s.potionPrice(select) != -1
+                && gc.gold >= s.potionPrice(select);
 
 
         case search::GameAction::RewardsActionType::RELIC:
@@ -579,6 +584,7 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
         for (int x = 0; x < r.cardRewards[i].size(); ++x) {
             actions.emplace_back(search::GameAction::RewardsActionType::CARD, i, x);
         }
+        actions.emplace_back(search::GameAction::RewardsActionType::CARD, i, 5);
     }
 
     for (int i = 0; i < r.relicCount; ++i) {
@@ -589,8 +595,10 @@ std::vector<search::GameAction> getAllRewardActions(const sts::GameContext &gc) 
         actions.emplace_back(search::GameAction::RewardsActionType::KEY);
     }
 
-    for (int i = 0; i < r.potionCount; ++i) {
-        actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+    if (!gc.relics.has(RelicId::SOZU) && gc.potionCount < gc.potionCapacity) {
+        for (int i = 0; i < r.potionCount; ++i) {
+            actions.emplace_back(search::GameAction::RewardsActionType::POTION, i);
+        }
     }
     actions.emplace_back(search::GameAction::RewardsActionType::SKIP);
 

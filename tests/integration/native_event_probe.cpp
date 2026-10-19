@@ -24,6 +24,67 @@ int main(int argc, char **argv) {
     root.curEvent = static_cast<Event>(event);
     root.regainControlAction = [](GameContext &g) { g.screenState = ScreenState::MAP_SCREEN; };
     if (root.curEvent != Event::NEOW) root.setupEvent();
+    if (variant == 19) {
+        Rewards reward;
+        CardReward cards;
+        cards.push_back(Card(CardId::STRIKE_RED));
+        cards.push_back(Card(CardId::BASH));
+        reward.addCardReward(cards);
+        root.openCombatRewardScreen(reward);
+        int skipCardCount = 0;
+        for (const auto &action : search::GameAction::getAllActionsInState(root)) {
+            if (action.getRewardsActionType() == search::GameAction::RewardsActionType::CARD
+                && action.getIdx1() == 0 && action.getIdx2() == 5) ++skipCardCount;
+        }
+        if (skipCardCount != 1) return 26;
+        search::GameAction skipCard(search::GameAction::RewardsActionType::CARD, 0, 5);
+        if (!skipCard.isValidAction(root)) return 26;
+        const int maxHp = root.maxHp;
+        skipCard.execute(root);
+        if (root.info.rewardsContainer.cardRewardCount != 0 || root.maxHp != maxHp) return 26;
+        std::cout << "card_reward_skip_is_enumerated" << std::endl;
+        return 0;
+    }
+    if (variant == 20) {
+        Rewards reward;
+        reward.addPotion(Potion::BLOOD_POTION);
+        root.openCombatRewardScreen(reward);
+        search::GameAction claim(search::GameAction::RewardsActionType::POTION, 0);
+        const auto hasPotionClaim = [](const GameContext &gc) {
+            for (const auto &action : search::GameAction::getAllActionsInState(gc)) {
+                if (action.getRewardsActionType() == search::GameAction::RewardsActionType::POTION) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!claim.isValidAction(root) || !hasPotionClaim(root)) return 27;
+        auto full = root;
+        full.potions.fill(Potion::BLOOD_POTION);
+        full.potionCount = full.potionCapacity;
+        if (claim.isValidAction(full) || hasPotionClaim(full)) return 27;
+        auto sozu = root;
+        sozu.obtainRelic(RelicId::SOZU);
+        if (claim.isValidAction(sozu) || hasPotionClaim(sozu)) return 27;
+        std::cout << "potion_reward_requires_claimable_slot" << std::endl;
+        return 0;
+    }
+    if (variant == 21) {
+        root.screenState = ScreenState::SHOP_ROOM;
+        root.gold = 500;
+        root.info.shop.potionPrice(0) = 10;
+        search::GameAction buy(search::GameAction::RewardsActionType::POTION, 0);
+        if (!buy.isValidAction(root)) return 28;
+        auto full = root;
+        full.potions.fill(Potion::BLOOD_POTION);
+        full.potionCount = full.potionCapacity;
+        if (buy.isValidAction(full)) return 28;
+        auto sozu = root;
+        sozu.obtainRelic(RelicId::SOZU);
+        if (buy.isValidAction(sozu)) return 28;
+        std::cout << "shop_potion_validation_matches_enumerator" << std::endl;
+        return 0;
+    }
     if (variant == 17) {
         Rewards reward;
         reward.addGold(11);
