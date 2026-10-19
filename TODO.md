@@ -7,7 +7,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BRIDGE73 | 源码确认，待修复 | BattleContext/GameContext喝药遗漏ToyOrnithopter的5治疗；战外EntropicBrew无视Sozu，且按槽号而非先空槽顺序获取随机药水。按真实use→onUsePotion顺序修复，Smoke也须在结束前完成治疗；不改变权重/动作布局，自动仙女复活不冒充主动喝药。 |
-| BRIDGE72 | 源码确认，待修复 | BattleContext::updateRelicsOnExit把MeatOnTheBone混入遗物顺序，BurningBlood可能先抬高HP导致漏12治疗；战后仍处于COMBAT的MagicFlower倍率遗漏，FaceOfCleric被延后到afterBattle而非真实遗物顺序。修复实际结算与projected_exit_hp消费者，保留最终权重pre-settlement HP目标；未行为验证。 |
+| BRIDGE72 | 已修复并构建，实机组合待覆盖 | updateRelicsOnExit先Meat后实际遗物顺序，战后仍COMBAT应用MagicFlower四舍五入/Bloom禁疗；Face在此加上限与治疗而不再afterBattle重复。projected_exit_hp复用、legacy boss目标同步规则；最终mode0结算前HP目标不变。源码对照外部endBattle/五遗物并复读消费者，未做离线或实际组合行为验证。 |
 | BRIDGE71 | 源码修复并构建，实机逃跑分支未验收 | canDrinkPotion共享合法性，实际Boss物种禁用/SlimeBoss分裂例外，Act4背袭仍不支持；PLAYER_ESCAPE=3独立于win/loss，搜索/评测/监督标签同步。afterEscape保留房间掉落RNG但不生成卡牌/展示战利品；真实SmokeCommandAck等待药槽消耗与同层非战斗帧。不改OBS20/ACTION8/layout9/权重，不伪造击杀；事件特殊战斗/Act4不外推，相关治疗问题见BRIDGE72/73。 |
 | BRIDGE70 | F41行动身份恢复实机通过，继续至三幕胜利 | from_real以Serpent读取行动，_state_spec以canonical SpireGrowth读取同表；real_to_sim_monster_move统一解登记别名，当前及两层history共用原始行动表，未知仍拒绝。1848a02从F41/index423连续运行718.2秒，打赢SpireGrowth、Reptomancer、Maw、GiantHead、TimeEater，F51真实GAME_OVER/victory=true，桥接ERROR为0。仅本续档路线验收，不代表所有怪物/分支或正式胜率。证据见worklog/2026-10-20.md“三幕胜利终局审计”。 |
 | BRIDGE69 | 二→三幕入口回执已实机通过 | TheBeyond保留TreasureRoomBoss(-1,15)，不同于TheCity的EmptyRoom(0,-1)。按来源幕指定目标并核对first_node_chosen=false，保留seed/floor/phase/room/node严格检查。12819e8从F34宝箱续档实际确认source=2/34/TreasureRoomBoss→target=3/34/TreasureRoomBoss，随后首行进入F35；其他跳过/特殊宝箱组合不据此宣称全部覆盖。 |

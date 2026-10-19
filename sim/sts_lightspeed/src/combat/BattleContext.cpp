@@ -3,6 +3,7 @@
 //
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include "combat/BattleContext.h"
 #include "game/GameContext.h"
@@ -529,7 +530,19 @@ void BattleContext::exitBattle(GameContext &g) const {
 }
 
 void BattleContext::updateRelicsOnExit(GameContext &g) const {
-    const bool survived = outcome == Outcome::PLAYER_VICTORY || outcome == Outcome::PLAYER_ESCAPE;
+    const bool survived = player.curHp > 0 &&
+        (outcome == Outcome::PLAYER_VICTORY || outcome == Outcome::PLAYER_ESCAPE);
+    // endBattle runs before the room leaves COMBAT, so Magic Flower applies.
+    const auto heal = [&g](int amount) {
+        if (g.hasRelic(RelicId::MAGIC_FLOWER)) {
+            amount = static_cast<int>(std::round(static_cast<float>(amount) * 1.5f));
+        }
+        g.playerHeal(amount);  // Still respects Mark of the Bloom.
+    };
+    // AbstractRoom triggers Meat before player.onVictory iterates the relics.
+    if (survived && g.hasRelic(RelicId::MEAT_ON_THE_BONE) && g.curHp <= g.maxHp / 2) {
+        heal(12);
+    }
     for (auto &r : g.relics.relics) {
         switch (r.id) {
             case RelicId::ANCIENT_TEA_SET:
@@ -580,19 +593,20 @@ void BattleContext::updateRelicsOnExit(GameContext &g) const {
 
             case RelicId::BURNING_BLOOD:
                 if (survived) {
-                    g.playerHeal(6);
+                    heal(6);
                 }
                 break;
 
             case RelicId::BLACK_BLOOD:
                 if (survived) {
-                    g.playerHeal(12);
+                    heal(12);
                 }
                 break;
 
-            case RelicId::MEAT_ON_THE_BONE:
-                if (survived && g.curHp <= g.maxHp / 2) {
-                    g.playerHeal(12);
+            case RelicId::FACE_OF_CLERIC:
+                if (survived) {
+                    ++g.maxHp;
+                    heal(1);
                 }
                 break;
 

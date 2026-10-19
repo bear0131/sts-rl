@@ -36,21 +36,31 @@ double bossTransitionTerminalValue(const BattleContext &bc, int mode, double win
         return 0.0;
     }
 
-    const int combatMaximum = std::max(0, bc.player.maxHp);
-    int hp = std::clamp(bc.player.curHp, 0, combatMaximum);
-    if (bc.player.hasRelic<RelicId::BURNING_BLOOD>()) {
-        hp = std::min(combatMaximum, hp + 6);
-    } else if (bc.player.hasRelic<RelicId::BLACK_BLOOD>()) {
-        hp = std::min(combatMaximum, hp + 12);
+    // The optional legacy transition objective must use the same exit heal
+    // order as endBattle. The current weight's mode=0 returned above unchanged.
+    int maximum = std::max(0, bc.player.maxHp);
+    int hp = std::clamp(bc.player.curHp, 0, maximum);
+    const auto heal = [&](int amount) {
+        if (bc.player.hasRelic<RelicId::MARK_OF_THE_BLOOM>()) return;
+        if (bc.player.hasRelic<RelicId::MAGIC_FLOWER>()) {
+            amount = static_cast<int>(std::round(static_cast<float>(amount) * 1.5f));
+        }
+        hp = std::min(maximum, hp + amount);
+    };
+    if (bc.player.hasRelic<RelicId::MEAT_ON_THE_BONE>() && hp > 0 && hp <= maximum / 2) {
+        heal(12);
     }
-    if (bc.player.hasRelic<RelicId::MEAT_ON_THE_BONE>() &&
-        hp <= combatMaximum / 2) {
-        hp = std::min(combatMaximum, hp + 12);
+    if (bc.player.hasRelic<RelicId::BURNING_BLOOD>()) {
+        heal(6);
+    }
+    if (bc.player.hasRelic<RelicId::BLACK_BLOOD>()) {
+        heal(12);
     }
 
-    int maximum = combatMaximum;
+    // Positive capped healing and Face's max-HP increase commute after Meat.
     if (bc.player.hasRelic<RelicId::FACE_OF_CLERIC>()) {
         ++maximum;
+        heal(1);
     }
 
     if (mode == 1) {
