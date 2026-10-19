@@ -16,6 +16,10 @@
 
 这只是当前main已有CardInstance字段的精确接口，不是完整战斗/Java快照。恢复要求PLAYER_NORMAL且动作队列为空，待选牌/自动出牌中的引用必须与队列一起处理，不能仅替换牌堆。版本1缺少动态exhausts而被明确拒绝，不根据印刷属性补值。Java UUID映射及真实帧接入仍见TODO BRIDGE28。旧to_dict、apply_custom_state与模型张量布局不变；旧简化接口不会因此自动获得完整实例语义。回归 `tests/integration/test_combat_card_snapshot.py`；使用新接口需重建本checkout原生扩展。
 
-主牌组快照：`GameContext.deck_state()` / `set_deck_state(records)` 保持物理牌序，每项必须且仅包含 `id/upgrades/misc/bottle`。`id` 为原生枚举名；`misc` 保留仪式匕首等永久数值，灼热的 `misc` 必须等于完整升级次数；`bottle` 是 `NONE/ATTACK/SKILL/POWER`，三种瓶装各至多一张且必须匹配牌类型。最多96张，非法类型、缺项、多余字段、越界或重复瓶装会在替换前整批拒绝；不触发取得卡牌效果或消耗随机数。此接口用于原生状态恢复，Java UUID与真实帧转换仍待BRIDGE28接入，不能直接传入CommunicationMod卡牌对象。
+主牌组快照：`GameContext.deck_state()` / `set_deck_state(records)` 保持物理牌序，每项必须且仅包含 `id/upgrades/misc/bottle`。`id` 为原生枚举名；`misc` 保留仪式匕首等永久数值，灼热的 `misc` 必须等于完整升级次数；`bottle` 是 `NONE/ATTACK/SKILL/POWER`，三种瓶装各至多一张且必须匹配牌类型。最多96张，非法类型、缺项、多余字段、越界或重复瓶装会在替换前整批拒绝；不触发取得卡牌效果或消耗随机数。此接口接受原生记录；CommunicationMod卡牌须经下述真实帧转换，不能直接传入原生接口。
 
 `set_deck([(id, upgrades), ...])` 继续用于创建新卡，兼容list/tuple序列及二元项；不会恢复永久成长数值，并明确清除旧瓶装索引。它现在也先验证完整输入，再原子替换；负数/布尔升级数、普通牌多次升级、状态牌、非法ID及超出96张会拒绝。需要同步重建原生扩展，观测/动作张量与checkpoint形状不变。主牌组恢复后的真实伤害、首抽物理身份、成长提交与选择候选见 `tests/integration/test_master_deck_snapshot.py`、`test_deck_invariants.py`。
+
+真实主牌组帧接入：`schemas/card_state.py` 接受同事分支 `fbfdf21` 起导出的逐卡 `simulator_card_state.version=1`（与原生战斗快照version=2是两个合同）。`replay._sync_gc` 使用其中的当前misc和三种瓶装标记恢复主牌组，Java灼热的misc=0转换为原生完整升级次数。主牌组必须提供唯一、规范拼写的UUID；卡牌ID、升级数、misc、当前费用、exhausts、ethereal及完整sidecar均需显式提供。缺项、未知字段、类型错误或不支持的版本会报错，旧日志不能通过补默认值用于精确回放。普通策略观测仍支持其原有帧格式。
+
+逐卡sidecar字段为 `version/base_cost/base_damage/base_block/free_to_play_once/retain/self_retain/innate/bottled_flame/bottled_lightning/bottled_tornado`；字段读取对应 `AbstractCard` 当前实例，不用卡名重建。现有模型词表顺序不变；战士/无色卡的Java特殊ID通过 `_card` 统一映射，主牌组、战斗牌堆、商店/奖励/选择共享该入口。回归 `tests/integration/test_real_master_deck.py` 与 `tests/unit/test_bridge_card_state.py` 验证输入帧到实际原生伤害/首抽及现有观测token。此阶段没有接入完整战斗UUID映射、待选牌队列、遗物计数恢复；`_sync_gc` 也不是完整真实战斗根状态恢复。兼容的Java导出器仍在远端同事分支，本机未编译、部署或连接实机，不把合成帧回归当成客户端验收。

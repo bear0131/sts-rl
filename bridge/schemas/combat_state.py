@@ -44,9 +44,18 @@ def _powers_real(power_list):
 # The cards behave identically either way, so canonicalize the upgrade to 0.
 _NO_UPGRADE = {"Dazed", "Wound", "Slimed", "Void"}  # Burn excluded (Burn+ exists)
 
-# The generated model vocabulary title-cases enum words. Normalize the one
-# CommunicationMod id whose preposition casing differs from that convention.
-_CARD_CANON_ID = {"Blood for Blood": "Blood For Blood"}
+# Java IDs are not display names. Match the frozen native-derived vocabulary
+# for Ironclad/colorless cards without changing its token order.
+_CARD_CANON_ID = {
+    "Blood for Blood": "Blood For Blood",
+    "Ghostly": "Apparition",
+    "Flash of Steel": "Flash Of Steel",
+    "HandOfGreed": "Hand Of Greed",
+    "J.A.X.": "Jax",
+    "Master of Strategy": "Master Of Strategy",
+    "PanicButton": "Panic Button",
+    "RitualDagger": "Ritual Dagger",
+}
 
 
 def _card(card_id, up, cost=None):
@@ -163,6 +172,7 @@ def real_to_sim_card_enum(real_id):
     """Inverse of _sim_card_id: real CommunicationMod id -> sim enum name, for
     force-syncing the sim deck (e.g. 'Strike_R'->'STRIKE_RED', 'Searing Blow'->
     'SEARING_BLOW')."""
+    real_id = _CARD_CANON_ID.get(real_id, real_id)
     if real_id in _CARD_OVERRIDE_INV:
         return _CARD_OVERRIDE_INV[real_id]
     return real_id.upper().replace(" ", "_")
@@ -303,7 +313,7 @@ def normalize_real_overworld(gs):
         "hp": gs["current_hp"],
         "max_hp": gs["max_hp"],
         "gold": gs["gold"],
-        "deck": sorted((c["id"], c["upgrades"]) for c in gs["deck"]),
+        "deck": sorted((c["id"], c["up"]) for c in _cards_real(gs["deck"])),
         "relics": sorted(r["id"] for r in gs["relics"]),
     }
 

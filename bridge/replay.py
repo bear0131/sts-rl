@@ -33,6 +33,7 @@ from schemas.combat_state import (  # noqa: E402
     normalize_real_overworld, normalize_sim_overworld, diff_overworld,
     real_to_sim_card_enum, _sim_monster_id,
 )
+from schemas.card_state import real_master_deck_state  # noqa: E402
 
 # sim InputState enum (combat): 1 = PLAYER_NORMAL, 2 = CARD_SELECT
 _CARD_SELECT = 2
@@ -348,7 +349,10 @@ def _sync_gc(seed, asc, init):
     gc.cur_hp = init["current_hp"]
     gc.max_hp = init["max_hp"]
     gc.gold = init["gold"]
-    gc.set_deck([(real_to_sim_card_enum(c["id"]), c["upgrades"]) for c in init["deck"]])
+    gc.set_deck_state([
+        dict(card, id=real_to_sim_card_enum(card["id"]))
+        for card in real_master_deck_state(init["deck"])
+    ])
     gc.set_relics([r["id"] for r in init["relics"]])
     # if this combat is the seed's burning (emerald-key) elite, sit the gc on
     # that map node (floor == burningEliteY+1) so create_battle applies the
