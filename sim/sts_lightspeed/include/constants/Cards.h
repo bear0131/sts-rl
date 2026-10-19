@@ -733,12 +733,14 @@ namespace sts {
             case CardId::PANACHE:
             case CardId::PANIC_BUTTON:
             case CardId::PURITY:
+            case CardId::RAGE:
             case CardId::RECKLESS_CHARGE:
             case CardId::SADISTIC_NATURE:
             case CardId::SECRET_TECHNIQUE:
             case CardId::SECRET_WEAPON:
             case CardId::SWIFT_STRIKE:
             case CardId::THINKING_AHEAD:
+            case CardId::TRIP:
             case CardId::VIOLENCE:
             case CardId::WARCRY:
                 return 0;
@@ -753,7 +755,6 @@ namespace sts {
             case CardId::STRIKE_PURPLE:
             case CardId::STRIKE_RED:
             case CardId::SWORD_BOOMERANG:
-            case CardId::TRIP:
             case CardId::TRUE_GRIT:
             case CardId::WILD_STRIKE:
                 return 1;
