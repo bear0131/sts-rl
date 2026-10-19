@@ -845,23 +845,9 @@ void BattleContext::executeActions() {
             continue;
         }
 
-        // can't win check
-        if (cards.cardsInHand + cards.discardPile.size() + cards.drawPile.size() == 0) {
-            bool hasDamageWithoutCards = player.hasStatus<PS::OMEGA>() ||
-                    player.hasStatus<PS::THORNS>() ||
-                    player.bomb1 ||
-                    player.bomb2 ||
-                    player.bomb3;
-
-            if (!hasDamageWithoutCards && monsters.arr[0].id != MonsterId::TRANSIENT) {
-                outcome = Outcome::PLAYER_LOSS;
-                break;
-            }
-        }
-
-        if (outcome != Outcome::UNDECIDED) {
-            break;
-        }
+        // Empty card piles are not a terminal condition. Potions, generated
+        // cards and passive effects may still win; return normal control and
+        // let actual death/escape/victory or the existing budget settle it.
 
         // Use the same explicit death/escape/rebirth predicate as damage and
         // target selection; do not silently rewrite a cached count to win.
@@ -1840,9 +1826,11 @@ void BattleContext::onUseAttackCard() {
 
     // todo Choke Power
 
-    auto &m = monsters.arr[0];
-    if (m.hasStatus<MS::SHARP_HIDE>()) {
-        addToBot( Actions::DamagePlayer(m.getStatus<MS::SHARP_HIDE>()));
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        const auto &m = monsters.arr[i];
+        if (m.id != MonsterId::INVALID && m.hasStatus<MS::SHARP_HIDE>()) {
+            addToBot(Actions::DamagePlayer(m.getStatus<MS::SHARP_HIDE>()));
+        }
     }
 
 }
@@ -1930,9 +1918,16 @@ void BattleContext::onUseSkillCard() {
     // ********* Enemy Powers onUseCard *********
     // todo Choke Power
 
-    auto &m = monsters.arr[0];
-    if (m.hasStatus<MS::ENRAGE>()) {
-        m.buff<MS::STRENGTH>(m.getStatus<MS::ENRAGE>());
+    for (int i = 0; i < monsters.monsterCount; ++i) {
+        const auto &m = monsters.arr[i];
+        if (m.id != MonsterId::INVALID && m.hasStatus<MS::ENRAGE>()) {
+            const int strength = m.getStatus<MS::ENRAGE>();
+            // AngerPower adds to TOP; Nob is slot 1 in Colosseum fight two.
+            addToTop({[i, strength](BattleContext &ctx) {
+                auto &target = ctx.monsters.arr[i];
+                if (!target.isDeadOrEscaped()) target.buff<MS::STRENGTH>(strength);
+            }});
+        }
     }
 }
 
@@ -1995,9 +1990,16 @@ void BattleContext::onUsePowerCard() {
     }
 
     for (int i = 0; i < monsters.monsterCount; ++i) {
-        auto &m = monsters.arr[i];
-        if (m.isTargetable() && m.hasStatus<MS::CURIOSITY>()) {
-            m.buff<MS::STRENGTH>(m.getStatus<MS::CURIOSITY>());
+        const auto &m = monsters.arr[i];
+        if (m.id != MonsterId::INVALID && m.hasStatus<MS::CURIOSITY>()) {
+            const int strength = m.getStatus<MS::CURIOSITY>();
+            // Curiosity adds to BOTTOM. If earlier Panache damage ends form
+            // one, ApplyPowerAction rejects the now half-dead owner instead
+            // of carrying this extra Strength into form two.
+            addToBot({[i, strength](BattleContext &ctx) {
+                auto &target = ctx.monsters.arr[i];
+                if (!target.isDeadOrEscaped()) target.buff<MS::STRENGTH>(strength);
+            }});
         }
     }
 }
