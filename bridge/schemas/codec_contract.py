@@ -325,6 +325,7 @@ def complete_word_tables():
             "audit": "BRIDGE76 real F46 same-save attachment and Four Shapes win passed after fix; continued to F50 natural loss with zero bridge errors; Neow/burning-elite combinations still uncovered",
         },
         "card_use_and_empty_pile_contracts": {
+            "Corruption/Mummified Hand": "first Corruption use constructs ApplyPower and immediately applies modifyCostForCombat(-9) to skills in hand/draw/discard/exhaust, before Mummified Hand selects positive base+turn cost non-freeOnce targets; power itself remains BOTTOM, existing Corruption skips reapplication, X costs stay negative (BRIDGE90)",
             "Unceasing Top": "empty-hand draw must settle queued shuffle/DrawCard/Evolve/FireBreathing/Void effects before PLAYER_NORMAL; NoDraw or empty draw+discard enqueue nothing and return without spinning (BRIDGE89)",
             "Void": "triggerWhenDrawn appends BOTTOM LoseEnergyAction(1), clamped to0 at execution; pre-existing Warcry/ThinkingAhead selection sees pre-loss energy; do not deduct inside draw (BRIDGE88)",
             "Chrysalis/Metamorphosis": "use() samples 3/5 skill/attack identities, reduces only positive base/turn costs to0 (Whirlwind stays X), then queues individual BOTTOM MakeTempCardInDrawPile; preserve actual CardGroup random spot 0..size-1 and no RNG for empty pile (BRIDGE87)",

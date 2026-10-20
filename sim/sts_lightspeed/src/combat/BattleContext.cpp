@@ -1648,7 +1648,12 @@ void BattleContext::usePowerCard() {
             break;
 
         case CardId::CORRUPTION:
-            addToBot( Actions::BuffPlayer<PS::CORRUPTION>() );
+            if (!player.hasStatus<PS::CORRUPTION>()) {
+                // ApplyPowerAction's constructor changes costs during use(),
+                // before Mummified Hand selects an onUseCard target.
+                cards.onBuffCorruption();
+                addToBot( Actions::BuffPlayer<PS::CORRUPTION>() );
+            }
             break;
 
         case CardId::COMBUST:

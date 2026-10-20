@@ -502,39 +502,29 @@ void CardManager::onTookDamage() {
 }
 
 void CardManager::onBuffCorruption() {
-    // game does modifyCostForCombat here but I don't think its necessary as skills cant cost more than 4?
+    // AbstractCard.modifyCostForCombat(-9), including temporary cost changes.
+    const auto reduceSkillCost = [](CardInstance &c) {
+        if (c.getType() != CardType::SKILL) return;
+        if (c.costForTurn > 0) {
+            c.costForTurn = static_cast<std::int8_t>(std::max(0, c.costForTurn - 9));
+            c.cost = c.costForTurn;
+        } else if (c.cost >= 0) {
+            c.cost = static_cast<std::int8_t>(std::max(0, c.cost - 9));
+            c.costForTurn = 0;
+        }
+    };
     for (int i = 0; i < cardsInHand; ++i) {
-        auto &c = hand[i];
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
+        reduceSkillCost(hand[i]);
     }
-
-    // probably only need to do hand?
-
     for (auto &c : drawPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
+        reduceSkillCost(c);
     }
-
     for (auto &c : discardPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
+        reduceSkillCost(c);
     }
-
     for (auto &c : exhaustPile) {
-        if (c.getType() == CardType::SKILL && c.cost > 0) {
-            c.cost = 0;
-            c.costForTurn = 0;
-        }
+        reduceSkillCost(c);
     }
-
-
 }
 
 // **************** END SPECIAL HELPERS ****************

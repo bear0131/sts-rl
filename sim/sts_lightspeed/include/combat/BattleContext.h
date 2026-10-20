@@ -243,9 +243,6 @@ namespace sts {
     template <PlayerStatus s>
     Action Actions::BuffPlayer(int amount) {
         return {[=] (BattleContext &bc) {
-            if (s == PlayerStatus::CORRUPTION && !bc.player.hasStatus<PS::CORRUPTION>()) {
-                bc.cards.onBuffCorruption();
-            }
             bc.player.buff<s>(amount);
         }};
     }
