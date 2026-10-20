@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE136 | 源码/语法/必要原生构建完成，待同208/F36续05 | 208/F36三Shapes须shadow_nonce1，开场GAMBLE首次attach漏公共根而KeyError UID4。现仅新attach、确切赌筹/Toolbox来源、turn1/零出牌弃牌/零选择且原生任务一致时原子恢复完整公共状态，保留pending任务/队列/RNG，再走原严格UID/实例/顺序/mask检查；不向半途选择开放重置或按位置猜。新native f68091f2/入口capability预检，OBS20/ACTION8/layout9/模型预算不变；源码/语法/clone/raw/key复读，无离线测试。旧04失败/原67件恢复保留，自然F36保存2693547e/index294待续05，不START/跳209；Toolbox特殊路径未自然验证。 |
+| BRIDGE136 | 已部署；同208/F36 nonce1与F38 nonce6开场赌筹实机通过，续F39 | 49b9060/nativef680/v35jar3b6，同自然F36保存2693547e/index294续05，先注入完整实际公共根再严格UID/实例/顺序/mask；模型128搜索自主CONFIRM保留原五牌，三Shapes战后继续，F38 SphereAndTwoShapes的nonce6再次成功。仅新attach/确切开场源/turn1/零出牌弃牌零选择，任务/队列/RNG保留，非一般pending重置，不按位置或新nonce猜手牌。实际模型32508加载pyd路径/hash核验；无离线测试/模型布局预算变化，无START/跳209。旧04失败保留；Toolbox与特殊后继联动未自然覆盖。 |
 | BRIDGE135 | 源码确证缺口，待实现：Designer/NoteForYourself typed导出与回执 | entity_ids已有两事件kind语义，real_game_env可消费typed按钮，但现Java只新增WeMeetAgain，event_contract两事件仍无stock动作/效果实现。不得因STRUCTURED_CONTRACTS包含身份就称已可实机；需核外部事件源码导出真实服务模式/价格/牌与持久Note来源，保留旧固定动作编号和全局实体，不从本地化或UI顺序猜，不填PAD/强制离开；完整回执、源码/语法/必要构建后自然同档验证。 |
 | BRIDGE134 | 已部署；208/F29赠卡/OldCoin+Ecto实际通过，续至F33 | 333b4fc/v35jar3b6d461d用真实enum+mod等待/CHOOSE非空门控。04同efdd原档模型57.9368%选旧语义2→CHOOSE0，精确移除ShrugItOff0指定UUID/21→20牌，真实OldCoin到账但Ecto令gold22不变，完整回执后才最终Leave；F30原128搜索index219恢复，F33继续/无ERROR。所有旧failed段保留，01 enum/03加载/02空间原因明确，不START/跳209。药水/金币及其他screenless组合尚未自然覆盖，无离线测试；不扩模型/猜UI/PAD/泄露未来奖品。 |
 | BRIDGE133 | 已部署208；实际普通128/强制END零诊断通过，终局汇总待验 | RealCombatSearch现按每次策略diagnostics明确整数累加、缺失拒绝，另报预算乘积及strategy-diagnostics-v1；含内部prefix/未发重选工作且不随transport rollback抹掉，init/reset一起覆盖。d3ec35a完整新冻208，F1真实index3强制END报告0且执行，无错误；终局汇总字段尚待自然结果。只改统计，不改搜索/模型/RNG，旧结果按历史预算解释不回填推测值；既有fixture同步、语法及完整复读，无离线测试。 |
