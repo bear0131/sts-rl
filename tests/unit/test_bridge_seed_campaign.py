@@ -16,7 +16,7 @@ def frame(*, in_game, seed=None, game_over=False, victory=False):
             "floor": 17,
             "act": 1,
         })
-    return {"in_game": in_game, "game_state": gs}
+    return {"in_game": in_game, "ready_for_command": True, "game_state": gs}
 
 
 def test_seed_campaign_reuses_pending_seed_then_advances_after_game_exit(tmp_path):

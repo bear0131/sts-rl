@@ -348,6 +348,8 @@ class RealPolicyAgent:
             log.info("campaign game complete %s", campaign_result)
         if (self.campaign is not None and self.adapter.in_game()
                 and self.adapter.screen_type() == "GAME_OVER"):
+            if frame.get("ready_for_command") is not True or 'PROCEED' not in self.adapter.commands():
+                return RealDecision("STATE", "await_campaign_game_over_ready")
             return RealDecision("PROCEED", "campaign_game_over")
 
         match_command = self.match_transport.command(frame, self.adapter._wait_clock())

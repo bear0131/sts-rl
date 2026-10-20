@@ -28,7 +28,7 @@ def seed_string_to_long(seed: str) -> int:
 
 class SeedCampaign:
     def __init__(self, seeds: list[str], results_path: str | Path | None = None) -> None:
-        if not seeds or len(set(seeds)) != len(seeds):
+        if not seeds or len({seed_string_to_long(seed) for seed in seeds}) != len(seeds):
             raise ValueError("campaign seeds must be non-empty and distinct")
         self.seeds = tuple(str(seed) for seed in seeds)
         self.results_path = None if results_path is None else Path(results_path)
@@ -56,25 +56,35 @@ class SeedCampaign:
     def observe(
         self, frame: dict[str, Any], *, metadata: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        in_game = bool(frame.get("in_game"))
+        in_game = frame.get("in_game")
         gs = frame.get("game_state") or {}
-        if in_game:
+        if in_game is True:
             self.active = True
-        if in_game and str(gs.get("screen_type") or "") == "GAME_OVER" and not self.recorded:
-            ss = gs.get("screen_state") or {}
+        if in_game is True and gs.get("screen_type") == "GAME_OVER" and not self.recorded:
+            if frame.get("ready_for_command") is not True:
+                return None  # A partially constructed terminal is not a result.
+            ss = gs.get("screen_state")
+            if (not isinstance(ss, dict) or type(ss.get("victory")) is not bool
+                    or type(ss.get("score")) is not int):
+                raise ValueError("ready GAME_OVER requires actual boolean victory and integer score")
+            if (type(gs.get("seed")) is not int or type(gs.get("floor")) is not int
+                    or gs["floor"] < 0 or type(gs.get("act")) is not int or gs["act"] < 1):
+                raise ValueError("ready GAME_OVER requires actual integer seed/floor/act identity")
             requested_seed = self.current_seed
             if requested_seed is None:
                 raise RuntimeError("game ended after the configured seed campaign completed")
             row = {
                 "requested_seed": requested_seed,
                 "requested_seed_long": seed_string_to_long(requested_seed),
-                "actual_seed": str(gs.get("seed")),
-                "victory": bool(ss.get("victory")),
-                "score": int(ss.get("score", 0) or 0),
-                "floor": int(gs.get("floor", 0) or 0),
-                "act": int(gs.get("act", 0) or 0),
+                "actual_seed": str(gs["seed"]),
+                "victory": ss["victory"],
+                "score": ss["score"],
+                "floor": gs["floor"],
+                "act": gs["act"],
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             }
+            if set(metadata or {}) & set(row):
+                raise ValueError("campaign metadata must not replace actual terminal fields")
             row.update(metadata or {})
             if row["actual_seed"] != str(row["requested_seed_long"]):
                 raise RuntimeError(
@@ -90,7 +100,8 @@ class SeedCampaign:
             self.completed.add(str(row["requested_seed"]))
             self.recorded = True
             return row
-        if not in_game and self.active and self.recorded:
+        if (in_game is False and frame.get("ready_for_command") is True
+                and self.active and self.recorded):
             self.index += 1
             while self.index < len(self.seeds) and self.seeds[self.index] in self.completed:
                 self.index += 1
@@ -101,7 +112,7 @@ class SeedCampaign:
 
     def start_command(self, character: str, ascension: int) -> str | None:
         seed = self.current_seed
-        if seed is None or self.start_sent:
+        if seed is None or self.start_sent or self.active:
             return None
         self.start_sent = True
         return f"START {character} {int(ascension)} {seed}"

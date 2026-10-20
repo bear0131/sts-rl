@@ -14,6 +14,13 @@ the agent does not auto-claim keys or change the old campfire recall action.
 The protocol and excluded actions are logged, terminal receipts name the
 protocol, and actions outside Acts 1-3 are rejected. This is not an Act 4
 evaluation or evidence that the old network learned key features.
+
+Campaigns record only ready `GAME_OVER` frames with actual typed seed, victory,
+score, floor and act fields; missing results are errors, not losses/zero scores.
+Metadata cannot overwrite terminal facts. The agent waits for an available
+`PROCEED`, and only a ready explicit menu advances the seed. An interrupted run
+does not authorize restarting it; numerically duplicate configured seeds are
+rejected even if their case or leading-zero spelling differs.
 Simulator evaluation can select the same contract through
 `PolicyStrategy(..., reward_policy_contract="checkpoint-v7-act3")`; both paths
 use `rl.policies.model.action_mask_for_policy` without altering the environment.

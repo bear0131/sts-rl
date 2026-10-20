@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE132 | 源码/语法及消费者复读完成，待208部署 | SeedCampaign未ready也记账/缺字段假False0，agent过早PROCEED。现仅ready完整真实终局记录一次，bool victory/int seed/score/floor/act缺失拒绝、元数据不覆盖事实；只有ready显式菜单推进seed，未终局活跃局不重开；配置数值等价seed拒绝。agent等ready且实际PROCEED可用。普通完整结果/模型布局不变；仅补既有夹具ready字段、语法/diff与完整调用方复读，无pytest/离线测试。当前207 attach42不热换，待推送后208完整重冻；未ready场景未自然覆盖。 |
 | BRIDGE131 | 已部署；同207铃铛确认/入组/后继战斗实机通过，其他来源待覆盖 | 42adb57/v34/native934同原F0/index0续03，18:46:27仅CONFIRM一次，F1真实11牌含铃铛诅咒1张/obtain_pending=false，原128搜索index0继续并到F11，无ERROR/START。整组确认经过校验后无descriptor/策略动作命令，auto独占确认/同组关闭等待；未知仍拒绝、不填PAD/伪selected。原01/02故障段保留。Neow/Pandora其他调用来源仍未自然验证，无离线测试。后续三遗物与native同样是可领取/跳过奖励页：模型领取冰淇淋/问号牌、以73.56%选择跳过微笑面具，并非桥接漏发，不强制补拿。 |
 | BRIDGE130 | 已部署；同207原Neow档版本入口通过，异常日志分支源码验收 | 本地207 wrapper漏将v32检查改v33，首in-game帧迭代器断言且仅finally误报EOF，180秒才停；原failed段/唯一START207保留。dddad3a主循环外层异常ERROR再抛出/finally普通session end；新入口protocol与冻结常量预检，actual25244/52464同原F0/index0 attach已接受v33并由模型选择换遗物，未START。后在131旧获牌确认逻辑停止并恢复，不归成版本仍不通；没有人工造错验证外层异常新分支。 |
 | BRIDGE129 | 已部署，普通零/单钩子根搜索接入；多钩子顺序组合待覆盖 | UseCardAction取得顺序被native四类硬编码反序，药丸先于墨水瓶时少抽/误随机费用、清负属性也不交换。14回调共用有序入口，能力→遗物→敌能力/各自同步及排队行为保留；ArtOfWar旧计数推导保留。顺序进入clone/多钩子NOSL key/严格根/raw读回，无模型通道扩维/伪默认。native934dd04d必要构建/语法及全库存复读完成，42adb57/v34实际207/F1原模型128搜索通过，live21468加载精确pyd路径/hash确认；至F11持Nunchaku单钩子继续。未宣称第十击或药丸+墨水瓶等组合覆盖，无离线测试。 |
