@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE131 | 源码/v34必要构建完成，待同207再次续档 | openConfirmationGrid实际isJustForConfirming不是单牌preview，旧桥接误拒207 CallingBell诅咒页。v34真实bool→OBTAIN_CONFIRM，全组UUID/属性保留、num0/selected空/flags及唯一强制CONFIRM校验，只确认一次等同组关闭/obtain队列，Neow/Pandora同源一起对接，无伪selected/模型动作。Java8必要构建jar2cad2788/四Python语法/完整diff及全部调用方与receipt复读通过；待提交推送后原F0/index0续207，不START/不跳208，无离线测试；129尚未战斗搜索接入。 |
+| BRIDGE131 | v34导出已实机，选择消费者补齐；待同207续03验收 | v34真实isJustForConfirming→OBTAIN_CONFIRM已导出，前02仍被update中multi-signature当选牌页提前拒绝，原failed段保留，未CONFIRM。现完整校验全组后descriptor=None/无语义动作命令/禁止提前policy观察，auto独占一次CONFIRM、同源同组收据/obtain队列，不填PAD/伪selected。Neow/Pandora同API，Java8 jar2cad2788可复用、语法及所有descriptor/obs/mask/command/receipt消费者复读完成；待推送后同原F0/index0续03，不START/不跳208，无离线测试；129尚未战斗搜索接入。 |
 | BRIDGE130 | 已部署；同207原Neow档版本入口通过，异常日志分支源码验收 | 本地207 wrapper漏将v32检查改v33，首in-game帧迭代器断言且仅finally误报EOF，180秒才停；原failed段/唯一START207保留。dddad3a主循环外层异常ERROR再抛出/finally普通session end；新入口protocol与冻结常量预检，actual25244/52464同原F0/index0 attach已接受v33并由模型选择换遗物，未START。后在131旧获牌确认逻辑停止并恢复，不归成版本仍不通；没有人工造错验证外层异常新分支。 |
 | BRIDGE129 | 源码及必要构建完成，待新207部署 | UseCardAction实际取得顺序被native四类型硬编码反序，药丸先于墨水瓶时少抽/误随机费用，与Kunai/Shuriken清负属性等也不交换。14个现有回调统一有序入口，保留能力→遗物→敌能力与各自同步/BOTTOM/cardqueue行为；ArtOfWar独立计数推导保留。顺序进入BC克隆/多钩子NOSL key/严格根显式恢复/raw读回，来自已有真实有序relic列表；无模型/packed通道扩维，无伪默认。native934dd04d必要构建/语法及完整diff/所有原版onUseCard类库存复读完成，待提交推送后207新冻结部署；无离线行为测试或特殊组合实机声明。 |
 | BRIDGE128 | 已部署，原收藏家双活召唤阻断实机通过；续局中 | 收藏家Java enemySlots真实键1/2，旧exporter误读1/0，206/F33/T2漏活TorchHead。v33改实际左→右键2/1/leader，非空残缺/未知map拒绝，未引用活怪保护不放松、不填PAD；Java8必要构建jar1c3057ce/契约语法及同类数组复读完成。04d7f65/nativeabb/v33从206自然F33原档index332续跑，无START；实际T2三活怪slots=[0,1,2]、pending=false，17:55:44原128搜索index337继续PLAY3，当前无ERROR。不冒称复活所有分支或整局通过，不跑离线行为测试。 |

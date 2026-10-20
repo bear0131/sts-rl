@@ -1070,6 +1070,9 @@ class RealGameAdapter:
         return obs
 
     def obs_canonical(self, pending: tuple | None = None) -> dict[str, Any]:
+        if (self.screen_type() == 'GRID'
+                and real_grid_obtain_confirmation_cards(_screen_state(self.gs)) is not None):
+            raise RuntimeError('forced obtain confirmation must settle before policy observation')
         canon = self._base_canonical()
         canon["pending_card_slot"] = int(pending[1]) + 1 if pending and pending[0] == "play" else 0
         canon["pending_potion_slot"] = int(pending[1]) + 1 if pending and pending[0] == "potion" else 0
@@ -1824,6 +1827,8 @@ class RealGameAdapter:
     # --------------------------------------------------------------- selectors
     def select_descriptor(self) -> dict[str, Any] | None:
         if self.screen_type() == "GRID":
+            if real_grid_obtain_confirmation_cards(_screen_state(self.gs)) is not None:
+                return None  # Validated transport-only group, not a pick context.
             return self._select_block(
                 cards=_screen_cards(_screen_state(self.gs)),
                 overworld=not bool(self.gs.get("combat_state")),
@@ -2111,6 +2116,9 @@ class RealGameAdapter:
     def legal_semantic_actions(self) -> list[tuple]:
         if not self.in_game() or self.screen_type() == "GAME_OVER":
             return []
+        if (self.screen_type() == 'GRID'
+                and real_grid_obtain_confirmation_cards(_screen_state(self.gs)) is not None):
+            return []  # CONFIRM belongs to transport, never a policy PROCEED.
         if self.phase() == "combat":
             return self._legal_combat_actions()
 
@@ -2486,6 +2494,9 @@ class RealGameAdapter:
 
     # ---------------------------------------------------------- command mapping
     def command_for_semantic(self, action: tuple) -> str:
+        if (self.screen_type() == 'GRID'
+                and real_grid_obtain_confirmation_cards(_screen_state(self.gs)) is not None):
+            raise ValueError('forced obtain confirmation has no policy semantic command')
         verb = action[0]
         if (self.screen_type() == "CARD_REWARD"
                 and self._combat_reward_card_open

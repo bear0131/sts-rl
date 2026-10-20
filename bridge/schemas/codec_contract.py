@@ -432,6 +432,7 @@ def complete_word_tables():
             "audit": "BRIDGE79 natural F12 Bonfire exposed old dead wait; same source applies to Blacksmith/Wing/Wheel and other single previews",
             "full-group obtain": "v34 actual is_just_for_confirming -> OBTAIN_CONFIRM; openConfirmationGrid receives entire target group, num_cards0/selected empty/no hovered UUID; preserve all real instances, confirm once and await same group closing/obtain queues (BRIDGE131)",
             "full-group callers": "CallingBell, PandorasBox, NeowEvent; given-source inventory also contains Endless GrotesqueTrophy outside the current evaluation scope; no synthetic selected_cards or model action",
+            "not a policy selection": "validated OBTAIN_CONFIRM has select_descriptor=None, no semantic actions/commands; multi-selection signature must not reinterpret it as a pick. Policy observation is rejected until transport settles, never fabricated",
         },
         "event_progress_transport_fields": {
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",

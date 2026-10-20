@@ -169,7 +169,7 @@ HAND_SELECT整组先移出所有选中实例，再结算弃牌/消耗回调，�
 严格原生根必须带 `on_use_relic_order`（稳定ID），来源是已有global有序遗物列表；
 缺失/重复/缺持有钩子拒绝，并核对raw读回。此元数据由BC克隆与搜索键保留，
 不增OBS20/ACTION8/layout9或packed模型通道；两个以上钩子的NOSL键域有意变化，
-零/单钩子不变。Java仍v33，Python需配套BRIDGE129新原生构建，不能只替换一侧。
+零/单钩子不变。顺序无需新增Java字段；使用当前parity，Python须配套BRIDGE129新原生构建。
 
 ## 奖励、商店与房间回放
 
