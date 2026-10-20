@@ -2614,7 +2614,9 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             }
 
             int myRoll = roll;
-            const bool canSpawn = bc.monsters.monstersAlive < 4;
+            // Java counts only the other monsters and allows up to three
+            // living daggers here. monstersAlive also includes Reptomancer.
+            const bool canSpawn = bc.monsters.monstersAlive <= 4;
 
             while (true) {
                 if (myRoll < 33) {
@@ -3614,7 +3616,7 @@ void Monster::returnStasisCard(BattleContext &bc) {
     }});
 }
 
-void reptoSummonHelper(const BattleContext &bc, int daggerIdxs[2], int daggerCount) {
+int reptoSummonHelper(const BattleContext &bc, int daggerIdxs[2], int daggerCount) {
     constexpr int searchOrder[4] = {4, 1, 3, 0};
 
     int openSlotsFound = 0;
@@ -3627,20 +3629,20 @@ void reptoSummonHelper(const BattleContext &bc, int daggerIdxs[2], int daggerCou
         }
 
         if (openSlotsFound == daggerCount) {
-            return;
+            return openSlotsFound;
         }
     }
 
-#ifdef sts_asserts
-    assert(false); // should always return first
-#endif
+    // A18 requests two, but Java summons only as many as its four dagger
+    // references have room for. A single free slot is a valid summon.
+    return openSlotsFound;
 }
 
 void Monster::reptomancerSummon(BattleContext &bc, int daggerCount) {
     int daggerIdxs[2];
-    reptoSummonHelper(bc, daggerIdxs, daggerCount);
+    const int spawnCount = reptoSummonHelper(bc, daggerIdxs, daggerCount);
 
-    for (int i = 0; i < daggerCount; ++i) {
+    for (int i = 0; i < spawnCount; ++i) {
         const auto daggerIdx = daggerIdxs[i];
         auto &dagger = bc.monsters.arr[daggerIdx];
         dagger = Monster();

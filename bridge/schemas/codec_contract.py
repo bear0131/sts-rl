@@ -525,6 +525,7 @@ def complete_word_tables():
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
         "summon_slot_transport": {
             "source": "actual GremlinLeader.gremlins / TheCollector.enemySlots / Reptomancer.daggers object references",
+            "Reptomancer capacity": "Java canSpawn counts other non-dying monsters <=3, so native total including leader <=4 permits summon; takeTurn fills up to 1/A18 2 actually empty dagger slots, including a single free slot at A18, preserving reference order and per-created-monster RNG (BRIDGE112)",
             "native_order": {"GremlinLeader": ["gremlins[2]", "gremlins[0]", "gremlins[1]", "leader"],
                              "TheCollector": ["enemySlots[1]", "enemySlots[0]", "leader"],
                              "Reptomancer": ["daggers[3]", "daggers[1]", "leader", "daggers[2]", "daggers[0]"]},
