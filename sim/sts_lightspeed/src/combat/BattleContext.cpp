@@ -1216,8 +1216,15 @@ void BattleContext::useAttackCard() {
         }
 
         case CardId::PERFECTED_STRIKE: {
-            // hack because we calculate strikeCount while non purge cards are still in hand.
-            const int strikeDmg = cards.strikeCount * (up ? 3 : 2);
+            // PerfectedStrike.countCards visits these three actual piles only.
+            // PlayTopCard has already removed an autoplayed card from draw;
+            // the combat-wide cache can still include that transient card.
+            const auto isStrike = [](const CardInstance &card) { return card.isStrikeCard(); };
+            const int strikeCount = static_cast<int>(
+                std::count_if(cards.hand.begin(), cards.hand.begin() + cards.cardsInHand, isStrike)
+                + std::count_if(cards.drawPile.begin(), cards.drawPile.end(), isStrike)
+                + std::count_if(cards.discardPile.begin(), cards.discardPile.end(), isStrike));
+            const int strikeDmg = strikeCount * (up ? 3 : 2);
             const int baseDamage = 6 + strikeDmg;
             addToBot( Actions::AttackEnemy(t, calculateCardDamage(c, t, baseDamage)) );
             break;

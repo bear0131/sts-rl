@@ -857,6 +857,7 @@ HIT_REACTION_CONTRACTS = {
 # contracts do not imply complete dynamic baseDamage/pending transport (BRIDGE28)
 # or completed behavior regression (BRIDGE35).
 CARD_DAMAGE_TIMING_CONTRACTS = {
+    'PERFECTED_STRIKE': {'java': 'PerfectedStrike.countCards / calculateCardDamage / AbstractPlayer.useCard / PlayTopCardAction', 'native': 'BattleContext::useAttackCard three-pile count', 'capture': 'count STRIKE tags in actual hand/draw/discard at use, never exhaust/limbo/queued copies; manual card still in hand, Havoc/Mayhem card already removed from draw. Do not use combat-wide strikeCount, which still includes transient played cards (BRIDGE154)'},
     'CLEAVE': {'java': 'Cleave.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; no settlement recalculation'},
     'DRAMATIC_ENTRANCE': {'java': 'DramaticEntrance.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; no settlement recalculation'},
     'IMMOLATE': {'java': 'Immolate.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; Burn generation remains after damage'},
