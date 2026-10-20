@@ -291,7 +291,13 @@ Draw Reduction's numeric amount retains its duration instead of becoming 1.
 The paired native build stores/ticks that duration and restores hand size only
 on final removal. Ordinary one-layer inputs and tensor layouts are unchanged.
 
-Do not mix v32 Python with an older jar/native extension. Model tensor layouts
+Parity-v33 corrects Collector's actual one-based `enemySlots` keys: native
+left/near/leader slots reference Java keys 2/1/the leader. An empty map before
+the first summon is valid; a nonempty partial/unknown map is rejected. Living
+unreferenced minions are still errors, never dropped or padded. Gremlin Leader
+and Reptomancer retain their separately audited reference permutations.
+
+Do not mix v33 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

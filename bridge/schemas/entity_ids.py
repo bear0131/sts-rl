@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v32"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v33"
 
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {

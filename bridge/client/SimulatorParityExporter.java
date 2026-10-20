@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v32";
+    public static final String VERSION = "simulator-parity-v33";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -466,7 +466,13 @@ public final class SimulatorParityExporter {
             } else if (leader instanceof com.megacrit.cardcrawl.monsters.city.TheCollector) {
                 HashMap<Integer, AbstractMonster> heads = ReflectionHacks.getPrivate(
                     leader, com.megacrit.cardcrawl.monsters.city.TheCollector.class, "enemySlots");
-                slots = new AbstractMonster[]{heads.get(1), heads.get(0), leader};
+                if (heads == null || (!heads.isEmpty() && (heads.size() != 2
+                        || heads.get(1) == null || heads.get(2) == null)))
+                    throw new IllegalStateException("Collector requires its actual one-based summon references");
+                // Java reserves keys 1 (near) and 2 (far), not 0 and 1.
+                // Native slots and actual smart-positioned targets are left to right.
+                // The empty map before the first summon is genuinely unoccupied.
+                slots = new AbstractMonster[]{heads.get(2), heads.get(1), leader};
             } else if (leader instanceof com.megacrit.cardcrawl.monsters.beyond.Reptomancer) {
                 AbstractMonster[] daggers = ReflectionHacks.getPrivate(
                     leader, com.megacrit.cardcrawl.monsters.beyond.Reptomancer.class, "daggers");

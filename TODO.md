@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE128 | 源码及v33必要构建完成，待同局续档实机 | 收藏家Java enemySlots真实键1/2，旧exporter误读1/0，206/F33/T2将活TorchHead0漏成null，严格对账正确报错。修正为实际左→右键2/1/leader，拒绝非空残缺或未知map，不放松未引用活怪检查，不填PAD；v33 Java8构建退出0/jar1c3057ce、契约语法和完整源码复读完成，其他两类引用数组已复查。需从同seed自然F33原档续跑而不START207，实际召唤后两个活火炬完整映射并128搜索继续；不跑离线行为测试。 |
 | BRIDGE127 | 源码修复及必要构建完成，待自然边界部署 | Pantograph原版按实际monster.type==BOSS治疗25，旧native只认Room::BOSS，漏MindBloom等事件首领战。复用SlaversCollar/SmokeBomb已有hasBossMonster，保持一次治疗及MagicFlower/Bloom，不改布局/RNG，不新建Boss表；nativeabb974e2必要构建退出0、词表语法/完整diff/全部房型遗物判定复读完成，当前206/fa7冻结不热换，无离线测试或事件首领组合自然验收声明。 |
 | BRIDGE126 | 已部署并实机接入，特殊组合待自然覆盖 | GamblersBrew.use需按使用时手牌非空才排GamblingChipAction；旧native空手仍开选择（药水仍可用/消耗，不是假禁用）。chooseGambleCards漏每张incrementDiscard，既有raw/packed/模型cards_discarded和NOSL key少计；补准确递增/零选不增加，保留回合末递增/新回合清零，int16溢出在移动前拒绝。fa7dd4c/native8e5ab192含125/126，必要构建/语法通过，205自然胜利边界后206已真实加载该pyd/最终权重并FullGumbel搜索至F3。不改布局/RNG，无离线行为测试，不把普通接入当空手或选后计数实际覆盖。 |
 | BRIDGE125 | 已部署并实机接入，特殊组合待自然覆盖 | Corruption的AbstractPlayer.onCardDrawOrDiscard会对当前手牌中非零turn费用技能再次modifyCostForCombat(-9)，旧native漏剩余手牌刷新；异蛇油改正费后正常出牌弃牌/抽牌/消耗，后继mask/费用可能错。补共享公式与八处实际触发点，手选整组先移出全部选中实例，避免错误改其费用；不改模型布局/RNG，不在随机费刚结束时无条件刷新。fa7dd4c/native8e5ab192已从新206自然段实际运行并搜索，live进程模块路径/hash确认；205整局a2旧冻结自然通关后才换版，无离线行为测试或腐化+异蛇油组合验收声明。 |
