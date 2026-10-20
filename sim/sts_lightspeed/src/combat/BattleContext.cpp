@@ -1479,9 +1479,15 @@ void BattleContext::useSkillCard() {
             addToBot( Actions::GainBlock(calculateCardBlock(up  ?  40 : 30)) );
             break;
 
-        case CardId::INFERNAL_BLADE:
-            addToBot( Actions::InfernalBladeAction() );
+        case CardId::INFERNAL_BLADE: {
+            // Java chooses the attack in use(), before any queued on-play
+            // reactions can draw/randomize another card.
+            const auto id = getTrulyRandomCardInCombat(cardRandomRng, player.cc, CardType::ATTACK);
+            CardInstance generated(id);
+            generated.setCostForTurn(0);
+            addToBot(Actions::MakeTempCardInHand(generated));
             break;
+        }
 
         case CardId::INTIMIDATE:
             addToBot( Actions::DebuffAllEnemy<MS::WEAK>(up ? 2 : 1, false) ); // game justs adds one for each enemy in order

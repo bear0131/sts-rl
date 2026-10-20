@@ -136,7 +136,6 @@ namespace sts {
         static Action SwordBoomerangAction(const CardInstance &card); // AttackDamageRandomEnemyAction
 
         static Action DiscoveryAction(CardType type, int amount); // attack potion, skill potion
-        static Action InfernalBladeAction();
         static Action TransmutationAction(bool upgraded, int energy, bool useEnergy);
         static Action ViolenceAction(int count);
 

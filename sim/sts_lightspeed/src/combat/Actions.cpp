@@ -622,15 +622,6 @@ Action Actions::DiscoveryAction(CardType type, int amount) {
     }};
 }
 
-Action Actions::InfernalBladeAction() {
-    return {[=] (BattleContext &bc) {
-        const auto cid = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, CardType::ATTACK);
-        CardInstance c(cid);
-        c.setCostForTurn(0);
-        bc.addToTop( Actions::MakeTempCardInHand(c) );
-    }};
-}
-
 Action Actions::TransmutationAction(bool upgraded, int energy, bool useEnergy) {
     return {[=] (BattleContext &bc) {
         const auto effectAmount = energy + (bc.player.hasRelic<R::CHEMICAL_X>() ? 2 : 0);
