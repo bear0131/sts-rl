@@ -3101,12 +3101,14 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
         addToTop(Actions::DamageAllEnemy(3));
     }
 
-    if (player.hasRelic<R::DEAD_BRANCH>()){
+    // UseCardAction survives victory, but these two onExhaust hooks explicitly
+    // reject a finished fight before sampling/queuing anything.
+    if (player.hasRelic<R::DEAD_BRANCH>() && !monsters.areMonstersBasicallyDead()) {
         CardId id = getTrulyRandomCardInCombat(cardRandomRng, player.cc);
         addToBot(Actions::MakeTempCardInHand(id));
     }
 
-    if (player.hasStatus<PS::DARK_EMBRACE>()) {
+    if (player.hasStatus<PS::DARK_EMBRACE>() && !monsters.areMonstersBasicallyDead()) {
         addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
     }
 
