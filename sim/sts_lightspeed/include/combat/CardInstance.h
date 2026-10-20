@@ -80,6 +80,8 @@ namespace sts {
         [[nodiscard]] bool isFreeToPlay(const BattleContext &bc) const;
 
         [[nodiscard]] bool canUseOnAnyTarget(const BattleContext &bc) const; // not for use in critical path
+        // Java queue admission; new player actions must separately require a
+        // targetable slot (canUseOnAnyTarget/search::Action retain that guard).
         [[nodiscard]] bool canUse(const BattleContext &bc, int target, bool inAutoplay) const;
     };
 

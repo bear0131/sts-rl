@@ -295,7 +295,8 @@ bool canUseClash(const BattleContext &bc) {
 
 bool CardInstance::canUseOnAnyTarget(const BattleContext &bc) const {
     if (requiresTarget()) {
-        return canUse(bc, bc.monsters.getFirstTargetable(), false);
+        const int target = bc.monsters.getFirstTargetable();
+        return target >= 0 && canUse(bc, target, false);
     } else {
         return canUse(bc, 0, false);
     }
@@ -307,9 +308,16 @@ bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAuto
         return false;
     }
 
-    if (this->requiresTarget() && (target < 0 || target >= bc.monsters.monsterCount ||
-        bc.monsters.areMonstersBasicallyDead() || !bc.monsters.arr[target].isTargetable())) {
+    if (bc.monsters.areMonstersBasicallyDead()) {
         return false;
+    }
+    if (requiresTarget()) {
+        // Java cardPlayable admits null/half-dead/escaping targets; the queue
+        // counts an admitted card before deciding whether its use is skipped.
+        // Only -1 represents null. Never reinterpret a bad/reserved slot as it.
+        if (target < -1 || target >= bc.monsters.monsterCount) return false;
+        if (target >= 0 && (bc.monsters.arr[target].id == MonsterId::INVALID ||
+                            bc.monsters.arr[target].isDying())) return false;
     }
 
     // todo grand finale, signature move, reflex, deus ex machina, tactician

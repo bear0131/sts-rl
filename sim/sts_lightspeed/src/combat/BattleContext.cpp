@@ -974,16 +974,25 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
     const bool canUseCard = item.triggerOnUse && c.canUse(*this, item.target, item.autoplay);
     if (canUseCard) {
 
-        if (c.isFreeToPlay(*this)) { // what the fuck
+        if (c.isFreeToPlay(*this)) {
             c.freeToPlayOnce = true;
         }
 
-        if (c.requiresTarget()) {
-            player.lastTargetedMonster = item.target;
-        }
+        // GameActionManager counts onPlay before checking isDeadOrEscaped.
+        // A half-dead Darkling can invalidate a queued copy without rejecting
+        // its admission (and without running UseCardAction/onUse callbacks).
+        ++player.cardsPlayedThisTurn;
 
-        if (!c.requiresTarget() || monsters.arr[item.target].isTargetable()) { // this is redundant right???? -> no i think echo form abilities can queue a card with invalid target
+        const bool canUseTarget = !c.requiresTarget() ||
+                (item.target >= 0 && item.target < monsters.monsterCount &&
+                 monsters.arr[item.target].isTargetable());
+        if (canUseTarget) {
+            if (c.requiresTarget()) player.lastTargetedMonster = item.target;
             useCard();
+        } else if (item.autoplay && !item.purgeOnUse) {
+            // PlayTop already removed this physical card from draw. Java drops
+            // it, not into exhaust/discard; purge copies never own that cache.
+            cards.notifyRemoveFromCombat(c);
         }
 
     }
@@ -1007,7 +1016,6 @@ void BattleContext::useCard() {
     if (c.cost == -1 && item.autoplay) c.freeToPlayOnce = true;
 
     item.exhaustOnUse |= c.doesExhaust();
-    ++player.cardsPlayedThisTurn;
 
     switch (c.getType()) {
         case CardType::ATTACK:

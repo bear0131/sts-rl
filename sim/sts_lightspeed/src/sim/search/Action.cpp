@@ -151,6 +151,12 @@ bool isValidCardAction(const BattleContext &bc, const search::Action &a) {
         return false;
     }
 
+    // Queue admission is deliberately looser than a new player target choice.
+    if (c.requiresTarget() && (a.getTargetIdx() >= bc.monsters.monsterCount ||
+            !bc.monsters.arr[a.getTargetIdx()].isTargetable())) {
+        return false;
+    }
+
     return c.canUse(bc, a.getTargetIdx(), false);
 }
 
