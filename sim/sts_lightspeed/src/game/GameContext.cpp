@@ -473,11 +473,11 @@ void GameContext::initRelics() {
             break;
     }
 
-    java::Collections::shuffle(commonRelicPool.begin(), commonRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(uncommonRelicPool.begin(), uncommonRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(rareRelicPool.begin(), rareRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(shopRelicPool.begin(), shopRelicPool.end(), java::Random(relicRng.nextLong()));
-    java::Collections::shuffle(bossRelicPool.begin(), bossRelicPool.end(), java::Random(relicRng.nextLong()));
+    java::Collections::shuffle(commonRelicPool.begin(), commonRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(uncommonRelicPool.begin(), uncommonRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(rareRelicPool.begin(), rareRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(shopRelicPool.begin(), shopRelicPool.end(), java::Random(relicRng.randomLong()));
+    java::Collections::shuffle(bossRelicPool.begin(), bossRelicPool.end(), java::Random(relicRng.randomLong()));
 
 }
 
@@ -1580,7 +1580,7 @@ bool GameContext::obtainRelic(RelicId r) {
 
         case RelicId::TINY_HOUSE: {
             auto upgradeCards = deck.getUpgradeableCardIdxs();
-            java::Collections::shuffle(upgradeCards.begin(), upgradeCards.end(), java::Random(miscRng.nextLong()));
+            java::Collections::shuffle(upgradeCards.begin(), upgradeCards.end(), java::Random(miscRng.randomLong()));
 
             if (!upgradeCards.empty()) {
                 deck.upgrade(upgradeCards[0]);
@@ -1858,7 +1858,7 @@ int GameContext::getRandomPlayerPotionIdx() {
             potionIdxs.push_back(i);
         }
     }
-    java::Collections::shuffle(potionIdxs.begin(), potionIdxs.end(), java::Random(miscRng.nextLong()));
+    java::Collections::shuffle(potionIdxs.begin(), potionIdxs.end(), java::Random(miscRng.randomLong()));
     return potionIdxs[0];
 }
 
@@ -1878,13 +1878,10 @@ int GameContext::getRandomPlayerNonBasicCardIdx() {
 
     java::Collections::shuffle(cardIdxs.begin(), cardIdxs.end(), java::Random(miscRng.randomLong()));
 
-    int retIdx = cardIdxs[0];
-    for (int i = 0; i < retIdx; ++i) {
-        if (deck.cards[i] == deck.cards[retIdx]) {
-            return i;
-        }
-    }
-    return retIdx;
+    // Java returns this physical master object. Equal Card values may have
+    // different bottle slots, so replacing it with the first equal copy is
+    // not a semantic equivalence and biases the offered instance.
+    return cardIdxs[0];
 }
 
 MonsterEncounter GameContext::getMonsterForRoomCreation() {
