@@ -427,6 +427,20 @@ def complete_word_tables():
             "guards": "context, zone, pick_min, optionality, selected instances, candidate order/handles and cards_in_hand remain exact; differing effective cap still rejects",
             "compatibility": "Java 99 unbounded sentinel normalizes to actual hand while native Elixir retains ten; compare equivalent legal subsets without rewriting native observations, checkpoint layouts or supplying PAD candidates",
         },
+        "selection_instance_transport_contract": {
+            "sources": "ForethoughtAction, ExhaustAction, GamblingChipAction, Attack/SkillFromDeckToHandAction, BetterDiscardPileToHandAction and ExhumeAction; native corresponding Actions/BattleContext choices, RealCombatSearch._sync_selection_candidates and RealGameAdapter command_for_joint_action/_continue_joint_multi",
+            "identity": "pending choices bind only known actual UUIDs to persistent native UIDs and complete card state. Single-choice candidate permutations map physical handles explicitly; MULTI requires identical source order/handles and rejects a permutation. Never bind an unknown temporary UUID by its displayed index or card name",
+            "subset_order": "one frozen native subset is transported as Forethought ascending source slots, exhaust/gamble descending slots. Each real CHOOSE must remove exactly the requested hand instance and append it to selected; unchanged frames only refresh, never repeat CHOOSE or request another model decision before CONFIRM",
+            "cost_boundaries": "plain deck/discard retrieval does not run generated-hand callbacks; full-hand Liquid Memories leaves selected source slots and costs intact. Its explicit zero-turn cost preserves base/X costs. Exhume retains its explicit Corruption discount; generated/returned-copy hand arrivals use the separate BRIDGE146 rule",
+            "copy_boundaries": "makeStatEquivalentCopy preserves upgrades, base/turn costs, growth and freeToPlayOnce but resets retain/exhaust to the fresh upgraded card's traits. makeSameInstanceOf alone keeps the original UUID; fresh-copy UID assignment occurs once at creation, Stasis same-UUID return does not allocate a new one",
+            "audit": "source/caller re-review after BRIDGE146; deployment is evidenced by the full4992861/fca13933 frozen214 runtime, not by running new offline cases. Prior real HAND_SELECT/GRID coverage does not prove every optional/overflow/copy combination",
+        },
+        "card_cost_reset_boundaries": {
+            "turn_end": "AbstractRoom.endTurn resets attributes in draw/discard/hand, not exhaust; native resets those same piles' turn costs to current base. resetAttributes does not clear freeToPlayOnce, so do not erase a legitimate Forethought discount merely because the turn ended",
+            "confusion_vs_oil": "ConfusionPower.onCardDraw clears freeToPlayOnce after eligible nonnegative-base-cost sampling. RandomizeHandCostAction used by Snecko Oil does not clear it. Both preserve an existing turn-only discount when the sampled cost equals current base cost",
+            "single_warcry": "PutOnDeckAction's mandatory one-card path still calls getRandomCard(cardRandomRng); it is not a zero-RNG shortcut merely because the only outcome is known. Native's discarded bounded draw consumes the same one RNG transition/counter; no behavioral change inferred from its unused bound",
+            "audit": "given-source AbstractCard/AbstractRoom/ConfusionPower/RandomizeHandCostAction/PutOnDeckAction and native CardInstance/CardManager/Actions reviewed; no new execution defect established in these rules and no new offline behavior test run",
+        },
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),
         "event_progress_contracts": {
