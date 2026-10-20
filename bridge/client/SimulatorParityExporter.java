@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v30";
+    public static final String VERSION = "simulator-parity-v31";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -331,6 +331,51 @@ public final class SimulatorParityExporter {
         return false;
     }
 
+    private static Object matchState(AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.shrines.GremlinMatchGame)) return null;
+        Class<?> type = com.megacrit.cardcrawl.events.shrines.GremlinMatchGame.class;
+        Object screen = ReflectionHacks.getPrivate(event, type, "screen");
+        String phase = ((Enum<?>)screen).name();
+        HashMap<String, Object> result = new HashMap<String, Object>();
+        result.put("source", type.getName());
+        result.put("phase", phase);
+        result.put("attempts", privateInt(event, type, "attemptCount"));
+        result.put("first_flipped", privateBool(event, type, "cardFlipped"));
+        result.put("game_done", privateBool(event, type, "gameDone"));
+        float timer = ((Float)ReflectionHacks.getPrivate(event, type, "waitTimer")).floatValue();
+        result.put("waiting", timer > 0.0f);
+        com.megacrit.cardcrawl.cards.CardGroup cards = ReflectionHacks.getPrivate(event, type, "cards");
+        if (communicationmod.patches.GremlinMatchGamePatch.cards != cards)
+            throw new IllegalStateException("Match board is not the stock command source");
+        ArrayList<Integer> remaining = new ArrayList<Integer>(), faceUp = new ArrayList<Integer>();
+        boolean boardShown = phase.equals("PLAY") || phase.equals("CLEAN_UP") || phase.equals("COMPLETE");
+        for (AbstractCard card : cards.group) {
+            Integer slot = communicationmod.patches.GremlinMatchGamePatch.cardPositions.get(card.uuid);
+            if (slot == null || slot < 0 || slot >= 12 || remaining.contains(slot))
+                throw new IllegalStateException("Invalid Match physical board slot");
+            remaining.add(slot);
+            if (boardShown && !card.isFlipped) faceUp.add(slot);
+        }
+        java.util.Collections.sort(remaining);
+        java.util.Collections.sort(faceUp);
+        result.put("remaining_slots", remaining);
+        result.put("face_up_slots", faceUp);
+        ArrayList<HashMap<String, Object>> choices = new ArrayList<HashMap<String, Object>>();
+        if (phase.equals("PLAY") && timer == 0.0f && !privateBool(event, type, "gameDone")) {
+            ArrayList<AbstractCard> ordered = communicationmod.patches.GremlinMatchGamePatch.getOrderedCards();
+            for (int i = 0; i < ordered.size(); ++i) {
+                HashMap<String, Object> choice = new HashMap<String, Object>();
+                choice.put("slot", communicationmod.patches.GremlinMatchGamePatch.cardPositions.get(ordered.get(i).uuid));
+                choice.put("choice_index", i);
+                choices.add(choice);
+            }
+        }
+        result.put("choices", choices);
+        // Positions and current face-up flags only. Never read card IDs, faces,
+        // remembered revealedCards, or random state to decide a pair.
+        return result;
+    }
+
     public static void augmentGameState(HashMap<String, Object> state) {
         state.put("has_ruby_key", Boolean.valueOf(Settings.hasRubyKey));
         state.put("has_emerald_key", Boolean.valueOf(Settings.hasEmeraldKey));
@@ -368,6 +413,7 @@ public final class SimulatorParityExporter {
         state.put("simulator_map_leaf_nodes", leaves);
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
         state.put("simulator_event_progress", eventProgress(event));
+        state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
             com.megacrit.cardcrawl.neow.NeowEvent neow = (com.megacrit.cardcrawl.neow.NeowEvent)event;

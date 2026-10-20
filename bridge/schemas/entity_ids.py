@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v30"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v31"
 
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
@@ -56,6 +56,7 @@ JSON_PRESENCE_CONTRACTS = {
     'simulator_move_state': 'required monster key; exact species-specific fields in MONSTER_MOVE_STATE_CONTRACTS, null for other species; no fake unused/default counters',
     'simulator_summon_slots': 'required combat key; actual leader reference slots and explicit queued-spawn flag, null for non-summon encounters; no guessed corpse compaction',
     'simulator_event_progress': 'actual audited event class and phase/counters, explicit null for other event classes; transport-only, never future random outcomes',
+    'simulator_match_state': 'required nullable stock GremlinMatchGame phase/attempts/remaining and face-up physical slots/current CHOOSE mapping; fixed first-two transport only, no card IDs, remembered faces or policy features',
     'simulator_obtain_pending': 'actual unfinished ShowCardAndObtainEffect across all four effect queues; required by staged event receipts',
     'card/relic_list_aliases': 'if multiple aliases are present, complete lists must be equal, including empty lists; no nonempty-wins fallback',
     'screen_inventories': 'card/relic/potion/reward screens require their structured lists; explicit lists must agree with coexisting reward records; labels do not replace entities',

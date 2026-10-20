@@ -276,7 +276,16 @@ null for these parameters. The bridge checks source/parameters and pending
 native metadata before choosing; native copies and search keys retain the cost
 mode. The model tensor layout and action vocabulary do not gain a new token.
 
-Do not mix v30 Python with an older jar/native extension. Model tensor layouts
+Parity-v31 also exports nullable `simulator_match_state`. For Match and Keep,
+the human-authorized fixed transport always selects the first two remaining
+public board slots. It maps each physical slot to stock CommunicationMod's
+current CHOOSE index; it waits for the first flip, the pair's exact attempt
+decrement and removal/flip-back, asynchronous card obtains, and the final
+COMPLETE dialogue. It reads no hidden card identities or remembered faces and
+does not invoke or modify the model for this minigame. Other events export null.
+The native combat extension is unchanged from v30; Python and jar must both be v31.
+
+Do not mix v31 Python with an older jar. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

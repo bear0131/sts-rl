@@ -417,6 +417,8 @@ def complete_word_tables():
         },
         "event_progress_transport_fields": {
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",
+            "simulator_match_state": "v31 actual GremlinMatchGame phase/attempts/current face-up and remaining physical slots; stock getOrderedCards CHOOSE index mapping, explicit null for other events; no hidden identities or remembered faces",
+            "Match and Keep fixed transport": "human-authorized first_two_match_slots only, bypasses policy; acknowledge first physical flip before second, then exact attempt decrement and either same remaining slots or removal of the two sent slots; wait obtain effects/final COMPLETE before actual exit; no model/layout/native change (BRIDGE12)",
             "simulator_obtain_pending": "actual unfinished ShowCardAndObtainEffect in all four game effect queues; never a guessed delay",
             "rewards_taken": "DeadAdventurer.numRewards distinguishes a successful NOTHING result from a stale frame",
             "startSpin/buttonPressed/purgeResult": "actual GremlinWheelGame execution flags; hidden random result is not exported",

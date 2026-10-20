@@ -181,6 +181,7 @@ def validate_transport_frame(frame: dict[str, Any]) -> None:
         raise ValueError(f"unknown real-game action_phase keyword: {action_phase!r}")
     _screen_state(gs)
     _choice_list(gs)
+    event_contract.match_state(gs)
     for key in ("deck", "relics", "potions", "map"):
         _list_value(gs, key, context="game_state")
     if "current_action" not in gs:

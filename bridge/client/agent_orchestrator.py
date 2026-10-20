@@ -29,7 +29,7 @@ import numpy as np
 
 from bridge.real_game_env import RealDecision, RealGameAdapter, validate_transport_frame
 from bridge.campaign import SeedCampaign
-from bridge.event_contract import EventEffectAck
+from bridge.event_contract import EventEffectAck, FixedMatchTransport
 from bridge.schemas.entity_ids import CHEST_REWARD_SCREEN_CONTRACTS, REWARD_ROOM_EXIT_CONTRACTS
 from env.core import action_space as A
 from env.core import game_actions as ga
@@ -316,6 +316,7 @@ class RealPolicyAgent:
         self.combat_search = combat_search
         _model.validate_reward_policy_contract(model, reward_policy_contract)
         self.reward_policy_contract = reward_policy_contract
+        self.match_transport = FixedMatchTransport()
         log.info("reward_policy_contract=%s; no automatic key claiming", reward_policy_contract)
 
     def decide(self, frame: dict[str, Any]) -> RealDecision:
@@ -348,6 +349,11 @@ class RealPolicyAgent:
         if (self.campaign is not None and self.adapter.in_game()
                 and self.adapter.screen_type() == "GAME_OVER"):
             return RealDecision("PROCEED", "campaign_game_over")
+
+        match_command = self.match_transport.command(frame, self.adapter._wait_clock())
+        if match_command is not None:
+            command, reason = match_command
+            return RealDecision(command, reason)
 
         # CommunicationMod error frames omit ``in_game`` and ``game_state``.
         # Refresh the state instead of mistaking a rejected command for a run
@@ -520,6 +526,8 @@ def send_decision(frame: dict[str, Any], decision: RealDecision) -> None:
     screen = str(gs.get("screen_type") or "").upper()
     verb = decision.command.split()[0].upper()
     outside_combat = str(gs.get("room_phase") or "").upper() != "COMBAT"
+    if decision.reason.startswith('await_match_'):
+        time.sleep(0.1)
     if verb not in {"STATE", "WAIT"} and (
         screen in {"EVENT", "SHOP_SCREEN", "SHOP_ROOM"}
         or (outside_combat and screen in {"GRID", "CARD_REWARD", "COMBAT_REWARD"})
@@ -986,6 +994,7 @@ def rebuild_save_attachment(agent, model, args):
                               master_nonce=args.seed, gumbel_scale=args.gumbel_scale)
               if args.combat_search else None)
     agent.adapter = adapter
+    agent.match_transport = FixedMatchTransport()
     agent.combat_search = search
     return adapter, search
 

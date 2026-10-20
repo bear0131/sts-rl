@@ -4,6 +4,7 @@ Only audited public labels are accepted. Unlisted events/variants require an
 explicit contract, never positional fallback. Native IDs remain checkpoint ABI.
 """
 import re
+import logging
 from collections import Counter
 from copy import deepcopy
 
@@ -20,7 +21,7 @@ def first_two_match_slots(available_slots):
 
     Slot numbers retain board order even when matched cards disappear. The
     caller must wait for the previous pair's ACK before requesting another pair.
-    This is not a model action and does not enable the unsupported Mod transport.
+    This is not a model action; FixedMatchTransport uses the stock Mod clicks.
     """
     slots = list(available_slots)
     if any(type(slot) is not int or not 0 <= slot < 12 for slot in slots):
@@ -30,6 +31,154 @@ def first_two_match_slots(available_slots):
     if len(slots) < 2:
         raise ValueError('Match pair requires two available slots')
     return tuple(sorted(slots)[:2])
+
+
+def match_state(gs):
+    """Validate current public Match progress, never a hidden card identity."""
+    if 'simulator_match_state' not in gs:
+        raise ValueError('missing explicit simulator_match_state')
+    state = gs['simulator_match_state']
+    is_match = ((gs.get('screen_state') or {}).get('event_id') == 'Match and Keep!'
+                and gs.get('screen_type') == 'EVENT')
+    if state is None:
+        if is_match:
+            raise ValueError('Match event requires actual board progress')
+        return None
+    if not isinstance(state, dict) or state.get('source') != 'com.megacrit.cardcrawl.events.shrines.GremlinMatchGame':
+        raise ValueError('invalid Match source')
+    phase = state.get('phase')
+    if phase not in {'INTRO', 'RULE_EXPLANATION', 'PLAY', 'CLEAN_UP', 'COMPLETE'}:
+        raise ValueError('unknown Match phase')
+    attempts = state.get('attempts')
+    if type(attempts) is not int or not 0 <= attempts <= 5:
+        raise ValueError('invalid Match attempt count')
+    for key in ('waiting', 'first_flipped', 'game_done'):
+        if type(state.get(key)) is not bool:
+            raise ValueError(f'Match requires explicit boolean {key}')
+    for key in ('remaining_slots', 'face_up_slots'):
+        slots = state.get(key)
+        if (not isinstance(slots, list) or any(type(s) is not int or not 0 <= s < 12 for s in slots)
+                or slots != sorted(set(slots))):
+            raise ValueError(f'invalid Match {key}')
+    remaining, face_up = state['remaining_slots'], state['face_up_slots']
+    if len(remaining) % 2 or not set(face_up).issubset(remaining) or len(face_up) > 2:
+        raise ValueError('inconsistent Match board occupancy')
+    choices = state.get('choices')
+    if not isinstance(choices, list):
+        raise ValueError('Match requires explicit choice mapping')
+    slots = []
+    for index, choice in enumerate(choices):
+        if (not isinstance(choice, dict) or type(choice.get('choice_index')) is not int
+                or choice['choice_index'] != index or type(choice.get('slot')) is not int):
+            raise ValueError('invalid Match CHOOSE mapping')
+        slots.append(choice['slot'])
+    if slots != sorted(set(slots)) or not set(slots).issubset(set(remaining) - set(face_up)):
+        raise ValueError('Match choices do not preserve physical slots')
+    playable = phase == 'PLAY' and not state['waiting'] and not state['game_done']
+    if playable:
+        if (attempts == 0 or slots != sorted(set(remaining) - set(face_up))
+                or len(face_up) != int(state['first_flipped'])):
+            raise ValueError('inconsistent actionable Match progress')
+    elif choices:
+        raise ValueError('Match choices advertised during nonselectable phase')
+    return state
+
+
+class FixedMatchTransport:
+    """Human-authorized first-two clicks with physical-slot/attempt receipts."""
+
+    def __init__(self):
+        self.identity = None
+        self.pending = None
+        self.pair = None
+        self.progress = None
+        self.progress_since = 0.0
+
+    def command(self, frame, now):
+        gs = frame.get('game_state') or {}
+        state = match_state(gs) if frame.get('in_game') else None
+        event = (gs.get('screen_state') or {}).get('event_id')
+        if gs.get('screen_type') != 'EVENT' or event != 'Match and Keep!':
+            if self.identity is not None:
+                if self.pending is None or self.pending['kind'] != 'COMPLETE':
+                    raise RuntimeError('Match left before an acknowledged COMPLETE exit')
+                self.__init__()
+            return None
+        identity = tuple(gs[k] for k in ('seed', 'act', 'floor'))
+        if self.identity is None:
+            self.identity = identity
+        elif self.identity != identity:
+            raise RuntimeError('Match seed/room changed before completion')
+        progress = (state['phase'], state['attempts'], tuple(state['remaining_slots']),
+                    tuple(state['face_up_slots']), state['waiting'], state['first_flipped'],
+                    state['game_done'], gs['simulator_obtain_pending'])
+        if progress != self.progress:
+            self.progress, self.progress_since = progress, now
+        elif now - self.progress_since > 30:
+            raise RuntimeError('Match made no observed progress for 30 seconds')
+        if self.pending is not None:
+            pending = self.pending
+            if now - pending['since'] > 10:
+                raise RuntimeError(f'Match {pending["kind"]} acknowledgement timed out')
+            kind = pending['kind']
+            if kind in {'INTRO', 'RULE_EXPLANATION', 'COMPLETE'}:
+                expected = {'INTRO': 'RULE_EXPLANATION', 'RULE_EXPLANATION': 'PLAY'}
+                if state['phase'] == kind:
+                    return 'STATE', 'await_match_dialogue_ack'
+                if state['phase'] != expected.get(kind):
+                    raise RuntimeError('unexpected Match dialogue transition')
+                self.pending = None
+            elif kind == 'first':
+                if (state['attempts'] != pending['attempts']
+                        or tuple(state['remaining_slots']) != pending['remaining']):
+                    raise RuntimeError('Match board/attempt changed before first flip acknowledgement')
+                if state['face_up_slots'] == [self.pair[0]] and state['first_flipped']:
+                    self.pending = None
+                elif not state['face_up_slots'] and not state['waiting']:
+                    return 'STATE', 'await_match_first_flip_ack'
+                else:
+                    raise RuntimeError('unexpected first Match flip')
+            else:
+                if state['attempts'] == pending['attempts']:
+                    if (tuple(state['remaining_slots']) != pending['remaining']
+                            or not set(state['face_up_slots']).issubset(self.pair)):
+                        raise RuntimeError('Match board changed before pair settlement')
+                    return 'STATE', 'await_match_pair_ack'
+                expected_remaining = set(pending['remaining']) - set(self.pair)
+                if (state['attempts'] != pending['attempts'] - 1
+                        or set(state['remaining_slots']) not in (set(pending['remaining']), expected_remaining)
+                        or state['face_up_slots'] or state['first_flipped']):
+                    raise RuntimeError('Match pair result does not match the sent physical slots')
+                logging.getLogger(__name__).info(
+                    'fixed Match pair acknowledged slots=%s attempts=%s removed=%s',
+                    self.pair, state['attempts'], sorted(set(pending['remaining']) - set(state['remaining_slots'])))
+                self.pending = self.pair = None
+        if (not frame['ready_for_command'] or state['waiting']
+                or (state['game_done'] and state['phase'] != 'COMPLETE') or gs['simulator_obtain_pending']
+                or state['phase'] == 'CLEAN_UP'):
+            return 'STATE', 'await_match_settlement'
+        commands = {c.upper() for c in frame['available_commands']}
+        if 'CHOOSE' not in commands:
+            return 'STATE', 'await_match_choose_available'
+        phase = state['phase']
+        if phase != 'PLAY':
+            options = [o for o in gs['screen_state']['options'] if not o['disabled']]
+            if len(options) != 1 or type(options[0].get('choice_index')) is not int:
+                raise ValueError('Match dialogue must have one explicit enabled choice')
+            self.pending = {'kind': phase, 'since': now}
+            return f'CHOOSE {options[0]["choice_index"]}', 'fixed_match_dialogue'
+        if self.pair is None:
+            if state['first_flipped'] or state['face_up_slots']:
+                raise RuntimeError('Match has an unowned first flip; refusing to invent a pair')
+            self.pair = first_two_match_slots(c['slot'] for c in state['choices'])
+        second = state['first_flipped']
+        target = self.pair[int(second)]
+        choices = [c for c in state['choices'] if c['slot'] == target]
+        if len(choices) != 1 or len(gs['choice_list']) != len(state['choices']):
+            raise RuntimeError('Match physical slot is absent from actual CHOOSE inventory')
+        self.pending = dict(kind='second' if second else 'first', since=now,
+                            attempts=state['attempts'], remaining=tuple(state['remaining_slots']))
+        return f'CHOOSE {choices[0]["choice_index"]}', 'fixed_match_second' if second else 'fixed_match_first'
 
 
 CONTRACTS = {
