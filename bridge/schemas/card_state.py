@@ -67,6 +67,10 @@ def real_selection_card_states(records, selected_records):
 
 def real_grid_confirmation_card(screen):
     """Read the original card in a preview, without fabricating selected_cards."""
+    if type(screen.get('is_just_for_confirming')) is not bool:
+        raise ValueError('GRID requires explicit is_just_for_confirming')
+    if screen['is_just_for_confirming']:
+        return None  # Full-group obtain confirmations have no hovered original.
     if type(screen.get('confirm_up')) is not bool or 'confirmation_card_uuid' not in screen:
         raise ValueError('GRID requires explicit confirmation state and card identity')
     identity = screen['confirmation_card_uuid']
@@ -83,6 +87,25 @@ def real_grid_confirmation_card(screen):
     if selected or len(matches) != 1:
         raise ValueError('GRID preview must identify one uncommitted original source card')
     return matches[0]
+
+
+def real_grid_obtain_confirmation_cards(screen):
+    """The actual openConfirmationGrid group is received, never selected."""
+    if type(screen.get('is_just_for_confirming')) is not bool:
+        raise ValueError('GRID requires explicit is_just_for_confirming')
+    if not screen['is_just_for_confirming']:
+        return None
+    if (screen.get('confirm_up') is not True
+            or 'confirmation_card_uuid' not in screen or screen['confirmation_card_uuid'] is not None
+            or type(screen.get('num_cards')) is not int or screen['num_cards'] != 0
+            or any(screen.get(flag) is not False
+                   for flag in ('any_number', 'for_upgrade', 'for_transform', 'for_purge'))
+            or screen.get('selection_context') != 'OBTAIN_CONFIRM'):
+        raise ValueError('unsupported full-group obtain confirmation state')
+    cards, selected = real_selection_card_states(screen.get('cards'), screen.get('selected_cards'))
+    if selected:
+        raise ValueError('obtain confirmation must not fabricate committed selections')
+    return cards
 
 
 def real_master_deck_state(records):

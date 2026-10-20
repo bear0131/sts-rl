@@ -430,6 +430,8 @@ def complete_word_tables():
             "consumer": "shared real_grid_confirmation_card verifies unique original candidate; event receipt matches requested UUID; adapter confirms once and waits for close",
             "compatibility": "selected_cards remains the actual committed list, not synthetic; multi-select unchanged; no new policy action/observation layout",
             "audit": "BRIDGE79 natural F12 Bonfire exposed old dead wait; same source applies to Blacksmith/Wing/Wheel and other single previews",
+            "full-group obtain": "v34 actual is_just_for_confirming -> OBTAIN_CONFIRM; openConfirmationGrid receives entire target group, num_cards0/selected empty/no hovered UUID; preserve all real instances, confirm once and await same group closing/obtain queues (BRIDGE131)",
+            "full-group callers": "CallingBell, PandorasBox, NeowEvent; given-source inventory also contains Endless GrotesqueTrophy outside the current evaluation scope; no synthetic selected_cards or model action",
         },
         "event_progress_transport_fields": {
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",

@@ -153,7 +153,12 @@ parity-v32另外显式携带真实 `gameHandSize` 和可空 `DrawReductionPower.
 
 parity-v33修正收藏家实际一基召唤引用：Java enemySlots键2/1依次对接原生左/近侧槽位，
 不能读取不存在的键0伪造空槽。首次召唤前真实空map允许，非空但缺键/未知键拒绝；
-未引用活怪仍严格报错，不删除/PAD，模型布局不变。Python与jar必须同为v33。
+未引用活怪仍严格报错，不删除/PAD，模型布局不变；该修复自v33起提供，Python/jar须同版。
+
+parity-v34区分真实 `isJustForConfirming` 全组获牌确认和单牌升级/变牌/删除预览。
+`OBTAIN_CONFIRM` 保留全组真实实例及UUID，num_cards=0并非缺失选择数；只执行一次强制
+CONFIRM并等待同源同组关闭、既有obtain队列结算，不伪造selected/hovered身份或模型动作。
+召唤铃铛、潘多拉魔盒、涅奥共用此真实UI合同，Python/jar须同时v34，模型布局不变。
 
 腐化的费用效果还会在真实抽牌、弃牌和消耗后刷新仍在手牌且本回合费用非零的技能，
 同步基础及本回合费用；异蛇油动作本身、生成牌直接入弃牌、移牌到抽牌堆不触发此刷新。

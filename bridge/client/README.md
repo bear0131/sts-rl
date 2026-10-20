@@ -297,7 +297,14 @@ the first summon is valid; a nonempty partial/unknown map is rejected. Living
 unreferenced minions are still errors, never dropped or padded. Gremlin Leader
 and Reptomancer retain their separately audited reference permutations.
 
-Do not mix v33 Python with an older jar/native extension. Model tensor layouts
+Parity-v34 exports actual `GridCardSelectScreen.isJustForConfirming`, distinct
+from the stock merged `confirm_up`. Its `OBTAIN_CONFIRM` context receives the
+entire actual group (Calling Bell, Pandora's Box and Neow), without fabricating
+selected cards or a hovered-card UUID. The adapter confirms once and waits for
+the same source/group to close; existing obtain-effect queue settling remains.
+Normal upgrade/transform/purge previews keep their separate original-card rule.
+
+Do not mix v34 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

@@ -6,7 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE130 | 启动入口版本遗漏已定位，错误可观测性修复；待同207续档 | 忽略目录207 wrapper漏将v32检查改v33，首in-game帧在迭代器内断言，main仅finally输出EOF而监督器180秒才停。原实际只START207/自然Neow F0档保留，无策略/战斗；原段failed原样留存。不热改旧证据；新入口统一protocol版本与冻结常量预检，主循环外层异常明确ERROR/抛出，finally不再冒称EOF；必要语法/源码复读提交后从同207原F0/index0 attach，不重发START、不跳208。 |
+| BRIDGE131 | 源码/v34必要构建完成，待同207再次续档 | openConfirmationGrid实际isJustForConfirming不是单牌preview，旧桥接误拒207 CallingBell诅咒页。v34真实bool→OBTAIN_CONFIRM，全组UUID/属性保留、num0/selected空/flags及唯一强制CONFIRM校验，只确认一次等同组关闭/obtain队列，Neow/Pandora同源一起对接，无伪selected/模型动作。Java8必要构建jar2cad2788/四Python语法/完整diff及全部调用方与receipt复读通过；待提交推送后原F0/index0续207，不START/不跳208，无离线测试；129尚未战斗搜索接入。 |
+| BRIDGE130 | 已部署；同207原Neow档版本入口通过，异常日志分支源码验收 | 本地207 wrapper漏将v32检查改v33，首in-game帧迭代器断言且仅finally误报EOF，180秒才停；原failed段/唯一START207保留。dddad3a主循环外层异常ERROR再抛出/finally普通session end；新入口protocol与冻结常量预检，actual25244/52464同原F0/index0 attach已接受v33并由模型选择换遗物，未START。后在131旧获牌确认逻辑停止并恢复，不归成版本仍不通；没有人工造错验证外层异常新分支。 |
 | BRIDGE129 | 源码及必要构建完成，待新207部署 | UseCardAction实际取得顺序被native四类型硬编码反序，药丸先于墨水瓶时少抽/误随机费用，与Kunai/Shuriken清负属性等也不交换。14个现有回调统一有序入口，保留能力→遗物→敌能力与各自同步/BOTTOM/cardqueue行为；ArtOfWar独立计数推导保留。顺序进入BC克隆/多钩子NOSL key/严格根显式恢复/raw读回，来自已有真实有序relic列表；无模型/packed通道扩维，无伪默认。native934dd04d必要构建/语法及完整diff/所有原版onUseCard类库存复读完成，待提交推送后207新冻结部署；无离线行为测试或特殊组合实机声明。 |
 | BRIDGE128 | 已部署，原收藏家双活召唤阻断实机通过；续局中 | 收藏家Java enemySlots真实键1/2，旧exporter误读1/0，206/F33/T2漏活TorchHead。v33改实际左→右键2/1/leader，非空残缺/未知map拒绝，未引用活怪保护不放松、不填PAD；Java8必要构建jar1c3057ce/契约语法及同类数组复读完成。04d7f65/nativeabb/v33从206自然F33原档index332续跑，无START；实际T2三活怪slots=[0,1,2]、pending=false，17:55:44原128搜索index337继续PLAY3，当前无ERROR。不冒称复活所有分支或整局通过，不跑离线行为测试。 |
 | BRIDGE127 | 已部署，常规实机接入通过；事件首领组合待自然覆盖 | Pantograph原版按实际monster.type==BOSS治疗25，旧native只认Room::BOSS，漏MindBloom等事件首领战。复用SlaversCollar/SmokeBomb已有hasBossMonster，保持一次治疗及MagicFlower/Bloom，不改布局/RNG，不新建Boss表；必要构建退出0。原206/fa7失败并恢复后，04d7f65续同F33已真实加载nativeabb974e2（actual27036模块路径/hash确认）、最终权重并128搜索继续，未热换旧局进程。无离线测试或事件首领组合自然验收声明。 |

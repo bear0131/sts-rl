@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v33";
+    public static final String VERSION = "simulator-parity-v34";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -722,6 +722,7 @@ public final class SimulatorParityExporter {
 
     public static void augmentGridState(HashMap<String, Object> state) {
         GridCardSelectScreen screen = AbstractDungeon.gridSelectScreen;
+        state.put("is_just_for_confirming", Boolean.valueOf(screen.isJustForConfirming));
         // Single-card upgrade/transform/purge previews clear selectedCards.
         // The actual original is hoveredCard, not the animated replacement or
         // upgraded preview. Preserve this distinct, not-yet-confirmed identity.
@@ -734,6 +735,7 @@ public final class SimulatorParityExporter {
         state.put("confirmation_card_uuid", confirming == null ? null : confirming.uuid.toString());
         String context = combatSelectionContext(AbstractDungeon.actionManager.currentAction);
         if (context == null) context = overworldSelectionContext(AbstractDungeon.gridSelectScreen);
+        if (screen.isJustForConfirming) context = "OBTAIN_CONFIRM";
         state.put("selection_context", context == null ? "UNMAPPED" : context);
         AbstractGameAction action = AbstractDungeon.actionManager.currentAction;
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
