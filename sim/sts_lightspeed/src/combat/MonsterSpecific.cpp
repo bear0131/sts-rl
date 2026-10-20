@@ -777,57 +777,50 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         // ************ HEXAGHOST ************
 
         case MMID::HEXAGHOST_ACTIVATE: {// 5
-            miscInfo = bc.player.curHp / 12 + 1; // set divider damage
+            hexaghostDividerDamage = bc.player.curHp / 12 + 1;
+            const int target = idx;
+            bc.addToBot({[target](BattleContext &ctx) {
+                auto &monster = ctx.monsters.arr[target];
+                monster.miscInfo = (monster.miscInfo & ~HEXAGHOST_ORB_MASK) | 6;
+            }});
             setMove(MMID::HEXAGHOST_DIVIDER);
-            bc.noOpRollMove();
             break;
         }
 
         case MMID::HEXAGHOST_DIVIDER: // 1
-            attackPlayerHelper(bc, miscInfo, 6);
-            uniquePower0 = 0;
-            setMove(MMID::HEXAGHOST_SEAR);
-            bc.addToBot( Actions::NoOpRollMove() );
+            attackPlayerHelper(bc, hexaghostDividerDamage, 6);
+            bc.addToBot(Actions::HexaghostDeactivateOrbs(idx));
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::HEXAGHOST_INFERNO: // 6
             attackPlayerHelper(bc, asc4 ? 3 : 2, 6);
-            uniquePower0 = 0;
-            setMove(MMID::HEXAGHOST_SEAR);
-            bc.addToBot( Actions::NoOpRollMove() );
+            bc.addToBot(Actions::BurnIncrease());
+            miscInfo |= HEXAGHOST_BURN_UPGRADED;
+            bc.addToBot(Actions::HexaghostDeactivateOrbs(idx));
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::HEXAGHOST_INFLAME: // 3
-            addBlock(12);
-            buff<MS::STRENGTH>(asc19 ? 3 : 2);
-            ++uniquePower0;
-            setMove(MMID::HEXAGHOST_TACKLE);
-            bc.noOpRollMove();
+            bc.addToBot(Actions::MonsterGainBlock(idx, 12));
+            bc.addToBot(Actions::BuffEnemy<MS::STRENGTH>(idx, asc19 ? 3 : 2));
+            bc.addToBot(Actions::HexaghostActivateOrb(idx));
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::HEXAGHOST_SEAR: // 4
             attackPlayerHelper(bc, 6);
             bc.addToBot (
-                    Actions::MakeTempCardInDiscard(CardInstance(CardId::BURN, bc.turn > 8), asc19 ? 2 : 1)
+                    Actions::MakeTempCardInDiscard(CardInstance(CardId::BURN, (miscInfo & HEXAGHOST_BURN_UPGRADED) != 0), asc19 ? 2 : 1)
             );
-            if (uniquePower0 == 0) {
-                setMove(MMID::HEXAGHOST_TACKLE);
-
-            } else if (uniquePower0 == 2) {
-                setMove(MMID::HEXAGHOST_INFLAME);
-
-            } else {
-                setMove(MMID::HEXAGHOST_INFERNO);
-            }
-            ++uniquePower0;
-            bc.addToBot(Actions::NoOpRollMove());
+            bc.addToBot(Actions::HexaghostActivateOrb(idx));
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::HEXAGHOST_TACKLE: // 2
             attackPlayerHelper(bc, asc4 ? 6 : 5, 2);
-            setMove(MMID::HEXAGHOST_SEAR);
-            ++uniquePower0;
-            bc.addToBot(Actions::NoOpRollMove());
+            bc.addToBot(Actions::HexaghostActivateOrb(idx));
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
 
@@ -2441,11 +2434,20 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
         }
 
         case MonsterId::HEXAGHOST: {
-#ifdef sts_asserts
-            assert(firstTurn());
-#endif
-            return (MMID::HEXAGHOST_ACTIVATE);
-            break;
+            if (!(monsterData & HEXAGHOST_ACTIVATED)) {
+                monsterData |= HEXAGHOST_ACTIVATED;
+                return MMID::HEXAGHOST_ACTIVATE;
+            }
+            switch (monsterData & HEXAGHOST_ORB_MASK) {
+                case 0:
+                case 2:
+                case 5: return MMID::HEXAGHOST_SEAR;
+                case 1:
+                case 4: return MMID::HEXAGHOST_TACKLE;
+                case 3: return MMID::HEXAGHOST_INFLAME;
+                case 6: return MMID::HEXAGHOST_INFERNO;
+                default: throw std::logic_error("invalid Hexaghost orb count");
+            }
         }
 
         case MonsterId::JAW_WORM: {

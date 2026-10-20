@@ -85,7 +85,7 @@ DamageInfo Monster::getMoveBaseDamage(const BattleContext &bc) const {
 
         case MonsterMoveId::GREMLIN_WIZARD_ULTIMATE_BLAST:  return {asc2 ? 30 : 25};
 
-        case MonsterMoveId::HEXAGHOST_DIVIDER:              return {miscInfo, 6};
+        case MonsterMoveId::HEXAGHOST_DIVIDER:              return {hexaghostDividerDamage, 6};
         case MonsterMoveId::HEXAGHOST_INFERNO:              return {asc4 ? 3 : 2, 6};
         case MonsterMoveId::HEXAGHOST_SEAR:                 return {6};
         case MonsterMoveId::HEXAGHOST_TACKLE:               return {asc4 ? 6 : 5, 2};

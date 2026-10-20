@@ -36,6 +36,11 @@ struct Monster {
         IMPLANT_PENDING = 1,
         IMPLANT_SETTLED = 2,
     };
+    enum HexaghostMoveState {
+        HEXAGHOST_ORB_MASK = 7,
+        HEXAGHOST_BURN_UPGRADED = 8,
+        HEXAGHOST_ACTIVATED = 16,
+    };
     static constexpr int MAX_BLOCK = 999;
     static constexpr int MAX_STRENGTH = 999;
     static int cappedStrength(int value) {
@@ -92,13 +97,13 @@ struct Monster {
         int vulnerable = 0;
         int weak = 0;
 
-        int uniquePower0 = 0; // unique powers, hexaghost orbCount
+        int uniquePower0 = 0; // unique powers
         std::int16_t uniquePower1 = 0; // Corrupt Heart invincible,
 
         // Shield Gremlin target
         // GreenLouse / RedLouse actual biteDamage
         // Red Slaver entangled turn
-        // hexaghost divider damage
+        // hexaghost HexaghostMoveState: low3 orbActiveCount, bit3 burnUpgraded, bit4 activated
         // Gremlin wizard charge
         // book of stabbing n
         // champ: low2 bits forgeTimes, bit2 thresholdReached, upper bits numTurns
@@ -112,6 +117,7 @@ struct Monster {
         // time eater has used haste
         // awakened one isPhase2
         int miscInfo = 0;
+        int hexaghostDividerDamage = -1; // actual damage[2].base, before Activate = -1
         // Looter/Mugger: miscInfo is the actual stolenGold ledger. These are
         // separate Java fields, not inferred from turn or ThieveryPower.
         int thiefSlashCount = 0;

@@ -380,6 +380,10 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, monster.uniquePower0);
         hashValue(hash, monster.uniquePower1);
         hashValue(hash, monster.miscInfo);
+        if (monster.id == MonsterId::HEXAGHOST) {
+            hashValue(hash, 0x48455841); // HEXA: separate private Divider base damage.
+            hashValue(hash, monster.hexaghostDividerDamage);
+        }
         if (monster.id == MonsterId::LOOTER || monster.id == MonsterId::MUGGER) {
             hashValue(hash, 0x54484946); // THIF: private future state, not a model token.
             hashValue(hash, monster.thiefSlashCount);

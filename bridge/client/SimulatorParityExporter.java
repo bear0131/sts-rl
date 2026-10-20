@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v27";
+    public static final String VERSION = "simulator-parity-v28";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -220,6 +220,14 @@ public final class SimulatorParityExporter {
         } else if (monster instanceof com.megacrit.cardcrawl.monsters.beyond.GiantHead) {
             result.put("count", Integer.valueOf(privateInt(monster,
                 com.megacrit.cardcrawl.monsters.beyond.GiantHead.class, "count")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.Hexaghost) {
+            Class<?> type = com.megacrit.cardcrawl.monsters.exordium.Hexaghost.class;
+            result.put("activated", Boolean.valueOf(privateBool(monster, type, "activated")));
+            result.put("burn_upgraded", Boolean.valueOf(privateBool(monster, type, "burnUpgraded")));
+            result.put("orb_active_count", Integer.valueOf(privateInt(monster, type, "orbActiveCount")));
+            if (monster.damage.size() != 4)
+                throw new IllegalStateException("Unexpected Hexaghost damage table");
+            result.put("divider_damage", Integer.valueOf(monster.damage.get(2).base));
         } else {
             return null;
         }

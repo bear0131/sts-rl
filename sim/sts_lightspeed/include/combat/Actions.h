@@ -69,6 +69,9 @@ namespace sts {
         static Action SetMonsterMove(int idx, MonsterMoveId move);
         static Action RollMove(int monsterIdx);
         static Action ReactiveRollMove(int monsterIdx); // one queued reactive hit
+        static Action HexaghostActivateOrb(int monsterIdx);
+        static Action HexaghostDeactivateOrbs(int monsterIdx);
+        static Action BurnIncrease();
 
         static Action NoOpRollMove();
 

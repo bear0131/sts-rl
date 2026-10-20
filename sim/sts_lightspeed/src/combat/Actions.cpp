@@ -154,6 +154,38 @@ Action Actions::RollMove(int monsterIdx) {
     }};
 }
 
+Action Actions::HexaghostActivateOrb(int monsterIdx) {
+    return {[=](BattleContext &bc) {
+        auto &monster = bc.monsters.arr[monsterIdx];
+        const int count = monster.miscInfo & Monster::HEXAGHOST_ORB_MASK;
+        if (count >= 6) throw std::logic_error("Hexaghost cannot activate a seventh orb");
+        monster.miscInfo = (monster.miscInfo & ~Monster::HEXAGHOST_ORB_MASK) | (count + 1);
+        // Java ChangeState sets Inferno here, then the queued RollMove sets it
+        // again. Both entries belong to the actual move history.
+        if (count + 1 == 6) monster.setMove(MonsterMoveId::HEXAGHOST_INFERNO);
+    }};
+}
+
+Action Actions::HexaghostDeactivateOrbs(int monsterIdx) {
+    return {[=](BattleContext &bc) {
+        bc.monsters.arr[monsterIdx].miscInfo &= ~Monster::HEXAGHOST_ORB_MASK;
+    }};
+}
+
+Action Actions::BurnIncrease() {
+    return {[](BattleContext &bc) {
+        for (auto &card : bc.cards.discardPile) {
+            if (card.getId() == CardId::BURN) card.upgrade();
+        }
+        for (auto &card : bc.cards.drawPile) {
+            if (card.getId() == CardId::BURN) card.upgrade();
+        }
+        for (int i = 0; i < 3; ++i) {
+            bc.cards.createTempCardInDiscard(CardInstance(CardId::BURN, true));
+        }
+    }};
+}
+
 Action Actions::ReactiveRollMove(int monsterIdx) {
     return {[=] (BattleContext &bc) {
         Monster &m = bc.monsters.arr[monsterIdx];

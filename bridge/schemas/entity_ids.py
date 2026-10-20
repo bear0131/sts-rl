@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v27"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v28"
 
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
@@ -24,6 +24,12 @@ MONSTER_MOVE_STATE_CONTRACTS = {
     'Darkling': {'nip_damage': {'type': 'int', 'min': 7, 'max': 13, 'java': 'nipDmg'}},
     'TheGuardian': {'damage_threshold': {'type': 'int', 'min': 30, 'max': 2147483647, 'java': 'dmgThreshold'}},
     'GiantHead': {'count': {'type': 'int', 'min': -6, 'max': 5, 'java': 'count'}},
+    'Hexaghost': {
+        'activated': {'type': 'bool', 'java': 'activated'},
+        'burn_upgraded': {'type': 'bool', 'java': 'burnUpgraded'},
+        'orb_active_count': {'type': 'int', 'min': 0, 'max': 6, 'java': 'orbActiveCount'},
+        'divider_damage': {'type': 'int', 'min': -1, 'max': 2147483647, 'java': 'damage[2].base'},
+    },
 }
 
 # Presence is part of the wire contract, independently of vocabulary tokens.

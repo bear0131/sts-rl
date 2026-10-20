@@ -367,6 +367,12 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
             case sts::MonsterId::GIANT_HEAD:
                 moveState["count"] = m.miscInfo;
                 break;
+            case sts::MonsterId::HEXAGHOST:
+                moveState["activated"] = (m.miscInfo & sts::Monster::HEXAGHOST_ACTIVATED) != 0;
+                moveState["burn_upgraded"] = (m.miscInfo & sts::Monster::HEXAGHOST_BURN_UPGRADED) != 0;
+                moveState["orb_active_count"] = m.miscInfo & sts::Monster::HEXAGHOST_ORB_MASK;
+                moveState["divider_damage"] = m.hexaghostDividerDamage;
+                break;
             default:
                 break;
         }
@@ -1190,7 +1196,8 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     case sts::MonsterId::GIANT_HEAD: singleField = "count"; break;
                     default: break;
                 }
-                if (singleField || monster.id == sts::MonsterId::THE_CHAMP) {
+                if (singleField || monster.id == sts::MonsterId::THE_CHAMP
+                    || monster.id == sts::MonsterId::HEXAGHOST) {
                     if (!py::isinstance<py::dict>(m["move_state"]))
                         throw std::invalid_argument("monster requires explicit move state");
                     const auto state = m["move_state"].cast<py::dict>();
@@ -1219,6 +1226,18 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         } else {
                             monster.miscInfo = getBool(state, singleField, false) ? 1 : 0;
                         }
+                    } else if (monster.id == sts::MonsterId::HEXAGHOST) {
+                        if (state.size() != 4 || !state.contains("activated")
+                            || !state.contains("burn_upgraded") || !state.contains("orb_active_count")
+                            || !state.contains("divider_damage"))
+                            throw std::invalid_argument("incomplete Hexaghost move state");
+                        const int count = snapshotInteger(state, "orb_active_count", 0, 6);
+                        const bool activated = getBool(state, "activated", false);
+                        const bool upgraded = getBool(state, "burn_upgraded", false);
+                        monster.hexaghostDividerDamage = snapshotInteger(
+                            state, "divider_damage", -1, std::numeric_limits<int>::max());
+                        monster.miscInfo = count | (activated ? sts::Monster::HEXAGHOST_ACTIVATED : 0)
+                            | (upgraded ? sts::Monster::HEXAGHOST_BURN_UPGRADED : 0);
                     } else {
                         if (state.size() != 3 || !state.contains("num_turns")
                             || !state.contains("forge_times") || !state.contains("threshold_reached"))
@@ -1249,7 +1268,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         if (!m.contains("move_state")) monster.miscInfo = requestedDamage;
                         break;
                     case sts::MonsterMoveId::HEXAGHOST_DIVIDER:
-                        monster.miscInfo = requestedDamage;
+                        if (!m.contains("move_state")) monster.hexaghostDividerDamage = requestedDamage;
                         break;
                     case sts::MonsterMoveId::BOOK_OF_STABBING_MULTI_STAB:
                         // Legacy non-strict custom states may explicitly edit
