@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v38"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v39"
 
 # Supported native UseCardAction relic callbacks; order comes from the actual
 # acquisition-ordered global relic list, never from this membership inventory.
@@ -241,7 +241,7 @@ REAL_RELIC_COUNTER_USAGE = {
     "CaptainsWheel": ("CaptainsWheel", "combat_turn_until_activation"),
     "CeramicFish": ("CeramicFish", "legacy_use_method_not_obtain_card_counter"),
     "Circlet": ("Circlet", "copies_obtained"),
-    "Du-Vu Doll": ("DuVuDoll", "master_deck_curse_count"),
+    "Du-Vu Doll": ("DuVuDoll", "cached_master_deck_curse_count"),
     "Girya": ("Girya", "lifts_completed"),
     "Happy Flower": ("HappyFlower", "turns_modulo_three"),
     "HornCleat": ("HornCleat", "combat_turn_until_activation"),
@@ -268,7 +268,7 @@ REAL_RELIC_COUNTER_USAGE = {
     "WingedGreaves": ("WingBoots", "disconnected_map_move_charges"),
 }
 
-DERIVED_RELIC_COUNTER_SOURCES = {"Du-Vu Doll": "Deck::getCurseCount()"}
+DERIVED_RELIC_COUNTER_SOURCES = {}
 FRESH_RELIC_INITIAL_DATA = {
     "Lizard Tail": 1, "MawBank": 1, "NlothsMask": 1, "Circlet": 1,
     "Matryoshka": 2, "Omamori": 2, "NeowsBlessing": 3, "WingedGreaves": 3,

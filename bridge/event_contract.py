@@ -291,6 +291,7 @@ EVENT_PROGRESS_CONTRACTS = {
     'Designer': ('shrines.Designer', {'INTRO', 'MAIN', 'DONE'}),
     'NoteForYourself': ('shrines.NoteForYourself', {'INTRO', 'CHOOSE', 'COMPLETE'}),
     'Falling': ('beyond.Falling', {'INTRO', 'CHOICE', 'RESULT'}),
+    "N'loth": ('shrines.Nloth', {'0', '1'}),
     'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
 }
 
@@ -508,6 +509,7 @@ def transport_only(gs):
         'Designer': {'INTRO', 'DONE'},
         'NoteForYourself': {'INTRO', 'COMPLETE'},
         'Falling': {'INTRO', 'RESULT'},
+        "N'loth": {'1'},
     }
     if event in stages and phase in stages[event]:
         return o['choice_index']
@@ -578,24 +580,34 @@ def falling_choices(gs):
 
 
 def nloth_choices(gs):
+    _validate_choice_indices(gs)
+    if (gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != "N'loth"
+            or event_progress(gs, "N'loth")['phase'] != '0'):
+        raise ValueError('Nloth choices require its actual initial screen')
+    rows = gs['screen_state'].get('options')
+    relics = gs.get('relics')
+    if (not isinstance(rows, list) or len(rows) != 3 or not isinstance(relics, list)
+            or any(not isinstance(r, dict) or not isinstance(r.get('id'), str)
+                   or type(r.get('counter')) is not int for r in relics)):
+        raise ValueError('Nloth requires complete actual options and owned relic records')
+    owned = {r['id']: r for r in relics}
+    if len(owned) != len(relics):
+        raise ValueError('Nloth duplicate owned relic identity')
     result = []
-    for o in (gs.get('screen_state') or {}).get('options', []):
-        if o.get('disabled'):
-            continue
-        text = _text(o.get('text', ''))
-        index = o.get('choice_index')
-        if text in {'[离开]', '[leave]'} and index == 2:
-            result.append(dict(index=2, ui=2, kind='leave'))
-            continue
-        match = re.match(r'\[(?:交出：|offer:)([^\]]+)\]', text)
-        if not match or index not in (0, 1):
-            raise ValueError('Nloth option identity/position mismatch')
-        relics = [r for r in gs.get('relics', []) if _text(r.get('name', '')) == match[1]]
-        if len(relics) != 1:
-            raise ValueError('Nloth displayed relic ambiguous/missing')
-        result.append(dict(index=index, ui=index, kind='lose_relic', relic=relics[0]))
-    if sorted(d['index'] for d in result) != [0, 1, 2]:
-        raise ValueError('Nloth incomplete choices')
+    for index, row in enumerate(rows):
+        kind = 'leave' if index == 2 else 'lose_relic'
+        if (row.get('kind') != kind or row.get('disabled') is not False
+                or type(row.get('choice_index')) is not int or row['choice_index'] != index):
+            raise ValueError('Nloth typed offer/leave mapping differs from actual buttons')
+        choice = dict(index=index, ui=index, kind=kind)
+        if index != 2:
+            relic = row.get('relic')
+            if not isinstance(relic, dict) or owned.get(relic.get('id')) != relic:
+                raise ValueError('Nloth typed target differs from the actual owned relic')
+            choice['relic'] = relic
+        result.append(choice)
+    if result[0]['relic']['id'] == result[1]['relic']['id']:
+        raise ValueError('Nloth actual offers must be distinct owned relics')
     return result
 
 
@@ -743,7 +755,7 @@ def options(gs):
             'Match and Keep requires the fixed board-slot transport contract'
         )
     if event == "N'loth":
-        return {d['index']: (d['ui'], 'nloth_trade' if d['kind'] == 'lose_relic' else 'leave')
+        return {d['index']: (d['ui'], 'nloth_trade' if d['kind'] == 'lose_relic' else 'nloth_leave')
                 for d in nloth_choices(gs)}
     if event == 'Falling':
         return {d['index']: (d['ui'], 'falling_leave' if d['kind'] == 'leave' else 'falling_remove')
@@ -1831,10 +1843,11 @@ class EventEffectAck:
             if not match or int(match[1]) > gs.get('gold', 0):
                 raise ValueError('World of Goop public gold loss missing/invalid')
             self.goop_loss = int(match[1])
-        if effect == 'nloth_trade':
-            self.nloth_target = next(d['relic']['id'] for d in nloth_choices(gs) if d['index'] == decision.semantic[1])
-            if any(r['id'] == "Nloth's Gift" for r in gs.get('relics', [])):
-                raise RuntimeError('Nloth duplicate gift variant not yet verified')
+        if effect in {'nloth_trade', 'nloth_leave'}:
+            choice = next(d for d in nloth_choices(gs) if d['index'] == decision.semantic[1])
+            if decision.command != f'CHOOSE {choice["ui"]}':
+                raise ValueError('Nloth semantic action and actual button disagree')
+            self.nloth_target = choice['relic']['id'] if choice['kind'] != 'leave' else None
         if effect == 'scrap_search':
             scrap_offer(gs)  # Refuse unparsed variants before sending anything.
         if effect in {'falling_remove', 'falling_leave'}:
@@ -2069,17 +2082,60 @@ class EventEffectAck:
                 self.pending = None
                 return False
             return True
-        if effect == 'nloth_trade':
-            before = Counter(r['id'] for r in old.get('relics', []))
-            after = Counter(r['id'] for r in g.get('relics', []))
-            removed, added = before - after, after - before
-            if (removed and removed != Counter({self.nloth_target: 1})
-                    or added and added != Counter({"Nloth's Gift": 1})):
+        if effect in {'nloth_trade', 'nloth_leave'}:
+            from bridge.schemas.card_state import real_selection_card_states
+            if any(g.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+                raise RuntimeError('Nloth receipt crossed its actual run/room')
+            if g.get('screen_type') != 'EVENT' or g['screen_state'].get('event_id') != "N'loth":
+                raise RuntimeError('Nloth left before its actual trade receipt')
+            if event_progress(g, "N'loth")['phase'] == '0':
+                return True
+            before, after = self._augmenter_relics(old), self._augmenter_relics(g)
+            duplicate = "Nloth's Gift" in before
+            donor = self.nloth_target if not duplicate else None
+            expected = dict(before)
+            expected_order = [r['id'] for r in old['relics'] if r['id'] != donor]
+            if donor is not None:
+                del expected[donor]
+            counter_pending = False
+            if self.nloth_target is not None:
+                gift = 'Circlet' if duplicate else "Nloth's Gift"
+                if gift not in expected:
+                    expected_order.append(gift)
+                expected[gift] = expected.get(gift, 0) + 1 if gift == 'Circlet' else -1
+            if set(after) - set(expected):
                 raise RuntimeError('Nloth relic exchange identity/count mismatch')
-            if removed and added and transport_only(g) is not None:
-                self.pending = None
-                return False
-            return True
+            for relic in set(after) & set(expected):
+                if after[relic] == expected[relic]:
+                    continue
+                if (self.nloth_target is not None and duplicate and relic == 'Circlet'
+                        and after[relic] == before.get(relic)):
+                    counter_pending = True
+                else:
+                    raise RuntimeError('Nloth relic exchange identity/count mismatch')
+            # spawnRelicAndObtain may finish after the dialogue switches.
+            if set(after) != set(expected) or counter_pending:
+                return True
+            if [r['id'] for r in g['relics']] != expected_order:
+                raise RuntimeError('Nloth changed unrelated relic acquisition order')
+            old_cards = real_selection_card_states(old['deck'], [])[0]
+            expected_cards = {c['uuid']: deepcopy(c) for c in old_cards}
+            bottle = {'Bottled Flame': 'bottled_flame', 'Bottled Lightning': 'bottled_lightning',
+                      'Bottled Tornado': 'bottled_tornado'}.get(donor)
+            if bottle is not None:
+                for card in expected_cards.values():
+                    card[bottle] = False
+            if donor == 'Necronomicon':
+                curse = next((c for c in old_cards if c['id'] == 'Necronomicurse'), None)
+                if curse is not None:
+                    del expected_cards[curse['uuid']]
+            actual_cards = {c['uuid']: c for c in real_selection_card_states(g['deck'], [])[0]}
+            if actual_cards != expected_cards:
+                raise RuntimeError('Nloth master instances do not match the actual unequip effects')
+            if any(g[k] != old[k] for k in ('current_hp', 'max_hp', 'gold', 'potions')):
+                raise RuntimeError('Nloth changed unrelated resources')
+            self.pending = None
+            return False
         if effect in {'face_touch', 'face_trade'}:
             if g.get('screen_type') == 'GAME_OVER' and g.get('current_hp', 1) <= 0:
                 self.pending = None

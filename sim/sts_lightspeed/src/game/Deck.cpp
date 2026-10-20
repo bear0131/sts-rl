@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <stdexcept>
 
 #include "game/Deck.h"
 #include "game/Random.h"
@@ -189,6 +190,15 @@ void Deck::obtainImpl(GameContext &gc, Card card, int count, bool checkOmamori) 
     for (int i = 0; i < count; ++i) {
         cards.push_back(card);
     }
+    notifyMasterChange(gc);
+}
+
+void Deck::notifyMasterChange(GameContext &gc) {
+    // Java caches this on onEquip/onMasterDeckChange, not every frame or
+    // combat. Direct Necronomicon group removal deliberately skips the hook.
+    if (gc.hasRelic(RelicId::DU_VU_DOLL)) {
+        gc.relics.getRelicValueRef(RelicId::DU_VU_DOLL) = getCurseCount();
+    }
 }
 
 void Deck::obtainRaw(Card card) {
@@ -226,11 +236,22 @@ void Deck::bottleCard(int idx, CardType bottleType) {
 }
 
 void Deck::removeBottle(CardType bottleType) {
+    if (bottleIdxs[static_cast<int>(bottleType)] == -1) return;
     bottleIdxs[static_cast<int>(bottleType)] = -1;
     ++transformableCount;
 }
 
 void Deck::remove(GameContext &gc, int idx) {
+    removeImpl(gc, idx, true);
+}
+
+void Deck::removeFromNecronomicon(GameContext &gc, int idx) {
+    if (idx < 0 || idx >= size() || cards[idx].getId() != CardId::NECRONOMICURSE)
+        throw std::invalid_argument("Necronomicon can only remove its actual curse");
+    removeImpl(gc, idx, false);
+}
+
+void Deck::removeImpl(GameContext &gc, int idx, bool notifyMasterChange) {
     const auto c = cards[idx];
 
     if (c.getType() == CardType::CURSE){
@@ -251,6 +272,7 @@ void Deck::remove(GameContext &gc, int idx) {
 
     if (!anyCardBottled()) { // if no bottled cards, can do simple remove
         cards.remove(idx);
+        if (notifyMasterChange) this->notifyMasterChange(gc);
         return;
     }
 
@@ -269,6 +291,7 @@ void Deck::remove(GameContext &gc, int idx) {
         cards[i] = cards[i+1]; // shift cards to erase remove card
     }
     cards.resize(cards.size()-1);
+    if (notifyMasterChange) this->notifyMasterChange(gc);
 }
 
 void Deck::upgrade(int idx) {

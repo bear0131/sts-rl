@@ -727,20 +727,29 @@ def test_nloth_encodes_exact_displayed_relics_and_ack(event_adapter):
     from types import SimpleNamespace
     a = event_adapter("N'loth", [('[交出： 冰淇淋] 失去这件遗物。', False),
                                   ('[Offer: Anchor] Lose this relic.', False), ('[Leave]', False)])
-    a.gs['relics'] = [{'id':'Ice Cream','name':'冰淇淋'}, {'id':'Anchor','name':'Anchor'}]
+    a.gs['relics'] = [{'id':'Ice Cream','name':'冰淇淋', 'counter':-1},
+                      {'id':'Anchor','name':'Anchor', 'counter':-1}]
+    a.gs['simulator_obtain_pending'] = False
+    a.gs['simulator_event_progress'] = dict(source='com.megacrit.cardcrawl.events.shrines.Nloth', phase='0')
+    for index, row in enumerate(a.gs['screen_state']['options']):
+        row['kind'] = 'leave' if index == 2 else 'lose_relic'
+        if index != 2:
+            row['relic'] = deepcopy(a.gs['relics'][index])
     assert a._options('event')['event_choices'] == [
         {'index':0,'kind':'lose_relic','relic':'Ice Cream'},
         {'index':1,'kind':'lose_relic','relic':'Anchor'}, {'index':2,'kind':'leave'}]
     ack = EventEffectAck()
-    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0)), 0)
+    ack.arm(a.frame, SimpleNamespace(semantic=('event', 0), command='CHOOSE 0'), 0)
     bad = deepcopy(a.frame)
-    bad['game_state']['relics'] = [a.gs['relics'][0], {'id':"Nloth's Gift"}]
+    bad['game_state']['relics'] = [a.gs['relics'][0], {'id':"Nloth's Gift", 'counter':-1}]
+    bad['game_state']['simulator_event_progress']['phase'] = '1'
     with pytest.raises(RuntimeError, match='identity/count'):
         ack.waiting(bad, 1)
     good = deepcopy(a.frame)
-    good['game_state']['relics'] = [a.gs['relics'][1], {'id':"Nloth's Gift"}]
+    good['game_state']['relics'] = [a.gs['relics'][1], {'id':"Nloth's Gift", 'counter':-1}]
     assert ack.waiting(good, 2)
     good['game_state']['screen_state']['options'] = [{'text':'[Leave]', 'choice_index':0}]
+    good['game_state']['simulator_event_progress']['phase'] = '1'
     assert not ack.waiting(good, 3)
 
 

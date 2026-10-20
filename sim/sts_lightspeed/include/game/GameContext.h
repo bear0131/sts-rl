@@ -285,6 +285,7 @@ namespace sts {
         void obtainKey(Key key);
         void obtainPotion(Potion p);
         bool obtainRelic(RelicId r);
+        void loseRelic(RelicId r);
 
         RelicId returnRandomRelic(RelicTier tier, bool shopRoom=false, bool fromFront=true);
         RelicId returnNonCampfireRelic(RelicTier tier, bool shopRoom=false);

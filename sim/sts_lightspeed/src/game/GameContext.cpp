@@ -1386,6 +1386,27 @@ void upgradeRandomCardsMatching(GameContext &gc, CardType type) {
 
 
 // relics with screens will call regainControl() after obtaining a relic with a screen
+void GameContext::loseRelic(RelicId r) {
+    if (!hasRelic(r)) return;
+    switch (r) {
+        case RelicId::BOTTLED_FLAME: deck.removeBottle(CardType::ATTACK); break;
+        case RelicId::BOTTLED_LIGHTNING: deck.removeBottle(CardType::SKILL); break;
+        case RelicId::BOTTLED_TORNADO: deck.removeBottle(CardType::POWER); break;
+        case RelicId::NECRONOMICON:
+            for (int i = 0; i < deck.size(); ++i) {
+                if (deck.cards[i].getId() == CardId::NECRONOMICURSE) {
+                    // Java removes from group directly: no onRemove or
+                    // onMasterDeckChange; later ordinary mutations refresh it.
+                    deck.removeFromNecronomicon(*this, i);
+                    break;
+                }
+            }
+            break;
+        default: break; // Energy/draw are derived from ownership at battle init.
+    }
+    relics.remove(r);
+}
+
 bool GameContext::obtainRelic(RelicId r) {
 //    std::cout << "obtained relic: " << relicNames[static_cast<int>(r)] << std::endl;
 //    std::cout << *this << std::endl;
@@ -1436,7 +1457,7 @@ bool GameContext::obtainRelic(RelicId r) {
 
         case RelicId::BLACK_BLOOD: {
             if (hasRelic(RelicId::BURNING_BLOOD)) {
-                relics.remove(RelicId::BURNING_BLOOD);
+                loseRelic(RelicId::BURNING_BLOOD);
             }
             break;
         }
@@ -1445,6 +1466,10 @@ bool GameContext::obtainRelic(RelicId r) {
             opensScreen = obtainBottleHelper(*this, CardType::ATTACK);
             break;
         }
+
+        case RelicId::DU_VU_DOLL:
+            relicData = deck.getCurseCount();
+            break;
 
         case RelicId::BOTTLED_LIGHTNING: {
             opensScreen = obtainBottleHelper(*this, CardType::SKILL);
@@ -2397,7 +2422,7 @@ void GameContext::chooseNeowOption(const Neow::Option &o) {
             break;
 
         case Neow::Drawback::LOSE_STARTER_RELIC:
-            relics.remove(getStarterRelicForClass(cc));
+            loseRelic(getStarterRelicForClass(cc));
             break;
 
         case Neow::Drawback::NONE:
@@ -3343,14 +3368,15 @@ void GameContext::chooseEventOption(int idx) {
         case Event::NLOTH: {
             switch (idx) {
                 case 0:
-                    relics.remove(relics.relics[info.relicIdx0].id); // maybe add a removeAtIdx method?
-                    obtainRelic(RelicId::NLOTHS_GIFT);
-                    regainControl();
-                    break;
-
                 case 1:
-                    relics.remove(relics.relics[info.relicIdx1].id); // maybe add a removeAtIdx method?
-                    obtainRelic(RelicId::NLOTHS_GIFT);
+                    if (hasRelic(RelicId::NLOTHS_GIFT)) {
+                        // Vanilla's duplicate-gift path keeps the offered relic.
+                        obtainRelic(RelicId::CIRCLET);
+                    } else {
+                        const auto offered = relics.relics[idx == 0 ? info.relicIdx0 : info.relicIdx1].id;
+                        loseRelic(offered);
+                        obtainRelic(RelicId::NLOTHS_GIFT);
+                    }
                     regainControl();
                     break;
 
@@ -3570,7 +3596,7 @@ void GameContext::chooseEventOption(int idx) {
 
                 case 1:
                     obtainGold(333);
-                    relics.remove(RelicId::GOLDEN_IDOL);
+                    loseRelic(RelicId::GOLDEN_IDOL);
                     regainControl();
                     break;
 
@@ -3675,7 +3701,7 @@ void GameContext::chooseEventOption(int idx) {
 
         case Event::VAMPIRES: { // Vampires(?)
             if (idx == 0) {
-                relics.remove(RelicId::BLOOD_VIAL);
+                loseRelic(RelicId::BLOOD_VIAL);
             } else if (idx == 1) {
                 int maxHpLoss = std::min(maxHp-1, fractionMaxHp(0.3f, CEIL));
                 loseMaxHp(maxHpLoss);

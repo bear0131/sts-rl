@@ -101,8 +101,8 @@ def test_complete_codec_inventory_is_serializable_and_coverage_checked():
     assert counts['native_combat_root_fields'] == 16
     assert counts['real_room_classes'] == 11
     assert counts['real_card_wire_fields'] == 12
-    assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'master_deck_curse_count'
-    assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_derived'
+    assert tables['relic_counter_contracts']['Du-Vu Doll']['meaning'] == 'cached_master_deck_curse_count'
+    assert tables['relic_counter_contracts']['Du-Vu Doll']['numeric_audit_status'] == 'mapped_persistent'
     assert tables['relic_counter_contracts']['Kunai']['combat_modulo'] == 3
     assert tables['relic_counter_contracts']['HornCleat']['combat_stop_turn'] == 2
     assert tables['relic_counter_contracts']['Burning Blood']['inherited_display_value_map'] == {-1: 0}

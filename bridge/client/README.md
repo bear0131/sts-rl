@@ -364,6 +364,17 @@ so same-printed cards with different accumulated values cannot be interchanged.
 Model tensors, rule scores and native transition logic are unchanged. Deploy
 matching rebuilt Java/Python together, only at an isolated run boundary.
 
+Parity-v39 adds N'loth's actual owned relic offers and current result phase.
+Its receipt accounts for bottle removal and Necronomicon's direct first-curse
+removal; an already-owned N'loth's Gift instead grants Circlet without consuming
+the donor. Native losses share `GameContext.loseRelic`. Du-Vu Doll now preserves
+its actual cached counter through export/restore and battle initialization:
+ordinary deck mutations refresh it, but Necronomicon's raw group removal does
+not. It is not safe to reconstruct this counter from the current curse count.
+This requires the rebuilt native extension plus matching Java/Python. Existing
+checkpoint tensors and action meanings are unchanged; a build alone does not
+prove natural coverage of these combinations.
+
 A fresh combat attachment already inside the opening Gambling Chip or Toolbox
 selection must initialize its complete actual public root before comparing
 physical candidates. The native `initialize_selection_root` entry retains the

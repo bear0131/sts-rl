@@ -1860,7 +1860,7 @@ py::list gcRelics(const sts::GameContext &gc) {
     for (const auto &r : gc.relics.relics) {
         py::dict item;
         item["id"] = std::string(sts::relicIds[static_cast<int>(r.id)]);
-        item["counter"] = r.id == sts::RelicId::DU_VU_DOLL ? gc.deck.getCurseCount() : r.data;
+        item["counter"] = r.data;
         out.append(item);
     }
     return out;
@@ -2233,7 +2233,8 @@ void setRelics(sts::GameContext &gc, const std::vector<std::string> &ids) {
     for (const auto &id : ids) {
         const auto relicId = relicIdFromString(id);
         if (replacement.has(relicId)) throw std::invalid_argument("duplicate fresh relic identity");
-        replacement.add({relicId, sts::RelicInstance::initialData(relicId)});
+        replacement.add({relicId, relicId == sts::RelicId::DU_VU_DOLL
+            ? gc.deck.getCurseCount() : sts::RelicInstance::initialData(relicId)});
     }
     gc.relics = std::move(replacement);
 }
@@ -2253,8 +2254,6 @@ void setRelicState(sts::GameContext &gc, const py::list &items) {
         const int data = d["counter"].cast<int>();
         if (data < 0) throw std::invalid_argument("native relic counter must be nonnegative; translate Java sentinels first");
         if (replacement.has(relicId)) throw std::invalid_argument("duplicate relic snapshot identity");
-        if (relicId == sts::RelicId::DU_VU_DOLL && data != gc.deck.getCurseCount())
-            throw std::invalid_argument("Du-Vu Doll snapshot counter differs from the master deck curse count");
         replacement.add({relicId, data});
     }
     gc.relics = std::move(replacement);

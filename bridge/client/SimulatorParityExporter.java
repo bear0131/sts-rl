@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v38";
+    public static final String VERSION = "simulator-parity-v39";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -294,6 +294,7 @@ public final class SimulatorParityExporter {
             case "com.megacrit.cardcrawl.events.shrines.Designer": field = "curScreen"; break;
             case "com.megacrit.cardcrawl.events.shrines.NoteForYourself": field = "screen"; break;
             case "com.megacrit.cardcrawl.events.beyond.Falling": field = "screen"; break;
+            case "com.megacrit.cardcrawl.events.shrines.Nloth": field = "screenNum"; break;
             case "com.megacrit.cardcrawl.events.shrines.AccursedBlacksmith":
             case "com.megacrit.cardcrawl.events.exordium.GoldenIdolEvent":
             case "com.megacrit.cardcrawl.events.beyond.MoaiHead": field = "screenNum"; break;
@@ -361,6 +362,38 @@ public final class SimulatorParityExporter {
             return (HashMap<String, Object>)method.invoke(null, card);
         } catch (ReflectiveOperationException error) {
             throw new IllegalStateException("Cannot serialize the actual public event card", error);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void augmentNloth(HashMap<String, Object> state, AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.shrines.Nloth)
+                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT
+                || !GameStateListener.isWaitingForCommand() || !CommandExecutor.isChooseCommandAvailable()
+                || privateInt(event, event.getClass(), "screenNum") != 0) return;
+        java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");
+        java.util.List<java.util.Map<String, Object>> options =
+            (java.util.List<java.util.Map<String, Object>>)screen.get("options");
+        if (!"N'loth".equals(screen.get("event_id")) || options.size() != 3)
+            throw new IllegalStateException("Nloth must expose its actual three buttons");
+        for (int i = 0; i < 3; i++) {
+            java.util.Map<String, Object> option = options.get(i);
+            if (!Boolean.FALSE.equals(option.get("disabled")) || !Integer.valueOf(i).equals(option.get("choice_index")))
+                throw new IllegalStateException("Nloth actual option mapping changed");
+            option.put("kind", i == 2 ? "leave" : "lose_relic");
+            if (i == 2) continue;
+            AbstractRelic relic = ReflectionHacks.getPrivate(event, event.getClass(), i == 0 ? "choice1" : "choice2");
+            if (relic == null || !AbstractDungeon.player.relics.contains(relic))
+                throw new IllegalStateException("Nloth offer is not an actual owned relic");
+            java.util.Map<String, Object> target = null;
+            for (java.util.Map<String, Object> record :
+                    (java.util.List<java.util.Map<String, Object>>)state.get("relics")) {
+                if (!relic.relicId.equals(record.get("id"))) continue;
+                if (target != null) throw new IllegalStateException("Nloth duplicate owned relic identity");
+                target = record;
+            }
+            if (target == null) throw new IllegalStateException("Nloth offer missing serialized relic");
+            option.put("relic", target);
         }
     }
 
@@ -636,6 +669,7 @@ public final class SimulatorParityExporter {
         augmentDesigner(state, event);
         augmentNote(state, event);
         augmentFalling(state, event);
+        augmentNloth(state, event);
         state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {

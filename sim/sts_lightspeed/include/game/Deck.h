@@ -57,6 +57,7 @@ namespace sts {
         void obtainRaw(Card card);
 
         void remove(GameContext &gc, int idx);
+        void removeFromNecronomicon(GameContext &gc, int idx);
         void removeSelected(GameContext &gc, const fixed_list<SelectScreenCard, 3> &selectList);
         void upgrade(int idx);
         void addMatchingToSelectList(fixed_list<SelectScreenCard, MAX_SIZE> &selectList, const CardPredicate &p) const;
@@ -69,6 +70,8 @@ namespace sts {
         [[nodiscard]] fixed_list<int, MAX_SIZE> getUpgradeableCardIdxs() const;
     private:
         void obtainImpl(GameContext &gc, Card card, int count, bool checkOmamori);
+        void removeImpl(GameContext &gc, int idx, bool notifyMasterChange);
+        void notifyMasterChange(GameContext &gc);
     };
 
 }

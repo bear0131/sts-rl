@@ -517,8 +517,8 @@ def _screen_potions(
 def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
     """Pass through typed event-button metadata when a bridge supplies it.
 
-    Stock buttons are localized ``text``/``label`` only. Parity-v35..38 add actual
-    WeMeetAgain/Designer/Note/Falling ``kind``/resource records; other sources need their own
+    Stock buttons are localized ``text``/``label`` only. Parity-v35..39 add actual
+    WeMeetAgain/Designer/Note/Falling/Nloth ``kind``/resource records; other sources need their own
     exporter contract. Never infer stable entity IDs from displayed names.
     """
     raw_options = _list_value(ss, "options", context="event screen", required=False)

@@ -20,7 +20,7 @@ def test_fresh_relic_injection_uses_declared_initial_charges(combat_factory, rel
     [{'id': 'Lizard Tail', 'counter': 1}, {'id': 'Lizard Tail', 'counter': 0}],
     [{'id': 'Lizard Tail', 'counter': 1}, {'id': 'UNKNOWN', 'counter': 0}],
     [{'id': 'Lizard Tail', 'counter': -2}], [{'id': 'INVALID', 'counter': 0}],
-    [{'id': 'Du-Vu Doll', 'counter': 4}],
+    [{'id': 'Du-Vu Doll', 'counter': -1}],
 ])
 def test_invalid_native_relic_snapshot_never_defaults_or_partially_replaces(combat_factory, records):
     env = combat_factory(['STRIKE_RED'], relics=['Burning Blood'])
@@ -40,7 +40,8 @@ def test_invalid_fresh_relic_list_does_not_erase_existing_state(combat_factory):
 
 def test_valid_relic_snapshot_preserves_explicit_consumed_and_accumulated_values(combat_factory):
     env = combat_factory(['STRIKE_RED'])
-    state = [{'id': 'Lizard Tail', 'counter': 0}, {'id': 'Circlet', 'counter': 4}]
+    state = [{'id': 'Lizard Tail', 'counter': 0}, {'id': 'Circlet', 'counter': 4},
+             {'id': 'Du-Vu Doll', 'counter': 4}]
     env.thick.gc.set_relic_state(state)
     assert env.thick.gc.relic_state() == state
 
