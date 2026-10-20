@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE137 | 续档索引设置错误已确证；显式起点/prefix日志已修，待新冻部署 | 208/F47原05最后F46决策432，开场先两次内部MULTI再435确认，正确房间起点433；06误用首个已输出命令435当入口，模型直接CONFIRM0张，非游戏漏执行换牌。旧错误协议/日志保留，不能当同轨复现。search_bridge记录每战斗接管起点、每事务start_index/内部prefix及最终命令prefix数，CLI明确恢复before-prefix；不改策略/权重/预算或强制选择。源码/语法后推送，后续新冻只认明确起点，135待办保留；06在运行不热换。 |
 | BRIDGE136 | 已部署；同208/F36 nonce1与F38 nonce6开场赌筹实机通过，续F39 | 49b9060/nativef680/v35jar3b6，同自然F36保存2693547e/index294续05，先注入完整实际公共根再严格UID/实例/顺序/mask；模型128搜索自主CONFIRM保留原五牌，三Shapes战后继续，F38 SphereAndTwoShapes的nonce6再次成功。仅新attach/确切开场源/turn1/零出牌弃牌零选择，任务/队列/RNG保留，非一般pending重置，不按位置或新nonce猜手牌。实际模型32508加载pyd路径/hash核验；无离线测试/模型布局预算变化，无START/跳209。旧04失败保留；Toolbox与特殊后继联动未自然覆盖。 |
 | BRIDGE135 | 源码确证缺口，待实现：Designer/NoteForYourself typed导出与回执 | entity_ids已有两事件kind语义，real_game_env可消费typed按钮，但现Java只新增WeMeetAgain，event_contract两事件仍无stock动作/效果实现。不得因STRUCTURED_CONTRACTS包含身份就称已可实机；需核外部事件源码导出真实服务模式/价格/牌与持久Note来源，保留旧固定动作编号和全局实体，不从本地化或UI顺序猜，不填PAD/强制离开；完整回执、源码/语法/必要构建后自然同档验证。 |
 | BRIDGE134 | 已部署；208/F29赠卡/OldCoin+Ecto实际通过，续至F33 | 333b4fc/v35jar3b6d461d用真实enum+mod等待/CHOOSE非空门控。04同efdd原档模型57.9368%选旧语义2→CHOOSE0，精确移除ShrugItOff0指定UUID/21→20牌，真实OldCoin到账但Ecto令gold22不变，完整回执后才最终Leave；F30原128搜索index219恢复，F33继续/无ERROR。所有旧failed段保留，01 enum/03加载/02空间原因明确，不START/跳209。药水/金币及其他screenless组合尚未自然覆盖，无离线测试；不扩模型/猜UI/PAD/泄露未来奖品。 |
@@ -183,7 +184,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 200200..206已通关，207同档运行；208..219待续 | 用户自动200200..219/最终TRAIN47/A0/确定性upper/G0/128/native4不变；前五含续档/版本，205单段a2/nativee516/v32完整胜利67-115HP/826分/33牌，687搜索/1374对齐/87936模拟/28战斗/错误0。206收藏家128故障原F33档续04d/nativeabb/v33后F51胜利66-98HP/756分/36牌，terminal f251fcf6、309续段搜索日志/ERROR0/START0/67原件恢复，非干净单版本7局胜率。207唯一START在初段，经历130入口版本及131确认消费者后，现resume200207-03完整42adb57/native934/v34从原F0/index0续，actual37452/10728、live21468精确pyd，F11正常搜索无ERROR/新START。旧failed段保留，1小时/首错同seed/四幕前/原件恢复；实际207自然终局并恢复后才启动208..219，新入口须从protocol+冻结常量校验版本，不复用旧v32硬编码。 |
+| BRIDGE05 | 200200..206通关、207真实战败；208同档续06，209..219未启 | 最终TRAIN47/A0/G0/128/native4不变，前七胜含续档/混版本、不可拼成干净胜率；207同原F0续42adb57/native934/v34至F50真实败，terminal eaef6f92，原件差缺独立审计恢复67项，唯一START207保留。208唯一START在d3段，WeMeetAgain134/初Gamble136阻断原档续49b9060/nativef680/v35jar3b6，实际赠卡/OldCoin+Ecto及非零nonceGamble已通过；05到F47仅C日志卷不足保护停，67原件独立hash恢复一致。06直接物理D运行/日志，同未改F47 save4515ea5e、实际25840/44412/model42168与D扩展hash核验；入口索引误435而应433导致换牌变化见137，不把该段算同轨复现、不改写旧协议。不热替换/不强制模型；真实终局/全67恢复/owned退出后再推进209，新source显式protocol校验、1小时/首错同seed/preAct4/封ZIP恢复继续。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 

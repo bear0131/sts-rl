@@ -321,6 +321,8 @@ class RealCombatSearch:
             "real_joint_multi_plan": deepcopy(self.adapter._joint_multi_plan),
             "real_combat_grid_receipt": deepcopy(self.adapter._combat_grid_receipt),
         }
+        LOG.info("full-gumbel transaction start seed=%s floor=%s start_index=%s",
+                 identity[0], identity[1], self.decision_index)
         last_diagnostics: dict[str, Any] = {}
         for _ in range(12):
             self._assert_mask_alignment()
@@ -355,6 +357,8 @@ class RealCombatSearch:
                 # Autoregressive MULTI prefix; both adapters now hold the same
                 # selection prefix and the next search decision chooses another
                 # card or STOP without issuing a game command yet.
+                LOG.info("full-gumbel prefix index=%s sim_action=%s real_action=%s start_index=%s",
+                         self.decision_index - 1, action, real_action, rollback_thin['decision_index'])
                 continue
 
             self._rollback_bc = rollback
@@ -364,13 +368,15 @@ class RealCombatSearch:
             self.run_commands += 1
             LOG.info(
                 "full-gumbel decision index=%s sim_action=%s real_action=%s command=%s "
-                "terminated=%s diagnostics=%s",
+                "terminated=%s diagnostics=%s start_index=%s prefix_decisions=%s",
                 self.decision_index - 1,
                 action,
                 real_action,
                 command,
                 terminated,
                 last_diagnostics,
+                rollback_thin['decision_index'],
+                self.decision_index - rollback_thin['decision_index'] - 1,
             )
             return RealDecision(
                 command,
@@ -393,6 +399,8 @@ class RealCombatSearch:
         native_room = native_combat_room(room_type)
         if global_state['floor'] != floor:
             raise ValueError("combat identity floor differs from canonical global floor")
+        LOG.info("attaching native battle seed=%s floor=%s search_start_index=%s",
+                 seed, floor, self.decision_index)
 
         def make_gc(seed_nonce: int):
             return make_native_combat_root(global_state, seed=seed,

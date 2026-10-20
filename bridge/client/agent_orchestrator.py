@@ -179,7 +179,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--attach-existing-floor', type=int, default=None,
                         help='Verify the first loaded floor when attaching to an existing save.')
     parser.add_argument('--attach-search-index', type=int, default=None,
-                        help='Restore logical search index on first validated seed/floor attachment only.')
+                        help='Restore the saved room first logical search index, BEFORE multi-selection '
+                             'prefixes, on first validated seed/floor attachment only; the first emitted '
+                             'command index may already include several prefixes.')
     return parser
 
 
