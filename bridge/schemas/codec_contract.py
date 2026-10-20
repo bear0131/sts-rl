@@ -423,6 +423,11 @@ def complete_word_tables():
         "commands": sorted(REAL_COMMAND_IDS),
         "reward_types": dict(REWARD_CHOICE_TYPES),
         "chest_reward_link_contracts": {
+            "Cursed Key": {
+                "java_source": "CursedKey.onChestOpen / ShowCardAndObtainEffect.update / CeramicFish.onObtainCard",
+                "effect": "chest rewards can open before curse acquisition and Fish9 gold; wait for explicit simulator_obtain_pending=false before any next policy/deferred action or receipt baseline (BRIDGE111)",
+                "guards": "shared obtain wait applies in and out of combat, keeps pause-adjusted ten-second deadline across same-room frames, exempts GAME_OVER; gold receipt remains exact, no fabricated balance or card",
+            },
             "Matryoshka": {
                 "java_source": "Matryoshka.onChestOpen",
                 "native_source": "GameContext::openTreasureRoomChest",

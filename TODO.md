@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE111 | 源码已修，待同档实机 | 200201/F43开箱诅咒钥匙的Normality未入库，提前领取25金，陶瓷鱼另加9造成旧回执误报419+25≠453。将真实obtain_pending等待扩到战斗外/奖励/商店等，等效果完成后再模型决策/延迟动作和回执基线；同房间刷新不重置10秒时限，GAME_OVER不阻挡，不放宽金币精确核对、不编造状态。待自然F43续跑，无离线测试。 |
 | BRIDGE110 | 源码已修并构建，待实机 | 复仇者Scythe选定时cooldown2、每次getMove先减1，真实允许镰刀→其他→镰刀；旧原生eitherLastTwo多禁一次，改为仅最近一次，保留randomBoolean短路/抽取顺序。Debuff灼伤门槛A3→A18（普通三连伤害仍A3）。200201旧冻结实机F41第2/4回合镰刀证明反例，不能当新构建验证；源码复读/必要构建完成，不改协议/权重布局，无离线测试。 |
 | BRIDGE109 | 已修复，F39同档药水多选实机通过 | 200201净化药水触发EXHAUST_MANY：真实99哨兵规范为五张手牌，native保留上限10；改为精确核物理候选/状态后对MULTI比较min(cap,候选数)，SINGLE/GRID仍精确，其余上下文/顺序/数量/可选零检查不变。65894f6同自然F39/index356再次用药，index359子集发送CHOOSE4→CHOOSE0→CONFIRM，真实Clumsy/Writhe按序消耗，保留其他三张并继续搜索。native描述符/权重输入/合法子集不变，不填PAD；无离线测试，非全部多选场景覆盖。 |
 | BRIDGE108 | 源码已修并构建，待实机 | 尖塔生长体低A且roll<50、最近两次QuickTackle、玩家未被缠绕时，必须先选Constrict而非Smash；按Java原分支顺序保留A17优先缠绕及后备重击/快攻。不改RNG、意图/动作ID或权重布局；词表补对接顺序，源码复读/必要构建完成，自然组合未覆盖，无离线测试。 |
@@ -157,7 +158,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 20种子批次进行中，200200胜利/200201第三幕续跑 | 用户授权自动200200..219，不逐局询问；最终TRAIN47/A0/确定性upper/G0/128/native4不变，旧成绩分开。200200在7d20096/v28下F51胜利60/102/756分，注明两次自然入口续档。200201先因BRIDGE107在F16停，修后同档双分裂通过；续到F39药水选择因BRIDGE109停，两段均恢复原件/65份存档偏好。现resume200201-02冻结65894f6/nativeb89fbf9/v28，从自然F39/index356/83-87HP续，同药水多选及后续出牌已通过。单段一小时/首错/终局/四幕前停；余下200202..219入口已更新同版本，须201真实终局后启动，每seed一小时/总18小时上限。新日志经C盘junction；Match/Act4排除，不混中断/版本变更/续档作独立样本。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 20种子批次进行中，200200胜利/200201待F43同档恢复 | 用户授权自动200200..219，不逐局询问；最终TRAIN47/A0/确定性upper/G0/128/native4不变，旧成绩分开。200200在7d20096/v28下F51胜利60/102/756分，注明两次自然入口续档。200201因BRIDGE107/F16、BRIDGE109/F39停，修后同档双分裂/药水多选均已通过；resume200201-02冻结65894f6/nativeb89fbf9/v28到F43因BRIDGE111金币回执误报停，已恢复原件/65份存档偏好，下一段自然F43/index492/41-87HP/419金续。单段一小时/首错/终局/四幕前停；余下200202..219尚未启动，待新冻结版本及201真实终局，每seed一小时/总18小时上限。新日志经C盘junction；Match/Act4排除，不混中断/版本变更/续档作独立样本。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
