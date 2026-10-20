@@ -539,6 +539,12 @@ def complete_word_tables():
             "blue_stab": "roll >=40 and not lastTwoMoves(Stab); otherwise apply the Rake repeat limit",
             "scope": "future move selection only, retaining current intent/history, explicit usedEntangle, RNG draws, and policy tensor/action layouts",
         },
+        "city_monster_move_selection": {
+            "snake_plant": "SnakePlant.getMove -> A17+ Spore is barred if either of the last two moves was Spore, not only when both were; below A17 only lastMove bars it",
+            "shelled_parasite": "ShelledParasite.getMove -> repeat Fell rerolls once in 20..99; compare that new value with 60, never the old value below 20",
+            "mystic": "Healer.getMove -> sum maxHP-HP over all actual monsters except dying/escaping; heal at >=21 (A17+) or >=16, unless the last two moves were Heal",
+            "scope": "BRIDGE100 native future move rules; same current intents, effect amounts, RNG draws, and policy tensor/action layouts",
+        },
         "writhing_mass_implant_transport": {
             "java": "WrithingMass.usedMegaDebuff -> simulator_writhing_mass_used_implant; required boolean for this species, explicit null otherwise (v23)",
             "canonical": "writhing_mass_used_implant in real/native full state, strict root and diff; never infer from recent moves or an existing Parasite",

@@ -2193,9 +2193,14 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 3 buff
 
             const auto healNeedAmt = asc17 ? 21 : 16;
-            const auto &knight = bc.monsters.arr[0];
-
-            if (maxHp-curHp >= healNeedAmt || knight.isAlive() && knight.maxHp-knight.curHp >= healNeedAmt) {
+            int needToHeal = 0;
+            for (int i = 0; i < bc.monsters.monsterCount; ++i) {
+                const auto &ally = bc.monsters.arr[i];
+                if (ally.id != MonsterId::INVALID && !ally.isDying() && !ally.isEscaping()) {
+                    needToHeal += ally.maxHp - ally.curHp;
+                }
+            }
+            if (needToHeal >= healNeedAmt && !lastTwoMoves(MMID::MYSTIC_HEAL)) {
                 return (MMID::MYSTIC_HEAL);
                 break;
             }
@@ -2680,17 +2685,17 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                 break;
             }
 
-            int roll2 = 100;
+            int moveRoll = roll;
 
             if (roll < 20) {
                 if (!lastMove(MMID::SHELLED_PARASITE_FELL)) {
                     return (MMID::SHELLED_PARASITE_FELL);
                     break;
                 }
-                roll2 = bc.aiRng.random(20,99);
+                moveRoll = bc.aiRng.random(20,99);
             }
 
-            if (roll < 60 || roll2 < 60) {
+            if (moveRoll < 60) {
                 if (!lastTwoMoves(MMID::SHELLED_PARASITE_DOUBLE_STRIKE)) {
                     return (MMID::SHELLED_PARASITE_DOUBLE_STRIKE);
                 } else {
@@ -2732,7 +2737,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                     } else {
                         return (MMID::SNAKE_PLANT_CHOMP);
                     }
-                } else if (!lastTwoMoves(MMID::SNAKE_PLANT_ENFEEBLING_SPORES)) {
+                } else if (!eitherLastTwo(MMID::SNAKE_PLANT_ENFEEBLING_SPORES)) {
                     return (MMID::SNAKE_PLANT_ENFEEBLING_SPORES);
                 } else {
                     return (MMID::SNAKE_PLANT_CHOMP);

@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE100 | 源码已修并构建，待实机 | A17蛇形植物孢子检查最近两次任一次；寄生怪Fell重抽后的分支只用新roll；治疗师按非dying/escaping全队总缺血并禁止连续第三次治疗。仅后继选择条件，不改布局/参数；源码/必要构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE99 | 源码已修并构建，待实机 | 红/蓝奴隶A17以上禁止连续Scrape/Rake，低阶才允许最多连续两次；红奴隶已缠绕后的Stab阈值50→55。保留当前动作、实际usedEntangle及RNG流/观察动作布局；源码及相邻虱虫/尖刺史莱姆条件复读、必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE98 | 源码已修，v24/原生已构建，待实机 | v24严格对接TimeEater.usedHaste、SlaverRed.usedEntangle、BronzeOrb.usedStasis、Spiker.thornsCount、Champ.numTurns/forgeTimes/thresholdReached、Automaton.numTurns；非本组null，未知拒绝，canonical/native/diff完整。修Slaver漏标记及计数/置位时点，保留模型布局/现有miscInfo搜索key；源码全链/必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE96 | 源码已修并构建，待实机 | 战内simulator_obtain_pending=true等待真实ShowCardAndObtain完成后才决策/恢复已结算植入；10秒暂停排除时钟，未知拒绝，不增加终局等待。原生Implant补未被Omamori挡住时陶瓷鱼9金及BloodyIdol共用收益，避免战后player覆盖丢失；源码/构建完成，自然组合未覆盖，无离线测试。 |
