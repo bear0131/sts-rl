@@ -335,6 +335,14 @@ and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.
 
+A fresh combat attachment already inside the opening Gambling Chip or Toolbox
+selection must initialize its complete actual public root before comparing
+physical candidates. The native `initialize_selection_root` entry retains the
+existing pending task, queued continuation and RNG; it only accepts the untouched
+first-turn opener, with no played/discarded cards or selected instances. All
+subsequent selections retain strict UUID/order checks. An older native extension
+without this entry is rejected at agent initialization, not silently substituted.
+
 When freezing an isolated runtime, archive all tracked application/source roots
 at the exact commit, excluding `runs/` (historical outputs/checkpoints, not runtime
 source). Record that exclusion and verify the relevant Git blobs after extraction.

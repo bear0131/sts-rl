@@ -444,6 +444,11 @@ def complete_word_tables():
             "record": "search_simulations sums reported calls, search_simulation_budget is decisions*configured limit, label strategy-diagnostics-v1; prefix/retry work survives transport rollback, resets on a new run (BRIDGE133)",
             "history": "older unlabeled search_simulations was a nominal budget product, not measured work; no result rewriting or inference from omitted internal-prefix logs; policy/search settings unchanged",
         },
+        "initial_combat_selection_root": {
+            "entry": "only fresh combat attachment, actual turn1/cards_played0/cards_discarded0/no selected instances; exact GamblingChipAction+owned GamblingChip GAMBLE or ChooseOneColorless+owned Toolbox DISCOVERY count1/free=false; native task must already agree (BRIDGE136)",
+            "restore": "initialize_selection_root atomically restores strict full actual public player/monster/card-instance/relic-order state while retaining pending CardSelectInfo, queued continuation and RNG; GAMBLE pick cap follows actual hand; no nonce search for a matching hand or positional UUID binding",
+            "consumers": "normal and later pending selections retain existing strict UID/instance/order/mask checks; new native method capability required before START, no checkpoint OBS20/ACTION8/layout9 or rollout/search budget change",
+        },
         "event_progress_transport_fields": {
             "WeMeetAgain": "v35 exact shrines.WeMeetAgain INTRO/COMPLETE, nullable given_relic only after COMPLETE; actual initial four options carry kind and exposed card UUID/potion physical slot/gold amount; compressed choice_index maps to frozen semantic0/1/2/3, never positional fallback (BRIDGE134)",
             "WeMeetAgain exporter readiness": "ChoiceType.EVENT is the actual internal enum, not a string; enrich only while GameStateListener is waiting and CHOOSE available; partial loading has no policy decision, actionable target inventory still strict",

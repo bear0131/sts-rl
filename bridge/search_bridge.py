@@ -152,6 +152,8 @@ class RealCombatSearch:
             raise ValueError("real-game native search requires a complete neural combat contract")
         if gumbel_scale is not None and (not np.isfinite(gumbel_scale) or gumbel_scale < 0):
             raise ValueError("gumbel_scale must be finite and nonnegative")
+        if not hasattr(sts.BattleContext, 'initialize_selection_root'):
+            raise RuntimeError('real-game search requires a native build with initial selection root restoration')
         self.config = NativeSearchConfig.from_model(model, gumbel_scale=gumbel_scale)
         if self.config.root_search_mode != 2 or not self.config.paper_full_gumbel:
             raise ValueError("real-game combat search requires the checkpoint's strict Full-Gumbel mode")
@@ -432,12 +434,58 @@ class RealCombatSearch:
         self.card_identities = CombatCardIdentityMap()
         self.sim_to_real_targets = {}
         self.sim_to_real_targets = self._target_mapping(real)
+        selection = self.adapter.select_descriptor()
+        if selection is not None:
+            self._initialize_selection_root(real, selection)
         self.run_encounters += 1
         LOG.info(
             "attached native battle seed=%s shadow_seed_nonce=%s floor=%s "
             "encounter=%s monsters=%s",
             seed, seed_nonce, floor, encounter, wanted,
         )
+
+    def _initialize_selection_root(self, real: dict[str, Any], selection: dict[str, Any]) -> None:
+        """Only a new battle's actual opening UI may initialize a pending root."""
+        context = selection['context']
+        source = self.adapter.gs['screen_state']['selection_source']
+        relics = self.adapter._global_block()['relics']
+        opening = (
+            context == 'GAMBLE'
+            and source == 'com.megacrit.cardcrawl.actions.unique.GamblingChipAction'
+            and 'Gambling Chip' in relics
+        ) or (
+            context == 'DISCOVERY'
+            and source == 'com.megacrit.cardcrawl.actions.utility.ChooseOneColorless'
+            and 'Toolbox' in relics
+            and selection['generated_count'] == 1
+            and selection['generated_free_for_turn'] is False
+        )
+        if (not opening or real['turn'] != 1
+                or real['player']['combat_counters']['cards_played'] != 0
+                or real['player']['combat_counters']['cards_discarded'] != 0
+                or selection['selected'] or selection['selected_instances']):
+            raise RuntimeError('fresh combat attachment requires an unselected actual opening relic UI')
+        battle = self.env.thick.bc
+        native = self.env.thick.select_descriptor()
+        if native is None or native['context'] != context or native['selected']:
+            raise RuntimeError('actual opening selection has a different native pending task')
+        spec = self._state_spec(real)
+        master = [dict(card, id=real_to_sim_card_enum(card['id']))
+                  for card in real_master_deck_state(self.adapter.gs['deck'])]
+        self.env.thick.gc.set_deck_state(master)
+        battle.initialize_selection_root(spec)
+        if (battle.card_state() != spec['card_state']
+                or battle.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']):
+            raise RuntimeError('initial selection root failed actual instance/relic-order readback')
+        self.env.thick.gc.max_hp = int(real['player']['max_hp'])
+        self.env.thick.gc.cur_hp = int(real['player']['hp'])
+        self.env.thick.gc.gold = int(real['player']['gold'])
+        self.env._invalidate_backend_cache()
+        after = diff(self._active_real_projection(real), self._sim_state_in_real_target_order())
+        if after:
+            raise RuntimeError(f'initial selection public state differs: {after[:12]!r}')
+        self.run_alignment_checks += 1
+        LOG.info('initialized actual opening selection root context=%s source=%s', context, source)
 
     def _target_mapping(self, real: dict[str, Any]) -> dict[int, int]:
         sim = normalize_sim(self.env.thick.bc.to_dict())

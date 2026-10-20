@@ -1590,6 +1590,41 @@ void applyCustomCombatState(sts::BattleContext &bc, const py::dict &spec) {
     bc = std::move(replacement);
 }
 
+void initializeCombatSelectionRoot(sts::BattleContext &bc, const py::dict &spec) {
+    using namespace sts;
+    const auto &select = bc.cardSelectInfo;
+    const bool gamble = select.cardSelectTask == CardSelectTask::GAMBLE
+        && bc.player.hasRelicRuntime(RelicId::GAMBLING_CHIP)
+        && select.canPickZero && select.canPickAnyNumber;
+    const bool toolbox = select.cardSelectTask == CardSelectTask::DISCOVERY
+        && bc.player.hasRelicRuntime(RelicId::TOOLBOX)
+        && select.data0 == 1 && !select.discoveryFreeForTurn;
+    if (bc.inputState != InputState::CARD_SELECT || bc.outcome != Outcome::UNDECIDED
+            || bc.turn != 0 || bc.player.cardsPlayedThisTurn != 0 || bc.player.cardsDiscardedThisTurn != 0
+            || bc.turnHasEnded || bc.endTurnQueued || bc.stopAfterEnemyTurn
+            || bc.postEnemyTurnBoundary || !bc.cardQueue.isEmpty()
+            || select.selectedCount != 0 || (!gamble && !toolbox))
+        throw std::invalid_argument("initial selection root requires an untouched opening Gambling Chip or Toolbox");
+    if (!spec.contains("strict_complete") || !py::isinstance<py::bool_>(spec["strict_complete"])
+            || !spec["strict_complete"].cast<bool>() || !spec.contains("turn")
+            || spec["turn"].cast<int>() != 0)
+        throw std::invalid_argument("initial selection root requires the complete actual first-turn state");
+    const auto player = spec["player"].cast<py::dict>();
+    const auto counters = player["counters"].cast<py::dict>();
+    if (counters["cards_played"].cast<int>() != 0 || counters["cards_discarded"].cast<int>() != 0)
+        throw std::invalid_argument("initial selection root cannot resume an already played/discarded-card action");
+    auto replacement = bc;
+    applyCustomCombatStateImpl(replacement, spec);
+    // The initial draw is sampled only to construct the native encounter. Its
+    // visible piles now come from the actual game, while the live selection,
+    // queued post-draw callbacks, captured actions and RNG streams stay intact.
+    replacement.inputState = InputState::CARD_SELECT;
+    replacement.cardSelectInfo = select;
+    replacement.monsterTurnIdx = bc.monsterTurnIdx;
+    if (gamble) replacement.cardSelectInfo.pickCount = replacement.cards.cardsInHand;
+    bc = std::move(replacement);
+}
+
 std::vector<sts::search::Action> legalCombatActions(const sts::BattleContext &bc) {
     using SA = sts::search::Action;
     using AT = sts::search::ActionType;
@@ -4480,6 +4515,9 @@ PYBIND11_MODULE(slaythespire, m) {
         .def("apply_custom_state", &applyCustomCombatState,
              pybind11::arg("state"),
              "apply a data-only custom combat state without advancing RNG or simulation")
+        .def("initialize_selection_root", &initializeCombatSelectionRoot,
+             pybind11::arg("state"),
+             "initialize a fresh opening Gambling Chip/Toolbox with complete actual public state; preserve pending task, queued continuation and RNG")
         .def("card_state", &combatCardState,
              "explicit current native card instances in all four piles and both stasis slots")
         .def("set_card_state", [](BattleContext &bc, const pybind11::dict &state) {
