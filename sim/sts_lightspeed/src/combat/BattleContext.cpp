@@ -2814,6 +2814,9 @@ void BattleContext::exhaustSpecificCardInHand(int idx, std::int16_t uniqueId) {
 
     cards.notifyRemoveFromHand(cards.hand[foundIdx]);
     triggerAndMoveToExhaustPile(cards.hand[foundIdx]);
+    // ExhaustSpecificCardAction clears this after moveToExhaustPile and its
+    // callbacks. Generic ExhaustAction deliberately does not clear the flag.
+    cards.exhaustPile.back().freeToPlayOnce = false;
     --cards.cardsInHand;
 
     for (int i = foundIdx; i < cards.cardsInHand; ++i) {
