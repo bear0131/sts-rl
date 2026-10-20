@@ -372,6 +372,12 @@ def complete_word_tables():
             for event, (source, phases) in event_contract.EVENT_PROGRESS_CONTRACTS.items()
         },
         "staged_event_effect_receipts": event_contract.STAGED_EFFECTS,
+        "single_card_obtain_event_receipts": {
+            event: {"effect": effect, "source": "com.megacrit.cardcrawl.events." + source,
+                    "context": context,
+                    "completion": "requested master UUID; transform removes only that card, duplicate preserves it; final dialogue and no pending obtain; one new UUID or curse blocked by exactly one Omamori charge (BRIDGE86)"}
+            for event, (effect, source, context) in event_contract.SINGLE_OBTAIN_EVENTS.items()
+        },
         "grid_confirmation_contract": {
             "source": "GridCardSelectScreen.update: single upgrade/transform/purge clears selectedCards until CONFIRM",
             "confirmation_card_uuid": "v22 exports actual hoveredCard UUID only while confirmScreenUp for these flags; explicit null otherwise; never upgradePreviewCard",

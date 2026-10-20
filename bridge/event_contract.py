@@ -165,6 +165,14 @@ STAGED_EFFECTS = {
     'pending_wheel_random': ('Wheel of Change', 'INTRO', 'LEAVE'),
 }
 
+# A blocked curse still completes these single-card transactions. The source
+# UUID and Omamori charge, not a positive deck-size delta, prove the result.
+SINGLE_OBTAIN_EVENTS = {
+    'Duplicator': ('card', 'shrines.Duplicator', 'DUPLICATE'),
+    'Transmorgrifier': ('transform', 'shrines.Transmogrifier', 'TRANSFORM'),
+    'Living Wall': ('transform', 'exordium.LivingWall', 'TRANSFORM'),
+}
+
 
 def event_progress(gs, event=None):
     event = event or gs.get('screen_state', {}).get('event_id')
@@ -436,6 +444,114 @@ class EventEffectAck:
     """Check observable effect types; permit selection UI, never stale retries."""
     def __init__(self):
         self.pending = None
+        self._single_obtain = None
+
+    @staticmethod
+    def _omamori_charges(gs):
+        rows = [r for r in gs['relics'] if r['id'] == 'Omamori']
+        if not rows:
+            return 0  # Explicitly absent relic, not a missing counter.
+        if (len(rows) != 1 or type(rows[0].get('counter')) is not int
+                or not 0 <= rows[0]['counter'] <= 2):
+            raise ValueError('single-card event requires actual Omamori charges')
+        return rows[0]['counter']
+
+    def _single_obtain_grid(self, gs):
+        from bridge.schemas.card_state import real_selection_card_states
+        receipt = self._single_obtain
+        _, source, context = SINGLE_OBTAIN_EVENTS[receipt['event']]
+        ss = gs['screen_state']
+        if (ss.get('selection_source') != 'com.megacrit.cardcrawl.events.' + source
+                or ss.get('selection_context') != context
+                or type(ss.get('num_cards')) is not int or ss['num_cards'] != 1
+                or ss.get('any_number') is not False):
+            raise ValueError('single-card event GRID source/context/count mismatch')
+        cards, selected = real_selection_card_states(ss['cards'], ss['selected_cards'])
+        if (len(selected) > 1 or any(receipt['before'].get(c['uuid']) != c for c in cards)):
+            raise RuntimeError('single-card event GRID differs from original master instances')
+        return cards, selected
+
+    def _arm_single_obtain_grid(self, gs, decision):
+        from bridge.schemas.card_state import real_grid_confirmation_card
+        command = decision.command.upper().split()
+        if command[:1] in (['STATE'], ['WAIT'], ['POTION']):
+            return
+        if gs.get('screen_type') != 'GRID':
+            raise RuntimeError('single-card event result pending; cannot leave or retry')
+        cards, selected = self._single_obtain_grid(gs)
+        receipt = self._single_obtain
+        preview = real_grid_confirmation_card(gs['screen_state'])
+        if len(command) == 2 and command[0] == 'CHOOSE':
+            index = int(command[1])
+            if (receipt['pick'] is not None or selected or preview is not None
+                    or not 0 <= index < len(cards)
+                    or decision.semantic != ('select', index)):
+                raise ValueError('single-card event invalid/repeated physical selection')
+            receipt['pick'] = cards[index]['uuid']
+        elif command == ['CONFIRM']:
+            if (preview is None or preview['uuid'] != receipt['pick'] or receipt['confirmed']):
+                raise ValueError('single-card event wrong/premature/repeated confirmation')
+            receipt['confirmed'] = True
+        else:
+            raise ValueError('single-card event unexpected selection command')
+
+    def _waiting_single_obtain(self, old, gs):
+        from bridge.schemas.card_state import real_selection_card_states, real_grid_confirmation_card
+        receipt = self._single_obtain
+        if any(gs.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+            raise RuntimeError('single-card event receipt crossed its run/room')
+        cards, _ = real_selection_card_states(gs['deck'], [])
+        before, after = receipt['before'], {c['uuid']: c for c in cards}
+        pick = receipt['pick']
+        transform = SINGLE_OBTAIN_EVENTS[receipt['event']][0] == 'transform'
+        expected_lost = {pick} if transform and pick is not None else set()
+        lost, gained = set(before) - set(after), set(after) - set(before)
+        if (lost - expected_lost or len(gained) > 1
+                or any(after[u] != before[u] for u in set(before) & set(after))):
+            raise RuntimeError('single-card event changed an unselected master instance')
+        if gs.get('screen_type') == 'GRID':
+            if before != after:
+                raise RuntimeError('single-card event mutated deck before GRID closed')
+            _, selected = self._single_obtain_grid(gs)
+            preview = real_grid_confirmation_card(gs['screen_state'])
+            chosen = [c['uuid'] for c in selected]
+            if (chosen and chosen != [pick]) or (preview is not None and preview['uuid'] != pick):
+                raise RuntimeError('single-card event acknowledged a different selection')
+            if preview is not None:
+                return receipt['confirmed']  # Let the adapter issue exactly one CONFIRM.
+            return pick is not None  # No second pick while the callback is pending.
+        if (gs.get('screen_type') != 'EVENT'
+                or gs['screen_state'].get('event_id') != receipt['event']):
+            raise RuntimeError('single-card event left before effect acknowledgement')
+        if pick is None:
+            if gained or lost:
+                raise RuntimeError('single-card event changed deck before a requested pick')
+            return True  # Old event/result page before its GRID opens.
+        blocked = receipt['types'][pick] == 'CURSE' and self._omamori_charges(old) > 0
+        if len(gained) > 1 - int(blocked):
+            raise RuntimeError('single-card event added a curse that Omamori should block')
+        charges = self._omamori_charges(old) - int(blocked)
+        if (lost != expected_lost or len(gained) != 1 - int(blocked)
+                or self._omamori_charges(gs) != charges
+                or gs['simulator_obtain_pending'] or transport_only(gs) is None):
+            return True  # Removal, obtain effect and final receipt can be separate frames.
+        if not transform and gained:
+            copy = after[next(iter(gained))]
+            if any(copy[k] != before[pick][k] for k in ('id', 'misc')):
+                raise RuntimeError('Duplicator obtained a different card instead of the selected copy')
+            eggs = {'ATTACK': 'Molten Egg 2', 'SKILL': 'Toxic Egg 2', 'POWER': 'Frozen Egg 2'}
+            upgraded = before[pick]['up'] or int(any(
+                r['id'] == eggs.get(receipt['types'][pick]) for r in old['relics']))
+            if copy['up'] != upgraded or any(copy[k] for k in
+                    ('bottled_flame', 'bottled_lightning', 'bottled_tornado')):
+                raise RuntimeError('Duplicator copy upgrade/bottle state mismatch')
+        if gained:
+            actual = next(c for c in gs['deck'] if c['uuid'] in gained)
+            if (actual['type'] == 'CURSE') != (receipt['types'][pick] == 'CURSE'):
+                raise RuntimeError('single-card event replacement curse type mismatch')
+        self.pending = None
+        self._single_obtain = None
+        return False
 
     def _arm_staged_command(self, gs, decision):
         if decision.command.upper().split()[0] in {'STATE', 'WAIT', 'POTION'}:
@@ -843,6 +959,9 @@ class EventEffectAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if self.pending and self._single_obtain is not None:
+            self._arm_single_obtain_grid(gs, decision)
+            return
         if self.pending and self.pending[1] in STAGED_EFFECTS:
             self._arm_staged_command(gs, decision)
             return
@@ -889,6 +1008,19 @@ class EventEffectAck:
             raise RuntimeError('event effect still unverified')
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
+        event = gs['screen_state']['event_id']
+        single_rule = SINGLE_OBTAIN_EVENTS.get(event)
+        if single_rule is not None and effect == single_rule[0]:
+            from bridge.schemas.card_state import real_selection_card_states
+            if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
+                raise ValueError('single-card event semantic action and UI command disagree')
+            cards, _ = real_selection_card_states(gs['deck'], [])
+            types = {c['uuid']: c['type'] for c in gs['deck']}
+            if any(t not in {'ATTACK', 'SKILL', 'POWER', 'CURSE'} for t in types.values()):
+                raise ValueError('single-card event master card type missing/unsupported')
+            self._omamori_charges(gs)
+            self._single_obtain = {'event': event, 'before': {c['uuid']: c for c in cards},
+                                   'types': types, 'pick': None, 'confirmed': False}
         if effect.startswith('pending_') and effect not in STAGED_EFFECTS:
             raise ValueError(
                 f'recognized event option has no audited effect receipt: {effect}'
@@ -989,6 +1121,8 @@ class EventEffectAck:
             return True
         if type(g.get('simulator_obtain_pending')) is not bool:
             raise ValueError('event receipt missing actual obtain-effect status')
+        if self._single_obtain is not None:
+            return self._waiting_single_obtain(old, g)
         if g['simulator_obtain_pending']:
             # Gold/relic/max-HP can change before the associated curse/cards
             # enter the deck. Do not release a partially completed reward.
