@@ -152,7 +152,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 新版本20种子批次进行中，200200已续F23 | 用户明确授权自动200200..200219，不再逐局询问；固定最终TRAIN47/A0/确定性upper/G0/128/native4，runtime7d20096/native7c3bf85f/v28，旧成绩分开。首段902.8秒到Act2 F23，ERROR0，首领/换幕及五笔金币回执正常；无自然终局，不计胜率。已保留自然F23/index232存档并启动resume200200-01，后续段1800秒/首错误/自然终局/四幕前停，原件备份恢复。错误先修再续同局，终局后自动下一种子；Match/Act4仍排除，不强选或填PAD。详见worklog/2026-10-20.md“TRAIN47新版本实机批次：200200–200219”及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 新版本20种子批次进行中，200200已续F50 | 用户授权自动200200..200219，不逐局询问；固定最终TRAIN47/A0/确定性upper/G0/128/native4，runtime7d20096/native7c3bf85f/v28，旧成绩分开。902.8秒首段及1803秒续段均ERROR0，已到觉醒者第二阶段，尚无自然终局。已启动resume200200-02，自然F50/index634/102HP，一小时有界。21笔金币573金实收匹配；F42的11金、F43的79金为模型主动PROCEED，不强补。剩余200201..219入口已准备，须首局真实终局才能启动，每seed3600秒/总19小时上限/首错误/四幕前停；日志C盘存储经runs/local入口访问，不删历史。Match/Act4仍排除，不混中断/续档作新样本。详见worklog/2026-10-20.md“BRIDGE05：继续当前实机与余下授权种子”及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
