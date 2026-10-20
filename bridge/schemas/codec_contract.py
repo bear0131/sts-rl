@@ -532,6 +532,13 @@ def complete_word_tables():
             "timing": "usedHaste and usedStasis set at intent selection, usedEntangle at execution even when Artifact blocks, Spiker increments on Spike; Champ counter increments per getMove and resets at Taunt; Automaton post-beam Stun/Boost does not increment numTurns",
             "scope": "six audited species (BRIDGE98); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
         },
+        "slaver_move_selection": {
+            "java": "SlaverBlue.getMove / SlaverRed.getMove; native Monster::getMoveForRoll (BRIDGE99)",
+            "repeat_limit": "A17+ Rake/Scrape cannot follow the same move; below A17 disallow only after two consecutive same moves, not an OR of the two permission checks",
+            "red_stab": "first move is Stab; after usedEntangle, roll >=55 and not lastTwoMoves(Stab); before entangle, roll >=75 selects Entangle",
+            "blue_stab": "roll >=40 and not lastTwoMoves(Stab); otherwise apply the Rake repeat limit",
+            "scope": "future move selection only, retaining current intent/history, explicit usedEntangle, RNG draws, and policy tensor/action layouts",
+        },
         "writhing_mass_implant_transport": {
             "java": "WrithingMass.usedMegaDebuff -> simulator_writhing_mass_used_implant; required boolean for this species, explicit null otherwise (v23)",
             "canonical": "writhing_mass_used_implant in real/native full state, strict root and diff; never infer from recent moves or an existing Parasite",

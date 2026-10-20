@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE99 | 源码已修并构建，待实机 | 红/蓝奴隶A17以上禁止连续Scrape/Rake，低阶才允许最多连续两次；红奴隶已缠绕后的Stab阈值50→55。保留当前动作、实际usedEntangle及RNG流/观察动作布局；源码及相邻虱虫/尖刺史莱姆条件复读、必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE98 | 源码已修，v24/原生已构建，待实机 | v24严格对接TimeEater.usedHaste、SlaverRed.usedEntangle、BronzeOrb.usedStasis、Spiker.thornsCount、Champ.numTurns/forgeTimes/thresholdReached、Automaton.numTurns；非本组null，未知拒绝，canonical/native/diff完整。修Slaver漏标记及计数/置位时点，保留模型布局/现有miscInfo搜索key；源码全链/必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE96 | 源码已修并构建，待实机 | 战内simulator_obtain_pending=true等待真实ShowCardAndObtain完成后才决策/恢复已结算植入；10秒暂停排除时钟，未知拒绝，不增加终局等待。原生Implant补未被Omamori挡住时陶瓷鱼9金及BloodyIdol共用收益，避免战后player覆盖丢失；源码/构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE97 | 旧权重动作范围差异，后置兼容评估 | Java有类型的Attack/Skill/PowerPotion DiscoveryAction允许SKIP；普通Discovery卡/ColorlessPotion不允许。现原生DISCOVERY仅三候选、CODEX另含skip，不影响已选卡效果，但未提供三类药水的额外跳过动作。不得据此称全部动作对齐；是否扩充旧权重未训练选项需独立兼容评估，不混入当前执行修复，不用PAD表示未知候选。 |
