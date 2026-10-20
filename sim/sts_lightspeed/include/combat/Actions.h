@@ -79,6 +79,7 @@ namespace sts {
         static Action GainEnergy(int amount);
         static Action GainBlock(int amount);
         static Action DrawCards(int amount);
+        static Action ConditionalDraw(int amount, CardType restrictedType);
 
 
         // the draw pile doesn't actually have to be empty

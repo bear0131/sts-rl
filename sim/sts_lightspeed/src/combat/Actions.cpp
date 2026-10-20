@@ -232,6 +232,18 @@ Action Actions::DrawCards(int amount) {
     }};
 }
 
+Action Actions::ConditionalDraw(int amount, CardType restrictedType) {
+    return {[=] (BattleContext &bc) {
+        // On-play TOP reactions may change the hand before this action runs.
+        for (int i = 0; i < bc.cards.cardsInHand; ++i) {
+            if (bc.cards.hand[i].getType() == restrictedType) {
+                return;
+            }
+        }
+        bc.addToTop(Actions::DrawCards(amount));
+    }};
+}
+
 Action Actions::EmptyDeckShuffle() {
     return {[=] (BattleContext &bc) {
         java::Collections::shuffle(

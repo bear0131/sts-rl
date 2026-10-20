@@ -1461,19 +1461,9 @@ void BattleContext::useSkillCard() {
             addToBot( Actions::PlayTopCard(monsters.getRandomMonsterIdx(cardRandomRng, true), true) );
             break;
 
-        case CardId::IMPATIENCE: {
-            bool hasAttack = false;
-            for (int i = 0; i < cards.cardsInHand; ++i) {
-                if (cards.hand[i].getType() == CardType::ATTACK) {
-                    hasAttack = true;
-                    break;
-                }
-            }
-            if (!hasAttack) {
-                addToBot(Actions::DrawCards(up ? 3 : 2));
-            }
+        case CardId::IMPATIENCE:
+            addToBot(Actions::ConditionalDraw(up ? 3 : 2, CardType::ATTACK));
             break;
-        }
 
         case CardId::IMPERVIOUS:
             addToBot( Actions::GainBlock(calculateCardBlock(up  ?  40 : 30)) );
