@@ -241,6 +241,15 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, static_cast<int>(bc.onEndTurnRelicOrder.size()));
         for (const auto relic : bc.onEndTurnRelicOrder) hashValue(hash, static_cast<int>(relic));
     }
+    // The old Pocketwatch -> Tongs order, including zero/one hook, keeps its
+    // key. The reversed pair has a genuinely different upgrade candidate pool.
+    if (bc.onPostDrawRelicOrder.size() > 1
+            && bc.onPostDrawRelicOrder.front() != RelicId::POCKETWATCH) {
+        hashValue(hash, 0x706f737444726177ULL);
+        hashValue(hash, static_cast<int>(bc.onPostDrawRelicOrder.size()));
+        for (const auto relic : bc.onPostDrawRelicOrder)
+            hashValue(hash, static_cast<int>(relic));
+    }
     hashValue(hash, bc.loopCount);
     // Historical scum-search scores are not part of NOSL HP futures.
     if (!equivalentFutures) {

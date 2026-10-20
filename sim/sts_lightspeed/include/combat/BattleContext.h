@@ -108,6 +108,8 @@ namespace sts {
         std::vector<RelicId> onUseRelicOrder;
         // Actual acquisition order of supported onPlayerEndTurn callbacks.
         std::vector<RelicId> onEndTurnRelicOrder;
+        // Repeated post-draw callbacks; first-turn Gambling Chip stays separate.
+        std::vector<RelicId> onPostDrawRelicOrder;
 
         CardQueueItem curCardQueueItem;
 
@@ -157,6 +159,7 @@ namespace sts {
         void onUseStatusOrCurseCard();
         static bool hasOnUseCardHook(RelicId relic);
         static bool hasOnPlayerEndTurnHook(RelicId relic);
+        static bool hasOnPostDrawHook(RelicId relic);
         void onUseCardRelics();
         void onAfterUseCard();
 

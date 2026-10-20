@@ -705,15 +705,18 @@ void Player::applyStartOfTurnPowers(BattleContext &bc) {
 }
 
 void Player::applyStartOfTurnPostDrawRelics(BattleContext &bc) {
-    // ****** Player Relics AtTurnStartPostDraw ******
-    if (hasRelic<R::POCKETWATCH>()) {
-        if (cardsPlayedThisTurn <= 3) {
-            bc.addToBot(Actions::DrawCards(3));
+    // Actual acquisition order determines which hand Warped Tongs upgrades.
+    for (const auto relic : bc.onPostDrawRelicOrder) {
+        switch (relic) {
+            case R::POCKETWATCH:
+                if (cardsPlayedThisTurn <= 3) bc.addToBot(Actions::DrawCards(3));
+                break;
+            case R::WARPED_TONGS:
+                bc.addToBot(Actions::UpgradeRandomCardAction());
+                break;
+            default:
+                throw std::logic_error("unsupported post-draw relic callback");
         }
-    }
-
-    if (hasRelic<R::WARPED_TONGS>()) {
-        bc.addToBot(Actions::UpgradeRandomCardAction());
     }
 }
 

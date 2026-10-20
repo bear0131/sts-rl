@@ -267,6 +267,10 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     for (const auto relic : bc.onEndTurnRelicOrder)
         onEndTurnRelics.append(sts::relicIds[static_cast<int>(relic)]);
     d["on_end_turn_relic_order"] = onEndTurnRelics;
+    py::list onPostDrawRelics;
+    for (const auto relic : bc.onPostDrawRelicOrder)
+        onPostDrawRelics.append(sts::relicIds[static_cast<int>(relic)]);
+    d["on_post_draw_relic_order"] = onPostDrawRelics;
 
     py::dict player;
     player["hp"] = bc.player.curHp;
@@ -862,6 +866,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         static constexpr const char *kRequired[] = {
             "turn", "player", "monsters", "card_state", "potions", "on_use_relic_order",
             "on_end_turn_relic_order",
+            "on_post_draw_relic_order",
         };
         for (const auto *key : kRequired) {
             if (!spec.contains(key)) {
@@ -915,6 +920,29 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 throw std::invalid_argument("onPlayerEndTurn relic order omits an owned callback");
         }
         bc.onEndTurnRelicOrder = std::move(order);
+    }
+    if (spec.contains("on_post_draw_relic_order")) {
+        if (!py::isinstance<py::list>(spec["on_post_draw_relic_order"]))
+            throw std::invalid_argument("post-draw relic order requires an explicit list");
+        std::vector<sts::RelicId> order;
+        std::set<sts::RelicId> seen;
+        for (auto item : spec["on_post_draw_relic_order"].cast<py::list>()) {
+            if (!py::isinstance<py::str>(item))
+                throw std::invalid_argument("post-draw relic order requires stable string identities");
+            const auto relic = relicIdFromString(item.cast<std::string>());
+            if (!sts::BattleContext::hasOnPostDrawHook(relic)
+                    || !bc.player.hasRelicRuntime(relic) || !seen.insert(relic).second)
+                throw std::invalid_argument("post-draw relic order contains an absent, unsupported or duplicate relic");
+            order.push_back(relic);
+        }
+        constexpr int count = sizeof(sts::relicIds) / sizeof(sts::relicIds[0]);
+        for (int i = 0; i < count; ++i) {
+            const auto relic = static_cast<sts::RelicId>(i);
+            if (sts::BattleContext::hasOnPostDrawHook(relic)
+                    && bc.player.hasRelicRuntime(relic) && !seen.count(relic))
+                throw std::invalid_argument("post-draw relic order omits an owned callback");
+        }
+        bc.onPostDrawRelicOrder = std::move(order);
     }
     if (spec.contains("card_state")) {
         for (const auto *key : {"hand", "draw", "discard", "exhaust",

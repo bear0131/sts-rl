@@ -41,6 +41,7 @@ from .entity_ids import (
     ON_USE_CARD_RELIC_IDS,
     OPENING_TURN_RELIC_COUNTER_CYCLES,
     ON_PLAYER_END_TURN_RELIC_IDS,
+    ON_POST_DRAW_RELIC_IDS,
     ON_EXHAUST_POWER_IDS,
     END_TURN_POWER_PRIORITIES,
     POTION_CAPACITY_RULES,
@@ -282,6 +283,15 @@ def complete_word_tables():
             "root": "required on_use_relic_order stable IDs, unique/exactly all owned supported hooks; raw readback checked, clone preserves; real source is the existing ordered global relic list, no new Java field/default",
             "effects": "Pellets before Ink removes NoDraw/Confusion before Draw1; Pellets vs Kunai/Shuriken can change negative-stat cleanse outcomes; preserve callback synchronous/BOTTOM/card-queue behavior",
             "compatibility": "OBS20/ACTION8/layout9/packed policy projection unchanged; this is transition metadata, not a model channel. Multi-hook NOSL keys include marker/ordered IDs; zero/one-hook old keys unchanged. Pair Python with rebuilt native; no special-combination coverage implied (BRIDGE129)",
+        },
+        "post_draw_relic_order_contract": {
+            "source": "AbstractPlayer.applyStartOfTurnPostDrawRelics visits actual acquisition-ordered relics; WarpedTongs queues BOTTOM UpgradeRandomCardAction, Pocketwatch conditionally BOTTOM DrawCard3 after the first turn",
+            "membership_not_order": sorted(ON_POST_DRAW_RELIC_IDS),
+            "native": "BattleContext.initRelics preserves the supported acquired order in onPostDrawRelicOrder; Player.applyStartOfTurnPostDrawRelics traverses it, retaining the original Pocketwatch previous-turn admission predicate. Initial GamblingChip/Tongs hooks keep their separate first-turn queue",
+            "root": "required native raw/root on_post_draw_relic_order is derived from the existing actual ordered global relics, not a new Java field or guessed enum order; stable IDs exactly all owned supported hooks once, atomic complete/initial-selection restoration and readback; clone retains the vector",
+            "effect": "Tongs acquired before Pocketwatch must upgrade the pre-reward hand, not newly drawn cards. With no upgradeable card before Draw3, actual Tongs does nothing while the old fixed Draw3-first order incorrectly upgrades a new card and consumes shuffleRng",
+            "compatibility": "paired Python/rebuilt native; no OBS20/ACTION8/layout9/packed policy columns or weight/budget changes. Legacy Pocketwatch->Tongs and zero/one-hook NOSL keys remain unchanged; reversed pair has an ordered-key marker. Native transition metadata is not an extra model channel",
+            "audit": "BRIDGE166 source correction; no offline behavior/model tests or claim of natural paired-relic coverage",
         },
         "exhaust_power_order_contract": {
             "source": "CardGroup.moveToExhaustPile iterates actual player.powers; DarkEmbracePower and FeelNoPainPower both have priority5, so stable sorting retains first-application order",
@@ -918,6 +928,8 @@ def validate_codec_contract() -> dict[str, int]:
         raise RuntimeError("Java counter users and numeric disposition word tables differ")
     if (set(LIVE_RELIC_COUNTER_MODULI) | set(LIVE_RELIC_COUNTER_STOP_TURNS)) - set(LIVE_RELIC_COUNTER_FIELDS):
         raise RuntimeError("live relic transforms name unknown runtime fields")
+    if ON_POST_DRAW_RELIC_IDS - set(canonical_sets["relic"]):
+        raise RuntimeError("post-draw callback inventory names unknown relic identities")
     for table in (RELIC_COUNTER_SENTINELS, COMBAT_RELIC_COUNTER_SENTINELS):
         for relic, values in table.items():
             if relic not in canonical_sets["relic"] or not values:

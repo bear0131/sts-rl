@@ -19,6 +19,10 @@ ON_PLAYER_END_TURN_RELIC_IDS = frozenset({
     "CloakClasp", "FrozenCore", "Nilry's Codex", "Orichalcum", "StoneCalendar",
 })
 
+# Repeated atTurnStartPostDraw hooks; Gambling Chip is first-turn-only.
+# This is membership, never a default order for the acquired relics.
+ON_POST_DRAW_RELIC_IDS = frozenset({"Pocketwatch", "WarpedTongs"})
+
 # Membership only: real order comes from the existing ordered player powers.
 ON_EXHAUST_POWER_IDS = frozenset({"Dark Embrace", "Feel No Pain"})
 

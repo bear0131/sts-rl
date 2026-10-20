@@ -43,6 +43,7 @@ from schemas.entity_ids import (
     NATIVE_MONSTER_STATUS_IDS,
     NATIVE_PLAYER_STATUS_IDS,
     ON_USE_CARD_RELIC_IDS,
+    ON_POST_DRAW_RELIC_IDS,
     OPENING_TURN_RELIC_COUNTER_CYCLES,
     native_power_enum,
 )
@@ -508,7 +509,8 @@ class RealCombatSearch:
         battle.initialize_selection_root(spec)
         if (battle.card_state() != spec['card_state']
                 or battle.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']
-                or battle.to_dict()['on_end_turn_relic_order'] != spec['on_end_turn_relic_order']):
+                or battle.to_dict()['on_end_turn_relic_order'] != spec['on_end_turn_relic_order']
+                or battle.to_dict()['on_post_draw_relic_order'] != spec['on_post_draw_relic_order']):
             raise RuntimeError('initial selection root failed actual instance/relic-order readback')
         self.env.thick.gc.max_hp = int(real['player']['max_hp'])
         self.env.thick.gc.cur_hp = int(real['player']['hp'])
@@ -754,13 +756,15 @@ class RealCombatSearch:
                     "Runic Dome current intent missing: install the simulator-parity "
                     "CommunicationMod exporter; shadow intent guesses are not allowed")
         player = real["player"]
+        relics = self.adapter._global_block()['relics']
         return {
             "strict_complete": True,
             "on_use_relic_order": [
-                relic for relic in self.adapter._global_block()['relics']
+                relic for relic in relics
                 if relic in ON_USE_CARD_RELIC_IDS
             ],
             "on_end_turn_relic_order": list(real['on_end_turn_relic_order']),
+            "on_post_draw_relic_order": [relic for relic in relics if relic in ON_POST_DRAW_RELIC_IDS],
             "turn": max(0, int(real["turn"]) - 1),
             "player": {
                 "hp": int(player["hp"]),
@@ -803,6 +807,8 @@ class RealCombatSearch:
             raise RuntimeError('native real-game onUseCard relic acquisition order differs')
         if self.env.thick.bc.to_dict()['on_end_turn_relic_order'] != spec['on_end_turn_relic_order']:
             raise RuntimeError('native real-game onPlayerEndTurn relic acquisition order differs')
+        if self.env.thick.bc.to_dict()['on_post_draw_relic_order'] != spec['on_post_draw_relic_order']:
+            raise RuntimeError('native real-game post-draw relic acquisition order differs')
         if self.env.thick.bc.card_state() != spec['card_state']:
             raise RuntimeError('native real-game card instance alignment failed')
         self.env.thick.gc.max_hp = int(real["player"]["max_hp"])

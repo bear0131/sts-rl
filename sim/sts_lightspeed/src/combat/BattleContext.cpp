@@ -117,9 +117,11 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
 void BattleContext::initRelics(const GameContext &gc) {
     onUseRelicOrder.clear();
     onEndTurnRelicOrder.clear();
+    onPostDrawRelicOrder.clear();
     for (const auto &relic : gc.relics.relics) {
         if (hasOnUseCardHook(relic.id)) onUseRelicOrder.push_back(relic.id);
         if (hasOnPlayerEndTurnHook(relic.id)) onEndTurnRelicOrder.push_back(relic.id);
+        if (hasOnPostDrawHook(relic.id)) onPostDrawRelicOrder.push_back(relic.id);
     }
     player.relicBits0 = gc.relics.relicBits0;
     player.relicBits1 = gc.relics.relicBits1;
@@ -1887,6 +1889,10 @@ void BattleContext::onUseCardRelics() {
                 throw std::logic_error("unsupported relic in onUseCard callback order");
         }
     }
+}
+
+bool BattleContext::hasOnPostDrawHook(RelicId relic) {
+    return relic == R::POCKETWATCH || relic == R::WARPED_TONGS;
 }
 
 bool BattleContext::hasOnPlayerEndTurnHook(RelicId relic) {
