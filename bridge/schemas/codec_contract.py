@@ -377,6 +377,10 @@ def complete_word_tables():
             for event, (source, phases) in event_contract.EVENT_PROGRESS_CONTRACTS.items()
         },
         "staged_event_effect_receipts": event_contract.STAGED_EFFECTS,
+        "event_damage_terminal_receipts": {
+            "effects_by_event": event_contract.EVENT_DAMAGE_TERMINAL_EFFECTS,
+            "receipt": "ready GAME_OVER with matching explicit seed/act/floor, prior positive HP, current HP0 and victory=false; releases before delayed obtain/reward UI waits; revival and zero deltas still require normal receipts (BRIDGE92)",
+        },
         "single_card_obtain_event_receipts": {
             event: {"effect": effect, "source": "com.megacrit.cardcrawl.events." + source,
                     "context": context,

@@ -119,7 +119,7 @@ CONTRACTS = {
                       (1, '献上：金神像|Offer: Golden Idol', 'pending_moai_idol_gold'),
                       (2, '离开|Leave', 'leave')],
     "Addict": [(0, '给他金币|Offer Gold', 'relic'), (1, '抢夺|Rob', 'relic'), (2, '离开|Leave', 'leave')],
-    "Winding Halls": [(0, '拥抱疯狂|Embrace Madness', 'card'), (1, '集中精神|Focus', 'card'), (2, '寻找来路|Retrace|Retrace Your Steps', 'maxhp_loss')],
+    "Winding Halls": [(0, '拥抱疯狂|Embrace Madness', 'winding_madness'), (1, '集中精神|Focus', 'card'), (2, '寻找来路|Retrace|Retrace Your Steps', 'maxhp_loss')],
     "Wheel of Change": [(0, '玩小游戏|Play', 'pending_wheel_random')],
 }
 
@@ -171,6 +171,16 @@ SINGLE_OBTAIN_EVENTS = {
     'Duplicator': ('card', 'shrines.Duplicator', 'DUPLICATE'),
     'Transmorgrifier': ('transform', 'shrines.Transmogrifier', 'TRANSFORM'),
     'Living Wall': ('transform', 'exordium.LivingWall', 'TRANSFORM'),
+}
+
+
+# These damage options can end the run before their reward/obtain UI settles.
+# Only a real, identity-matched loss is a substitute for the normal receipt.
+EVENT_DAMAGE_TERMINAL_EFFECTS = {
+    'Forgotten Altar': ('altar_sacrifice',),
+    'SensoryStone': ('colorless_rewards_2', 'colorless_rewards_3'),
+    'Nest': ('card',),
+    'Winding Halls': ('winding_madness',),
 }
 
 
@@ -1009,6 +1019,9 @@ class EventEffectAck:
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
         event = gs['screen_state']['event_id']
+        if effect in EVENT_DAMAGE_TERMINAL_EFFECTS.get(event, ()):
+            if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
+                raise ValueError('damage event semantic action and UI command disagree')
         single_rule = SINGLE_OBTAIN_EVENTS.get(event)
         if single_rule is not None and effect == single_rule[0]:
             from bridge.schemas.card_state import real_selection_card_states
@@ -1111,6 +1124,21 @@ class EventEffectAck:
             raise RuntimeError(f'event effect timeout/mismatch: expected {effect}')
         if not g:
             return True
+        event = old['screen_state']['event_id']
+        if (g.get('screen_type') == 'GAME_OVER'
+                and effect in EVENT_DAMAGE_TERMINAL_EFFECTS.get(event, ())):
+            if frame.get('ready_for_command') is not True:
+                return True
+            for key in ('seed', 'act', 'floor'):
+                if (type(old.get(key)) is not int or type(g.get(key)) is not int
+                        or g[key] != old[key]):
+                    raise RuntimeError(f'{event} death receipt changed/missing {key}')
+            if (type(old.get('current_hp')) is not int or old['current_hp'] <= 0
+                    or type(g.get('current_hp')) is not int or g['current_hp'] != 0
+                    or g.get('screen_state', {}).get('victory') is not False):
+                raise RuntimeError(f'{event} damage result is not an explicit death terminal')
+            self.pending = None
+            return False
         if effect in STAGED_EFFECTS:
             return self._waiting_staged(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('tome_'):
@@ -1444,6 +1472,7 @@ class EventEffectAck:
         success = {
             'gold': delta('gold') > 0 or blocked_gold, 'gold_loss': delta('gold') < 0 or paid_empty,
             'card': bool(gained) or blocked_card, 'remove': bool(lost) and not gained,
+            'winding_madness': bool(gained),
             'transform': bool(gained) and bool(lost),
             'upgrade': bool(gained) and bool(lost) and Counter(c['id'] for c in g.get('deck', [])) == Counter(c['id'] for c in old.get('deck', [])),
             'potion': potion_changed, 'relic': relic_changed,

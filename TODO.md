@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE92 | 源码已修并复读，死亡组合待实机 | EventEffectAck补ForgottenAltar献祭、SensoryStone付血2/3组、Nest拿匕首、WindingHalls拥抱疯狂的真实死亡回执；同seed/act/floor且明确GAME_OVER/victory=false/HP0才释放，先于延迟obtain等待。Winding伤害分支独立效果关键词，语义ID不变；不把复活/普通零变化当死亡，无原生/权重改动。源码复读/语法检查完成，自然死亡组合未覆盖，无离线行为测试。 |
 | BRIDGE91 | 源码已修并构建，特殊分支待实机 | Havoc/Mayhem的playTopCardInDrawPile在抽牌堆空且弃牌非空时补onShuffle，恢复算盘6格挡和日晷计数/每三次2能量；在排EmptyDeckShuffle前按构造时点触发。普通抽牌/DeepBreath原有触发保留，两堆空不触发；不改卡牌随机/身份/布局。源码复读/构建完成，尚未自然实机覆盖，无离线测试。 |
 | BRIDGE90 | 源码已修并构建，特殊分支待实机 | 腐化首次use时立即对四牌堆技能执行modifyCostForCombat(-9)，早于木乃伊之手onUseCard选候选，能力本身仍BOTTOM；已有Corruption不重复处理。费用按真实当前/基础费用分支保留X，去除BuffPlayer执行时的延迟降费。适用原生搜索及桥接shadow，未改权重/布局；源码复读/构建完成，自然实机组合未覆盖，不跑离线测试。 |
 | BRIDGE89 | 源码已修并构建，特殊分支待实机 | 不休陀螺抽牌后若产生洗牌/抽牌/进化/火焰吐息/Void等动作，executeActions继续结算后才返回PLAYER_NORMAL；NoDraw/全部无牌保持可返回，不循环。外部UnceasingTop实际排DrawCardAction，影响根状态、合法动作和搜索后继。源码复读/必要构建完成，未自然实机覆盖，无离线测试。 |
