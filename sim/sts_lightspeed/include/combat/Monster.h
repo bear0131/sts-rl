@@ -96,7 +96,7 @@ struct Monster {
         std::int16_t uniquePower1 = 0; // Corrupt Heart invincible,
 
         // Shield Gremlin target
-        // GreenLouse / RedLouse D
+        // GreenLouse / RedLouse actual biteDamage
         // Red Slaver entangled turn
         // hexaghost divider damage
         // Gremlin wizard charge
@@ -106,7 +106,8 @@ struct Monster {
         // bronze automaton numTurns (0..4)
         // spiker thorn buff count
         // writhing mass WrithingImplantState
-        // darkling d
+        // darkling actual nipDmg (already includes ascension roll range)
+        // guardian actual dmgThreshold (increases when entering defensive mode)
         // time eater has used haste
         // awakened one isPhase2
         int miscInfo = 0;

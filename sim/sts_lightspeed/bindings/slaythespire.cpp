@@ -354,6 +354,16 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
             case sts::MonsterId::BOOK_OF_STABBING:
                 moveState["stab_count"] = m.miscInfo;
                 break;
+            case sts::MonsterId::GREEN_LOUSE:
+            case sts::MonsterId::RED_LOUSE:
+                moveState["bite_damage"] = m.miscInfo;
+                break;
+            case sts::MonsterId::DARKLING:
+                moveState["nip_damage"] = m.miscInfo;
+                break;
+            case sts::MonsterId::THE_GUARDIAN:
+                moveState["damage_threshold"] = m.miscInfo;
+                break;
             default:
                 break;
         }
@@ -1170,6 +1180,10 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     case sts::MonsterId::SPIKER: singleField = "thorns_count"; break;
                     case sts::MonsterId::BRONZE_AUTOMATON: singleField = "num_turns"; break;
                     case sts::MonsterId::BOOK_OF_STABBING: singleField = "stab_count"; break;
+                    case sts::MonsterId::GREEN_LOUSE:
+                    case sts::MonsterId::RED_LOUSE: singleField = "bite_damage"; break;
+                    case sts::MonsterId::DARKLING: singleField = "nip_damage"; break;
+                    case sts::MonsterId::THE_GUARDIAN: singleField = "damage_threshold"; break;
                     default: break;
                 }
                 if (singleField || monster.id == sts::MonsterId::THE_CHAMP) {
@@ -1186,6 +1200,16 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         } else if (monster.id == sts::MonsterId::BOOK_OF_STABBING) {
                             monster.miscInfo = snapshotInteger(
                                 state, singleField, 1, std::numeric_limits<int>::max());
+                        } else if (monster.id == sts::MonsterId::GREEN_LOUSE
+                                   || monster.id == sts::MonsterId::RED_LOUSE) {
+                            monster.miscInfo = snapshotInteger(
+                                state, singleField, bc.ascension >= 2 ? 6 : 5, bc.ascension >= 2 ? 8 : 7);
+                        } else if (monster.id == sts::MonsterId::DARKLING) {
+                            monster.miscInfo = snapshotInteger(
+                                state, singleField, bc.ascension >= 2 ? 9 : 7, bc.ascension >= 2 ? 13 : 11);
+                        } else if (monster.id == sts::MonsterId::THE_GUARDIAN) {
+                            monster.miscInfo = snapshotInteger(
+                                state, singleField, 30, std::numeric_limits<int>::max());
                         } else {
                             monster.miscInfo = getBool(state, singleField, false) ? 1 : 0;
                         }
@@ -1215,11 +1239,11 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 switch (monster.moveHistory[0]) {
                     case sts::MonsterMoveId::GREEN_LOUSE_BITE:
                     case sts::MonsterMoveId::RED_LOUSE_BITE:
+                    case sts::MonsterMoveId::DARKLING_NIP:
+                        if (!m.contains("move_state")) monster.miscInfo = requestedDamage;
+                        break;
                     case sts::MonsterMoveId::HEXAGHOST_DIVIDER:
                         monster.miscInfo = requestedDamage;
-                        break;
-                    case sts::MonsterMoveId::DARKLING_NIP:
-                        monster.miscInfo = requestedDamage - (bc.ascension >= 2 ? 2 : 0);
                         break;
                     case sts::MonsterMoveId::BOOK_OF_STABBING_MULTI_STAB:
                         // Legacy non-strict custom states may explicitly edit

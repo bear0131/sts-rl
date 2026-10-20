@@ -3,6 +3,8 @@
 //
 
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 #include "combat/Monster.h"
 
@@ -648,6 +650,12 @@ void Monster::onHpLost(BattleContext &bc, int amount) {
             if (hasStatus<MS::MODE_SHIFT>()) {
                 const int newModeShiftAmount = getStatus<MS::MODE_SHIFT>() - amount;
                 if (newModeShiftAmount <= 0) {
+                    if (miscInfo > std::numeric_limits<int>::max() - 10) {
+                        throw std::overflow_error("Guardian damage threshold exceeds native range");
+                    }
+                    // Java raises dmgThreshold on entering Defensive Mode,
+                    // not when Twin Slam later restores Offensive Mode.
+                    miscInfo += 10;
                     removeStatus<MS::MODE_SHIFT>();
                     setMove(MMID::THE_GUARDIAN_DEFENSIVE_MODE);
                     bc.addToBot( Actions::MonsterGainBlock(idx, 20) );

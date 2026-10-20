@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v25";
+    public static final String VERSION = "simulator-parity-v26";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -205,6 +205,18 @@ public final class SimulatorParityExporter {
         } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.BookOfStabbing) {
             result.put("stab_count", Integer.valueOf(privateInt(monster,
                 com.megacrit.cardcrawl.monsters.city.BookOfStabbing.class, "stabCount")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.LouseNormal) {
+            result.put("bite_damage", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.exordium.LouseNormal.class, "biteDamage")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.LouseDefensive) {
+            result.put("bite_damage", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.exordium.LouseDefensive.class, "biteDamage")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.beyond.Darkling) {
+            result.put("nip_damage", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.beyond.Darkling.class, "nipDmg")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.TheGuardian) {
+            result.put("damage_threshold", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.exordium.TheGuardian.class, "dmgThreshold")));
         } else {
             return null;
         }

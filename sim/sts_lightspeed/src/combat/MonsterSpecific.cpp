@@ -1331,7 +1331,6 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         case MMID::THE_GUARDIAN_TWIN_SLAM:
             attackPlayerHelper(bc, 8, 2);
             removeStatus<MS::SHARP_HIDE>();
-            miscInfo += 10;
             setMove(MMID::THE_GUARDIAN_WHIRLWIND);
             bc.addToBot( Actions::BuffEnemy<MS::MODE_SHIFT>(idx, miscInfo) );
             break;
@@ -1437,8 +1436,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::DARKLING_NIP: {
-            const auto damage = miscInfo + (asc2 ? 2 : 0); // todo maybe make d part of the miscInfo at prebattle
-            attackPlayerHelper(bc, damage);
+            attackPlayerHelper(bc, miscInfo);
             bc.addToBot( Actions::RollMove(idx) );
             break;
         }

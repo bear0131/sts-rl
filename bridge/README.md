@@ -50,7 +50,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v25`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v26`配套使用。
+v26补红绿虱虫实际biteDamage、黑暗小鬼实际nipDmg和守护者实际dmgThreshold，非攻击/防御根也保留。
+黑暗小鬼不重复加高进阶伤害，守护者阈值在进入防御时递增；旧v25帧拒绝，需Java/native配套构建。
 v25补刺杀之书实际stabCount，单刺意图也完整保留；先恢复计数再核对当前意图hits，冲突拒绝。
 旧v24帧拒绝，必须配套重建Java和原生，不改权重张量或动作编号。
 v24新增六种怪物的实际一次性行动/次数/阶段字段，完整映射见`monster_move_state_fields`；
