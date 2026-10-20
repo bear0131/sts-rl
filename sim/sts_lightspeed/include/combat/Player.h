@@ -71,6 +71,9 @@ struct Player {
         std::uint64_t statusBits0 = 0;
         std::uint32_t statusBits1 = 0;
         std::map<PlayerStatus, std::int16_t> statusMap;
+        // Equal-priority Java powers retain their first-application order.
+        // Only these two player onExhaust hooks enqueue ordered effects.
+        bool feelNoPainBeforeDarkEmbrace = false;
 
         std::uint64_t relicBits0 = 0;
         std::uint64_t relicBits1 = 0;
@@ -263,6 +266,14 @@ struct Player {
     template <PlayerStatus s>
     void Player::setHasStatus(bool value) {
 //        static_assert(s != PlayerStatus::THE_BOMB);
+
+        if (value && !hasStatus<s>()) {
+            if constexpr (s == PS::DARK_EMBRACE) {
+                feelNoPainBeforeDarkEmbrace = hasStatus<PS::FEEL_NO_PAIN>();
+            } else if constexpr (s == PS::FEEL_NO_PAIN) {
+                feelNoPainBeforeDarkEmbrace = false;
+            }
+        }
 
         switch (s) {
             case PS::ARTIFACT:

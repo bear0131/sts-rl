@@ -296,6 +296,14 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     counters["last_attack_unblocked_damage"] = bc.player.lastAttackUnblockedDamage;
     player["combat_counters"] = counters;
     player["powers"] = playerPowersToList(bc.player);
+    py::list exhaustPowers;
+    if (bc.player.feelNoPainBeforeDarkEmbrace && bc.player.hasStatus<PlayerStatus::FEEL_NO_PAIN>())
+        exhaustPowers.append(playerStatusStrings[static_cast<int>(PlayerStatus::FEEL_NO_PAIN)]);
+    if (bc.player.hasStatus<PlayerStatus::DARK_EMBRACE>())
+        exhaustPowers.append(playerStatusStrings[static_cast<int>(PlayerStatus::DARK_EMBRACE)]);
+    if (!bc.player.feelNoPainBeforeDarkEmbrace && bc.player.hasStatus<PlayerStatus::FEEL_NO_PAIN>())
+        exhaustPowers.append(playerStatusStrings[static_cast<int>(PlayerStatus::FEEL_NO_PAIN)]);
+    player["on_exhaust_power_order"] = exhaustPowers;
     player["energy_per_turn"] = static_cast<int>(bc.player.energyPerTurn);
     player["card_draw_per_turn"] = static_cast<int>(bc.player.cardDrawPerTurn);
     if (bc.player.hasStatus<PlayerStatus::DRAW_REDUCTION>())
@@ -1082,6 +1090,33 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 // restored above.  Never manufacture them from the power value.
                 setRulePlayerStatusByNameExact(bc, name, amount, false);
             }
+        }
+        const bool darkEmbraceActive = bc.player.hasStatus<PlayerStatus::DARK_EMBRACE>();
+        const bool feelNoPainActive = bc.player.hasStatus<PlayerStatus::FEEL_NO_PAIN>();
+        if (p.contains("on_exhaust_power_order")) {
+            if (!py::isinstance<py::list>(p["on_exhaust_power_order"]))
+                throw std::invalid_argument("onExhaust power order requires an explicit list");
+            const std::string darkEmbraceName = playerStatusStrings[static_cast<int>(PlayerStatus::DARK_EMBRACE)];
+            const std::string feelNoPainName = playerStatusStrings[static_cast<int>(PlayerStatus::FEEL_NO_PAIN)];
+            std::vector<std::string> order;
+            std::set<std::string> seen;
+            for (auto item : p["on_exhaust_power_order"].cast<py::list>()) {
+                if (!py::isinstance<py::str>(item))
+                    throw std::invalid_argument("onExhaust power order requires stable string identities");
+                const auto name = item.cast<std::string>();
+                if (!((name == darkEmbraceName && darkEmbraceActive)
+                        || (name == feelNoPainName && feelNoPainActive))
+                        || !seen.insert(name).second)
+                    throw std::invalid_argument("onExhaust power order contains an absent, unsupported or duplicate power");
+                order.push_back(name);
+            }
+            if (order.size() != static_cast<size_t>(darkEmbraceActive + feelNoPainActive))
+                throw std::invalid_argument("onExhaust power order is incomplete");
+            bc.player.feelNoPainBeforeDarkEmbrace = order.size() == 2 && order.front() == feelNoPainName;
+        } else if (strictComplete && darkEmbraceActive && feelNoPainActive) {
+            // With zero/one hook the actual owned set uniquely fixes its order.
+            // With both, a complete root must never guess the acquisition order.
+            throw std::invalid_argument("strict player state missing on_exhaust_power_order");
         }
         if (p.contains("draw_reduction_just_applied")) {
             const auto flag = p["draw_reduction_just_applied"];

@@ -237,6 +237,13 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, player.justAppliedBits);
     hashValue(hash, player.statusBits0);
     hashValue(hash, player.statusBits1);
+    // Keep historical keys when no ordering distinction changes the future.
+    if (player.hasStatus<PlayerStatus::DARK_EMBRACE>()
+            && player.hasStatus<PlayerStatus::FEEL_NO_PAIN>()
+            && player.feelNoPainBeforeDarkEmbrace) {
+        hashValue(hash, 0x657868617573744fULL);
+        hashValue(hash, 1);
+    }
     hashValue(hash, player.relicBits0);
     hashValue(hash, player.relicBits1);
     hashValue(hash, player.happyFlowerCounter);

@@ -52,6 +52,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 
 当前源码要求OBS20 / ACTION8 / compact layout9，与`schemas/entity_ids.py`中当前
 `SIMULATOR_PARITY_EXPORT_VERSION`对应的Java补丁配套；以下版本条目保留各自增量合同。
+`player.on_exhaust_power_order`从既有真实powers有序列表保留Dark Embrace/Feel No Pain的
+实际生效顺序；stack不重排，严格根同时持有两者时缺顺序拒绝。配套重建原生与Python，
+不增加Java字段或模型张量；普通复制与NOSL key保留这个会改变后继伤害的顺序（BRIDGE144）。
 v28补六火亡魂实际激活/灼伤升级/火球数/Divider基础伤害，周期不再被通用能力清零；Inferno升级抽牌与弃牌堆灼伤并加入3张Burn+，Sear不从回合猜升级。旧v27帧拒绝，需Java/native配套构建，模型布局不变。
 v27补巨人头实际count，A18提前进入大攻击且后续伤害按真实倒计数成长；旧v26帧拒绝，需Java/native配套构建。
 v26补红绿虱虫实际biteDamage、黑暗小鬼实际nipDmg和守护者实际dmgThreshold，非攻击/防御根也保留。

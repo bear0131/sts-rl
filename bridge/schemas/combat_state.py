@@ -43,6 +43,7 @@ from .entity_ids import (
     THIEF_STATE_FIELDS,
     LAGAVULIN_STATE_FIELDS,
     MONSTER_MOVE_STATE_CONTRACTS,
+    ON_EXHAUST_POWER_IDS,
     UNSUPPORTED_REAL_CARD_IDS,
     UNSUPPORTED_REAL_POWER_IDS,
     UNSUPPORTED_REAL_RELIC_IDS,
@@ -98,6 +99,14 @@ def _validated_combat_counters(counters):
             raise ValueError(f"combat counter {key!r} is not an integer: {value!r}")
         result[key] = int(value)
     return result
+
+
+def _validated_exhaust_power_order(order, powers):
+    if (not isinstance(order, list) or any(type(name) is not str for name in order)
+            or len(order) != len(set(order))
+            or set(order) != set(powers) & ON_EXHAUST_POWER_IDS):
+        raise ValueError("onExhaust power order must contain exactly the actual owned hooks once")
+    return list(order)
 
 
 def _validated_bombs(bombs, counters, *, real_powers=None):
@@ -520,6 +529,8 @@ def normalize_real(game_state):
             "bombs": bombs,
             "powers": {k: v for k, v in player_powers.items()
                        if k != "Berserk"},
+            "on_exhaust_power_order": _validated_exhaust_power_order(
+                [name for name in player_powers if name in ON_EXHAUST_POWER_IDS], player_powers),
             "energy_per_turn": _real_energy_per_turn(game_state),
             **_validated_draw_state(cs['simulator_card_draw_per_turn'],
                                     cs['simulator_draw_reduction_just_applied'], player_powers),
@@ -915,6 +926,7 @@ def normalize_sim(raw):
     player_required = {
         "hp", "max_hp", "block", "energy", "gold", "combat_counters",
         "powers", "energy_per_turn", "bombs", "card_draw_per_turn", "draw_reduction_just_applied",
+        "on_exhaust_power_order",
     }
     missing_player = player_required - set(p)
     if missing_player:
@@ -929,6 +941,7 @@ def normalize_sim(raw):
     from env.core.vocab import PLAYER_BUFF_VOCAB_INDEX
     combat_counters = _validated_combat_counters(p["combat_counters"])
     bombs = _validated_bombs(p["bombs"], combat_counters)
+    player_powers = _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX)
     return {
         # sim turn is 0-based at combat start; real game is 1-based.
         "turn": raw["turn"] + 1,
@@ -947,7 +960,9 @@ def normalize_sim(raw):
             "gold": p["gold"],
             "combat_counters": combat_counters,
             "bombs": bombs,
-            "powers": _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX),
+            "powers": player_powers,
+            "on_exhaust_power_order": _validated_exhaust_power_order(
+                p["on_exhaust_power_order"], player_powers),
             "energy_per_turn": p["energy_per_turn"],
             **_validated_draw_state(p['card_draw_per_turn'], p['draw_reduction_just_applied'],
                                     dict(p['powers'])),
@@ -1378,6 +1393,8 @@ def diff(real, sim, pile_mode="auto"):
         if field in real['player']:
             cmp('player.' + field, real['player'][field], sim['player'][field])
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
+    cmp("player.on_exhaust_power_order", real["player"]["on_exhaust_power_order"],
+        sim["player"]["on_exhaust_power_order"])
     cmp("player.bombs", real["player"]["bombs"], sim["player"]["bombs"])
     cmp(
         "player.combat_counters",

@@ -39,6 +39,7 @@ from .entity_ids import (
     CHEST_REWARD_SCREEN_CONTRACTS,
     NATIVE_GLOBAL_FIELDS,
     ON_USE_CARD_RELIC_IDS,
+    ON_EXHAUST_POWER_IDS,
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
     FRESH_CARD_MISC,
@@ -278,6 +279,14 @@ def complete_word_tables():
             "root": "required on_use_relic_order stable IDs, unique/exactly all owned supported hooks; raw readback checked, clone preserves; real source is the existing ordered global relic list, no new Java field/default",
             "effects": "Pellets before Ink removes NoDraw/Confusion before Draw1; Pellets vs Kunai/Shuriken can change negative-stat cleanse outcomes; preserve callback synchronous/BOTTOM/card-queue behavior",
             "compatibility": "OBS20/ACTION8/layout9/packed policy projection unchanged; this is transition metadata, not a model channel. Multi-hook NOSL keys include marker/ordered IDs; zero/one-hook old keys unchanged. Pair Python with rebuilt native; no special-combination coverage implied (BRIDGE129)",
+        },
+        "exhaust_power_order_contract": {
+            "source": "CardGroup.moveToExhaustPile iterates actual player.powers; DarkEmbracePower and FeelNoPainPower both have priority5, so stable sorting retains first-application order",
+            "membership_not_order": sorted(ON_EXHAUST_POWER_IDS),
+            "native": "Player records relative order only when either hook is first added; stacking does not reorder, removal/re-add tracks the new application. Both BOTTOM callbacks run after relic hooks and before card-specific exhaust hooks",
+            "root": "canonical player.on_exhaust_power_order filters the existing actual ordered powers; native readback preserves exactly the active hooks once. A strict root with both hooks and no order is rejected; zero/one hook has only one possible order",
+            "effect": "FNP->DarkEmbrace versus reverse changes the queued order of Juggernaut random damage and FireBreathing AOE when exhaust draws a status/curse; legal random targets and surviving HP can differ",
+            "compatibility": "paired rebuilt native/Python, no Java field or OBS20/ACTION8/layout9 change; Player copy preserves order and nondefault two-hook NOSL futures get a distinct key. No offline test or natural-combination coverage claimed (BRIDGE144)",
         },
         "potion_use_relic_contract": {
             "java": "PotionPopUp: potion.use -> relic.onUsePotion -> destroyPotion; EntropicBrew/ObtainPotionAction/ToyOrnithopter",

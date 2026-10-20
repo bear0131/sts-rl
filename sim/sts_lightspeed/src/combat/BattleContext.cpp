@@ -3098,12 +3098,22 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
         addToBot(Actions::MakeTempCardInHand(id));
     }
 
-    if (player.hasStatus<PS::DARK_EMBRACE>() && !monsters.areMonstersBasicallyDead()) {
-        addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
-    }
-
-    if (player.hasStatus<PS::FEEL_NO_PAIN>()) {
-        addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+    const auto darkEmbrace = [&] {
+        if (player.hasStatus<PS::DARK_EMBRACE>() && !monsters.areMonstersBasicallyDead()) {
+            addToBot(Actions::DrawCards(player.getStatus<PS::DARK_EMBRACE>()));
+        }
+    };
+    const auto feelNoPain = [&] {
+        if (player.hasStatus<PS::FEEL_NO_PAIN>()) {
+            addToBot(Actions::GainBlock(player.getStatus<PS::FEEL_NO_PAIN>()));
+        }
+    };
+    if (player.feelNoPainBeforeDarkEmbrace) {
+        feelNoPain();
+        darkEmbrace();
+    } else {
+        darkEmbrace();
+        feelNoPain();
     }
 
     if (c.getId() == CardId::NECRONOMICURSE) {

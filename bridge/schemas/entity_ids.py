@@ -14,6 +14,9 @@ ON_USE_CARD_RELIC_IDS = frozenset({
     "Nunchaku", "OrangePellets", "Ornamental Fan", "Pen Nib", "Shuriken",
 })
 
+# Membership only: real order comes from the existing ordered player powers.
+ON_EXHAUST_POWER_IDS = frozenset({"Dark Embrace", "Feel No Pain"})
+
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
     'TimeEater': {'used_haste': {'type': 'bool', 'java': 'usedHaste'}},
