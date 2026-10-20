@@ -489,7 +489,9 @@ void BattleContext::initRelics(const GameContext &gc) {
         addToBot( Actions::DamageAllEnemy(3) );
     }
 
-    if (gc.hasRelic(R::RED_SKULL) && gc.curHp <= gc.maxHp / 2) {
+    // Blood Vial/Pantograph heal at TOP before Red Skull's BOTTOM start action.
+    // That action reads the current bloodied latch, not the pre-battle GC HP.
+    if (gc.hasRelic(R::RED_SKULL) && p.bloodied) {
         p.buff<PS::STRENGTH>(3);
         p.redSkullActive = true;
     }
