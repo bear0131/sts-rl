@@ -1554,7 +1554,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::NEMESIS_DEBUFF:
-            Actions::MakeTempCardInDiscard({CardId::BURN}, asc3 ? 5 : 3).actFunc(bc);
+            Actions::MakeTempCardInDiscard({CardId::BURN}, asc18 ? 5 : 3).actFunc(bc);
             rollMove(bc);
             if (!hasStatus<MS::INTANGIBLE>()) {
                 buff<MS::INTANGIBLE>(2);
@@ -2517,6 +2517,11 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 2 attack
             // 3 scythe
             // 4 debuff
+            // Java sets cooldown=2 when choosing Scythe and decrements at the
+            // start of each later getMove. With one roll per turn, only the
+            // immediately preceding Scythe still has a positive cooldown;
+            // Scythe -> another move -> Scythe is allowed.
+            const bool scytheCoolingDown = lastMove(MMID::NEMESIS_SCYTHE);
 
             if (firstTurn()) {
                 if (roll < 50) {
@@ -2527,7 +2532,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             }
 
             if (roll < 30) {
-                if (!eitherLastTwo(MMID::NEMESIS_SCYTHE)) {
+                if (!scytheCoolingDown) {
                     return MMID::NEMESIS_SCYTHE;
 
                 } else if (bc.aiRng.randomBoolean()) {
@@ -2549,7 +2554,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                 if (!lastTwoMoves(MMID::NEMESIS_ATTACK)) {
                     return MMID::NEMESIS_ATTACK;
 
-                } else if (!bc.aiRng.randomBoolean() || eitherLastTwo(MMID::NEMESIS_SCYTHE)) {
+                } else if (!bc.aiRng.randomBoolean() || scytheCoolingDown) {
                     return MMID::NEMESIS_DEBUFF;
 
                 } else {
@@ -2561,7 +2566,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                 return MMID::NEMESIS_DEBUFF;
             }
 
-            if (bc.aiRng.randomBoolean() && !eitherLastTwo(MMID::NEMESIS_SCYTHE)) {
+            if (bc.aiRng.randomBoolean() && !scytheCoolingDown) {
                 return MMID::NEMESIS_SCYTHE;
             }
 
