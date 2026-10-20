@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE107 | F16实机已复现，已修复构建待续档 | 200201史莱姆首领双分裂7个真实对象对原生有限槽失败。原生仅回收已死大型父体，保留首领死体及四个中型子体（含死体），不丢首领导致SmokeBomb误开放；桥接精确7→5物种/组内次序映射，两父体保留历史账本且严格死亡核验，不填PAD。源码复读/必要构建/语法完成，下一步续同一自然F16；未自然终局不计战败，无离线测试。 |
+| BRIDGE107 | 已修复，F16同档双分裂及胜利实机通过 | f72f52c/native8298b4b仅回收已死大型父体，保留首领死体及四中型（含死体），修SmokeBomb首领身份；桥接精确7→5物种内次序映射，退休父体保留历史账本，不填PAD。200201自然F16/index100续跑出现51帧七实体，index126原生22→实际21→PLAY4目标3正确执行，随后首领奖励63/87HP/272金并到Act2F18，ERROR0。无烟雾弹组合覆盖，无离线测试；非自然终局/独立样本。 |
 | BRIDGE106 | 源码已修并构建，待续档 | 断魂斩SeverSoulExhaustAction按原手牌正序捕获物理UID、逐项TOP，实际逆序消耗先于已排攻击/UseCard及其致命清队列；Charon伤害插队保留，不能把新增牌误消耗。不改ID/布局/权重；源码复读、必要原生构建及词表语法完成，无离线测试。200201被独立史莱姆映射错误中断，未宣称本卡组合已实机。 |
 | BRIDGE105 | 源码已修，v28/原生已构建，待实机 | v28对接Hexaghost activated/burnUpgraded/orbActiveCount/Divider基础伤害，周期不再被能力清零；Inferno补升级draw/discard灼伤及3张Burn+，Sear按真实标志；恢复真实Activate无Roll和火球达6的双历史。不改模型布局，新增内部Divider值入key；源码全链/必要构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE104 | 源码已修并构建，待实机 | Champ Gloat按A0/4/19加力量2/3/4（不是3/4/5），保留正确Anger6/9/12；TimeEater Ripple先易伤后虚弱再A19脆弱，确保Artifact按真实顺序阻挡。不改布局/权重，源码/必要构建完成，未自然组合实机，无离线测试。 |
@@ -154,7 +154,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 新版本20种子批次进行中，200200胜利/200201实机 | 用户授权自动200200..200219，不逐局询问；固定最终TRAIN47/A0/确定性upper/G0/128/native4，runtime7d20096/native7c3bf85f/v28，旧成绩分开。200200真实GAME_OVER胜利：F51/Act3/60-102HP/score756，三个实机段均ERROR0，注明两次自然房间入口续档，只计一个完成种子。原jar/config和65份存档偏好恢复核验后，200201..219监督器已启动，200201实际F1/index14正常出牌；每seed3600秒/总19小时上限/首错误/四幕前停，出错先修再续。21笔金币573金实收匹配，F42的11金/F43的79金为策略主动PROCEED，不强补。日志C盘存储经runs/local入口访问；Match/Act4仍排除，不混中断/续档作新样本。详见worklog/2026-10-20.md“BRIDGE05：继续当前实机与余下授权种子”及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 20种子批次进行中，200200胜利/200201修复后续跑 | 用户授权自动200200..219，不逐局询问；最终TRAIN47/A0/确定性upper/G0/128/native4不变，旧成绩分开。200200在7d20096/v28下F51胜利60/102/756分，注明两次自然入口续档。200201首段455.6秒因BRIDGE107在F16停止，原件/65份存档偏好恢复核验；已部署f72f52c/native8298b4b/v28，从同一F16/index100/75-87HP续，七实体双分裂及首领胜利后到Act2F18，ERROR0。当前resume200201-01上限3600秒/首错/终局/四幕前停；余下200202..219已准备，须201真实终局后启动，每seed一小时/总18小时上限。日志存runs/local，部分通过C盘junction；Match/Act4排除，不混中断/版本变更/续档作独立样本。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
