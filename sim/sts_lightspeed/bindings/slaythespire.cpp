@@ -304,6 +304,10 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     if (!bc.player.feelNoPainBeforeDarkEmbrace && bc.player.hasStatus<PlayerStatus::FEEL_NO_PAIN>())
         exhaustPowers.append(playerStatusStrings[static_cast<int>(PlayerStatus::FEEL_NO_PAIN)]);
     player["on_exhaust_power_order"] = exhaustPowers;
+    py::list endTurnPowers;
+    for (const auto status : bc.player.endTurnPowerOrder)
+        endTurnPowers.append(playerStatusStrings[static_cast<int>(status)]);
+    player["on_end_turn_power_order"] = endTurnPowers;
     player["energy_per_turn"] = static_cast<int>(bc.player.energyPerTurn);
     player["card_draw_per_turn"] = static_cast<int>(bc.player.cardDrawPerTurn);
     if (bc.player.hasStatus<PlayerStatus::DRAW_REDUCTION>())
@@ -1117,6 +1121,60 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             // With zero/one hook the actual owned set uniquely fixes its order.
             // With both, a complete root must never guess the acquisition order.
             throw std::invalid_argument("strict player state missing on_exhaust_power_order");
+        }
+        size_t expectedEndPowers = bc.player.bombs.size();
+        for (int i = 1; i <= static_cast<int>(PlayerStatus::THE_BOMB); ++i) {
+            const auto status = static_cast<PlayerStatus>(i);
+            if (status != PlayerStatus::THE_BOMB && sts::Player::endTurnPowerPriority(status) >= 0
+                    && bc.player.hasStatusRuntime(status)) ++expectedEndPowers;
+        }
+        if (p.contains("on_end_turn_power_order")) {
+            if (!py::isinstance<py::list>(p["on_end_turn_power_order"]))
+                throw std::invalid_argument("end-turn power order requires an explicit list");
+            std::vector<PlayerStatus> order;
+            std::set<PlayerStatus> seen;
+            size_t bombCount = 0;
+            int previousPriority = -1;
+            for (auto item : p["on_end_turn_power_order"].cast<py::list>()) {
+                if (!py::isinstance<py::str>(item))
+                    throw std::invalid_argument("end-turn power order requires stable identities");
+                const auto name = item.cast<std::string>();
+                auto status = PlayerStatus::INVALID;
+                for (int i = 1; i <= static_cast<int>(PlayerStatus::THE_BOMB); ++i)
+                    if (name == playerStatusStrings[i]) { status = static_cast<PlayerStatus>(i); break; }
+                const int priority = sts::Player::endTurnPowerPriority(status);
+                if (priority < 0 || priority < previousPriority)
+                    throw std::invalid_argument("end-turn power identity/priority is unsupported");
+                if (status == PlayerStatus::THE_BOMB) {
+                    if (++bombCount > bc.player.bombs.size())
+                        throw std::invalid_argument("end-turn order duplicates a bomb instance");
+                } else if (!bc.player.hasStatusRuntime(status) || !seen.insert(status).second) {
+                    throw std::invalid_argument("end-turn order has an absent or duplicate power");
+                }
+                previousPriority = priority;
+                order.push_back(status);
+            }
+            if (order.size() != expectedEndPowers || bombCount != bc.player.bombs.size())
+                throw std::invalid_argument("end-turn power order is incomplete");
+            bc.player.endTurnPowerOrder = std::move(order);
+        } else if (strictComplete) {
+            if (expectedEndPowers > 1)
+                throw std::invalid_argument("strict player state missing on_end_turn_power_order");
+            bc.player.endTurnPowerOrder.clear();
+            for (int i = 1; i <= static_cast<int>(PlayerStatus::THE_BOMB); ++i) {
+                const auto status = static_cast<PlayerStatus>(i);
+                if (status != PlayerStatus::THE_BOMB && sts::Player::endTurnPowerPriority(status) >= 0
+                        && bc.player.hasStatusRuntime(status)) bc.player.addEndTurnPower(status);
+            }
+            if (!bc.player.bombs.empty()) bc.player.addEndTurnPower(PlayerStatus::THE_BOMB);
+        } else if (p.contains("bombs")) {
+            if (expectedEndPowers == bc.player.bombs.size()) {
+                // With no ordinary hooks, ordered bomb instances have a unique placement.
+                bc.player.endTurnPowerOrder.assign(bc.player.bombs.size(), PlayerStatus::THE_BOMB);
+            } else if (std::count(bc.player.endTurnPowerOrder.begin(), bc.player.endTurnPowerOrder.end(),
+                                 PlayerStatus::THE_BOMB) != static_cast<int>(bc.player.bombs.size())) {
+                throw std::invalid_argument("changing bomb count among other hooks requires explicit order");
+            }
         }
         if (p.contains("draw_reduction_just_applied")) {
             const auto flag = p["draw_reduction_just_applied"];

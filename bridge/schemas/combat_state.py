@@ -28,6 +28,7 @@ localized `name` field, which is GBK-localized and unstable):
 # ============================ real-game side ============================
 
 from functools import lru_cache
+from collections import Counter
 
 from .entity_ids import (
     CARD_ALIASES,
@@ -44,6 +45,7 @@ from .entity_ids import (
     LAGAVULIN_STATE_FIELDS,
     MONSTER_MOVE_STATE_CONTRACTS,
     ON_EXHAUST_POWER_IDS,
+    END_TURN_POWER_PRIORITIES,
     UNSUPPORTED_REAL_CARD_IDS,
     UNSUPPORTED_REAL_POWER_IDS,
     UNSUPPORTED_REAL_RELIC_IDS,
@@ -106,6 +108,20 @@ def _validated_exhaust_power_order(order, powers):
             or len(order) != len(set(order))
             or set(order) != set(powers) & ON_EXHAUST_POWER_IDS):
         raise ValueError("onExhaust power order must contain exactly the actual owned hooks once")
+    return list(order)
+
+
+def _validated_end_turn_power_order(order, powers, bombs):
+    if not isinstance(order, list) or any(type(name) is not str for name in order):
+        raise ValueError("end-turn power order requires explicit stable identities")
+    expected = Counter({name: 1 for name in powers if name in END_TURN_POWER_PRIORITIES})
+    if bombs:
+        expected["The Bomb"] = len(bombs)
+    if Counter(order) != expected:
+        raise ValueError("end-turn power order differs from actual powers/bomb instances")
+    priorities = [END_TURN_POWER_PRIORITIES[name] for name in order]
+    if priorities != sorted(priorities):
+        raise ValueError("end-turn power order disagrees with stock priorities")
     return list(order)
 
 
@@ -482,6 +498,13 @@ def normalize_real(game_state):
     player_powers = _player_powers_real(p["powers"])
     bombs = _validated_bombs(cs.get("simulator_bombs"), combat_counters,
                             real_powers=p["powers"])
+    end_turn_order = []
+    for power in p["powers"]:
+        raw_name = power["id"]
+        name = ("The Bomb" if raw_name.startswith("TheBomb") and raw_name[7:].isdigit()
+                else _REAL_POWER_CANON_ID.get(raw_name, raw_name))
+        if name in END_TURN_POWER_PRIORITIES:
+            end_turn_order.append(name)
     power_overrides = cs.get("simulator_player_power_overrides")
     if not isinstance(power_overrides, dict):
         raise ValueError(
@@ -531,6 +554,8 @@ def normalize_real(game_state):
                        if k != "Berserk"},
             "on_exhaust_power_order": _validated_exhaust_power_order(
                 [name for name in player_powers if name in ON_EXHAUST_POWER_IDS], player_powers),
+            "on_end_turn_power_order": _validated_end_turn_power_order(
+                end_turn_order, player_powers, bombs),
             "energy_per_turn": _real_energy_per_turn(game_state),
             **_validated_draw_state(cs['simulator_card_draw_per_turn'],
                                     cs['simulator_draw_reduction_just_applied'], player_powers),
@@ -927,6 +952,7 @@ def normalize_sim(raw):
         "hp", "max_hp", "block", "energy", "gold", "combat_counters",
         "powers", "energy_per_turn", "bombs", "card_draw_per_turn", "draw_reduction_just_applied",
         "on_exhaust_power_order",
+        "on_end_turn_power_order",
     }
     missing_player = player_required - set(p)
     if missing_player:
@@ -963,6 +989,8 @@ def normalize_sim(raw):
             "powers": player_powers,
             "on_exhaust_power_order": _validated_exhaust_power_order(
                 p["on_exhaust_power_order"], player_powers),
+            "on_end_turn_power_order": _validated_end_turn_power_order(
+                p["on_end_turn_power_order"], player_powers, bombs),
             "energy_per_turn": p["energy_per_turn"],
             **_validated_draw_state(p['card_draw_per_turn'], p['draw_reduction_just_applied'],
                                     dict(p['powers'])),
@@ -1395,6 +1423,8 @@ def diff(real, sim, pile_mode="auto"):
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
     cmp("player.on_exhaust_power_order", real["player"]["on_exhaust_power_order"],
         sim["player"]["on_exhaust_power_order"])
+    cmp("player.on_end_turn_power_order", real["player"]["on_end_turn_power_order"],
+        sim["player"]["on_end_turn_power_order"])
     cmp("player.bombs", real["player"]["bombs"], sim["player"]["bombs"])
     cmp(
         "player.combat_counters",

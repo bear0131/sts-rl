@@ -40,6 +40,7 @@ from .entity_ids import (
     NATIVE_GLOBAL_FIELDS,
     ON_USE_CARD_RELIC_IDS,
     ON_EXHAUST_POWER_IDS,
+    END_TURN_POWER_PRIORITIES,
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
     FRESH_CARD_MISC,
@@ -287,6 +288,14 @@ def complete_word_tables():
             "root": "canonical player.on_exhaust_power_order filters the existing actual ordered powers; native readback preserves exactly the active hooks once. A strict root with both hooks and no order is rejected; zero/one hook has only one possible order",
             "effect": "FNP->DarkEmbrace versus reverse changes the queued order of Juggernaut random damage and FireBreathing AOE when exhaust draws a status/curse; legal random targets and surviving HP can differ",
             "compatibility": "paired rebuilt native/Python, no Java field or OBS20/ACTION8/layout9 change; Player copy preserves order and nondefault two-hook NOSL futures get a distinct key. No offline test or natural-combination coverage claimed (BRIDGE144)",
+        },
+        "end_turn_power_order_contract": {
+            "source": "AbstractRoom.endTurn calls inherited AbstractCreature.applyEndOfTurnTriggers over actual powers; Combust/TheBomb/default supported hooks priority5, Establishment25 and Constricted105. Stable order within one priority",
+            "priorities": dict(END_TURN_POWER_PRIORITIES),
+            "native": "Player.endTurnPowerOrder tracks first additions/removals; THE_BOMB entries each bind the next independent ordered bomb. Snapshot iteration tolerates immediate Rage removal; expiry removes matching bomb entries only",
+            "root": "player.on_end_turn_power_order from existing actual wire power list, with TheBomb<N> converted to ordered The Bomb markers; exact active singleton identities, bomb count and priorities required. Strict roots with multiple hooks cannot omit order",
+            "effects": "Buffer may prevent Combust HP_LOSS or the larger Constricted THORNS depending on order, changing actual HP/survival. Damage actions survive clearPostCombatActions, so do not assume a lethal AOE erases later self-damage. Preserve ordered bomb positions and TOP regen versus BOTTOM effects, not other-class hook implementations",
+            "compatibility": "paired native/Python raw-state change, no Java fields or OBS20/ACTION8/layout9/weight changes; copy and NOSL distinguish nonlegacy callback sequences. No offline behavior or natural-combination coverage claimed (BRIDGE145)",
         },
         "potion_use_relic_contract": {
             "java": "PotionPopUp: potion.use -> relic.onUsePotion -> destroyPotion; EntropicBrew/ObtainPotionAction/ToyOrnithopter",

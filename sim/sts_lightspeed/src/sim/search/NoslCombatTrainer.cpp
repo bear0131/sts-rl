@@ -237,6 +237,25 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, player.justAppliedBits);
     hashValue(hash, player.statusBits0);
     hashValue(hash, player.statusBits1);
+    // Historical order put all bombs first, then enum-sorted ordinary powers.
+    // Keep that key when it already represents the same callback sequence.
+    bool legacyEndTurnOrder = true, sawOrdinaryPower = false;
+    int previousEndPower = -1;
+    for (const auto status : player.endTurnPowerOrder) {
+        if (status == PlayerStatus::THE_BOMB) {
+            if (sawOrdinaryPower) legacyEndTurnOrder = false;
+        } else {
+            const int value = static_cast<int>(status);
+            if (value < previousEndPower) legacyEndTurnOrder = false;
+            previousEndPower = value;
+            sawOrdinaryPower = true;
+        }
+    }
+    if (!legacyEndTurnOrder) {
+        hashValue(hash, 0x656e645475726e4fULL);
+        hashValue(hash, static_cast<int>(player.endTurnPowerOrder.size()));
+        for (const auto status : player.endTurnPowerOrder) hashValue(hash, static_cast<int>(status));
+    }
     // Keep historical keys when no ordering distinction changes the future.
     if (player.hasStatus<PlayerStatus::DARK_EMBRACE>()
             && player.hasStatus<PlayerStatus::FEEL_NO_PAIN>()

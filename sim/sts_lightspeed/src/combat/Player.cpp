@@ -369,23 +369,24 @@ void Player::wouldDie(BattleContext &bc) {
 }
 
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    if (!bc.monsters.areMonstersBasicallyDead()) {
-        for (auto &bomb : bombs) {
-            if (bomb.turns == 1) {
-                bc.addToBot(Actions::DamageAllEnemy(bomb.damage));
+    // Some hooks remove their own power immediately. Iterate a snapshot so
+    // their removal cannot invalidate the remaining real callback order.
+    const auto order = endTurnPowerOrder;
+    size_t bombIndex = 0;
+    for (const auto status : order) {
+        if (status == PS::THE_BOMB) {
+            auto &bomb = bombs.at(bombIndex++);
+            if (!bc.monsters.areMonstersBasicallyDead()) {
+                if (bomb.turns == 1) bc.addToBot(Actions::DamageAllEnemy(bomb.damage));
+                --bomb.turns;
             }
-            --bomb.turns;
-        }
-        bombs.erase(std::remove_if(bombs.begin(), bombs.end(),
-                [](const Bomb &bomb) { return bomb.turns == 0; }), bombs.end());
-    }
-
-    for (auto pair : statusMap) {
-        if (!hasStatusRuntime(pair.first)) {
             continue;
         }
-
-        switch (pair.first) {
+        if (!hasStatusRuntime(status)) {
+            continue;
+        }
+        const int amount = getStatusRuntime(status);
+        switch (status) {
             case PS::BURST:
                 bc.addToBot(Actions::RemoveStatus<PS::BURST>());
                 break;
@@ -393,12 +394,12 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
             case PS::COMBUST:
                 if (!bc.monsters.areMonstersBasicallyDead()) {
                     bc.addToBot(Actions::PlayerLoseHp(combustHpLoss, true)); // todo combust doesnt stack hp loss correctly
-                    bc.addToBot(Actions::DamageAllEnemy(pair.second));
+                    bc.addToBot(Actions::DamageAllEnemy(amount));
                 }
                 break;
 
             case PS::CONSTRICTED:
-                bc.addToBot(Actions::DamagePlayer(pair.second));
+                bc.addToBot(Actions::DamagePlayer(amount));
                 break;
 
             case PS::DOUBLE_TAP:
@@ -418,12 +419,12 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::LOSE_DEXTERITY:
-                bc.addToBot(Actions::DebuffPlayer<PS::DEXTERITY>(-pair.second));
+                bc.addToBot(Actions::DebuffPlayer<PS::DEXTERITY>(-amount));
                 bc.addToBot(Actions::RemoveStatus<PS::LOSE_DEXTERITY>());
                 break;
 
             case PS::LOSE_STRENGTH:
-                bc.addToBot(Actions::DebuffPlayer<PS::STRENGTH>(-pair.second));
+                bc.addToBot(Actions::DebuffPlayer<PS::STRENGTH>(-amount));
                 bc.addToBot(Actions::RemoveStatus<PS::LOSE_STRENGTH>());
                 break;
 
@@ -432,7 +433,7 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::OMEGA:
-                bc.addToBot(Actions::DamageAllEnemy(pair.second));
+                bc.addToBot(Actions::DamageAllEnemy(amount));
                 break;
 
             case PS::RAGE:
@@ -444,25 +445,32 @@ void Player::applyEndOfTurnPowers(BattleContext &bc) {
                 break;
 
             case PS::REGEN:
-                bc.addToTop(Actions::HealPlayer(pair.second));
+                bc.addToTop(Actions::HealPlayer(amount));
                 bc.addToTop(Actions::DecrementStatus<PS::REGEN>());
                 break;
 
                 //case RetainCardPower -> if not has relic runic pyramid and not has power equilibrium, addToBot retain cards action
 
             case PS::RITUAL:
-                bc.addToBot(Actions::BuffPlayer<PS::STRENGTH>(pair.second));
+                bc.addToBot(Actions::BuffPlayer<PS::STRENGTH>(amount));
                 break;
                 // case TheBomb
 
             case PS::WRAITH_FORM: // todo does this debuff or just decrement?
-                bc.addToBot(Actions::DecrementStatus<PS::DEXTERITY>(pair.second));
+                bc.addToBot(Actions::DecrementStatus<PS::DEXTERITY>(amount));
                 break;
 
             default:
                 break;
         }
     }
+    if (bombIndex != bombs.size()) throw std::logic_error("end-turn order omits a bomb instance");
+    bombIndex = 0;
+    endTurnPowerOrder.erase(std::remove_if(endTurnPowerOrder.begin(), endTurnPowerOrder.end(),
+        [&](PlayerStatus status) { return status == PS::THE_BOMB && bombs.at(bombIndex++).turns == 0; }),
+        endTurnPowerOrder.end());
+    bombs.erase(std::remove_if(bombs.begin(), bombs.end(),
+        [](const Bomb &bomb) { return bomb.turns == 0; }), bombs.end());
 }
 
 void Player::applyAtEndOfRoundPowers() {

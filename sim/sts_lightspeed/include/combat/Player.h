@@ -74,6 +74,30 @@ struct Player {
         // Equal-priority Java powers retain their first-application order.
         // Only these two player onExhaust hooks enqueue ordered effects.
         bool feelNoPainBeforeDarkEmbrace = false;
+        // One entry per active end-turn power; The Bomb entries correspond,
+        // in order, to the independent instances in bombs.
+        std::vector<PlayerStatus> endTurnPowerOrder;
+        static constexpr int endTurnPowerPriority(PlayerStatus status) {
+            switch (status) {
+                case PS::BURST: case PS::COMBUST: case PS::DOUBLE_TAP:
+                case PS::ENTANGLED: case PS::EQUILIBRIUM:
+                case PS::LOSE_DEXTERITY: case PS::LOSE_STRENGTH:
+                case PS::NO_DRAW: case PS::OMEGA: case PS::RAGE:
+                case PS::REBOUND: case PS::REGEN: case PS::RITUAL:
+                case PS::WRAITH_FORM: case PS::THE_BOMB:
+                    return 5;
+                case PS::ESTABLISHMENT: return 25;
+                case PS::CONSTRICTED: return 105;
+                default: return -1;
+            }
+        }
+        void addEndTurnPower(PlayerStatus status) {
+            const int priority = endTurnPowerPriority(status);
+            if (priority < 0) throw std::invalid_argument("power has no supported end-turn hook");
+            const auto position = std::find_if(endTurnPowerOrder.begin(), endTurnPowerOrder.end(),
+                [priority](PlayerStatus existing) { return endTurnPowerPriority(existing) > priority; });
+            endTurnPowerOrder.insert(position, status); // Stable among equal priorities.
+        }
 
         std::uint64_t relicBits0 = 0;
         std::uint64_t relicBits1 = 0;
@@ -267,6 +291,12 @@ struct Player {
     void Player::setHasStatus(bool value) {
 //        static_assert(s != PlayerStatus::THE_BOMB);
 
+        if constexpr (endTurnPowerPriority(s) >= 0 && s != PS::THE_BOMB) {
+            if (value && !hasStatus<s>()) addEndTurnPower(s);
+            else if (!value) endTurnPowerOrder.erase(
+                std::remove(endTurnPowerOrder.begin(), endTurnPowerOrder.end(), s), endTurnPowerOrder.end());
+        }
+
         if (value && !hasStatus<s>()) {
             if constexpr (s == PS::DARK_EMBRACE) {
                 feelNoPainBeforeDarkEmbrace = hasStatus<PS::FEEL_NO_PAIN>();
@@ -371,6 +401,7 @@ struct Player {
 
         if (s == PS::THE_BOMB) {
             if (amount < 0) throw std::invalid_argument("negative bomb damage");
+            addEndTurnPower(PS::THE_BOMB);
             bombs.push_back({3, amount});
             return;
         }

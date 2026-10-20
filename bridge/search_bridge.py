@@ -742,6 +742,7 @@ class RealCombatSearch:
                 "bombs": [dict(bomb) for bomb in player["bombs"]],
                 "powers": _power_rows(player["powers"], _SUPPORTED_PLAYER_POWERS),
                 "on_exhaust_power_order": list(player["on_exhaust_power_order"]),
+                "on_end_turn_power_order": list(player["on_end_turn_power_order"]),
             },
             "monsters": monsters,
             "card_state": self._card_state(real),

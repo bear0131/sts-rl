@@ -17,6 +17,16 @@ ON_USE_CARD_RELIC_IDS = frozenset({
 # Membership only: real order comes from the existing ordered player powers.
 ON_EXHAUST_POWER_IDS = frozenset({"Dark Embrace", "Feel No Pain"})
 
+# Supported native atEndOfTurn hooks. Equal-priority powers retain wire order;
+# each TheBomb<N> is an independent "The Bomb" entry bound to ordered bombs.
+END_TURN_POWER_PRIORITIES = {
+    "Burst": 5, "Combust": 5, "Double Tap": 5, "Entangled": 5,
+    "Equilibrium": 5, "Lose Dexterity": 5, "Lose Strength": 5,
+    "No Draw": 5, "Omega": 5, "Rage": 5, "Rebound": 5,
+    "Regen": 5, "Ritual": 5, "Wraith Form": 5, "The Bomb": 5,
+    "Establishment": 25, "Constricted": 105,
+}
+
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
     'TimeEater': {'used_haste': {'type': 'bool', 'java': 'usedHaste'}},
