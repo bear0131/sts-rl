@@ -2776,8 +2776,6 @@ class RealGameAdapter:
         affordable = []
         shelves = self._shop_shelves(ss)
         for kind in (ga.SHOP_CARD, ga.SHOP_RELIC, ga.SHOP_POTION):
-            if kind == ga.SHOP_POTION and not can_buy_potion:
-                continue
             items = shelves[kind]
             for i, item in enumerate(items):
                 if item is None:
@@ -2807,7 +2805,11 @@ class RealGameAdapter:
                 raise ValueError(f"shop choice identity mismatch/ambiguity: {label!r}")
             kind, shelf_idx = matches[0]
             used.add((kind, shelf_idx))
-            out.append((ga.shop_buy(kind, shelf_idx), choice_idx))
+            # CommunicationMod advertises affordable potions even with Sozu or
+            # a full belt. Account for the real button before policy filtering;
+            # removing its identity first breaks coverage of the actual UI.
+            if kind != ga.SHOP_POTION or can_buy_potion:
+                out.append((ga.shop_buy(kind, shelf_idx), choice_idx))
         if len(used) != len(affordable):
             raise ValueError("shop affordable inventory/choice coverage mismatch")
         return out

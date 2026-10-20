@@ -583,6 +583,7 @@ def complete_word_tables():
             "sold_potion_slots": "only initialized StorePotion instances whose actual isPurchased became true",
             "coverage": "every physical slot must contain a typed item or explicit sale evidence; unknown/missing slots are never fabricated as PAD",
             "policy": "same fixed shelf slots in observation and SHOP_BUY; choice_list ordinals remain transport-only handles",
+            "advertised_vs_legal": "CommunicationMod ChoiceScreenUtils.getAvailableShopItems advertises potions by actual price<=gold even with Sozu/full slots. Match all advertised affordable identities and verify complete coverage first, then exclude only potion purchase policy actions when obtaining is impossible. Do not drop real buttons before identity matching; duplicate same-ID offers retain real shelf order and exact prices, cross-ID ambiguity still rejects (BRIDGE149)",
             "purge_available": "actual ShopScreen flag; false maps to native sold service price -1, not the stale actualPurgeCost",
         },
         "native_card_queue_fields": NATIVE_CARD_QUEUE_FIELDS,

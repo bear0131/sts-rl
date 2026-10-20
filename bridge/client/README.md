@@ -106,6 +106,9 @@ combat commands keep their existing timing.
 Shop potion offers remain visible in the observation, but buying them is masked
 when the player has Sozu or no empty potion slot, matching both the simulator's
 legal-action contract and the real game's accepted commands.
+CommunicationMod still advertises affordable potion buttons in these cases.
+The adapter matches their real shelf identities for transport coverage before
+filtering policy actions; it does not treat those buttons as unknown or buy them.
 
 Logs are written to `bridge/client/agent_orchestrator.log`. The script writes
 only CommunicationMod commands to stdout.
