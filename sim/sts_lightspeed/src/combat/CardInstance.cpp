@@ -295,16 +295,15 @@ bool CardInstance::canUseOnAnyTarget(const BattleContext &bc) const {
 }
 
 bool CardInstance::canUse(const BattleContext &bc, int target, const bool inAutoplay) const {
+    // Autoplay bypasses energy only, not turn/card-count restrictions.
+    if (bc.turnHasEnded || !bc.isCardPlayAllowed()) {
+        return false;
+    }
+
     if (this->requiresTarget() && (target < 0 || target >= bc.monsters.monsterCount ||
         bc.monsters.areMonstersBasicallyDead() || !bc.monsters.arr[target].isTargetable())) {
         return false;
     }
-
-    // this is handled elsewhere now
-//    if (purgeOnUse) {
-//        return true;
-//    }
-
 
     // todo grand finale, signature move, reflex, deus ex machina, tactician
     switch (getType()) {

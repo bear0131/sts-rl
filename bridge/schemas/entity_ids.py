@@ -831,7 +831,7 @@ COMBAT_VICTORY_ACTION_CONTRACTS = {
     'SuicideAction': {'native': 'SuicideAction', 'keep': True, 'reason': 'ActionType.DAMAGE; bypass damage and do not itself filter queue'},
     'GainBlockAction': {'native': 'GainBlock/MonsterGainBlock', 'keep': True, 'reason': 'explicit class exception; dying/dead recipient rejects block at execution'},
     'HealAction': {'native': 'HealPlayer', 'keep': True, 'reason': 'explicit class exception'},
-    'UseCardAction': {'native': 'OnAfterCardUsed/TimeEaterPlayCardQueueItem', 'keep': True, 'reason': 'explicit class exception'},
+    'UseCardAction': {'native': 'OnAfterCardUsed/ResolveUnplayedCard', 'keep': True, 'reason': 'explicit class exception; failed/cancelled autoplay still resolves discard/exhaust without onUse (BRIDGE93)'},
     'DropkickAction': {'native': 'DropkickAction', 'keep': False, 'reason': 'BLOCK type is not the GainBlockAction class'},
     'FiendFireAction': {'native': 'FiendFireAction', 'keep': False, 'reason': 'WAIT setup; already-enqueued DamageAction hits are different'},
     'WhirlwindAction': {'native': 'WhirlwindAction', 'keep': False, 'reason': 'SPECIAL setup; already-enqueued AOE waves are different'},

@@ -958,10 +958,8 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
         item.target = monsters.getRandomMonsterIdx(cardRandomRng);
     }
 
-//    bool canPlayCard = false; // not really sure what this is used for
-    const bool canUseCard = item.purgeOnUse || (item.triggerOnUse && c.canUse(*this, item.target, item.autoplay) && (!c.requiresTarget() || monsters.arr[item.target].isTargetable()));
-    if (canUseCard) { // not sure if this is correct,
-//        canPlayCard = true; // what is this for......
+    const bool canUseCard = item.triggerOnUse && c.canUse(*this, item.target, item.autoplay);
+    if (canUseCard) {
 
         if (c.isFreeToPlay(*this)) { // what the fuck
             c.freeToPlayOnce = true;
@@ -979,6 +977,10 @@ void BattleContext::playCardQueueItem(CardQueueItem playItem) {
 
     if (!item.triggerOnUse) {
         useNoTriggerCard(); // for burn, decay, doubt, regret and shame,
+    } else if (!canUseCard && item.autoplay) {
+        // GameActionManager still queues UseCardAction for a failed autoplay.
+        // It does not play the card or fire its end-of-turn curse/status effect.
+        addToBot(Actions::ResolveUnplayedCard(item));
     }
 }
 
@@ -2268,7 +2270,7 @@ void BattleContext::callEndTurnEarlySequence() {
     while (!cardQueue.isEmpty()) {
         auto item = cardQueue.popFront();
         if (item.autoplay && !item.purgeOnUse) {
-            addToBot( Actions::TimeEaterPlayCardQueueItem(item) );
+            addToBot( Actions::ResolveUnplayedCard(item) );
         }
     }
     addToTopCard(CardQueueItem::endTurnItem());

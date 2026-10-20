@@ -887,10 +887,10 @@ Action Actions::WarcryAction() {
     }};
 }
 
-Action Actions::TimeEaterPlayCardQueueItem(const CardQueueItem &x) {
+Action Actions::ResolveUnplayedCard(const CardQueueItem &x) {
     return {[=] (BattleContext &bc) {
         auto item = x;
-        // Each cancelled autoplay resolves its own UseCardAction. The last
+        // Each failed/cancelled autoplay resolves its own UseCardAction. The last
         // card processed may have a different persistent exhaust attribute.
         item.exhaustOnUse |= item.card.doesExhaust();
         item.triggerOnUse = false;

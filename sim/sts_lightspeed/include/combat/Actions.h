@@ -149,7 +149,7 @@ namespace sts {
 
         // ************
 
-        static Action TimeEaterPlayCardQueueItem(const CardQueueItem &item);
+        static Action ResolveUnplayedCard(const CardQueueItem &item);
         static Action UpgradeAllCardsInHand();
         static Action OnAfterCardUsed(); // called UseCardAction in game
         static Action EssenceOfDarkness(int darkOrbsPerSlot); // handle sacred bark
