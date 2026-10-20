@@ -156,7 +156,7 @@
 
 | BRIDGE13 | 蓝衣女子购药漏扣金币：源码已修，未部署 | GameContext THE_WOMAN_IN_BLUE补20/30/40扣款；独立A0/A15三选项反例旧exit11新0，208场景204通过/对对碰4未支持。生产ff65950b仍含旧规则；部署前需独立Python扩展兼容/固定模型验证和协议标注，真机奖励数量/扣款ACK合同尚待补齐。见worklog/2026-10-19.md“蓝衣女子购药漏扣金币”。 |
 
-| BRIDGE12 | 用户重启固定前两张范围，v31源码/必要构建完成，待同档实机 | 历史停机与33966c7/79e1d0a修复边界保留，见worklog/2026-10-19.md及2026-10-20.md。用户最新明确继续始终选前两张；复用stock实际点击与公开cardPositions顺序，新typed进度只含phase/attempts/剩余和翻开槽位/CHOOSE索引，无cardID或记忆。FixedMatchTransport先核第一张翻开，再发同对第二张，整对尝试数减1与两槽移除/翻回后才重选；等实际obtain/COMPLETE退出，不经模型也不伪造观测。v31 Python/Java同步，native b437648e/旧模型布局不改；Java必要构建及py_compile完成，无离线测试。200204原始F3自然档1e7c4c22...07dc77/79-80HP保留，下一步新冻结同档续跑，不START205。 |
+| BRIDGE12 | 已部署v31，同档F3固定五对/翻回/结束实机通过；匹配入库待自然覆盖 | 用户明确继续始终选前两张；复用stock点击与公开cardPositions，新typed进度无cardID/记忆。0c44518已从200204原始F3档续跑：真实五次各翻物理0/1、第二张映射当前CHOOSE0，尝试5→0，各对不匹配均翻回，随后COMPLETE/离开正常，牌组UUID11张/79HP/124金不变；16:01:45起原模型index24/F4搜索，后至F6无ERROR。v31 Python/Java同步，native b437648e/旧模型布局不改，未跑离线测试；匹配移除两槽/获得牌分支本自然局没有覆盖，不夸大验收。历史停机与33966c7/79e1d0a边界保留，见worklog/2026-10-19.md及2026-10-20.md。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |
 
@@ -169,7 +169,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 200200..203均通关，200204 F3翻牌未支持停机 | 用户授权自动200200..219，休息后已明确恢复并部署全部完成修复；最终TRAIN47/A0/确定性upper/G0/128/native4不变。前三seed两/三/一次自然入口续档及版本转换后胜利；203又经F14故障及用户暂停后原F37续跑，15:37自然F51胜利5-81HP/826分，不能合成无中断胜率。6034596/native b437648e含121/122/Java30完整冻结在203终局/恢复后于15:40用于remaining200204-219，实际START仅204；F2完成战斗，F3因BRIDGE12已知翻牌传输未接通报错退出，原件和65存档偏好已恢复，实际57932/32892退出。自然F3档保留，不跳205；是否恢复处理本轮原排除项待用户明确。原每seed一小时/首错同seed恢复/四幕前/原件备份恢复不变。旧新真机四seed开局遗物一致，但与原模拟器四个均不同，不按同局面配对。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 200200..203均通关，200204同F3新版续跑已至F6 | 用户授权自动200200..219，最终TRAIN47/A0/确定性upper/G0/128/native4不变；前四胜均含不同自然房间续档/版本转换，不合成无中断胜率。204原F3已知配对停机后恢复原件，用户明确重新接通固定前两张；resume200204-01以0c44518/native b437648e/Java31/原1e7c4c22自然F3档从index24继续，无START，16:01实际五对固定0/1及COMPLETE退出通过，随后F4真实128搜索、至F6无ERROR。actual23600/26512运行中，每段一小时/首错同seed恢复/四幕前/原件备份恢复不变；205..219待204自然终局后新段，不复用已失败204入口或跳种子。旧新真机四seed开局遗物一致，与原模拟器四个均不同，不按同局面配对。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
