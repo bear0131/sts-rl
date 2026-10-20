@@ -981,12 +981,12 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 getBoundedInt(c, "cards_discarded", bc.player.cardsDiscardedThisTurn, 0, 32767));
             bc.player.timesDamagedThisCombat = static_cast<std::int16_t>(
                 getBoundedInt(c, "times_damaged", bc.player.timesDamagedThisCombat, 0, 32767));
-            bc.player.bomb1 = static_cast<std::int8_t>(
-                getBoundedInt(c, "bomb_1", bc.player.bomb1, 0, 127));
-            bc.player.bomb2 = static_cast<std::int8_t>(
-                getBoundedInt(c, "bomb_2", bc.player.bomb2, 0, 127));
-            bc.player.bomb3 = static_cast<std::int8_t>(
-                getBoundedInt(c, "bomb_3", bc.player.bomb3, 0, 127));
+            bc.player.bomb1 = getBoundedInt(
+                c, "bomb_1", bc.player.bomb1, 0, std::numeric_limits<int>::max());
+            bc.player.bomb2 = getBoundedInt(
+                c, "bomb_2", bc.player.bomb2, 0, std::numeric_limits<int>::max());
+            bc.player.bomb3 = getBoundedInt(
+                c, "bomb_3", bc.player.bomb3, 0, std::numeric_limits<int>::max());
             bc.player.lastAttackUnblockedDamage = static_cast<std::int16_t>(
                 getBoundedInt(c, "last_attack_unblocked_damage", bc.player.lastAttackUnblockedDamage, 0, 32767));
             bc.player.setHasRelic<sts::RelicId::CENTENNIAL_PUZZLE>(

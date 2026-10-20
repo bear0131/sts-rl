@@ -82,23 +82,25 @@ struct Monster {
         };
 
         std::uint64_t statusBits = 0;
-        std::int8_t artifact = 0;
-        std::int8_t blockReturn = 0;
-        std::int8_t choked = 0;
-        std::int8_t corpseExplosion = 0;
-        std::int8_t lockOn = 0;
-        std::int16_t mark = 0;
-        std::int8_t metallicize = 0;
-        std::int8_t platedArmor = 0;
-        std::int8_t poison = 0;
-        std::int8_t regen = 0;
-        std::int8_t shackled = 0;
+        // Java power amounts are ints. Transient's Shackled can exceed 127
+        // in a single turn; stackable powers must not wrap in narrow storage.
+        int artifact = 0;
+        int blockReturn = 0;
+        int choked = 0;
+        int corpseExplosion = 0;
+        int lockOn = 0;
+        int mark = 0;
+        int metallicize = 0;
+        int platedArmor = 0;
+        int poison = 0;
+        int regen = 0;
+        int shackled = 0;
         int strength = 0;
         int vulnerable = 0;
         int weak = 0;
 
         int uniquePower0 = 0; // unique powers
-        std::int16_t uniquePower1 = 0; // Corrupt Heart invincible,
+        int uniquePower1 = 0; // Corrupt Heart invincible,
 
         // Shield Gremlin target
         // GreenLouse / RedLouse actual biteDamage
@@ -284,7 +286,8 @@ struct Monster {
                 return;
 
             case MonsterStatus::SHACKLED:
-                shackled = amount;
+                // GainStrengthPower uses the same +/-999 bounds as Strength.
+                shackled = cappedStrength(amount);
                 return;
 
             case MonsterStatus::STRENGTH:
@@ -574,7 +577,7 @@ struct Monster {
                 return;
 
             case MonsterStatus::SHACKLED:
-                shackled += amount;
+                shackled = cappedStrengthSum(shackled, amount);
                 setHasStatus<s>(true);
                 return;
 

@@ -542,6 +542,12 @@ def complete_word_tables():
             "timing": "increment on charge, reset on every Blast including A17",
         },
         "monster_move_state_fields": MONSTER_MOVE_STATE_CONTRACTS,
+        "native_power_amount_storage": {
+            "monster": "all dedicated stackable amounts and uniquePower1 use Java-sized int storage, not int8/int16; Transient Shifting can accumulate Shackled134 in one turn (BRIDGE115)",
+            "Shackled": "GainStrengthPower constructor/stack uses +/-999 clamp; same bound as Strength, no 127 truncation; strict restore still checks exact readback",
+            "TheBomb": "existing three native damage buckets and restore bounds use int amounts, allowing totals above127; observation/action dimensions and IDs unchanged; individual bomb hit ordering remains a separate audit",
+            "consumers": "native default copies and NOSL hashValue consume full fields; full wire snapshots/compact scalars remain numeric, requiring rebuilt native ABI rather than a checkpoint migration",
+        },
         "monster_move_state_transport": {
             "wire": "v28 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
             "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns, Book actual stabCount, Louse actual biteDamage, Darkling actual nipDmg, Guardian actual dmgThreshold, GiantHead count -6..5; Hexaghost low3 orb count/bit3 upgraded/bit4 activated and separate hexaghostDividerDamage int; NOSL hash and clone retain all values",
