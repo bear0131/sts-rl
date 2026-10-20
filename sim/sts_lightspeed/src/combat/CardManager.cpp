@@ -13,6 +13,20 @@
 
 using namespace sts;
 
+namespace {
+    // AbstractCard.modifyCostForCombat(-9), not a turn-only setCostForTurn.
+    void reduceSkillCostForCorruption(CardInstance &c) {
+        if (c.getType() != CardType::SKILL) return;
+        if (c.costForTurn > 0) {
+            c.costForTurn = static_cast<std::int8_t>(std::max(0, c.costForTurn - 9));
+            c.cost = c.costForTurn;
+        } else if (c.cost >= 0) {
+            c.cost = static_cast<std::int8_t>(std::max(0, c.cost - 9));
+            c.costForTurn = 0;
+        }
+    }
+}
+
 void CardManager::init(const sts::GameContext &gc, BattleContext &bc) {
 
 //    masterDeckSize = gc.deck.size();
@@ -470,6 +484,7 @@ void CardManager::draw(BattleContext &bc, int amount) {
         } else {
             moveToDiscardPile(c);
         }
+        bc.onCardDrawOrDiscard();
     }
 
 }
@@ -502,28 +517,25 @@ void CardManager::onTookDamage() {
 }
 
 void CardManager::onBuffCorruption() {
-    // AbstractCard.modifyCostForCombat(-9), including temporary cost changes.
-    const auto reduceSkillCost = [](CardInstance &c) {
-        if (c.getType() != CardType::SKILL) return;
-        if (c.costForTurn > 0) {
-            c.costForTurn = static_cast<std::int8_t>(std::max(0, c.costForTurn - 9));
-            c.cost = c.costForTurn;
-        } else if (c.cost >= 0) {
-            c.cost = static_cast<std::int8_t>(std::max(0, c.cost - 9));
-            c.costForTurn = 0;
-        }
-    };
     for (int i = 0; i < cardsInHand; ++i) {
-        reduceSkillCost(hand[i]);
+        reduceSkillCostForCorruption(hand[i]);
     }
     for (auto &c : drawPile) {
-        reduceSkillCost(c);
+        reduceSkillCostForCorruption(c);
     }
     for (auto &c : discardPile) {
-        reduceSkillCost(c);
+        reduceSkillCostForCorruption(c);
     }
     for (auto &c : exhaustPile) {
-        reduceSkillCost(c);
+        reduceSkillCostForCorruption(c);
+    }
+}
+
+void CardManager::onCorruptionDrawOrDiscard() {
+    // The later callback touches only nonzero-cost skills still in hand.
+    // In particular, preserve a zero turn cost with a nonzero base cost.
+    for (int i = 0; i < cardsInHand; ++i) {
+        if (hand[i].costForTurn != 0) reduceSkillCostForCorruption(hand[i]);
     }
 }
 

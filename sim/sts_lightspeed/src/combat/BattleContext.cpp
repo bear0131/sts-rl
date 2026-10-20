@@ -2151,11 +2151,8 @@ void BattleContext::onAfterUseCard() {
             cards.shuffleIntoDrawPile(cardRandomRng, c);
 
         } else {
-            // The game calls OnCardDrawOrDiscard here which only does two things:
-            // 1. sets the damage on all shivs in hand if you have accuracy power,
-            // 2. sets the cost of all skills in hand to -9 if you have corruption
-            // we will handle these tasks elsewhere
             cards.moveToDiscardPile(c);
+            onCardDrawOrDiscard();
         }
     }
     // TODO these must be done in the cards method itself
@@ -2755,7 +2752,9 @@ void BattleContext::discardAtEndOfTurnHelper() {
     int temp = cards.cardsInHand;
     for (int i = temp-1; i >= 0; --i) {
         cards.notifyRemoveFromHand(cards.hand[i]);
+        --cards.cardsInHand;
         cards.moveToDiscardPile(cards.hand[i]);
+        onCardDrawOrDiscard();
         ++player.cardsDiscardedThisTurn;
     }
     cards.cardsInHand = 0;
@@ -3079,6 +3078,12 @@ void BattleContext::onManualDiscard(const CardInstance &c) {
     }
 }
 
+void BattleContext::onCardDrawOrDiscard() {
+    // Accuracy and other derived damage values are calculated on demand.
+    // Corruption's cost mutation must occur only at actual draw/discard hooks.
+    if (player.hasStatus<PS::CORRUPTION>()) cards.onCorruptionDrawOrDiscard();
+}
+
 void BattleContext::onShuffle() {
     if (player.hasRelic<R::THE_ABACUS>()) {
         addToBot( Actions::GainBlock(6) );
@@ -3131,6 +3136,7 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
     }
 
     cards.moveToExhaustPile(c);
+    onCardDrawOrDiscard();
 }
 
 void BattleContext::mummifiedHandOnUsePower() {
@@ -3401,7 +3407,9 @@ void BattleContext::chooseDrawToHandCards(const int *idxs, int cardCount) {
         const auto drawIdx = idxs[i];
         auto c = cards.drawPile[drawIdx];
         cards.removeFromDrawPileAtIdx(drawIdx);
+        const bool toDiscard = cards.cardsInHand == CardManager::MAX_HAND_SIZE;
         moveToHandHelper(c);
+        if (toDiscard) onCardDrawOrDiscard();
     }
 }
 
@@ -3412,12 +3420,14 @@ void BattleContext::chooseExhaustCards(const fixed_list<int, 10> &idxs) {
     auto listCopy = idxs;
     std::sort(listCopy.begin(), listCopy.end(), [](auto a, auto b) { return b < a; });
 
-    // assume idxs is sorted in descending order
+    // Java HAND_SELECT already moved every selected card out of hand before
+    // any onExhaust/onDrawOrDiscard callback sees the remaining hand.
+    fixed_list<CardInstance, 10> selected;
     for (const auto handIdx : listCopy) {
-        auto c = cards.hand[handIdx];
+        selected.push_back(cards.hand[handIdx]);
         cards.removeFromHandAtIdx(handIdx);
-        triggerAndMoveToExhaustPile(c);
     }
+    for (const auto &c : selected) triggerAndMoveToExhaustPile(c);
 }
 
 void BattleContext::chooseGambleCards(const fixed_list<int, 10> &idxs) {
@@ -3429,10 +3439,14 @@ void BattleContext::chooseGambleCards(const fixed_list<int, 10> &idxs) {
 
     // assume idxs is sorted in descending order
     addToTop( Actions::DrawCards(listCopy.size()) );
+    fixed_list<CardInstance, 10> selected;
     for (const auto handIdx : listCopy) {
-        auto c = cards.hand[handIdx];
+        selected.push_back(cards.hand[handIdx]);
         cards.removeFromHandAtIdx(handIdx);
+    }
+    for (const auto &c : selected) {
         cards.moveToDiscardPile(c);
+        onCardDrawOrDiscard();
         onManualDiscard(c);
     }
 }

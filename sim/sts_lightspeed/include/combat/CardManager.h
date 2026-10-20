@@ -95,6 +95,7 @@ namespace sts {
         void draw(BattleContext &bc, int amount);
         void onTookDamage(); // update blood for blood, masterful stab
         void onBuffCorruption();
+        void onCorruptionDrawOrDiscard();
     };
 
     std::ostream &operator <<(std::ostream &os, const CardManager &c);

@@ -350,6 +350,7 @@ Action Actions::DiscardNoTriggerCard() {
         const auto &c = bc.curCardQueueItem.card;
         bc.cards.notifyRemoveFromHand(c);
         bc.cards.moveToDiscardPile(c);
+        bc.onCardDrawOrDiscard();
     }};
 }
 
@@ -698,6 +699,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
             const auto &c = bc.cards.drawPile[removeIdx];
             if (bc.cards.cardsInHand == 10) {
                 bc.cards.moveToDiscardPile(c);
+                bc.onCardDrawOrDiscard();
             } else {
                 bc.cards.moveToHand(c);
             }

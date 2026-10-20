@@ -208,6 +208,7 @@ namespace sts {
         void noOpRollMove(); // called by monsters to manipulate the aiRng counter when their rollMove function doesn't do anything
 
         void onManualDiscard(const CardInstance &c);
+        void onCardDrawOrDiscard();
         void onShuffle();
         void triggerAndMoveToExhaustPile(CardInstance c);
         void mummifiedHandOnUsePower();

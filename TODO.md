@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE125 | 源码修复及必要构建完成，待自然边界部署 | Corruption的AbstractPlayer.onCardDrawOrDiscard会对当前手牌中非零turn费用技能再次modifyCostForCombat(-9)，旧native漏剩余手牌刷新；异蛇油改正费后正常出牌弃牌/抽牌/消耗，后继mask/费用可能错。补共享公式与八处实际触发点，手选整组先移出全部选中实例，避免错误改其费用；不改模型布局/RNG，不在随机费刚结束时无条件刷新。native90a97a00构建退出0/词表语法和源码消费者复读完成，当前205/a2a7be4不热换；无离线行为测试、特殊组合待自然覆盖。 |
 | BRIDGE124 | 已部署并实机接入，特殊组合待覆盖 | 异蛇油RandomizeHandCostAction只有newCost!=基础cost才覆盖base/turn费用；旧native无条件覆盖，随机恰好命中基础费用时错误清掉已有临时降费。只补赋值条件，保留每张RNG、负费用跳过、抽牌/树皮及布局；普通Confusion draw原已正确不改。a2a7be4/nativee516a822含123/124，构建退出0/词表py_compile通过，204自然通关后200205新段已实际加载最终模型并搜索；无离线行为测试，不把常规接入当该药水降费组合通过。 |
 | BRIDGE123 | 已部署v32，常规根恢复实机通过；减抽牌组合待覆盖 | Draw Reduction原amount被canonical/native导出压成1、重施重复减基础抽牌且重设justApplied，现保留真实持续层数、首次减一次/逐层过期/最终恢复一次；普通单层抽牌先捕获再移除时点保留。沿根恢复又确认实际gameHandSize及justApplied未导入，v32显式导出→canonical→strict native restore/readback，独立于模型通道，不用影子默认5或presence猜状态。无模型ID/布局改变，200205用完整a2a7be4/jar f07cb9b0/nativee516a822在实际F1明确导出5/null、完成原生恢复/读回及128搜索，无ERROR。204始终旧冻结自然通关，不混记为新修复组合验收；无离线测试/减抽牌或多层实机覆盖声明。 |
 | BRIDGE122 | 已部署，常规实机接入通过；特殊组合待覆盖 | Impatience真实排ConditionalDrawAction，到动作执行时检查当前手牌的ATTACK再TOP排DrawCard；旧native在use时决定，Pain→RunicCube在中间抽到攻击牌仍错误多抽2/3。改为执行时检查并TOP排原DrawCards，保留NoDraw/满手/抽牌回调，不改模型布局。必要构建退出0，6034596/native b437648e/v30已从200203自然F37/index423续跑并实际搜索，无离线测试、不冒充特殊组合已自然覆盖。 |
