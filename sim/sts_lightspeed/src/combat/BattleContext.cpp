@@ -3163,7 +3163,7 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
     }
 
     if (c.getId() == CardId::SENTINEL) {
-        player.gainEnergy(c.isUpgraded() ? 3 : 2); // the game adds to bot here
+        player.gainEnergy(c.isUpgraded() ? 3 : 2); // Sentinel's TOP gain precedes the other queued exhaust reactions.
     }
 
     cards.moveToExhaustPile(c);
