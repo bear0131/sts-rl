@@ -1363,8 +1363,20 @@ void BattleContext::useSkillCard() {
             break;
 
         case CardId::CHRYSALIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::SKILL, up ? 5 : 3) );
+        case CardId::METAMORPHOSIS: {
+            // Java samples all identities in use(), then inserts each card
+            // through its queued action. X/unplayable costs are not reduced.
+            const auto type = c.getId() == CardId::CHRYSALIS ? CardType::SKILL : CardType::ATTACK;
+            for (int i = 0; i < (up ? 5 : 3); ++i) {
+                CardInstance generated(getTrulyRandomCardInCombat(cardRandomRng, player.cc, type));
+                if (generated.cost > 0) {
+                    generated.cost = 0;
+                    generated.costForTurn = 0;
+                }
+                addToBot(Actions::MakeTempCardInDrawPile(generated, 1, true));
+            }
             break;
+        }
 
         case CardId::DARK_SHACKLES:
             addToBot( Actions::DebuffEnemy<MS::STRENGTH>(t, up ? -15 : -9) );
@@ -1492,10 +1504,6 @@ void BattleContext::useSkillCard() {
 
         case CardId::MASTER_OF_STRATEGY:
             addToBot( Actions::DrawCards(up ? 4 : 3) );
-            break;
-
-        case CardId::METAMORPHOSIS:
-            addToBot( Actions::PutRandomCardsInDrawPile(CardType::ATTACK, up ? 5 : 3) );
             break;
 
         case CardId::OFFERING:

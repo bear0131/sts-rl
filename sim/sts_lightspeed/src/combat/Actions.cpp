@@ -578,24 +578,6 @@ Action Actions::OnAfterCardUsed() {
     }, false};
 }
 
-Action Actions::PutRandomCardsInDrawPile(CardType type, int count) {
-    return {[=] (BattleContext &bc) {
-        CardId ids[5];
-        for (int i = 0; i < count; ++i) {
-            ids[i] = getTrulyRandomCardInCombat(bc.cardRandomRng, bc.player.cc, type);
-        }
-
-        for (int i = 0; i < count; ++i) {
-            CardInstance card(ids[i], false);
-            card.cost = 0;
-            card.costForTurn = 0;
-
-            const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
-            bc.cards.createTempCardInDrawPile(idx, card);
-        }
-    }};
-}
-
 Action Actions::DiscoveryAction(CardType type, int amount) {
     return {[=] (BattleContext &bc) {
         bc.haveUsedDiscoveryAction = true;
