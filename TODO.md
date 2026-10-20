@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE106 | 源码已修并构建，待续档 | 断魂斩SeverSoulExhaustAction按原手牌正序捕获物理UID、逐项TOP，实际逆序消耗先于已排攻击/UseCard及其致命清队列；Charon伤害插队保留，不能把新增牌误消耗。不改ID/布局/权重；源码复读、必要原生构建及词表语法完成，无离线测试。200201被独立史莱姆映射错误中断，未宣称本卡组合已实机。 |
 | BRIDGE105 | 源码已修，v28/原生已构建，待实机 | v28对接Hexaghost activated/burnUpgraded/orbActiveCount/Divider基础伤害，周期不再被能力清零；Inferno补升级draw/discard灼伤及3张Burn+，Sear按真实标志；恢复真实Activate无Roll和火球达6的双历史。不改模型布局，新增内部Divider值入key；源码全链/必要构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE104 | 源码已修并构建，待实机 | Champ Gloat按A0/4/19加力量2/3/4（不是3/4/5），保留正确Anger6/9/12；TimeEater Ripple先易伤后虚弱再A19脆弱，确保Artifact按真实顺序阻挡。不改布局/权重，源码/必要构建完成，未自然组合实机，无离线测试。 |
 | BRIDGE103 | 源码已修，v27/原生已构建，待实机 | v27完整对接GiantHead.count并修A18提前大攻击/后续成长，构造→首次roll→preBattle→后继roll时点不变；收藏家A19三类减益3→5、A4..8格挡18→15。现有miscInfo key/clone及模型布局保留；源码全链/必要构建完成，未自然实机，无离线测试。 |

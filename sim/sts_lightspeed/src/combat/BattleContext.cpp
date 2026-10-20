@@ -1250,7 +1250,8 @@ void BattleContext::useAttackCard() {
             break;
         }
 
-        case CardId::SEVER_SOUL: // another example of damage being calculated after an action, maybe need a new action to calculate damage later...
+        case CardId::SEVER_SOUL:
+            // Java captures damage at use(), before the queued exhausts.
             addToBot( Actions::SeverSoulExhaustAction() );
             addToBot( Actions::AttackEnemy(t, calculateCardDamage(c, t, up ? 22 : 16)) );
             break;

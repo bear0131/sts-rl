@@ -1256,10 +1256,15 @@ Action Actions::SecondWindAction(int blockPerCard) {
 
 Action Actions::SeverSoulExhaustAction() {
     return {[=] (BattleContext &bc) {
-        for (int i = bc.cards.cardsInHand-1; i >= 0; --i) {
+        // ExhaustAllNonAttackAction visits the original hand in order and
+        // prepends each exhaust, so the last eligible card resolves first.
+        // These must run before the already-queued attack/UseCardAction:
+        // Charon's Ashes can kill its target, and lethal damage can clear
+        // pending exhaust actions. Capture physical IDs, not a moving index.
+        for (int i = 0; i < bc.cards.cardsInHand; ++i) {
             const auto &c = bc.cards.hand[i];
             if (c.getType() != CardType::ATTACK) {
-                bc.addToBot( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
+                bc.addToTop( Actions::ExhaustSpecificCardInHand(i, c.getUniqueId()) );
             }
         }
     }};
