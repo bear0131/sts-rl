@@ -14,6 +14,14 @@
 using namespace sts;
 
 namespace {
+    CardInstance resetMovedCardTurnCost(CardInstance card) {
+        // Soul.update clears powers on arrival in draw/discard. Java's
+        // resetAttributes restores the current base cost, not printed cost,
+        // and does not clear freeToPlayOnce, retain or MindBlast.baseDamage.
+        card.costForTurn = card.cost;
+        return card;
+    }
+
     // AbstractCard.modifyCostForCombat(-9), not a turn-only setCostForTurn.
     void reduceSkillCostForCorruption(CardInstance &c) {
         if (c.getType() != CardType::SKILL) return;
@@ -110,6 +118,7 @@ void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
 #endif
 
     c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
+    c = resetMovedCardTurnCost(c);
     notifyAddCardToCombat(c);
     notifyAddToDrawPile(c);
     drawPile.insert(drawPile.begin()+idx, c);
@@ -117,6 +126,7 @@ void CardManager::createTempCardInDrawPile(int idx, CardInstance c) {
 
 void CardManager::createTempCardInDiscard(CardInstance c) {
     c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
+    c = resetMovedCardTurnCost(c);
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
         std::cerr << *g_debug_bc << '\n';
@@ -210,7 +220,7 @@ void CardManager::insertToDrawPile(int drawPileIdx, const CardInstance &c) {
     }
 #endif
     notifyAddToDrawPile(c);
-    drawPile.insert(drawPile.begin()+drawPileIdx, c);
+    drawPile.insert(drawPile.begin()+drawPileIdx, resetMovedCardTurnCost(c));
 }
 
 void CardManager::moveToDrawPileTop(const CardInstance &c) {
@@ -223,7 +233,7 @@ void CardManager::moveToDrawPileTop(const CardInstance &c) {
     }
 #endif
     notifyAddToDrawPile(c);
-    drawPile.push_back(c);
+    drawPile.push_back(resetMovedCardTurnCost(c));
 }
 
 void CardManager::shuffleIntoDrawPile(Random &cardRandomRng, const CardInstance &c) {
@@ -246,13 +256,14 @@ void CardManager::moveToDiscardPile(const CardInstance &c) {
     }
 #endif
     notifyAddToDiscardPile(c);
-    discardPile.push_back(c);
+    discardPile.push_back(resetMovedCardTurnCost(c));
 }
 
 void CardManager::moveDiscardPileIntoToDrawPile() {
     if (drawPile.empty()) {
         drawPileBloodCardCount = discardPileBloodCardCount;
         drawPile = discardPile;
+        for (auto &card : drawPile) card = resetMovedCardTurnCost(card);
 
     } else {
         for (const auto &c : discardPile) {
