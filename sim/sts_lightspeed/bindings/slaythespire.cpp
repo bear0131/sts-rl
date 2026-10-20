@@ -62,6 +62,7 @@ void setRulePlayerStatusByNameExact(
     bool initializeAuxiliary);
 void setRuleMonsterStatusByName(BattleContext &bc, int target, const std::string &name, int amount);
 sts::CardId cardIdFromEnum(const std::string &name);
+sts::RelicId relicIdFromString(const std::string &name);
 
 Potion potionFromNameOrId(const std::string &value) {
     const auto count = sizeof(potionNames) / sizeof(potionNames[0]);
@@ -252,6 +253,10 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     d["outcome"] = static_cast<int>(bc.outcome);
     d["escaped"] = bc.outcome == sts::Outcome::PLAYER_ESCAPE;
     d["input_state"] = static_cast<int>(bc.inputState);
+    py::list onUseRelics;
+    for (const auto relic : bc.onUseRelicOrder)
+        onUseRelics.append(sts::relicIds[static_cast<int>(relic)]);
+    d["on_use_relic_order"] = onUseRelics;
 
     py::dict player;
     player["hp"] = bc.player.curHp;
@@ -831,7 +836,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         && spec["strict_complete"].cast<bool>();
     if (strictComplete) {
         static constexpr const char *kRequired[] = {
-            "turn", "player", "monsters", "card_state", "potions",
+            "turn", "player", "monsters", "card_state", "potions", "on_use_relic_order",
         };
         for (const auto *key : kRequired) {
             if (!spec.contains(key)) {
@@ -839,6 +844,29 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     std::string("strict combat state missing ") + key);
             }
         }
+    }
+    if (spec.contains("on_use_relic_order")) {
+        if (!py::isinstance<py::list>(spec["on_use_relic_order"]))
+            throw std::invalid_argument("onUseCard relic order requires an explicit list");
+        std::vector<sts::RelicId> order;
+        std::set<sts::RelicId> seen;
+        for (auto item : spec["on_use_relic_order"].cast<py::list>()) {
+            if (!py::isinstance<py::str>(item))
+                throw std::invalid_argument("onUseCard relic order requires stable string identities");
+            const auto relic = relicIdFromString(item.cast<std::string>());
+            if (!sts::BattleContext::hasOnUseCardHook(relic)
+                    || !bc.player.hasRelicRuntime(relic) || !seen.insert(relic).second)
+                throw std::invalid_argument("onUseCard relic order contains an absent, unsupported or duplicate relic");
+            order.push_back(relic);
+        }
+        constexpr int count = sizeof(sts::relicIds) / sizeof(sts::relicIds[0]);
+        for (int i = 0; i < count; ++i) {
+            const auto relic = static_cast<sts::RelicId>(i);
+            if (sts::BattleContext::hasOnUseCardHook(relic)
+                    && bc.player.hasRelicRuntime(relic) && !seen.count(relic))
+                throw std::invalid_argument("onUseCard relic order omits an owned callback");
+        }
+        bc.onUseRelicOrder = std::move(order);
     }
     if (spec.contains("card_state")) {
         for (const auto *key : {"hand", "draw", "discard", "exhaust",

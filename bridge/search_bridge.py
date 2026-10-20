@@ -42,6 +42,7 @@ from schemas.combat_state import (
 from schemas.entity_ids import (
     NATIVE_MONSTER_STATUS_IDS,
     NATIVE_PLAYER_STATUS_IDS,
+    ON_USE_CARD_RELIC_IDS,
     native_power_enum,
 )
 
@@ -656,6 +657,10 @@ class RealCombatSearch:
         player = real["player"]
         return {
             "strict_complete": True,
+            "on_use_relic_order": [
+                relic for relic in self.adapter._global_block()['relics']
+                if relic in ON_USE_CARD_RELIC_IDS
+            ],
             "turn": max(0, int(real["turn"]) - 1),
             "player": {
                 "hp": int(player["hp"]),
@@ -692,6 +697,8 @@ class RealCombatSearch:
                   for card in real_master_deck_state(self.adapter.gs['deck'])]
         self.env.thick.gc.set_deck_state(master)
         self.env.thick.bc.apply_custom_state(spec)
+        if self.env.thick.bc.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']:
+            raise RuntimeError('native real-game onUseCard relic acquisition order differs')
         if self.env.thick.bc.card_state() != spec['card_state']:
             raise RuntimeError('native real-game card instance alignment failed')
         self.env.thick.gc.max_hp = int(real["player"]["max_hp"])

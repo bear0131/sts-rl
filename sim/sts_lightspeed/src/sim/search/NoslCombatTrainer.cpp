@@ -201,6 +201,14 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         hashValue(hash, bc.pocketwatchCardsAtBoundary);
     }
     hashValue(hash, bc.miscBits.to_ulong());
+    // A singleton has no order relation. Preserve old keys for zero/one hook,
+    // but never merge futures with different multi-relic callback orders.
+    if (bc.onUseRelicOrder.size() > 1) {
+        hashValue(hash, 0x6f6e557365536571ULL);
+        hashValue(hash, static_cast<int>(bc.onUseRelicOrder.size()));
+        for (const auto relic : bc.onUseRelicOrder)
+            hashValue(hash, static_cast<int>(relic));
+    }
     hashValue(hash, bc.loopCount);
     // Historical scum-search scores are not part of NOSL HP futures.
     if (!equivalentFutures) {

@@ -38,6 +38,7 @@ from .entity_ids import (
     REWARD_ROOM_EXIT_CONTRACTS,
     CHEST_REWARD_SCREEN_CONTRACTS,
     NATIVE_GLOBAL_FIELDS,
+    ON_USE_CARD_RELIC_IDS,
     POTION_CAPACITY_RULES,
     COMPACT_PLAYER_SCALAR_FIELDS,
     FRESH_CARD_MISC,
@@ -268,6 +269,15 @@ def complete_word_tables():
             "amount": "Meat=12, BurningBlood=6, BlackBlood=12, Face=maxHP+1 and heal1; MagicFlower positive float *1.5 rounded, Bloom blocks healing not maxHP",
             "compatibility": "final mode0 combat-end-hp-v1 target unchanged; actual next-room HP and optional legacy projected exit corrected; skipBattles preview keeps prior convention",
             "audit": "BRIDGE72 source reviewed and native rebuilt; real combination coverage pending",
+        },
+        "card_use_relic_order_contract": {
+            "source": "UseCardAction constructor iterates the actual acquisition-ordered player.relics list; no sorted/bitset callback order",
+            "membership_not_order": sorted(ON_USE_CARD_RELIC_IDS),
+            "independent ArtOfWar hook": "Java only clears gainEnergyNext on attack, without enqueuing an action; native already derives this from attacksPlayedThisTurn at end turn (Player.cpp), so it is not an ordered queue callback",
+            "native": "BattleContext.onUseRelicOrder filters the ordered GC inventory; four card-type paths call shared onUseCardRelics after powers and before enemy powers",
+            "root": "required on_use_relic_order stable IDs, unique/exactly all owned supported hooks; raw readback checked, clone preserves; real source is the existing ordered global relic list, no new Java field/default",
+            "effects": "Pellets before Ink removes NoDraw/Confusion before Draw1; Pellets vs Kunai/Shuriken can change negative-stat cleanse outcomes; preserve callback synchronous/BOTTOM/card-queue behavior",
+            "compatibility": "OBS20/ACTION8/layout9/packed policy projection unchanged; this is transition metadata, not a model channel. Multi-hook NOSL keys include marker/ordered IDs; zero/one-hook old keys unchanged. Pair Python with rebuilt native; no special-combination coverage implied (BRIDGE129)",
         },
         "potion_use_relic_contract": {
             "java": "PotionPopUp: potion.use -> relic.onUsePotion -> destroyPotion; EntropicBrew/ObtainPotionAction/ToyOrnithopter",

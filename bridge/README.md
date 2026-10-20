@@ -160,6 +160,12 @@ parity-v33修正收藏家实际一基召唤引用：Java enemySlots键2/1依次�
 HAND_SELECT整组先移出所有选中实例，再结算弃牌/消耗回调，不能顺带修改已选牌的费用。
 该原生补充修复保持v32传输与模型布局，需要包含BRIDGE125的新构建。
 
+出牌遗物按真实取得顺序执行，不按bitset/硬编码排序；四卡类共用14种既有回调入口。
+严格原生根必须带 `on_use_relic_order`（稳定ID），来源是已有global有序遗物列表；
+缺失/重复/缺持有钩子拒绝，并核对raw读回。此元数据由BC克隆与搜索键保留，
+不增OBS20/ACTION8/layout9或packed模型通道；两个以上钩子的NOSL键域有意变化，
+零/单钩子不变。Java仍v33，Python需配套BRIDGE129新原生构建，不能只替换一侧。
+
 ## 奖励、商店与房间回放
 
 parity-v12新增 `simulator_current_node`（每个画面的真实坐标/房间类型）与 `simulator_map_leaf_nodes`（原版hasEdges过滤遗漏的实际叶节点）。第四幕心脏(3,3)回到全图原位，胜利展示节点(3,4)保留为 `terminal_map_nodes`，不伪造为可行动房间/PAD；Boss按钮真实入房位置(-1,15)与地图图标坐标显式区分。地图移动收据在ready稳定帧同时确认落点、楼层和飞靴次数；缺新协议/字段拒绝。`Map.fromSeed(..., act=4)`现在返回实际固定终幕图，而非随机15行图。现役SimGameEnv训练/评测仍在第三幕结束；这些辅助地图修复不延长episode、不改变reward/终局定义，也不把第四幕作为前三幕实机启动门槛。

@@ -103,6 +103,10 @@ namespace sts {
         MonsterGroup monsters;
         CardManager cards;
 
+        // Acquisition order of the supported onUseCard relic callbacks.
+        // Immutable during combat; copied with the battle and restored explicitly.
+        std::vector<RelicId> onUseRelicOrder;
+
         CardQueueItem curCardQueueItem;
 
 #ifdef STS_ENABLE_RULE_TRACE
@@ -149,6 +153,8 @@ namespace sts {
         void onUsePowerCard();
 
         void onUseStatusOrCurseCard();
+        static bool hasOnUseCardHook(RelicId relic);
+        void onUseCardRelics();
         void onAfterUseCard();
 
         void setState(InputState state);

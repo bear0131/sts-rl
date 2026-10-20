@@ -6,6 +6,14 @@ Runtime does not parse simulator headers.
 
 SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v33"
 
+# Supported native UseCardAction relic callbacks; order comes from the actual
+# acquisition-ordered global relic list, never from this membership inventory.
+ON_USE_CARD_RELIC_IDS = frozenset({
+    "Bird Faced Urn", "Blue Candle", "Yang", "InkBottle", "Kunai",
+    "Letter Opener", "Medical Kit", "Mummified Hand", "Necronomicon",
+    "Nunchaku", "OrangePellets", "Ornamental Fan", "Pen Nib", "Shuriken",
+})
+
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
     'TimeEater': {'used_haste': {'type': 'bool', 'java': 'usedHaste'}},
