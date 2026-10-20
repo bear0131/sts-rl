@@ -1315,25 +1315,12 @@ class SlayTheSpireEnv(gym.Env):
             raise RuntimeError("native NOSL search requires a live combat state")
 
         # A pending target is outside the native trainer's complete-action
-        # contract. Keep the branch live and let the normal codec consume it.
+        # contract. The caller must finish that codec transaction explicitly;
+        # choosing its first target here would substitute for the policy.
         if self._pending is not None:
-            legal = np.flatnonzero(self.action_masks())
-            action = int(legal[0]) if legal.size else int(A.END_TURN)
-            visit_policy = np.zeros(self.action_space.n, dtype=np.float32)
-            if legal.size:
-                visit_policy[action] = 1.0
-            self._nosl_cpp_pending = None
-            self._nosl_value_capture_pending = True
-            return {
-                "action": action,
-                "visit_policy": visit_policy,
-                "root_value": 0.0,
-                "root_visits": np.zeros(self.action_space.n, dtype=np.int32),
-                "simulations": 0,
-                "transitions": 0,
-                "expanded_nodes": 0,
-                "native": False,
-            }
+            raise RuntimeError(
+                "native NOSL complete-action search cannot run with a pending codec target"
+            )
 
         terminal_mode = context_value_mode(
             enabled=bool(boss_transition_target),
@@ -1379,16 +1366,12 @@ class SlayTheSpireEnv(gym.Env):
         else:
             visit_policy /= visit_sum
 
-        selected_native = int(result.get("action_bits", 0xFFFFFFFF))
-        action = native_to_thin(selected_native)
-        native_valid = bool(result.get("action_valid", False))
-        if action is None or not (0 <= action < self.action_space.n) or not live_mask[action]:
-            legal = np.flatnonzero(live_mask)
-            action = int(legal[0]) if legal.size else int(A.END_TURN)
-            native_valid = False
-        self._nosl_cpp_pending = (
-            (int(action), selected_native) if native_valid else None
-        )
+        if result.get("action_valid") is not True:
+            raise RuntimeError("native NOSL did not return an explicitly valid root action")
+        selected_native = result.get("action_bits")
+        action = self._require_native_root_action(selected_native, live_mask)
+        selected_native = int(selected_native)
+        self._nosl_cpp_pending = (int(action), selected_native)
         self._nosl_value_capture_pending = True
         return {
             "action": int(action),
@@ -1400,6 +1383,21 @@ class SlayTheSpireEnv(gym.Env):
             "expanded_nodes": int(result.get("expanded_nodes", 0)),
             "native": True,
         }
+
+    def _require_native_root_action(self, bits, live_mask) -> int:
+        """Reject missing/invalid complete actions, never choose a replacement."""
+        if (isinstance(bits, (bool, np.bool_))
+                or not isinstance(bits, (int, np.integer))
+                or not 0 <= int(bits) <= 0xFFFFFFFF):
+            raise RuntimeError(f"native NOSL action_bits must be an explicit uint32, got {bits!r}")
+        action = self._native_action_to_thin(int(bits))
+        if (action is None or not 0 <= action < self.action_space.n
+                or not live_mask[action]):
+            raise RuntimeError(
+                f"native NOSL returned an unmapped or illegal root action: "
+                f"bits={int(bits)} thin={action!r}"
+            )
+        return int(action)
 
     def _native_action_to_thin(self, bits: int) -> int | None:
         """Map a complete simulator action to the whole-run root slot."""
@@ -1825,7 +1823,11 @@ class SlayTheSpireEnv(gym.Env):
             improved_policy /= improved_total
         else:
             improved_policy[:] = root_visit_policy
-        native_bits = int(result.get("action_bits", 0xFFFFFFFF))
+        native_bits = result.get("action_bits")
+        # Validate the actual native result even when an explicitly stochastic
+        # actor will subsequently sample from its visit distribution.
+        action = self._require_native_root_action(native_bits, live_mask)
+        native_bits = int(native_bits)
         if stochastic and raw_visits:
             # Sample complete native actions, not the aggregated thin action.
             # This keeps card-target choices atomic while preserving the NOSL
@@ -1846,15 +1848,8 @@ class SlayTheSpireEnv(gym.Env):
                         p=weights / total,
                     )
                 )
-        action = self._native_action_to_thin(native_bits)
-        native_valid = action is not None
-        if action is None or not (0 <= action < self.action_space.n) or not live_mask[action]:
-            legal = np.flatnonzero(live_mask)
-            action = int(legal[0]) if legal.size else int(A.END_TURN)
-            native_valid = False
-        self._nosl_cpp_pending = (
-            (int(action), native_bits) if native_valid else None
-        )
+                action = self._require_native_root_action(native_bits, live_mask)
+        self._nosl_cpp_pending = (int(action), native_bits)
         self._nosl_value_capture_pending = True
         return {
             "action": int(action),
@@ -1885,11 +1880,8 @@ class SlayTheSpireEnv(gym.Env):
         checker = getattr(getattr(self, "thick", None), "bc", None)
         checker = getattr(checker, "is_targeted_action", None)
         if checker is None:
-            return False
-        try:
-            return bool(checker(int(bits)))
-        except (TypeError, ValueError, RuntimeError):
-            return False
+            raise RuntimeError("native NOSL requires the complete-action target checker")
+        return bool(checker(int(bits)))
 
     def nosl_is_az_cpp_begin(
         self,
