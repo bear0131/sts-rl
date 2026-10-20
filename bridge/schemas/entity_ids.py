@@ -583,6 +583,7 @@ NATIVE_CARD_INSTANCE_FIELDS = {
     'upgrades': 'CardInstance.getUpgradeCount; complete Searing Blow count',
     'uid': 'CardInstance.uniqueId; stable identity, master cards use physical deck slot',
     'special_data': 'CardInstance.specialData; current growth, not fresh constructor value',
+    'cached_base_damage': 'CardInstance.cachedBaseDamage; actual MindBlast baseDamage integer, explicit null for other card identities; not a model feature',
     'base_cost': 'CardInstance.cost; survives end-of-turn reset',
     'cost': 'CardInstance.costForTurn; underlying cost, not effective free-once cost',
     'free_to_play_once': 'CardInstance.freeToPlayOnce; explicit boolean',
@@ -590,7 +591,7 @@ NATIVE_CARD_INSTANCE_FIELDS = {
     'exhausts': 'CardInstance.exhaust; actual persistent instance property, separate from one-use queue flag',
 }
 NATIVE_CARD_SNAPSHOT_FIELDS = {
-    'version': 'integer 2', 'next_uid': 'allocation cursor; greater than every active uid',
+    'version': 'integer 3; complete cached_base_damage variant required, no v2 defaults', 'next_uid': 'allocation cursor; greater than every active uid',
     'hand': 'ordered complete records; at most 10',
     'draw': 'ordered complete records', 'discard': 'ordered complete records',
     'exhaust': 'ordered complete records',
@@ -665,7 +666,7 @@ CARD_STATE_FIELD_CONTRACTS = {
     'retain': {'source': 'AbstractCard.retain', 'native': 'CardInstance.retain', 'status': 'settled_root_restored', 'reason': 'turn-end retention is separate from printed self-retain'},
     'self_retain': {'source': 'AbstractCard.selfRetain', 'native': 'CardInstance.hasSelfRetain()', 'status': 'printed_validated_dynamic_pending', 'reason': 'different dynamic values rejected rather than dropped'},
     'innate': {'source': 'AbstractCard.isInnate', 'native': 'Card innate metadata at initial draw', 'status': 'initial_draw_audit_pending', 'reason': 'settled root already contains actual drawn cards; independent mutations need source audit'},
-    'base_damage': {'source': 'AbstractCard.baseDamage', 'native': 'Rampage growth / fixed or recomputed card damage', 'status': 'growth_restored_mind_blast_cache_fix_pending', 'reason': 'MindBlast refreshes this only in applyPowers, not calculateCardDamage; same-instance copies retain the captured value even after draw changes. Current native conversion drops it outside Rampage and recomputes MindBlast at use: confirmed BRIDGE156, not a completed restoration. Preserve transition metadata separately from frozen model misc/specialData; other independent mutations remain under BRIDGE28'},
+    'base_damage': {'source': 'AbstractCard.baseDamage', 'native': 'Rampage growth / MindBlast cached_base_damage / other fixed or recomputed card damage', 'status': 'growth_and_mind_blast_cache_restored_other_mutations_pending', 'reason': 'MindBlast refreshes only at actual applyPowers boundaries; stat-equivalent copies retain the captured value. Snapshot v3 preserves its actual nonnegative integer through roots/choices/readback/clone, other identities use explicit null. Independent transition metadata is not frozen-model misc/specialData (BRIDGE156); other independent mutations remain under BRIDGE28'},
     'base_block': {'source': 'AbstractCard.baseBlock', 'native': 'fixed card block / unsupported GeneticAlgorithm', 'status': 'mutation_audit_pending', 'reason': 'not yet a general native instance field'},
     'rampage_growth': {'source': 'Rampage.baseDamage - printed base damage', 'native': 'CardInstance.specialData', 'status': 'settled_root_restored', 'reason': 'not encoded in AbstractCard.misc'},
 }
@@ -857,7 +858,7 @@ HIT_REACTION_CONTRACTS = {
 # contracts do not imply complete dynamic baseDamage/pending transport (BRIDGE28)
 # or completed behavior regression (BRIDGE35).
 CARD_DAMAGE_TIMING_CONTRACTS = {
-    'MIND_BLAST': {'java': 'MindBlast.applyPowers / calculateCardDamage / AbstractCard.makeStatEquivalentCopy / DoubleTapPower / DuplicationPower / Necronomicon / PlayTopCardAction', 'native': 'BattleContext::useAttackCard currently recomputes draw size; instance cache/consumer fix pending BRIDGE156', 'capture': 'applyPowers alone captures draw size into instance baseDamage, calculateCardDamage uses that captured base with current damage modifiers. Stat-equivalent copies preserve baseDamage; DoubleTap/Duplication limbo copies do not refresh on later hand-only draws. Necro explicitly applies powers at copy creation; PlayTop applies after removing from draw, before queuing. Do not refresh every action or every queued card; actual root base_damage, fresh0 versus live copies, strict readback, grouping/remap and NOSL key must retain this independent transition value without adding a model feature'},
+    'MIND_BLAST': {'java': 'MindBlast.applyPowers / calculateCardDamage / AbstractCard.makeStatEquivalentCopy / DoubleTapPower / DuplicationPower / Necronomicon / PlayTopCardAction', 'native': 'CardInstance.cachedBaseDamage / applyPowers / BattleContext.applyPowersToHand / snapshot v3 (BRIDGE156)', 'capture': 'applyPowers captures draw size into the independent instance cache; use applies current damage modifiers to that captured base. Hand draw/discard/retrieval and actual power hooks refresh hand only. Stat-equivalent DoubleTap/Duplication limbo copies preserve the cache, Necro explicitly refreshes its copy, PlayTop refreshes after removal from draw. Roots/choices require actual base_damage, fresh constructor is0, full readback/clone/grouping/remap/NOSL retain it; ordinary non-MindBlast keys and all frozen model columns remain unchanged. Source/build evidence is not natural coverage of every copy combination'},
     'HEAVY_BLADE': {'java': 'HeavyBlade.applyPowers / calculateCardDamage / StrengthPower.atDamageGive', 'native': 'BattleContext::useAttackCard / calculateCardDamage', 'capture': 'multiply the actual positive or negative Strength by3/5 before the common damage pipeline; native adds the extra2/4 Strength to base14 and the common pipeline adds the remaining1. Clamp only after all damage modifiers, not before multiplying negative Strength; source audit found no new execution defect'},
     'PERFECTED_STRIKE': {'java': 'PerfectedStrike.countCards / calculateCardDamage / AbstractPlayer.useCard / PlayTopCardAction', 'native': 'BattleContext::useAttackCard three-pile count', 'capture': 'count STRIKE tags in actual hand/draw/discard at use, never exhaust/limbo/queued copies; manual card still in hand, Havoc/Mayhem card already removed from draw. Do not use combat-wide strikeCount, which still includes transient played cards (BRIDGE154)'},
     'CLEAVE': {'java': 'Cleave.use / DamageAllEnemiesAction', 'native': 'calculateCardDamageMatrix / AttackAllEnemy', 'capture': 'per-slot multiDamage at use; no settlement recalculation'},

@@ -165,6 +165,7 @@ def native_combat_card_state(card, uid):
         return -3 if value == -2 and traits['base_cost'] == -3 else value
 
     return dict(id=native_id, upgrades=card['up'], uid=uid, special_data=special,
+                cached_base_damage=card['base_damage'] if native_id == 'MIND_BLAST' else None,
                 base_cost=cost('base_cost'), cost=cost('cost'),
                 free_to_play_once=card['free_to_play_once'], retain=card['retain'],
                 exhausts=card['exhausts'])
@@ -236,7 +237,7 @@ class CombatCardIdentityMap:
                 return None  # Only a real empty stasis slot calls this branch.
             return self._convert(card, master, master_ids, temporary)
 
-        result = dict(version=2, next_uid=next_uid,
+        result = dict(version=3, next_uid=next_uid,
                       **{name: [convert(card) for card in pile] for name, pile in piles.items()},
                       stasis=[convert(card) for card in stasis])
         self._temporary = temporary  # Failed conversion never consumes an identity.

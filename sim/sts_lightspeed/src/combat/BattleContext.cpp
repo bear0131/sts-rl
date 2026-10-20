@@ -1210,7 +1210,7 @@ void BattleContext::useAttackCard() {
         }
 
         case CardId::MIND_BLAST: {
-            const auto damage = calculateCardDamage(c, t, static_cast<int>(cards.drawPile.size()));
+            const auto damage = calculateCardDamage(c, t, c.cachedBaseDamage);
             addToBot( Actions::AttackEnemy(t, damage) );
             break;
         }
@@ -2127,6 +2127,7 @@ void BattleContext::onAfterUseCard() {
 
     if (c.getType() == CardType::POWER) {
         c.id = CardId::INVALID;
+        applyPowersToHand(); // UseCardAction's explicit hand.applyPowers.
         return;
     }
 
@@ -2165,6 +2166,7 @@ void BattleContext::onAfterUseCard() {
         }
     }
     // TODO these must be done in the cards method itself
+    applyPowersToHand(); // The non-purge UseCardAction queues HandCheckAction.
     // todo make Accuracy part of calculateBaseDamage
 
     // this.targetCard.exhaustOnUseOnce = false;
@@ -2779,6 +2781,7 @@ void BattleContext::playTopCardInDrawPile(int monsterTargetIdx, bool exhausts) {
     }
 
     CardQueueItem item(cards.popFromDrawPile(), monsterTargetIdx, player.energy);
+    item.card.applyPowers(*this); // PlayTopCardAction applies after removing from draw.
     item.exhaustOnUse = exhausts;
     item.autoplay = true;
     item.freeToPlay = true; // todo remove the autoplay boolean? added this instead
@@ -2800,6 +2803,8 @@ void BattleContext::moveToHandHelper(CardInstance c) {
     } else {
         cards.moveToDiscardPile(c);
     }
+    // CardGroup.moveToHand and deck/discard retrieval actions refresh the hand.
+    applyPowersToHand();
 }
 
 void BattleContext::moveGeneratedCardToHand(CardInstance c) {
@@ -3055,6 +3060,9 @@ void BattleContext::queuePurgeCard(const CardInstance &c, int target, bool inLim
     // original UUID, not an unrestricted copy of all instance flags.
     item.card = c.makeStatEquivalentCopy();
     item.card.uniqueId = c.uniqueId;
+    // Necronomicon explicitly applies powers to its new copy. Power-created
+    // limbo copies only calculate damage and retain the copied baseDamage.
+    if (!inLimbo) item.card.applyPowers(*this);
     item.purgeOnUse = true;
     item.inLimbo = inLimbo;
     item.target = target;
@@ -3107,9 +3115,15 @@ void BattleContext::onManualDiscard(const CardInstance &c) {
 }
 
 void BattleContext::onCardDrawOrDiscard() {
-    // Accuracy and other derived damage values are calculated on demand.
+    // Most damage is calculated on demand; MindBlast retains an instance cache.
     // Corruption's cost mutation must occur only at actual draw/discard hooks.
     if (player.hasStatus<PS::CORRUPTION>()) cards.onCorruptionDrawOrDiscard();
+    applyPowersToHand();
+}
+
+void BattleContext::applyPowersToHand() {
+    // Never refresh limbo/queued copies: the Java hook visits the hand only.
+    for (int i = 0; i < cards.cardsInHand; ++i) cards.hand[i].applyPowers(*this);
 }
 
 void BattleContext::onShuffle() {
@@ -3263,6 +3277,7 @@ void BattleContext::chooseCodexCard(CardId id) {
     c.uniqueId = static_cast<std::int16_t>(cards.nextUniqueCardId++);
     cards.notifyAddCardToCombat(c);
     cards.shuffleIntoDrawPile(cardRandomRng, c);
+    applyPowersToHand(); // Soul.onToDeck completion for the Codex card.
 }
 
 void BattleContext::chooseDualWieldCard(int handIdx) {
@@ -3395,6 +3410,7 @@ void BattleContext::chooseForethoughtCard(int handIdx) {
 
     cards.insertToDrawPile(0, cards.hand[handIdx]);
     cards.removeFromHandAtIdx(handIdx);
+    applyPowersToHand();
 }
 
 void BattleContext::chooseHeadbuttCard(int discardIdx) {
@@ -3403,6 +3419,7 @@ void BattleContext::chooseHeadbuttCard(int discardIdx) {
 #endif
     cards.moveToDrawPileTop(cards.discardPile[discardIdx]);
     cards.removeFromDiscard(discardIdx);
+    applyPowersToHand();
 }
 
 void BattleContext::chooseForethoughtCards(const fixed_list<int, 10> &idxs) {
@@ -3427,6 +3444,7 @@ void BattleContext::chooseWarcryCard(int handIdx) {
 #endif
     cards.moveToDrawPileTop(cards.hand[handIdx]);
     cards.removeFromHandAtIdx(handIdx);
+    applyPowersToHand();
 }
 
 void BattleContext::chooseDrawToHandCards(const int *idxs, int cardCount) {

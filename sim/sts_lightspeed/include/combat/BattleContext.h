@@ -224,6 +224,7 @@ namespace sts {
 
         void onManualDiscard(const CardInstance &c);
         void onCardDrawOrDiscard();
+        void applyPowersToHand();
         void onShuffle();
         void triggerAndMoveToExhaustPile(CardInstance c);
         void mummifiedHandOnUsePower();
@@ -259,28 +260,38 @@ namespace sts {
     template <PlayerStatus s>
     Action Actions::BuffPlayer(int amount) {
         return {[=] (BattleContext &bc) {
+            const bool noDrawAlreadyActive = s == PS::NO_DRAW && bc.player.hasStatus<PS::NO_DRAW>();
             bc.player.buff<s>(amount);
+            // ApplyPowerAction's repeated NoDraw branch returns before onModifyPower.
+            if (!noDrawAlreadyActive) bc.applyPowersToHand();
         }};
     }
 
     template <PlayerStatus s>
     Action Actions::DebuffPlayer(int amount, bool isSourceMonster) {
         return {[=] (BattleContext &bc) {
+            const bool immune = (s == PS::WEAK && bc.player.hasRelic<RelicId::GINGER>())
+                || (s == PS::FRAIL && bc.player.hasRelic<RelicId::TURNIP>());
             bc.player.debuff<s>(amount, isSourceMonster);
+            if (!immune) bc.applyPowersToHand();
         }};
     }
 
     template<PlayerStatus s>
     Action Actions::DecrementStatus(int amount) {
         return {[=] (BattleContext &bc) {
+            const bool present = bc.player.hasStatus<s>();
             bc.player.decrementStatus<s>(amount);
+            if (present) bc.applyPowersToHand();
         }};
     }
 
     template <PlayerStatus s>
     Action Actions::RemoveStatus() {
         return {[=] (BattleContext &bc) {
+            const bool present = bc.player.hasStatus<s>();
             bc.player.setHasStatus<s>(false);
+            if (present) bc.applyPowersToHand();
         }};
     }
 
@@ -292,6 +303,7 @@ namespace sts {
             auto &monster = bc.monsters.arr[idx];
             if (!monster.isTargetable()) return;
             monster.buff<s>(amount);
+            bc.applyPowersToHand();
         }};
     }
 
@@ -324,10 +336,12 @@ namespace sts {
 
         if (e.hasStatus<MS::ARTIFACT>()) {
             e.decrementStatus<MS::ARTIFACT>();
+            applyPowersToHand(); // Artifact's queued ReducePower/RemovePower hook.
             return;
         }
 
         e.addDebuff<s>(amount, isSourceMonster);
+        applyPowersToHand();
         if (player.hasStatus<PS::SADISTIC>()) {
             addToBot( Actions::DamageEnemy(idx, player.getStatus<PS::SADISTIC>()) );
         }

@@ -35,6 +35,13 @@ CardInstance CardInstance::makeStatEquivalentCopy() const {
     return copy;
 }
 
+void CardInstance::applyPowers(const BattleContext &bc) {
+    // Other damage modifiers remain calculated on demand. Unlike BodySlam
+    // and PerfectedStrike, MindBlast does not refresh this in calculateCardDamage.
+    if (id == CardId::MIND_BLAST)
+        cachedBaseDamage = static_cast<int>(bc.cards.drawPile.size());
+}
+
 CardId CardInstance::getId() const {
     return id;
 }

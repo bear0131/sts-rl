@@ -253,6 +253,7 @@ Action Actions::EmptyDeckShuffle() {
         );
 
         bc.cards.moveDiscardPileIntoToDrawPile();
+        bc.applyPowersToHand(); // Soul completion refreshes the hand after shuffle.
     }};
 }
 
@@ -273,6 +274,7 @@ Action Actions::ShuffleTempCardIntoDrawPile(CardId id, int count) {
             const int idx = bc.cards.drawPile.empty() ? 0 : bc.cardRandomRng.random(static_cast<int>(bc.cards.drawPile.size()-1));
             bc.cards.createTempCardInDrawPile(idx, c);
         }
+        if (count > 0) bc.applyPowersToHand();
     }};
 }
 
@@ -319,6 +321,7 @@ Action Actions::MakeTempCardInDrawPile(const CardInstance &c, int amount, bool s
             }
             // todo else
         }
+        if (amount > 0 && shuffleInto) bc.applyPowersToHand();
     }};
 }
 
@@ -328,6 +331,7 @@ Action Actions::MakeTempCardInDiscard(const CardInstance &c, int amount) {
         for (int i = 0; i < amount; ++i) {
             bc.cards.createTempCardInDiscard(c_copy);
         }
+        if (amount > 0) bc.applyPowersToHand();
     }};
 }
 
@@ -705,7 +709,7 @@ Action Actions::ViolenceAction(int count) { // todo a faster algorithm for inser
             const auto drawPileRemoveIdx = removeIdxs[x];
             bc.cards.removeFromDrawPileAtIdx(drawPileRemoveIdx);
         }
-
+        bc.applyPowersToHand(); // DrawPileToHandAction / Violence, after actual moves.
     }};
 }
 
@@ -989,6 +993,7 @@ Action Actions::PoisonLoseHpAction(int target, int amount) {
 Action Actions::RemovePlayerDebuffs() {
     return {[] (BattleContext &bc) {
         bc.player.removeDebuffs();
+        bc.applyPowersToHand();
     }};
 }
 
@@ -1056,6 +1061,7 @@ Action Actions::DualityAction() {
     return {[](BattleContext &bc) {
         bc.player.buff<PS::DEXTERITY>(1);
         bc.player.debuff<PS::LOSE_DEXTERITY>(1);
+        bc.applyPowersToHand();
     }};
 }
 
@@ -1295,6 +1301,7 @@ Action Actions::SpotWeaknessAction(int target, int strength) {
     return {[=](BattleContext &bc) {
         if (bc.monsters.arr[target].isAttacking()) {
             bc.player.buff<PS::STRENGTH>(strength);
+            bc.applyPowersToHand();
         }
     }};
 }

@@ -92,6 +92,8 @@ py::dict combatCardRecord(const sts::CardInstance &card) {
     row["upgrades"] = card.getUpgradeCount();
     row["uid"] = card.uniqueId;
     row["special_data"] = card.specialData;
+    if (card.id == sts::CardId::MIND_BLAST) row["cached_base_damage"] = card.cachedBaseDamage;
+    else row["cached_base_damage"] = py::none();
     row["base_cost"] = card.cost;
     row["cost"] = card.costForTurn;
     row["free_to_play_once"] = card.freeToPlayOnce;
@@ -102,7 +104,7 @@ py::dict combatCardRecord(const sts::CardInstance &card) {
 
 py::dict combatCardState(const sts::BattleContext &bc) {
     py::dict out;
-    out["version"] = 2;
+    out["version"] = 3;
     out["next_uid"] = bc.cards.nextUniqueCardId;
     py::list hand;
     for (int i = 0; i < bc.cards.cardsInHand; ++i) hand.append(combatCardRecord(bc.cards.hand[i]));
@@ -139,14 +141,14 @@ void restoreCombatCardState(sts::BattleContext &bc, const py::dict &state) {
     };
     if (state.size() != std::size(fields)) throw std::invalid_argument("combat card snapshot has incomplete or unknown fields");
     for (auto key : fields) if (!state.contains(key)) throw std::invalid_argument("combat card snapshot has incomplete or unknown fields");
-    if (snapshotInteger(state, "version", 2, 2) != 2) throw std::invalid_argument("unsupported combat card snapshot version");
+    if (snapshotInteger(state, "version", 3, 3) != 3) throw std::invalid_argument("unsupported combat card snapshot version");
     const int nextUid = snapshotInteger(state, "next_uid", 0, 32767);
     std::set<int> identities;
     auto parse = [&](const py::handle &value) {
         if (!py::isinstance<py::dict>(value)) throw std::invalid_argument("combat card snapshot needs complete records");
         const auto row = value.cast<py::dict>();
         static constexpr const char *cardFields[] = {
-            "id", "upgrades", "uid", "special_data", "base_cost", "cost", "free_to_play_once", "retain", "exhausts",
+            "id", "upgrades", "uid", "special_data", "cached_base_damage", "base_cost", "cost", "free_to_play_once", "retain", "exhausts",
         };
         if (row.size() != std::size(cardFields)) throw std::invalid_argument("combat card record has incomplete or unknown fields");
         for (auto key : cardFields) if (!row.contains(key)) throw std::invalid_argument("combat card record has incomplete or unknown fields");
@@ -159,6 +161,10 @@ void restoreCombatCardState(sts::BattleContext &bc, const py::dict &state) {
         if (card.uniqueId >= nextUid || !identities.insert(card.uniqueId).second)
             throw std::invalid_argument("combat card identities must be unique and below next_uid");
         card.specialData = snapshotInteger(row, "special_data", 0, 32767);
+        if (id == sts::CardId::MIND_BLAST)
+            card.cachedBaseDamage = snapshotInteger(row, "cached_base_damage", 0, 2147483647);
+        else if (!row["cached_base_damage"].is_none())
+            throw std::invalid_argument("cached_base_damage is only applicable to Mind Blast");
         if (id == sts::CardId::SEARING_BLOW && card.specialData != up)
             throw std::invalid_argument("Searing Blow special_data must equal the complete upgrade count");
         card.cost = snapshotInteger(row, "base_cost", -3, 127);
@@ -2851,6 +2857,7 @@ std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
     }
     const auto found = std::find_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity);
     if (card.id != found->id || card.specialData != found->specialData ||
+        card.cachedBaseDamage != found->cachedBaseDamage ||
         card.upgraded != found->upgraded || card.cost != found->cost ||
         card.costForTurn != found->costForTurn || card.freeToPlayOnce != found->freeToPlayOnce ||
         card.retain != found->retain || card.exhaust != found->exhaust) {

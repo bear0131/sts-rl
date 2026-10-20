@@ -30,8 +30,12 @@ parity-v7通过第7个只读serializer补充11项typed字段，misc包括真实0
 主牌组`deck_state`保存有序身份/升级/当前native misc/瓶装物理槽位，恢复必须走
 `set_deck_state`并核对旧模型的deck投影，不以`set_deck`创建fresh牌代替当前快照。
 后者也改为原子替换，明确清除旧瓶装索引；未知字段/缺值/错型/超容量/重复瓶装类型拒绝，失败不改变原牌组。
-原生`BattleContext.card_state/set_card_state`快照v2完整读写9项实例成员和7项牌堆快照字段，
+原生`BattleContext.card_state/set_card_state`快照v3完整读写10项实例成员和7项牌堆快照字段，
 保留四个牌堆、两个青铜球暂扣槽、稳定UID和后续生成编号；整批验证后替换并重算派生缓存。
+新增`cached_base_damage`只对Mind Blast保存实际`baseDamage`非负整数，其他牌必须明确为null；
+v2不能省略该字段或伪补0，需配套当前Python和重建原生。此值独立于模型`misc/specialData`，
+不改变OBS20/ACTION8/layout9或checkpoint张量。真实hand.applyPowers边界刷新手牌缓存，
+双发/复制药水暂存复制保留复制时的值；死灵书与PlayTop按各自明确调用刷新其复制/抽出对象。
 该接口的同状态回灌保持模型输入、合法动作、压缩观测与搜索future key逐项一致。
 实时普通决策已接入UUID映射和暂扣牌导出；选择中实例和其他动态字段的剩余审查单列，
 不能将`apply_custom_state`简化tuple视为实例快照，严格真实根必须提供完整`card_state`。

@@ -13,7 +13,7 @@ bool search::Action::equivalentCards(const CardInstance &a, const CardInstance &
     if (a.id == CardId::RITUAL_DAGGER || a.id == CardId::GENETIC_ALGORITHM)
         return false;
     return a.id == b.id && a.upgraded == b.upgraded &&
-        a.specialData == b.specialData && a.cost == b.cost &&
+        a.specialData == b.specialData && a.cachedBaseDamage == b.cachedBaseDamage && a.cost == b.cost &&
         a.costForTurn == b.costForTurn &&
           a.freeToPlayOnce == b.freeToPlayOnce && a.retain == b.retain &&
           a.exhaust == b.exhaust;

@@ -22,6 +22,9 @@ namespace sts {
         CardId id = CardId::INVALID;
         std::int16_t uniqueId = -1;
         std::int16_t specialData = 0;
+        // MindBlast.applyPowers captures this per object. It is transition
+        // metadata, not misc/specialData or a new frozen-model feature.
+        std::int32_t cachedBaseDamage = 0;
         std::int8_t cost = 0;
         std::int8_t costForTurn = 0;
 
@@ -37,6 +40,7 @@ namespace sts {
 
         // New Java stat-equivalent instance, not a move/restore of this card.
         [[nodiscard]] CardInstance makeStatEquivalentCopy() const;
+        void applyPowers(const BattleContext &bc);
 
         [[nodiscard]] CardId getId() const;
         [[nodiscard]] CardType getType() const;

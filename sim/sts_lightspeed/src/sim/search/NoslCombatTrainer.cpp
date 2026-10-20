@@ -82,7 +82,7 @@ inline void hashValue(std::uint64_t &hash, T value) {
     hashCombine(hash, static_cast<std::uint64_t>(value));
 }
 
-using CardSignature = std::tuple<int, int, int, int, int, int, int, int>;
+using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int>;
 
 int cardRetentionExhaustSignature(const CardInstance &card) {
     // Keep the exact old hash input for ordinary printed cards. The spare bit
@@ -122,12 +122,12 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
             static_cast<int>(card.costForTurn),
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            cardRetentionExhaustSignature(card), persistentCardIdentity(card));
+            cardRetentionExhaustSignature(card), persistentCardIdentity(card), card.cachedBaseDamage);
     }
     std::sort(cards.begin(), cards.end());
     hashValue(hash, cards.size());
     for (const auto &[cardId, specialData, cost, costForTurn, upgraded,
-                       freeToPlayOnce, retain, persistentId] : cards) {
+                       freeToPlayOnce, retain, persistentId, cachedBaseDamage] : cards) {
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -136,11 +136,15 @@ void hashCardComposition(std::uint64_t &hash, const Pile &pile,
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
         if (equivalentFutures) hashValue(hash, persistentId);
+        if (cardId == static_cast<int>(CardId::MIND_BLAST)) {
+            hashValue(hash, 0x4d696e64426c6173ULL);
+            hashValue(hash, cachedBaseDamage);
+        }
     }
 }
 
 void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equivalentFutures = true) {
-    using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int>;
+    using CardSignature = std::tuple<int, int, int, int, int, int, int, int, int, int>;
     std::array<CardSignature, CardManager::MAX_HAND_SIZE> cards{};
     std::size_t count = 0;
     for (int i = 0; i < bc.cards.cardsInHand; ++i) {
@@ -154,13 +158,13 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equi
             currentCost,
             card.upgraded ? 1 : 0,
             card.freeToPlayOnce ? 1 : 0,
-            cardRetentionExhaustSignature(card), persistentCardIdentity(card));
+            cardRetentionExhaustSignature(card), persistentCardIdentity(card), card.cachedBaseDamage);
     }
     std::sort(cards.begin(), cards.begin() + count);
     hashValue(hash, count);
     for (std::size_t i = 0; i < count; ++i) {
         const auto &[cardId, specialData, cost, costForTurn, currentCost,
-                     upgraded, freeToPlayOnce, retain, persistentId] = cards[i];
+                     upgraded, freeToPlayOnce, retain, persistentId, cachedBaseDamage] = cards[i];
         hashValue(hash, cardId);
         hashValue(hash, specialData);
         hashValue(hash, cost);
@@ -170,6 +174,10 @@ void hashHandComposition(std::uint64_t &hash, const BattleContext &bc, bool equi
         hashValue(hash, freeToPlayOnce);
         hashValue(hash, retain);
         if (equivalentFutures) hashValue(hash, persistentId);
+        if (cardId == static_cast<int>(CardId::MIND_BLAST)) {
+            hashValue(hash, 0x4d696e64426c6173ULL);
+            hashValue(hash, cachedBaseDamage);
+        }
     }
 }
 

@@ -295,7 +295,7 @@ private:
     int simulationsCompleted_ = 0;
     std::uint64_t nextRequestId_ = 1;
     std::unordered_map<std::uint64_t, Pending> pending_;
-    std::vector<std::tuple<int, int, int, int, int, int, int, int>> stateKeyScratch_;
+    std::vector<std::tuple<int, int, int, int, int, int, int, int, int>> stateKeyScratch_;
     // Sessions are sequential; these buffers never outlive the owning tree.
     mutable std::vector<double> rawQScratch_;
     mutable std::vector<double> scaledQScratch_;
