@@ -587,7 +587,7 @@ def complete_word_tables():
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
         "combat_settlement_transport": {
             "source": "real COMBAT/NONE with every physical monster is_dying or is_escaping, exactly MonsterGroup.areMonstersBasicallyDead; never HP0 or is_gone (which includes half-dead revivers)",
-            "action": "await_combat_settlement refresh only, same-room pause-adjusted 10-second deadline; no empty encounter attachment, policy END, synthetic victory, corpse removal or PAD; explicit empty roster is also only a wait (BRIDGE143)",
+            "action": "await_combat_settlement refresh only, same-room pause-adjusted 10-second deadline; shared UiPauseClock excludes exact SETTINGS/MASTER_DECK_VIEW inspection time from all ACKs, not real selection screens. Other actual is_screen_up NONE overlays are not timed settlement frames and still forbid ordinary combat policy. No empty encounter attachment, policy END, synthetic victory, corpse removal or PAD; explicit empty roster is also only a wait (BRIDGE143)",
             "boundary": "actual HAND_SELECT/GRID/CARD_REWARD remain actionable; actual reward/room/terminal frames end the wait, immutable ready GAME_OVER alone records outcome; model layout/search nonce/budget unchanged",
         },
         "summon_slot_transport": {

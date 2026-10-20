@@ -933,7 +933,7 @@ class RewardCommandAck:
 
 
 class UiPauseClock:
-    """Suspend acknowledgement time only for an explicitly exported settings UI."""
+    """Suspend acknowledgement time for explicit user-controlled pause/view UIs."""
     def __init__(self):
         self.last = None
         self.paused = False
@@ -941,7 +941,10 @@ class UiPauseClock:
 
     def update(self, frame, now):
         gs = frame.get('game_state') or {}
-        paused = bool(gs.get('is_screen_up')) and gs.get('screen_name') == 'SETTINGS'
+        # A master-deck inspection can hold a dying room open, just as settings
+        # can suspend a pending command. Never pause real choice screens here.
+        paused = (gs.get('is_screen_up') is True
+                  and gs.get('screen_name') in {'SETTINGS', 'MASTER_DECK_VIEW'})
         if self.last is not None and self.paused:
             self.excluded += now - self.last
         self.last, self.paused = now, paused

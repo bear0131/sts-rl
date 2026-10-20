@@ -829,6 +829,8 @@ class RealGameAdapter:
         if (not combat or self.gs.get("room_phase") != "COMBAT"
                 or self.screen_type() != "NONE"):
             return False
+        if _required_bool(self.gs, "is_screen_up", context="combat settlement"):
+            return False  # Inspecting the master deck/relics is not a settlement timeout.
         monsters = _dict_records(
             _list_value(combat, "monsters", context="combat settlement"),
             context="combat settlement monsters",
@@ -875,10 +877,9 @@ class RealGameAdapter:
                     and combat.get("player", {}).get("energy") == 0
                     and combat.get("draw_pile")):
                 return False
-        if self.screen_type() == "NONE" and bool(self.gs.get("is_screen_up")):
-            screen_name = str(self.gs.get("screen_name") or "").upper()
-            if screen_name and screen_name != "NONE":
-                return False
+        if (self.screen_type() == "NONE"
+                and _required_bool(self.gs, "is_screen_up", context="combat readiness")):
+            return False
         return True
 
     def _combat_card_choice_screen(self) -> bool:
