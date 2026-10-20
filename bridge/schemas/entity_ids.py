@@ -814,6 +814,7 @@ CARD_DAMAGE_TIMING_CONTRACTS = {
 # action-name or general BLOCK rule. This is the source-audited BRIDGE36 batch;
 # the full Java action-queue transport is still incomplete (BRIDGE28).
 COMBAT_VICTORY_ACTION_CONTRACTS = {
+    'LoseEnergyAction': {'native': 'CardManager.draw Void queued energy-loss callback', 'keep': False, 'reason': 'default action type; BOTTOM subtract1 with zero floor, after pre-existing selection/actions (BRIDGE88)'},
     'SetMoveAction': {'native': 'SetMonsterMove', 'keep': False, 'reason': 'default action type; no target lifecycle guard, deferred exactly where Java enqueues it'},
     'PoisonLoseHpAction': {'native': 'PoisonLoseHpAction(target, amount)', 'keep': True, 'reason': 'DAMAGE; capture poison at turn start, HP_LOSS bypasses block, decrement surviving power after death callbacks'},
     'DamageAction': {'native': 'AttackEnemy/DamageEnemy/AttackPlayer/StealingAttackPlayer/DamagePlayer', 'keep': True, 'reason': 'ActionType.DAMAGE; stealing variant guards source before gold deduction and then applies damage'},

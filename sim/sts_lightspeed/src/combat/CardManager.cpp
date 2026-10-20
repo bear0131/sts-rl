@@ -450,8 +450,11 @@ void CardManager::draw(BattleContext &bc, int amount) {
                 bc.addToBot( Actions::DamageAllEnemy(fireBreathing) );
             }
             if (c.getId() == CardId::VOID) {
-                // game adds action to bottom of the queue but I think it is ok to do directly
-                bc.player.energy = std::max(0, bc.player.energy-1);
+                // VoidCard queues LoseEnergyAction. Existing actions such as
+                // Warcry's selection must still see the pre-loss energy.
+                bc.addToBot({[](BattleContext &ctx) {
+                    ctx.player.energy = std::max(0, ctx.player.energy - 1);
+                }});
             }
 
         } else if (c.getType() == CardType::CURSE) {
