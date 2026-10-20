@@ -331,7 +331,9 @@ public final class SimulatorParityExporter {
     @SuppressWarnings("unchecked")
     private static void augmentWeMeetAgain(HashMap<String, Object> state, AbstractEvent event) {
         if (!(event instanceof com.megacrit.cardcrawl.events.shrines.WeMeetAgain)
-                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT) return;
+                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT
+                || !communicationmod.GameStateListener.isWaitingForCommand()
+                || !CommandExecutor.isChooseCommandAvailable()) return;
         Object phase = ReflectionHacks.getPrivate(event, event.getClass(), "screen");
         if (!"INTRO".equals(((Enum<?>)phase).name())) return;
         java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");

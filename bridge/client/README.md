@@ -320,7 +320,10 @@ Normal upgrade/transform/purge previews keep their separate original-card rule.
 Parity-v35 additionally exports WeMeetAgain's actual public offer objects: a
 full master-card UUID, a physical potion slot, and the offered gold amount.
 Typed kinds map the four frozen semantic choices to stock's compressed CHOOSE
-indices, even when earlier buttons are disabled. The actual INTRO/COMPLETE phase
+indices, even when earlier buttons are disabled. Enrichment runs only when the
+actual screen enum is EVENT, the mod is waiting for a command, and CHOOSE is
+available; room-loading snapshots can legitimately have no initialized buttons.
+Once actionable, missing or inconsistent targets remain errors. The INTRO/COMPLETE phase
 and completed visible relic identity are transport receipts; INTRO never exposes
 the future prize. Trade confirmation waits for the selected cost, received relic
 and its screenless on-equip effects. No localized-name matching or forced leave
@@ -331,6 +334,12 @@ Do not mix v35 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.
+
+When freezing an isolated runtime, archive all tracked application/source roots
+at the exact commit, excluding `runs/` (historical outputs/checkpoints, not runtime
+source). Record that exclusion and verify the relevant Git blobs after extraction.
+Keep the selected model, vectors, native extension and mod jar as separately
+hashed inputs; do not duplicate unrelated historical checkpoints in each runtime.
 Two read-only game hooks track the last monster attack damage and reset it at
 combat entry. Gameplay, UI and RNG are untouched.
 The bridge fails on a live Dome monster whose current move is still missing;
