@@ -97,7 +97,10 @@ def real_grid_obtain_confirmation_cards(screen):
         return None
     if (screen.get('confirm_up') is not True
             or 'confirmation_card_uuid' not in screen or screen['confirmation_card_uuid'] is not None
-            or type(screen.get('num_cards')) is not int or screen['num_cards'] != 0
+            # openConfirmationGrid/callOnOpen do not reset private numCards.
+            # It is an explicit but inactive prior pick count, not the number
+            # of cards to choose or receive on this full-group confirmation.
+            or type(screen.get('num_cards')) is not int or screen['num_cards'] < 0
             or any(screen.get(flag) is not False
                    for flag in ('any_number', 'for_upgrade', 'for_transform', 'for_purge'))
             or screen.get('selection_context') != 'OBTAIN_CONFIRM'):
