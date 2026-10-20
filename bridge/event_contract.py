@@ -11,6 +11,7 @@ from copy import deepcopy
 from bridge.schemas.entity_ids import (
     CARD_ALIASES,
     DYNAMIC_EVENT_OPTION_KINDS,
+    DYNAMIC_EVENT_OPTION_KIND_ALIASES,
     EVENT_ALIASES,
 )
 
@@ -288,6 +289,7 @@ EVENT_PROGRESS_CONTRACTS = {
     'The Moai Head': ('beyond.MoaiHead', {'0', '1'}),
     'WeMeetAgain': ('shrines.WeMeetAgain', {'INTRO', 'COMPLETE'}),
     'Designer': ('shrines.Designer', {'INTRO', 'MAIN', 'DONE'}),
+    'NoteForYourself': ('shrines.NoteForYourself', {'INTRO', 'CHOOSE', 'COMPLETE'}),
     'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
 }
 
@@ -364,6 +366,20 @@ def event_progress(gs, event=None):
     if event == 'Designer' and progress.get('pending_selection') not in {
             'NONE', 'UPGRADE', 'REMOVE', 'REMOVE_AND_UPGRADE', 'TRANSFORM'}:
         raise ValueError('Designer requires its actual pending service selection')
+    if event == 'NoteForYourself':
+        if (type(progress.get('card_select_pending')) is not bool
+                or 'obtain_card' not in progress or 'stored_card' not in progress):
+            raise ValueError('Note requires explicit nullable public cards and selection progress')
+        if progress['phase'] == 'INTRO':
+            if progress['obtain_card'] is not None or progress['stored_card'] is not None or progress['card_select_pending']:
+                raise ValueError('Note INTRO must not leak its future offer or invent progress')
+        else:
+            from bridge.schemas.card_state import real_card_state
+            real_card_state(progress['obtain_card'])
+            if progress['stored_card'] is not None:
+                real_card_state(progress['stored_card'])
+            if progress['phase'] == 'CHOOSE' and (progress['stored_card'] is not None or progress['card_select_pending']):
+                raise ValueError('Note CHOOSE contains premature completion progress')
     return progress
 
 # Contracts whose semantic identity comes from public per-instance records
@@ -489,6 +505,7 @@ def transport_only(gs):
         'Golden Wing': {'PURGE'}, 'Liars Game': {'AGREE'},
         'Dead Adventurer': {'FAIL'}, 'Wheel of Change': {'COMPLETE'},
         'Designer': {'INTRO', 'DONE'},
+        'NoteForYourself': {'INTRO', 'COMPLETE'},
     }
     if event in stages and phase in stages[event]:
         return o['choice_index']
@@ -637,7 +654,7 @@ def designer_choices(gs):
     kinds = DYNAMIC_EVENT_OPTION_KINDS['Designer']
     result = []
     for position, row in enumerate(rows):
-        kind = row.get('kind')
+        kind = DYNAMIC_EVENT_OPTION_KIND_ALIASES['Designer'].get(row.get('kind'), row.get('kind'))
         if kind not in allowed[position] or type(row.get('disabled')) is not bool:
             raise ValueError('Designer service mode/disabled flag missing or in wrong position')
         parameter = 'hp' if position == 3 else 'gold'
@@ -662,16 +679,40 @@ def designer_choices(gs):
             raise ValueError('Designer compressed CHOOSE indices are incomplete or out of order')
         if position < 3 and gs['gold'] < row['gold']:
             raise ValueError('Designer advertises an unaffordable service')
-        result.append(dict(row, index=kinds[kind], ui=row['choice_index']))
+        result.append(dict(row, kind=kind, index=kinds[kind], ui=row['choice_index']))
     if len(result) != len(gs.get('choice_list', [])):
         raise ValueError('Designer typed choices do not cover actual CHOOSE inventory')
     return result
+
+
+def note_choices(gs):
+    from bridge.schemas.card_state import real_card_state, real_selection_card_states
+    progress = event_progress(gs, 'NoteForYourself')
+    ss = gs.get('screen_state') or {}
+    rows = ss.get('options')
+    if (gs.get('screen_type') != 'EVENT' or ss.get('event_id') != 'NoteForYourself'
+            or progress['phase'] != 'CHOOSE' or not isinstance(rows, list) or len(rows) != 2):
+        raise ValueError('Note policy choices require its public two-button CHOOSE page')
+    for index, kind in enumerate(('gain_card_then_remove', 'leave')):
+        row = rows[index]
+        if (row.get('kind') != kind or row.get('disabled') is not False
+                or type(row.get('choice_index')) is not int or row['choice_index'] != index):
+            raise ValueError('Note actual public offer/leave mapping is incomplete or reordered')
+    card = real_card_state(rows[0].get('card'))
+    if card != real_card_state(progress['obtain_card']):
+        raise ValueError('Note typed offer differs from the actual event card instance')
+    master, _ = real_selection_card_states(gs.get('deck'), [])
+    if card['uuid'] in {c['uuid'] for c in master} or len(gs.get('choice_list', [])) != 2:
+        raise ValueError('Note pre-acquisition card already in master deck or choice list incomplete')
+    return [dict(row, index=i, ui=i) for i, row in enumerate(rows)]
 
 
 def options(gs):
     _validate_choice_indices(gs)
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'NoteForYourself':
+        return {d['index']: (d['ui'], 'note_take' if d['index'] == 0 else 'note_leave') for d in note_choices(gs)}
     if event == 'Designer':
         return {d['index']: (d['ui'], 'designer_' + d['kind']) for d in designer_choices(gs)}
     if event == 'WeMeetAgain':
@@ -730,6 +771,121 @@ class EventEffectAck:
         self.pending = None
         self._single_obtain = None
         self._designer = None
+        self._note = None
+
+    def _note_before_selection(self, gs):
+        from bridge.schemas.card_state import real_card_state
+        receipt = self._note
+        offered = receipt['offer']
+        raw = event_progress(gs, 'NoteForYourself')['obtain_card']
+        card = real_card_state(raw)
+        eggs = {'ATTACK': 'Molten Egg 2', 'SKILL': 'Toxic Egg 2', 'POWER': 'Frozen Egg 2'}
+        egg = offered['up'] == 0 and eggs.get(receipt['offer_type']) in receipt['relics']
+        immutable = ('id', 'uuid', 'misc', 'free_to_play_once', 'retain', 'self_retain',
+                     'bottled_flame', 'bottled_lightning', 'bottled_tornado')
+        if (raw.get('type') != receipt['offer_type'] or any(card[k] != offered[k] for k in immutable)
+                or (card != offered and not (egg and card['up'] == 1))):
+            raise RuntimeError('Note obtained object differs from its actual public offer/egg upgrade')
+        before = dict(receipt['before'])
+        before[card['uuid']] = dict(card, type=receipt['offer_type'])
+        return before
+
+    def _note_grid(self, gs):
+        from bridge.schemas.card_state import real_selection_card_states
+        progress = event_progress(gs, 'NoteForYourself')
+        ss = gs['screen_state']
+        if (ss.get('selection_source') != progress['source'] or ss.get('selection_context') != 'REMOVE'
+                or type(ss.get('num_cards')) is not int or ss['num_cards'] != 1
+                or any(ss.get(k) is not False for k in ('any_number', 'for_upgrade', 'for_purge', 'for_transform'))
+                or progress['card_select_pending'] is not True):
+            raise ValueError('Note requires its actual single removal GRID, not an obtain screen')
+        before = self._note_before_selection(gs)
+        if {c['uuid']: c for c in self._augmenter_deck(gs)} != before:
+            raise RuntimeError('Note did not acquire its public card before opening the removal GRID')
+        cards, selected = real_selection_card_states(ss.get('cards'), ss.get('selected_cards'))
+        expected = {u: {k: v for k, v in c.items() if k != 'type'} for u, c in before.items()
+                    if c['id'] not in {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
+                    and not any(c[b] for b in ('bottled_flame', 'bottled_lightning', 'bottled_tornado'))}
+        if {c['uuid']: c for c in cards} != expected or len(selected) > 1:
+            raise RuntimeError('Note GRID omitted or changed a purgeable physical card, including the new card')
+        return cards, [c['uuid'] for c in selected]
+
+    def _arm_note_grid(self, gs, decision):
+        parts = decision.command.upper().split()
+        if parts[:1] in (['STATE'], ['WAIT']):
+            return
+        if gs.get('screen_type') != 'GRID':
+            raise RuntimeError('Note result pending; cannot leave or retry')
+        cards, selected = self._note_grid(gs)
+        if len(parts) != 2 or parts[0] != 'CHOOSE':
+            raise ValueError('Note removal requires its actual single CHOOSE, not a fabricated confirmation')
+        index = int(parts[1])
+        if (self._note['pick'] is not None or selected or not 0 <= index < len(cards)
+                or decision.semantic != ('select', index)):
+            raise ValueError('Note policy selection and physical removal CHOOSE disagree')
+        self._note['pick'] = cards[index]['uuid']
+
+    def _waiting_note(self, old, gs, ready):
+        if any(gs.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+            raise RuntimeError('Note receipt crossed its actual run/room')
+        if not ready:
+            return True
+        receipt = self._note
+        progress = event_progress(gs, 'NoteForYourself')
+        if progress['phase'] == 'CHOOSE':
+            return True
+        if progress['phase'] != 'COMPLETE':
+            raise RuntimeError('Note returned to an unexpected page before receipt')
+        if receipt['take'] and gs.get('screen_type') == 'GRID':
+            # Unlike Designer, Note.update consumes the selected card without
+            # waiting for isScreenUp=false. That closing frame is not a new task.
+            if not progress['card_select_pending']:
+                return True
+            _, selected = self._note_grid(gs)
+            if selected and selected != [receipt['pick']]:
+                raise RuntimeError('Note acknowledged a different physical removal')
+            return receipt['pick'] is not None
+        if gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != 'NoteForYourself':
+            raise RuntimeError('Note left before acquisition/storage receipt completed')
+        if progress['card_select_pending'] or gs['simulator_obtain_pending']:
+            return True
+        current = {c['uuid']: c for c in self._augmenter_deck(gs)}
+        relics = self._augmenter_relics(gs)
+        if not receipt['take']:
+            if (progress['stored_card'] is not None or current != receipt['before'] or relics != receipt['relics']
+                    or any(gs[k] != old[k] for k in ('current_hp', 'max_hp', 'gold', 'potions'))):
+                raise RuntimeError('Note leave changed resources or stored a card')
+        else:
+            from bridge.schemas.card_state import real_card_state
+            before = self._note_before_selection(gs)
+            pick = receipt['pick']
+            if pick is None or pick not in before or progress['stored_card'] is None:
+                raise RuntimeError('Note completed without the requested physical storage result')
+            stored = real_card_state(progress['stored_card'])
+            if stored != {k: v for k, v in before[pick].items() if k != 'type'}:
+                raise RuntimeError('Note stored a different physical card or mutated its persistence data')
+            if current != {u: c for u, c in before.items() if u != pick}:
+                raise RuntimeError('Note acquisition/removal did not conserve exact master instances')
+            initial = receipt['relics']
+            expected_relics = dict(initial)
+            if 'Du-Vu Doll' in expected_relics:
+                expected_relics['Du-Vu Doll'] = sum(c['type'] == 'CURSE' for c in current.values())
+            # This event bypasses ShowCardAndObtainEffect: an offered curse is
+            # really acquired, and Omamori's original charge must stay intact.
+            curse = receipt['offer_type'] == 'CURSE'
+            max_hp = old['max_hp'] + (6 if curse and 'Darkstone Periapt' in initial else 0)
+            parasite = before[pick]['id'] == 'Parasite'
+            if parasite:
+                max_hp = max(1, max_hp - 3)
+            gain_gold = 9 if 'CeramicFish' in initial and 'Ectoplasm' not in initial else 0
+            hp_effect = parasite or (curse and 'Darkstone Periapt' in initial) or (gain_gold and 'Bloody Idol' in initial)
+            if (relics != expected_relics or gs['gold'] != old['gold'] + gain_gold
+                    or gs['max_hp'] != max_hp or gs['potions'] != old['potions']
+                    or not 0 < gs['current_hp'] <= gs['max_hp']
+                    or (not hp_effect and gs['current_hp'] != old['current_hp'])):
+                raise RuntimeError('Note acquisition/storage has unexpected resource effects')
+        self.pending = self._note = None
+        return False
 
     def _designer_grid(self, gs):
         from bridge.schemas.card_state import real_selection_card_states, real_grid_confirmation_card
@@ -1492,6 +1648,9 @@ class EventEffectAck:
         if self.pending and self._designer is not None:
             self._arm_designer_grid(gs, decision)
             return
+        if self.pending and self._note is not None:
+            self._arm_note_grid(gs, decision)
+            return
         if self.pending and self._single_obtain is not None:
             self._arm_single_obtain_grid(gs, decision)
             return
@@ -1542,6 +1701,21 @@ class EventEffectAck:
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
         event = gs['screen_state']['event_id']
+        if effect.startswith('note_'):
+            from bridge.schemas.card_state import real_card_state
+            choice = note_choices(gs)[decision.semantic[1]]
+            if decision.command != f'CHOOSE {choice["ui"]}':
+                raise ValueError('Note policy action and actual CHOOSE disagree')
+            offer = gs['simulator_event_progress']['obtain_card']
+            if offer.get('type') not in {'ATTACK', 'SKILL', 'POWER', 'CURSE'}:
+                raise ValueError('Note public offer requires an actual supported card type')
+            self._omamori_charges(gs)
+            for key in ('seed', 'act', 'floor', 'current_hp', 'max_hp', 'gold', 'potions'):
+                if key not in gs:
+                    raise ValueError(f'Note missing actual resource {key}')
+            self._note = dict(take=effect == 'note_take', offer=real_card_state(offer),
+                              offer_type=offer['type'], before={c['uuid']: c for c in self._augmenter_deck(gs)},
+                              relics=self._augmenter_relics(gs), pick=None)
         if effect.startswith('designer_'):
             choice = next(d for d in designer_choices(gs) if d['index'] == decision.semantic[1])
             if decision.command != f'CHOOSE {choice["ui"]}':
@@ -1680,7 +1854,7 @@ class EventEffectAck:
                     or type(g.get('current_hp')) is not int or g['current_hp'] != 0
                     or g.get('screen_state', {}).get('victory') is not False):
                 raise RuntimeError(f'{event} damage result is not an explicit death terminal')
-            self.pending = None
+            self.pending = self._designer = self._note = None
             return False
         if effect in STAGED_EFFECTS:
             return self._waiting_staged(old, g, effect, frame.get('ready_for_command') is True)
@@ -1692,6 +1866,8 @@ class EventEffectAck:
             return self._waiting_we_meet_again(old, g, frame.get('ready_for_command') is True)
         if effect.startswith('designer_'):
             return self._waiting_designer(old, g, frame.get('ready_for_command') is True)
+        if effect.startswith('note_'):
+            return self._waiting_note(old, g, frame.get('ready_for_command') is True)
         if frame.get('ready_for_command') is not True:
             return True
         if type(g.get('simulator_obtain_pending')) is not bool:

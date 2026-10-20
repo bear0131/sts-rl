@@ -127,6 +127,16 @@ void Deck::transformRandomCards(Random &miscRng, int count) {
 }
 
 void Deck::obtain(GameContext &gc, Card card, int count) {
+    obtainImpl(gc, card, count, true);
+}
+
+void Deck::obtainFromNote(GameContext &gc, Card card) {
+    // NoteForYourself calls onObtainCard and inserts directly, without the
+    // ShowCardAndObtainEffect constructor that consumes an Omamori charge.
+    obtainImpl(gc, card, 1, false);
+}
+
+void Deck::obtainImpl(GameContext &gc, Card card, int count, bool checkOmamori) {
     card = gc.previewObtainCard(card);
     const auto type = card.getType();
 
@@ -141,7 +151,7 @@ void Deck::obtain(GameContext &gc, Card card, int count) {
             break;
 
         case CardType::CURSE:
-            if (gc.relics.has(RelicId::OMAMORI)) {
+            if (checkOmamori && gc.relics.has(RelicId::OMAMORI)) {
                 int &omamoriCount = gc.relics.getRelicValueRef(RelicId::OMAMORI);
                 if (omamoriCount > 0) {
                     int decAmt = std::min(count, omamoriCount);

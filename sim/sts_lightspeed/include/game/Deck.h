@@ -53,6 +53,7 @@ namespace sts {
         void transformRandomCards(Random &miscRng, int count);
 
         void obtain(GameContext &gc, Card card, int count=1); // for all cards
+        void obtainFromNote(GameContext &gc, Card card);
         void obtainRaw(Card card);
 
         void remove(GameContext &gc, int idx);
@@ -66,6 +67,8 @@ namespace sts {
         void removeAllMatching(GameContext &gc, const CardPredicate &p);
 
         [[nodiscard]] fixed_list<int, MAX_SIZE> getUpgradeableCardIdxs() const;
+    private:
+        void obtainImpl(GameContext &gc, Card card, int count, bool checkOmamori);
     };
 
 }

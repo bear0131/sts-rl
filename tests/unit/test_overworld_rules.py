@@ -538,17 +538,28 @@ def test_real_shop_potions_require_capacity_and_no_sozu(relics, potions, can_buy
 
 @pytest.mark.parametrize('kind', ['transform_cards', 'transform_random_cards'])
 def test_real_bridge_preserves_designer_transform_selection_metadata(kind):
+    from tests.bridge_fixtures import real_card
+    deck = [real_card('Strike_R', upgrades=1, index=0), real_card('Defend_R', upgrades=1, index=1)]
+    candidates = [c['uuid'] for c in deck]
     adapter = RealGameAdapter()
     adapter.update({
         'in_game': True,
         'game_state': {
             'screen_type': 'EVENT',
+            'ascension_level': 0, 'gold': 60, 'deck': deck,
+            'simulator_obtain_pending': False,
+            'simulator_event_progress': {'source': 'com.megacrit.cardcrawl.events.shrines.Designer',
+                                         'phase': 'MAIN', 'pending_selection': 'NONE'},
             'choice_list': ['clean up', 'leave'],
             'screen_state': {
                 'event_id': 'Designer',
                 'options': [
-                    {'choice_index': 0, 'kind': kind, 'gold': 60, 'count': 2},
-                    {'choice_index': 1, 'kind': 'lose_hp', 'hp': 3},
+                    {'kind': 'upgrade_card', 'gold': 40, 'disabled': True, 'candidate_uuids': []},
+                    {'choice_index': 0, 'kind': kind, 'gold': 60, 'count': 2,
+                     'disabled': False, 'candidate_uuids': candidates},
+                    {'kind': 'remove_card_upgrade_random', 'gold': 90, 'count': 1, 'disabled': True,
+                     'candidate_uuids': candidates, 'upgrade_uuids': []},
+                    {'choice_index': 1, 'kind': 'lose_hp', 'hp': 3, 'disabled': False},
                 ],
             },
         },

@@ -342,7 +342,16 @@ picks and confirmation are acknowledged before the final DONE dialogue can leave
 Random upgrade/transform targets are not exported in advance. This retains the
 existing EVENT_OPT0..5 meanings and model tensors, and requires a matching rebuilt
 Java exporter. It is source/build checked, not proof of naturally covered services.
-NoteForYourself is still pending its separate actual-card/removal contract.
+Parity-v37 adds NoteForYourself's actual public card instance and current
+acquire/store progress. The offered card stays null during INTRO. CHOOSE uses
+the same complete card serializer as master/GRID cards, not a local default.
+After acquisition its flag-free GRID is REMOVE (not OBTAIN), including the new
+card among eligible candidates. The exact selected `saveCard` and final master
+deck acknowledge storage even if the newly acquired card itself is stored back.
+Native Note insertion shares the normal obtain core but bypasses Omamori's
+effect-constructor interception; other obtain sources keep their original guard.
+This requires the rebuilt native extension and matching Java/Python version;
+source/build checks do not claim natural coverage of every Note or service branch.
 
 A fresh combat attachment already inside the opening Gambling Chip or Toolbox
 selection must initialize its complete actual public root before comparing

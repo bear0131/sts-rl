@@ -3366,7 +3366,7 @@ void GameContext::chooseEventOption(int idx) {
 
         case Event::NOTE_FOR_YOURSELF:
             if (idx == 0) {
-                deck.obtain(*this, noteForYourselfCard);
+                deck.obtainFromNote(*this, noteForYourselfCard);
                 openCardSelectScreen(CardSelectScreenType::REMOVE, 1);
             } else if (idx == 1) {
                 regainControl();

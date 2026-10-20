@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v36";
+    public static final String VERSION = "simulator-parity-v37";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -292,6 +292,7 @@ public final class SimulatorParityExporter {
         String name = event.getClass().getName(), field;
         switch (name) {
             case "com.megacrit.cardcrawl.events.shrines.Designer": field = "curScreen"; break;
+            case "com.megacrit.cardcrawl.events.shrines.NoteForYourself": field = "screen"; break;
             case "com.megacrit.cardcrawl.events.shrines.AccursedBlacksmith":
             case "com.megacrit.cardcrawl.events.exordium.GoldenIdolEvent":
             case "com.megacrit.cardcrawl.events.beyond.MoaiHead": field = "screenNum"; break;
@@ -311,6 +312,15 @@ public final class SimulatorParityExporter {
         HashMap<String, Object> progress = new HashMap<String, Object>();
         progress.put("source", name);
         progress.put("phase", phase instanceof Enum ? ((Enum<?>)phase).name() : phase.toString());
+        if (event instanceof com.megacrit.cardcrawl.events.shrines.NoteForYourself) {
+            boolean publicOffer = !"INTRO".equals(progress.get("phase"));
+            AbstractCard offer = publicOffer
+                ? (AbstractCard)ReflectionHacks.getPrivate(event, event.getClass(), "obtainCard") : null;
+            AbstractCard stored = ((com.megacrit.cardcrawl.events.shrines.NoteForYourself)event).saveCard;
+            progress.put("obtain_card", offer == null ? null : cardRecord(offer));
+            progress.put("stored_card", stored == null ? null : cardRecord(stored));
+            progress.put("card_select_pending", Boolean.valueOf(privateBool(event, event.getClass(), "cardSelect")));
+        }
         if (event instanceof com.megacrit.cardcrawl.events.shrines.Designer) {
             Object option = ReflectionHacks.getPrivate(event, event.getClass(), "option");
             progress.put("pending_selection", ((Enum<?>)option).name());
@@ -337,6 +347,43 @@ public final class SimulatorParityExporter {
         ArrayList<String> result = new ArrayList<String>();
         for (AbstractCard card : group.group) result.add(card.uuid.toString());
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static HashMap<String, Object> cardRecord(AbstractCard card) {
+        try {
+            // Invoke the same patched serializer used for master/GRID cards;
+            // the offered Note object is not yet a member of either group.
+            java.lang.reflect.Method method = GameStateConverter.class.getDeclaredMethod(
+                "convertCardToJson", AbstractCard.class);
+            method.setAccessible(true);
+            return (HashMap<String, Object>)method.invoke(null, card);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Cannot serialize the actual public event card", error);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void augmentNote(HashMap<String, Object> state, AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.shrines.NoteForYourself)
+                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT
+                || !GameStateListener.isWaitingForCommand() || !CommandExecutor.isChooseCommandAvailable()) return;
+        Object phase = ReflectionHacks.getPrivate(event, event.getClass(), "screen");
+        if (!"CHOOSE".equals(((Enum<?>)phase).name())) return;
+        java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");
+        java.util.List<java.util.Map<String, Object>> options =
+            (java.util.List<java.util.Map<String, Object>>)screen.get("options");
+        if (!"NoteForYourself".equals(screen.get("event_id")) || options.size() != 2)
+            throw new IllegalStateException("Note must expose its actual take/leave buttons");
+        for (int i = 0; i < 2; i++) {
+            java.util.Map<String, Object> option = options.get(i);
+            if (!Boolean.FALSE.equals(option.get("disabled")) || !Integer.valueOf(i).equals(option.get("choice_index")))
+                throw new IllegalStateException("Note actual choice availability/index changed");
+            option.put("kind", i == 0 ? "gain_card_then_remove" : "leave");
+        }
+        AbstractCard offer = ReflectionHacks.getPrivate(event, event.getClass(), "obtainCard");
+        if (offer == null) throw new IllegalStateException("Note public offer has no actual card");
+        options.get(0).put("card", cardRecord(offer));
     }
 
     @SuppressWarnings("unchecked")
@@ -543,6 +590,7 @@ public final class SimulatorParityExporter {
         state.put("simulator_event_progress", eventProgress(event));
         augmentWeMeetAgain(state, event);
         augmentDesigner(state, event);
+        augmentNote(state, event);
         state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
@@ -848,7 +896,8 @@ public final class SimulatorParityExporter {
             }
             if ("Bonfire".equals(name)) return "BONFIRE_SPIRITS";
             if ("Duplicator".equals(name)) return "DUPLICATE";
-            if ("TheLibrary".equals(name) || "NoteForYourself".equals(name)
+            if ("NoteForYourself".equals(name)) return "REMOVE";
+            if ("TheLibrary".equals(name)
                     || "NeowEvent".equals(name)) return "OBTAIN";
         }
         return null;
