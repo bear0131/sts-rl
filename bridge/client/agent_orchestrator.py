@@ -534,9 +534,34 @@ def searched_command_still_current(frame, original, command):
             and command.split()[0].lower() in frame.get("available_commands", []))
 
 
+def generated_selection_identity(gs: dict[str, Any] | None) -> tuple | None:
+    """A generated choice is acknowledged by leaving its actual card page."""
+    if (not gs or gs.get("screen_type") != "CARD_REWARD"
+            or gs.get("room_phase") != "COMBAT" or not gs.get("combat_state")):
+        return None
+    screen = gs["screen_state"]
+    context = screen["selection_context"]
+    if context not in {"DISCOVERY", "CODEX"}:
+        return None
+    cards = screen["cards"]
+    if not isinstance(cards, list) or len(cards) != 3:
+        raise RuntimeError("generated selection acknowledgement requires three actual card records")
+    uuids = tuple(card["uuid"] for card in cards)
+    if any(type(uid) is not str or not uid for uid in uuids) or len(set(uuids)) != 3:
+        raise RuntimeError("generated selection acknowledgement requires distinct actual UUIDs")
+    parameters = (screen["generated_count"], screen["generated_free_for_turn"]) if context == "DISCOVERY" else None
+    return (gs["seed"], gs["act"], gs["floor"], context, screen["selection_source"], parameters, uuids)
+
+
 def stale_combat_play_frame(frame: dict[str, Any], pending: dict[str, Any] | None) -> bool:
-    """A mutating command must change its real frame before another decision."""
-    return pending is not None and frame.get("game_state") == pending
+    """Require command progress, not an unrelated monster-intent refresh."""
+    if pending is None:
+        return False
+    current = frame.get("game_state")
+    choice = generated_selection_identity(pending)
+    if choice is not None and generated_selection_identity(current) == choice:
+        return True
+    return current == pending
 
 
 def combat_command_needs_ack(frame: dict[str, Any], command: str) -> bool:
@@ -1130,7 +1155,7 @@ def main() -> None:
                 pending_end_frame = None
                 if stale_combat_play_frame(frame, pending_play_frame):
                     if now - pending_play_since > 10.0:
-                        raise RuntimeError("game state unchanged for 10 seconds after mutating command")
+                        raise RuntimeError("mutating command frame/selection did not advance for 10 seconds")
                     time.sleep(0.05)
                     send("STATE")
                     continue
