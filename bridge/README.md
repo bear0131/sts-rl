@@ -56,6 +56,10 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 
 当前源码要求OBS20 / ACTION8 / compact layout9，与`schemas/entity_ids.py`中当前
 `SIMULATOR_PARITY_EXPORT_VERSION`对应的Java补丁配套；以下版本条目保留各自增量合同。
+v41区分队列准入数`cards_played`与实际非dontTrigger使用数`attacks_played/skills_played`。
+只读观察UseCardAction双参构造，战斗准备初始化、真实回合切换清零；漏初始化/回合倒退拒绝，
+不从GAM准入表或三连遗物余数猜使用次数。目标失效跳过use仍计颈圈/凡庸/怀表，
+不计苦无/手里剑/折扇/开信刀/兵法。配套158原生队列，旧v40拒绝；模型24列/布局不变（BRIDGE159）。
 `player.on_exhaust_power_order`从既有真实powers有序列表保留Dark Embrace/Feel No Pain的
 实际生效顺序；stack不重排，严格根同时持有两者时缺顺序拒绝。配套重建原生与Python，
 不增加Java字段或模型张量；普通复制与NOSL key保留这个会改变后继伤害的顺序（BRIDGE144）。

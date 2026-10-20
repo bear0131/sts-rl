@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v40"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v41"
 
 # Supported native UseCardAction relic callbacks; order comes from the actual
 # acquisition-ordered global relic list, never from this membership inventory.
@@ -226,6 +226,8 @@ LIVE_RELIC_STATE_FIELDS = {
     "Lizard Tail": "lizard_tail_active",
 }
 
+# cards_played counts admitted queue items; attacks/skills count actual onUse,
+# not admitted items skipped for invalidated targets (v41/BRIDGE159).
 LIVE_RELIC_COUNTER_FIELDS = {
     "Centennial Puzzle": "centennial_puzzle_active",
     "Happy Flower": "happy_flower",

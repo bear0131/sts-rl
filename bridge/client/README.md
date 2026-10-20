@@ -142,7 +142,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v40`.
+`current_intent_export: simulator-parity-v41`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -156,7 +156,18 @@ before healing; deriving the old state from the new ratio can incorrectly
 remove Red Skull Strength. Both booleans are required by the paired Python and
 native strict roots, copied/read back and distinguished by search keys.
 They are transition metadata, not added frozen-model counter columns. Deploy
-the exporter, Python and native extension together; v39 roots are not accepted.
+the exporter, Python and native extension together; older roots are not accepted.
+Since v41, `cards_played` counts queue admission, while `attacks_played` and
+`skills_played` count actual non-`dontTriggerOnUseCard` use events. The read-only
+hook observes only the two-argument `UseCardAction` constructor (the one-argument
+overload delegates to it), including purge copies but excluding failed autoplay.
+`preBattlePrep` initializes the observer, and the actual action-manager turn
+resets its per-turn counts. Unobserved ownership or a regressed turn fails;
+the exporter never guesses a use count from a relic's modulo-three display.
+An admitted copy skipped for a half-dead/null enemy still counts for Choker,
+Normality and Pocketwatch, but not Kunai/Shuriken/Fan/Letter Opener/Art of War.
+The native fields and frozen 24 counter columns retain their original meanings
+and widths; deploy v41 with the BRIDGE158 queue fix, not the v40 exporter.
 The v11 exporter identifies DrugDealer's two-card transform grid by its actual
 event class: all three generic grid operation flags are false in the game.
 All GRID candidates and selected cards require complete instance records and

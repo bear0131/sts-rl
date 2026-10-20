@@ -2,6 +2,8 @@ package communicationmod;
 
 import basemod.ReflectionHacks;
 import com.megacrit.cardcrawl.actions.AbstractGameAction;
+import com.megacrit.cardcrawl.actions.GameActionManager;
+import com.megacrit.cardcrawl.actions.utility.UseCardAction;
 import com.megacrit.cardcrawl.cards.AbstractCard;
 import com.megacrit.cardcrawl.cards.DamageInfo;
 import com.megacrit.cardcrawl.characters.AbstractPlayer;
@@ -12,6 +14,7 @@ import com.megacrit.cardcrawl.powers.AbstractPower;
 import com.megacrit.cardcrawl.relics.AbstractRelic;
 import com.megacrit.cardcrawl.screens.select.GridCardSelectScreen;
 import com.megacrit.cardcrawl.core.Settings;
+import com.megacrit.cardcrawl.core.AbstractCreature;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePatch;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePostfixPatch;
 import com.evacipated.cardcrawl.modthespire.lib.SpirePrefixPatch;
@@ -21,14 +24,48 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v40";
+    public static final String VERSION = "simulator-parity-v41";
     private static int lastAttackUnblockedDamage = 0;
+    private static AbstractPlayer cardUseOwner;
+    private static GameActionManager cardUseActions;
+    private static int cardUseTurn = -1;
+    private static int attacksUsedThisTurn;
+    private static int skillsUsedThisTurn;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
     private static final com.megacrit.cardcrawl.shop.StoreRelic[] shopRelics = new com.megacrit.cardcrawl.shop.StoreRelic[3];
     private static final com.megacrit.cardcrawl.shop.StorePotion[] shopPotions = new com.megacrit.cardcrawl.shop.StorePotion[3];
 
     private SimulatorParityExporter() {}
+
+    private static void synchronizeCardUseTurn() {
+        if (cardUseOwner == null || cardUseOwner != AbstractDungeon.player
+                || cardUseActions == null || cardUseActions != AbstractDungeon.actionManager)
+            throw new IllegalStateException("Combat card-use observation was not initialized");
+        if (GameActionManager.turn < cardUseTurn)
+            throw new IllegalStateException("Card-use turn regressed without observed preBattlePrep");
+        if (GameActionManager.turn != cardUseTurn) {
+            cardUseTurn = GameActionManager.turn;
+            attacksUsedThisTurn = 0;
+            skillsUsedThisTurn = 0;
+        }
+    }
+
+    // Patch only the two-argument constructor: its one-argument overload delegates
+    // here. Failed autoplay also constructs this action, but sets dontTrigger.
+    @SpirePatch(clz = UseCardAction.class, method = SpirePatch.CONSTRUCTOR,
+        paramtypez = {AbstractCard.class, AbstractCreature.class})
+    public static final class CardUsePatch {
+        @SpirePostfixPatch
+        public static void afterUseCardAction(AbstractCard card) {
+            if (card.dontTriggerOnUseCard) return;
+            synchronizeCardUseTurn();
+            if (card.type == AbstractCard.CardType.ATTACK)
+                attacksUsedThisTurn = Math.addExact(attacksUsedThisTurn, 1);
+            if (card.type == AbstractCard.CardType.SKILL)
+                skillsUsedThisTurn = Math.addExact(skillsUsedThisTurn, 1);
+        }
+    }
 
     @SpirePatch(clz = ShopScreen.class, method = "init")
     public static class ShopInitPatch {
@@ -794,16 +831,19 @@ public final class SimulatorParityExporter {
                 com.megacrit.cardcrawl.relics.Necronomicon.class,
                 "activated")));
 
-        int attacks = 0;
-        int skills = 0;
+        synchronizeCardUseTurn();
+        int admittedAttacks = 0;
+        int admittedSkills = 0;
         for (AbstractCard card : AbstractDungeon.actionManager.cardsPlayedThisTurn) {
-            if (card.type == AbstractCard.CardType.ATTACK) attacks++;
-            if (card.type == AbstractCard.CardType.SKILL) skills++;
+            if (card.type == AbstractCard.CardType.ATTACK) admittedAttacks++;
+            if (card.type == AbstractCard.CardType.SKILL) admittedSkills++;
         }
+        if (attacksUsedThisTurn > admittedAttacks || skillsUsedThisTurn > admittedSkills)
+            throw new IllegalStateException("Observed card uses exceed admitted card types");
         counters.put("cards_played", Integer.valueOf(
             AbstractDungeon.actionManager.cardsPlayedThisTurn.size()));
-        counters.put("attacks_played", Integer.valueOf(attacks));
-        counters.put("skills_played", Integer.valueOf(skills));
+        counters.put("attacks_played", Integer.valueOf(attacksUsedThisTurn));
+        counters.put("skills_played", Integer.valueOf(skillsUsedThisTurn));
 
         AbstractRelic pellets = player.getRelic("OrangePellets");
         counters.put("orange_attack", Boolean.valueOf(pellets != null &&
@@ -901,6 +941,11 @@ public final class SimulatorParityExporter {
         @SpirePostfixPatch
         public static void afterPreBattle(AbstractPlayer __instance) {
             lastAttackUnblockedDamage = 0;
+            cardUseOwner = __instance;
+            cardUseActions = AbstractDungeon.actionManager;
+            cardUseTurn = GameActionManager.turn;
+            attacksUsedThisTurn = 0;
+            skillsUsedThisTurn = 0;
         }
     }
 
