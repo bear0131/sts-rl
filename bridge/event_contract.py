@@ -1549,6 +1549,7 @@ class EventEffectAck:
             gained = [c for c in current if c['uuid'] not in before]
             expected_relics = dict(self._augmenter_initial_relics)
             gold = old['gold']
+            hp = old['current_hp']
             if effect == 'augmenter_jax':
                 up = int('Toxic Egg 2' in expected_relics)
                 if len(gained) > 1 or any(c['id'] != CARD_ALIASES['J.A.X.'] or c['up'] != up for c in gained):
@@ -1557,6 +1558,8 @@ class EventEffectAck:
                     return True
                 if 'CeramicFish' in expected_relics and 'Ectoplasm' not in expected_relics:
                     gold += 9
+                    if 'Bloody Idol' in expected_relics and 'Mark of the Bloom' not in expected_relics:
+                        hp = min(hp + 5, old['max_hp'])
             else:
                 if gained:
                     raise RuntimeError('Augmenter relic choice unexpectedly added cards')
@@ -1566,7 +1569,7 @@ class EventEffectAck:
                     expected_relics['MutagenicStrength'] = -1
             if (transport_only(gs) is not None and relics == expected_relics
                     and (gs['gold'], gs['current_hp'], gs['max_hp']) ==
-                    (gold, old['current_hp'], old['max_hp'])):
+                    (gold, hp, old['max_hp'])):
                 self.pending = None
                 return False
             return True
@@ -1620,6 +1623,9 @@ class EventEffectAck:
                 hp = min(hp + bonus, max_hp)
         gold = old['gold'] + (9 * len(gained) if 'CeramicFish' in initial_relics
                               and 'Ectoplasm' not in initial_relics else 0)
+        if (gold > old['gold'] and 'Bloody Idol' in initial_relics
+                and 'Mark of the Bloom' not in initial_relics):
+            hp = min(hp + 5 * len(gained), max_hp)
         if complete and (relics, gs['current_hp'], gs['max_hp'], gs['gold']) == (expected_relics, hp, max_hp, gold):
             self.pending = None
             return False

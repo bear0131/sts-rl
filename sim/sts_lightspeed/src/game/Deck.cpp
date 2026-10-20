@@ -183,8 +183,12 @@ void Deck::obtainImpl(GameContext &gc, Card card, int count, bool checkOmamori) 
     }
 
 
-    if (gc.relics.has(RelicId::CERAMIC_FISH)) { // todo check if ceramic fish activates before omamori
-        gc.obtainGold(9 * count);
+    if (gc.relics.has(RelicId::CERAMIC_FISH)) {
+        // Each actually obtained card has its own onObtainCard/gainGold hook.
+        // Combining the amount would lose Bloody Idol's per-card healing.
+        for (int i = 0; i < count; ++i) {
+            gc.obtainGold(9);
+        }
     }
 
     for (int i = 0; i < count; ++i) {
