@@ -1195,10 +1195,15 @@ def main() -> None:
                     combat_search.note_error()
                 log.error("failed to handle frame:\n%s\n%s", line, traceback.format_exc())
                 send("STATE")
+    except Exception:
+        # Iterator/wrapper failures occur before the per-frame try block. They
+        # must reach the supervisor as errors, not look like a clean stdin EOF.
+        log.exception("agent input/session aborted before frame handling")
+        raise
     finally:
         if combat_search is not None:
             combat_search.close()
-        log.info("stdin EOF; session end")
+        log.info("agent session end")
 
 
 if __name__ == "__main__":

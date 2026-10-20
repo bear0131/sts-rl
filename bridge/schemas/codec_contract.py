@@ -273,7 +273,7 @@ def complete_word_tables():
         "card_use_relic_order_contract": {
             "source": "UseCardAction constructor iterates the actual acquisition-ordered player.relics list; no sorted/bitset callback order",
             "membership_not_order": sorted(ON_USE_CARD_RELIC_IDS),
-            "independent ArtOfWar hook": "Java only clears gainEnergyNext on attack, without enqueuing an action; native already derives this from attacksPlayedThisTurn at end turn (Player.cpp), so it is not an ordered queue callback",
+            "independent ArtOfWar hook": "Java only clears gainEnergyNext on attack, without enqueuing an action; native derives this from the preceding attacksPlayedThisTurn in Player.applyStartOfTurnRelics before resetting that counter, so it is not an ordered queue callback",
             "native": "BattleContext.onUseRelicOrder filters the ordered GC inventory; four card-type paths call shared onUseCardRelics after powers and before enemy powers",
             "root": "required on_use_relic_order stable IDs, unique/exactly all owned supported hooks; raw readback checked, clone preserves; real source is the existing ordered global relic list, no new Java field/default",
             "effects": "Pellets before Ink removes NoDraw/Confusion before Draw1; Pellets vs Kunai/Shuriken can change negative-stat cleanse outcomes; preserve callback synchronous/BOTTOM/card-queue behavior",
