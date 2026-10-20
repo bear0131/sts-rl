@@ -319,6 +319,7 @@ def complete_word_tables():
             "audit": "BRIDGE74/75 source reviewed and native built; real F39 MindBloom fight/reward chain passed without Idol/Collar; new special branches still uncovered; no new checkpoint/OBS/ACTION/Java fields",
         },
         "native_reserved_monster_slot_contract": {
+            "slime_boss_double_split": "retain SlimeBoss corpse plus both medium children of each species, dead or alive; only the two completed large-parent corpses leave the native projection and remain in the real historical ledger. Exact seven-to-five roster and species-relative order map real indices, never HP guesses/PAD; native split preserves boss identity for Smoke Bomb (BRIDGE107)",
             "java": "PhilosopherStone/NeowsLament/PreservedInsect and MonsterRoomElite iterate actual monster objects, not summon reservations",
             "native": "BattleContext.init/initRelics + MonsterGroup.applyEmeraldEliteBuff skip id=INVALID before writing stats; burning buff requires ELITE room",
             "mapping": "keep all physical target slots; actual summons initialize their slot and receive onSpawn effects; never clear a corrupt slot merely to normalize as PAD",

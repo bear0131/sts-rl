@@ -472,6 +472,40 @@ class RealCombatSearch:
             return mapping
         if leaders:
             raise ValueError('summon leader has no actual object-slot roster')
+        if len(real['monsters']) > 5 and any(
+                m['id'] == 'SlimeBoss' for m in real['monsters']):
+            # Two completed splits leave seven Java objects but only five
+            # meaningful native slots: the boss and its four medium descendants.
+            # Preserve both dead and living medium instances. Only the two
+            # spent large parents are historical, never unknown/PAD entities.
+            expected_real = ['SlimeBoss', 'AcidSlime_L', 'SpikeSlime_L',
+                             'AcidSlime_M', 'AcidSlime_M', 'SpikeSlime_M', 'SpikeSlime_M']
+            expected_native = ['SlimeBoss', 'AcidSlime_M', 'AcidSlime_M',
+                               'SpikeSlime_M', 'SpikeSlime_M']
+            if (sorted(m['id'] for m in real['monsters']) != sorted(expected_real)
+                    or sorted(m['id'] for m in sim['monsters']) != sorted(expected_native)):
+                raise RuntimeError('Slime Boss double-split roster is incomplete')
+            retired = {}
+            for ri, monster in enumerate(real['monsters']):
+                if monster['id'] not in {'SlimeBoss', 'AcidSlime_L', 'SpikeSlime_L'}:
+                    continue
+                if (not monster['is_dead'] or not monster['gone']
+                        or monster['half_dead'] or monster['is_escaping']
+                        or monster['hp'] != 0 or real['stasis_cards'][ri] is not None):
+                    raise RuntimeError('split parent is not an inert completed death')
+                if monster['id'] != 'SlimeBoss':
+                    retired[ri] = monster
+            # Spawn insertion preserves left-to-right order within each child
+            # species. Map that explicit rank, not old Java indices or HP guesses:
+            # smart positioning can move a child around its parent's dead body.
+            remaining = [ri for ri in range(len(real['monsters'])) if ri not in retired]
+            mapping = {}
+            for si, monster in enumerate(sim['monsters']):
+                ri = next(ri for ri in remaining if real['monsters'][ri]['id'] == monster['id'])
+                mapping[si] = ri
+                remaining.remove(ri)
+            self._retired_monsters = deepcopy(retired)
+            return mapping
         unused = {
             index for index, monster in enumerate(real["monsters"])
             if monster["id"] != "PAD"

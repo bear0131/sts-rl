@@ -3376,19 +3376,20 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
     // vanished while monstersAlive still counted it -> the victory counter
     // never hit 0 and the battle span forever (the crash/log-spam in doc/day_0623).
     //
-    // If shifting the tail would overrun the 5-slot array, first compact out the
-    // dead bodies that are already in arr[]. Dead/halfDead/escaping monsters are
-    // filtered out of every alive-only path (getRandomMonster, victory, AOE), so
-    // dropping their corpses does not change RNG targeting or the living
-    // monsters' relative order — it just reclaims slots for the double split.
+    // On a double split only the retired large-slime bodies can leave the
+    // five-slot projection. Keep both pairs of medium children, including dead
+    // children, and the boss corpse: Smoke Bomb still inspects that boss type.
+    // Never drop arbitrary dead/half-dead/escaping entities to reclaim slots.
     if (m.monsterCount + 2 > static_cast<int>(m.arr.size())) {
         std::array<Monster, 5> compacted;
         int w = 0;
         int newPlaceIdx = placeIdx;
         for (int i = 0; i < m.monsterCount; ++i) {
-            // keep every living monster, plus the splitting slime itself (it is
-            // still alive at this point — it only dies as part of this split)
-            if (i == placeIdx || !m.arr[i].isDeadOrEscaped()) {
+            const auto &old = m.arr[i];
+            const bool retiredLarge = (old.id == MonsterId::ACID_SLIME_L ||
+                old.id == MonsterId::SPIKE_SLIME_L) && old.curHp == 0 &&
+                old.isDying() && !old.isHalfDead() && !old.isEscaping();
+            if (i == placeIdx || !retiredLarge) {
                 if (i == placeIdx) {
                     newPlaceIdx = w;
                 }
@@ -3402,20 +3403,29 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
         placeIdx = newPlaceIdx;
     }
 
+    // The second splitting parent also leaves the finite projection when its
+    // corpse would require a sixth slot. Its two actual children replace it.
+    const bool keepParent = m.monsterCount + 2 <= static_cast<int>(m.arr.size());
+    const int growth = keepParent ? 2 : 1;
+    if (m.monsterCount + growth > static_cast<int>(m.arr.size())) {
+        throw std::runtime_error("slime split cannot preserve all non-retired entities");
+    }
     const auto idx1 = placeIdx;
-    const auto idx2 = placeIdx + 2;
+    const auto idx2 = placeIdx + growth;
     const auto deadIdx = placeIdx + 1;
 
-    // shift the tail (everything after the splitting slime) right by 2
+    // Shift only the actual tail; keep its relative order and entity identity.
     for (int i = m.monsterCount - 1; i > placeIdx; --i) {
-        m.arr[i + 2] = m.arr[i];
-        m.arr[i + 2].idx = i + 2;
+        m.arr[i + growth] = m.arr[i];
+        m.arr[i + growth].idx = i + growth;
     }
 
-    m.arr[deadIdx] = m.arr[placeIdx];
-    m.arr[deadIdx].idx = deadIdx;
-    m.arr[deadIdx].curHp = 0; // the large slime dies when it splits
-    m.arr[deadIdx].isDyingB = true;
+    if (keepParent) {
+        m.arr[deadIdx] = m.arr[placeIdx];
+        m.arr[deadIdx].idx = deadIdx;
+        m.arr[deadIdx].curHp = 0; // the large slime dies when it splits
+        m.arr[deadIdx].isDyingB = true;
+    }
 
     m.arr[idx1] = Monster();
     m.arr[idx1].initSpawnedMonster(bc, mediumSlimeType, idx1, hp);
@@ -3430,7 +3440,7 @@ void Monster::largeSlimeSplit(BattleContext &bc, const MonsterId mediumSlimeType
 
     // parent dies (-1), two children spawn (+2) => net +1 living monster
     m.monstersAlive++;
-    m.monsterCount = std::min(m.monsterCount + 2, static_cast<int>(m.arr.size()));
+    m.monsterCount += growth;
 
     bc.monsterTurnIdx = idx2 + 1;
 }
