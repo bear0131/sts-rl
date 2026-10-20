@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v37";
+    public static final String VERSION = "simulator-parity-v38";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -293,6 +293,7 @@ public final class SimulatorParityExporter {
         switch (name) {
             case "com.megacrit.cardcrawl.events.shrines.Designer": field = "curScreen"; break;
             case "com.megacrit.cardcrawl.events.shrines.NoteForYourself": field = "screen"; break;
+            case "com.megacrit.cardcrawl.events.beyond.Falling": field = "screen"; break;
             case "com.megacrit.cardcrawl.events.shrines.AccursedBlacksmith":
             case "com.megacrit.cardcrawl.events.exordium.GoldenIdolEvent":
             case "com.megacrit.cardcrawl.events.beyond.MoaiHead": field = "screenNum"; break;
@@ -352,14 +353,57 @@ public final class SimulatorParityExporter {
     @SuppressWarnings("unchecked")
     private static HashMap<String, Object> cardRecord(AbstractCard card) {
         try {
-            // Invoke the same patched serializer used for master/GRID cards;
-            // the offered Note object is not yet a member of either group.
+            // The same full serializer as master/GRID cards, also for actual
+            // event targets and offers not yet members of either group.
             java.lang.reflect.Method method = GameStateConverter.class.getDeclaredMethod(
                 "convertCardToJson", AbstractCard.class);
             method.setAccessible(true);
             return (HashMap<String, Object>)method.invoke(null, card);
         } catch (ReflectiveOperationException error) {
             throw new IllegalStateException("Cannot serialize the actual public event card", error);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void augmentFalling(HashMap<String, Object> state, AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.beyond.Falling)
+                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT
+                || !GameStateListener.isWaitingForCommand() || !CommandExecutor.isChooseCommandAvailable()) return;
+        Object phase = ReflectionHacks.getPrivate(event, event.getClass(), "screen");
+        if (!"CHOICE".equals(((Enum<?>)phase).name())) return; // INTRO targets are not public.
+        java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");
+        java.util.List<java.util.Map<String, Object>> options =
+            (java.util.List<java.util.Map<String, Object>>)screen.get("options");
+        if (!"Falling".equals(screen.get("event_id")))
+            throw new IllegalStateException("Falling event identity changed");
+        String[] fields = new String[]{"skillCard", "powerCard", "attackCard"};
+        String[] available = new String[]{"skill", "power", "attack"};
+        AbstractCard.CardType[] types = new AbstractCard.CardType[]{
+            AbstractCard.CardType.SKILL, AbstractCard.CardType.POWER, AbstractCard.CardType.ATTACK};
+        boolean any = false;
+        for (String key : available) any |= privateBool(event, event.getClass(), key);
+        if (!any) {
+            if (options.size() != 1 || !Boolean.FALSE.equals(options.get(0).get("disabled"))
+                    || !Integer.valueOf(0).equals(options.get(0).get("choice_index")))
+                throw new IllegalStateException("Falling empty-deck choice changed");
+            options.get(0).put("kind", "leave");
+            return;
+        }
+        if (options.size() != 3) throw new IllegalStateException("Falling must retain three physical button slots");
+        int choice = 0;
+        for (int i = 0; i < 3; i++) {
+            boolean enabled = privateBool(event, event.getClass(), available[i]);
+            java.util.Map<String, Object> option = options.get(i);
+            if (!Boolean.valueOf(!enabled).equals(option.get("disabled")))
+                throw new IllegalStateException("Falling actual availability changed");
+            option.put("kind", "lose_card");
+            if (!enabled) continue;
+            AbstractCard card = ReflectionHacks.getPrivate(event, event.getClass(), fields[i]);
+            if (card == null || card.type != types[i] || card.inBottleFlame || card.inBottleLightning
+                    || card.inBottleTornado || !AbstractDungeon.player.masterDeck.group.contains(card)
+                    || !Integer.valueOf(choice++).equals(option.get("choice_index")))
+                throw new IllegalStateException("Falling target is not its actual unbottled master instance");
+            option.put("card", cardRecord(card));
         }
     }
 
@@ -591,6 +635,7 @@ public final class SimulatorParityExporter {
         augmentWeMeetAgain(state, event);
         augmentDesigner(state, event);
         augmentNote(state, event);
+        augmentFalling(state, event);
         state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {

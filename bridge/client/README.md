@@ -353,6 +353,17 @@ effect-constructor interception; other obtain sources keep their original guard.
 This requires the rebuilt native extension and matching Java/Python version;
 source/build checks do not claim natural coverage of every Note or service branch.
 
+Parity-v38 adds Falling's actual public target objects. INTRO does not expose
+its preselected future cards. CHOICE carries full master-card snapshots from
+the event's `skillCard`/`powerCard`/`attackCard`, not a lookup by translated name
+or `(id, upgrades)`. Three raw button slots retain disabled positions; frozen
+skill0/power1/attack2 map to the compressed CHOOSE index. When every type is
+absent or bottled, the real one-button choice maps to native leave3. The RESULT
+receipt checks the exact requested UUID removal and every surviving instance,
+so same-printed cards with different accumulated values cannot be interchanged.
+Model tensors, rule scores and native transition logic are unchanged. Deploy
+matching rebuilt Java/Python together, only at an isolated run boundary.
+
 A fresh combat attachment already inside the opening Gambling Chip or Toolbox
 selection must initialize its complete actual public root before comparing
 physical candidates. The native `initialize_selection_root` entry retains the

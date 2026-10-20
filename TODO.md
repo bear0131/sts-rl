@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE139 | 源码/必要构建已修v38，未部署/自然覆盖 | 主动发现Falling用本地化名与(id,upgrades)合并实际master候选，回执同样会接受移走同级同ID但不同misc的另一张。改actual beyond.Falling INTRO/CHOICE/RESULT与CHOICE可见私有目标完整UUID快照、非瓶装与disabled/压缩UI检查；原skill0/power1/attack2/全无leave3保持，完整UUID/状态守恒再放行。不泄露INTRO目标、不增加模型通道/改策略/原生规则；必要Java8构建/保护打包退出0，v38 jar bcc4f8a4、五Python语法与完整diff/外部CardHelper源码复读通过。既有Falling fixture同步真实合同/错同ID实例断言但未运行。当前209固定v37不热换，新版仅自然边界完整新冻，无离线测试。 |
 | BRIDGE138 | 已部署209并接通常规搜索，Note组合未自然覆盖 | Deck.obtain与新的语义明确obtainFromNote共用private obtainImpl，普通来源保留Omamori拦截，Note直接入库不拦截但仍走相同preview/三蛋/Fish/Darkstone/派生牌计数；不暂改遗物计数/复制整套获得逻辑。C++必要28对象构建退出0、native93d1da31，无字段/布局/模型变化，只有Note事件调用新入口；Java37回执要求御守原次数不变与实际saveCard移除。cd5f5ec完整新冻209..219/物理D已运行，实际模型27796模块路径与hash核验、209/F4原128搜索正常；不因普通接入称Note诅咒组合实机已覆盖，无离线测试。 |
 | BRIDGE137 | 已部署；同208/F47正确起点433实机恢复原两张换牌与补抽 | 9a3b701新冻07/nativef680/v35jar3b6，真实日志接管433→内部prefix433/434→最终435/prefix_decisions2，实际CHOOSE3/CHOOSE1/CONFIRM，selected与discard精确Strike_R0/Rage1，补抽Necronomicurse0/Defend_R0，与原05一致，未强制模型或改权重。06误用首个输出命令435当入口导致换0张，旧协议/日志/真实终局保留，不当同轨复现或独立种子。新战斗/事务起点与prefix均显式记账，CLI说明before-prefix，07的初始两次本地preflight失败亦保留/均未部署；源码/语法/普通push完成，无离线测试。07继续同档非START，后续原件恢复/自然终局待审。 |
 | BRIDGE136 | 已部署；同208/F36 nonce1与F38 nonce6开场赌筹实机通过，续F39 | 49b9060/nativef680/v35jar3b6，同自然F36保存2693547e/index294续05，先注入完整实际公共根再严格UID/实例/顺序/mask；模型128搜索自主CONFIRM保留原五牌，三Shapes战后继续，F38 SphereAndTwoShapes的nonce6再次成功。仅新attach/确切开场源/turn1/零出牌弃牌零选择，任务/队列/RNG保留，非一般pending重置，不按位置或新nonce猜手牌。实际模型32508加载pyd路径/hash核验；无离线测试/模型布局预算变化，无START/跳209。旧04失败保留；Toolbox与特殊后继联动未自然覆盖。 |

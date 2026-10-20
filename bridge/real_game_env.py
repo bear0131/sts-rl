@@ -517,8 +517,8 @@ def _screen_potions(
 def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
     """Pass through typed event-button metadata when a bridge supplies it.
 
-    Stock buttons are localized ``text``/``label`` only. Parity-v35..37 add actual
-    WeMeetAgain/Designer/Note ``kind``/resource records; other sources need their own
+    Stock buttons are localized ``text``/``label`` only. Parity-v35..38 add actual
+    WeMeetAgain/Designer/Note/Falling ``kind``/resource records; other sources need their own
     exporter contract. Never infer stable entity IDs from displayed names.
     """
     raw_options = _list_value(ss, "options", context="event screen", required=False)
@@ -1491,11 +1491,14 @@ class RealGameAdapter:
                     event_contract.designer_choices(self.gs)
                 elif ss.get('event_id') == 'NoteForYourself':
                     event_contract.note_choices(self.gs)
+                elif ss.get('event_id') == 'Falling':
+                    event_contract.falling_choices(self.gs)
                 details = _structured_event_choices(ss, len(cl))
                 if ss.get('event_id') == 'Falling':
                     mapping = event_contract.options(self.gs)
                     opts["event_options"] = sorted(mapping)
-                    opts['event_choices'] = [dict(index=d['index'], kind='lose_card', card=_real_card_tuple(d['card']))
+                    opts['event_choices'] = [dict(index=d['index'], kind=d['kind'],
+                                                **({'card': _real_card_tuple(d['card'])} if d['kind'] == 'lose_card' else {}))
                                              for d in event_contract.falling_choices(self.gs)]
                     details = []
                 elif ss.get('event_id') == "N'loth":

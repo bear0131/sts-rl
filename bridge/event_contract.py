@@ -290,6 +290,7 @@ EVENT_PROGRESS_CONTRACTS = {
     'WeMeetAgain': ('shrines.WeMeetAgain', {'INTRO', 'COMPLETE'}),
     'Designer': ('shrines.Designer', {'INTRO', 'MAIN', 'DONE'}),
     'NoteForYourself': ('shrines.NoteForYourself', {'INTRO', 'CHOOSE', 'COMPLETE'}),
+    'Falling': ('beyond.Falling', {'INTRO', 'CHOICE', 'RESULT'}),
     'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
 }
 
@@ -506,6 +507,7 @@ def transport_only(gs):
         'Dead Adventurer': {'FAIL'}, 'Wheel of Change': {'COMPLETE'},
         'Designer': {'INTRO', 'DONE'},
         'NoteForYourself': {'INTRO', 'COMPLETE'},
+        'Falling': {'INTRO', 'RESULT'},
     }
     if event in stages and phase in stages[event]:
         return o['choice_index']
@@ -535,24 +537,43 @@ def transport_only(gs):
 
 
 def falling_choices(gs):
+    """Read the actual public targets; equal printed cards are not instances."""
+    from bridge.schemas.card_state import real_card_state, real_selection_card_states
+    _validate_choice_indices(gs)
+    if (gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != 'Falling'
+            or event_progress(gs, 'Falling')['phase'] != 'CHOICE'):
+        raise ValueError('Falling choices require the actual public CHOICE phase')
+    raw = gs['screen_state'].get('options')
+    if not isinstance(raw, list):
+        raise ValueError('Falling requires its complete actual button list')
+    deck, _ = real_selection_card_states(gs['deck'], [])
+    if any(c.get('type') not in {'ATTACK', 'SKILL', 'POWER', 'CURSE', 'STATUS'} for c in gs['deck']):
+        raise ValueError('Falling requires explicit actual master card types')
+    master = {c['uuid']: c for c in deck}
+    types = ('SKILL', 'POWER', 'ATTACK')
+    available = [any(c.get('type') == typ and not any(
+        c['simulator_card_state'][flag] for flag in ('bottled_flame', 'bottled_lightning', 'bottled_tornado'))
+        for c in gs['deck']) for typ in types]
+    if not any(available):
+        if (len(raw) != 1 or raw[0].get('disabled') is not False or raw[0].get('kind') != 'leave'
+                or type(raw[0].get('choice_index')) is not int or raw[0]['choice_index'] != 0):
+            raise ValueError('Falling empty-candidate leave option mismatch')
+        return [dict(index=3, ui=0, kind='leave')]
+    if len(raw) != 3:
+        raise ValueError('Falling must preserve all three physical button slots')
     result = []
-    rules = [('落地|land', 0, 'SKILL'), ('释放|channel', 1, 'POWER'), ('猛击|strike', 2, 'ATTACK')]
-    for o in gs.get('screen_state', {}).get('options', []):
-        if o.get('disabled'):
+    for index, (row, enabled, typ) in enumerate(zip(raw, available, types)):
+        if row.get('disabled') is not (not enabled) or row.get('kind') != 'lose_card':
+            raise ValueError('Falling button availability/type mismatch')
+        if not enabled:
             continue
-        text = _text(o.get('text', ''))
-        matches = [(i, typ, re.fullmatch(r'\[(?:'+labels+r')\](?:失去|lose)(.+)', text)) for labels,i,typ in rules]
-        matches = [(i,typ,m[1]) for i,typ,m in matches if m]
-        if len(matches) != 1 or o.get('choice_index') is None:
-            raise ValueError(f'unrecognized Falling option: {text}')
-        i,typ,name = matches[0]
-        cards = {(c['id'], c.get('upgrades', 0)): c for c in gs.get('deck', [])
-                 if c.get('type') == typ and _text(c.get('name', '')) == name}
-        if len(cards) != 1:
-            raise ValueError(f'Falling displayed card identity ambiguous/missing: {name}')
-        result.append(dict(index=i, ui=int(o['choice_index']), kind='lose_card', card=next(iter(cards.values()))))
-    if not result or len({d['index'] for d in result}) != len(result):
-        raise ValueError('invalid Falling option set')
+        card = row.get('card')
+        actual = real_card_state(card)
+        if (master.get(actual['uuid']) != actual or card.get('type') != typ
+                or any(actual[flag] for flag in ('bottled_flame', 'bottled_lightning', 'bottled_tornado'))
+                or row['choice_index'] != len(result)):
+            raise ValueError('Falling target is not the exact eligible master instance/UI slot')
+        result.append(dict(index=index, ui=row['choice_index'], kind='lose_card', card=card))
     return result
 
 
@@ -725,7 +746,8 @@ def options(gs):
         return {d['index']: (d['ui'], 'nloth_trade' if d['kind'] == 'lose_relic' else 'leave')
                 for d in nloth_choices(gs)}
     if event == 'Falling':
-        return {d['index']: (d['ui'], 'falling_remove') for d in falling_choices(gs)}
+        return {d['index']: (d['ui'], 'falling_leave' if d['kind'] == 'leave' else 'falling_remove')
+                for d in falling_choices(gs)}
     if event == 'SensoryStone':
         result = {}
         for o in ss.get('options', []):
@@ -1815,9 +1837,12 @@ class EventEffectAck:
                 raise RuntimeError('Nloth duplicate gift variant not yet verified')
         if effect == 'scrap_search':
             scrap_offer(gs)  # Refuse unparsed variants before sending anything.
-        if effect == 'falling_remove':
-            card = next(d['card'] for d in falling_choices(gs) if d['index'] == decision.semantic[1])
-            self.falling_target = (card['id'], card.get('upgrades', 0))
+        if effect in {'falling_remove', 'falling_leave'}:
+            from bridge.schemas.card_state import real_card_state
+            choice = next(d for d in falling_choices(gs) if d['index'] == decision.semantic[1])
+            if decision.command != f'CHOOSE {choice["ui"]}':
+                raise ValueError('Falling semantic action and physical button disagree')
+            self.falling_target = real_card_state(choice['card']) if choice['kind'] == 'lose_card' else None
         if effect.startswith('we_meet_'):
             self._we_meet_choice = next(d for d in we_meet_again_choices(gs)
                                         if d['index'] == decision.semantic[1])
@@ -1924,15 +1949,23 @@ class EventEffectAck:
             # Cards are optional rewards, not guaranteed permanent deck gains.
             self.pending = None
             return False
-        if effect == 'falling_remove':
-            # arm stores the exact selected card; do not accept any deck loss.
+        if effect in {'falling_remove', 'falling_leave'}:
+            from bridge.schemas.card_state import real_selection_card_states
+            if any(g.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+                raise RuntimeError('Falling receipt crossed its actual run/room')
+            if g.get('screen_type') != 'EVENT' or g['screen_state'].get('event_id') != 'Falling':
+                raise RuntimeError('Falling left before its instance receipt')
+            before = {c['uuid']: c for c in real_selection_card_states(old['deck'], [])[0]}
+            after = {c['uuid']: c for c in real_selection_card_states(g['deck'], [])[0]}
             target = self.falling_target
-            count = lambda s: Counter((c['id'], c.get('upgrades', 0)) for c in s.get('deck', []))
-            before, after = count(old), count(g)
-            if before == after:
+            expected = {u: c for u, c in before.items() if target is None or u != target['uuid']}
+            phase = event_progress(g, 'Falling')['phase']
+            if phase == 'CHOICE' and before == after:
                 return True
-            if before - after != Counter({target: 1}) or after - before:
-                raise RuntimeError('Falling removed card identity/count mismatch')
+            if phase != 'RESULT' or after != expected:
+                raise RuntimeError('Falling did not remove exactly its requested master instance')
+            if any(g[k] != old[k] for k in ('current_hp', 'max_hp', 'gold', 'relics', 'potions')):
+                raise RuntimeError('Falling changed unrelated resources')
             self.pending = None
             return False
         deck = lambda s: Counter((c['id'], c.get('upgrades', 0)) for c in s.get('deck', []))

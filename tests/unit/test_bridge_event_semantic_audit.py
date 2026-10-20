@@ -351,28 +351,34 @@ def test_mindbloom_real_rich_label_and_reordered_semantics(event_adapter):
     assert a._options('event')['event'] == 'Mindbloom'
 
 
-def test_falling_maps_by_type_label_not_ui_order_and_checks_exact_loss():
+def test_falling_uses_actual_typed_instance_and_checks_exact_loss():
     from copy import deepcopy
     from types import SimpleNamespace
     from bridge.event_contract import options, EventEffectAck, falling_choices
-    deck = [dict(id='Defend_R', name='防御', type='SKILL', upgrades=0),
-            dict(id='Demon Form', name='恶魔形态', type='POWER', upgrades=0),
-            dict(id='Iron Wave', name='铁斩波+', type='ATTACK', upgrades=1)]
-    gs = dict(deck=deck, screen_type='EVENT', screen_state=dict(event_id='Falling', options=[
-        dict(choice_index=0,text='[猛击] 失去 铁斩波+'),
-        dict(choice_index=1,text='[落地] 失去 防御'),
-        dict(choice_index=2,text='[释放] 失去 恶魔形态')]))
-    assert options(gs) == {2:(0,'falling_remove'),0:(1,'falling_remove'),1:(2,'falling_remove')}
-    assert falling_choices(gs)[0]['card']['upgrades'] == 1
-    ack=EventEffectAck();ack.arm({'game_state':gs},SimpleNamespace(semantic=('event',2)),0)
-    assert ack.waiting({'game_state':gs},1)
-    bad=deepcopy(gs);bad['deck']=bad['deck'][1:]
-    with pytest.raises(RuntimeError,match='identity/count'):
-        ack.waiting({'game_state':bad},2)
-    good=deepcopy(gs);good['deck']=good['deck'][:2]
-    assert not ack.waiting({'game_state':good},3)
-    bad=deepcopy(gs);bad['deck'][2]['name']='铁斩波'
-    with pytest.raises(ValueError,match='identity'):
+    from tests.bridge_fixtures import real_card
+    deck = [dict(real_card('Defend_R', index=0), type='SKILL'),
+            dict(real_card('Demon Form', index=1), type='POWER'),
+            dict(real_card('RitualDagger', upgrades=1, misc=35, index=2), type='ATTACK'),
+            dict(real_card('RitualDagger', upgrades=1, misc=60, index=3), type='ATTACK')]
+    gs = dict(deck=deck, seed=200209, floor=42, act=3, current_hp=60, max_hp=80,
+              gold=14, relics=[], potions=[], simulator_obtain_pending=False,
+              simulator_event_progress=dict(source='com.megacrit.cardcrawl.events.beyond.Falling', phase='CHOICE'),
+              screen_type='EVENT', screen_state=dict(event_id='Falling', options=[
+        dict(choice_index=i, disabled=False, kind='lose_card', card=deepcopy(card), text='public label')
+        for i, card in enumerate(deck[:3])]))
+    assert options(gs) == {0:(0,'falling_remove'),1:(1,'falling_remove'),2:(2,'falling_remove')}
+    assert falling_choices(gs)[2]['card']['uuid'] == deck[2]['uuid']
+    ack=EventEffectAck();ack.arm({'game_state':gs},SimpleNamespace(semantic=('event',2), command='CHOOSE 2'),0)
+    assert ack.waiting({'game_state':gs, 'ready_for_command':True},1)
+    bad=deepcopy(gs);bad['deck']=bad['deck'][:3]
+    bad['simulator_event_progress']['phase']='RESULT'
+    with pytest.raises(RuntimeError,match='exactly its requested master instance'):
+        ack.waiting({'game_state':bad, 'ready_for_command':True},2)
+    good=deepcopy(gs);good['deck']=good['deck'][:2]+good['deck'][3:]
+    good['simulator_event_progress']['phase']='RESULT'
+    assert not ack.waiting({'game_state':good, 'ready_for_command':True},3)
+    bad=deepcopy(gs);bad['screen_state']['options'][2]['card']['misc']=99
+    with pytest.raises(ValueError,match='exact eligible master instance'):
         options(bad)
 
 from bridge.real_game_env import RealGameAdapter
