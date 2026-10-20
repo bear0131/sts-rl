@@ -156,7 +156,7 @@
 
 | BRIDGE13 | 蓝衣女子购药漏扣金币：源码已修，未部署 | GameContext THE_WOMAN_IN_BLUE补20/30/40扣款；独立A0/A15三选项反例旧exit11新0，208场景204通过/对对碰4未支持。生产ff65950b仍含旧规则；部署前需独立Python扩展兼容/固定模型验证和协议标注，真机奖励数量/扣款ACK合同尚待补齐。见worklog/2026-10-19.md“蓝衣女子购药漏扣金币”。 |
 
-| BRIDGE12 | 正式2/14：1胜1负；200208 F2断点待修 | 200207正式F50/567自然死亡已报告，errors/rejections均0；旧200206胜利保留协议差异。200208 F2 Match and Keep缺小游戏支持保护退出，checkpoint-200208-f2-match存档/日志已保全，恢复search13、prior33963.1，不从头重开或跳过。生产native ff65950b、bridge a9f17b1；实现净化之泉/秘密传送门待部署。见worklog/2026-10-19.md“对对碰被模拟器跳过与探针覆盖修正”。 |
+| BRIDGE12 | 翻牌传输未接通；本轮200204 F3同类边界停机 | 历史200207正式死亡/200206胜利及200208 F2断点保留原协议差异，详见worklog/2026-10-19.md。33966c7只修native非法/重复配对，79e1d0a只加公开槽位first_two_match_slots；当前函数仍无生产调用，event_contract.options明确拒绝，Mod翻牌/ACK未实现，并非旧修复丢失。用户后来排除此事件，本轮200204于15:42:26.868在F3 intro/继续前拒绝，同seed原始自然档1e7c4c22...07dc77/79-80HP已保全，未START205。用户现追问旧修复，已诊断，是否恢复处理翻牌传输待明确；不能删除报错或自动猜牌冒充支持。 |
 
 | BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |
 
@@ -169,7 +169,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 200200..203均通关，204..219新版连续实机启动 | 用户授权自动200200..219，休息后已明确恢复并部署全部完成修复；最终TRAIN47/A0/确定性upper/G0/128/native4不变。前三seed两/三/一次自然入口续档及版本转换后胜利；203又经F14故障及用户暂停后原F37续跑，15:37自然F51胜利5-81HP/826分，不能合成无中断胜率。6034596/native b437648e含121/122/Java30为完整冻结，203实际终局ready且进程退出、jar/config及65存档偏好恢复后，15:40启动remaining200204-219；明确continuous-test/auto-start和精确种子顺序，复用同冻结不换模型。每seed一小时、首错同seed自然档恢复、四幕前/原件备份恢复，完整新段存C；Match/Act4排除。旧新真机四seed开局遗物一致，但与原模拟器四个均不同，不按同局面配对。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 200200..203均通关，200204 F3翻牌未支持停机 | 用户授权自动200200..219，休息后已明确恢复并部署全部完成修复；最终TRAIN47/A0/确定性upper/G0/128/native4不变。前三seed两/三/一次自然入口续档及版本转换后胜利；203又经F14故障及用户暂停后原F37续跑，15:37自然F51胜利5-81HP/826分，不能合成无中断胜率。6034596/native b437648e含121/122/Java30完整冻结在203终局/恢复后于15:40用于remaining200204-219，实际START仅204；F2完成战斗，F3因BRIDGE12已知翻牌传输未接通报错退出，原件和65存档偏好已恢复，实际57932/32892退出。自然F3档保留，不跳205；是否恢复处理本轮原排除项待用户明确。原每seed一小时/首错同seed恢复/四幕前/原件备份恢复不变。旧新真机四seed开局遗物一致，但与原模拟器四个均不同，不按同局面配对。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
