@@ -1523,7 +1523,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::WRITHING_MASS_IMPLANT: // 4
-            miscInfo = true;
+            miscInfo = IMPLANT_PENDING;
             if (!bc.player.hasRelic<R::OMAMORI>()) {
                 if (bc.player.hasRelic<R::DARKSTONE_PERIAPT>()) {
                     bc.player.increaseMaxHp(6);
@@ -3093,7 +3093,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                 }
             }
 
-            const bool haveUsedImplant = miscInfo;
+            const bool haveUsedImplant = miscInfo != IMPLANT_NOT_USED;
             auto myRoll = roll;
             while (true) {
 

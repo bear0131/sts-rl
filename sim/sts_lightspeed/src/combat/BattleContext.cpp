@@ -505,7 +505,7 @@ void BattleContext::initRelics(const GameContext &gc) {
 void BattleContext::exitBattle(GameContext &g) const {
     // do this first so that darkstone periapt is overridden by curHp and maxHp are set afterwards
     const auto &m = monsters.arr[0];
-    if (m.id == MonsterId::WRITHING_MASS && m.miscInfo) {
+    if (m.id == MonsterId::WRITHING_MASS && m.miscInfo == Monster::IMPLANT_PENDING) {
         if (player.hasRelic<R::OMAMORI>()) {
             --g.relics.getRelicValueRef(RelicId::OMAMORI);
         } else {

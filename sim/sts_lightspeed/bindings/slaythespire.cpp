@@ -327,6 +327,8 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
         }
         md["wizard_charge"] = m.id == sts::MonsterId::GREMLIN_WIZARD
             ? py::cast(m.miscInfo) : py::none();
+        md["writhing_mass_used_implant"] = m.id == sts::MonsterId::WRITHING_MASS
+            ? py::cast(m.miscInfo != sts::Monster::IMPLANT_NOT_USED) : py::none();
         // This is the first-life death protection, not UnawakenedPower's
         // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
@@ -1003,6 +1005,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     "thief_state",
                     "lagavulin_state",
                     "wizard_charge",
+                    "writhing_mass_used_implant",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1213,6 +1216,16 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     monster.miscInfo = snapshotInteger(m, "wizard_charge", 0, 3);
                 } else if (!m["wizard_charge"].is_none()) {
                     throw std::invalid_argument("non-wizard cannot carry charge state");
+                }
+            }
+            if (m.contains("writhing_mass_used_implant")) {
+                if (monster.id == sts::MonsterId::WRITHING_MASS) {
+                    // Strict real roots load the actual master deck before
+                    // restoring combat state; never obtain the same curse twice.
+                    monster.miscInfo = getBool(m, "writhing_mass_used_implant", false)
+                        ? sts::Monster::IMPLANT_SETTLED : sts::Monster::IMPLANT_NOT_USED;
+                } else if (!m["writhing_mass_used_implant"].is_none()) {
+                    throw std::invalid_argument("non-WrithingMass cannot carry an implant flag");
                 }
             }
             if (m.contains("reactive")) {

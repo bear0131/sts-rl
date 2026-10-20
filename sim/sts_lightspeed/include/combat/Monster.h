@@ -29,6 +29,13 @@ namespace sts {
     };
 
 struct Monster {
+    // Writhing Mass uses miscInfo for both its one-shot move and the deferred
+    // master-deck update. A real root already has that update in its deck.
+    enum WrithingImplantState {
+        IMPLANT_NOT_USED = 0,
+        IMPLANT_PENDING = 1,
+        IMPLANT_SETTLED = 2,
+    };
     static constexpr int MAX_BLOCK = 999;
     static constexpr int MAX_STRENGTH = 999;
     static int cappedStrength(int value) {
@@ -98,7 +105,7 @@ struct Monster {
         // bronze orb have used stasis
         // bronze automaton lastBoostWasFlail
         // spiker thorn buff count
-        // writhing mass used implant
+        // writhing mass WrithingImplantState
         // darkling d
         // time eater has used haste
         // awakened one isPhase2

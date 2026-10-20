@@ -524,6 +524,13 @@ def complete_word_tables():
             "native": "Monster.miscInfo, already part of search key; no new policy tensor",
             "timing": "increment on charge, reset on every Blast including A17",
         },
+        "writhing_mass_implant_transport": {
+            "java": "WrithingMass.usedMegaDebuff -> simulator_writhing_mass_used_implant; required boolean for this species, explicit null otherwise (v23)",
+            "canonical": "writhing_mass_used_implant in real/native full state, strict root and diff; never infer from recent moves or an existing Parasite",
+            "native": "Monster.miscInfo named states: IMPLANT_NOT_USED=0, IMPLANT_PENDING=1, IMPLANT_SETTLED=2; both used states prohibit another Implant and are distinguished by the existing NOSL key/clone",
+            "master_deck": "real root first loads the actual master deck, then restores used=true as SETTLED; exitBattle only obtains Parasite/consumes Omamori for a newly simulated PENDING effect, never again for a real settled effect",
+            "scope": "normal settled combat root; no tensor/action layout change, no claim that arbitrary pending Java actions or every monster-private field are restored (BRIDGE95/28/37)",
+        },
         "monster_intent_damage_contract": {
             "java_source": "AbstractMonster.getIntentDmg / intentDmg",
             "wire": "move_adjusted_damage",

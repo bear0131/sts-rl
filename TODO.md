@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE95 | 源码已修，v23/原生已构建，待实机 | WrithingMass实际usedMegaDebuff经v23→canonical→strict native→diff恢复，非本物种null/未知拒绝；miscInfo具名三态区分未用/模拟待写回/真机已结算，禁止重复预测植入或exit重复Parasite/Omamori。纯模拟0→1行为、NOSL key/clone及模型布局保留；源码/构建完成，未实机，无离线测试。 |
 | BRIDGE94 | 源码已修并构建，特殊分支待实机 | triggerAndMoveToExhaustPile的DeadBranch/DarkEmbrace按实际areMonstersBasicallyDead拒绝胜利后的新生成/抽牌；最后一击后的UseCard收尾仍处理消耗、FNP、Charon等，半死复活不当终局。不改通用DrawCards；源码/构建完成，未自然实机覆盖，无离线测试/权重或布局修改。 |
 | BRIDGE93 | 源码已修并构建，特殊分支待实机 | 原生Havoc/Mayhem失败autoplay补BOTTOM无onUse的UseCard收尾，防已出抽牌堆的牌消失；purge复制不再绕过canUse，自动出牌同样受回合结束/VelvetChoker/Normality限制。共用ResolveUnplayedCard保留消耗/Spoon/复制消失，正常回合末诅咒另走原分支；源码/构建完成，未自然实机覆盖，无离线测试/权重或布局修改。 |
 | BRIDGE92 | 源码已修并复读，死亡组合待实机 | EventEffectAck补ForgottenAltar献祭、SensoryStone付血2/3组、Nest拿匕首、WindingHalls拥抱疯狂的真实死亡回执；同seed/act/floor且明确GAME_OVER/victory=false/HP0才释放，先于延迟obtain等待。Winding伤害分支独立效果关键词，语义ID不变；不把复活/普通零变化当死亡，无原生/权重改动。源码复读/语法检查完成，自然死亡组合未覆盖，无离线行为测试。 |

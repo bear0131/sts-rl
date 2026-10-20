@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v22";
+    public static final String VERSION = "simulator-parity-v23";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -170,6 +170,8 @@ public final class SimulatorParityExporter {
         state.put("simulator_lagavulin_state", lagavulin);
         state.put("simulator_wizard_charge", monster instanceof com.megacrit.cardcrawl.monsters.exordium.GremlinWizard
             ? Integer.valueOf(privateInt(monster, com.megacrit.cardcrawl.monsters.exordium.GremlinWizard.class, "currentCharge")) : null);
+        state.put("simulator_writhing_mass_used_implant", monster instanceof com.megacrit.cardcrawl.monsters.beyond.WrithingMass
+            ? Boolean.valueOf(privateBool(monster, com.megacrit.cardcrawl.monsters.beyond.WrithingMass.class, "usedMegaDebuff")) : null);
         // UnawakenedPower is removed at the first lethal hit, while the room's
         // death protection remains until the queued CanLoseAction executes.
         state.put("unawakened", Boolean.valueOf(

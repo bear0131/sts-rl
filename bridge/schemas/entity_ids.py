@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v22"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v23"
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -26,6 +26,7 @@ JSON_PRESENCE_CONTRACTS = {
     'simulator_thief_state': 'required key for every monster; Looter/Mugger actual stolenGold/slashCount/goldAmt including dead/escaping entities; explicit null only for other species',
     'simulator_lagavulin_state': 'required monster key; Lagavulin gameplay sleep flag and completed idle turns; explicit null for other species, never infer sleep from SLEEP/STUN shared model token',
     'simulator_wizard_charge': 'required monster key; actual GremlinWizard.currentCharge 0..3, explicit null for other species',
+    'simulator_writhing_mass_used_implant': 'required monster key; actual WrithingMass.usedMegaDebuff boolean, explicit null for other species; never infer from move history or Parasite inventory',
     'simulator_summon_slots': 'required combat key; actual leader reference slots and explicit queued-spawn flag, null for non-summon encounters; no guessed corpse compaction',
     'simulator_event_progress': 'actual audited event class and phase/counters, explicit null for other event classes; transport-only, never future random outcomes',
     'simulator_obtain_pending': 'actual unfinished ShowCardAndObtainEffect across all four effect queues; required by staged event receipts',

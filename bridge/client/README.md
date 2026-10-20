@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v22`.
+`current_intent_export: simulator-parity-v23`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -212,7 +212,16 @@ UUID comes from the actual original hovered card, never the animated replacement
 The adapter confirms that preview once; staged events also match the requested
 physical UUID before allowing confirmation. Missing fields are rejected.
 
-Do not mix v22 Python with an older jar/native extension. Model tensor layouts
+Since v23 each monster also exports `simulator_writhing_mass_used_implant`:
+the actual Writhing Mass `usedMegaDebuff` boolean, or explicit null for other
+species. It is restored and compared, not inferred from recent moves or Parasite
+ownership. A settled real root already loads the actual master deck, so its
+used flag must not cause another curse/Omamori charge at native combat exit.
+The native miscInfo states distinguish a newly simulated pending Implant from
+an already-settled real one; both prohibit a second Implant. Rebuild the native
+extension together with the Java helper.
+
+Do not mix v23 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.
