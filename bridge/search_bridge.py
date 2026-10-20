@@ -815,6 +815,10 @@ class RealCombatSearch:
         def semantic_pick_max(desc: dict[str, Any]) -> int:
             raw = int(desc["pick_max"])
             if bool(desc["multi"]):
+                # Elixir's Java 99 sentinel becomes the actual hand size in
+                # the adapter; native keeps its historical ten-card limit.
+                # Equal physical candidates and effective caps mean the same
+                # subsets, without changing either policy input descriptor.
                 return min(raw, len(desc["candidates"]))
             return raw
 
@@ -827,12 +831,16 @@ class RealCombatSearch:
                 )
             return int(desc["pick_remaining"])
 
-        for key in ("zone", "pick_min", "pick_max", "can_pick_zero", "can_pick_any"):
+        for key in ("zone", "pick_min", "can_pick_zero", "can_pick_any"):
             if real_desc[key] != sim_desc[key]:
                 raise RuntimeError(
                     f"combat selection {key} mismatch "
                     f"real={real_desc[key]!r} sim={sim_desc[key]!r}")
 
+        if semantic_pick_max(real_desc) != semantic_pick_max(sim_desc):
+            raise RuntimeError(
+                "combat selection effective pick_max mismatch "
+                f"real={real_desc['pick_max']!r} sim={sim_desc['pick_max']!r}")
         if semantic_pick_remaining(real_desc) != semantic_pick_remaining(sim_desc):
             raise RuntimeError(
                 "combat selection pick_remaining mismatch "
@@ -843,11 +851,6 @@ class RealCombatSearch:
             # A permutation needs a whole-plan transport, not per-pick renumbering.
             if real_order != list(range(len(real_order))) or sim_handles != real_handles:
                 raise RuntimeError("multi-selection physical order differs")
-            if semantic_pick_max(real_desc) != semantic_pick_max(sim_desc):
-                raise RuntimeError(
-                    "combat selection pick_max mismatch "
-                    f"real={real_desc.get('pick_max')!r} "
-                    f"sim={sim_desc.get('pick_max')!r}")
             if int(real_desc["cards_in_hand"]) != int(sim_desc["cards_in_hand"]):
                 raise RuntimeError(
                     "combat selection cards_in_hand mismatch "

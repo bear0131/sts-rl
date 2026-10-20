@@ -375,6 +375,12 @@ def complete_word_tables():
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
         "monster_move_canonical_to_real": dict(CS._MONSTER_CANON2REAL),
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,
+        "multi_selection_cap_alignment": {
+            "source": "Elixir.use -> ExhaustAction(false,true,true), Purity.use -> bounded ExhaustAction; native ExhaustMany (BRIDGE109)",
+            "comparison": "after exact candidate physical identity/state validation, MULTI compares min(pick_max,candidate_count); SINGLE/GRID retains exact requested pick_max",
+            "guards": "context, zone, pick_min, optionality, selected instances, candidate order/handles and cards_in_hand remain exact; differing effective cap still rejects",
+            "compatibility": "Java 99 unbounded sentinel normalizes to actual hand while native Elixir retains ten; compare equivalent legal subsets without rewriting native observations, checkpoint layouts or supplying PAD candidates",
+        },
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),
         "event_progress_contracts": {
