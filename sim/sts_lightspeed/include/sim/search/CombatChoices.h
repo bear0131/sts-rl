@@ -28,7 +28,7 @@ inline CardInstance combatChoiceCard(const BattleContext &bc, int zone, int inde
         case 2: return bc.cards.drawPile[index];
         case 3: return bc.cards.discardPile[index];
         case 4: return bc.cards.exhaustPile[index];
-        case 5: return CardInstance(bc.cardSelectInfo.cards[index]);
+        case 5: return bc.makeCardCopy(bc.cardSelectInfo.cards[index]);
         default: throw std::invalid_argument("combat choice has no card zone");
     }
 }

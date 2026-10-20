@@ -188,7 +188,7 @@ void BattleContext::initRelics(const GameContext &gc) {
 
             case R::ENCHIRIDION: {
                 const auto cardId = getTrulyRandomCardInCombat(cardRandomRng, p.cc, CardType::POWER);
-                CardInstance c(cardId);
+                auto c = makeCardCopy(cardId);
                 c.setCostForTurn(0);
                 addToBot( Actions::MakeTempCardInHand(c) );
                 break;
@@ -1388,7 +1388,7 @@ void BattleContext::useSkillCard() {
             // through its queued action. X/unplayable costs are not reduced.
             const auto type = c.getId() == CardId::CHRYSALIS ? CardType::SKILL : CardType::ATTACK;
             for (int i = 0; i < (up ? 5 : 3); ++i) {
-                CardInstance generated(getTrulyRandomCardInCombat(cardRandomRng, player.cc, type));
+                auto generated = makeCardCopy(getTrulyRandomCardInCombat(cardRandomRng, player.cc, type));
                 if (generated.cost > 0) {
                     generated.cost = 0;
                     generated.costForTurn = 0;
@@ -1486,7 +1486,7 @@ void BattleContext::useSkillCard() {
             // Java chooses the attack in use(), before any queued on-play
             // reactions can draw/randomize another card.
             const auto id = getTrulyRandomCardInCombat(cardRandomRng, player.cc, CardType::ATTACK);
-            CardInstance generated(id);
+            auto generated = makeCardCopy(id);
             generated.setCostForTurn(0);
             addToBot(Actions::MakeTempCardInHand(generated));
             break;
@@ -1501,7 +1501,7 @@ void BattleContext::useSkillCard() {
             // resolves generated cards in sample order (also when hand is full).
             for (int i = 0; i < (up ? 2 : 1); ++i) {
                 const auto id = sts::getTrulyRandomColorlessCardInCombat(cardRandomRng);
-                addToBot(Actions::MakeTempCardInHand(id));
+                addToBot(Actions::MakeTempCardInHand(makeCardCopy(id)));
             }
             break;
 
@@ -2772,6 +2772,15 @@ void BattleContext::playTopCardInDrawPile(int monsterTargetIdx, bool exhausts) {
     addToTopCard(item);
 }
 
+CardInstance BattleContext::makeCardCopy(CardId id) const {
+    CardInstance card(id);
+    // BloodForBlood.makeCopy discounts a NEW card for past hits. Copies of
+    // existing cards instead preserve their own (possibly overridden) cost.
+    if (id == CardId::BLOOD_FOR_BLOOD)
+        card.updateCost(-player.timesDamagedThisCombat);
+    return card;
+}
+
 void BattleContext::moveToHandHelper(CardInstance c) {
     if (cards.cardsInHand < CardManager::MAX_HAND_SIZE) {
         cards.moveToHand(c);
@@ -3122,7 +3131,7 @@ void BattleContext::triggerAndMoveToExhaustPile(CardInstance c) {
     // reject a finished fight before sampling/queuing anything.
     if (player.hasRelic<R::DEAD_BRANCH>() && !monsters.areMonstersBasicallyDead()) {
         CardId id = getTrulyRandomCardInCombat(cardRandomRng, player.cc);
-        addToBot(Actions::MakeTempCardInHand(id));
+        addToBot(Actions::MakeTempCardInHand(makeCardCopy(id)));
     }
 
     const auto darkEmbrace = [&] {
@@ -3237,7 +3246,7 @@ void BattleContext::chooseArmamentsCard(int handIdx) {
 }
 
 void BattleContext::chooseCodexCard(CardId id) {
-    CardInstance c(id);
+    auto c = makeCardCopy(id);
     c.uniqueId = static_cast<std::int16_t>(cards.nextUniqueCardId++);
     cards.notifyAddCardToCombat(c);
     cards.shuffleIntoDrawPile(cardRandomRng, c);
@@ -3339,7 +3348,7 @@ bool BattleContext::chooseLiquidMemoriesCard(int discardIdx) {
 
 void BattleContext::chooseDiscoveryCard(CardId id) {
     const auto discoveryAmount = cardSelectInfo.data0;
-    CardInstance c(id);
+    auto c = makeCardCopy(id);
     if (cardSelectInfo.discoveryFreeForTurn) c.setCostForTurn(0);
 
     for (int i = 0; i < discoveryAmount; ++i) {

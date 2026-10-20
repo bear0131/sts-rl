@@ -196,6 +196,9 @@ namespace sts {
 
         void playTopCardInDrawPile(int monsterTargetIdx, bool exhausts);
 
+        // A fresh AbstractCard.makeCopy, not a copy of an existing instance.
+        // Capture combat-dependent base cost before any source-specific override.
+        [[nodiscard]] CardInstance makeCardCopy(CardId id) const;
         void moveToHandHelper(CardInstance c);
         // Generated/returned-copy arrival, after identity and combat bookkeeping.
         // Unlike a plain transfer, ShowCardAndAddToHandEffect refreshes hand costs.
