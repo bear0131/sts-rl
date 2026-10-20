@@ -165,6 +165,7 @@ void Monster::preBattleAction(BattleContext &bc) {
         case MonsterId::GIANT_HEAD:     // game adds slow power
             setHasStatus<MS::SLOW>(true);
             setStatus<MS::SLOW>(0);
+            if (asc18) --miscInfo;
             break;
 
         case MonsterId::GREMLIN_LEADER: // game adds MinionPower to all gremlins
@@ -1274,7 +1275,6 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::THE_COLLECTOR_BUFF: { //3
             const int strAmounts[3] {3, 4, 5};
-            const int blockAmounts[3] {15, 18, 23};
 
             for (int i = 0; i < 2; ++i) {
                 auto &torchHead = bc.monsters.arr[i];
@@ -1283,7 +1283,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
                 }
             }
             buff<MS::STRENGTH>(strAmounts[bossDiffIdx]);
-            addBlock(blockAmounts[bossDiffIdx]);
+            addBlock((asc9 ? 18 : 15) + (asc19 ? 5 : 0));
 
             bc.addToBot(Actions::RollMove(idx));
             break;
@@ -1295,9 +1295,9 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::THE_COLLECTOR_MEGA_DEBUFF: // 4
-            bc.addToBot( Actions::DebuffPlayer<PS::WEAK>(3, true) );
-            bc.addToBot( Actions::DebuffPlayer<PS::VULNERABLE>(3, true) );
-            bc.addToBot( Actions::DebuffPlayer<PS::FRAIL>(3, true) );
+            bc.addToBot( Actions::DebuffPlayer<PS::WEAK>(asc19 ? 5 : 3, true) );
+            bc.addToBot( Actions::DebuffPlayer<PS::VULNERABLE>(asc19 ? 5 : 3, true) );
+            bc.addToBot( Actions::DebuffPlayer<PS::FRAIL>(asc19 ? 5 : 3, true) );
             bc.addToBot( Actions::RollMove(idx) );
             break;
 
@@ -1547,10 +1547,8 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::GIANT_HEAD_IT_IS_TIME: { // 2
-            const auto t = std::min(bc.getMonsterTurnNumber()-5, 6) * 5;
-            const auto damage = (asc3 ? 40 : 30) + t;
-            attackPlayerHelper(bc, damage); // todo this can be done immediately
-            bc.noOpRollMove();
+            attackPlayerHelper(bc, (asc3 ? 40 : 30) - miscInfo * 5);
+            bc.addToBot(Actions::RollMove(idx));
             break;
         }
 
@@ -3169,9 +3167,11 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 1 glare
             // 2 it is time
             // 3 count
-            if (bc.getMonsterTurnNumber() >= 4) {
+            if (monsterData <= 1) {
+                if (monsterData > -6) --monsterData;
                 return MMID::GIANT_HEAD_IT_IS_TIME;
             }
+            --monsterData;
 
             if (roll < 50) {
                 if (!lastTwoMoves(MMID::GIANT_HEAD_GLARE)) {

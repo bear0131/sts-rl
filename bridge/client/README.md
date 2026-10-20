@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v26`.
+`current_intent_export: simulator-parity-v27`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -225,7 +225,8 @@ Since v24 `simulator_move_state` contains the exact audited AI fields for
 Time Eater, Red Slaver, Bronze Orb, Spiker, Champ and Bronze Automaton. V25 adds
 Book of Stabbing's actual `stabCount`, including during its single-stab intent.
 V26 adds both Louse species' `biteDamage`, Darkling's `nipDmg` and Guardian's
-`dmgThreshold`, including during non-attacking/defensive intents; other
+`dmgThreshold`, including during non-attacking/defensive intents. V27 adds
+Giant Head's actual `count` (-6..5), including its A18 pre-battle decrement; other
 species have explicit null. `monster_move_state_fields` lists each actual Java
 field, type and native domain. Canonical state, strict native restoration and
 diff retain all of them. One-shot flags are set at the actual intent-selection
@@ -244,7 +245,11 @@ the ascension-specific range, so execution must not add another ascension bonus.
 Guardian's next-cycle threshold increments on entering Defensive Mode and is
 distinct from the remaining Mode Shift power amount.
 
-Do not mix v26 Python with an older jar/native extension. Model tensor layouts
+Giant Head's large-attack intent, damage and next move all use its actual
+countdown, not the global turn number. The decrement on A18+ happens after
+the initial move selection, matching the game's pre-battle callback.
+
+Do not mix v27 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

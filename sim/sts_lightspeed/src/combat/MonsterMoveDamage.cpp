@@ -73,9 +73,7 @@ DamageInfo Monster::getMoveBaseDamage(const BattleContext &bc) const {
 
         case MonsterMoveId::GIANT_HEAD_COUNT:               return {13};
         case MonsterMoveId::GIANT_HEAD_IT_IS_TIME: {
-            const auto t = std::min(bc.getMonsterTurnNumber()-5, 6) * 5;
-            const auto damage = (asc3 ? 40 : 30) + t;
-            return {damage};
+            return {(asc3 ? 40 : 30) - miscInfo * 5};
         }
 
         case MonsterMoveId::GREEN_LOUSE_BITE:               return {miscInfo};

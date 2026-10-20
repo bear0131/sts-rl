@@ -364,6 +364,9 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
             case sts::MonsterId::THE_GUARDIAN:
                 moveState["damage_threshold"] = m.miscInfo;
                 break;
+            case sts::MonsterId::GIANT_HEAD:
+                moveState["count"] = m.miscInfo;
+                break;
             default:
                 break;
         }
@@ -1184,6 +1187,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     case sts::MonsterId::RED_LOUSE: singleField = "bite_damage"; break;
                     case sts::MonsterId::DARKLING: singleField = "nip_damage"; break;
                     case sts::MonsterId::THE_GUARDIAN: singleField = "damage_threshold"; break;
+                    case sts::MonsterId::GIANT_HEAD: singleField = "count"; break;
                     default: break;
                 }
                 if (singleField || monster.id == sts::MonsterId::THE_CHAMP) {
@@ -1210,6 +1214,8 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         } else if (monster.id == sts::MonsterId::THE_GUARDIAN) {
                             monster.miscInfo = snapshotInteger(
                                 state, singleField, 30, std::numeric_limits<int>::max());
+                        } else if (monster.id == sts::MonsterId::GIANT_HEAD) {
+                            monster.miscInfo = snapshotInteger(state, singleField, -6, 5);
                         } else {
                             monster.miscInfo = getBool(state, singleField, false) ? 1 : 0;
                         }

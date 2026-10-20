@@ -527,13 +527,20 @@ def complete_word_tables():
         },
         "monster_move_state_fields": MONSTER_MOVE_STATE_CONTRACTS,
         "monster_move_state_transport": {
-            "wire": "v26 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
-            "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns, Book actual stabCount, Louse actual biteDamage, Darkling actual nipDmg, Guardian actual dmgThreshold; existing NOSL hash and clone retain it",
+            "wire": "v27 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
+            "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns, Book actual stabCount, Louse actual biteDamage, Darkling actual nipDmg, Guardian actual dmgThreshold, GiantHead count -6..5; existing NOSL hash and clone retain it",
             "timing": "usedHaste and usedStasis set at intent selection, usedEntangle at execution even when Artifact blocks, Spiker increments on Spike; Champ counter increments per getMove and resets at Taunt; Automaton post-beam Stun/Boost does not increment numTurns",
             "book_intent": "restore actual stabCount before checking visible hits; MultiStab must match, SingleStab stays one hit without resetting the hidden count; increment on selected MultiStab and also on A18+ SingleStab, reject native integer overflow (BRIDGE101)",
             "random_base_damage": "Louse biteDamage and Darkling nipDmg survive all intents; strict restoration precedes visible attack damage checks, conflicts rejected; Darkling construction already chooses A2 9..13, never add another 2 (BRIDGE102)",
             "guardian_threshold": "actual dmgThreshold survives offensive/defensive roots; increment 10 upon entering Defensive Mode, use unchanged at Twin Slam return; remaining ModeShift power is distinct from next-cycle threshold, integer overflow rejected (BRIDGE102)",
-            "scope": "eleven audited species (BRIDGE98/101/102); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
+            "giant_head_count": "count starts at 5; initial getMove decrements, A18+ preBattle decrements once more; each subsequent getMove decrements to -6 floor, ItIsTime selects when previous count <=1 and damage is startingDeathDmg -5*count; native execution and visible intent use the same restored field (BRIDGE103)",
+            "scope": "twelve audited species (BRIDGE98/101/102/103); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
+        },
+        "collector_ascension_effects": {
+            "source": "TheCollector constructor and takeTurn -> native Monster::takeTurn (BRIDGE103)",
+            "block": "Buff grants 15 below A9, 18 at A9..18, 23 at A19+; do not share the strength 4/19 tier index",
+            "mega_debuff": "Weak, Vulnerable and Frail each 5 at A19+, otherwise each 3; preserve source=true and existing queue order",
+            "scope": "effect amounts only; no action numbering, current intent, model tensor or checkpoint change",
         },
         "slaver_move_selection": {
             "java": "SlaverBlue.getMove / SlaverRed.getMove; native Monster::getMoveForRoll (BRIDGE99)",

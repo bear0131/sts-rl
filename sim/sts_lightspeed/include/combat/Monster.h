@@ -108,6 +108,7 @@ struct Monster {
         // writhing mass WrithingImplantState
         // darkling actual nipDmg (already includes ascension roll range)
         // guardian actual dmgThreshold (increases when entering defensive mode)
+        // giant head actual count (-6..5), independent of global turn
         // time eater has used haste
         // awakened one isPhase2
         int miscInfo = 0;

@@ -140,6 +140,10 @@ void Monster::construct(BattleContext &bc, MonsterId monsterId, int monsterIdx) 
             }
             break;
 
+        case MonsterId::GIANT_HEAD:
+            miscInfo = 5; // Java count, before the first getMove/preBattleAction.
+            break;
+
         default:
             break;
     }
