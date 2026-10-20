@@ -2588,7 +2588,7 @@ void BattleContext::drinkPotion(int idx, int target) {
             break;
 
         case Potion::GAMBLERS_BREW:
-            addToBot( Actions::GambleAction() );
+            if (cards.cardsInHand > 0) addToBot(Actions::GambleAction());
             break;
 
         case Potion::GHOST_IN_A_JAR:
@@ -2750,6 +2750,8 @@ void BattleContext::discardAtEndOfTurnHelper() {
     }
 
     int temp = cards.cardsInHand;
+    if (temp > std::numeric_limits<std::int16_t>::max() - player.cardsDiscardedThisTurn)
+        throw std::overflow_error("discard count exceeds native storage");
     for (int i = temp-1; i >= 0; --i) {
         cards.notifyRemoveFromHand(cards.hand[i]);
         --cards.cardsInHand;
@@ -3434,6 +3436,8 @@ void BattleContext::chooseGambleCards(const fixed_list<int, 10> &idxs) {
     if (idxs.empty()) {
         return;
     }
+    if (idxs.size() > std::numeric_limits<std::int16_t>::max() - player.cardsDiscardedThisTurn)
+        throw std::overflow_error("discard count exceeds native storage");
     auto listCopy = idxs;
     std::sort(listCopy.begin(), listCopy.end(), [](auto a, auto b) { return b < a; });
 
@@ -3447,6 +3451,7 @@ void BattleContext::chooseGambleCards(const fixed_list<int, 10> &idxs) {
     for (const auto &c : selected) {
         cards.moveToDiscardPile(c);
         onCardDrawOrDiscard();
+        ++player.cardsDiscardedThisTurn; // GameActionManager.incrementDiscard(false)
         onManualDiscard(c);
     }
 }
