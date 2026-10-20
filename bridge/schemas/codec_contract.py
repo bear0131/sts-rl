@@ -542,6 +542,11 @@ def complete_word_tables():
             "mega_debuff": "Weak, Vulnerable and Frail each 5 at A19+, otherwise each 3; preserve source=true and existing queue order",
             "scope": "effect amounts only; no action numbering, current intent, model tensor or checkpoint change",
         },
+        "boss_buff_and_debuff_order": {
+            "champ": "Champ constructor strAmt 2/3/4 at A0/4/19; Gloat grants strAmt, Anger grants 3*strAmt =6/9/12 (BRIDGE104)",
+            "time_eater_ripple": "TimeEater.takeTurn grants 20 block, then Vulnerable1, Weak1, A19+ Frail1 in that order; Artifact must block the first eligible actual debuff, not the swapped status (BRIDGE104)",
+            "scope": "effect values/order only; existing source=true and status transport retained, no policy tensor/action ID change",
+        },
         "slaver_move_selection": {
             "java": "SlaverBlue.getMove / SlaverRed.getMove; native Monster::getMoveForRoll (BRIDGE99)",
             "repeat_limit": "A17+ Rake/Scrape cannot follow the same move; below A17 disallow only after two consecutive same moves, not an OR of the two permission checks",
