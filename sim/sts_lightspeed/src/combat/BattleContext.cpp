@@ -2758,14 +2758,26 @@ void BattleContext::playTopCardInDrawPile(int monsterTargetIdx, bool exhausts) {
 }
 
 void BattleContext::moveToHandHelper(CardInstance c) {
-    if (cards.cardsInHand < 10) {
-        if (player.hasStatus<PS::CORRUPTION>() && c.getType() == CardType::SKILL) {
-            c.setCostForTurn(-9);
-        }
+    if (cards.cardsInHand < CardManager::MAX_HAND_SIZE) {
         cards.moveToHand(c);
     } else {
         cards.moveToDiscardPile(c);
     }
+}
+
+void BattleContext::moveGeneratedCardToHand(CardInstance c) {
+    if (cards.cardsInHand >= CardManager::MAX_HAND_SIZE) {
+        // ShowCardAndAddToDiscardEffect has no onCardDrawOrDiscard callback.
+        cards.moveToDiscardPile(c);
+        return;
+    }
+    cards.moveToHand(c);
+    // This must run before the generated skill's explicit turn-only discount:
+    // Corruption refreshes every nonzero-turn-cost skill currently in hand.
+    onCardDrawOrDiscard();
+    auto &added = cards.hand[cards.cardsInHand - 1];
+    if (player.hasStatus<PS::CORRUPTION>() && added.getType() == CardType::SKILL)
+        added.setCostForTurn(-9);
 }
 
 void BattleContext::exhaustSpecificCardInHand(int idx, std::int16_t uniqueId) {
@@ -3255,13 +3267,7 @@ void BattleContext::chooseDualWieldCard(int handIdx) {
     cards.hand[i++] = dualWieldCard;
 
     for (int x = 0; x < copyCount; ++x) {
-        if (cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {
-            cards.createTempCardInHand(dualWieldCard);
-
-        } else {
-            cards.createTempCardInDiscard(dualWieldCard);
-
-        }
+        cards.createTempCardInHand(*this, dualWieldCard);
     }
 
 }
@@ -3322,15 +3328,7 @@ void BattleContext::chooseDiscoveryCard(CardId id) {
     if (cardSelectInfo.discoveryFreeForTurn) c.setCostForTurn(0);
 
     for (int i = 0; i < discoveryAmount; ++i) {
-        if (cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {
-            if (player.hasStatus<PS::CORRUPTION>() && c.getType() == CardType::SKILL) {
-                c.setCostForTurn(-9);
-            }
-            cards.createTempCardInHand(c);
-
-        } else {
-            cards.createTempCardInDiscard(c);
-        }
+        cards.createTempCardInHand(*this, c);
     }
 }
 
@@ -3342,11 +3340,14 @@ void BattleContext::chooseExhaustOneCard(int handIdx) {
 
 
 void BattleContext::chooseExhumeCard(int exhaustIdx) {
-    // todo game handles corruption here
     auto c = cards.exhaustPile[exhaustIdx];
     cards.removeFromExhaustPile(exhaustIdx);
     cards.notifyAddCardToCombat(c);
 
+    // Exhume explicitly discounts the retrieved skill; ordinary deck/discard
+    // transfers do not use ShowCardAndAddToHandEffect or this special case.
+    if (player.hasStatus<PS::CORRUPTION>() && c.getType() == CardType::SKILL)
+        c.setCostForTurn(-9);
     moveToHandHelper(c);
 }
 

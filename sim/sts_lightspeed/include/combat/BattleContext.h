@@ -194,6 +194,9 @@ namespace sts {
         void playTopCardInDrawPile(int monsterTargetIdx, bool exhausts);
 
         void moveToHandHelper(CardInstance c);
+        // Generated/returned-copy arrival, after identity and combat bookkeeping.
+        // Unlike a plain transfer, ShowCardAndAddToHandEffect refreshes hand costs.
+        void moveGeneratedCardToHand(CardInstance c);
         void exhaustSpecificCardInHand(int idx, std::int16_t uniqueId);
         void restoreRetainedCards(int count);
         void exhaustTopCardInHand();

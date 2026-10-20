@@ -130,7 +130,7 @@ void CardManager::createTempCardInDiscard(CardInstance c) {
     discardPile.push_back(c);
 }
 
-void CardManager::createTempCardInHand(CardInstance c) {
+void CardManager::createTempCardInHand(BattleContext &bc, CardInstance c) {
     c.uniqueId = static_cast<std::int16_t>(nextUniqueCardId++);
 #ifdef sts_asserts
     if (c.getId() == CardId::INVALID) {
@@ -141,8 +141,7 @@ void CardManager::createTempCardInHand(CardInstance c) {
     }
 #endif
     notifyAddCardToCombat(c);
-    notifyAddToHand(c);
-    hand[cardsInHand++] = c;
+    bc.moveGeneratedCardToHand(c);
 }
 
 // **************** START Remove Methods ****************

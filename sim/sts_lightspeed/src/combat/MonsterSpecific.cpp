@@ -3612,7 +3612,7 @@ void Monster::returnStasisCard(BattleContext &bc) {
         original = {CardId::INVALID};
         ctx.cards.notifyAddCardToCombat(card);
         if (toDiscard) ctx.cards.moveToDiscardPile(card);
-        else ctx.moveToHandHelper(card);
+        else ctx.moveGeneratedCardToHand(card);
     }});
 }
 

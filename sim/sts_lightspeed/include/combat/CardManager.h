@@ -52,7 +52,7 @@ namespace sts {
         void createDeckCardInstanceInDrawPile(const Card &card, int deckIdx, int drawIdx);
         void createTempCardInDrawPile(int insertIdx, CardInstance c);
         void createTempCardInDiscard(CardInstance c);
-        void createTempCardInHand(CardInstance c);
+        void createTempCardInHand(BattleContext &bc, CardInstance c);
 
         void removeFromDrawPileAtIdx(int idx);
         CardInstance popFromDrawPile();

@@ -304,10 +304,7 @@ Action Actions::MakeTempCardInHand(CardInstance card, int amount) {
     // todo master reality when the action is created
     return {[=](BattleContext &bc) {
         for (int i = 0; i < amount; ++i) {
-            CardInstance c(card);
-            c.uniqueId = bc.cards.nextUniqueCardId++;
-            bc.cards.notifyAddCardToCombat(c);
-            bc.moveToHandHelper(c);
+            bc.cards.createTempCardInHand(bc, card);
         }
     }};
 }
@@ -337,9 +334,7 @@ Action Actions::MakeTempCardInDiscard(const CardInstance &c, int amount) {
 Action Actions::MakeTempCardsInHand(std::vector<CardInstance> cards) {
     return {[=](BattleContext &bc) {
         for (auto c : cards) {
-            c.uniqueId = bc.cards.nextUniqueCardId++;
-            bc.cards.notifyAddCardToCombat(c);
-            bc.moveToHandHelper(c);
+            bc.cards.createTempCardInHand(bc, c);
         }
     }};
 }
@@ -792,13 +787,7 @@ Action Actions::DualWieldAction(int copyCount) {
         if (validCount == 1) {
             for (int i = 0; i < copyCount; ++i) {
                 auto c = bc.cards.hand[lastValidIdx].makeStatEquivalentCopy();
-                if (bc.cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {
-                    bc.cards.createTempCardInHand(c);
-
-                } else {
-                    bc.cards.createTempCardInDiscard(c);
-
-                }
+                bc.cards.createTempCardInHand(bc, c);
             }
 
         } else {
