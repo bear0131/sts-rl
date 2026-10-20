@@ -764,6 +764,10 @@ class RealCombatSearch:
             battle = battle.clone()
             battle.set_generated_selection_cards(generated)
             sim_desc = combat_select_options(battle.select_info())
+            if sim_context == "DISCOVERY":
+                for key in ("generated_count", "generated_free_for_turn"):
+                    if real_desc[key] != sim_desc[key]:
+                        raise RuntimeError(f"generated-card selection parameter mismatch: {key}")
             real_instances = [None if card is None else native_combat_card_state(card, None)
                               for card in real_instances]
         else:

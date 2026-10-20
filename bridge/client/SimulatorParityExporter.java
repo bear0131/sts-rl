@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v29";
+    public static final String VERSION = "simulator-parity-v30";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -592,6 +592,7 @@ public final class SimulatorParityExporter {
         if ("ArmamentsAction".equals(name)) return "ARMAMENTS";
         if ("CodexAction".equals(name)) return "CODEX";
         if ("DiscoveryAction".equals(name)) return "DISCOVERY";
+        if ("ChooseOneColorless".equals(name)) return "DISCOVERY";
         if ("DualWieldAction".equals(name)) return "DUAL_WIELD";
         if ("ExhumeAction".equals(name)) return "EXHUME";
         if ("ForethoughtAction".equals(name)) return "FORETHOUGHT";
@@ -702,6 +703,10 @@ public final class SimulatorParityExporter {
         state.put("reward_item_present", AbstractDungeon.cardRewardScreen.rItem != null);
         state.put("selection_context", context == null ? "UNMAPPED" : context);
         state.put("selection_source", action == null ? "NONE" : action.getClass().getName());
+        boolean discovery = action instanceof com.megacrit.cardcrawl.actions.unique.DiscoveryAction;
+        boolean toolbox = action instanceof com.megacrit.cardcrawl.actions.utility.ChooseOneColorless;
+        state.put("generated_count", discovery || toolbox ? Integer.valueOf(action.amount) : null);
+        state.put("generated_free_for_turn", discovery || toolbox ? Boolean.valueOf(discovery) : null);
         state.put("simulator_parity_export", VERSION);
     }
 }

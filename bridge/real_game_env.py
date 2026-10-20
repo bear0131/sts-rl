@@ -28,13 +28,14 @@ from env.core import encode
 from env.core import game_actions as ga
 from env.core import vocab as V
 from env.core import native_actions as C
-from schemas.combat_state import _card, normalize_real
+from schemas.combat_state import _card, normalize_real, generated_selection_parameters
 from bridge import event_contract
 from bridge.schemas.card_state import real_card_state, real_master_deck_state, real_grid_confirmation_card
 from bridge.schemas.entity_ids import (
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
     COMBAT_SELECTION_SOURCES,
+    DISCOVERY_SELECTION_PARAMETERS,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
     DYNAMIC_EVENT_OPTION_KIND_ALIASES,
@@ -1836,6 +1837,14 @@ class RealGameAdapter:
                 f"exporter: {ss.get('simulator_parity_export')!r}"
             )
         context = self._select_context(ss, cards, overworld=overworld)
+        generated = {}
+        if not overworld and context == "DISCOVERY":
+            generated = generated_selection_parameters(ss)
+            source_class = ss["selection_source"].rsplit(".", 1)[-1]
+            expected = DISCOVERY_SELECTION_PARAMETERS[source_class]
+            if (generated["generated_free_for_turn"] != expected["free_for_turn"]
+                    or generated["generated_count"] not in expected["counts"]):
+                raise ValueError("generated-card parameters differ from their exact source contract")
         grid_screen = self.screen_type() == "GRID"
         hand_screen = self.screen_type() == "HAND_SELECT"
         card_reward_screen = self.screen_type() == "CARD_REWARD"
@@ -1954,6 +1963,7 @@ class RealGameAdapter:
                                             c["card"]["up"], c["card"]["cost"]))
         return {
             "context": context,
+            **generated,
             "pick_remaining": max(0, pick_count - have_selected),
             "can_pick_zero": can_pick_zero,
             "can_pick_any": can_pick_any,

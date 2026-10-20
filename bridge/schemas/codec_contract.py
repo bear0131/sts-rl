@@ -21,6 +21,7 @@ from .entity_ids import (
     REAL_ACT_BOSS_KEYS,
     CARD_ALIASES,
     COMBAT_SELECTION_SOURCES,
+    DISCOVERY_SELECTION_PARAMETERS,
     DYNAMIC_COMBAT_SELECTION_SOURCES,
     DYNAMIC_EVENT_OPTION_KINDS,
     DYNAMIC_EVENT_OPTION_KIND_ALIASES,
@@ -327,6 +328,7 @@ def complete_word_tables():
             "audit": "BRIDGE76 real F46 same-save attachment and Four Shapes win passed after fix; continued to F50 natural loss with zero bridge errors; Neow/burning-elite combinations still uncovered",
         },
         "card_use_and_empty_pile_contracts": {
+            "Toolbox/ChooseOneColorless": "v30 maps this exact stock action to the frozen DISCOVERY choice token, with explicit generated_count=1/generated_free_for_turn=false. Native Toolbox selection retains normal cost; DiscoveryAction retains its explicit true/1-or-2 mode. Full metadata/strict pending comparison/clone/search key preserve the distinction, no new model token or PAD substitution (BRIDGE119)",
             "specific exhaust free-once reset": "ExhaustSpecificCardAction moves the exact hand instance and runs onExhaust, then clears freeToPlayOnce on that same exhausted card; applies to ethereal end-turn/SeverSoul/SecondWind, so Exhume cannot revive the prior Forethought free-once flag. Generic ExhaustAction preserves its own semantics and must not be changed (BRIDGE114)",
             "Exhume single candidate": "only original exhaust pile size1 with a non-Exhume card auto-retrieves; a larger original pile opens GRID after excluding Exhumes even when one eligible physical candidate remains. Native retains excluded inert Exhumes internally and filters exact candidates/UIDs, so real/native selection phases agree without forced transport shortcuts (BRIDGE117)",
             "TrueGrit/FiendFire random exhaust": "ExhaustAction with anyNumber=false and hand<=amount moves the original whole hand from top without RNG; TrueGrit uses this path with one remaining card. FiendFire explicitly uses anyNumber=true, retaining per-exhaust random selection even for index0; generic free-once/onExhaust semantics unchanged (BRIDGE118)",
@@ -379,6 +381,7 @@ def complete_word_tables():
         "monster_moves_by_real_id": REAL_MONSTER_MOVE_TO_CANONICAL,
         "monster_move_canonical_to_real": dict(CS._MONSTER_CANON2REAL),
         "selection_sources": SELECTION_SOURCE_TO_CONTEXT,
+        "generated_selection_parameters": DISCOVERY_SELECTION_PARAMETERS,
         "multi_selection_cap_alignment": {
             "source": "Elixir.use -> ExhaustAction(false,true,true), Purity.use -> bounded ExhaustAction; native ExhaustMany (BRIDGE109)",
             "comparison": "after exact candidate physical identity/state validation, MULTI compares min(pick_max,candidate_count); SINGLE/GRID retains exact requested pick_max",

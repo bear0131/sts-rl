@@ -308,6 +308,10 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, bc.cardSelectInfo.canPickZero ? 1 : 0);
     hashValue(hash, bc.cardSelectInfo.canPickAnyNumber ? 1 : 0);
     hashValue(hash, bc.cardSelectInfo.data0);
+    if (bc.cardSelectInfo.cardSelectTask == CardSelectTask::DISCOVERY
+            && !bc.cardSelectInfo.discoveryFreeForTurn) {
+        hashValue(hash, 0x544f4f4c); // Toolbox and free Discovery have different futures.
+    }
     for (const auto card : bc.cardSelectInfo.cards) {
         hashValue(hash, static_cast<int>(card));
     }

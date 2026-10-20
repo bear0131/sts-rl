@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v29`.
+`current_intent_export: simulator-parity-v30`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -267,7 +267,16 @@ The old three damage-sum inputs remain unchanged for existing checkpoints.
 Counts and per-bomb damage are never inferred from those totals. Native copies
 and search keys retain the instances; rebuild the native extension with v29.
 
-Do not mix v29 Python with an older jar/native extension. Model tensor layouts
+Since v30 Toolbox's actual `ChooseOneColorless` is a supported generated-card
+selection source. It shares the checkpoint's existing `DISCOVERY` choice token,
+but not DiscoveryAction's zero-cost effect: `generated_count` and
+`generated_free_for_turn` explicitly preserve one normal-cost Toolbox card
+versus one/two temporarily free Discovery cards. Other reward sources export
+null for these parameters. The bridge checks source/parameters and pending
+native metadata before choosing; native copies and search keys retain the cost
+mode. The model tensor layout and action vocabulary do not gain a new token.
+
+Do not mix v30 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

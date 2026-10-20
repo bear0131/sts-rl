@@ -1147,6 +1147,15 @@ def _select_options(context, pick_count, have_selected, selected_ids,
     }
 
 
+def generated_selection_parameters(info):
+    """Non-tensor parameters distinguish normal Toolbox from free Discovery."""
+    count = info["generated_count"]
+    free = info["generated_free_for_turn"]
+    if type(count) is not int or count not in (1, 2) or type(free) is not bool:
+        raise ValueError("generated-card selection requires exact count1/2 and boolean cost mode")
+    return {"generated_count": count, "generated_free_for_turn": free}
+
+
 def combat_select_options(select_info):
     """Canonical 'select' block for an in-combat card-select sub-screen, from
     bc.select_info() (context = CardSelectTask name, pick_count, can_pick_zero,
@@ -1177,6 +1186,8 @@ def combat_select_options(select_info):
         pick_max=select_info["pick_max"],
         cards_in_hand=select_info["cards_in_hand"])
     result["zone"] = select_info["zone"]
+    if select_info["context"] == "DISCOVERY":
+        result.update(generated_selection_parameters(select_info))
     result["candidates"] = [
         {"native_index": int(item["native_index"]),
          "card": None if item["skip"] else _card(

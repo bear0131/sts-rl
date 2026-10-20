@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE119 | 源码已修并构建，待同档F14实机 | 200203/F14真实Toolbox开场ChooseOneColorless未映射，strict context拒绝；补确切来源→旧DISCOVERY token，同时修原native工具箱误得0费。v30显式generated_count/free_for_turn区分工具箱normal/1与Discovery zero/1或2；native模式/描述符/严格对账/复制/key保留，不增加OBS20/ACTION8/layout9或猜参数。必要构建完成，待冻结及自然F14/index130同档，不用新seed跳错，不做离线测试。 |
 | BRIDGE117 | 源码已修并构建，待自然实机组合 | Exhume只在原消耗堆总数1且可取时自动返回；原堆含旧Exhume+单个有效候选仍开GRID。旧native按有效候选1直接返回，真机有选择/native无选择会阻断；改按原总数，保留非Exhume候选/物理UID、旧Exhume内部保留与费用恢复，不改模型/动作布局。必要构建/词表语法检查完成，待自然组合，无离线测试。 |
 | BRIDGE118 | 源码已修并构建，待自然实机组合 | ExhaustAction的!anyNumber且手牌<=amount整手分支先于isRandom，不取随机；旧native让未升级TrueGrit单牌也多取一次RNG。显式anyNumber参数/整手从top取，FiendFire传true保留本来正确的单牌随机行为，不夸大为已观测错选牌。泛用消耗回调/freeOnce不变，无模型/动作布局变化；必要构建/词表语法检查完成，待自然组合，无离线测试。 |
 | BRIDGE115 | 已修并构建；原134实机故障路径通过 | 200202/F41倏忽魔Shackled134在native int8溢出-122，strict restore拒绝；怪物各独立stackable/unique1量改Java int，Shackled按真实±999封顶，保留精确读回验证。TheBomb三桶伤害与restore127界限一并扩int，native复制/搜索key/数值观察消费者不变，完整重建内部ABI，无模型布局/权重变化。cb421da/nativee8b7ea同自然F41/index353续跑，真实T5再次134/Strength-140后index381继续搜索、382结束战斗并至F45，无ERROR；只覆盖本自然路径，其他高层数/炸弹仍待自然组合，无离线测试。 |

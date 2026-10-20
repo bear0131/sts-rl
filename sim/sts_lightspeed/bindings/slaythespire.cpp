@@ -2521,6 +2521,10 @@ py::dict combatSelectInfo(const sts::BattleContext &bc) {
     d["can_pick_any"] = csi.canPickAnyNumber;
     d["multi"] = multi;
     d["cards_in_hand"] = bc.cards.cardsInHand;
+    d["generated_count"] = task == sts::CardSelectTask::DISCOVERY
+        ? py::cast(csi.data0) : py::none();
+    d["generated_free_for_turn"] = task == sts::CardSelectTask::DISCOVERY
+        ? py::cast(csi.discoveryFreeForTurn) : py::none();
     py::list selected;
     for (const auto &card : sts::search::combatSelectedCards(bc))
         selected.append(py::make_tuple(sts::cardEnumStrings[static_cast<int>(card.id)], card.getUpgradeCount()));

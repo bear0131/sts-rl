@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v29"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v30"
 
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
@@ -571,6 +571,8 @@ COMBAT_SELECTION_TRANSPORT_FIELDS = {
     'reward_item_present': 'CARD_REWARD actual CardRewardScreen.rItem != null; noncombat false means one standalone reward (including Neow), true requires cached outer rewards; combat choices remain combat selections',
     'selection_context': 'explicit native semantic task, crosschecked against source class',
     'selection_source': 'current Java action class; never guessed from hand or text',
+    'generated_count': 'v30 DiscoveryAction/ChooseOneColorless actual action.amount (1/2 for Discovery, 1 for Toolbox); explicit null for other CARD_REWARD sources',
+    'generated_free_for_turn': 'v30 DiscoveryAction true, Toolbox ChooseOneColorless false; typed mode retained separately from the frozen DISCOVERY token, null for other sources',
     'any_number': 'HAND_SELECT private HandCardSelectScreen.anyNumber; GRID original serializer; explicit boolean',
     'max_cards': 'HAND_SELECT.numCardsToSelect; 99 is normalized to actual selectable hand size',
     'num_cards': 'GRID.numCards; actual requested count, not always one',
@@ -1185,6 +1187,7 @@ COMBAT_SELECTION_SOURCES = {
     "ArmamentsAction": "ARMAMENTS",
     "CodexAction": "CODEX",
     "DiscoveryAction": "DISCOVERY",
+    "ChooseOneColorless": "DISCOVERY",
     "DualWieldAction": "DUAL_WIELD",
     "ExhumeAction": "EXHUME",
     "ForethoughtAction": "FORETHOUGHT",
@@ -1199,6 +1202,11 @@ COMBAT_SELECTION_SOURCES = {
     "SeekAction": "SEEK",  # legacy game class; shipped Seek uses BetterDraw...
     "SetupAction": "SETUP",
     "PutOnDeckAction": "WARCRY",
+}
+
+DISCOVERY_SELECTION_PARAMETERS = {
+    "DiscoveryAction": {"free_for_turn": True, "counts": (1, 2)},
+    "ChooseOneColorless": {"free_for_turn": False, "counts": (1,)},
 }
 
 DYNAMIC_COMBAT_SELECTION_SOURCES = {
@@ -1239,6 +1247,7 @@ OVERWORLD_SELECTION_EVENTS = {
 # the exporter emits UNMAPPED and Python fails closed instead of manufacturing
 # PAD or reusing a semantically different task.
 UNSUPPORTED_SELECTION_SOURCES = {
+    "ChooseOneAction": "Watcher choice-card effects are not normal generated-card acquisition",
     "ScryAction": "native simulator has no Scry CardSelectTask",
     "ClarityAction": "deprecated Scry implementation has no native task",
     "OmniscienceAction": "native simulator has no Omniscience CardSelectTask",

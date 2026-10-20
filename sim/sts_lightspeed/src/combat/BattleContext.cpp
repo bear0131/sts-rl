@@ -3171,6 +3171,7 @@ void BattleContext::openDiscoveryScreen(std::array<CardId, 3> discoveryCards, in
     openSimpleCardSelectScreen(CardSelectTask::DISCOVERY, 1);
     cardSelectInfo.cards = discoveryCards;
     cardSelectInfo.discovery_CopyCount() = copyCount;
+    cardSelectInfo.discoveryFreeForTurn = true;
 }
 
 void BattleContext::openSimpleCardSelectScreen(CardSelectTask task, int count) {
@@ -3325,7 +3326,7 @@ bool BattleContext::chooseLiquidMemoriesCard(int discardIdx) {
 void BattleContext::chooseDiscoveryCard(CardId id) {
     const auto discoveryAmount = cardSelectInfo.data0;
     CardInstance c(id);
-    c.setCostForTurn(0);
+    if (cardSelectInfo.discoveryFreeForTurn) c.setCostForTurn(0);
 
     for (int i = 0; i < discoveryAmount; ++i) {
         if (cards.cardsInHand + 1 <= CardManager::MAX_HAND_SIZE) {

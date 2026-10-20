@@ -66,6 +66,8 @@ namespace sts {
         bool canPickAnyNumber = false;
         int pickCount = 0;
         int data0 = 0;
+        // Toolbox chooses a normal-cost card; Discovery makes it free this turn.
+        bool discoveryFreeForTurn = true;
 
         // Mandatory GRID picks stay in the source pile until all are chosen.
         // Store physical identities so a cloned/search-shuffled pile is safe.
