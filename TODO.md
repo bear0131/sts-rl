@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE89 | 源码已修并构建，特殊分支待实机 | 不休陀螺抽牌后若产生洗牌/抽牌/进化/火焰吐息/Void等动作，executeActions继续结算后才返回PLAYER_NORMAL；NoDraw/全部无牌保持可返回，不循环。外部UnceasingTop实际排DrawCardAction，影响根状态、合法动作和搜索后继。源码复读/必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE88 | 源码已修并构建，特殊分支待实机 | CardManager.draw抽到Void改为BOTTOM扣能量闭包，执行时减1且下限0；Warcry/ThinkingAhead先开选择时不提前改变能量，保留Evolve/FireBreathing既有触发顺序及默认胜利清理。共享clone/选择后继续执行队列，未冒充完整Java pending恢复；词表登记LoseEnergyAction，无观察/动作/权重变更。源码复读/构建完成，自然实机组合未覆盖，无离线测试。 |
 | BRIDGE87 | 源码已修并构建，特殊分支待实机 | 蛹/蜕变在use时抽取3/5个身份，只有正费用降0；生成的Whirlwind保留X费。复用逐张BOTTOM MakeTempCardInDrawPile，删除仅两调用方的旧PutRandomCardsInDrawPile；保留Java实际随机插牌边界和既有ID/快照/权重布局。源码消费者复读、原生构建完成，需自然实机组合，无离线测试。 |
 | BRIDGE86 | 源码已修并复读，特殊分支待实机 | Duplicator/Transmorgrifier/LivingWall单张复制/变牌回执绑定实际选中UUID及GRID来源/确认，未选实例不变；复制保留原牌，变牌只删选中牌，等待最终页与延迟obtain完成。诅咒被御守阻挡以恰好扣一次+零新增确认，不再死等新增牌；正常复制核对身份/misc/升级蛋/瓶装清除，三入口入词表。原生阻咒规则已正确，无原生/Java/权重布局变化，无离线测试；自然组合未覆盖。 |

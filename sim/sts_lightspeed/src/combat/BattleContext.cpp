@@ -921,6 +921,10 @@ void BattleContext::executeActions() {
                     atomicStepObserver(*this);
                 }
 #endif
+                // A shuffle or on-draw effect is still part of this draw,
+                // not a future player decision. Blocked/empty draws enqueue
+                // nothing and must not spin here waiting for a card.
+                if (!actionQueue.isEmpty()) continue;
             }
         }
 
