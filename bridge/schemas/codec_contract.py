@@ -407,6 +407,15 @@ def complete_word_tables():
             "consumers": "existing Buffer/Rupture/Strength/status counters and LizardTail availability flow through native snapshot/search/key/bridge; no new observation/action layout or weight",
             "audit": "BRIDGE78 source reviewed; combinations still need natural real coverage",
         },
+        "player_bloodied_latch_contract": {
+            "java": "v40 AbstractCreature.isBloodied and actual RedSkull.isActive are distinct stored booleans; absent owned Red Skull explicitly exports inactive, reflection failures are not replaced with a default",
+            "wire": "simulator_combat_counters.bloodied/red_skull_active -> canonical combat_counters -> strict native Player.bloodied/redSkullActive; both required boolean fields, active Skull requires actual ownership",
+            "transitions": "fresh preBattlePrep initializes bloodied from HP; positive HP loss crosses into bloodied before revival; heal (including zero after Bloom) clears an existing latch only above half. Max-HP growth precedes heal and must not recompute the previous latch from its changed threshold",
+            "impact": "healthy inactive Skull at 51/100 followed by Feed+3 to 54/103 must not subtract3 Strength or consume Artifact; Bloom can leave HP-derived ratio different from the actual latch until later damage/heal",
+            "consumers": "raw/canonical diff, complete and initial-selection strict roots, atomic restore/readback, native copies and non-derived NOSL future keys retain both flags; partial editor keeps existing values, never guesses unknown actual flags",
+            "compatibility": "paired Java40/Python/native required for real roots; transition metadata only, frozen COMBAT_COUNTER_KEYS and compact scalar columns/OBS20/ACTION8/layout9/finalTRAIN47 unchanged. Ordinary HP-derived latch search keys unchanged",
+            "audit": "BRIDGE148 source review and necessary native/Java builds, no offline behavior/model tests; special Feed/Bloom/Skull combination still requires natural real coverage",
+        },
         "queued_monster_power_lifecycle_contract": {
             "java": "ApplyPowerAction.update rejects dying/halfDead/escaping targets before power hooks, Artifact consumption or application",
             "native": "Actions.BuffEnemy and BattleContext.debuffEnemy recheck isTargetable at execution, not only at card use",

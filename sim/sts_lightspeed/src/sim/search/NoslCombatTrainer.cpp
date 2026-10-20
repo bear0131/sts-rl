@@ -246,6 +246,14 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, static_cast<int>(player.cc));
     hashValue(hash, player.curHp);
     hashValue(hash, player.maxHp);
+    // Ordinary HP-derived latches keep the historical future key. Max-HP
+    // changes can leave a different actual latch, which must not be merged.
+    if (player.bloodied != (player.curHp <= player.maxHp / 2)
+            || player.redSkullActive != (player.bloodied && player.hasRelicRuntime(RelicId::RED_SKULL))) {
+        hashValue(hash, 0x626c6f6f64696564ULL);
+        hashValue(hash, player.bloodied ? 1 : 0);
+        hashValue(hash, player.redSkullActive ? 1 : 0);
+    }
     hashValue(hash, player.block);
     hashValue(hash, player.energy);
     hashValue(hash, player.energyPerTurn);

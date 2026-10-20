@@ -50,6 +50,9 @@ struct Player {
         int16_t gold = 0;
         int curHp = 80;
         int maxHp = 80;
+        // Actual latches, not recomputed from a possibly changed max-HP ratio.
+        bool bloodied = false;
+        bool redSkullActive = false;
         int energy = 0;
         int8_t energyPerTurn = 3;
         int8_t cardDrawPerTurn = 5; // AbstractPlayer gameHandSize

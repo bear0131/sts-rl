@@ -142,7 +142,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v30`.
+`current_intent_export: simulator-parity-v40`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -150,6 +150,13 @@ The bridge preserves corpse/revival powers and move history; incomplete entity
 mapping or private-state replacement fails explicitly instead of dropping a body.
 The exporter also supplies all three run keys, recurring energy, combat/relic
 counters, private power values, and explicit card-selection source/context.
+Since v40, combat counters also preserve the actual `bloodied` and
+`red_skull_active` latches. Increasing maximum HP changes the half-HP threshold
+before healing; deriving the old state from the new ratio can incorrectly
+remove Red Skull Strength. Both booleans are required by the paired Python and
+native strict roots, copied/read back and distinguished by search keys.
+They are transition metadata, not added frozen-model counter columns. Deploy
+the exporter, Python and native extension together; v39 roots are not accepted.
 The v11 exporter identifies DrugDealer's two-card transform grid by its actual
 event class: all three generic grid operation flags are false in the game.
 All GRID candidates and selected cards require complete instance records and

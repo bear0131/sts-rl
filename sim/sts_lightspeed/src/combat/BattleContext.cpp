@@ -85,6 +85,10 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
     player.curHp = gc.curHp;
     player.maxHp = gc.maxHp;
     player.gold = gc.gold;
+    // AbstractPlayer.preBattlePrep initializes the bloodied latch for a fresh
+    // battle; strict real roots subsequently restore both actual latch values.
+    player.bloodied = gc.curHp <= gc.maxHp / 2;
+    player.redSkullActive = false;
 
     monsters.init(*this, encounterToInit);
     if (gc.curRoom == Room::ELITE && gc.map->burningEliteX == gc.curMapNodeX &&
@@ -487,6 +491,7 @@ void BattleContext::initRelics(const GameContext &gc) {
 
     if (gc.hasRelic(R::RED_SKULL) && gc.curHp <= gc.maxHp / 2) {
         p.buff<PS::STRENGTH>(3);
+        p.redSkullActive = true;
     }
 
     for (auto r : atTurnStartPostDraw) {

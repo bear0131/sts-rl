@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v39";
+    public static final String VERSION = "simulator-parity-v40";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -760,6 +760,10 @@ public final class SimulatorParityExporter {
         state.put("simulator_summon_slots", summonSlots());
         AbstractPlayer player = AbstractDungeon.player;
         HashMap<String, Object> counters = new HashMap<String, Object>();
+        counters.put("bloodied", Boolean.valueOf(player.isBloodied));
+        AbstractRelic redSkull = player.getRelic("Red Skull");
+        counters.put("red_skull_active", Boolean.valueOf(redSkull != null &&
+            privateBool(redSkull, com.megacrit.cardcrawl.relics.RedSkull.class, "isActive")));
         counters.put("happy_flower", Integer.valueOf(relicCounter("Happy Flower")));
         counters.put("incense_burner", Integer.valueOf(relicCounter("Incense Burner")));
         counters.put("ink_bottle", Integer.valueOf(relicCounter("InkBottle")));

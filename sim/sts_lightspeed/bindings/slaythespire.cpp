@@ -269,6 +269,8 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     player["energy"] = bc.player.energy;
     player["gold"] = bc.player.gold;
     py::dict counters;
+    counters["bloodied"] = bc.player.bloodied;
+    counters["red_skull_active"] = bc.player.redSkullActive;
     counters["centennial_puzzle_active"] =
         bc.player.hasRelicRuntime(sts::RelicId::CENTENNIAL_PUZZLE);
     counters["happy_flower"] = bc.player.happyFlowerCounter;
@@ -1026,6 +1028,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             auto c = p["counters"].cast<py::dict>();
             if (strictComplete) {
                 static constexpr const char *kCounterKeys[] = {
+                    "bloodied", "red_skull_active",
                     "happy_flower", "incense_burner", "ink_bottle", "inserter",
                     "nunchaku", "pen_nib", "sundial", "necronomicon_used",
                     "cards_played", "attacks_played", "skills_played",
@@ -1044,6 +1047,10 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     }
                 }
             }
+            bc.player.bloodied = getBoundedInt(c, "bloodied", bc.player.bloodied, 0, 1) != 0;
+            bc.player.redSkullActive = getBoundedInt(c, "red_skull_active", bc.player.redSkullActive, 0, 1) != 0;
+            if (bc.player.redSkullActive && !bc.player.hasRelicRuntime(sts::RelicId::RED_SKULL))
+                throw std::invalid_argument("active Red Skull requires the actual owned relic");
             bc.player.happyFlowerCounter = static_cast<std::int8_t>(
                 getBoundedInt(c, "happy_flower", bc.player.happyFlowerCounter, 0, 127));
             bc.player.incenseBurnerCounter = static_cast<std::int8_t>(

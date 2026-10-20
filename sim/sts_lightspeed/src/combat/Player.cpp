@@ -167,7 +167,7 @@ void Player::increaseMaxHp(int amount) {
 
 void Player::heal(int amount) {
     if (hasRelic<RelicId::MARK_OF_THE_BLOOM>()) {
-        return;
+        amount = 0;
     }
 
     if (hasRelic<RelicId::MAGIC_FLOWER>()) {
@@ -175,12 +175,13 @@ void Player::heal(int amount) {
         amount = static_cast<int>(std::round(static_cast<float>(amount) * 1.5f));
     }
 
-    bool wasBloodied = curHp <= maxHp/2;
-
     curHp = std::min(static_cast<int>(maxHp), curHp + amount);
 
-    if (wasBloodied && curHp > maxHp/2 && hasRelic<RelicId::RED_SKULL>()) {
-        debuff<PS::STRENGTH>(-3);
+    if (bloodied && curHp > maxHp/2) {
+        bloodied = false;
+        if (redSkullActive && hasRelic<RelicId::RED_SKULL>())
+            debuff<PS::STRENGTH>(-3);
+        redSkullActive = false;
     }
 }
 
@@ -299,8 +300,6 @@ void Player::loseHp(BattleContext &bc, int amount, bool selfDamage) {
 void Player::hpWasLost(BattleContext &bc, int amount, bool selfDamage) {
     assert(amount > 0);
 
-    bool wasBloodied = curHp <= maxHp/2;
-
     curHp = std::max(0, curHp-amount);
 
     if (selfDamage && hasStatus<PS::RUPTURE>()) {
@@ -331,8 +330,12 @@ void Player::hpWasLost(BattleContext &bc, int amount, bool selfDamage) {
         bc.addToTop( Actions::DrawCards(1) );
     }
 
-    if (hasRelic<RelicId::RED_SKULL>() && !wasBloodied && curHp <= maxHp/2) {
-        buff<PS::STRENGTH>(3);
+    if (!bloodied && curHp <= maxHp/2) {
+        bloodied = true;
+        if (hasRelic<RelicId::RED_SKULL>() && !redSkullActive) {
+            buff<PS::STRENGTH>(3);
+            redSkullActive = true;
+        }
     }
 
     bc.cards.onTookDamage();

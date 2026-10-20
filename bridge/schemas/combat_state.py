@@ -73,6 +73,7 @@ BOOLEAN_MONSTER_POWERS = frozenset({
 _REAL_POWER_CANON_ID = REAL_POWER_ALIASES
 
 _REAL_COMBAT_COUNTER_KEYS = (
+    "bloodied", "red_skull_active",
     "happy_flower", "incense_burner", "ink_bottle", "inserter",
     "nunchaku", "pen_nib", "sundial", "necronomicon_used",
     "cards_played", "attacks_played", "skills_played",
@@ -91,6 +92,7 @@ def _validated_combat_counters(counters):
     if unknown:
         raise ValueError(f"combat counter word table has unknown fields: {sorted(unknown)!r}")
     binary = {"necronomicon_used", "orange_attack", "orange_skill", "orange_power",
+              "bloodied", "red_skull_active",
               *LIVE_RELIC_STATE_FIELDS.values()}
     result = {}
     for key in _REAL_COMBAT_COUNTER_KEYS:
