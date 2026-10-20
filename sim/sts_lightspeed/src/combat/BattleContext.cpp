@@ -346,7 +346,7 @@ void BattleContext::initRelics(const GameContext &gc) {
                 break;
 
             case R::PANTOGRAPH:
-                if (room == Room::BOSS) {
+                if (hasBossMonster(monsters)) {
                     p.heal(25);
                 }
                 break;
