@@ -1579,9 +1579,13 @@ void BattleContext::useSkillCard() {
             addToBot( Actions::BuffPlayer<PS::THE_BOMB>(up ? 50 : 40) );
             break;
 
-        case CardId::THINKING_AHEAD: // same as upgraded warcry
+        case CardId::THINKING_AHEAD:
             addToBot( Actions::DrawCards(2) );
-            addToBot( Actions::WarcryAction() );
+            // Java decides this in use(), before drawing or removing the
+            // played card from hand. An empty-hand autoplay draws only.
+            if (cards.cardsInHand > 0) {
+                addToBot( Actions::WarcryAction() );
+            }
             break;
 
         case CardId::TRANSMUTATION:
