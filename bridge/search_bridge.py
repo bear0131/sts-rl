@@ -483,7 +483,8 @@ class RealCombatSearch:
         self.env.thick.gc.set_deck_state(master)
         battle.initialize_selection_root(spec)
         if (battle.card_state() != spec['card_state']
-                or battle.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']):
+                or battle.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']
+                or battle.to_dict()['on_end_turn_relic_order'] != spec['on_end_turn_relic_order']):
             raise RuntimeError('initial selection root failed actual instance/relic-order readback')
         self.env.thick.gc.max_hp = int(real['player']['max_hp'])
         self.env.thick.gc.cur_hp = int(real['player']['hp'])
@@ -728,6 +729,7 @@ class RealCombatSearch:
                 relic for relic in self.adapter._global_block()['relics']
                 if relic in ON_USE_CARD_RELIC_IDS
             ],
+            "on_end_turn_relic_order": list(real['on_end_turn_relic_order']),
             "turn": max(0, int(real["turn"]) - 1),
             "player": {
                 "hp": int(player["hp"]),
@@ -768,6 +770,8 @@ class RealCombatSearch:
         self.env.thick.bc.apply_custom_state(spec)
         if self.env.thick.bc.to_dict()['on_use_relic_order'] != spec['on_use_relic_order']:
             raise RuntimeError('native real-game onUseCard relic acquisition order differs')
+        if self.env.thick.bc.to_dict()['on_end_turn_relic_order'] != spec['on_end_turn_relic_order']:
+            raise RuntimeError('native real-game onPlayerEndTurn relic acquisition order differs')
         if self.env.thick.bc.card_state() != spec['card_state']:
             raise RuntimeError('native real-game card instance alignment failed')
         self.env.thick.gc.max_hp = int(real["player"]["max_hp"])

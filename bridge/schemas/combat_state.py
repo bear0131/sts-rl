@@ -45,6 +45,7 @@ from .entity_ids import (
     LAGAVULIN_STATE_FIELDS,
     MONSTER_MOVE_STATE_CONTRACTS,
     ON_EXHAUST_POWER_IDS,
+    ON_PLAYER_END_TURN_RELIC_IDS,
     END_TURN_POWER_PRIORITIES,
     UNSUPPORTED_REAL_CARD_IDS,
     UNSUPPORTED_REAL_POWER_IDS,
@@ -101,6 +102,14 @@ def _validated_combat_counters(counters):
             raise ValueError(f"combat counter {key!r} is not an integer: {value!r}")
         result[key] = int(value)
     return result
+
+
+def _validated_end_turn_relic_order(order):
+    if (not isinstance(order, list) or any(type(name) is not str for name in order)
+            or len(order) != len(set(order))
+            or not set(order) <= ON_PLAYER_END_TURN_RELIC_IDS):
+        raise ValueError("onPlayerEndTurn relic order requires unique supported identities")
+    return list(order)
 
 
 def _validated_exhaust_power_order(order, powers):
@@ -542,6 +551,9 @@ def normalize_real(game_state):
     return {
         "turn": cs["turn"],
         "post_enemy_turn_boundary": False,
+        "on_end_turn_relic_order": _validated_end_turn_relic_order([
+            relic["id"] for relic in game_state["relics"]
+            if relic["id"] in ON_PLAYER_END_TURN_RELIC_IDS]),
         "player": {
             "hp": p["current_hp"],
             "max_hp": p["max_hp"],
@@ -936,7 +948,7 @@ def normalize_sim(raw):
     """`raw` = sim BattleContext.to_dict(). Returns the canonical combat state."""
     required = {
         "turn", "post_enemy_turn_boundary", "player", "monsters", "hand",
-        "draw", "discard", "exhaust",
+        "draw", "discard", "exhaust", "on_end_turn_relic_order",
     }
     missing = required - set(raw)
     if missing:
@@ -971,6 +983,7 @@ def normalize_sim(raw):
     return {
         # sim turn is 0-based at combat start; real game is 1-based.
         "turn": raw["turn"] + 1,
+        "on_end_turn_relic_order": _validated_end_turn_relic_order(raw["on_end_turn_relic_order"]),
         # Native NOSL leaves may stop exactly after the enemy turn, before the
         # next-turn draw/energy setup. Preserve this search-only boundary bit
         # through the canonical layer so the combat encoder can expose it.
@@ -1412,6 +1425,8 @@ def diff(real, sim, pile_mode="auto"):
         bool(real["post_enemy_turn_boundary"]),
         bool(sim["post_enemy_turn_boundary"]),
     )
+    cmp("on_end_turn_relic_order", real["on_end_turn_relic_order"],
+        sim["on_end_turn_relic_order"])
     for k in ("hp", "max_hp", "block", "energy", "gold"):
         cmp(f"player.{k}", real["player"][k], sim["player"][k])
     if "energy_per_turn" in real["player"]:

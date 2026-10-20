@@ -58,6 +58,10 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 `player.on_end_turn_power_order`同样保留已支持回合末钩子的实际优先级/生效顺序；
 重复的The Bomb标记按序绑定独立`bombs`实例，不能把所有炸弹提前或把缠绕按enum提前。
 完整恢复同时核对身份、数量、priority与读回；多钩子缺序拒绝，模型布局不变（BRIDGE145）。
+`on_end_turn_relic_order`从既有真实遗物有序列表保留已支持`onPlayerEndTurn`钩子的获得顺序；
+完整根必须显式给出全部实际钩子，严格核身份/库存/唯一性与读回，clone/NOSL保留顺序。
+石历先清场可取消后续宝典选牌，不能固定先开宝典；CodexAction也在执行时核真实basically-dead。
+需配套Python与重建原生，无新Java字段或模型布局变化，特殊双遗物组合仍待自然覆盖（BRIDGE147）。
 v28补六火亡魂实际激活/灼伤升级/火球数/Divider基础伤害，周期不再被通用能力清零；Inferno升级抽牌与弃牌堆灼伤并加入3张Burn+，Sear不从回合猜升级。旧v27帧拒绝，需Java/native配套构建，模型布局不变。
 v27补巨人头实际count，A18提前进入大攻击且后续伤害按真实倒计数成长；旧v26帧拒绝，需Java/native配套构建。
 v26补红绿虱虫实际biteDamage、黑暗小鬼实际nipDmg和守护者实际dmgThreshold，非攻击/防御根也保留。

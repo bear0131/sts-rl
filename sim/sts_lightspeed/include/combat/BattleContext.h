@@ -106,6 +106,8 @@ namespace sts {
         // Acquisition order of the supported onUseCard relic callbacks.
         // Immutable during combat; copied with the battle and restored explicitly.
         std::vector<RelicId> onUseRelicOrder;
+        // Actual acquisition order of supported onPlayerEndTurn callbacks.
+        std::vector<RelicId> onEndTurnRelicOrder;
 
         CardQueueItem curCardQueueItem;
 
@@ -154,6 +156,7 @@ namespace sts {
 
         void onUseStatusOrCurseCard();
         static bool hasOnUseCardHook(RelicId relic);
+        static bool hasOnPlayerEndTurnHook(RelicId relic);
         void onUseCardRelics();
         void onAfterUseCard();
 

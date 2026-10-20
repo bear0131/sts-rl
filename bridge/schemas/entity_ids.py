@@ -14,6 +14,11 @@ ON_USE_CARD_RELIC_IDS = frozenset({
     "Nunchaku", "OrangePellets", "Ornamental Fan", "Pen Nib", "Shuriken",
 })
 
+# Membership only; onPlayerEndTurn follows the actual acquisition-ordered list.
+ON_PLAYER_END_TURN_RELIC_IDS = frozenset({
+    "CloakClasp", "FrozenCore", "Nilry's Codex", "Orichalcum", "StoneCalendar",
+})
+
 # Membership only: real order comes from the existing ordered player powers.
 ON_EXHAUST_POWER_IDS = frozenset({"Dark Embrace", "Feel No Pain"})
 

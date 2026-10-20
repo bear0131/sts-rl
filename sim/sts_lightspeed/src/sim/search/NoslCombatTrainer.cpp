@@ -209,6 +209,30 @@ std::uint64_t publicStateKey(const BattleContext &bc,
         for (const auto relic : bc.onUseRelicOrder)
             hashValue(hash, static_cast<int>(relic));
     }
+    // Preserve historical keys when the old fixed callback order was correct.
+    // This rank is compatibility metadata, not the game's acquisition order.
+    const auto legacyEndRelicRank = [](RelicId relic) {
+        switch (relic) {
+            case RelicId::CLOAK_CLASP: return 0;
+            case RelicId::FROZEN_CORE: return 1;
+            case RelicId::NILRYS_CODEX: return 2;
+            case RelicId::ORICHALCUM: return 3;
+            case RelicId::STONE_CALENDAR: return 4;
+            default: throw std::logic_error("unknown onPlayerEndTurn relic in search key");
+        }
+    };
+    bool legacyEndRelicOrder = true;
+    int previousEndRelic = -1;
+    for (const auto relic : bc.onEndTurnRelicOrder) {
+        const int rank = legacyEndRelicRank(relic);
+        if (rank <= previousEndRelic) legacyEndRelicOrder = false;
+        previousEndRelic = rank;
+    }
+    if (!legacyEndRelicOrder) {
+        hashValue(hash, 0x656e6452656c5365ULL);
+        hashValue(hash, static_cast<int>(bc.onEndTurnRelicOrder.size()));
+        for (const auto relic : bc.onEndTurnRelicOrder) hashValue(hash, static_cast<int>(relic));
+    }
     hashValue(hash, bc.loopCount);
     // Historical scum-search scores are not part of NOSL HP futures.
     if (!equivalentFutures) {

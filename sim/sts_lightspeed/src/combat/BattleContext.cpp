@@ -112,8 +112,10 @@ void BattleContext::init(const GameContext &gc, MonsterEncounter encounterToInit
 // this doesnt apply powers in order, so if that matters in the future all relics will have to be sorted
 void BattleContext::initRelics(const GameContext &gc) {
     onUseRelicOrder.clear();
+    onEndTurnRelicOrder.clear();
     for (const auto &relic : gc.relics.relics) {
         if (hasOnUseCardHook(relic.id)) onUseRelicOrder.push_back(relic.id);
+        if (hasOnPlayerEndTurnHook(relic.id)) onEndTurnRelicOrder.push_back(relic.id);
     }
     player.relicBits0 = gc.relics.relicBits0;
     player.relicBits1 = gc.relics.relicBits1;
@@ -1831,6 +1833,16 @@ void BattleContext::onUseCardRelics() {
     }
 }
 
+bool BattleContext::hasOnPlayerEndTurnHook(RelicId relic) {
+    switch (relic) {
+        case R::CLOAK_CLASP: case R::FROZEN_CORE: case R::NILRYS_CODEX:
+        case R::ORICHALCUM: case R::STONE_CALENDAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void BattleContext::onUseAttackCard() {
     auto &item = curCardQueueItem;
     auto &c = item.card;
@@ -2156,29 +2168,25 @@ void BattleContext::callEndOfTurnActions() {
 
     // ********************* Player Relics OnPlayerEndTurn *********************
 
-    if (player.hasRelic<R::CLOAK_CLASP>()) {
-        addToBot( Actions::GainBlock(cards.cardsInHand) );
-    }
-
-    if (player.hasRelic<R::FROZEN_CORE>()) {
-        if (player.hasEmptyOrb()) {
-            player.channelOrb(Orb::FROST);
-        }
-    }
-
-    if (player.hasRelic<R::NILRYS_CODEX>()) {
-        addToBot(Actions::CodexAction());
-    }
-
-    if (player.hasRelic<R::ORICHALCUM>()) {
-        if (player.block <= 0) {
-            addToTop(Actions::GainBlock(6));
-        }
-    }
-
-    if (player.hasRelic<R::STONE_CALENDAR>()) {
-        if (turn == 6) {
-            addToBot(Actions::DamageAllEnemy(52));
+    for (const auto relic : onEndTurnRelicOrder) {
+        switch (relic) {
+            case R::CLOAK_CLASP:
+                addToBot(Actions::GainBlock(cards.cardsInHand));
+                break;
+            case R::FROZEN_CORE:
+                if (player.hasEmptyOrb()) player.channelOrb(Orb::FROST);
+                break;
+            case R::NILRYS_CODEX:
+                addToBot(Actions::CodexAction());
+                break;
+            case R::ORICHALCUM:
+                if (player.block <= 0) addToTop(Actions::GainBlock(6));
+                break;
+            case R::STONE_CALENDAR:
+                if (turn == 6) addToBot(Actions::DamageAllEnemy(52));
+                break;
+            default:
+                throw std::logic_error("unsupported relic in onPlayerEndTurn callback order");
         }
     }
 

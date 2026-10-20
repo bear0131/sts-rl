@@ -1018,6 +1018,7 @@ Action Actions::UpgradeRandomCardAction() {
 
 Action Actions::CodexAction() {
     return {[] (BattleContext &bc) {
+        if (bc.monsters.areMonstersBasicallyDead()) return;
         bc.openSimpleCardSelectScreen(CardSelectTask::CODEX, 1);
         bc.cardSelectInfo.codexCards() =
                 generateDiscoveryCards(bc.cardRandomRng, CharacterClass::IRONCLAD, CardType::INVALID);

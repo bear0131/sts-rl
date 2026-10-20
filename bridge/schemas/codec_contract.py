@@ -39,6 +39,7 @@ from .entity_ids import (
     CHEST_REWARD_SCREEN_CONTRACTS,
     NATIVE_GLOBAL_FIELDS,
     ON_USE_CARD_RELIC_IDS,
+    ON_PLAYER_END_TURN_RELIC_IDS,
     ON_EXHAUST_POWER_IDS,
     END_TURN_POWER_PRIORITIES,
     POTION_CAPACITY_RULES,
@@ -288,6 +289,14 @@ def complete_word_tables():
             "root": "canonical player.on_exhaust_power_order filters the existing actual ordered powers; native readback preserves exactly the active hooks once. A strict root with both hooks and no order is rejected; zero/one hook has only one possible order",
             "effect": "FNP->DarkEmbrace versus reverse changes the queued order of Juggernaut random damage and FireBreathing AOE when exhaust draws a status/curse; legal random targets and surviving HP can differ",
             "compatibility": "paired rebuilt native/Python, no Java field or OBS20/ACTION8/layout9 change; Player copy preserves order and nondefault two-hook NOSL futures get a distinct key. No offline test or natural-combination coverage claimed (BRIDGE144)",
+        },
+        "end_turn_relic_order_contract": {
+            "source": "AbstractRoom.applyEndOfTurnRelics iterates actual acquisition-ordered player.relics; NilrysCodex appends CodexAction, StoneCalendar at counter7 appends DamageAllEnemies52. Orichalcum prepends block; keep existing TOP/BOTTOM semantics",
+            "membership_not_order": sorted(ON_PLAYER_END_TURN_RELIC_IDS),
+            "native": "BattleContext.initRelics filters ordered GC inventory into onEndTurnRelicOrder; callEndOfTurnActions traverses it rather than fixed CloakClasp/FrozenCore/Codex/Orichalcum/Calendar order. Other-class effect implementations are not expanded",
+            "root": "canonical/raw/root on_end_turn_relic_order from existing real relic list; strict explicit list, stable supported IDs exactly all owned hooks once, atomic complete/initial-selection replacement and readback, default clone preserves. No fake order from a set or enum",
+            "effect": "Calendar acquired before Codex can kill the final enemy on turn7 before the choice; clearPostCombatActions cancels CARD_MANIPULATION, so no Codex selection may be invented first. CodexAction independently rechecks actual areMonstersBasicallyDead at execution, never HP0 alone or a half-dead reviving enemy",
+            "compatibility": "paired rebuilt native and Python; legacy valid callback order keeps existing NOSL key, nonlegacy order gets its own marker/list. No new Java fields, OBS20/ACTION8/layout9, weight or budget change. Source/build is not natural Calendar+Codex lethal-combination acceptance (BRIDGE147)",
         },
         "end_turn_power_order_contract": {
             "source": "AbstractRoom.endTurn calls inherited AbstractCreature.applyEndOfTurnTriggers over actual powers; Combust/TheBomb/default supported hooks priority5, Establishment25 and Constricted105. Stable order within one priority",
