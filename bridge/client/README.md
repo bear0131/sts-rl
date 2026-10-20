@@ -132,6 +132,23 @@ Record this as an SL diagnostic, not a new complete run or formal win-rate
 sample. A new full run requires a reason such as an unusable save or an explicit
 whole-run evaluation; do not silently fall back to START if attachment fails.
 
+Bounded diagnostic supervisors share the no-CLI process-identity helpers in
+`experiments/launchers/real_game_processes.py`. Capture each actual owner and
+child with `capture_process_identity` while live, persist its exact PID and
+creation time, and retain separate records for different incarnations of a
+reused PID. Parent PID, executable, name and observation time are provenance;
+denied metadata is explicit null with a reason, never a made-up value.
+Before checking or stopping an owner, use `matching_process(record)`; signal
+only the returned psutil Process, not the bare PID. Access denial is not proof
+of exit. Numeric `child_pids` may remain for display but cannot authorize cleanup.
+
+Old records without birth identities require read-only provenance review.
+`inspect_legacy_pid` can prove absence or reuse after a documented observation
+bound; otherwise it returns `unverifiable`, not "still our process". In
+particular, final status mtime cannot resolve PID reuse during the game. Do not
+backfill guessed birth times, stop an unknown current owner, or rewrite sealed
+scripts/protocols from completed runs to pretend they recorded identities.
+
 ### Simulator-parity state exporter
 
 Neural simulation exposes the current native monster move even with Runic Dome.
