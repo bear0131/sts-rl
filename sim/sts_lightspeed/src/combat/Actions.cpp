@@ -510,8 +510,12 @@ Action Actions::RandomizeHandCost() {
             auto &c = bc.cards.hand[i];
             if (c.cost >= 0) {
                 int newCost = bc.cardRandomRng.random(3);
-                c.cost = newCost;
-                c.costForTurn = newCost;
+                // Java leaves an existing turn-only discount unchanged when
+                // the sampled cost equals the card's current base cost.
+                if (c.cost != newCost) {
+                    c.cost = newCost;
+                    c.costForTurn = newCost;
+                }
             }
         }
     }};
