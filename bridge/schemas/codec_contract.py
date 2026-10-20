@@ -460,6 +460,15 @@ def complete_word_tables():
             "single_warcry": "PutOnDeckAction's mandatory one-card path still calls getRandomCard(cardRandomRng); it is not a zero-RNG shortcut merely because the only outcome is known. Native's discarded bounded draw consumes the same one RNG transition/counter; no behavioral change inferred from its unused bound",
             "audit": "given-source AbstractCard/AbstractRoom/ConfusionPower/RandomizeHandCostAction/PutOnDeckAction and native CardInstance/CardManager/Actions reviewed; no new execution defect established in these rules and no new offline behavior test run",
         },
+        "master_deck_event_mutation_contract": {
+            "sources": "given Duplicator, LivingWall, Designer and DrugDealer; native Deck.removeImpl/removeSelected/removeAllMatching/upgrade/obtain and GameContext.selectScreenTransform; EventEffectAck single-obtain/Designer/Augmenter receipts",
+            "deletion": "multi-remove sorts physical deck indices descending for safe compaction, not selected-card identities for transformation. Removal shifts surviving bottle indices, clears a removed bottle target and applies Parasite max-HP loss; only actual onMasterDeckChange paths refresh DuVu cache",
+            "transform": "preserve selected instance order for transform/obtain processing separately from descending deletion. Java queues independent delayed ShowCardAndObtainEffect; a closed GRID is not sufficient acknowledgement. Preserve exact surviving UUID/state map, new physical instances, actual source/context and explicit obtain-pending flag",
+            "eligibility": "ordinary LivingWall/Designer remove-transform uses actual nonbottled purgeable candidates; DrugDealer's two-card grid deliberately uses purgeable cards including bottled ones. Duplicator exposes the full master deck for a nonremoving copy; never reuse a single shared candidate filter across these sources",
+            "copy_upgrade": "Duplicator makes a stat-equivalent new instance preserving ID/misc/upgrade level, but clears all three bottle flags on the copy; original stays untouched. Eggs apply only their actual acquisition upgrade rule. Ordinary upgrades do not refresh DuVu, SearingBlow remains upgradeable; unchanged/repeated ordinary upgrades must not decrement eligible count again",
+            "excluded_false_positives": "Deck.cardTypeCounts excludes nonremovable curses for purge-oriented hasCurse, while getCurseCount scans all actual curses for DuVu; do not substitute one for the other. Uncalled transformRandomCards stub is not a runtime action. FaceTrader Touch genuinely credits gold before NORMAL damage, unlike WorldOfGoop; do not globally reorder all gold/damage events",
+            "evidence": "source and existing consumer review only, no new execution defect established or offline behavior/model test run; not proof that every private queue or rare combination has real coverage",
+        },
         "event_options": event_options,
         "structured_event_contracts": sorted(event_contract.STRUCTURED_CONTRACTS),
         "event_progress_contracts": {
