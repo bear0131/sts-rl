@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v28";
+    public static final String VERSION = "simulator-parity-v29";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -527,15 +527,25 @@ public final class SimulatorParityExporter {
         counters.put("times_damaged", Integer.valueOf(player.damagedThisCombat));
 
         int[] bombs = new int[] {0, 0, 0};
+        ArrayList<HashMap<String, Object>> bombInstances = new ArrayList<HashMap<String, Object>>();
         for (AbstractPower candidate : player.powers) {
             if (!candidate.ID.startsWith("TheBomb")) continue;
             if (candidate.amount < 1 || candidate.amount > 3) {
                 throw new IllegalStateException("The Bomb countdown outside simulator contract: "
                     + candidate.amount);
             }
-            bombs[candidate.amount - 1] += privateInt(
-                candidate, com.megacrit.cardcrawl.powers.TheBombPower.class, "damage");
+            int damage = privateInt(candidate, com.megacrit.cardcrawl.powers.TheBombPower.class, "damage");
+            if (damage < 0 || bombs[candidate.amount - 1] > Integer.MAX_VALUE - damage) {
+                throw new IllegalStateException("The Bomb damage outside simulator integer range");
+            }
+            bombs[candidate.amount - 1] += damage;
+            HashMap<String, Object> instance = new HashMap<String, Object>();
+            instance.put("id", candidate.ID);
+            instance.put("turns", Integer.valueOf(candidate.amount));
+            instance.put("damage", Integer.valueOf(damage));
+            bombInstances.add(instance);
         }
+        state.put("simulator_bombs", bombInstances);
         counters.put("bomb_1", Integer.valueOf(bombs[0]));
         counters.put("bomb_2", Integer.valueOf(bombs[1]));
         counters.put("bomb_3", Integer.valueOf(bombs[2]));

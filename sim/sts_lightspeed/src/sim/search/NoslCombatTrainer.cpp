@@ -250,9 +250,19 @@ std::uint64_t publicStateKey(const BattleContext &bc,
     hashValue(hash, player.orangePelletsCardTypesPlayed.to_ulong());
     hashValue(hash, player.cardsDiscardedThisTurn);
     hashValue(hash, player.timesDamagedThisCombat);
-    hashValue(hash, player.bomb1);
-    hashValue(hash, player.bomb2);
-    hashValue(hash, player.bomb3);
+    hashValue(hash, player.bombDamage(1));
+    hashValue(hash, player.bombDamage(2));
+    hashValue(hash, player.bombDamage(3));
+    if (!player.bombs.empty()) {
+        // Equal totals can have different hit counts/damage ordering.
+        // Keep no-bomb keys unchanged for the existing search seed protocol.
+        hashValue(hash, 0x424f4d42);
+        hashValue(hash, player.bombs.size());
+        for (const auto &bomb : player.bombs) {
+            hashValue(hash, bomb.turns);
+            hashValue(hash, bomb.damage);
+        }
+    }
     hashValue(hash, player.lastAttackUnblockedDamage);
 
     const int playerStatusCount = static_cast<int>(

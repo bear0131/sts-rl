@@ -55,6 +55,7 @@ def real_combat_state(*, deck=(), hand=(), draw=(), discard=(), exhaust=(), mons
             'simulator_energy_per_turn': 3,
             'simulator_combat_counters': {key: 0 for key in _REAL_COMBAT_COUNTER_KEYS},
             'simulator_player_power_overrides': {}, 'turn': 1,
+            'simulator_bombs': [],
             'player': {'current_hp': 80, 'max_hp': 80, 'block': 0, 'energy': 3, 'powers': []},
             'monsters': monsters, 'hand': list(hand), 'draw_pile': list(draw),
             'discard_pile': list(discard), 'exhaust_pile': list(exhaust),

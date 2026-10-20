@@ -665,6 +665,7 @@ class RealCombatSearch:
                 "energy_per_turn": int(player["energy_per_turn"]),
                 "gold": int(player["gold"]),
                 "counters": dict(player["combat_counters"]),
+                "bombs": [dict(bomb) for bomb in player["bombs"]],
                 "powers": _power_rows(player["powers"], _SUPPORTED_PLAYER_POWERS),
             },
             "monsters": monsters,

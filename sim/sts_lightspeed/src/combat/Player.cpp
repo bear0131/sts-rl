@@ -369,12 +369,16 @@ void Player::wouldDie(BattleContext &bc) {
 }
 
 void Player::applyEndOfTurnPowers(BattleContext &bc) {
-    if (bomb1) {
-        bc.addToBot( Actions::DamageAllEnemy(bomb1) );
+    if (!bc.monsters.areMonstersBasicallyDead()) {
+        for (auto &bomb : bombs) {
+            if (bomb.turns == 1) {
+                bc.addToBot(Actions::DamageAllEnemy(bomb.damage));
+            }
+            --bomb.turns;
+        }
+        bombs.erase(std::remove_if(bombs.begin(), bombs.end(),
+                [](const Bomb &bomb) { return bomb.turns == 0; }), bombs.end());
     }
-    bomb1 = bomb2;
-    bomb2 = bomb3;
-    bomb3 = 0;
 
     for (auto pair : statusMap) {
         if (!hasStatusRuntime(pair.first)) {
@@ -853,9 +857,9 @@ namespace sts {
             << s << "devaFormEnergyPerTurn: " << static_cast<int>(p.devaFormEnergyPerTurn)
             << s << "echoFormCardsDoubled: " << static_cast<int>(p.echoFormCardsDoubled)
             << s << "panacheCounter: " << static_cast<int>(p.panacheCounter)
-            << s << "TheBomb: { 1=" << static_cast<int>(p.bomb1)
-                << ", 2=" << static_cast<int>(p.bomb2)
-                << ", 3=" << static_cast<int>(p.bomb3)
+            << s << "TheBomb: { 1=" << p.bombDamage(1)
+                << ", 2=" << p.bombDamage(2)
+                << ", 3=" << p.bombDamage(3)
                 << " }"
 
             << "\n\t" << "Misc: "

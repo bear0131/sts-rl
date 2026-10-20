@@ -285,13 +285,21 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     counters["panache_counter"] = bc.player.panacheCounter;
     counters["cards_discarded"] = bc.player.cardsDiscardedThisTurn;
     counters["times_damaged"] = bc.player.timesDamagedThisCombat;
-    counters["bomb_1"] = bc.player.bomb1;
-    counters["bomb_2"] = bc.player.bomb2;
-    counters["bomb_3"] = bc.player.bomb3;
+    counters["bomb_1"] = bc.player.bombDamage(1);
+    counters["bomb_2"] = bc.player.bombDamage(2);
+    counters["bomb_3"] = bc.player.bombDamage(3);
     counters["last_attack_unblocked_damage"] = bc.player.lastAttackUnblockedDamage;
     player["combat_counters"] = counters;
     player["powers"] = playerPowersToList(bc.player);
     player["energy_per_turn"] = static_cast<int>(bc.player.energyPerTurn);
+    py::list bombs;
+    for (const auto &bomb : bc.player.bombs) {
+        py::dict record;
+        record["turns"] = bomb.turns;
+        record["damage"] = bomb.damage;
+        bombs.append(record);
+    }
+    player["bombs"] = bombs;
     d["player"] = player;
 
     py::list monsters;
@@ -706,9 +714,9 @@ inline Row pack(const sts::BattleContext &bc) {
         static_cast<float>(bc.player.panacheCounter),
         static_cast<float>(bc.player.cardsDiscardedThisTurn),
         static_cast<float>(bc.player.timesDamagedThisCombat),
-        static_cast<float>(bc.player.bomb1),
-        static_cast<float>(bc.player.bomb2),
-        static_cast<float>(bc.player.bomb3),
+        static_cast<float>(bc.player.bombDamage(1)),
+        static_cast<float>(bc.player.bombDamage(2)),
+        static_cast<float>(bc.player.bombDamage(3)),
         static_cast<float>(bc.player.lastAttackUnblockedDamage),
     };
     for (int i = 0; i < kCombatCounters; ++i) row.scalars[f++] = counters[i];
@@ -898,7 +906,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         if (strictComplete) {
             static constexpr const char *kPlayerKeys[] = {
                 "max_hp", "hp", "block", "energy", "energy_per_turn",
-                "gold", "counters", "powers",
+                "gold", "counters", "powers", "bombs",
             };
             for (const auto *key : kPlayerKeys) {
                 if (!p.contains(key)) {
@@ -919,6 +927,26 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             getBoundedInt(p, "energy_per_turn", bc.player.energyPerTurn, 0, 127));
         bc.player.gold = getBoundedInt(
             p, "gold", bc.player.gold, 0, std::numeric_limits<std::int16_t>::max());
+        if (p.contains("bombs")) {
+            std::vector<sts::Player::Bomb> bombs;
+            for (auto item : p["bombs"].cast<py::list>()) {
+                const auto record = item.cast<py::dict>();
+                if (record.size() != 2 || !record.contains("turns") || !record.contains("damage")) {
+                    throw std::invalid_argument("bomb instance must contain exactly turns and damage");
+                }
+                if (!py::isinstance<py::int_>(record["turns"]) || py::isinstance<py::bool_>(record["turns"])
+                        || !py::isinstance<py::int_>(record["damage"]) || py::isinstance<py::bool_>(record["damage"])) {
+                    throw std::invalid_argument("bomb countdown/damage must be integers, not booleans");
+                }
+                const int turns = record["turns"].cast<int>();
+                const int damage = record["damage"].cast<int>();
+                if (turns < 1 || turns > 3 || damage < 0) {
+                    throw std::invalid_argument("bomb instance countdown/damage outside native range");
+                }
+                bombs.push_back({turns, damage});
+            }
+            bc.player.bombs = std::move(bombs);
+        }
         if (p.contains("counters")) {
             auto c = p["counters"].cast<py::dict>();
             if (strictComplete) {
@@ -981,12 +1009,12 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 getBoundedInt(c, "cards_discarded", bc.player.cardsDiscardedThisTurn, 0, 32767));
             bc.player.timesDamagedThisCombat = static_cast<std::int16_t>(
                 getBoundedInt(c, "times_damaged", bc.player.timesDamagedThisCombat, 0, 32767));
-            bc.player.bomb1 = getBoundedInt(
-                c, "bomb_1", bc.player.bomb1, 0, std::numeric_limits<int>::max());
-            bc.player.bomb2 = getBoundedInt(
-                c, "bomb_2", bc.player.bomb2, 0, std::numeric_limits<int>::max());
-            bc.player.bomb3 = getBoundedInt(
-                c, "bomb_3", bc.player.bomb3, 0, std::numeric_limits<int>::max());
+            for (int turns = 1; turns <= 3; ++turns) {
+                const auto key = std::string("bomb_") + std::to_string(turns);
+                if (c.contains(key.c_str()) && c[key.c_str()].cast<int>() != bc.player.bombDamage(turns)) {
+                    throw std::invalid_argument("bomb counter differs from explicit bomb instances");
+                }
+            }
             bc.player.lastAttackUnblockedDamage = static_cast<std::int16_t>(
                 getBoundedInt(c, "last_attack_unblocked_damage", bc.player.lastAttackUnblockedDamage, 0, 32767));
             bc.player.setHasRelic<sts::RelicId::CENTENNIAL_PUZZLE>(
@@ -1823,7 +1851,7 @@ void setRulePlayerStatusByNameExact(
     }
     if (name == "THE_BOMB" && amount != 0) {
         throw std::invalid_argument(
-            "THE_BOMB is represented by bomb_1/bomb_2/bomb_3 counters");
+            "THE_BOMB requires explicit ordered player.bombs instances, not a scalar power");
     }
 #define SET_PLAYER_STATUS(value) \
     if (name == #value) { \

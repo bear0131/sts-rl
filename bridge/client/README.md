@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v28`.
+`current_intent_export: simulator-parity-v29`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -258,7 +258,16 @@ Sear uses the actual upgrade flag. Activate does not roll again. Activating the
 sixth orb sets Inferno before the queued RollMove sets it again, retaining both
 real history entries. This does not claim arbitrary pending-action restoration.
 
-Do not mix v28 Python with an older jar/native extension. Model tensor layouts
+Since v29 combat state also exports `simulator_bombs`, an explicit ordered list
+of each TheBomb power's actual ID, countdown and private damage (or `[]`).
+The bridge checks every instance against the actual power list and the three
+aggregate counters. Native roots retain each independent hit; combining two
+explosions would incorrectly deal only one damage to an Intangible enemy.
+The old three damage-sum inputs remain unchanged for existing checkpoints.
+Counts and per-bomb damage are never inferred from those totals. Native copies
+and search keys retain the instances; rebuild the native extension with v29.
+
+Do not mix v29 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

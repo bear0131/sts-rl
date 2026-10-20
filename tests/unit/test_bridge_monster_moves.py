@@ -23,6 +23,7 @@ def _real_combat_frame(monsters):
                 key: 0 for key in _REAL_COMBAT_COUNTER_KEYS
             },
             "simulator_player_power_overrides": {},
+            "simulator_bombs": [],
             "turn": 3,
             "cards_discarded_this_turn": 0,
             "times_damaged": 0,

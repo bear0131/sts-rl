@@ -18,6 +18,8 @@
 #include <bitset>
 #include <map>
 #include <algorithm>
+#include <limits>
+#include <stdexcept>
 
 #include <constants/CharacterClasses.h>
 #include <constants/Relics.h>
@@ -99,9 +101,23 @@ struct Player {
         int16_t lastAttackUnblockedDamage = 0;
         int16_t timesDamagedThisCombat = 0;
 
-        int bomb1 = 0;
-        int bomb2 = 0;
-        int bomb3 = 0;
+        struct Bomb {
+            int turns;
+            int damage;
+        };
+        // Each TheBombPower explodes separately, including against Intangible.
+        // The frozen observation still exposes only the three derived totals.
+        std::vector<Bomb> bombs;
+        [[nodiscard]] int bombDamage(int turns) const {
+            std::int64_t total = 0;
+            for (const auto &bomb : bombs) {
+                if (bomb.turns == turns) total += bomb.damage;
+            }
+            if (total > std::numeric_limits<int>::max()) {
+                throw std::overflow_error("bomb damage total exceeds native integer range");
+            }
+            return static_cast<int>(total);
+        }
 
         template <RelicId r> void setHasRelic(bool value);
         template <PlayerStatus> void setHasStatus(bool value);
@@ -343,7 +359,8 @@ struct Player {
         }
 
         if (s == PS::THE_BOMB) {
-            bomb3 += amount;
+            if (amount < 0) throw std::invalid_argument("negative bomb damage");
+            bombs.push_back({3, amount});
             return;
         }
 

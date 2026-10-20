@@ -216,6 +216,7 @@ def joint_frame(hand, *, selected=(), multi=False):
                 "simulator_energy_per_turn": 3,
                 "simulator_combat_counters": counters,
                 "simulator_player_power_overrides": {},
+                "simulator_bombs": [],
                 "turn":1,"hand":hand,"draw_pile":[],
                 "discard_pile":[],"exhaust_pile":[],
                 "player":{"current_hp":80,"max_hp":80,"block":0,"energy":3,"powers":[]},

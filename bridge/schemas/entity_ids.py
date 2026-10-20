@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v28"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v29"
 
 # Actual AI fields governing later moves; not inferred from visible buffs/history.
 MONSTER_MOVE_STATE_CONTRACTS = {
@@ -915,8 +915,8 @@ STRUCTURAL_POWER_FIELDS = {
     "BackAttack": "player.surrounded + monster position/adjusted intent damage",
     "Berserk": "player.energy_per_turn",
     # Java creates a unique TheBomb<N> power for each copy.  Countdown and
-    # damage are losslessly folded into the three native bomb damage buckets.
-    "TheBomb*": "player.combat_counters.bomb_1/bomb_2/bomb_3",
+    # damage must retain independent hits; the old three totals are derived.
+    "TheBomb*": "player.bombs ordered turns/damage instances; combat_counters.bomb_1/bomb_2/bomb_3 are the frozen model projection",
 }
 
 # Exact Java Power IDs present in desktop-1.0.jar but intentionally unsupported

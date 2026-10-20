@@ -88,7 +88,7 @@ struct Planner {
         for (const auto &c:b.cards.discardPile) if (!harmless(c)) return false;
         for (int i=1;i<=static_cast<int>(PlayerStatus::THE_BOMB);++i)
             if (!tables().harmlessPower[i] && observePower(b.player,static_cast<PlayerStatus>(i))>0) return false;
-        if (b.player.bomb1>0 || b.player.bomb2>0 || b.player.bomb3>0) return false;
+        if (!b.player.bombs.empty()) return false;
         for (int i=0;i<b.potionCapacity;++i)
             if (b.potions[i]!=Potion::INVALID && b.potions[i]!=Potion::EMPTY_POTION_SLOT) return false;
         for (int i=0;i<b.monsters.monsterCount;++i) {

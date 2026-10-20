@@ -7,7 +7,7 @@
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
 | BRIDGE115 | 已修并构建；原134实机故障路径通过 | 200202/F41倏忽魔Shackled134在native int8溢出-122，strict restore拒绝；怪物各独立stackable/unique1量改Java int，Shackled按真实±999封顶，保留精确读回验证。TheBomb三桶伤害与restore127界限一并扩int，native复制/搜索key/数值观察消费者不变，完整重建内部ABI，无模型布局/权重变化。cb421da/nativee8b7ea同自然F41/index353续跑，真实T5再次134/Strength-140后index381继续搜索、382结束战斗并至F45，无ERROR；只覆盖本自然路径，其他高层数/炸弹仍待自然组合，无离线测试。 |
-| BRIDGE116 | 待源码审查 | TheBomb真实独立power各自爆炸，native三时间桶仅存总伤害；需核对同桶多枚与Nemesis Intangible等组合是否损失有效命中次数，若确证则保持旧模型桶输入、补内部实例/真实对接。不能以115仅扩存储声称全部炸弹效果对齐；无离线测试。 |
+| BRIDGE116 | 源码已修并构建，待v29自然实机 | TheBomb真实独立power各自爆炸，旧native三时间桶合并一次伤害，Nemesis Intangible会少算命中。改有序turns/damage实例为唯一来源，各自爆炸；既有三桶/紧凑/模型输入只派生总和，不改OBS20/ACTION8/layout9。Java v29显式导出每枚ID/countdown/private damage，规范层核实际power身份顺序、数量/倒计时/总量，strict restore/对账/默认复制/NOSL key保留实例，缺失拒绝不猜实例。必要Java/native构建及语法检查完成，后续运行段部署；未声明一般回合末能力交错全部对齐，无离线测试。 |
 | BRIDGE114 | 源码已修并构建，待后续实机 | ExhaustSpecificCardAction在消耗回调/入堆后清freeToPlayOnce；原生指定消耗路径未清，Forethought免费牌经幽灵护甲回合末/断魂斩/重振精神消耗再Exhume会错误保持免费。只清同一已入堆实例的freeOnce，普通ExhaustAction/手选消耗/物理UID/回调顺序不变，无布局/权重变更。源码复读/必要构建完成，待后续自然组合，无离线测试。 |
 | BRIDGE113 | 源码已修并构建，待后续实机 | ThinkingAhead.use在抽牌前、打出牌尚未离手时检查手牌非空才排PutOnDeck；原生误同Warcry始终排选牌，空手Havoc自动打出该牌会多放回一张/与真机选择不一致。仅按use时cardsInHand>0决定是否排WarcryAction，保留Draw2、普通手打及Warcry自身无条件放回；无字段/ID/权重布局变更。源码链复读/必要构建完成，后续运行段部署，无离线测试。 |
 | BRIDGE112 | 源码已修并构建，待后续实机 | 匕首召唤者canSpawn实际排除自身计其他非dying≤3，原生全队含自身<4错误禁止第三把匕首后的补第四把；改全队≤4。A18请求2把时只生成实际空槽数量，单空槽/无空槽不读未初始化索引，保留物理槽及逐生成RNG/skipTurn/Minion/Philo，不填PAD、不改权重布局。当前200202冻结版本运行中不热换，源码复读及必要构建完成，后续段部署；无离线测试。 |

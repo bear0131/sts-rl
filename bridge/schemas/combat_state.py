@@ -10,7 +10,8 @@ localized `name` field, which is GBK-localized and unstable):
 
   {
     "turn": int,
-    "player": {"hp", "max_hp", "block", "energy", "powers": {power_id: amount}},
+    "player": {"hp", "max_hp", "block", "energy", "powers": {power_id: amount},
+               "bombs": [{"turns": int, "damage": int}, ...]},
     "monsters": [
       {"id", "hp", "max_hp", "block", "gone", "base_damage",
        "adjusted_damage", "hits", "move", "move_id",
@@ -99,6 +100,40 @@ def _validated_combat_counters(counters):
     return result
 
 
+def _validated_bombs(bombs, counters, *, real_powers=None):
+    """Retain independent hits; the old three totals are only a projection."""
+    if not isinstance(bombs, list):
+        raise ValueError("bomb instances must be an explicit list, including when empty")
+    wire = real_powers is not None
+    keys = {"turns", "damage", "id"} if wire else {"turns", "damage"}
+    result, ids, totals = [], [], [0, 0, 0]
+    for record in bombs:
+        if not isinstance(record, dict) or set(record) != keys:
+            raise ValueError(f"bomb instance fields are incomplete or unmapped: {record!r}")
+        turns, damage = record["turns"], record["damage"]
+        if type(turns) is not int or not 1 <= turns <= 3:
+            raise ValueError(f"bomb countdown outside 1..3: {turns!r}")
+        if type(damage) is not int or not 0 <= damage <= 2147483647:
+            raise ValueError(f"bomb damage outside Java integer range: {damage!r}")
+        totals[turns - 1] += damage
+        result.append({"turns": turns, "damage": damage})
+        if wire:
+            ids.append(record["id"])
+    if wire:
+        actual = [p for p in real_powers
+                  if p["id"].startswith("TheBomb") and p["id"][7:].isdigit()]
+        expected_ids = [p["id"] for p in actual]
+        if ids != expected_ids or len(set(expected_ids)) != len(expected_ids):
+            raise ValueError("bomb instances differ from ordered unique real power identities")
+        if any(type(p["amount"]) is not int or p["amount"] != b["turns"]
+               for p, b in zip(actual, result)):
+            raise ValueError("bomb countdown differs from its actual power amount")
+    for turns, total in enumerate(totals, 1):
+        if total > 2147483647 or counters[f"bomb_{turns}"] != total:
+            raise ValueError("bomb counter differs from explicit bomb instance totals")
+    return result
+
+
 def _powers_real(power_list, *, include_structural=False):
     # real game flattens every buff/debuff into a list; key by stable English id
     if not isinstance(power_list, list):
@@ -110,7 +145,7 @@ def _powers_real(power_list, *, include_structural=False):
         raw_name = str(power["id"])
         if raw_name.startswith("TheBomb") and raw_name[7:].isdigit():
             # Each copy has a generated ID (TheBomb0, TheBomb1, ...).  Its
-            # countdown and private damage are exported into bomb_1..bomb_3.
+            # countdown/private damage survive as ordered independent bombs.
             continue
         if raw_name in UNSUPPORTED_REAL_POWER_IDS:
             raise ValueError(
@@ -424,6 +459,8 @@ def normalize_real(game_state):
     combat_counters = _validated_combat_counters(exported_counters)
     combat_counters["pen_nib"] = native_combat_relic_counter("Pen Nib", combat_counters["pen_nib"])
     player_powers = _player_powers_real(p["powers"])
+    bombs = _validated_bombs(cs.get("simulator_bombs"), combat_counters,
+                            real_powers=p["powers"])
     power_overrides = cs.get("simulator_player_power_overrides")
     if not isinstance(power_overrides, dict):
         raise ValueError(
@@ -468,6 +505,7 @@ def normalize_real(game_state):
             "energy": p["energy"],
             "gold": game_state["gold"],
             "combat_counters": combat_counters,
+            "bombs": bombs,
             "powers": {k: v for k, v in player_powers.items()
                        if k != "Berserk"},
             "energy_per_turn": _real_energy_per_turn(game_state),
@@ -862,7 +900,7 @@ def normalize_sim(raw):
     p = raw["player"]
     player_required = {
         "hp", "max_hp", "block", "energy", "gold", "combat_counters",
-        "powers", "energy_per_turn",
+        "powers", "energy_per_turn", "bombs",
     }
     missing_player = player_required - set(p)
     if missing_player:
@@ -875,6 +913,8 @@ def normalize_sim(raw):
             f"sim combat counters are incomplete: {sorted(missing_counters)!r}"
         )
     from env.core.vocab import PLAYER_BUFF_VOCAB_INDEX
+    combat_counters = _validated_combat_counters(p["combat_counters"])
+    bombs = _validated_bombs(p["bombs"], combat_counters)
     return {
         # sim turn is 0-based at combat start; real game is 1-based.
         "turn": raw["turn"] + 1,
@@ -891,7 +931,8 @@ def normalize_sim(raw):
             "block": p["block"],
             "energy": p["energy"],
             "gold": p["gold"],
-            "combat_counters": _validated_combat_counters(p["combat_counters"]),
+            "combat_counters": combat_counters,
+            "bombs": bombs,
             "powers": _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX),
             "energy_per_turn": p["energy_per_turn"],
         },
@@ -1307,6 +1348,7 @@ def diff(real, sim, pile_mode="auto"):
         cmp("player.energy_per_turn", real["player"]["energy_per_turn"],
             sim["player"]["energy_per_turn"])
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
+    cmp("player.bombs", real["player"]["bombs"], sim["player"]["bombs"])
     cmp(
         "player.combat_counters",
         real["player"]["combat_counters"],

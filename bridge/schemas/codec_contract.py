@@ -545,8 +545,13 @@ def complete_word_tables():
         "native_power_amount_storage": {
             "monster": "all dedicated stackable amounts and uniquePower1 use Java-sized int storage, not int8/int16; Transient Shifting can accumulate Shackled134 in one turn (BRIDGE115)",
             "Shackled": "GainStrengthPower constructor/stack uses +/-999 clamp; same bound as Strength, no 127 truncation; strict restore still checks exact readback",
-            "TheBomb": "existing three native damage buckets and restore bounds use int amounts, allowing totals above127; observation/action dimensions and IDs unchanged; individual bomb hit ordering remains a separate audit",
+            "TheBomb": "Java-sized per-instance damage/turns; three frozen int damage totals are derived, allowing totals above127 without merging independent hits (BRIDGE115/116)",
             "consumers": "native default copies and NOSL hashValue consume full fields; full wire snapshots/compact scalars remain numeric, requiring rebuilt native ABI rather than a checkpoint migration",
+        },
+        "bomb_instance_transport": {
+            "wire": "v29 combat_state.simulator_bombs is an explicit ordered list of id/turns/damage, including []; each unique ID/countdown must match the actual ordered player.powers",
+            "native": "Player.bombs retains each turns/damage instance; each expiring bomb queues its own THORNS-equivalent DamageAllEnemy, preserving Intangible hit count; no decomposition guessed from aggregate totals",
+            "consumers": "canonical player.bombs, strict restore, diff, native copies and nonempty-bomb search keys retain the ordered instances; three old counter/compact/model slots remain derived damage sums with unchanged OBS20/ACTION8/layout9",
         },
         "monster_move_state_transport": {
             "wire": "v28 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
