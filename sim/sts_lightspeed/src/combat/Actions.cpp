@@ -418,13 +418,18 @@ Action Actions::DamageRandomEnemy(int damage) {
     }, false};
 }
 
-Action Actions::ExhaustRandomCardInHand(int count) {
+Action Actions::ExhaustRandomCardInHand(int count, bool anyNumber) {
     return {[=] (BattleContext &bc) {
-        for (int i = 0; i < count; ++i) {
+        // ExhaustAction's mandatory whole-hand branch runs before isRandom.
+        // Fiend Fire explicitly sets anyNumber=true and must still sample.
+        const bool exhaustAll = !anyNumber && bc.cards.cardsInHand <= count;
+        const int amount = exhaustAll ? bc.cards.cardsInHand : count;
+        for (int i = 0; i < amount; ++i) {
             if (bc.cards.cardsInHand <= 0) {
                 return;
             }
-            const auto idx = bc.cards.getRandomCardIdxInHand(bc.cardRandomRng);
+            const auto idx = exhaustAll ? bc.cards.cardsInHand - 1
+                                       : bc.cards.getRandomCardIdxInHand(bc.cardRandomRng);
             auto c = bc.cards.hand[idx];
             bc.cards.removeFromHandAtIdx(idx);
             bc.triggerAndMoveToExhaustPile(c);
@@ -797,7 +802,7 @@ Action Actions::DualWieldAction(int copyCount) {
     }};
 }
 
-Action Actions::ExhumeAction() { // todo this is bugged because the selected card cannot be exhume
+Action Actions::ExhumeAction() {
     return {[=] (BattleContext &bc) {
         if (bc.cards.exhaustPile.empty() || bc.cards.cardsInHand == 10) {
             return;
@@ -815,10 +820,12 @@ Action Actions::ExhumeAction() { // todo this is bugged because the selected car
         if (nonExhumeCards == 0) {
             return;
 
-        } else if (nonExhumeCards == 1) {
+        } else if (bc.cards.exhaustPile.size() == 1) {
             bc.chooseExhumeCard(lastNonExhumeIdx);
 
         } else {
+            // Java checks the original pile size before temporarily removing
+            // Exhumes. A larger pile still opens GRID with one eligible card.
             bc.openSimpleCardSelectScreen(CardSelectTask::EXHUME, 1);
         }
 
@@ -1145,7 +1152,7 @@ Action Actions::FiendFireAction(int targetIdx, int calculatedDamage) {
         }
 
         for (int i = 0; i < bc.cards.cardsInHand; ++i) {
-            bc.addToTop( Actions::ExhaustRandomCardInHand(1) );
+            bc.addToTop( Actions::ExhaustRandomCardInHand(1, true) );
         }
     }};
 }

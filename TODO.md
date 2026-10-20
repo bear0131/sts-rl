@@ -6,6 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE117 | 源码已修并构建，待自然实机组合 | Exhume只在原消耗堆总数1且可取时自动返回；原堆含旧Exhume+单个有效候选仍开GRID。旧native按有效候选1直接返回，真机有选择/native无选择会阻断；改按原总数，保留非Exhume候选/物理UID、旧Exhume内部保留与费用恢复，不改模型/动作布局。必要构建/词表语法检查完成，待自然组合，无离线测试。 |
+| BRIDGE118 | 源码已修并构建，待自然实机组合 | ExhaustAction的!anyNumber且手牌<=amount整手分支先于isRandom，不取随机；旧native让未升级TrueGrit单牌也多取一次RNG。显式anyNumber参数/整手从top取，FiendFire传true保留本来正确的单牌随机行为，不夸大为已观测错选牌。泛用消耗回调/freeOnce不变，无模型/动作布局变化；必要构建/词表语法检查完成，待自然组合，无离线测试。 |
 | BRIDGE115 | 已修并构建；原134实机故障路径通过 | 200202/F41倏忽魔Shackled134在native int8溢出-122，strict restore拒绝；怪物各独立stackable/unique1量改Java int，Shackled按真实±999封顶，保留精确读回验证。TheBomb三桶伤害与restore127界限一并扩int，native复制/搜索key/数值观察消费者不变，完整重建内部ABI，无模型布局/权重变化。cb421da/nativee8b7ea同自然F41/index353续跑，真实T5再次134/Strength-140后index381继续搜索、382结束战斗并至F45，无ERROR；只覆盖本自然路径，其他高层数/炸弹仍待自然组合，无离线测试。 |
 | BRIDGE116 | 已部署v29并接通常规实机，多炸弹待覆盖 | TheBomb真实独立power各自爆炸，旧native三时间桶合并一次伤害，Nemesis Intangible会少算命中。改有序turns/damage实例为唯一来源，各自爆炸；既有三桶/紧凑/模型输入只派生总和，不改OBS20/ACTION8/layout9。Java v29显式导出每枚ID/countdown/private damage，规范层核实际power身份顺序、数量/倒计时/总量，strict restore/对账/默认复制/NOSL key保留实例，缺失拒绝不猜实例。必要构建/语法检查及200203 F1空列表真实恢复/原最终模型搜索已通过，未覆盖多炸弹/Intangible及一般回合末能力交错，无离线测试。 |
 | BRIDGE114 | 源码已修并构建，待后续实机 | ExhaustSpecificCardAction在消耗回调/入堆后清freeToPlayOnce；原生指定消耗路径未清，Forethought免费牌经幽灵护甲回合末/断魂斩/重振精神消耗再Exhume会错误保持免费。只清同一已入堆实例的freeOnce，普通ExhaustAction/手选消耗/物理UID/回调顺序不变，无布局/权重变更。源码复读/必要构建完成，待后续自然组合，无离线测试。 |
