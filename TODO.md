@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE143 | 源码/语法/复读已修，待同211自然档实机 | 211/F33杀死Automaton后短暂COMBAT/NONE仍广告END，三物理怪均dying，旧native已终局却重attach过滤成空wanted()而失败。按真实is_dying/is_escaping的Java areMonstersBasicallyDead等待实际奖励，不能用含半死态的is_gone或HP0；空集合亦仅等待、不造遭遇/胜利/PAD，真实选牌不阻挡，同房间pause-adjusted10秒上限。py_compile/diff/source复读通过，无离线测试/新Java/原生构建；保留搜索nonce/预算/模型。已定位未改F33自然档64dc1c73/index226，提交推送后完整新冻同211续，不START/跳212。 |
 | BRIDGE142 | 已完整部署211并接通搜索，烟斗组合待自然覆盖 | 原生烟斗TOKE刚开REMOVE选牌就regainControl覆盖为地图，无法实际删牌；移除提前continuation，由既有选牌完成后返回。isValidRestAction/getAllRestActions同时要求至少1张可删非瓶装卡，与原版PeacePipe条件一致；桥接for_purge/REMOVE/UUID保持，动作/张量/RNG不变。必要native构建退出0/e19d0bd6、词表语法/完整diff通过，无新wire/强迫选择/离线测试。919b056普通push后全25根新冻，210自然终局/67原件独立恢复/旧owner退出后仅START211；actual模型13284加载独立e19d模块路径/hash、Java39与首F1实际128搜索核验，未热换或重开210，不冒称烟斗组合已覆盖。 |
 | BRIDGE141 | 已随919/e19d完整部署211，特殊供品组合待自然覆盖 | WeMeetAgain旧shuffle后折叠到首张等值Card，忽略独立bottleIdxs；直接返回实际随机物理索引，保留资格/顺序/原RNG/Card等价/模型动作。药水供品、TinyHouse升级、五个初始遗物池共七处恢复原版计数randomLong，底层随机位/抽取数/顺序不变但counter完整，空供品不抽、单瓶仍一次；initFromSave不重跑pool初始化。首次必要构建5cce7a23通过，142后最终e19d0bd6包含全部修改，Java39无需新wire/张量。210全程原239/native06c3自然胜76-96HP/814分/31牌、67恢复后仅211..219新冻，实际13284模块/hash与F1原128搜索核验；旧210诊断不重复算seed，无离线测试，不据普通接入称特殊组合已覆盖。 |
 | BRIDGE140 | 已完整部署210并接通搜索，特殊组合待自然覆盖 | 原生Nloth漏三瓶解除/死灵书移首诅咒，重复Gift错丢供品；共享loseRelic/确切direct-remove、已有data保存DuVu真实缓存，正常移牌刷新，死灵书直接移除/纯升级保留，restore/战斗不重算假counter。Java39实际两遗物/screenNum、typed0/1/leave2/有序遗物与完整卡副作用回执，重复Gift给Circlet保留供品。必要构建native06c3/Java39-a5f1和语法/diff通过；239ea02再修Falling/WeMeetAgain/Designer回执。209自然通关/67原件核验恢复后完整新冻210..219，模型57704模块路径/hash核验、v39/F4原128搜索继续/error无；无张量/权重/预算变化、无离线测试，特殊组合不冒称覆盖。 |
@@ -178,7 +179,7 @@
 
 | BRIDGE12 | 已部署v31，同档F3固定五对/翻回/结束实机通过；匹配入库待自然覆盖 | 用户明确继续始终选前两张；复用stock点击与公开cardPositions，新typed进度无cardID/记忆。0c44518已从200204原始F3档续跑：真实五次各翻物理0/1、第二张映射当前CHOOSE0，尝试5→0，各对不匹配均翻回，随后COMPLETE/离开正常，牌组UUID11张/79HP/124金不变；16:01:45起原模型index24/F4搜索，后至F6无ERROR。v31 Python/Java同步，native b437648e/旧模型布局不改，未跑离线测试；匹配移除两槽/获得牌分支本自然局没有覆盖，不夸大验收。历史停机与33966c7/79e1d0a边界保留，见worklog/2026-10-19.md及2026-10-20.md。 |
 
-| BRIDGE11 | 真机52身份已核对；全分支未完成 | 实现32/52显式路径、20缺失，运行中仍30/52；净化之泉与秘密传送门尚未部署，315项实现回归通过。208场景有界4200 transitions无基础异常，Skull两场景封顶，不等于Java一致验收。ScrapOoze/Sphere两规则修复已在正式200207边界显式切换ff65950b扩展，旧成绩保留版本差异。仍须全部分支结果oracle、编码、动作、ACK与遗物副作用；原始java-event-identity-audit.json及event-probe-*-results.json在campaign目录，见worklog/2026-10-19.md“秘密传送门两段确认”。 |
+| BRIDGE11 | 当前52身份均有显式选项合同；分支/副作用仍待审 | 当前33ca0ea静态源码44个CONTRACTS+7个structured/dynamic+NEOW=52唯一canonical身份，与EVENT_VOCAB去PAD后52项同集合，missing/extra均空；codec_contract已有全覆盖guard。旧32/52、20缺失、30/52运行中及两事件未部署是历史快照，不可再当当前缺口。此项只证明身份/选项有处置，不证明每个结果、GRID、零效果、死亡/复活或遗物副作用等价；须继续原版源码逐分支核对及后续自然实机。旧315项/208场景4200 transitions仅历史证据、非本轮测试；原始审计/探针见campaign根与worklog/2026-10-19.md“秘密传送门两段确认”，不冒称52事件全分支完成。 |
 
 | BRIDGE09 | 主菜单默认等待修复；用户自行启动游戏 | 自动START必须显式同时启用continuous-test与auto-start；seed/campaign不可绕过。手动attach守卫在每次SL返回主菜单仍生效。198实现回归通过；用户自行启动/继续，不允许旧心跳自动启动。SL结果单独诊断，不混正式receipt；实际Esc/SL复验待用户继续。见worklog/2026-10-19.md“主菜单显式授权”。 |
 | BRIDGE10 | 已复现：SL重启改变搜索随机身份，尚未修复 | bridge/search_bridge.py的全程decision_index重启归零，经rl/evaluation/strategies.py进入state_nonce；同seed/公开状态不足以保证同动作。200205 F23旧index204/205与读档0/1第二步分歧；固定首帧连续两步离线改变index可稳定改变第二动作，但未精确复现原日志全部动作。需恢复搜索上下文或定义重启稳定身份并验证相同输入、完整搜索配置、前缀和隐状态；不修改正在运行的游戏。见worklog/2026-10-19.md“三奴隶SL轨迹分歧”。 |

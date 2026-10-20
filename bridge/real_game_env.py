@@ -703,6 +703,7 @@ class RealGameAdapter:
         self._seen_game_frame = False
         self._combat_identity = None
         self._combat_initialized = False
+        self._combat_settlement_wait = None
 
     def exclude_wait_time(self, seconds: float) -> None:
         """Share only the caller's explicitly observed settings-pause duration."""
@@ -734,6 +735,7 @@ class RealGameAdapter:
                 self._combat_initialized = False
             if not self.in_game():
                 self._card_obtain_wait = None
+                self._combat_settlement_wait = None
             self._combat_identity = identity
             if combat and (combat.get("hand")
                            or combat.get("player", {}).get("energy", 0) > 0
@@ -822,8 +824,29 @@ class RealGameAdapter:
             "frame requires refresh but advertises neither STATE nor WAIT"
         )
 
+    def _combat_settlement_pending(self) -> bool:
+        combat = self.gs.get("combat_state")
+        if (not combat or self.gs.get("room_phase") != "COMBAT"
+                or self.screen_type() != "NONE"):
+            return False
+        monsters = _dict_records(
+            _list_value(combat, "monsters", context="combat settlement"),
+            context="combat settlement monsters",
+        )
+        lifecycle = [
+            (_required_bool(monster, "is_dying", context="combat settlement monster"),
+             _required_bool(monster, "is_escaping", context="combat settlement monster"))
+            for monster in monsters
+        ]
+        # Match MonsterGroup.areMonstersBasicallyDead, not is_gone/HP: a
+        # half-dead Darkling or Awakened One is still a continuing battle.
+        # An explicitly empty roster is likewise only a transport wait.
+        return all(dying or escaping for dying, escaping in lifecycle)
+
     def _combat_ready_for_policy(self) -> bool:
         if not self.gs.get("combat_state"):
+            return False
+        if self._combat_settlement_pending():
             return False
         if (self.screen_type() != "GAME_OVER"
                 and _required_bool(self.gs, "simulator_obtain_pending", context="combat game_state")):
@@ -906,6 +929,17 @@ class RealGameAdapter:
             if "RETURN" in self.commands():
                 return "RETURN", "close_combat_map_overlay"
             return self._refresh_command(), "await_combat_map_overlay_close"
+        if self._combat_settlement_pending():
+            identity = tuple(_required(self.gs, key, context="combat settlement")
+                             for key in ("seed", "act", "floor", "room_type"))
+            pending = self._combat_settlement_wait
+            now = self._wait_clock()
+            if pending is None or pending[0] != identity:
+                self._combat_settlement_wait = (identity, now)
+            elif now - pending[1] > 10:
+                raise RuntimeError("defeated/escaping monster room did not settle for 10 seconds")
+            return self._refresh_command(), "await_combat_settlement"
+        self._combat_settlement_wait = None
         if self.gs.get("combat_state") and not self._combat_ready_for_policy():
             return self._refresh_command(), "combat_not_waiting"
         if self._combat_grid_receipt is not None:

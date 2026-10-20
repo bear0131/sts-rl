@@ -585,6 +585,11 @@ def complete_word_tables():
         "combat_victory_action_contracts": COMBAT_VICTORY_ACTION_CONTRACTS,
         "monster_death_contracts": MONSTER_DEATH_CONTRACTS,
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
+        "combat_settlement_transport": {
+            "source": "real COMBAT/NONE with every physical monster is_dying or is_escaping, exactly MonsterGroup.areMonstersBasicallyDead; never HP0 or is_gone (which includes half-dead revivers)",
+            "action": "await_combat_settlement refresh only, same-room pause-adjusted 10-second deadline; no empty encounter attachment, policy END, synthetic victory, corpse removal or PAD; explicit empty roster is also only a wait (BRIDGE143)",
+            "boundary": "actual HAND_SELECT/GRID/CARD_REWARD remain actionable; actual reward/room/terminal frames end the wait, immutable ready GAME_OVER alone records outcome; model layout/search nonce/budget unchanged",
+        },
         "summon_slot_transport": {
             "source": "actual GremlinLeader.gremlins / TheCollector.enemySlots / Reptomancer.daggers object references",
             "Reptomancer capacity": "Java canSpawn counts other non-dying monsters <=3, so native total including leader <=4 permits summon; takeTurn fills up to 1/A18 2 actually empty dagger slots, including a single free slot at A18, preserving reference order and per-created-monster RNG (BRIDGE112)",
