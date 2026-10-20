@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE133 | 源码/语法及消费者复读完成，待208部署 | RealCombatSearch.run_summary把所有决策乘128，NativeStrategy强制END诊断明确search_simulations=0，导致报告偏大。现按每次策略diagnostics明确整数累加、缺失拒绝，另报预算乘积及strategy-diagnostics-v1；含内部prefix/未发重选工作且不随transport rollback抹掉，init/reset一起覆盖。只改统计，不改搜索/模型/RNG，旧结果按历史预算解释不回填推测值；现有fixture同步、py_compile及完整消费者/diff复读通过，未运行离线测试。当前207不热换，208与132一起完整新冻结。 |
 | BRIDGE132 | 源码/语法及消费者复读完成，待208部署 | SeedCampaign未ready也记账/缺字段假False0，agent过早PROCEED。现仅ready完整真实终局记录一次，bool victory/int seed/score/floor/act缺失拒绝、元数据不覆盖事实；只有ready显式菜单推进seed，未终局活跃局不重开；配置数值等价seed拒绝。agent等ready且实际PROCEED可用。普通完整结果/模型布局不变；仅补既有夹具ready字段、语法/diff与完整调用方复读，无pytest/离线测试。当前207 attach42不热换，待推送后208完整重冻；未ready场景未自然覆盖。 |
 | BRIDGE131 | 已部署；同207铃铛确认/入组/后继战斗实机通过，其他来源待覆盖 | 42adb57/v34/native934同原F0/index0续03，18:46:27仅CONFIRM一次，F1真实11牌含铃铛诅咒1张/obtain_pending=false，原128搜索index0继续并到F11，无ERROR/START。整组确认经过校验后无descriptor/策略动作命令，auto独占确认/同组关闭等待；未知仍拒绝、不填PAD/伪selected。原01/02故障段保留。Neow/Pandora其他调用来源仍未自然验证，无离线测试。后续三遗物与native同样是可领取/跳过奖励页：模型领取冰淇淋/问号牌、以73.56%选择跳过微笑面具，并非桥接漏发，不强制补拿。 |
 | BRIDGE130 | 已部署；同207原Neow档版本入口通过，异常日志分支源码验收 | 本地207 wrapper漏将v32检查改v33，首in-game帧迭代器断言且仅finally误报EOF，180秒才停；原failed段/唯一START207保留。dddad3a主循环外层异常ERROR再抛出/finally普通session end；新入口protocol与冻结常量预检，actual25244/52464同原F0/index0 attach已接受v33并由模型选择换遗物，未START。后在131旧获牌确认逻辑停止并恢复，不归成版本仍不通；没有人工造错验证外层异常新分支。 |

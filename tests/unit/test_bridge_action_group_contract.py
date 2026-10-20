@@ -326,6 +326,7 @@ def test_transport_retry_reuses_entire_autoregressive_nonce_transaction(monkeypa
     bridge.identity = (200205, 4)
     bridge.decision_index = 39
     bridge.run_decisions = bridge.run_commands = 0
+    bridge.run_simulations = 0
     bridge._reconcile_and_sync = lambda _: None
     bridge._assert_mask_alignment = lambda: None
     bridge._map_action_to_real = lambda a: a
@@ -333,7 +334,7 @@ def test_transport_retry_reuses_entire_autoregressive_nonce_transaction(monkeypa
     steps = []
     def search(requests, check):
         steps.append(requests[0].step)
-        return [SimpleNamespace(action=6, diagnostics={})]
+        return [SimpleNamespace(action=6, diagnostics={'search_simulations': 128})]
     bridge.strategy = SimpleNamespace(decide=search)
     def step(action):
         bridge.env._multi = {"prefix": bridge.decision_index}

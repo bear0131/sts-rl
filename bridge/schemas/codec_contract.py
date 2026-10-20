@@ -439,6 +439,11 @@ def complete_word_tables():
             "transport": "unready terminal waits; PROCEED must be advertised; only ready explicit in_game=false menu advances the campaign, not error/missing frames or interrupted runs",
             "record": "one actual result per requested seed, exact real seed match, no missing-field defaults or metadata overwrites; configured numeric seed aliases cannot repeat (BRIDGE132)",
         },
+        "campaign_search_accounting": {
+            "source": "each NativeStrategy Decision.diagnostics.search_simulations, including forced END with explicit0; missing/negative/noninteger is an error",
+            "record": "search_simulations sums reported calls, search_simulation_budget is decisions*configured limit, label strategy-diagnostics-v1; prefix/retry work survives transport rollback, resets on a new run (BRIDGE133)",
+            "history": "older unlabeled search_simulations was a nominal budget product, not measured work; no result rewriting or inference from omitted internal-prefix logs; policy/search settings unchanged",
+        },
         "event_progress_transport_fields": {
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",
             "simulator_match_state": "v31 actual GremlinMatchGame phase/attempts/current face-up and remaining physical slots; stock getOrderedCards CHOOSE index mapping, explicit null for other events; no hidden identities or remembered faces",

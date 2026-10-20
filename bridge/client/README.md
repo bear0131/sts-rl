@@ -21,6 +21,12 @@ Metadata cannot overwrite terminal facts. The agent waits for an available
 `PROCEED`, and only a ready explicit menu advances the seed. An interrupted run
 does not authorize restarting it; numerically duplicate configured seeds are
 rejected even if their case or leading-zero spelling differs.
+
+`search_simulations` sums explicit strategy diagnostics, including genuine zero
+for forced END roots; `search_simulation_budget` retains decisions × configured
+budget. `search_simulation_accounting=strategy-diagnostics-v1` identifies this
+reporting contract. Older records without it used the budget product and must
+not be presented as measured work. Leaf evaluations are a different quantity.
 Simulator evaluation can select the same contract through
 `PolicyStrategy(..., reward_policy_contract="checkpoint-v7-act3")`; both paths
 use `rl.policies.model.action_mask_for_policy` without altering the environment.

@@ -191,6 +191,7 @@ class RealCombatSearch:
         self._rollback_thin = None
         self._awaiting_command = False
         self.run_decisions = 0
+        self.run_simulations = 0
         self.run_commands = 0
         self.run_alignment_checks = 0
         self.run_errors = 0
@@ -268,6 +269,7 @@ class RealCombatSearch:
         self._rollback_thin = None
         self._awaiting_command = False
         self.run_decisions = 0
+        self.run_simulations = 0
         self.run_commands = 0
         self.run_alignment_checks = 0
         self.run_errors = 0
@@ -278,11 +280,13 @@ class RealCombatSearch:
     def note_error(self) -> None:
         self.run_errors += 1
 
-    def run_summary(self) -> dict[str, int]:
+    def run_summary(self) -> dict[str, int | str]:
         return {
             "search_decisions": self.run_decisions,
             "search_commands": self.run_commands,
-            "search_simulations": self.run_decisions * int(self.config.simulations),
+            "search_simulations": self.run_simulations,
+            "search_simulation_budget": self.run_decisions * int(self.config.simulations),
+            "search_simulation_accounting": "strategy-diagnostics-v1",
             "search_alignment_checks": self.run_alignment_checks,
             "search_errors": self.run_errors,
             "transport_rejected_commands": self.run_rejected_commands,
@@ -331,6 +335,13 @@ class RealCombatSearch:
             action = int(result.action)
             self.run_decisions += 1
             last_diagnostics = dict(result.diagnostics)
+            simulations = last_diagnostics.get('search_simulations')
+            if (isinstance(simulations, bool) or not isinstance(simulations, (int, np.integer))
+                    or simulations < 0):
+                raise RuntimeError('native strategy must report its nonnegative integer simulation count')
+            # Like run_decisions, this is real work, not a transport nonce:
+            # retries/prefixes count, while a forced END explicitly reports 0.
+            self.run_simulations += int(simulations)
             real_action = self._map_action_to_real(action)
             command = self.adapter.command_for_joint_action(real_action)
 
