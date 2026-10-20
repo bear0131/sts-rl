@@ -527,10 +527,11 @@ def complete_word_tables():
         },
         "monster_move_state_fields": MONSTER_MOVE_STATE_CONTRACTS,
         "monster_move_state_transport": {
-            "wire": "v24 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
-            "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns; existing NOSL hash and clone retain it",
+            "wire": "v25 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
+            "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns, Book actual stabCount even during SingleStab; existing NOSL hash and clone retain it",
             "timing": "usedHaste and usedStasis set at intent selection, usedEntangle at execution even when Artifact blocks, Spiker increments on Spike; Champ counter increments per getMove and resets at Taunt; Automaton post-beam Stun/Boost does not increment numTurns",
-            "scope": "six audited species (BRIDGE98); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
+            "book_intent": "restore actual stabCount before checking visible hits; MultiStab must match, SingleStab stays one hit without resetting the hidden count; increment on selected MultiStab and also on A18+ SingleStab, reject native integer overflow (BRIDGE101)",
+            "scope": "seven audited species (BRIDGE98/101); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
         },
         "slaver_move_selection": {
             "java": "SlaverBlue.getMove / SlaverRed.getMove; native Monster::getMoveForRoll (BRIDGE99)",

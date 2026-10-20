@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v24";
+    public static final String VERSION = "simulator-parity-v25";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -202,6 +202,9 @@ public final class SimulatorParityExporter {
         } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.BronzeAutomaton) {
             result.put("num_turns", Integer.valueOf(privateInt(monster,
                 com.megacrit.cardcrawl.monsters.city.BronzeAutomaton.class, "numTurns")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.BookOfStabbing) {
+            result.put("stab_count", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.city.BookOfStabbing.class, "stabCount")));
         } else {
             return null;
         }

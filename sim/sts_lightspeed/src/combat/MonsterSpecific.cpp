@@ -2269,29 +2269,17 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
         }
 
         case MonsterId::BOOK_OF_STABBING: {
-            // 1 multi stab
-            // 2 single stab
+            const bool multiStab = roll < 15
+                ? lastMove(MMID::BOOK_OF_STABBING_SINGLE_STAB)
+                : !lastTwoMoves(MMID::BOOK_OF_STABBING_MULTI_STAB);
             auto &stabCount = monsterData;
-            if (roll < 15) {
-                if (lastMove(MMID::BOOK_OF_STABBING_SINGLE_STAB)) {
-                    ++stabCount;
-                    return (MMID::BOOK_OF_STABBING_MULTI_STAB);
-                } else {
-                    if (asc18) {
-                        ++stabCount;
-                    }
-                    return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
+            if (multiStab || asc18) {
+                if (stabCount == std::numeric_limits<int>::max()) {
+                    throw std::overflow_error("Book of Stabbing counter exceeds native range");
                 }
-            } else if (lastTwoMoves(MMID::BOOK_OF_STABBING_MULTI_STAB)) {
-                if (asc18) {
-                    ++stabCount;
-                }
-                return (MMID::BOOK_OF_STABBING_SINGLE_STAB);
-            } else {
                 ++stabCount;
-                return (MMID::BOOK_OF_STABBING_MULTI_STAB);
             }
-            break;
+            return multiStab ? MMID::BOOK_OF_STABBING_MULTI_STAB : MMID::BOOK_OF_STABBING_SINGLE_STAB;
         }
 
         case MonsterId::CULTIST: {

@@ -50,7 +50,9 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v24`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v25`配套使用。
+v25补刺杀之书实际stabCount，单刺意图也完整保留；先恢复计数再核对当前意图hits，冲突拒绝。
+旧v24帧拒绝，必须配套重建Java和原生，不改权重张量或动作编号。
 v24新增六种怪物的实际一次性行动/次数/阶段字段，完整映射见`monster_move_state_fields`；
 不从行动历史或能力数量猜状态，旧v23帧拒绝，必须配套重建Java和原生。
 v23导出蠕动团块实际usedMegaDebuff，防止搜索重复预测植入；非该物种显式null，旧v22帧拒绝。
