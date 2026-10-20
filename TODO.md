@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| BRIDGE109 | 源码已修，待F39同档实机 | 200201净化药水触发EXHAUST_MANY：真实99哨兵规范为五张手牌，native保留上限10；严格raw比较先于已有有效上限比较而误报。改为先核物理候选/完整状态，再对MULTI比较min(cap,候选数)，SINGLE/GRID仍精确；上下文、顺序、数量、可选零等不放宽，真正有效上限不同仍拒绝。不改native描述符/模型输入/合法子集，不填PAD；需同自然F39药水选牌验证，无离线测试。 |
+| BRIDGE109 | 已修复，F39同档药水多选实机通过 | 200201净化药水触发EXHAUST_MANY：真实99哨兵规范为五张手牌，native保留上限10；改为精确核物理候选/状态后对MULTI比较min(cap,候选数)，SINGLE/GRID仍精确，其余上下文/顺序/数量/可选零检查不变。65894f6同自然F39/index356再次用药，index359子集发送CHOOSE4→CHOOSE0→CONFIRM，真实Clumsy/Writhe按序消耗，保留其他三张并继续搜索。native描述符/权重输入/合法子集不变，不填PAD；无离线测试，非全部多选场景覆盖。 |
 | BRIDGE108 | 源码已修并构建，待实机 | 尖塔生长体低A且roll<50、最近两次QuickTackle、玩家未被缠绕时，必须先选Constrict而非Smash；按Java原分支顺序保留A17优先缠绕及后备重击/快攻。不改RNG、意图/动作ID或权重布局；词表补对接顺序，源码复读/必要构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE107 | 已修复，F16同档双分裂及胜利实机通过 | f72f52c/native8298b4b仅回收已死大型父体，保留首领死体及四中型（含死体），修SmokeBomb首领身份；桥接精确7→5物种内次序映射，退休父体保留历史账本，不填PAD。200201自然F16/index100续跑出现51帧七实体，index126原生22→实际21→PLAY4目标3正确执行，随后首领奖励63/87HP/272金并到Act2F18，ERROR0。无烟雾弹组合覆盖，无离线测试；非自然终局/独立样本。 |
 | BRIDGE106 | 已部署，普通消耗路径实机已观察，特殊联动待覆盖 | 断魂斩SeverSoulExhaustAction按原手牌正序捕获物理UID、逐项TOP，实际逆序消耗先于已排攻击/UseCard及其致命清队列；Charon伤害插队保留，不能把新增牌误消耗。不改ID/布局/权重。200201修复史莱姆后同档续跑，F18两次实际断魂斩回执显示非攻击牌按逆序消耗、目标扣血，后续原生搜索继续；不能据此声称Charon/新增抽牌/最后一击清队列组合全部覆盖。源码复读/必要构建完成，无离线测试。 |
@@ -156,7 +156,7 @@
 
 | BRIDGE06 | e873561已隔离部署，attempt19实机验证中 | 在17类有限契约上增加SensoryStone开场/数量代价映射/冻结事件身份/奖励组数确认；末组优先与逐组跳过，颂钵skip实际+2HP确认，deferred领取保留claim语义。194实现/164隔离回归及真实F36开场/本地化构造下一页固定模型预测通过。51事件未全支持，Cursed Tome/Golden Idol/Designer/Match and Keep等仍需审计；不能声称全部等价。attempt18 F36中断不计成绩，证据归档。见worklog/2026-10-19.md BRIDGE06。 |
 
-| BRIDGE05 | 20种子批次进行中，200200胜利/200201修复后续跑 | 用户授权自动200200..219，不逐局询问；最终TRAIN47/A0/确定性upper/G0/128/native4不变，旧成绩分开。200200在7d20096/v28下F51胜利60/102/756分，注明两次自然入口续档。200201首段455.6秒因BRIDGE107在F16停止，原件/65份存档偏好恢复核验；已部署f72f52c/native8298b4b/v28，从同一F16/index100/75-87HP续，七实体双分裂及首领胜利后到Act2F18，ERROR0。当前resume200201-01上限3600秒/首错/终局/四幕前停；余下200202..219已准备，须201真实终局后启动，每seed一小时/总18小时上限。日志存runs/local，部分通过C盘junction；Match/Act4排除，不混中断/版本变更/续档作独立样本。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
+| BRIDGE05 | 20种子批次进行中，200200胜利/200201第三幕续跑 | 用户授权自动200200..219，不逐局询问；最终TRAIN47/A0/确定性upper/G0/128/native4不变，旧成绩分开。200200在7d20096/v28下F51胜利60/102/756分，注明两次自然入口续档。200201先因BRIDGE107在F16停，修后同档双分裂通过；续到F39药水选择因BRIDGE109停，两段均恢复原件/65份存档偏好。现resume200201-02冻结65894f6/nativeb89fbf9/v28，从自然F39/index356/83-87HP续，同药水多选及后续出牌已通过。单段一小时/首错/终局/四幕前停；余下200202..219入口已更新同版本，须201真实终局后启动，每seed一小时/总18小时上限。新日志经C盘junction；Match/Act4排除，不混中断/版本变更/续档作独立样本。详见worklog/2026-10-20.md及runs/local/real-game-train47-campaign200200-219-20261020。 |
 
 | EVAL06 | 已完成 | `rl.evaluation.eval --trajectory-output` 提供 rulebase+search 与 checkpoint model 的共享评测入口；sparse JSONL/Markdown 包含地图路线、问号多步骤事件、商店购买/删牌、战斗前后 HP 与资源差分、奖励、宝箱、Boss relic 候选/选择。固定 seeds 200000--200099、num-envs=8、8192 planner 完成 100 局：46/100 win，胜率 46.0%（Wilson 95% CI 36.56%--55.74%），Act1/Act2/Act3 到达率 100%/94%/63%。结果目录：`runs/local/eval-overworld-v3-planner8192-trajectories-final-seeds200000-100-20260927/`；详见 `worklog/2026-09-27.md#eval06-trajectory-evaluation-wrapper`。 |
 
