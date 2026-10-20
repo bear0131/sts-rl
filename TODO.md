@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE142 | 源码/必要构建已修，待210自然边界部署 | 原生烟斗TOKE刚开REMOVE选牌就regainControl覆盖为地图，无法实际删牌；移除提前continuation，由既有选牌完成后返回。isValidRestAction/getAllRestActions同时要求至少1张可删非瓶装卡，与原版PeacePipe条件一致；桥接for_purge/REMOVE/UUID保持，动作/张量/RNG不变。必要native构建退出0/e19d0bd6、词表语法/完整diff通过，无新wire/强迫选择/离线测试；211须完整新冻包含141/142，烟斗组合待自然覆盖。 |
 | BRIDGE141 | 源码/必要构建已修，待210自然边界后部署 | WeMeetAgain旧shuffle后折叠到首张等值Card，忽略独立bottleIdxs；直接返回实际随机物理索引，保留资格/顺序/原RNG/Card等价/模型动作。药水供品、TinyHouse升级、五个初始遗物池共七处恢复原版计数randomLong，底层随机位/抽取数/顺序不变但counter完整，空供品不抽、单瓶仍一次；initFromSave不重跑pool初始化。必要native构建退出0/5cce7a23、词表语法/完整diff复读通过，无离线测试。Java39实际UUID/slot现已具备，无wire/张量扩维。210仍原239/native06c3运行无错，不热换、不因以前诊断过而再重开；自然终局/67恢复后仅211..219新冻，特殊供品组合未自然覆盖。 |
 | BRIDGE140 | 已完整部署210并接通搜索，特殊组合待自然覆盖 | 原生Nloth漏三瓶解除/死灵书移首诅咒，重复Gift错丢供品；共享loseRelic/确切direct-remove、已有data保存DuVu真实缓存，正常移牌刷新，死灵书直接移除/纯升级保留，restore/战斗不重算假counter。Java39实际两遗物/screenNum、typed0/1/leave2/有序遗物与完整卡副作用回执，重复Gift给Circlet保留供品。必要构建native06c3/Java39-a5f1和语法/diff通过；239ea02再修Falling/WeMeetAgain/Designer回执。209自然通关/67原件核验恢复后完整新冻210..219，模型57704模块路径/hash核验、v39/F4原128搜索继续/error无；无张量/权重/预算变化、无离线测试，特殊组合不冒称覆盖。 |
 | BRIDGE139 | 已随v39完整部署210，Falling分支待自然覆盖 | Falling本地化名/(id,upgrades)合并实际候选、回执错认不同misc同牌；改actual INTRO/CHOICE/RESULT、仅CHOICE公开私有目标完整UUID、非瓶装/disabled/压缩UI；原skill0/power1/attack2/全无leave3保持，完整UUID守恒/真实DuVu刷新。不泄露INTRO或改模型通道/策略/原生规则；v38保护包bcc4后并入39-a5f1/239ea02完整冻结，210真实128搜索正常，Falling组合未覆盖。既有fixture同步合同未运行，无离线测试/热换。 |

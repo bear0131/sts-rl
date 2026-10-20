@@ -125,7 +125,7 @@ bool isValidRestAction(const GameContext &gc, const search::GameAction a) {
         bits.set(3);
     }
 
-    if (gc.relics.has(RelicId::PEACE_PIPE)) { // assume we have card to remove
+    if (gc.relics.has(RelicId::PEACE_PIPE) && gc.deck.getTransformableCount(1) > 0) {
         bits.set(4);
     }
 
@@ -548,7 +548,7 @@ std::vector<search::GameAction> getAllRestActions(const sts::GameContext &gc) {
         actions.emplace_back(3);
     }
 
-    if (gc.relics.has(RelicId::PEACE_PIPE)) { // assume we have card to remove
+    if (gc.relics.has(RelicId::PEACE_PIPE) && gc.deck.getTransformableCount(1) > 0) {
         actions.emplace_back(4);
     }
 

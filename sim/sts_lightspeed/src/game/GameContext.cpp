@@ -3971,7 +3971,7 @@ void GameContext::chooseCampfireOption(int idx) {
 
         case 4: { // TOKE
             openCardSelectScreen(CardSelectScreenType::REMOVE, 1);
-            regainControl();
+            // REMOVE returns control after the selected card is actually gone.
             break;
         }
 
