@@ -1058,7 +1058,7 @@ class EventEffectAck:
             expected_relics = dict(initial)
             if blocked:
                 expected_relics['Omamori'] -= blocked
-            if 'Du-Vu Doll' in expected_relics:
+            if remove and 'Du-Vu Doll' in expected_relics:
                 expected_relics['Du-Vu Doll'] = sum(c['type'] == 'CURSE' for c in current.values())
             new_curses = sum(current[u]['type'] == 'CURSE' for u in gained)
             if new_curses != picked_curses - blocked:
@@ -1109,12 +1109,18 @@ class EventEffectAck:
         if set(after_relics) - expected_ids or set(before_relics) - set(after_relics):
             raise RuntimeError('WeMeetAgain changed an unrelated relic identity')
         for relic, counter in before_relics.items():
-            if after_relics[relic] != counter + int(relic == gift == 'Circlet'):
+            expected_counter = counter + int(relic == gift == 'Circlet')
+            if relic == 'Du-Vu Doll' and choice['kind'] == 'lose_card':
+                expected_counter = sum(c['type'] == 'CURSE' for c in old['deck'])
+            if after_relics[relic] != expected_counter:
                 if relic == gift == 'Circlet' and after_relics[relic] == counter:
                     return True
                 raise RuntimeError('WeMeetAgain changed an unrelated relic counter')
         if trading and gift in before_relics and gift != 'Circlet':
             raise RuntimeError('WeMeetAgain duplicated a nonstacking relic')
+        if (gift == 'Du-Vu Doll' and gift in after_relics
+                and after_relics[gift] != sum(c['type'] == 'CURSE' for c in old['deck'])):
+            raise RuntimeError('WeMeetAgain new Du-Vu Doll cache differs from its actual equip effect')
 
         before, _ = real_selection_card_states(old['deck'], [])
         after, _ = real_selection_card_states(gs['deck'], [])
@@ -1977,7 +1983,12 @@ class EventEffectAck:
                 return True
             if phase != 'RESULT' or after != expected:
                 raise RuntimeError('Falling did not remove exactly its requested master instance')
-            if any(g[k] != old[k] for k in ('current_hp', 'max_hp', 'gold', 'relics', 'potions')):
+            expected_relics = self._augmenter_relics(old)
+            if target is not None and 'Du-Vu Doll' in expected_relics:
+                expected_relics['Du-Vu Doll'] = sum(c['type'] == 'CURSE' for c in g['deck'])
+            if (self._augmenter_relics(g) != expected_relics
+                    or [r['id'] for r in g['relics']] != [r['id'] for r in old['relics']]
+                    or any(g[k] != old[k] for k in ('current_hp', 'max_hp', 'gold', 'potions'))):
                 raise RuntimeError('Falling changed unrelated resources')
             self.pending = None
             return False
