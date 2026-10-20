@@ -149,7 +149,7 @@ REAL_ANONYMOUS_ACTION_CONTRACTS = {
         'source': 'RedSkull.atBattleStart',
         'effect': 'when wrapper executes, if not active and bloodied add 3 Strength directly, mark isActive and refresh powers; queue relic visual on top',
         'native_source': 'BattleContext::initRelics / Player::hpWasLost / Player::heal',
-        'native_audit': 'BRIDGE56 fixes the gameplay-sign error on healing above half HP; full queue/isActive internals deferred under effect-equivalence scope, not certified identical',
+        'native_audit': 'BRIDGE56 fixes the healing sign; BRIDGE148 preserves both actual latches, BRIDGE150 uses post-heal bloodied, and BRIDGE163 queues this exact conditional BOTTOM start action in relic order so initial Toolbox root restore cannot erase the future gain. Shared copies preserve its continuation; no guessed/default Strength or isActive. Special natural combination coverage remains separate',
         'transport': 'settle',
     },
     'com.megacrit.cardcrawl.rooms.AbstractRoom$1': {

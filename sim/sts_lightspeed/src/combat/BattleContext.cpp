@@ -125,7 +125,7 @@ void BattleContext::initRelics(const GameContext &gc) {
     player.relicBits1 = gc.relics.relicBits1;
 
     fixed_list<RelicId, 4> atBattleStartPreDraw;
-    fixed_list<RelicId, 9> atBattleStart;
+    fixed_list<RelicId, 10> atBattleStart;
     fixed_list<RelicId, 2> atTurnStartPostDraw;
 
     auto room = gc.curRoom;
@@ -153,6 +153,7 @@ void BattleContext::initRelics(const GameContext &gc) {
             case R::GREMLIN_VISAGE:
             case R::MUTAGENIC_STRENGTH:
             case R::RED_MASK:
+            case R::RED_SKULL:
             case R::RING_OF_THE_SNAKE:
             case R::TWISTED_FUNNEL:
                 atBattleStart.push_back(r.id);
@@ -472,6 +473,20 @@ void BattleContext::initRelics(const GameContext &gc) {
                 addToBot( Actions::DebuffAllEnemy<MS::WEAK>(1, false) );
                 break;
 
+            case R::RED_SKULL:
+                // The real start action runs after a possible Toolbox choice.
+                // Keep it pending when that actual root replaces public state;
+                // an eager grant would be overwritten and never applied again.
+                addToBot({[](BattleContext &bc) {
+                    auto &player = bc.player;
+                    if (!player.redSkullActive && player.bloodied) {
+                        player.buff<PS::STRENGTH>(3);
+                        player.redSkullActive = true;
+                        bc.applyPowersToHand();
+                    }
+                }});
+                break;
+
             case R::RING_OF_THE_SNAKE:
                 addToBot( Actions::DrawCards(2) );
                 break;
@@ -487,13 +502,6 @@ void BattleContext::initRelics(const GameContext &gc) {
 
     if (gc.hasRelic(R::MERCURY_HOURGLASS)) {
         addToBot( Actions::DamageAllEnemy(3) );
-    }
-
-    // Blood Vial/Pantograph heal at TOP before Red Skull's BOTTOM start action.
-    // That action reads the current bloodied latch, not the pre-battle GC HP.
-    if (gc.hasRelic(R::RED_SKULL) && p.bloodied) {
-        p.buff<PS::STRENGTH>(3);
-        p.redSkullActive = true;
     }
 
     for (auto r : atTurnStartPostDraw) {
