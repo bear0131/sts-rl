@@ -1528,6 +1528,11 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
                 if (bc.player.hasRelic<R::DARKSTONE_PERIAPT>()) {
                     bc.player.increaseMaxHp(6);
                 }
+                if (bc.player.hasRelic<R::CERAMIC_FISH>()) {
+                    // Battle exit restores player gold/HP after Deck.obtain.
+                    // Keep the real obtain callbacks in the combat state too.
+                    bc.player.gainGold(bc, 9);
+                }
             }
             rollMove(bc);
             break;

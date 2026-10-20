@@ -6,6 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE96 | 源码已修并构建，待实机 | 战内simulator_obtain_pending=true等待真实ShowCardAndObtain完成后才决策/恢复已结算植入；10秒暂停排除时钟，未知拒绝，不增加终局等待。原生Implant补未被Omamori挡住时陶瓷鱼9金及BloodyIdol共用收益，避免战后player覆盖丢失；源码/构建完成，自然组合未覆盖，无离线测试。 |
+| BRIDGE97 | 旧权重动作范围差异，后置兼容评估 | Java有类型的Attack/Skill/PowerPotion DiscoveryAction允许SKIP；普通Discovery卡/ColorlessPotion不允许。现原生DISCOVERY仅三候选、CODEX另含skip，不影响已选卡效果，但未提供三类药水的额外跳过动作。不得据此称全部动作对齐；是否扩充旧权重未训练选项需独立兼容评估，不混入当前执行修复，不用PAD表示未知候选。 |
 | BRIDGE95 | 源码已修，v23/原生已构建，待实机 | WrithingMass实际usedMegaDebuff经v23→canonical→strict native→diff恢复，非本物种null/未知拒绝；miscInfo具名三态区分未用/模拟待写回/真机已结算，禁止重复预测植入或exit重复Parasite/Omamori。纯模拟0→1行为、NOSL key/clone及模型布局保留；源码/构建完成，未实机，无离线测试。 |
 | BRIDGE94 | 源码已修并构建，特殊分支待实机 | triggerAndMoveToExhaustPile的DeadBranch/DarkEmbrace按实际areMonstersBasicallyDead拒绝胜利后的新生成/抽牌；最后一击后的UseCard收尾仍处理消耗、FNP、Charon等，半死复活不当终局。不改通用DrawCards；源码/构建完成，未自然实机覆盖，无离线测试/权重或布局修改。 |
 | BRIDGE93 | 源码已修并构建，特殊分支待实机 | 原生Havoc/Mayhem失败autoplay补BOTTOM无onUse的UseCard收尾，防已出抽牌堆的牌消失；purge复制不再绕过canUse，自动出牌同样受回合结束/VelvetChoker/Normality限制。共用ResolveUnplayedCard保留消耗/Spoon/复制消失，正常回合末诅咒另走原分支；源码/构建完成，未自然实机覆盖，无离线测试/权重或布局修改。 |

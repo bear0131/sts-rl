@@ -655,6 +655,7 @@ class RealGameAdapter:
         self.combat_action_contract = combat_action_contract
         self._joint_multi_plan = None
         self._combat_grid_receipt = None
+        self._combat_obtain_wait = None
         self._paused_wait_seconds = 0.0
         self.character = character
         self.ascension = int(ascension)
@@ -727,6 +728,7 @@ class RealGameAdapter:
                         if combat else None)
             if identity != self._combat_identity or not combat:
                 self._combat_initialized = False
+                self._combat_obtain_wait = None
             self._combat_identity = identity
             if combat and (combat.get("hand")
                            or combat.get("player", {}).get("energy", 0) > 0
@@ -818,6 +820,9 @@ class RealGameAdapter:
     def _combat_ready_for_policy(self) -> bool:
         if not self.gs.get("combat_state"):
             return False
+        if (self.screen_type() != "GAME_OVER"
+                and _required_bool(self.gs, "simulator_obtain_pending", context="combat game_state")):
+            return False
         if self._combat_card_choice_screen():
             return True
         # CommunicationMod can expose an actionable hand-selection screen
@@ -869,6 +874,21 @@ class RealGameAdapter:
             return None
         if not self.frame.get("ready_for_command", False):
             return self._refresh_command(), "not_ready"
+        # Implant sets its one-shot flag before the asynchronous master-deck
+        # obtain effect. Do not mirror that flag as settled while cards/relic
+        # callbacks are still pending, including during a start-turn selection.
+        if (self.gs.get("combat_state") and self.gs.get("room_phase") == "COMBAT"
+                and self.screen_type() != "GAME_OVER"
+                and _required_bool(self.gs, "simulator_obtain_pending", context="combat game_state")):
+            identity = (self.gs["seed"], self.gs["act"], self.gs["floor"])
+            now = self._wait_clock()
+            if self._combat_obtain_wait is None or self._combat_obtain_wait[0] != identity:
+                self._combat_obtain_wait = (identity, now)
+            elif now - self._combat_obtain_wait[1] > 10:
+                raise RuntimeError("combat master-deck obtain did not settle for 10 seconds")
+            return ("WAIT 1" if "WAIT" in self.commands() else self._refresh_command(),
+                    "await_combat_card_obtain")
+        self._combat_obtain_wait = None
         # The in-combat map is an inspect-only overlay.  CommunicationMod still
         # publishes the underlying combat state and room phase, but replaces
         # PLAY/END with CHOOSE/RETURN while the overlay is open.  Sending that

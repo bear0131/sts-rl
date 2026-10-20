@@ -289,6 +289,8 @@ class RealCombatSearch:
         }
 
     def decide(self) -> RealDecision:
+        if self.adapter.gs.get("simulator_obtain_pending") is not False:
+            raise RuntimeError("native combat search requires an explicitly settled master-deck obtain")
         real = normalize_real(self.adapter.gs)
         if real is None:
             raise RuntimeError("native combat search called outside combat")

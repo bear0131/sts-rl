@@ -529,6 +529,8 @@ def complete_word_tables():
             "canonical": "writhing_mass_used_implant in real/native full state, strict root and diff; never infer from recent moves or an existing Parasite",
             "native": "Monster.miscInfo named states: IMPLANT_NOT_USED=0, IMPLANT_PENDING=1, IMPLANT_SETTLED=2; both used states prohibit another Implant and are distinguished by the existing NOSL key/clone",
             "master_deck": "real root first loads the actual master deck, then restores used=true as SETTLED; exitBattle only obtains Parasite/consumes Omamori for a newly simulated PENDING effect, never again for a real settled effect",
+            "obtain_receipt": "wait for explicit simulator_obtain_pending=false before combat/selection decisions or native root restoration; 10-second pause-adjusted transport deadline, no automatic card choice, GAME_OVER remains terminal (BRIDGE96)",
+            "obtain_relics": "unblocked simulated Implant applies Darkstone and CeramicFish gainGold(9) to combat player before exit; gainGold preserves Ectoplasm/BloodyIdol/Bloom/Flower behavior, and exit's player gold/HP overwrite avoids duplicate Deck.obtain benefits (BRIDGE96)",
             "scope": "normal settled combat root; no tensor/action layout change, no claim that arbitrary pending Java actions or every monster-private field are restored (BRIDGE95/28/37)",
         },
         "monster_intent_damage_contract": {
