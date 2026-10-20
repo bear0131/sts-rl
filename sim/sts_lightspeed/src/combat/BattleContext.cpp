@@ -2318,6 +2318,28 @@ void BattleContext::enterPostEnemyTurnBoundary() {
         applyEndOfRoundPowers();
     }
 
+    // Round-end powers can append actions (notably monster regeneration).
+    // The caller stopped the normal pump here, so settle them before exposing
+    // a value-only leaf. Never run the next turn's start/draw/recharge path.
+    while (inputState == InputState::EXECUTING_ACTIONS &&
+            outcome != Outcome::PLAYER_LOSS && outcome != Outcome::PLAYER_ESCAPE) {
+        if (actionQueue.isEmpty() &&
+                (outcome != Outcome::UNDECIDED || cardQueue.isEmpty())) break;
+        if (++loopCount > 1000000)
+            throw std::runtime_error("round-end settlement exceeded combat action budget");
+        if (!actionQueue.isEmpty()) {
+            auto action = std::move(actionQueue.popFront());
+            action(*this);
+        } else {
+            playCardQueueItem(cardQueue.popFront());
+        }
+#ifdef STS_ENABLE_RULE_TRACE
+        if (atomicStepObserver) atomicStepObserver(*this);
+#endif
+    }
+    if (outcome != Outcome::UNDECIDED || inputState != InputState::EXECUTING_ACTIONS)
+        return; // Preserve a real terminal or input, not a fictitious boundary.
+
     ++turn;
     skipMonsterTurn = false;
     turnHasEnded = false;

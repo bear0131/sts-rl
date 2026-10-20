@@ -625,6 +625,13 @@ def complete_word_tables():
         "native_card_snapshot_fields": NATIVE_CARD_SNAPSHOT_FIELDS,
         "native_master_deck_snapshot_fields": {'id': 'native CardId spelling', 'upgrades': 'explicit count', 'misc': 'explicit current native value', 'bottle': 'NONE/ATTACK/SKILL/POWER; physical slot kept'},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "post_enemy_turn_settlement": {
+            "producer": "BattleContext.enterPostEnemyTurnBoundary / applyEndOfRoundPowers / Monster REGEN -> queued HealMonster",
+            "contract": "Drain deterministic round-end actions and any card callbacks before marking postEnemyTurnBoundary or projecting next-turn cleanup. Preserve real terminal/selection states, FIFO/TOP reactions and the existing battle execution budget. Do not run another monster phase, player start relic/power hooks, draw or recharge, silently drop pending healing, or replace it with guessed HP",
+            "consumers": "NOSL explicit endTurnAsLeaf, RuleTurnPlanner horizon, execute_to_enemy_boundary and both preview_end_turn APIs -> existing raw/canonical/packed HP and boundary marker, cloning and public state key; no new observation/action fields or weights",
+            "compatibility": "Final TRAIN47 real configuration records end_turn_as_leaf=false; repair this shared supported boundary path without enabling it, changing search budgets, or claiming current ordinary Full-Gumbel naturally exercises it (BRIDGE160)",
+            "audit": "Source/consumer review and necessary native build only for this specific boundary branch; ordinary current-checkpoint real integration is a compatibility check, not dynamic coverage of the disabled leaf mode",
+        },
         "neow_bonus_keywords": NEOW_BONUS_IDS,
         "neow_drawback_keywords": NEOW_DRAWBACK_IDS,
         "neow_implicit_drawbacks": NEOW_IMPLICIT_DRAWBACK_IDS,
