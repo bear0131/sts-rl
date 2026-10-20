@@ -1001,6 +1001,11 @@ void BattleContext::useCard() {
     auto &item = curCardQueueItem;
     auto &c = item.card;
 
+    // AbstractPlayer.useCard makes every autoplayed X card free, including
+    // same-UUID Double Tap/Duplication copies, not just PlayTopCard actions.
+    // Ordinary autoplay does not itself set a fixed-cost card's free-once flag.
+    if (c.cost == -1 && item.autoplay) c.freeToPlayOnce = true;
+
     item.exhaustOnUse |= c.doesExhaust();
     ++player.cardsPlayedThisTurn;
 
@@ -1299,7 +1304,7 @@ void BattleContext::useAttackCard() {
             break;
 
         case CardId::WHIRLWIND: {
-            if (!item.ignoreEnergyTotal && player.energy < item.energyOnUse) {
+            if (!item.ignoreEnergyTotal && !item.autoplay && player.energy < item.energyOnUse) {
                 item.energyOnUse = player.energy;
             }
             // Java passes the card's current multiDamage into WhirlwindAction,
@@ -1601,7 +1606,7 @@ void BattleContext::useSkillCard() {
             if (player.energy > item.energyOnUse) {
                 item.energyOnUse = player.energy;
             }
-            if (!item.ignoreEnergyTotal && player.energy < item.energyOnUse) {
+            if (!item.ignoreEnergyTotal && !item.autoplay && player.energy < item.energyOnUse) {
                 item.energyOnUse = player.energy;
             }
 
@@ -1806,8 +1811,8 @@ void BattleContext::onUseCardRelics() {
                 break;
             case R::NECRONOMICON:
                 if (type == CardType::ATTACK && !p.haveUsedNecronomiconThisTurn
-                        && !item.freeToPlay && !item.purgeOnUse
-                        && (c.costForTurn >= 2 || (c.isXCost() && item.energyOnUse >= 2))) {
+                        && ((c.costForTurn >= 2 && !c.freeToPlayOnce)
+                            || (c.cost == -1 && item.energyOnUse >= 2))) {
                     queuePurgeCard(c, item.target, false);
                     p.haveUsedNecronomiconThisTurn = true;
                 }
@@ -2105,12 +2110,13 @@ void BattleContext::onAfterUseCard() {
         }
     }
 
+    // UseCardAction clears this even for copies that are purged on use.
+    c.freeToPlayOnce = false;
     if (item.purgeOnUse) {
         return;
     }
 
     bool rebound = false;
-    c.freeToPlayOnce = false;
 
     if (c.getType() == CardType::POWER) {
         c.id = CardId::INVALID;
