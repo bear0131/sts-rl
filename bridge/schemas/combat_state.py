@@ -58,7 +58,7 @@ from .entity_ids import (
 # OBS18 includes it in player_buffs.
 _POWER_DROP = set(STRUCTURAL_POWER_FIELDS)
 BOOLEAN_PLAYER_POWERS = frozenset({
-    "Confused", "Hex", "Draw Reduction", "Barricade", "Blasphemer",
+    "Confused", "Hex", "Barricade", "Blasphemer",
     "Corruption", "Electro", "Surrounded", "Master Reality", "Pen Nib",
     "Wrath Next Turn", "No Draw",
 })
@@ -431,6 +431,18 @@ def _real_energy_per_turn(game_state):
     return value
 
 
+def _validated_draw_state(amount, just_applied, powers):
+    if type(amount) is not int or not 0 <= amount <= 127:
+        raise ValueError('base turn draw must be an explicit integer within native 0..127')
+    if 'Draw Reduction' in powers:
+        if (type(powers['Draw Reduction']) is not int or not 1 <= powers['Draw Reduction'] <= 32767
+                or type(just_applied) is not bool):
+            raise ValueError('Draw Reduction requires actual positive duration and boolean justApplied')
+    elif just_applied is not None:
+        raise ValueError('absent Draw Reduction requires explicit null justApplied')
+    return {'card_draw_per_turn': amount, 'draw_reduction_just_applied': just_applied}
+
+
 def normalize_real(game_state):
     """`game_state` is the dict under the top-level 'game_state' key of a
     CommunicationMod frame. Returns the canonical combat state, or None if the
@@ -509,6 +521,8 @@ def normalize_real(game_state):
             "powers": {k: v for k, v in player_powers.items()
                        if k != "Berserk"},
             "energy_per_turn": _real_energy_per_turn(game_state),
+            **_validated_draw_state(cs['simulator_card_draw_per_turn'],
+                                    cs['simulator_draw_reduction_just_applied'], player_powers),
         },
         "monsters": monsters,
         "card_instances": instances,
@@ -900,7 +914,7 @@ def normalize_sim(raw):
     p = raw["player"]
     player_required = {
         "hp", "max_hp", "block", "energy", "gold", "combat_counters",
-        "powers", "energy_per_turn", "bombs",
+        "powers", "energy_per_turn", "bombs", "card_draw_per_turn", "draw_reduction_just_applied",
     }
     missing_player = player_required - set(p)
     if missing_player:
@@ -935,6 +949,8 @@ def normalize_sim(raw):
             "bombs": bombs,
             "powers": _powers_sim(p["powers"], PLAYER_BUFF_VOCAB_INDEX),
             "energy_per_turn": p["energy_per_turn"],
+            **_validated_draw_state(p['card_draw_per_turn'], p['draw_reduction_just_applied'],
+                                    dict(p['powers'])),
         },
         "monsters": [
             # Preserve native target slots, including reserved empty positions.
@@ -1358,6 +1374,9 @@ def diff(real, sim, pile_mode="auto"):
     if "energy_per_turn" in real["player"]:
         cmp("player.energy_per_turn", real["player"]["energy_per_turn"],
             sim["player"]["energy_per_turn"])
+    for field in ('card_draw_per_turn', 'draw_reduction_just_applied'):
+        if field in real['player']:
+            cmp('player.' + field, real['player'][field], sim['player'][field])
     cmp("player.powers", real["player"]["powers"], sim["player"]["powers"])
     cmp("player.bombs", real["player"]["bombs"], sim["player"]["bombs"])
     cmp(

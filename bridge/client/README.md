@@ -283,9 +283,15 @@ current CHOOSE index; it waits for the first flip, the pair's exact attempt
 decrement and removal/flip-back, asynchronous card obtains, and the final
 COMPLETE dialogue. It reads no hidden card identities or remembered faces and
 does not invoke or modify the model for this minigame. Other events export null.
-The native combat extension is unchanged from v30; Python and jar must both be v31.
+Parity-v32 additionally exports the actual `AbstractPlayer.gameHandSize` and
+nullable `DrawReductionPower.justApplied`. They are transition metadata, not new
+model channels. Canonical state, strict native root restore and read-back checks
+retain both fields; a shadow/default draw count cannot stand in for real state.
+Draw Reduction's numeric amount retains its duration instead of becoming 1.
+The paired native build stores/ticks that duration and restores hand size only
+on final removal. Ordinary one-layer inputs and tensor layouts are unchanged.
 
-Do not mix v31 Python with an older jar. Model tensor layouts
+Do not mix v32 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

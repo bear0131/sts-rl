@@ -2405,8 +2405,10 @@ void BattleContext::afterMonsterTurns() {
         if (player.wasJustApplied<PS::DRAW_REDUCTION>()) {
             player.setJustApplied<PS::DRAW_REDUCTION>(false);
         } else {
-            player.removeStatus<PS::DRAW_REDUCTION>();
-            ++player.cardDrawPerTurn;
+            // The already-created DrawCardAction keeps its captured amount.
+            // Only final removal restores hand size, not every duration tick.
+            player.decrementStatus<PS::DRAW_REDUCTION>();
+            if (!player.hasStatus<PS::DRAW_REDUCTION>()) ++player.cardDrawPerTurn;
         }
     }
 

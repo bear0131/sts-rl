@@ -421,8 +421,17 @@ struct Player {
         }
 
         if (s == PlayerStatus::DRAW_REDUCTION) {
-            --cardDrawPerTurn;
-            setJustApplied<PS::DRAW_REDUCTION>(true);
+            // Java reduces hand size only on the first application. Stacking
+            // extends duration without resetting the existing justApplied flag.
+            const int previous = hasStatus<PS::DRAW_REDUCTION>()
+                ? getStatus<PS::DRAW_REDUCTION>() : 0;
+            if (amount > std::numeric_limits<std::int16_t>::max() - previous)
+                throw std::overflow_error("Draw Reduction duration exceeds native storage");
+            if (!hasStatus<PS::DRAW_REDUCTION>()) {
+                --cardDrawPerTurn;
+                setJustApplied<PS::DRAW_REDUCTION>(true);
+            }
+            statusMap[s] = static_cast<std::int16_t>(previous + amount);
             setHasStatus<PS::DRAW_REDUCTION>(true);
             return;
         }

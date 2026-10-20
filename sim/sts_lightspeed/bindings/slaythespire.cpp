@@ -205,7 +205,7 @@ int playerPowerObservation(const sts::Player &p, PlayerStatus status) {
     // Keep getStatusRuntime unchanged: search keys and game rules use it too.
     switch (status) {
         case PlayerStatus::CONFUSED: case PlayerStatus::HEX:
-        case PlayerStatus::DRAW_REDUCTION: case PlayerStatus::BARRICADE:
+        case PlayerStatus::BARRICADE:
         case PlayerStatus::BLASPHEMER: case PlayerStatus::CORRUPTION:
         case PlayerStatus::ELECTRO: case PlayerStatus::SURROUNDED:
         case PlayerStatus::MASTER_REALITY: case PlayerStatus::PEN_NIB:
@@ -292,6 +292,10 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
     player["combat_counters"] = counters;
     player["powers"] = playerPowersToList(bc.player);
     player["energy_per_turn"] = static_cast<int>(bc.player.energyPerTurn);
+    player["card_draw_per_turn"] = static_cast<int>(bc.player.cardDrawPerTurn);
+    if (bc.player.hasStatus<PlayerStatus::DRAW_REDUCTION>())
+        player["draw_reduction_just_applied"] = bc.player.wasJustApplied<PlayerStatus::DRAW_REDUCTION>();
+    else player["draw_reduction_just_applied"] = py::none();
     py::list bombs;
     for (const auto &bomb : bc.player.bombs) {
         py::dict record;
@@ -906,6 +910,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
         if (strictComplete) {
             static constexpr const char *kPlayerKeys[] = {
                 "max_hp", "hp", "block", "energy", "energy_per_turn",
+                "card_draw_per_turn", "draw_reduction_just_applied",
                 "gold", "counters", "powers", "bombs",
             };
             for (const auto *key : kPlayerKeys) {
@@ -925,6 +930,8 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
             p, "energy", bc.player.energy, 0, std::numeric_limits<int>::max());
         bc.player.energyPerTurn = static_cast<std::int8_t>(
             getBoundedInt(p, "energy_per_turn", bc.player.energyPerTurn, 0, 127));
+        bc.player.cardDrawPerTurn = static_cast<std::int8_t>(
+            getBoundedInt(p, "card_draw_per_turn", bc.player.cardDrawPerTurn, 0, 127));
         bc.player.gold = getBoundedInt(
             p, "gold", bc.player.gold, 0, std::numeric_limits<std::int16_t>::max());
         if (p.contains("bombs")) {
@@ -1046,6 +1053,18 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                 // Auxiliary counters are exported separately and were already
                 // restored above.  Never manufacture them from the power value.
                 setRulePlayerStatusByNameExact(bc, name, amount, false);
+            }
+        }
+        if (p.contains("draw_reduction_just_applied")) {
+            const auto flag = p["draw_reduction_just_applied"];
+            if (bc.player.hasStatus<PlayerStatus::DRAW_REDUCTION>()) {
+                if (!py::isinstance<py::bool_>(flag))
+                    throw std::invalid_argument("Draw Reduction requires actual boolean justApplied");
+                bc.player.setJustApplied<PlayerStatus::DRAW_REDUCTION>(flag.cast<bool>());
+            } else {
+                if (!flag.is_none())
+                    throw std::invalid_argument("absent Draw Reduction requires null justApplied");
+                bc.player.setJustApplied<PlayerStatus::DRAW_REDUCTION>(false);
             }
         }
     }

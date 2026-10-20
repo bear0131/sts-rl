@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v31";
+    public static final String VERSION = "simulator-parity-v32";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -605,6 +605,11 @@ public final class SimulatorParityExporter {
         // energyPerTurn, so both parts are required for an exact root.
         state.put("simulator_energy_per_turn", Integer.valueOf(
             player.energy.energyMaster + (berserk == null ? 0 : berserk.amount)));
+        state.put("simulator_card_draw_per_turn", Integer.valueOf(player.gameHandSize));
+        AbstractPower drawReduction = power("Draw Reduction");
+        state.put("simulator_draw_reduction_just_applied", drawReduction == null ? null
+            : Boolean.valueOf(privateBool(drawReduction,
+                com.megacrit.cardcrawl.powers.DrawReductionPower.class, "justApplied")));
         state.put("simulator_parity_export", VERSION);
     }
 

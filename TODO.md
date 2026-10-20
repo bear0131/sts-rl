@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE123 | 源码修复及必要构建完成，待后继自然段部署 | Draw Reduction原amount被canonical/native导出压成1、重施重复减基础抽牌且重设justApplied，现保留真实持续层数、首次减一次/逐层过期/最终恢复一次；普通单层抽牌先捕获再移除时点保留。沿根恢复又确认实际gameHandSize及justApplied未导入，v32显式导出→canonical→strict native restore/readback，独立于模型通道，不用影子默认5或presence猜状态。无模型ID/布局改变，配套新jar f07cb9b0/native2f5138e0构建退出0。当前0c44518/nativeb437/v31跑200204不热换；后继段部署，无离线测试/多层实机验收声明。 |
 | BRIDGE122 | 已部署，常规实机接入通过；特殊组合待覆盖 | Impatience真实排ConditionalDrawAction，到动作执行时检查当前手牌的ATTACK再TOP排DrawCard；旧native在use时决定，Pain→RunicCube在中间抽到攻击牌仍错误多抽2/3。改为执行时检查并TOP排原DrawCards，保留NoDraw/满手/抽牌回调，不改模型布局。必要构建退出0，6034596/native b437648e/v30已从200203自然F37/index423续跑并实际搜索，无离线测试、不冒充特殊组合已自然覆盖。 |
 | BRIDGE121 | 已部署，常规实机接入通过；特殊组合待覆盖 | InfernalBlade在Java use中先随机选攻击/设本回合0费，再BOTTOM排入手；旧native延后到InfernalBladeAction才采样，Pain→RunicCube→Confusion等TOP抽牌可先消耗同RNG。采样/费用捕获移到use，复用MakeTempCardInHand并删除仅此调用的延迟helper，保留牌池/数量/UID/满手弃牌/模型布局。6034596/native b437648e含本修复及122，已从200203自然F37/index423续跑并实际搜索。无离线测试，不声称特殊插队组合已自然覆盖。 |
 | BRIDGE120 | 已修；同档F14旧页意图刷新实机通过 | 119已真实选CHOOSE0，但怪物DEBUG→ATTACK/调整伤害变化让全game_state不等，被误认成选择已结束；13ms后实际仍同工具箱页/native已推进，strict selection报错。生成选择回执按真实三候选UUID及seed/act/floor/source/context/生成参数等待实际关页/换页，保留10秒/暂停扣除及后继严格对账。97cb903同档F14再次同页意图变化，未重复CHOOSE，随后GoodInstincts入手/index131继续，至实际战后奖励无ERROR；Discovery/Codex其他组合待自然覆盖，无布局变化/离线测试。 |
