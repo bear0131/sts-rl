@@ -101,9 +101,9 @@ struct Monster {
         // hexaghost divider damage
         // Gremlin wizard charge
         // book of stabbing n
-        // champ phase2
+        // champ: low2 bits forgeTimes, bit2 thresholdReached, upper bits numTurns
         // bronze orb have used stasis
-        // bronze automaton lastBoostWasFlail
+        // bronze automaton numTurns (0..4)
         // spiker thorn buff count
         // writhing mass WrithingImplantState
         // darkling d

@@ -4,7 +4,21 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v23"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v24"
+
+# Actual AI fields governing later moves; not inferred from visible buffs/history.
+MONSTER_MOVE_STATE_CONTRACTS = {
+    'TimeEater': {'used_haste': {'type': 'bool', 'java': 'usedHaste'}},
+    'SlaverRed': {'used_entangle': {'type': 'bool', 'java': 'usedEntangle'}},
+    'BronzeOrb': {'used_stasis': {'type': 'bool', 'java': 'usedStasis'}},
+    'Spiker': {'thorns_count': {'type': 'int', 'min': 0, 'max': 6, 'java': 'thornsCount'}},
+    'Champ': {
+        'num_turns': {'type': 'int', 'min': 0, 'max': 268435455, 'java': 'numTurns'},
+        'forge_times': {'type': 'int', 'min': 0, 'max': 2, 'java': 'forgeTimes'},
+        'threshold_reached': {'type': 'bool', 'java': 'thresholdReached'},
+    },
+    'BronzeAutomaton': {'num_turns': {'type': 'int', 'min': 0, 'max': 4, 'java': 'numTurns'}},
+}
 
 # Presence is part of the wire contract, independently of vocabulary tokens.
 # None/empty collections are observations, not substitutes for missing fields.
@@ -27,6 +41,7 @@ JSON_PRESENCE_CONTRACTS = {
     'simulator_lagavulin_state': 'required monster key; Lagavulin gameplay sleep flag and completed idle turns; explicit null for other species, never infer sleep from SLEEP/STUN shared model token',
     'simulator_wizard_charge': 'required monster key; actual GremlinWizard.currentCharge 0..3, explicit null for other species',
     'simulator_writhing_mass_used_implant': 'required monster key; actual WrithingMass.usedMegaDebuff boolean, explicit null for other species; never infer from move history or Parasite inventory',
+    'simulator_move_state': 'required monster key; exact species-specific fields in MONSTER_MOVE_STATE_CONTRACTS, null for other species; no fake unused/default counters',
     'simulator_summon_slots': 'required combat key; actual leader reference slots and explicit queued-spawn flag, null for non-summon encounters; no guessed corpse compaction',
     'simulator_event_progress': 'actual audited event class and phase/counters, explicit null for other event classes; transport-only, never future random outcomes',
     'simulator_obtain_pending': 'actual unfinished ShowCardAndObtainEffect across all four effect queues; required by staged event receipts',

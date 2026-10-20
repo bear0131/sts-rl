@@ -603,6 +603,7 @@ class RealCombatSearch:
                 "lagavulin_state": monster['lagavulin_state'],
                 "wizard_charge": monster['wizard_charge'],
                 "writhing_mass_used_implant": monster['writhing_mass_used_implant'],
+                "move_state": monster['move_state'],
                 "move_history": [move, last_move, second_last_move],
                 "base_damage": int(monster["base_damage"]),
                 "adjusted_damage": int(monster["adjusted_damage"]),

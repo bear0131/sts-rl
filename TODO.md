@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE98 | 源码已修，v24/原生已构建，待实机 | v24严格对接TimeEater.usedHaste、SlaverRed.usedEntangle、BronzeOrb.usedStasis、Spiker.thornsCount、Champ.numTurns/forgeTimes/thresholdReached、Automaton.numTurns；非本组null，未知拒绝，canonical/native/diff完整。修Slaver漏标记及计数/置位时点，保留模型布局/现有miscInfo搜索key；源码全链/必要构建完成，未自然实机覆盖，无离线测试。 |
 | BRIDGE96 | 源码已修并构建，待实机 | 战内simulator_obtain_pending=true等待真实ShowCardAndObtain完成后才决策/恢复已结算植入；10秒暂停排除时钟，未知拒绝，不增加终局等待。原生Implant补未被Omamori挡住时陶瓷鱼9金及BloodyIdol共用收益，避免战后player覆盖丢失；源码/构建完成，自然组合未覆盖，无离线测试。 |
 | BRIDGE97 | 旧权重动作范围差异，后置兼容评估 | Java有类型的Attack/Skill/PowerPotion DiscoveryAction允许SKIP；普通Discovery卡/ColorlessPotion不允许。现原生DISCOVERY仅三候选、CODEX另含skip，不影响已选卡效果，但未提供三类药水的额外跳过动作。不得据此称全部动作对齐；是否扩充旧权重未训练选项需独立兼容评估，不混入当前执行修复，不用PAD表示未知候选。 |
 | BRIDGE95 | 源码已修，v23/原生已构建，待实机 | WrithingMass实际usedMegaDebuff经v23→canonical→strict native→diff恢复，非本物种null/未知拒绝；miscInfo具名三态区分未用/模拟待写回/真机已结算，禁止重复预测植入或exit重复Parasite/Omamori。纯模拟0→1行为、NOSL key/clone及模型布局保留；源码/构建完成，未实机，无离线测试。 |

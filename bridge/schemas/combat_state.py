@@ -41,6 +41,7 @@ from .entity_ids import (
     STRUCTURAL_POWER_FIELDS,
     THIEF_STATE_FIELDS,
     LAGAVULIN_STATE_FIELDS,
+    MONSTER_MOVE_STATE_CONTRACTS,
     UNSUPPORTED_REAL_CARD_IDS,
     UNSUPPORTED_REAL_POWER_IDS,
     UNSUPPORTED_REAL_RELIC_IDS,
@@ -267,6 +268,25 @@ def _validated_writhing_mass_used_implant(monster_id, value):
     return value
 
 
+def _validated_move_state(monster_id, state):
+    fields = MONSTER_MOVE_STATE_CONTRACTS.get(monster_id)
+    if fields is None:
+        if state is not None:
+            raise ValueError(f'{monster_id} cannot carry this species-specific move state')
+        return None
+    if not isinstance(state, dict) or set(state) != set(fields):
+        raise ValueError(f'{monster_id} requires exact move state fields {sorted(fields)}')
+    for key, contract in fields.items():
+        value = state[key]
+        if contract['type'] == 'bool':
+            valid = type(value) is bool
+        else:
+            valid = type(value) is int and contract['min'] <= value <= contract['max']
+        if not valid:
+            raise ValueError(f'invalid {monster_id} move state {key}: {value!r}')
+    return dict(state)
+
+
 def _monster_real(m, *, intents_hidden=False):
     required = {
         "id", "current_hp", "max_hp", "block", "is_gone", "powers",
@@ -277,6 +297,7 @@ def _monster_real(m, *, intents_hidden=False):
         "simulator_lagavulin_state",
         "simulator_wizard_charge",
         "simulator_writhing_mass_used_implant",
+        "simulator_move_state",
     }
     missing = required - set(m)
     if missing:
@@ -332,6 +353,7 @@ def _monster_real(m, *, intents_hidden=False):
         "wizard_charge": _validated_wizard_charge(canonical_id, m['simulator_wizard_charge']),
         "writhing_mass_used_implant": _validated_writhing_mass_used_implant(
             canonical_id, m['simulator_writhing_mass_used_implant']),
+        "move_state": _validated_move_state(canonical_id, m['simulator_move_state']),
         # Java exposes Writhing Mass's attack-triggered intent reroll as the
         # presence power Compulsive. The native simulator stores the same
         # mechanism in the REACTIVE status bit while reusing its numeric slot
@@ -698,6 +720,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         "lagavulin_state",
         "wizard_charge",
         "writhing_mass_used_implant",
+        "move_state",
     }
     missing = required - set(m)
     if missing:
@@ -716,6 +739,8 @@ def _norm_sim_monster(m, *, allow_no_move=False):
     writhing_mass_used_implant = _validated_writhing_mass_used_implant(
         _sim_monster_id(m['id']) if m['id'] != _SIM_MONSTER_INVALID else 'PAD',
         m['writhing_mass_used_implant'])
+    move_state = _validated_move_state(
+        _sim_monster_id(m['id']) if m['id'] != _SIM_MONSTER_INVALID else 'PAD', m['move_state'])
     if m["id"] == _SIM_MONSTER_INVALID:
         if (any(m[key] != 0 for key in ("hp", "max_hp", "block"))
                 or m["powers"] or not m["gone"] or not m["is_dying"]
@@ -730,7 +755,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
                     last_move_id=0, second_last_move="INVALID",
                     second_last_move_id=0, unawakened=False,
                     reactive=False, thief_state=None, lagavulin_state=None, wizard_charge=None,
-                    writhing_mass_used_implant=None, **lifecycle)
+                    writhing_mass_used_implant=None, move_state=None, **lifecycle)
     try:
         move = m["move"]
         move_id = int(m["move_id"])
@@ -808,6 +833,7 @@ def _norm_sim_monster(m, *, allow_no_move=False):
         "lagavulin_state": lagavulin_state,
         "wizard_charge": wizard_charge,
         "writhing_mass_used_implant": writhing_mass_used_implant,
+        "move_state": move_state,
         "powers": _powers_sim(m["powers"], MONSTER_BUFF_VOCAB_INDEX),
         "move": move,
         "move_id": move_id,
@@ -1252,6 +1278,7 @@ _MONSTER_CMP_FIELDS = (
     "last_move_id", "second_last_move", "second_last_move_id", "unawakened",
     "reactive", "powers", "thief_state", "lagavulin_state", "wizard_charge",
     "writhing_mass_used_implant",
+    "move_state",
 )
 
 

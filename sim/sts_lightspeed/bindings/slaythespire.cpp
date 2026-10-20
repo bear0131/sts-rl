@@ -329,6 +329,32 @@ py::dict rawCombatState(const sts::BattleContext &bc, bool includeJointActions =
             ? py::cast(m.miscInfo) : py::none();
         md["writhing_mass_used_implant"] = m.id == sts::MonsterId::WRITHING_MASS
             ? py::cast(m.miscInfo != sts::Monster::IMPLANT_NOT_USED) : py::none();
+        py::dict moveState;
+        switch (m.id) {
+            case sts::MonsterId::TIME_EATER:
+                moveState["used_haste"] = m.miscInfo != 0;
+                break;
+            case sts::MonsterId::RED_SLAVER:
+                moveState["used_entangle"] = m.miscInfo != 0;
+                break;
+            case sts::MonsterId::BRONZE_ORB:
+                moveState["used_stasis"] = m.miscInfo != 0;
+                break;
+            case sts::MonsterId::SPIKER:
+                moveState["thorns_count"] = m.miscInfo;
+                break;
+            case sts::MonsterId::THE_CHAMP:
+                moveState["forge_times"] = m.miscInfo & 3;
+                moveState["threshold_reached"] = (m.miscInfo & 4) != 0;
+                moveState["num_turns"] = m.miscInfo >> 3;
+                break;
+            case sts::MonsterId::BRONZE_AUTOMATON:
+                moveState["num_turns"] = m.miscInfo;
+                break;
+            default:
+                break;
+        }
+        md["move_state"] = moveState.empty() ? py::object(py::none()) : py::object(moveState);
         // This is the first-life death protection, not UnawakenedPower's
         // presence: Java removes that power before REBIRTH finishes.
         md["unawakened"] =
@@ -1006,6 +1032,7 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                     "lagavulin_state",
                     "wizard_charge",
                     "writhing_mass_used_implant",
+                    "move_state",
                 };
                 for (const auto *key : kMonsterKeys) {
                     if (!m.contains(key)) {
@@ -1226,6 +1253,43 @@ void applyCustomCombatStateImpl(sts::BattleContext &bc, const py::dict &spec) {
                         ? sts::Monster::IMPLANT_SETTLED : sts::Monster::IMPLANT_NOT_USED;
                 } else if (!m["writhing_mass_used_implant"].is_none()) {
                     throw std::invalid_argument("non-WrithingMass cannot carry an implant flag");
+                }
+            }
+            if (m.contains("move_state")) {
+                const char *singleField = nullptr;
+                switch (monster.id) {
+                    case sts::MonsterId::TIME_EATER: singleField = "used_haste"; break;
+                    case sts::MonsterId::RED_SLAVER: singleField = "used_entangle"; break;
+                    case sts::MonsterId::BRONZE_ORB: singleField = "used_stasis"; break;
+                    case sts::MonsterId::SPIKER: singleField = "thorns_count"; break;
+                    case sts::MonsterId::BRONZE_AUTOMATON: singleField = "num_turns"; break;
+                    default: break;
+                }
+                if (singleField || monster.id == sts::MonsterId::THE_CHAMP) {
+                    if (!py::isinstance<py::dict>(m["move_state"]))
+                        throw std::invalid_argument("monster requires explicit move state");
+                    const auto state = m["move_state"].cast<py::dict>();
+                    if (singleField) {
+                        if (state.size() != 1 || !state.contains(singleField))
+                            throw std::invalid_argument("wrong species-specific move state fields");
+                        if (monster.id == sts::MonsterId::SPIKER) {
+                            monster.miscInfo = snapshotInteger(state, singleField, 0, 6);
+                        } else if (monster.id == sts::MonsterId::BRONZE_AUTOMATON) {
+                            monster.miscInfo = snapshotInteger(state, singleField, 0, 4);
+                        } else {
+                            monster.miscInfo = getBool(state, singleField, false) ? 1 : 0;
+                        }
+                    } else {
+                        if (state.size() != 3 || !state.contains("num_turns")
+                            || !state.contains("forge_times") || !state.contains("threshold_reached"))
+                            throw std::invalid_argument("incomplete Champ move state");
+                        const int turns = snapshotInteger(state, "num_turns", 0, 268435455);
+                        const int forges = snapshotInteger(state, "forge_times", 0, 2);
+                        const bool threshold = getBool(state, "threshold_reached", false);
+                        monster.miscInfo = (turns << 3) | (threshold ? 4 : 0) | forges;
+                    }
+                } else if (!m["move_state"].is_none()) {
+                    throw std::invalid_argument("unexpected species-specific move state");
                 }
             }
             if (m.contains("reactive")) {

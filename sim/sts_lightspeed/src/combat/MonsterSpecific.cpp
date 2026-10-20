@@ -473,43 +473,27 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         case MMID::BRONZE_AUTOMATON_BOOST: {// 5
             buff<MS::STRENGTH>(asc4 ? 4 : 3);
             addBlock(asc9 ? 12 : 9);
-            auto &lastBoostWasFlail = miscInfo;
-            if (lastBoostWasFlail) {
-                setMove(MMID::BRONZE_AUTOMATON_HYPER_BEAM);
-                lastBoostWasFlail = false;
-            } else {
-                setMove(MMID::BRONZE_AUTOMATON_FLAIL);
-                lastBoostWasFlail = true;
-            }
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
         }
 
         case MMID::BRONZE_AUTOMATON_FLAIL: // 1
             attackPlayerHelper(bc, asc4 ? 8 : 7, 2);
-            setMove(MMID::BRONZE_AUTOMATON_BOOST);
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::BRONZE_AUTOMATON_HYPER_BEAM: // 2
             attackPlayerHelper(bc, asc4 ? 50 : 45);
-            if (asc19) {
-                setMove(MMID::BRONZE_AUTOMATON_BOOST);
-            } else {
-                setMove(MMID::BRONZE_AUTOMATON_STUNNED);
-            }
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::BRONZE_AUTOMATON_SPAWN_ORBS: // 4
             spawnBronzeOrbs(bc);
-            setMove(MMID::BRONZE_AUTOMATON_FLAIL);
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::BRONZE_AUTOMATON_STUNNED: // 3
-            setMove(MMID::BRONZE_AUTOMATON_FLAIL);
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::BRONZE_ORB_BEAM:
@@ -519,7 +503,6 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::BRONZE_ORB_STASIS:
             stasisAction(bc);
-            miscInfo = 1;
             rollMove(bc);
             break;
 
@@ -1019,6 +1002,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::RED_SLAVER_ENTANGLE:
             bc.addToBot(Actions::DebuffPlayer<PS::ENTANGLED>(1));
+            miscInfo = 1; // Java usedEntangle, even if Artifact blocks the power.
             bc.addToBot(Actions::RollMove(idx));
             break;
 
@@ -1626,7 +1610,6 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
         case MMID::TIME_EATER_HASTE:
-            miscInfo = true; // set have used haste true
             curHp = maxHp / 2;
             if (asc19) {
                 addBlock(32);
@@ -2072,8 +2055,22 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
         }
 
         case MonsterId::BRONZE_AUTOMATON: {
-            return (MMID::BRONZE_AUTOMATON_SPAWN_ORBS);
-            break;
+            // Java's numTurns counts only the alternating Flail/Boost rolls.
+            // The post-Hyper-Beam Stun/Boost does not advance the cycle.
+            if (firstTurn()) return MMID::BRONZE_AUTOMATON_SPAWN_ORBS;
+            if (monsterData == 4) {
+                monsterData = 0;
+                return MMID::BRONZE_AUTOMATON_HYPER_BEAM;
+            }
+            if (lastMove(MMID::BRONZE_AUTOMATON_HYPER_BEAM)) {
+                return asc19 ? MMID::BRONZE_AUTOMATON_BOOST : MMID::BRONZE_AUTOMATON_STUNNED;
+            }
+            ++monsterData;
+            if (lastMove(MMID::BRONZE_AUTOMATON_STUNNED) || lastMove(MMID::BRONZE_AUTOMATON_BOOST)
+                || lastMove(MMID::BRONZE_AUTOMATON_SPAWN_ORBS)) {
+                return MMID::BRONZE_AUTOMATON_FLAIL;
+            }
+            return MMID::BRONZE_AUTOMATON_BOOST;
         }
 
         case MonsterId::BRONZE_ORB: { // todo bug with discarded cards - blind card not showing in discard pile
@@ -2082,6 +2079,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             // 3 stasis
             const auto haveUsedStasis = miscInfo;
             if (!haveUsedStasis && roll >= 25) {
+                monsterData = 1; // usedStasis is set when the intent is selected.
                 return (MMID::BRONZE_ORB_STASIS);
 
             } else if (roll >= 70 && !lastTwoMoves(MMID::BRONZE_ORB_SUPPORT_BEAM)) {
@@ -2854,6 +2852,12 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
         }
 
         case MonsterId::THE_CHAMP: {
+            // Low bits retain forgeTimes/thresholdReached; upper bits hold
+            // Java's independent numTurns, including its Taunt reset.
+            int numTurns = monsterData >> 3;
+            if (numTurns == 268435455) throw std::overflow_error("Champ move counter overflow");
+            ++numTurns;
+            monsterData = (monsterData & 7) | (numTurns << 3);
             // 1 Heavy Slash
             // 2 Defensive Stance
             // 3 Execute
@@ -2875,7 +2879,8 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
                     return (MMID::THE_CHAMP_ANGER);
                     break;
 
-                } else if ((bc.getMonsterTurnNumber()+1) % 4 == 0) {
+                } else if (numTurns == 4) {
+                    monsterData &= 7;
                     return (MMID::THE_CHAMP_TAUNT);
                     break;
                 }
@@ -3200,6 +3205,7 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             const bool usedHaste = miscInfo;
             const bool underHalfHp = curHp < maxHp/2;
             if (!usedHaste && underHalfHp) {
+                monsterData = 1; // usedHaste is set when Haste becomes the intent.
                 return MonsterMoveId::TIME_EATER_HASTE;
             }
 

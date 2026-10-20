@@ -126,7 +126,7 @@ It patches eight `GameStateConverter` serializers and both actual JSON writers
 bundled shaded Gson's `serializeNulls()`. An intermediate Map containing null
 is insufficient: Gson's default would remove that field from the wire.
 The Dome-specific export mask is bypassed, and monsters receive
-`current_intent_export: simulator-parity-v23`.
+`current_intent_export: simulator-parity-v24`.
 Monster serialization includes the actual `is_dying`, `is_dead`, `is_escaping`,
 `escape_next` flags and Awakened One's room-level first-life protection
 (`unawakened`). Zero HP and `is_gone` must not substitute for these fields.
@@ -221,7 +221,17 @@ The native miscInfo states distinguish a newly simulated pending Implant from
 an already-settled real one; both prohibit a second Implant. Rebuild the native
 extension together with the Java helper.
 
-Do not mix v23 Python with an older jar/native extension. Model tensor layouts
+Since v24 `simulator_move_state` contains the exact audited AI fields for
+Time Eater, Red Slaver, Bronze Orb, Spiker, Champ and Bronze Automaton; other
+species have explicit null. `monster_move_state_fields` lists each actual Java
+field, type and native domain. Canonical state, strict native restoration and
+diff retain all of them. One-shot flags are set at the actual intent-selection
+or execution point; Champ and Automaton retain their own move counters instead
+of guessing from global turns, buffs or recent move history. The native search
+key already includes their miscInfo storage. This is not full pending-action
+restoration or a claim that all monster-private fields have been audited.
+
+Do not mix v24 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

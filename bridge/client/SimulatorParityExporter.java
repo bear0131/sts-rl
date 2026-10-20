@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v23";
+    public static final String VERSION = "simulator-parity-v24";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -172,11 +172,40 @@ public final class SimulatorParityExporter {
             ? Integer.valueOf(privateInt(monster, com.megacrit.cardcrawl.monsters.exordium.GremlinWizard.class, "currentCharge")) : null);
         state.put("simulator_writhing_mass_used_implant", monster instanceof com.megacrit.cardcrawl.monsters.beyond.WrithingMass
             ? Boolean.valueOf(privateBool(monster, com.megacrit.cardcrawl.monsters.beyond.WrithingMass.class, "usedMegaDebuff")) : null);
+        state.put("simulator_move_state", monsterMoveState(monster));
         // UnawakenedPower is removed at the first lethal hit, while the room's
         // death protection remains until the queued CanLoseAction executes.
         state.put("unawakened", Boolean.valueOf(
             monster instanceof com.megacrit.cardcrawl.monsters.beyond.AwakenedOne
             && AbstractDungeon.getCurrRoom().cannotLose));
+    }
+
+    private static HashMap<String, Object> monsterMoveState(AbstractMonster monster) {
+        HashMap<String, Object> result = new HashMap<String, Object>();
+        if (monster instanceof com.megacrit.cardcrawl.monsters.beyond.TimeEater) {
+            result.put("used_haste", Boolean.valueOf(privateBool(monster,
+                com.megacrit.cardcrawl.monsters.beyond.TimeEater.class, "usedHaste")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.exordium.SlaverRed) {
+            result.put("used_entangle", Boolean.valueOf(privateBool(monster,
+                com.megacrit.cardcrawl.monsters.exordium.SlaverRed.class, "usedEntangle")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.BronzeOrb) {
+            result.put("used_stasis", Boolean.valueOf(privateBool(monster,
+                com.megacrit.cardcrawl.monsters.city.BronzeOrb.class, "usedStasis")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.beyond.Spiker) {
+            result.put("thorns_count", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.beyond.Spiker.class, "thornsCount")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.Champ) {
+            Class<?> type = com.megacrit.cardcrawl.monsters.city.Champ.class;
+            result.put("num_turns", Integer.valueOf(privateInt(monster, type, "numTurns")));
+            result.put("forge_times", Integer.valueOf(privateInt(monster, type, "forgeTimes")));
+            result.put("threshold_reached", Boolean.valueOf(privateBool(monster, type, "thresholdReached")));
+        } else if (monster instanceof com.megacrit.cardcrawl.monsters.city.BronzeAutomaton) {
+            result.put("num_turns", Integer.valueOf(privateInt(monster,
+                com.megacrit.cardcrawl.monsters.city.BronzeAutomaton.class, "numTurns")));
+        } else {
+            return null;
+        }
+        return result;
     }
 
     public static AbstractCard stasisCard(com.megacrit.cardcrawl.monsters.AbstractMonster monster) {

@@ -44,6 +44,7 @@ from .entity_ids import (
     REAL_ANONYMOUS_ACTION_CONTRACTS,
     THIEF_STATE_FIELDS,
     LAGAVULIN_STATE_FIELDS,
+    MONSTER_MOVE_STATE_CONTRACTS,
     REAL_CARD_WIRE_FIELDS,
     CARD_STATE_FIELD_CONTRACTS,
     CARD_SPECIAL_DATA_FIELDS,
@@ -523,6 +524,13 @@ def complete_word_tables():
             "canonical": "wizard_charge in real/native full state and diff",
             "native": "Monster.miscInfo, already part of search key; no new policy tensor",
             "timing": "increment on charge, reset on every Blast including A17",
+        },
+        "monster_move_state_fields": MONSTER_MOVE_STATE_CONTRACTS,
+        "monster_move_state_transport": {
+            "wire": "v24 simulator_move_state; required exact species-specific dictionary or explicit null for other species; canonical/native move_state and diff retain every field",
+            "native": "miscInfo: bool for TimeEater/RedSlaver/BronzeOrb, 0..6 Spiker thornsCount, 0..4 Automaton numTurns, Champ low2 forgeTimes/bit2 thresholdReached/upper bits numTurns; existing NOSL hash and clone retain it",
+            "timing": "usedHaste and usedStasis set at intent selection, usedEntangle at execution even when Artifact blocks, Spiker increments on Spike; Champ counter increments per getMove and resets at Taunt; Automaton post-beam Stun/Boost does not increment numTurns",
+            "scope": "six audited species (BRIDGE98); no policy tensor/action ID change, no inferred counters from powers/history or claim that all BRIDGE37 private state is complete",
         },
         "writhing_mass_implant_transport": {
             "java": "WrithingMass.usedMegaDebuff -> simulator_writhing_mass_used_implant; required boolean for this species, explicit null otherwise (v23)",
