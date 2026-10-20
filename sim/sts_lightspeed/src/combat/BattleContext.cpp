@@ -125,7 +125,8 @@ void BattleContext::initRelics(const GameContext &gc) {
     player.relicBits1 = gc.relics.relicBits1;
 
     fixed_list<RelicId, 4> atBattleStartPreDraw;
-    fixed_list<RelicId, 10> atBattleStart;
+    fixed_list<RelicId, 12> atBattleStart;
+    fixed_list<RelicId, 3> atTurnStart;
     fixed_list<RelicId, 2> atTurnStartPostDraw;
 
     auto room = gc.curRoom;
@@ -147,9 +148,11 @@ void BattleContext::initRelics(const GameContext &gc) {
                 atBattleStartPreDraw.push_back(r.id);
                 break;
 
+            case R::ANCHOR:
             case R::BAG_OF_MARBLES:
             case R::BAG_OF_PREPARATION:
             case R::CLOCKWORK_SOUVENIR:
+            case R::FOSSILIZED_HELIX:
             case R::GREMLIN_VISAGE:
             case R::MUTAGENIC_STRENGTH:
             case R::RED_MASK:
@@ -198,8 +201,8 @@ void BattleContext::initRelics(const GameContext &gc) {
             case R::HAPPY_FLOWER:
                 player.happyFlowerCounter = r.data + 1;
                 if (player.happyFlowerCounter == 3) {
-                    ++player.energy;
                     player.happyFlowerCounter = 0;
+                    atTurnStart.push_back(r.id);
                 }
                 break;
 
@@ -207,8 +210,12 @@ void BattleContext::initRelics(const GameContext &gc) {
                 p.incenseBurnerCounter = r.data;
                 if (++p.incenseBurnerCounter == 6) {
                     p.incenseBurnerCounter = 0;
-                    p.buff<PS::INTANGIBLE>(1);
+                    atTurnStart.push_back(r.id);
                 }
+                break;
+
+            case R::MERCURY_HOURGLASS:
+                atTurnStart.push_back(r.id);
                 break;
 
             case R::INK_BOTTLE:
@@ -275,10 +282,6 @@ void BattleContext::initRelics(const GameContext &gc) {
                 p.energyPerTurn++;
                 break;
 
-            case R::ANCHOR:
-                p.block = std::min(Player::MAX_BLOCK, std::max(0, p.block) + 10);
-                break;
-
             case R::ANCIENT_TEA_SET:
                 if (r.data != 0) {
                     p.gainEnergy(2);
@@ -319,10 +322,6 @@ void BattleContext::initRelics(const GameContext &gc) {
 
             case R::DU_VU_DOLL:
                 p.buff<PS::STRENGTH>(r.data);
-                break;
-
-            case R::FOSSILIZED_HELIX:
-                p.buff<PS::BUFFER>(1);
                 break;
 
             case R::FUSION_HAMMER:
@@ -442,6 +441,10 @@ void BattleContext::initRelics(const GameContext &gc) {
 
     for (auto r : atBattleStart) {
         switch (r) {
+            case R::ANCHOR:
+                addToBot(Actions::GainBlock(10));
+                break;
+
             case R::BAG_OF_MARBLES:
                 addToBot( Actions::DebuffAllEnemy<MS::VULNERABLE>(1, false) );
                 break;
@@ -454,6 +457,10 @@ void BattleContext::initRelics(const GameContext &gc) {
                 // Both this and Mutagenic Strength prepend their actions.
                 // The later relic's TOP actions therefore resolve first.
                 addToTop( Actions::BuffPlayer<PS::ARTIFACT>(1) );
+                break;
+
+            case R::FOSSILIZED_HELIX:
+                addToBot(Actions::BuffPlayer<PS::BUFFER>(1));
                 break;
 
             case R::GREMLIN_VISAGE:
@@ -500,8 +507,22 @@ void BattleContext::initRelics(const GameContext &gc) {
         }
     }
 
-    if (gc.hasRelic(R::MERCURY_HOURGLASS)) {
-        addToBot( Actions::DamageAllEnemy(3) );
+    // Their counters advance synchronously, but their effects are BOTTOM
+    // actions after atBattleStart, and remain pending at an opening Toolbox.
+    for (auto r : atTurnStart) {
+        switch (r) {
+            case R::HAPPY_FLOWER:
+                addToBot(Actions::GainEnergy(1));
+                break;
+            case R::INCENSE_BURNER:
+                addToBot(Actions::BuffPlayer<PS::INTANGIBLE>(1));
+                break;
+            case R::MERCURY_HOURGLASS:
+                addToBot(Actions::DamageAllEnemy(3));
+                break;
+            default:
+                break;
+        }
     }
 
     for (auto r : atTurnStartPostDraw) {

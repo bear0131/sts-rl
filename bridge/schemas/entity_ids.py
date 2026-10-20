@@ -252,6 +252,11 @@ LIVE_RELIC_COUNTER_FIELDS = {
 LIVE_RELIC_COUNTER_MODULI = {"Kunai": 3, "Letter Opener": 3, "Ornamental Fan": 3, "Shuriken": 3}
 LIVE_RELIC_COUNTER_STOP_TURNS = {"CaptainsWheel": 3, "HornCleat": 2}
 
+# At an actual first-turn Toolbox screen these counters have already advanced,
+# but their BOTTOM rewards have not. Only native construction rewinds this
+# known cycle; strict pending-root/global restoration keeps the exported value.
+OPENING_TURN_RELIC_COUNTER_CYCLES = {"Happy Flower": 3, "Incense Burner": 6}
+
 # Every stock relic class in desktop-1.0.jar was checked for reads/writes of
 # AbstractRelic.counter (including setCounter calls). These 29 classes use it;
 # all other supported identities inherit the display sentinel. This is a

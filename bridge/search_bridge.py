@@ -43,6 +43,7 @@ from schemas.entity_ids import (
     NATIVE_MONSTER_STATUS_IDS,
     NATIVE_PLAYER_STATUS_IDS,
     ON_USE_CARD_RELIC_IDS,
+    OPENING_TURN_RELIC_COUNTER_CYCLES,
     native_power_enum,
 )
 
@@ -402,8 +403,32 @@ class RealCombatSearch:
         LOG.info("attaching native battle seed=%s floor=%s search_start_index=%s",
                  seed, floor, self.decision_index)
 
+        selection = self.adapter.select_descriptor()
+        opening_toolbox = (
+            selection is not None and selection['context'] == 'DISCOVERY'
+            and self.adapter.gs['screen_state']['selection_source']
+                == 'com.megacrit.cardcrawl.actions.utility.ChooseOneColorless'
+            and 'Toolbox' in global_state['relics'] and real['turn'] == 1
+        )
+
         def make_gc(seed_nonce: int):
-            return make_native_combat_root(global_state, seed=seed,
+            construction_state = global_state
+            if opening_toolbox:
+                # atTurnStart has already advanced these public counters,
+                # while its BOTTOM effects are still behind Toolbox. Rewind
+                # only this known cycle for native initialization; never infer
+                # a trigger from a post-hook counter as if it were pre-entry.
+                construction_state = dict(global_state)
+                counters = list(global_state['relic_counters'])
+                for index, relic in enumerate(global_state['relics']):
+                    modulus = OPENING_TURN_RELIC_COUNTER_CYCLES.get(relic)
+                    if modulus is not None:
+                        value = counters[index]
+                        if type(value) is not int or not 0 <= value < modulus:
+                            raise ValueError(f'opening Toolbox has an invalid {relic} counter')
+                        counters[index] = (value - 1) % modulus
+                construction_state['relic_counters'] = counters
+            return make_native_combat_root(construction_state, seed=seed,
                                            room_type=room_type, seed_nonce=seed_nonce)
 
         wanted = tuple(sorted(m["id"] for m in real["monsters"]
@@ -442,7 +467,6 @@ class RealCombatSearch:
         self.card_identities = CombatCardIdentityMap()
         self.sim_to_real_targets = {}
         self.sim_to_real_targets = self._target_mapping(real)
-        selection = self.adapter.select_descriptor()
         if selection is not None:
             self._initialize_selection_root(real, selection)
         self.run_encounters += 1
@@ -489,6 +513,13 @@ class RealCombatSearch:
         self.env.thick.gc.max_hp = int(real['player']['max_hp'])
         self.env.thick.gc.cur_hp = int(real['player']['hp'])
         self.env.thick.gc.gold = int(real['player']['gold'])
+        # Construction may rewind the two known first-turn counter cycles.
+        # The actual root/global observation must keep the exported values.
+        global_state = self.adapter.obs_canonical()['global']
+        self.env.thick.gc.set_relic_state([
+            {'id': relic, 'counter': counter}
+            for relic, counter in zip(global_state['relics'], global_state['relic_counters'])
+        ])
         self.env._invalidate_backend_cache()
         after = diff(self._active_real_projection(real), self._sim_state_in_real_target_order())
         if after:
