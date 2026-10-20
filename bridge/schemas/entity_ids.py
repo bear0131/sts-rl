@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v34"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v35"
 
 # Supported native UseCardAction relic callbacks; order comes from the actual
 # acquisition-ordered global relic list, never from this membership inventory.

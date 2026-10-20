@@ -445,6 +445,8 @@ def complete_word_tables():
             "history": "older unlabeled search_simulations was a nominal budget product, not measured work; no result rewriting or inference from omitted internal-prefix logs; policy/search settings unchanged",
         },
         "event_progress_transport_fields": {
+            "WeMeetAgain": "v35 exact shrines.WeMeetAgain INTRO/COMPLETE, nullable given_relic only after COMPLETE; actual initial four options carry kind and exposed card UUID/potion physical slot/gold amount; compressed choice_index maps to frozen semantic0/1/2/3, never positional fallback (BRIDGE134)",
+            "WeMeetAgain receipt": "selected physical donor/cost only, no unrelated deck losses/gains or relic changes; wait complete page, gift owned, exact surviving resources and known screenless onEquip effects (War Paint, fruit maxHP/heal with Bloom, Old Coin/Ecto/BloodyIdol, Potion Belt, stacked Circlet); excludes bottles/Whetstone; no hidden INTRO prize or new model token",
             "simulator_event_progress": "actual screen/screenNum and source; null outside the explicitly audited event classes",
             "simulator_match_state": "v31 actual GremlinMatchGame phase/attempts/current face-up and remaining physical slots; stock getOrderedCards CHOOSE index mapping, explicit null for other events; no hidden identities or remembered faces",
             "Match and Keep fixed transport": "human-authorized first_two_match_slots only, bypasses policy; acknowledge first physical flip before second, then exact attempt decrement and either same remaining slots or removal of the two sent slots; wait obtain effects/final COMPLETE before actual exit; no model/layout/native change (BRIDGE12)",

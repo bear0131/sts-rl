@@ -317,7 +317,17 @@ selected cards or a hovered-card UUID. The adapter confirms once and waits for
 the same source/group to close; existing obtain-effect queue settling remains.
 Normal upgrade/transform/purge previews keep their separate original-card rule.
 
-Do not mix v34 Python with an older jar/native extension. Model tensor layouts
+Parity-v35 additionally exports WeMeetAgain's actual public offer objects: a
+full master-card UUID, a physical potion slot, and the offered gold amount.
+Typed kinds map the four frozen semantic choices to stock's compressed CHOOSE
+indices, even when earlier buttons are disabled. The actual INTRO/COMPLETE phase
+and completed visible relic identity are transport receipts; INTRO never exposes
+the future prize. Trade confirmation waits for the selected cost, received relic
+and its screenless on-equip effects. No localized-name matching or forced leave
+stands in for the model's decision. Other dynamic events still require their own
+typed exporter; declaring their vocabulary does not prove bridge coverage.
+
+Do not mix v35 Python with an older jar/native extension. Model tensor layouts
 and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.

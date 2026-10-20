@@ -6,6 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE135 | 源码确证缺口，待实现：Designer/NoteForYourself typed导出与回执 | entity_ids已有两事件kind语义，real_game_env可消费typed按钮，但现Java只新增WeMeetAgain，event_contract两事件仍无stock动作/效果实现。不得因STRUCTURED_CONTRACTS包含身份就称已可实机；需核外部事件源码导出真实服务模式/价格/牌与持久Note来源，保留旧固定动作编号和全局实体，不从本地化或UI顺序猜，不填PAD/强制离开；完整回执、源码/语法/必要构建后自然同档验证。 |
+| BRIDGE134 | 源码修复/语法/必要Java35构建完成，待同208/F29实机 | 208/F29拒绝unsupported WeMeetAgain：词表固定0药水/1金币/2卡/3离开，Java缺typed目标。现v35真实公开药水物理槽/金币金额/完整master卡UUID及INTRO/COMPLETE，压缩CHOOSE映射旧语义、复用既有typed候选不扩模型。回执核所选成本/实际gift/最终页及WarPaint、果实、OldCoin/Ecto/血偶、PotionBelt/Circlet等screenless作用；INTRO不泄露奖品。Java8构建jar b1cc9c63/四Python语法/diff及消费者复读通过，无离线测试。旧failed段保留，待完整新冻同208/F29未改档/search219续跑，不START/跳209。 |
 | BRIDGE133 | 已部署208；实际普通128/强制END零诊断通过，终局汇总待验 | RealCombatSearch现按每次策略diagnostics明确整数累加、缺失拒绝，另报预算乘积及strategy-diagnostics-v1；含内部prefix/未发重选工作且不随transport rollback抹掉，init/reset一起覆盖。d3ec35a完整新冻208，F1真实index3强制END报告0且执行，无错误；终局汇总字段尚待自然结果。只改统计，不改搜索/模型/RNG，旧结果按历史预算解释不回填推测值；既有fixture同步、语法及完整复读，无离线测试。 |
 | BRIDGE132 | 已部署208；新局入口通过，终局/跨局等待自然覆盖 | SeedCampaign现仅ready完整真实终局记录一次，bool victory/int seed/score/floor/act缺失拒绝、元数据不覆盖事实；只有ready显式菜单推进seed，未终局活跃局不重开；配置数值等价seed拒绝。agent等ready且实际PROCEED可用。d3ec35a完整新冻208，实际仅START208并进入F1搜索；普通终局/未ready/跨局分支尚未自然覆盖。普通结果/模型布局不变；既有夹具同步、语法/diff与完整调用方复读，无pytest/离线测试。 |
 | BRIDGE131 | 已部署；同207铃铛确认/入组/后继战斗实机通过，其他来源待覆盖 | 42adb57/v34/native934同原F0/index0续03，18:46:27仅CONFIRM一次，F1真实11牌含铃铛诅咒1张/obtain_pending=false，原128搜索index0继续并到F11，无ERROR/START。整组确认经过校验后无descriptor/策略动作命令，auto独占确认/同组关闭等待；未知仍拒绝、不填PAD/伪selected。原01/02故障段保留。Neow/Pandora其他调用来源仍未自然验证，无离线测试。后续三遗物与native同样是可领取/跳过奖励页：模型领取冰淇淋/问号牌、以73.56%选择跳过微笑面具，并非桥接漏发，不强制补拿。 |

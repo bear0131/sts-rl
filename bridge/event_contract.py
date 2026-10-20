@@ -286,6 +286,7 @@ EVENT_PROGRESS_CONTRACTS = {
     'The Joust': ('city.TheJoust', {'HALT', 'EXPLANATION', 'PRE_JOUST', 'JOUST', 'COMPLETE'}),
     'The Mausoleum': ('city.TheMausoleum', {'INTRO', 'RESULT'}),
     'The Moai Head': ('beyond.MoaiHead', {'0', '1'}),
+    'WeMeetAgain': ('shrines.WeMeetAgain', {'INTRO', 'COMPLETE'}),
     'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
 }
 
@@ -351,6 +352,13 @@ def event_progress(gs, event=None):
     if event == 'Wheel of Change' and any(type(progress.get(key)) is not bool for key in
                                         ('startSpin', 'buttonPressed', 'purgeResult')):
         raise ValueError('missing actual Wheel execution flags')
+    if event == 'WeMeetAgain':
+        if 'given_relic' not in progress:
+            raise ValueError('WeMeetAgain requires explicit nullable received relic identity')
+        given = progress['given_relic']
+        if ((given is not None and (not isinstance(given, str) or not given))
+                or (progress['phase'] == 'INTRO' and given is not None)):
+            raise ValueError('invalid/publicly premature WeMeetAgain relic identity')
     return progress
 
 # Contracts whose semantic identity comes from public per-instance records
@@ -547,10 +555,69 @@ def nloth_choices(gs):
     return result
 
 
+def we_meet_again_choices(gs):
+    """Actual public targets; semantic indices never use compressed UI ordinals."""
+    from bridge.schemas.card_state import real_card_state, real_selection_card_states
+    _validate_choice_indices(gs)
+    if (gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != 'WeMeetAgain'
+            or event_progress(gs)['phase'] != 'INTRO'):
+        raise ValueError('WeMeetAgain choices require the actual INTRO page')
+    raw = gs['screen_state'].get('options')
+    if not isinstance(raw, list) or len(raw) != 4:
+        raise ValueError('WeMeetAgain requires all four original option positions')
+    cards, _ = real_selection_card_states(gs['deck'], [])
+    by_uuid = {c['uuid']: c for c in cards}
+    if any(not isinstance(c.get('rarity'), str) or c.get('type') not in
+           {'ATTACK', 'SKILL', 'POWER', 'STATUS', 'CURSE'} for c in gs['deck']):
+        raise ValueError('WeMeetAgain requires actual master-card type/rarity')
+    potions, gold = gs['potions'], gs['gold']
+    if (not isinstance(potions, list) or type(gold) is not int or gold < 0
+            or any(not isinstance(p, dict) or not isinstance(p.get('id'), str) for p in potions)):
+        raise ValueError('WeMeetAgain requires explicit potion slots and gold')
+    kinds = ('lose_potion', 'lose_gold', 'lose_card', 'leave')
+    result = []
+    for index, (option, kind) in enumerate(zip(raw, kinds)):
+        if (not isinstance(option, dict) or type(option.get('disabled')) is not bool
+                or option.get('kind') != kind):
+            raise ValueError('WeMeetAgain typed option source/position mismatch')
+        if option['disabled']:
+            if (index == 3 or (index == 0 and any(p['id'] != 'Potion Slot' for p in potions))
+                    or (index == 1 and gold >= 50)
+                    or (index == 2 and any(c['rarity'] != 'BASIC' and c['type'] != 'CURSE'
+                                         for c in gs['deck']))):
+                raise ValueError('WeMeetAgain disabled option contradicts actual inventory')
+            continue
+        row = dict(index=index, ui=option['choice_index'], kind=kind)
+        if index == 0:
+            slot = option.get('potion_slot')
+            if (type(slot) is not int or not 0 <= slot < len(potions)
+                    or potions[slot]['id'] == 'Potion Slot' or option.get('potion') != potions[slot]):
+                raise ValueError('WeMeetAgain offered potion differs from its physical slot')
+            row.update(potion_slot=slot, potion=potions[slot])
+        elif index == 1:
+            amount = option.get('gold')
+            if type(amount) is not int or not 50 <= amount <= min(150, gold):
+                raise ValueError('WeMeetAgain offered gold is missing/out of range')
+            row['gold'] = amount
+        elif index == 2:
+            card = real_card_state(option.get('card'))
+            source = next((c for c in gs['deck'] if c['uuid'] == card['uuid']), None)
+            if (by_uuid.get(card['uuid']) != card or source != option['card']
+                    or source['rarity'] == 'BASIC' or source['type'] == 'CURSE'):
+                raise ValueError('WeMeetAgain offered card is not the exact eligible master UUID')
+            row['card'] = option['card']
+        result.append(row)
+    if [r['ui'] for r in result] != list(range(len(result))) or len(gs['choice_list']) != len(result):
+        raise ValueError('WeMeetAgain choices do not cover actual compressed CHOOSE inventory')
+    return result
+
+
 def options(gs):
     _validate_choice_indices(gs)
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'WeMeetAgain':
+        return {d['index']: (d['ui'], 'we_meet_' + d['kind']) for d in we_meet_again_choices(gs)}
     if event == 'Match and Keep!':
         raise ValueError(
             'Match and Keep requires the fixed board-slot transport contract'
@@ -604,6 +671,87 @@ class EventEffectAck:
     def __init__(self):
         self.pending = None
         self._single_obtain = None
+
+    def _waiting_we_meet_again(self, old, gs, ready):
+        from bridge.schemas.card_state import real_selection_card_states
+        if any(gs.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+            raise RuntimeError('WeMeetAgain receipt crossed its actual run/room')
+        if (gs.get('screen_type') != 'EVENT'
+                or gs.get('screen_state', {}).get('event_id') != 'WeMeetAgain'):
+            raise RuntimeError('WeMeetAgain left before its completed trade receipt')
+        progress = event_progress(gs)
+        if not ready or progress['phase'] == 'INTRO':
+            return True
+        choice = self._we_meet_choice
+        trading = choice['kind'] != 'leave'
+        gift = progress['given_relic']
+        if not trading and gift is not None:
+            raise RuntimeError('WeMeetAgain leave unexpectedly granted a relic')
+        if trading and gift is None:
+            return True
+        if gift in {'Bottled Flame', 'Bottled Lightning', 'Bottled Tornado', 'Whetstone'}:
+            raise RuntimeError('WeMeetAgain granted a non-screenless relic')
+        before_relics, after_relics = self._augmenter_relics(old), self._augmenter_relics(gs)
+        expected_ids = set(before_relics) | ({gift} if trading else set())
+        if set(after_relics) - expected_ids or set(before_relics) - set(after_relics):
+            raise RuntimeError('WeMeetAgain changed an unrelated relic identity')
+        for relic, counter in before_relics.items():
+            if after_relics[relic] != counter + int(relic == gift == 'Circlet'):
+                if relic == gift == 'Circlet' and after_relics[relic] == counter:
+                    return True
+                raise RuntimeError('WeMeetAgain changed an unrelated relic counter')
+        if trading and gift in before_relics and gift != 'Circlet':
+            raise RuntimeError('WeMeetAgain duplicated a nonstacking relic')
+
+        before, _ = real_selection_card_states(old['deck'], [])
+        after, _ = real_selection_card_states(gs['deck'], [])
+        before, after = {c['uuid']: c for c in before}, {c['uuid']: c for c in after}
+        expected_lost = ({choice['card']['uuid']} if choice['kind'] == 'lose_card' else set())
+        lost = set(before) - set(after)
+        if set(after) - set(before) or lost - expected_lost:
+            raise RuntimeError('WeMeetAgain removed a different physical card or added cards')
+        # War Paint is screenless, upgrades synchronously on obtain, and may
+        # upgrade two surviving skills. Whetstone/bottles are explicitly excluded.
+        eligible = {c['uuid'] for c in old['deck'] if c['type'] == 'SKILL'
+                    and c['upgrades'] == 0 and c['uuid'] not in expected_lost}
+        upgraded = set()
+        for identity in set(before) & set(after):
+            if before[identity] == after[identity]:
+                continue
+            first, last = before[identity], after[identity]
+            if (gift != 'War Paint' or identity not in eligible or last['up'] != first['up'] + 1
+                    or any(first[k] != last[k] for k in
+                           ('id', 'uuid', 'misc', 'bottled_flame', 'bottled_lightning', 'bottled_tornado'))):
+                raise RuntimeError('WeMeetAgain mutated an unrelated master-card instance')
+            upgraded.add(identity)
+        upgrade_count = min(2, len(eligible)) if gift == 'War Paint' else 0
+        if len(upgraded) > upgrade_count:
+            raise RuntimeError('WeMeetAgain upgraded too many cards')
+        potions = lambda state: [p['id'] for p in state['potions']]
+        expected_potions = potions(old)
+        if choice['kind'] == 'lose_potion':
+            expected_potions[choice['potion_slot']] = 'Potion Slot'
+        if gift == 'Potion Belt':
+            expected_potions += ['Potion Slot', 'Potion Slot']
+        expected_gold = old['gold'] - (choice['gold'] if choice['kind'] == 'lose_gold' else 0)
+        if gift == 'Old Coin' and 'Ectoplasm' not in before_relics:
+            expected_gold += 300
+        hp_gain = {'Strawberry': 7, 'Pear': 10, 'Mango': 14}.get(gift, 0)
+        expected_max = old['max_hp'] + hp_gain
+        heal_amount = hp_gain + (5 if gift == 'Old Coin' and 'Ectoplasm' not in before_relics
+                                and 'Bloody Idol' in before_relics else 0)
+        expected_hp = (old['current_hp'] if 'Mark of the Bloom' in before_relics
+                       else min(expected_max, old['current_hp'] + heal_amount))
+        # Prize effects may finish after the immediate cost. Never replace a
+        # missing resource or gift with a default, nor resend the trade.
+        if (lost != expected_lost or len(upgraded) != upgrade_count
+                or set(after_relics) != expected_ids or potions(gs) != expected_potions
+                or gs['gold'] != expected_gold or gs['max_hp'] != expected_max
+                or gs['current_hp'] != expected_hp or gs['simulator_obtain_pending']
+                or transport_only(gs) is None):
+            return True
+        self.pending = None
+        return False
 
     @staticmethod
     def _omamori_charges(gs):
@@ -1255,6 +1403,11 @@ class EventEffectAck:
         if effect == 'falling_remove':
             card = next(d['card'] for d in falling_choices(gs) if d['index'] == decision.semantic[1])
             self.falling_target = (card['id'], card.get('upgrades', 0))
+        if effect.startswith('we_meet_'):
+            self._we_meet_choice = next(d for d in we_meet_again_choices(gs)
+                                        if d['index'] == decision.semantic[1])
+            if decision.command != f'CHOOSE {self._we_meet_choice["ui"]}':
+                raise ValueError('WeMeetAgain semantic choice and actual command disagree')
         if gs['screen_state'].get('event_id') == 'Knowing Skull':
             skull_costs(gs)
             if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
@@ -1294,6 +1447,8 @@ class EventEffectAck:
             return self._waiting_tome(old, g, effect, frame.get('ready_for_command') is True)
         if effect.startswith('augmenter_'):
             return self._waiting_augmenter(old, g, effect)
+        if effect.startswith('we_meet_'):
+            return self._waiting_we_meet_again(old, g, frame.get('ready_for_command') is True)
         if frame.get('ready_for_command') is not True:
             return True
         if type(g.get('simulator_obtain_pending')) is not bool:

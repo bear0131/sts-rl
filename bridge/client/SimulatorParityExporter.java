@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v34";
+    public static final String VERSION = "simulator-parity-v35";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -302,6 +302,7 @@ public final class SimulatorParityExporter {
             case "com.megacrit.cardcrawl.events.exordium.ShiningLight":
             case "com.megacrit.cardcrawl.events.city.TheJoust":
             case "com.megacrit.cardcrawl.events.city.TheMausoleum":
+            case "com.megacrit.cardcrawl.events.shrines.WeMeetAgain":
             case "com.megacrit.cardcrawl.events.shrines.GremlinWheelGame": field = "screen"; break;
             default: return null;
         }
@@ -315,9 +316,76 @@ public final class SimulatorParityExporter {
             for (String key : new String[]{"startSpin", "buttonPressed", "purgeResult"})
                 progress.put(key, privateBool(event, event.getClass(), key));
         }
+        if (event instanceof com.megacrit.cardcrawl.events.shrines.WeMeetAgain) {
+            // INTRO's future prize is not public. COMPLETE already names and
+            // displays it; this transport receipt never enters model features.
+            AbstractRelic given = "COMPLETE".equals(progress.get("phase"))
+                ? (AbstractRelic)ReflectionHacks.getPrivate(event, event.getClass(), "givenRelic") : null;
+            progress.put("given_relic", given == null ? null : given.relicId);
+        }
         // Only current execution progress; never export the wheel's hidden
         // result or Joust's ownerWins roll to the policy.
         return progress;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void augmentWeMeetAgain(HashMap<String, Object> state, AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.shrines.WeMeetAgain)
+                || !"EVENT".equals(state.get("screen_type"))) return;
+        Object phase = ReflectionHacks.getPrivate(event, event.getClass(), "screen");
+        if (!"INTRO".equals(((Enum<?>)phase).name())) return;
+        java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");
+        java.util.List<java.util.Map<String, Object>> options =
+            (java.util.List<java.util.Map<String, Object>>)screen.get("options");
+        if (!"WeMeetAgain".equals(screen.get("event_id")) || options.size() != 4)
+            throw new IllegalStateException("WeMeetAgain initial option inventory changed");
+        com.megacrit.cardcrawl.potions.AbstractPotion potion = ReflectionHacks.getPrivate(
+            event, event.getClass(), "potionOption");
+        AbstractCard card = ReflectionHacks.getPrivate(event, event.getClass(), "cardOption");
+        int gold = privateInt(event, event.getClass(), "goldAmount");
+        boolean[] disabled = new boolean[]{potion == null, gold == 0, card == null, false};
+        String[] kinds = new String[]{"lose_potion", "lose_gold", "lose_card", "leave"};
+        int choice = 0;
+        for (int i = 0; i < 4; i++) {
+            java.util.Map<String, Object> option = options.get(i);
+            if (!Boolean.valueOf(disabled[i]).equals(option.get("disabled")))
+                throw new IllegalStateException("WeMeetAgain option availability differs from its public target");
+            option.put("kind", kinds[i]);
+            if (disabled[i]) continue;
+            if (!Integer.valueOf(choice++).equals(option.get("choice_index")))
+                throw new IllegalStateException("WeMeetAgain stock CHOOSE ordinals changed");
+            if (i == 0) {
+                int slot = -1;
+                for (int j = 0; j < AbstractDungeon.player.potions.size(); j++) {
+                    if (AbstractDungeon.player.potions.get(j) != potion) continue;
+                    if (slot != -1) throw new IllegalStateException("WeMeetAgain duplicate potion object");
+                    slot = j;
+                }
+                java.util.List<java.util.Map<String, Object>> potions =
+                    (java.util.List<java.util.Map<String, Object>>)state.get("potions");
+                if (slot < 0 || !potion.ID.equals(potions.get(slot).get("id")))
+                    throw new IllegalStateException("WeMeetAgain potion has no physical source slot");
+                option.put("potion_slot", Integer.valueOf(slot));
+                option.put("potion", potions.get(slot));
+            } else if (i == 1) {
+                if (gold < 50 || gold > Math.min(150, AbstractDungeon.player.gold))
+                    throw new IllegalStateException("WeMeetAgain public gold offer is invalid");
+                option.put("gold", Integer.valueOf(gold));
+            } else if (i == 2) {
+                if (!AbstractDungeon.player.masterDeck.group.contains(card)
+                        || card.rarity == AbstractCard.CardRarity.BASIC || card.type == AbstractCard.CardType.CURSE)
+                    throw new IllegalStateException("WeMeetAgain public card is not an eligible master instance");
+                java.util.Map<String, Object> target = null;
+                for (java.util.Map<String, Object> record :
+                        (java.util.List<java.util.Map<String, Object>>)state.get("deck")) {
+                    if (!card.uuid.toString().equals(record.get("uuid"))) continue;
+                    if (target != null) throw new IllegalStateException("Duplicate WeMeetAgain master UUID");
+                    target = record;
+                }
+                if (target == null) throw new IllegalStateException("WeMeetAgain card has no serialized master UUID");
+                option.put("card", target);
+            }
+        }
     }
 
     private static boolean pendingCardObtain() {
@@ -413,6 +481,7 @@ public final class SimulatorParityExporter {
         state.put("simulator_map_leaf_nodes", leaves);
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
         state.put("simulator_event_progress", eventProgress(event));
+        augmentWeMeetAgain(state, event);
         state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {

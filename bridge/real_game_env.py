@@ -517,10 +517,9 @@ def _screen_potions(
 def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
     """Pass through typed event-button metadata when a bridge supplies it.
 
-    Stock CommunicationMod currently exports localized ``text``/``label`` only.
-    Those strings are useful for display but are not stable entity identifiers,
-    so this adapter deliberately does not parse card/relic/potion names from
-    them.  A richer bridge can add ``kind`` plus typed fields to each option.
+    Stock buttons are localized ``text``/``label`` only. Parity-v35 adds actual
+    WeMeetAgain ``kind``/resource records; other sources still need their own
+    exporter contract. Never infer stable entity IDs from displayed names.
     """
     raw_options = _list_value(ss, "options", context="event screen", required=False)
     # ``choice_index`` is stock transport metadata, not a semantic type.  Only
@@ -1486,6 +1485,8 @@ class RealGameAdapter:
             if event == "NEOW" and self.neow_observation:
                 opts["neow"] = self._neow_options(ss)
             elif event != "NEOW":
+                if ss.get('event_id') == 'WeMeetAgain':
+                    event_contract.we_meet_again_choices(self.gs)
                 details = _structured_event_choices(ss, len(cl))
                 if ss.get('event_id') == 'Falling':
                     mapping = event_contract.options(self.gs)
@@ -1552,6 +1553,8 @@ class RealGameAdapter:
         """Map frozen native EVENT_OPT IDs to current CommunicationMod ordinals."""
         ss = _screen_state(self.gs)
         event = _normalize_event(_required(ss, "event_id", context="event screen"))
+        if ss.get('event_id') == 'WeMeetAgain':
+            event_contract.we_meet_again_choices(self.gs)
         details = _structured_event_choices(ss, len(self.choices()))
         kind_to_semantic = DYNAMIC_EVENT_OPTION_KINDS.get(event)
         if details and kind_to_semantic is not None:
