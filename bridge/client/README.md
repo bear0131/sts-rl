@@ -335,6 +335,15 @@ and checkpoint parameters are unchanged; these private fields affect simulation
 and search, not the dimensions of the policy input. Source changes are not a
 claim of a rebuilt or behavior-verified runtime.
 
+Parity-v36 adds Designer's actual service variants, prices, counts, and eligible
+master UUIDs on the public MAIN page. INTRO never exposes its private service
+rolls. Its current pending service, exact GRID flags/source/candidates, physical
+picks and confirmation are acknowledged before the final DONE dialogue can leave.
+Random upgrade/transform targets are not exported in advance. This retains the
+existing EVENT_OPT0..5 meanings and model tensors, and requires a matching rebuilt
+Java exporter. It is source/build checked, not proof of naturally covered services.
+NoteForYourself is still pending its separate actual-card/removal contract.
+
 A fresh combat attachment already inside the opening Gambling Chip or Toolbox
 selection must initialize its complete actual public root before comparing
 physical candidates. The native `initialize_selection_root` entry retains the

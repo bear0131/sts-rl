@@ -4,7 +4,7 @@ Source: SaveFileMappings.h and Potions.h, checked against frozen vocabularies.
 Runtime does not parse simulator headers.
 """
 
-SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v35"
+SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v36"
 
 # Supported native UseCardAction relic callbacks; order comes from the actual
 # acquisition-ordered global relic list, never from this membership inventory.
@@ -1246,6 +1246,7 @@ OVERWORLD_SELECTION_RELICS = {
 }
 
 OVERWORLD_SELECTION_EVENTS = {
+    "Designer": "TRANSFORM",  # Upgrade/purge variants use actual GRID flags.
     "DrugDealer": "TRANSFORM",
     "Bonfire": "BONFIRE_SPIRITS",
     "Duplicator": "DUPLICATE",

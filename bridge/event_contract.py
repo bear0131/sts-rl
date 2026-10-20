@@ -287,6 +287,7 @@ EVENT_PROGRESS_CONTRACTS = {
     'The Mausoleum': ('city.TheMausoleum', {'INTRO', 'RESULT'}),
     'The Moai Head': ('beyond.MoaiHead', {'0', '1'}),
     'WeMeetAgain': ('shrines.WeMeetAgain', {'INTRO', 'COMPLETE'}),
+    'Designer': ('shrines.Designer', {'INTRO', 'MAIN', 'DONE'}),
     'Wheel of Change': ('shrines.GremlinWheelGame', {'INTRO', 'COMPLETE', 'LEAVE'}),
 }
 
@@ -327,6 +328,7 @@ SINGLE_OBTAIN_EVENTS = {
 # These damage options can end the run before their reward/obtain UI settles.
 # Only a real, identity-matched loss is a substitute for the normal receipt.
 EVENT_DAMAGE_TERMINAL_EFFECTS = {
+    'Designer': ('designer_lose_hp',),
     'Forgotten Altar': ('altar_sacrifice',),
     'SensoryStone': ('colorless_rewards_2', 'colorless_rewards_3'),
     'Nest': ('card',),
@@ -359,6 +361,9 @@ def event_progress(gs, event=None):
         if ((given is not None and (not isinstance(given, str) or not given))
                 or (progress['phase'] == 'INTRO' and given is not None)):
             raise ValueError('invalid/publicly premature WeMeetAgain relic identity')
+    if event == 'Designer' and progress.get('pending_selection') not in {
+            'NONE', 'UPGRADE', 'REMOVE', 'REMOVE_AND_UPGRADE', 'TRANSFORM'}:
+        raise ValueError('Designer requires its actual pending service selection')
     return progress
 
 # Contracts whose semantic identity comes from public per-instance records
@@ -483,6 +488,7 @@ def transport_only(gs):
         'The Joust': {'HALT', 'PRE_JOUST', 'JOUST'},
         'Golden Wing': {'PURGE'}, 'Liars Game': {'AGREE'},
         'Dead Adventurer': {'FAIL'}, 'Wheel of Change': {'COMPLETE'},
+        'Designer': {'INTRO', 'DONE'},
     }
     if event in stages and phase in stages[event]:
         return o['choice_index']
@@ -612,10 +618,62 @@ def we_meet_again_choices(gs):
     return result
 
 
+def designer_choices(gs):
+    progress = event_progress(gs, 'Designer')
+    ss = gs.get('screen_state') or {}
+    rows = ss.get('options')
+    if (gs.get('screen_type') != 'EVENT' or ss.get('event_id') != 'Designer'
+            or progress['phase'] != 'MAIN' or progress['pending_selection'] != 'NONE'
+            or not isinstance(rows, list) or len(rows) != 4):
+        raise ValueError('Designer policy choices require its actual four-button MAIN page')
+    if type(gs.get('ascension_level')) is not int or type(gs.get('gold')) is not int:
+        raise ValueError('Designer requires actual ascension/gold')
+    from bridge.schemas.card_state import real_selection_card_states
+    cards, _ = real_selection_card_states(gs.get('deck'), [])
+    deck = {card['uuid']: card for card in cards}
+    costs = (50, 75, 110, 5) if gs['ascension_level'] >= 15 else (40, 60, 90, 3)
+    allowed = ({'upgrade_card', 'upgrade_random_cards'}, {'remove_card', 'transform_cards'},
+               {'remove_card_upgrade_random'}, {'lose_hp'})
+    kinds = DYNAMIC_EVENT_OPTION_KINDS['Designer']
+    result = []
+    for position, row in enumerate(rows):
+        kind = row.get('kind')
+        if kind not in allowed[position] or type(row.get('disabled')) is not bool:
+            raise ValueError('Designer service mode/disabled flag missing or in wrong position')
+        parameter = 'hp' if position == 3 else 'gold'
+        if type(row.get(parameter)) is not int or row[parameter] != costs[position]:
+            raise ValueError('Designer actual service price/HP loss differs from the supported contract')
+        if kind in {'upgrade_random_cards', 'transform_cards', 'remove_card_upgrade_random'}:
+            if type(row.get('count')) is not int or row['count'] != (1 if position == 2 else 2):
+                raise ValueError('Designer service requires its actual card count')
+        if position < 3:
+            for key in ('candidate_uuids', 'upgrade_uuids') if position == 2 else ('candidate_uuids',):
+                uuids = row.get(key)
+                if (not isinstance(uuids, list) or any(not isinstance(u, str) or u not in deck for u in uuids)
+                        or len(set(uuids)) != len(uuids)):
+                    raise ValueError('Designer public candidates must be unique actual master UUIDs')
+            if position > 0 and any(deck[u]['id'] in {'AscendersBane', 'CurseOfTheBell', 'Necronomicurse'}
+                    or any(deck[u][b] for b in ('bottled_flame', 'bottled_lightning', 'bottled_tornado'))
+                    for u in row['candidate_uuids']):
+                raise ValueError('Designer purge/transform includes an ineligible physical card')
+        if row['disabled']:
+            continue
+        if type(row.get('choice_index')) is not int or row['choice_index'] != len(result):
+            raise ValueError('Designer compressed CHOOSE indices are incomplete or out of order')
+        if position < 3 and gs['gold'] < row['gold']:
+            raise ValueError('Designer advertises an unaffordable service')
+        result.append(dict(row, index=kinds[kind], ui=row['choice_index']))
+    if len(result) != len(gs.get('choice_list', [])):
+        raise ValueError('Designer typed choices do not cover actual CHOOSE inventory')
+    return result
+
+
 def options(gs):
     _validate_choice_indices(gs)
     ss = gs.get('screen_state') or {}
     event = ss.get('event_id')
+    if event == 'Designer':
+        return {d['index']: (d['ui'], 'designer_' + d['kind']) for d in designer_choices(gs)}
     if event == 'WeMeetAgain':
         return {d['index']: (d['ui'], 'we_meet_' + d['kind']) for d in we_meet_again_choices(gs)}
     if event == 'Match and Keep!':
@@ -671,6 +729,171 @@ class EventEffectAck:
     def __init__(self):
         self.pending = None
         self._single_obtain = None
+        self._designer = None
+
+    def _designer_grid(self, gs):
+        from bridge.schemas.card_state import real_selection_card_states, real_grid_confirmation_card
+        receipt = self._designer
+        kind = receipt['choice']['kind']
+        rules = {'upgrade_card': ('UPGRADE', 1, 'UPGRADE', (True, False, False)),
+                 'remove_card': ('REMOVE', 1, 'REMOVE', (False, True, False)),
+                 'transform_cards': ('TRANSFORM', 2, 'TRANSFORM', (False, False, False)),
+                 'remove_card_upgrade_random': ('REMOVE', 1, 'REMOVE_AND_UPGRADE', (False, True, False))}
+        if kind not in rules:
+            raise RuntimeError('Designer opened a selection for a nonselection service')
+        context, count, pending, flags = rules[kind]
+        ss = gs['screen_state']
+        if (ss.get('selection_source') != 'com.megacrit.cardcrawl.events.shrines.Designer'
+                or ss.get('selection_context') != context
+                or type(ss.get('num_cards')) is not int or ss['num_cards'] != count
+                or ss.get('any_number') is not False
+                or any(type(ss.get(k)) is not bool for k in ('for_upgrade', 'for_purge', 'for_transform'))
+                or tuple(ss.get(k) for k in ('for_upgrade', 'for_purge', 'for_transform')) != flags
+                or event_progress(gs, 'Designer')['pending_selection'] != pending):
+            raise ValueError('Designer GRID source/mode/count/flags mismatch')
+        cards, selected = real_selection_card_states(ss.get('cards'), ss.get('selected_cards'))
+        before = receipt['before']
+        expected = {u: {k: v for k, v in before[u].items() if k != 'type'}
+                    for u in receipt['choice']['candidate_uuids']}
+        if {c['uuid']: c for c in cards} != expected or len(selected) > count:
+            raise RuntimeError('Designer GRID omitted or changed a public master-card candidate')
+        return cards, [c['uuid'] for c in selected], real_grid_confirmation_card(ss), count
+
+    def _arm_designer_grid(self, gs, decision):
+        parts = decision.command.upper().split()
+        if parts[:1] in (['STATE'], ['WAIT']):
+            return
+        if gs.get('screen_type') != 'GRID':
+            raise RuntimeError('Designer result pending; cannot leave or retry a service')
+        cards, selected, preview, count = self._designer_grid(gs)
+        receipt = self._designer
+        if parts == ['CONFIRM']:
+            if (receipt['confirmed'] or (preview is not None and [preview['uuid']] != receipt['picks'])
+                    or (preview is None and (count != 2 or selected != receipt['picks'] or len(selected) != 2))):
+                raise ValueError('Designer premature/repeated or different-card confirmation')
+            receipt['confirmed'] = True
+        elif len(parts) == 2 and parts[0] == 'CHOOSE':
+            index = int(parts[1])
+            remaining = [i for i, c in enumerate(cards) if c['uuid'] not in selected]
+            semantic = decision.semantic
+            if (selected != receipt['picks'] or preview is not None or len(selected) >= count
+                    or not semantic or semantic[0] != 'select' or len(semantic) != 2
+                    or type(semantic[1]) is not int or not 0 <= semantic[1] < len(remaining)
+                    or index != remaining[semantic[1]]):
+                raise ValueError('Designer policy selection and physical CHOOSE disagree')
+            receipt['picks'].append(cards[index]['uuid'])
+        else:
+            raise ValueError('Designer unexpected command during service selection')
+
+    def _waiting_designer(self, old, gs, ready):
+        if any(gs.get(k) != old[k] for k in ('seed', 'act', 'floor')):
+            raise RuntimeError('Designer receipt crossed its actual run/room')
+        if not ready:
+            return True
+        receipt = self._designer
+        choice, before = receipt['choice'], receipt['before']
+        progress = event_progress(gs, 'Designer')
+        current = {c['uuid']: c for c in self._augmenter_deck(gs)}
+        relics = self._augmenter_relics(gs)
+        initial = receipt['relics']
+        kind = choice['kind']
+        cost = 0 if kind == 'lose_hp' else choice['gold']
+        if gs.get('screen_type') == 'GRID':
+            if (current != before or relics != initial or gs['gold'] != old['gold'] - cost
+                    or any(gs[k] != old[k] for k in ('current_hp', 'max_hp', 'potions'))):
+                raise RuntimeError('Designer changed unrelated resources before its GRID closed')
+            _, selected, preview, _ = self._designer_grid(gs)
+            if selected != receipt['picks'][:len(selected)]:
+                raise RuntimeError('Designer acknowledged a different physical selection')
+            if preview is not None:
+                if [preview['uuid']] != receipt['picks']:
+                    raise RuntimeError('Designer preview does not identify the requested card')
+                return receipt['confirmed']
+            return selected != receipt['picks'] or receipt['confirmed']
+        if (gs.get('screen_type') != 'EVENT' or gs['screen_state'].get('event_id') != 'Designer'):
+            raise RuntimeError('Designer left before the service receipt completed')
+        if progress['phase'] == 'MAIN':
+            return True  # Original page before the sent service executes.
+        if progress['phase'] != 'DONE':
+            raise RuntimeError('Designer returned to an unexpected service phase')
+        if progress['pending_selection'] != 'NONE' or gs['simulator_obtain_pending']:
+            return True
+        if kind == 'lose_hp':
+            allowed_relics = dict(initial)
+            if initial.get('Lizard Tail') == -1 and relics.get('Lizard Tail') == -2:
+                allowed_relics['Lizard Tail'] = -2
+            damage = max(0, choice['hp'] - int('TungstenRod' in initial))
+            if (current != before or gs['gold'] != old['gold'] or gs['max_hp'] != old['max_hp']
+                    or relics != allowed_relics
+                    or [p['id'] for p in gs['potions']] not in _automatic_revival_potion_bases(old)
+                    or not 0 < gs['current_hp'] <= gs['max_hp']
+                    or (old['current_hp'] > damage and gs['current_hp'] != old['current_hp'] - damage)):
+                raise RuntimeError('Designer HP-loss service changed unrelated resources')
+        else:
+            picks = set(receipt['picks'])
+            remove = kind in {'remove_card', 'transform_cards', 'remove_card_upgrade_random'}
+            required = 2 if kind == 'transform_cards' else int(kind != 'upgrade_random_cards')
+            if len(picks) != required:
+                raise RuntimeError('Designer completed before the requested physical selections')
+            lost, gained = set(before) - set(current), set(current) - set(before)
+            if lost != (picks if remove else set()):
+                raise RuntimeError('Designer removed an unselected card or retained the selected removal')
+            if kind == 'upgrade_card':
+                upgradeable, expected_count = picks, 1
+            elif kind == 'upgrade_random_cards':
+                upgradeable = set(choice['candidate_uuids'])
+                expected_count = min(2, len(upgradeable))
+            elif kind == 'remove_card_upgrade_random':
+                upgradeable = set(choice['upgrade_uuids']) - lost
+                expected_count = min(1, len(upgradeable))
+            else:
+                upgradeable, expected_count = set(), 0
+            upgraded = set()
+            immutable = ('id', 'uuid', 'misc', 'type', 'free_to_play_once', 'retain', 'self_retain',
+                         'bottled_flame', 'bottled_lightning', 'bottled_tornado')
+            for uid in set(before) & set(current):
+                if current[uid] == before[uid]:
+                    continue
+                if (uid not in upgradeable or current[uid]['up'] != before[uid]['up'] + 1
+                        or any(current[uid][k] != before[uid][k] for k in immutable)):
+                    raise RuntimeError('Designer changed an unrelated master-card instance')
+                upgraded.add(uid)
+            if len(upgraded) != expected_count:
+                raise RuntimeError('Designer upgrade result count differs from its actual service')
+            picked_curses = sum(before[u]['type'] == 'CURSE' for u in lost) if kind == 'transform_cards' else 0
+            charges = max(0, initial.get('Omamori', 0))
+            blocked = min(charges, picked_curses)
+            if len(gained) != (2 - blocked if kind == 'transform_cards' else 0):
+                raise RuntimeError('Designer replacement count differs from its selected transforms')
+            expected_relics = dict(initial)
+            if blocked:
+                expected_relics['Omamori'] -= blocked
+            if 'Du-Vu Doll' in expected_relics:
+                expected_relics['Du-Vu Doll'] = sum(c['type'] == 'CURSE' for c in current.values())
+            new_curses = sum(current[u]['type'] == 'CURSE' for u in gained)
+            if new_curses != picked_curses - blocked:
+                raise RuntimeError('Designer transform changed the selected curse/noncurse types')
+            eggs = {'ATTACK': 'Molten Egg 2', 'SKILL': 'Toxic Egg 2', 'POWER': 'Frozen Egg 2'}
+            if any(current[u]['up'] != int(eggs.get(current[u]['type']) in initial)
+                   or any(current[u][k] for k in ('bottled_flame', 'bottled_lightning', 'bottled_tornado'))
+                   for u in gained):
+                raise RuntimeError('Designer obtained an invalid transformed upgrade/bottle state')
+            max_hp = old['max_hp']
+            for uid in lost:
+                if before[uid]['id'] == 'Parasite':
+                    max_hp = max(1, max_hp - 3)
+            max_hp += 6 * new_curses if 'Darkstone Periapt' in initial else 0
+            gain_gold = 9 * len(gained) if 'CeramicFish' in initial and 'Ectoplasm' not in initial else 0
+            hp_effect = (any(before[u]['id'] == 'Parasite' for u in lost)
+                         or (new_curses and 'Darkstone Periapt' in initial)
+                         or (gain_gold and 'Bloody Idol' in initial))
+            if (gs['max_hp'] != max_hp or gs['gold'] != old['gold'] - cost + gain_gold
+                    or gs['potions'] != old['potions'] or relics != expected_relics
+                    or not 0 < gs['current_hp'] <= gs['max_hp']
+                    or (not hp_effect and gs['current_hp'] != old['current_hp'])):
+                raise RuntimeError('Designer completed with unexpected service resource effects')
+        self.pending = self._designer = None
+        return False
 
     def _waiting_we_meet_again(self, old, gs, ready):
         from bridge.schemas.card_state import real_selection_card_states
@@ -1266,6 +1489,9 @@ class EventEffectAck:
 
     def arm(self, frame, decision, now):
         gs = frame.get('game_state') or {}
+        if self.pending and self._designer is not None:
+            self._arm_designer_grid(gs, decision)
+            return
         if self.pending and self._single_obtain is not None:
             self._arm_single_obtain_grid(gs, decision)
             return
@@ -1316,6 +1542,21 @@ class EventEffectAck:
         gs = frame.get('game_state') or {}
         _, effect = options(gs)[decision.semantic[1]]
         event = gs['screen_state']['event_id']
+        if effect.startswith('designer_'):
+            choice = next(d for d in designer_choices(gs) if d['index'] == decision.semantic[1])
+            if decision.command != f'CHOOSE {choice["ui"]}':
+                raise ValueError('Designer semantic service and actual CHOOSE disagree')
+            before = {c['uuid']: c for c in self._augmenter_deck(gs)}
+            relics = self._augmenter_relics(gs)
+            self._omamori_charges(gs)
+            for key in ('seed', 'floor', 'act', 'potions', 'current_hp', 'max_hp', 'gold'):
+                if key not in gs:
+                    raise ValueError(f'Designer missing actual resource {key}')
+            if choice['kind'] != 'lose_hp':
+                count = 2 if choice['kind'] == 'transform_cards' else 1
+                if len(choice['candidate_uuids']) < count:
+                    raise ValueError('Designer service has insufficient actual eligible card instances')
+            self._designer = dict(choice=choice, before=before, relics=relics, picks=[], confirmed=False)
         if effect in EVENT_DAMAGE_TERMINAL_EFFECTS.get(event, ()):
             if decision.command != f'CHOOSE {options(gs)[decision.semantic[1]][0]}':
                 raise ValueError('damage event semantic action and UI command disagree')
@@ -1449,6 +1690,8 @@ class EventEffectAck:
             return self._waiting_augmenter(old, g, effect)
         if effect.startswith('we_meet_'):
             return self._waiting_we_meet_again(old, g, frame.get('ready_for_command') is True)
+        if effect.startswith('designer_'):
+            return self._waiting_designer(old, g, frame.get('ready_for_command') is True)
         if frame.get('ready_for_command') is not True:
             return True
         if type(g.get('simulator_obtain_pending')) is not bool:

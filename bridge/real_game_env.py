@@ -517,8 +517,8 @@ def _screen_potions(
 def _structured_event_choices(ss: dict[str, Any], legal_count: int) -> list[dict[str, Any]]:
     """Pass through typed event-button metadata when a bridge supplies it.
 
-    Stock buttons are localized ``text``/``label`` only. Parity-v35 adds actual
-    WeMeetAgain ``kind``/resource records; other sources still need their own
+    Stock buttons are localized ``text``/``label`` only. Parity-v35/36 add actual
+    WeMeetAgain/Designer ``kind``/resource records; other sources still need their own
     exporter contract. Never infer stable entity IDs from displayed names.
     """
     raw_options = _list_value(ss, "options", context="event screen", required=False)
@@ -1487,6 +1487,8 @@ class RealGameAdapter:
             elif event != "NEOW":
                 if ss.get('event_id') == 'WeMeetAgain':
                     event_contract.we_meet_again_choices(self.gs)
+                elif ss.get('event_id') == 'Designer':
+                    event_contract.designer_choices(self.gs)
                 details = _structured_event_choices(ss, len(cl))
                 if ss.get('event_id') == 'Falling':
                     mapping = event_contract.options(self.gs)
@@ -1555,6 +1557,8 @@ class RealGameAdapter:
         event = _normalize_event(_required(ss, "event_id", context="event screen"))
         if ss.get('event_id') == 'WeMeetAgain':
             event_contract.we_meet_again_choices(self.gs)
+        elif ss.get('event_id') == 'Designer':
+            event_contract.designer_choices(self.gs)
         details = _structured_event_choices(ss, len(self.choices()))
         kind_to_semantic = DYNAMIC_EVENT_OPTION_KINDS.get(event)
         if details and kind_to_semantic is not None:

@@ -50,7 +50,8 @@ PAD/EMPTY 只表示实际不存在的固定槽位、空药水槽或显式 skip �
 缺失字段、越界枚举、无法完整表达的原生状态必须报错。紧凑观测导出完整枚举名称表，
 解码按名称映射；卡堆列顺序必须与冻结词表逐列一致，禁止截断或夹到合法索引。
 
-当前源码要求OBS20 / ACTION8 / compact layout9 / `simulator-parity-v28`配套使用。
+当前源码要求OBS20 / ACTION8 / compact layout9，与`schemas/entity_ids.py`中当前
+`SIMULATOR_PARITY_EXPORT_VERSION`对应的Java补丁配套；以下版本条目保留各自增量合同。
 v28补六火亡魂实际激活/灼伤升级/火球数/Divider基础伤害，周期不再被通用能力清零；Inferno升级抽牌与弃牌堆灼伤并加入3张Burn+，Sear不从回合猜升级。旧v27帧拒绝，需Java/native配套构建，模型布局不变。
 v27补巨人头实际count，A18提前进入大攻击且后续伤害按真实倒计数成长；旧v26帧拒绝，需Java/native配套构建。
 v26补红绿虱虫实际biteDamage、黑暗小鬼实际nipDmg和守护者实际dmgThreshold，非攻击/防御根也保留。

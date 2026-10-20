@@ -21,7 +21,7 @@ import java.util.ArrayList;
 
 /** Extra state that the simulator observes but stock CommunicationMod omits. */
 public final class SimulatorParityExporter {
-    public static final String VERSION = "simulator-parity-v35";
+    public static final String VERSION = "simulator-parity-v36";
     private static int lastAttackUnblockedDamage = 0;
     private static ShopScreen shopOwner;
     private static final AbstractCard[] shopCards = new AbstractCard[7];
@@ -291,6 +291,7 @@ public final class SimulatorParityExporter {
         if (event == null) return null;
         String name = event.getClass().getName(), field;
         switch (name) {
+            case "com.megacrit.cardcrawl.events.shrines.Designer": field = "curScreen"; break;
             case "com.megacrit.cardcrawl.events.shrines.AccursedBlacksmith":
             case "com.megacrit.cardcrawl.events.exordium.GoldenIdolEvent":
             case "com.megacrit.cardcrawl.events.beyond.MoaiHead": field = "screenNum"; break;
@@ -310,6 +311,10 @@ public final class SimulatorParityExporter {
         HashMap<String, Object> progress = new HashMap<String, Object>();
         progress.put("source", name);
         progress.put("phase", phase instanceof Enum ? ((Enum<?>)phase).name() : phase.toString());
+        if (event instanceof com.megacrit.cardcrawl.events.shrines.Designer) {
+            Object option = ReflectionHacks.getPrivate(event, event.getClass(), "option");
+            progress.put("pending_selection", ((Enum<?>)option).name());
+        }
         if (event instanceof com.megacrit.cardcrawl.events.exordium.DeadAdventurer)
             progress.put("rewards_taken", privateInt(event, event.getClass(), "numRewards"));
         if (event instanceof com.megacrit.cardcrawl.events.shrines.GremlinWheelGame) {
@@ -326,6 +331,59 @@ public final class SimulatorParityExporter {
         // Only current execution progress; never export the wheel's hidden
         // result or Joust's ownerWins roll to the policy.
         return progress;
+    }
+
+    private static ArrayList<String> cardUuids(com.megacrit.cardcrawl.cards.CardGroup group) {
+        ArrayList<String> result = new ArrayList<String>();
+        for (AbstractCard card : group.group) result.add(card.uuid.toString());
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void augmentDesigner(HashMap<String, Object> state, AbstractEvent event) {
+        if (!(event instanceof com.megacrit.cardcrawl.events.shrines.Designer)
+                || state.get("screen_type") != communicationmod.ChoiceScreenUtils.ChoiceType.EVENT
+                || !GameStateListener.isWaitingForCommand() || !CommandExecutor.isChooseCommandAvailable()) return;
+        Object phase = ReflectionHacks.getPrivate(event, event.getClass(), "curScreen");
+        if (!"MAIN".equals(((Enum<?>)phase).name())) return; // INTRO's rolls are not public yet.
+        java.util.Map<String, Object> screen = (java.util.Map<String, Object>)state.get("screen_state");
+        java.util.List<java.util.Map<String, Object>> options =
+            (java.util.List<java.util.Map<String, Object>>)screen.get("options");
+        if (!"Designer".equals(screen.get("event_id")) || options.size() != 4)
+            throw new IllegalStateException("Designer must expose its four actual service buttons");
+        boolean one = privateBool(event, event.getClass(), "adjustmentUpgradesOne");
+        boolean remove = privateBool(event, event.getClass(), "cleanUpRemovesCards");
+        int[] costs = new int[]{privateInt(event, event.getClass(), "adjustCost"),
+            privateInt(event, event.getClass(), "cleanUpCost"), privateInt(event, event.getClass(), "fullServiceCost")};
+        ArrayList<String> upgrades = cardUuids(AbstractDungeon.player.masterDeck.getUpgradableCards());
+        ArrayList<String> purgeable = cardUuids(com.megacrit.cardcrawl.cards.CardGroup.getGroupWithoutBottledCards(
+            AbstractDungeon.player.masterDeck.getPurgeableCards()));
+        int unbottled = com.megacrit.cardcrawl.cards.CardGroup.getGroupWithoutBottledCards(
+            AbstractDungeon.player.masterDeck).size();
+        boolean[] disabled = new boolean[]{AbstractDungeon.player.gold < costs[0] || upgrades.isEmpty(),
+            AbstractDungeon.player.gold < costs[1] || unbottled < (remove ? 1 : 2),
+            AbstractDungeon.player.gold < costs[2] || unbottled == 0, false};
+        String[] kinds = new String[]{one ? "upgrade_card" : "upgrade_random_cards",
+            remove ? "remove_card" : "transform_cards", "remove_card_upgrade_random", "lose_hp"};
+        int choice = 0;
+        for (int i = 0; i < options.size(); i++) {
+            java.util.Map<String, Object> option = options.get(i);
+            if (!Boolean.valueOf(disabled[i]).equals(option.get("disabled")))
+                throw new IllegalStateException("Designer availability differs from actual services");
+            option.put("kind", kinds[i]);
+            if (i == 3) option.put("hp", Integer.valueOf(privateInt(event, event.getClass(), "hpLoss")));
+            else {
+                option.put("gold", Integer.valueOf(costs[i]));
+                option.put("candidate_uuids", i == 0 ? upgrades : purgeable);
+                if (i == 0 && !one || i == 1 && !remove) option.put("count", Integer.valueOf(2));
+                if (i == 2) {
+                    option.put("count", Integer.valueOf(1));
+                    option.put("upgrade_uuids", upgrades);
+                }
+            }
+            if (!disabled[i] && !Integer.valueOf(choice++).equals(option.get("choice_index")))
+                throw new IllegalStateException("Designer compressed CHOOSE mapping changed");
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -484,6 +542,7 @@ public final class SimulatorParityExporter {
         AbstractEvent event = AbstractDungeon.getCurrRoom().event;
         state.put("simulator_event_progress", eventProgress(event));
         augmentWeMeetAgain(state, event);
+        augmentDesigner(state, event);
         state.put("simulator_match_state", matchState(event));
         state.put("simulator_obtain_pending", pendingCardObtain());
         if (event instanceof com.megacrit.cardcrawl.neow.NeowEvent) {
@@ -783,6 +842,10 @@ public final class SimulatorParityExporter {
             // DrugDealer opens a two-card grid with every generic flag false;
             // the event, not GridCardSelectScreen, performs the transforms.
             if ("DrugDealer".equals(name)) return "TRANSFORM";
+            if ("Designer".equals(name)) {
+                Object option = ReflectionHacks.getPrivate(event, event.getClass(), "option");
+                if ("TRANSFORM".equals(((Enum<?>)option).name())) return "TRANSFORM";
+            }
             if ("Bonfire".equals(name)) return "BONFIRE_SPIRITS";
             if ("Duplicator".equals(name)) return "DUPLICATE";
             if ("TheLibrary".equals(name) || "NoteForYourself".equals(name)
