@@ -556,6 +556,12 @@ def complete_word_tables():
             "time_eater_ripple": "TimeEater.takeTurn grants 20 block, then Vulnerable1, Weak1, A19+ Frail1 in that order; Artifact must block the first eligible actual debuff, not the swapped status (BRIDGE104)",
             "scope": "effect values/order only; existing source=true and status transport retained, no policy tensor/action ID change",
         },
+        "spire_growth_move_selection": {
+            "source": "SpireGrowth.getMove -> native Monster::getMoveForRoll (BRIDGE108)",
+            "priority": "A17+ available Constrict first; otherwise roll<50 and not two Quick Tackles; then available Constrict regardless of roll; then Smash unless two consecutive Smashes; otherwise Quick Tackle",
+            "available": "player has no Constricted and previous move is not Constrict; never replace the post-repeat fallback with roll>=50",
+            "scope": "future move choice only; existing current intent/history, RNG draw and observation/action/checkpoint layouts unchanged",
+        },
         "slaver_move_selection": {
             "java": "SlaverBlue.getMove / SlaverRed.getMove; native Monster::getMoveForRoll (BRIDGE99)",
             "repeat_limit": "A17+ Rake/Scrape cannot follow the same move; below A17 disallow only after two consecutive same moves, not an OR of the two permission checks",
