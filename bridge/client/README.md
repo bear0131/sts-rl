@@ -161,6 +161,8 @@ Since v41, `cards_played` counts queue admission, while `attacks_played` and
 `skills_played` count actual non-`dontTriggerOnUseCard` use events. The read-only
 hook observes only the two-argument `UseCardAction` constructor (the one-argument
 overload delegates to it), including purge copies but excluding failed autoplay.
+The constructor hook declares the patched `UseCardAction` instance followed by
+both constructor arguments, as required by the installed ModTheSpire binding.
 `preBattlePrep` initializes the observer, and the actual action-manager turn
 resets its per-turn counts. Unobserved ownership or a regressed turn fails;
 the exporter never guesses a use count from a relic's modulo-three display.

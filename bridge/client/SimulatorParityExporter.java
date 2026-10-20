@@ -57,7 +57,8 @@ public final class SimulatorParityExporter {
         paramtypez = {AbstractCard.class, AbstractCreature.class})
     public static final class CardUsePatch {
         @SpirePostfixPatch
-        public static void afterUseCardAction(AbstractCard card) {
+        public static void afterUseCardAction(UseCardAction __instance, AbstractCard card,
+                AbstractCreature target) {
             if (card.dontTriggerOnUseCard) return;
             synchronizeCardUseTurn();
             if (card.type == AbstractCard.CardType.ATTACK)
