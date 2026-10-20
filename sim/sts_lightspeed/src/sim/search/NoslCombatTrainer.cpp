@@ -550,6 +550,10 @@ void hashActionCard(std::uint64_t &hash, const CardInstance &card,
     if (includeCost) {
         hashValue(hash, card.freeToPlayOnce ? 0 : card.costForTurn);
     }
+    if (card.id == CardId::MIND_BLAST) {
+        hashValue(hash, 0x4d696e64426c6173ULL);
+        hashValue(hash, card.cachedBaseDamage);
+    }
 }
 
 const CardInstance *actionCardAt(const BattleContext &bc, int collection,
@@ -632,28 +636,27 @@ std::uint64_t publicActionKey(const BattleContext &bc, const Action &action) {
         case ActionType::MULTI_CARD_SELECT: {
             hashValue(hash, static_cast<int>(
                 bc.cardSelectInfo.cardSelectTask));
-            std::array<std::tuple<int, int, int>, CardManager::MAX_HAND_SIZE>
-                selected{};
+            std::array<std::uint64_t, CardManager::MAX_HAND_SIZE> selected{};
             std::size_t selectedCount = 0;
             for (const int index : action.getSelectedIdxs()) {
                 const auto *card = actionCardAt(
                     bc, static_cast<int>(ActionCardCollection::HAND), index);
-                if (card != nullptr) {
-                selected[selectedCount++] = std::make_tuple(
-                        static_cast<int>(card->getId()),
-                        card->specialData,
-                        card->freeToPlayOnce ? 0 : card->costForTurn);
-                } else {
-                    selected[selectedCount++] = std::make_tuple(-1, index, 0);
+                if (card == nullptr) {
+                    throw std::logic_error(
+                        "NOSL multi-select semantic key has no hand card at index " +
+                        std::to_string(index));
                 }
+                // A set of card names/current costs is not a set of complete
+                // instances (upgrades, free-once, exhaust, etc. can differ).
+                // Reuse the single-card identity, retaining multiplicity.
+                std::uint64_t cardKey = 0xcbf29ce484222325ULL;
+                hashActionCard(cardKey, *card, true);
+                selected[selectedCount++] = cardKey;
             }
             std::sort(selected.begin(), selected.begin() + selectedCount);
             hashValue(hash, selectedCount);
             for (std::size_t i = 0; i < selectedCount; ++i) {
-                const auto &[cardId, upgrades, cost] = selected[i];
-                hashValue(hash, cardId);
-                hashValue(hash, upgrades);
-                hashValue(hash, cost);
+                hashValue(hash, selected[i]);
             }
             break;
         }
@@ -861,20 +864,14 @@ NoslCombatDecision NoslCombatTrainer::search(const BattleContext &rootState,
                 }
             }
             if (!foundAction) {
-                // Preserve the defensive fallback for a state whose action
-                // set has no semantic counterpart in this node.
-                edge = nullptr;
-                for (auto &candidate : node->edges) {
-                    if (candidate.action.isValidAction(state)) {
-                        edge = &candidate;
-                        executableAction = candidate.action;
-                        foundAction = true;
-                        break;
-                    }
-                }
-                if (!foundAction) {
-                    break;
-                }
+                throw std::runtime_error(
+                    "NOSL semantic action remap failed: turn=" +
+                    std::to_string(state.turn) + " input=" +
+                    std::to_string(static_cast<int>(state.inputState)) +
+                    " task=" + std::to_string(static_cast<int>(
+                        state.cardSelectInfo.cardSelectTask)) +
+                    " action=" + std::to_string(edge->action.bits) +
+                    " semantic_key=" + std::to_string(edge->semanticKey));
             }
             edgePath.push_back(edge);
             state.stopAfterEnemyTurn =
@@ -2296,18 +2293,17 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 }
             }
             if (!foundAction) {
-                edge = nullptr;
-                for (auto &candidate : node->edges) {
-                    if (validAction(candidate.action, state, pending.selectionPrefix)) {
-                        edge = &candidate;
-                        executableAction = candidate.action;
-                        foundAction = true;
-                        break;
-                    }
-                }
-            }
-            if (!foundAction) {
-                break;
+                // Equal public states must admit this exact semantic edge,
+                // possibly at another slot. Never attach another action's
+                // transition/value to it or fabricate a terminal leaf.
+                throw std::runtime_error(
+                    "NOSL neural semantic action remap failed: turn=" +
+                    std::to_string(state.turn) + " input=" +
+                    std::to_string(static_cast<int>(state.inputState)) +
+                    " task=" + std::to_string(static_cast<int>(
+                        state.cardSelectInfo.cardSelectTask)) +
+                    " edge=" + std::to_string(edgeIndex) +
+                    " selection_prefix=" + std::to_string(pending.selectionPrefix));
             }
             pending.edges.push_back(edge);
             edge->virtualVisits++;

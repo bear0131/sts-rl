@@ -625,6 +625,13 @@ def complete_word_tables():
         "native_card_snapshot_fields": NATIVE_CARD_SNAPSHOT_FIELDS,
         "native_master_deck_snapshot_fields": {'id': 'native CardId spelling', 'upgrades': 'explicit count', 'misc': 'explicit current native value', 'bottle': 'NONE/ATTACK/SKILL/POWER; physical slot kept'},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "search_action_semantics": {
+            "producer": "NoslCombatTrainer.publicActionKey / hashActionCard -> both tabular and neural search edge remapping",
+            "card_instance": "ID, specialData, base/turn cost, independent upgraded/freeToPlayOnce/retain/exhaust state and persistent RitualDagger/GeneticAlgorithm identity; MindBlast also preserves actual cachedBaseDamage. Single-card non-MindBlast keys keep their existing inputs",
+            "multi_selection": "Hash the complete single-card semantics for every selected hand instance, sorted with multiplicity. Ordinary and upgraded same-ID/same-cost cards, free-once versus temporary cost0, independent exhaust and unequal cached damage must not alias. Missing selected hand cards reject, never synthesize an invalid-card/default signature",
+            "remapping": "A selected edge may move to a different physical index only through an equal complete semantic key. If no legal counterpart exists, both searches raise contextual errors before executing/backing up any substitute; no first-legal fallback or synthetic terminal value (BRIDGE161)",
+            "compatibility": "Keep NOSL public composition/randomness, budgets, weight tensors, legal-action enumeration and equivalent-play grouping unchanged. Autoregressive pending selections already hash ordered hand/prefix state and retain that protection; ordinary current-checkpoint integration is not direct coverage of legacy non-AR subset remapping",
+        },
         "post_enemy_turn_settlement": {
             "producer": "BattleContext.enterPostEnemyTurnBoundary / applyEndOfRoundPowers / Monster REGEN -> queued HealMonster",
             "contract": "Drain deterministic round-end actions and any card callbacks before marking postEnemyTurnBoundary or projecting next-turn cleanup. Preserve real terminal/selection states, FIFO/TOP reactions and the existing battle execution budget. Do not run another monster phase, player start relic/power hooks, draw or recharge, silently drop pending healing, or replace it with guessed HP",
