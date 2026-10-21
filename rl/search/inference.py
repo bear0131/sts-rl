@@ -62,13 +62,14 @@ class CombatLeafGraphs:
     def clear(self):
         self.entries.clear()
 
-    def forward_native(self, batch):
+    def forward_native(self, batch, rows=None):
         # Joint subset evaluation inspects actual legal rows before splitting;
         # it retains the ordinary materialized observation path.
         if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
-            return self(batch.observations(), batch.active_relic_width)
-        return self(batch.observation_layout(), batch.active_relic_width,
-                    writer=batch.write_observations, failure_observations=batch.observations)
+            return self(batch.observations(rows), batch.relic_width(rows))
+        return self(batch.observation_layout(rows), batch.relic_width(rows),
+                    writer=lambda destination: batch.write_observations(destination, rows),
+                    failure_observations=lambda: batch.observations(rows))
 
     def __call__(self, observations, width, *, writer=None, failure_observations=None):
         try:

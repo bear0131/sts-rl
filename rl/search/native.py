@@ -557,7 +557,6 @@ def complete_searches_native(
 
 def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
     """Route typed exits through complete settlement before evaluating a value."""
-    observations = batch.observations()
     started = time.perf_counter()
     exits = batch.combat_exits()
     runtime = getattr(model, '_rollout_inference', None)
@@ -567,9 +566,21 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
     values = np.zeros(batch.rows, dtype=np.float32)
     active = [i for i in range(batch.rows) if i not in exits]
     if active:
-        logits[active], values[active] = forward_leaves(model,
-            {key: value[active] for key, value in observations.items()},
-            compact=True, autocast=autocast, leaf_backend=leaf_backend)
+        backend = (getattr(model, '_native_leaf_inference', None)
+                   if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
+        direct = getattr(backend, 'forward_native', None)
+        if direct is not None and (runtime is None or runtime.lower.max_bytes == 0):
+            rows = active if exits else None
+            if runtime is None:
+                prediction = direct(batch, rows=rows)
+            else:
+                prediction = runtime.lower.forward(batch.observation_layout(rows),
+                    lambda _: direct(batch, rows=rows))
+            logits[active], values[active] = prediction
+        else:
+            observations = batch.observations(active if exits else None)
+            logits[active], values[active] = forward_leaves(model, observations,
+                compact=True, autocast=autocast, leaf_backend=leaf_backend)
     for kind in ('upper', 'combat'):
         rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
         if not rows:

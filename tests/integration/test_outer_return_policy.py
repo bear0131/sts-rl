@@ -88,6 +88,63 @@ def test_grid_leaf_choices_override_root_context_and_reach_lower(outer_return_co
         batch.close()
 
 
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_return_core, device):
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('direct pinned graph inputs require CUDA')
+    from rl.search.inference import CombatLeafGraphs
+    core, _, env = outer_return_core
+    _enter_combat(env)
+    envs = [env.fork_run() for _ in range(3)]
+    for i, item in enumerate(envs):
+        item.thick.bc.apply_custom_state({'player': {'hp': 20+i*13, 'gold': 17+i*61}})
+        item._invalidate_backend_cache()
+    pool = NativeSearchBatch(envs, 2)
+    graphs = reference_graphs = None
+    if device == 'cuda':
+        core.to(device).eval()
+        graphs = CombatLeafGraphs(core, device, amp='bf16', batch_multiple=2,
+                                  capacity=2, compile_forward=False)
+        reference_graphs = CombatLeafGraphs(core, device, amp='bf16', batch_multiple=2,
+                                            capacity=2, compile_forward=False)
+    config = NativeSearchConfig(simulations=8, depth=1, outer_return=True,
+                                fixed_worldline=True, gumbel_scale=0.)
+    try:
+        pool.begin({i: ((np.zeros(198, np.float32),), dict(**asdict(config), root_value=0.,
+                    state_nonce=42101+i, compact_observation=True)) for i in range(3)})
+        # Distinct live wallet and HP must be decoded, not copied from GC.
+        full = pool.observations()
+        assert len(set(full['gold'][:, 0])) == 3
+        assert len(set(full['run_hp'][:, 0])) == 3
+        # Permanent growth belongs to the selected leaf's original row.
+        pool.payload['permanent_misc'] = {2: {0: 41}, 0: {1: 17}}
+        full = pool.observations()
+        assert full['outer_deck_misc'][2, 0] == np.float32(.41)
+        assert full['outer_deck_misc'][0, 1] == np.float32(.17)
+        target = {k: np.full((5, *v.shape[1:]), 3, dtype=v.dtype) for k, v in full.items()}
+        for rows in ([2, 0], [1], [0, 1, 2], [2, 1]):
+            padding = {k: v[len(rows):].tobytes() for k, v in target.items()}
+            pool.write_observations(target, rows)
+            selected = pool.observations(rows)
+            for key, value in full.items():
+                assert selected[key].tobytes() == value[rows].tobytes(), key
+                assert target[key][:len(rows)].tobytes() == value[rows].tobytes(), key
+                assert target[key][len(rows):].tobytes() == padding[key], key
+            if graphs is not None:
+                actual = graphs.forward_native(pool, rows)
+                reference = reference_graphs({k: v[rows] for k, v in full.items()}, pool.relic_width(rows))
+                for a, b in zip(actual, reference, strict=True):
+                    assert a.tobytes() == b.tobytes()
+                torch._C._cuda_clearCublasWorkspaces()
+                torch.cuda.empty_cache()
+        core.teacher.assert_integrity()
+    finally:
+        pool.close()
+        for graph in (graphs, reference_graphs):
+            if graph is not None:
+                graph.clear()
+
+
 def test_warm_actor_scalar_updates_and_frozen_teacher(outer_return_core):
     core, source, env = outer_return_core
     _enter_combat(env)
@@ -118,7 +175,10 @@ def test_warm_actor_scalar_updates_and_frozen_teacher(outer_return_core):
         assert core.combat_actor_critic(obs)[1].item() == pytest.approx(2.7)
 
 
-def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core):
+@pytest.mark.parametrize('device', ['cpu', 'cuda'])
+def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, device):
+    if device == 'cuda' and not torch.cuda.is_available():
+        pytest.skip('native outer graph routing requires CUDA')
     import slaythespire as sts
     core, _, env = outer_return_core
     _enter_combat(env)
@@ -127,9 +187,15 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core):
     env.thick.bc.set_player_strength(999)
     env._invalidate_backend_cache()
     before = env.thick.bc.to_dict()
-    core.eval()
-    model = SimpleNamespace(policy=SimpleNamespace(core=core), device=torch.device('cpu'),
+    core.to(device).eval()
+    model = SimpleNamespace(policy=SimpleNamespace(core=core), device=torch.device(device),
                             action_space=env.action_space)
+    if device == 'cuda':
+        from rl.search.inference import CombatLeafGraphs
+        from rl.search.rollout_inference import RolloutInference
+        model._native_leaf_inference = CombatLeafGraphs(core, device, amp='bf16',
+                                                       compile_forward=False)
+        model._rollout_inference = RolloutInference(model)
     config = NativeSearchConfig(simulations=8, fixed_worldline=True, outer_return=True,
                                gumbel_scale=0., gumbel_value_scale=1., gumbel_rescale_q=False)
     logits = np.zeros(198, np.float32)
@@ -153,6 +219,9 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core):
         core.teacher.assert_integrity()
     finally:
         batch.close()
+        if device == 'cuda':
+            model._native_leaf_inference.clear()
+            model._rollout_inference.clear()
 
 
 @pytest.mark.parametrize('ending', ['win', 'smoke', 'death'])

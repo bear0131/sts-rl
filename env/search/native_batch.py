@@ -31,18 +31,18 @@ class NativeSearchBatch:
         # two fields made batched native leaves differ byte-for-byte from the
         # serial bridge path.
         self._prototypes = dict(shapes)
-        self._decoder_keys = frozenset(shapes)
         if self.outer_return:
             from env.core.outer_return import CONTEXT_KEYS
             self._prototypes.update({key: np.zeros(first.observation_space[key].shape,
                 dtype=first.observation_space[key].dtype) for key in CONTEXT_KEYS})
+        self._decoder_keys = frozenset(self._prototypes)
         self._layouts = {}
         # Grow printed-card data only when a real leaf needs a higher upgrade
         # count, so Searing Blow remains exact without reserving the complete
         # int16 range in every search worker.
         self._card_stats = _nosl_card_stats()
         self.decoder = sts.NeuralObservationDecoder(
-            shapes, _nosl_compact_lut(), self._card_stats,
+            self._prototypes, _nosl_compact_lut(), self._card_stats,
             {key: getattr(encode, key+'_SCALE') for key in
                 ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK','GOLD')},
             dict(counters=encode.COMBAT_COUNTERS, moves=encode.V.MOVE_VOCAB_CAPACITY,
@@ -90,23 +90,37 @@ class NativeSearchBatch:
     def done(self):
         return bool(self.payload['done'])
 
-    def observations(self):
+    def observations(self, rows=None):
+        return self._decode_observations(rows=rows)
+
+    def _decode_observations(self, destination=None, rows=None):
         started = time.perf_counter()
         self._ensure_card_stats()
-        result = self.decoder.decode(self.payload, self._decoder_globals)
+        payload = self.payload
+        if rows is not None:
+            # Select the few packed arrays before decoding, not every expanded
+            # observation field afterwards. Owners retain original root IDs.
+            payload = dict(payload)
+            for key in ('categorical', 'scalars', 'owners', 'selection_prefix',
+                        'legal_policy_ids', 'language_ids', 'language_features'):
+                if key in payload:
+                    payload[key] = np.asarray(payload[key])[rows]
+        result = self.decoder.decode(payload, self._decoder_globals, destination)
         if self.outer_return:
-            from env.core.outer_return import CONTEXT_KEYS, MISC_SCALE
+            from env.core.outer_return import MISC_SCALE
             if self.payload.get('outer_return_schema') != 1:
                 raise RuntimeError('native outer-return leaf contract is missing')
-            owners = np.asarray(self.payload['owners'], dtype=np.intp)
-            # GRID picks are branch state decoded above, never root metadata.
-            result.update({key: self.global_fields[key][owners].copy() for key in CONTEXT_KEYS
-                           if key not in ('selected_card_ids', 'selected_card_upgrades')})
-            hp = result['player_scalars']
-            result['run_hp'][:, :2] = hp[:, :2]
-            result['run_hp'][:, 2] = np.divide(hp[:, 0], hp[:, 1],
+            count = len(payload['owners'])
+            hp = result['player_scalars'][:count]
+            result['run_hp'][:count, :2] = hp[:, :2]
+            result['run_hp'][:count, 2] = np.divide(hp[:, 0], hp[:, 1],
                 out=np.zeros(len(hp), dtype=np.float32), where=hp[:, 1] != 0)
+            remap = None if rows is None else {original: index for index, original in enumerate(rows)}
             for row, changes in self.payload['permanent_misc'].items():
+                if remap is not None:
+                    if row not in remap:
+                        continue
+                    row = remap[row]
                 for index, value in changes.items():
                     if 0 <= index < result['deck_ids'].shape[1] and result['deck_ids'][row, index] != 0:
                         result['outer_deck_misc'][row, index] = value / MISC_SCALE
@@ -125,26 +139,25 @@ class NativeSearchBatch:
 
     @property
     def active_relic_width(self):
-        return int(max(self._relic_widths[owner] for owner in self.payload['owners']))
+        return self.relic_width()
 
-    def observation_layout(self):
+    def relic_width(self, rows=None):
+        owners = self.payload['owners']
+        if rows is not None:
+            owners = [owners[i] for i in rows]
+        return int(max(self._relic_widths[owner] for owner in owners))
+
+    def observation_layout(self, rows=None):
         """Shape/dtype views only; their contents are not model observations."""
-        count = self.rows
+        count = self.rows if rows is None else len(rows)
         if count not in self._layouts:
             self._layouts[count] = {key: np.broadcast_to(value, (count, *value.shape))
                                     for key, value in self._prototypes.items()}
         return self._layouts[count]
 
-    def write_observations(self, destination):
+    def write_observations(self, destination, rows=None):
         """Fill caller-owned contiguous arrays before their next device upload."""
-        if self.outer_return:
-            for key, value in self.observations().items():
-                np.copyto(destination[key][:len(value)], value)
-            return
-        started = time.perf_counter()
-        self._ensure_card_stats()
-        self.decoder.decode(self.payload, self._decoder_globals, destination)
-        self.decode_seconds += time.perf_counter()-started
+        self._decode_observations(destination, rows)
 
     def _ensure_card_stats(self):
         layout = _nosl_compact_lut()['layout']

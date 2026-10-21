@@ -27,8 +27,9 @@ ID、升级与misc/角色/进阶/keys；零初始化的上下文残差保证起�
 native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。所有战斗
 出口返回拥有独立存储的typed终局BC，由resident NativeSearchBatch在同一采样GC上
 结算，按upper/combat/terminal分流；内部叶用新lower，出口用冻结teacher或自然终局
-真实reward。该路径绕过native直接解码的快捷入口，但可复用解码后lower CUDA graph；
-GPU完整生命周期尚须验证。非resident传输明确拒绝，不降级到HP。learner/启动接入
+真实reward。普通叶子先在packed数据上选行，再由同一native decoder直接填充lower
+graph输入区，保留root归属、实时HP/钱包、GRID进度与永久成长；出口仍按完整GC结算。
+非resident传输明确拒绝，不降级到HP。GPU完整轮验证与learner/启动接入
 状态以TODO COMBAT01为准，策略组件可加载不等于已完成训练验收。
 
 `policies.frozen_upper.FrozenUpperTeacher` 从已核验的 entity-joint core 复制上层
