@@ -611,11 +611,17 @@ class SlayTheSpireEnv(gym.Env):
         base = getattr(self, '_nosl_outer_branch', None)
         if base is None:
             raise RuntimeError('outer-return search has no sampled full-run continuation')
-        branch = base.fork_run()
-        branch.thick, outcome = base.thick.settle_combat_leaf(battle)
+        # The sampled continuation owns the complete simulator state. Settlement
+        # already makes its independent copy; do not clone it again or copy the
+        # live episode's recovery journal for a view used only to encode an obs.
+        thick, outcome = base.settle_combat_leaf(battle)
+        if outcome.kind == 'terminal':
+            return outcome, None
+        branch = copy.copy(self)
+        branch.thick = thick
         branch._pending = branch._multi = None
         branch._invalidate_backend_cache()
-        return outcome, None if outcome.kind == 'terminal' else branch._obs()
+        return outcome, branch._obs()
 
     def combat_action_advances(self, action_id):
         """Whether a legal thin action completes one simulator decision."""
@@ -1978,7 +1984,7 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('outer return requires public run context, fixed worldline and no HP objective')
         if outer_return and not _defer_leaf_selection:
             raise ValueError('outer-return v1 requires the resident native batch transport')
-        self._nosl_outer_branch = self.fork_run(worldline=int(state_nonce) & ((1 << 64) - 1)) if outer_return else None
+        self._nosl_outer_branch = self.thick.fork_run(worldline=int(state_nonce) & ((1 << 64) - 1)) if outer_return else None
         if not 0 <= boss_win_weight <= 1:
             raise ValueError("boss_win_weight must be in [0, 1]")
         if boss_win_weight and (not self._autoregressive_actions or boss_transition_target or model_victory_terminal):

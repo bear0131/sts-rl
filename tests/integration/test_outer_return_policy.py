@@ -155,6 +155,55 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core):
         batch.close()
 
 
+@pytest.mark.parametrize('ending', ['win', 'smoke', 'death'])
+def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_return_core, ending):
+    import copy
+    import slaythespire as sts
+    core, _, env = outer_return_core
+    _enter_combat(env)
+    env.thick.gc.set_deck([('STRIKE_RED', 0)] * 10)
+    env.thick.gc.set_potion_state(['Smoke Bomb'])
+    env.thick.bc = sts.create_battle(env.thick.gc, 'Looter')
+    env._invalidate_backend_cache()
+    history = copy.deepcopy(env._episode_action_journal)
+    live = env.thick.bc.to_dict()
+    base = env.thick.fork_run(worldline=42101)
+    leaf = env.thick.bc.clone()
+    if ending == 'win':
+        leaf.set_player_strength(999)
+        leaf.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+    elif ending == 'smoke':
+        leaf.execute(sts.Action(sts.ActionType.POTION, 0, 0))
+    else:
+        leaf.apply_custom_state({'player': {'hp': 1}})
+        for _ in range(16):
+            if leaf.is_battle_over:
+                break
+            leaf.execute(sts.Action(sts.ActionType.END_TURN))
+    assert leaf.is_battle_over
+    # Independent reference uses the ordinary full-copy API and the same
+    # sampled future, retaining its public pending/reset semantics.
+    reference = env.fork_run()
+    reference.thick, expected_exit = base.settle_combat_leaf(leaf)
+    reference._pending = reference._multi = None
+    reference._invalidate_backend_cache()
+    expected = None if expected_exit.kind == 'terminal' else reference._obs()
+    env._nosl_outer_branch = base
+    for _ in range(2):
+        outcome, observation = env.settle_search_combat_exit(leaf)
+        assert outcome == expected_exit
+        if expected is None:
+            assert observation is None
+        else:
+            assert observation.keys() == expected.keys()
+            for key in expected:
+                np.testing.assert_array_equal(observation[key], expected[key], err_msg=key)
+        assert env._episode_action_journal == history
+        assert env.thick.bc.to_dict() == live
+    assert base.bc.to_dict() == live
+    core.teacher.assert_integrity()
+
+
 def test_material_manifest_guard(tmp_path):
     from rl.policies.outer_return import load_initialization_material
     (tmp_path / 'manifest.json').write_text('{}')
