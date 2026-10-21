@@ -1,0 +1,58 @@
+{
+  "kind": "combat01-deployment-draft-v1",
+  "launch_ready": false,
+  "profile": "configs/train/combat_outer_return_876_4x5090.json",
+  "manager": "experiments/launchers/manage_nosl_replay_4way.ps1",
+  "launcher": "experiments/launchers/launch_nosl_replay.sh",
+  "run_id": "combat01-876-outer-v1-4x5090",
+  "wandb_id": null,
+  "remote_repo": null,
+  "ring_port": null,
+  "ranks": [
+    {
+      "rank": 0,
+      "host": null,
+      "port": null,
+      "gpu": "RTX 5090",
+      "nominal_vram_gb": 32,
+      "nominal_ram_gb": 90,
+      "linux_native_build_dir": null,
+      "linux_native_sha256": null
+    },
+    {
+      "rank": 1,
+      "host": null,
+      "port": null,
+      "gpu": "RTX 5090",
+      "nominal_vram_gb": 32,
+      "nominal_ram_gb": 90,
+      "linux_native_build_dir": null,
+      "linux_native_sha256": null
+    },
+    {
+      "rank": 2,
+      "host": null,
+      "port": null,
+      "gpu": "RTX 5090",
+      "nominal_vram_gb": 32,
+      "nominal_ram_gb": 90,
+      "linux_native_build_dir": null,
+      "linux_native_sha256": null
+    },
+    {
+      "rank": 3,
+      "host": null,
+      "port": null,
+      "gpu": "RTX 5090",
+      "nominal_vram_gb": 32,
+      "nominal_ram_gb": 90,
+      "linux_native_build_dir": null,
+      "linux_native_sha256": null
+    }
+  ],
+  "resume": false,
+  "initial_global_step": 0,
+  "full_training_max_seconds": null,
+  "full_training_target_step": null,
+  "notice": "Offline preparation only; no SSH, launch or old endpoint reuse. Fill current machines and bounded budget after runtime acceptance."
+}

@@ -168,3 +168,79 @@ def game_context_executable():
         # add_dll_directory handles in the Python parent do not reach a native child.
         run_env['PATH'] = str(Path(compiler).parent) + os.pathsep + run_env.get('PATH', '')
     return executable, run_env
+
+
+@pytest.fixture
+def entity_material_source(tmp_path):
+    """Small tensor-only checkpoint with the real cross-layer buffer alias."""
+    import hashlib
+    import io
+    import json
+    from zipfile import ZipFile
+
+    card = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    state = {
+        'core.upper_tokenizer.card.vectors': card,
+        'core.upper_tokenizer.projection.weight': torch.ones(2, 3),
+        'core.overworld.actor.weight': torch.ones(2, 2),
+        'core.overworld.value.weight': torch.ones(1, 2),
+        'core.combat.card.vectors': card,
+        'core.combat.encoder.weight': torch.ones(2, 3),
+        'core.combat.pointer_query.weight': torch.ones(2, 2),
+        'core.combat.distribution.win.weight': torch.ones(1, 2),
+        'core.combat.transition.0.weight': torch.ones(2, 2),
+    }
+    metadata = {
+        'num_timesteps': 123, 'policy_class': {'__module__': 'rl.policies.entity_joint'},
+        'observation_space': {'fixture': 'original-space'}, 'action_space': {'n': 198},
+        'policy_kwargs': {'entity_config': {'card_vector_checkpoint': '/old/cards.pt'}},
+    }
+    source, cards, profile, out = [tmp_path / n for n in ('source.zip', 'cards.pt', 'profile.json', 'material')]
+    payload = io.BytesIO()
+    torch.save(state, payload)
+    with ZipFile(source, 'w') as archive:
+        archive.writestr('data', json.dumps(metadata))
+        archive.writestr('policy.pth', payload.getvalue())
+        archive.writestr('policy.optimizer.pth', b'must never be imported')
+    torch.save({'vectors': card}, cards)
+    plan = {
+        'kind': 'combat01-preparation-v1', 'launch_ready': False,
+        'source': {'model_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+                   'card_vectors_sha256': hashlib.sha256(cards.read_bytes()).hexdigest()},
+        'source_checkpoint_contract': {'num_timesteps': 123},
+        'source_components': {'upper': {'tensors': 4, 'elements': 24},
+                              'lower_init': {'tensors': 3, 'elements': 22},
+                              'discarded': {'tensors': 2, 'elements': 6}},
+        'simulator': {'runtime_commit': 'fixture'},
+    }
+    profile.write_text(json.dumps(plan), encoding='utf-8')
+    return source, cards, profile, out, state, plan
+
+
+@pytest.fixture
+def frozen_upper_source(tmp_path):
+    """A small real entity-joint core with TRAIN47's shared frozen card table."""
+    from gymnasium import spaces
+    from rl.policies.entity_combat import EntityCombatConfig
+    from rl.policies.entity_joint import EntityJointCore, UpperConfig
+    from rl.rules.rule_vector_model import FROZEN_CARD_VECTOR_TABLE_SCHEMA
+    from env.core.cards_vocab import CARD_VOCAB
+
+    env = SlayTheSpireEnv(card_language=False, global_map_view=True,
+                         combat_action_contract='autoregressive-v2')
+    observation, _ = env.reset(seed=42101)
+    old_space = spaces.Dict({k: v for k, v in env.observation_space.spaces.items()
+                            if k not in ('run_keys', 'reward_keys')})
+    cards = tmp_path / 'cards.pt'
+    generator = torch.Generator().manual_seed(42101)
+    torch.save(dict(schema=FROZEN_CARD_VECTOR_TABLE_SCHEMA, card_vocab=list(CARD_VOCAB),
+                    vectors=torch.randn(len(CARD_VOCAB), 2, 12, generator=generator)), cards)
+    with torch.random.fork_rng():
+        torch.manual_seed(42101)
+        core = EntityJointCore(old_space,
+            EntityCombatConfig(width=32, layers=1, heads=4, quantiles=8,
+                               boss_win_weight=.9, card_vector_checkpoint=str(cards)),
+            UpperConfig(width=32, layers=1, heads=4))
+    core.eval()
+    yield core, old_space, env, {k: torch.as_tensor(v[None]) for k, v in observation.items()}
+    env.close()

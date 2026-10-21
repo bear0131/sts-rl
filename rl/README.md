@@ -16,6 +16,20 @@
 新代码使用 canonical 包路径。`_compat/` 仅保留历史 checkpoint 所需的 20 个库别名；旧 CLI 包装已删除。不会导入两套类，不在这里实现新功能。映射/退役说明见 ../tools/validation/migrations.json。
 训练/评估参数放 ../configs；启动环境放 ../experiments/launchers；输出放 ../runs/local。不要在 rl 根目录增加实验脚本或测试。
 
+### 冻结上层 teacher
+
+`policies.frozen_upper.FrozenUpperTeacher` 从已核验的 entity-joint core 复制上层
+tokenizer、actor、critic 和全部依赖；卡表 storage 与原下层分离。来源必须记录
+checkpoint SHA256。父模块 `train()` 不改变 teacher 的 eval/无梯度状态，外层
+autocast 不改变其 FP32 前推；移动设备可以，转换权重精度明确报错。调用方只给
+下层建立 optimizer，在 collection、更新和保存边界调用 `assert_integrity()`，
+检查参数、buffer 和训练标志。恢复时必须复制 tensor，拒绝来源/合同/权重变化。
+
+teacher 按旧 observation space 投影输入，`decide()` 复用 checkpoint-v7-act3
+动作适配和 masked argmax，只接受上层决策；真实死亡、截断和连战必须由调用方
+区分。该模块本身不提供新的战斗回报、搜索结算或训练入口；COMBAT01 完整接入
+验收前，四机 profile 保持 `launch_ready=false`。
+
 ## Entity combat 实验架构
 
 ### 完整动作等价组 equivalent-plays-v1
