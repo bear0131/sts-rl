@@ -31,6 +31,16 @@ def write(path, data):
     Path(path).write_text(json.dumps(data, indent=2, allow_nan=False), encoding='utf-8')
 
 
+def run_ssh_script(command, script, timeout):
+    # Windows text-mode pipes translate LF to CRLF, which becomes literal CR
+    # in POSIX paths and commands. Keep the wire protocol UTF-8/LF on all hosts.
+    result = subprocess.run(command, input=script.replace('\r\n', '\n').encode('utf-8'),
+                            capture_output=True, timeout=timeout)
+    result.stdout = result.stdout.decode('utf-8', errors='replace')
+    result.stderr = result.stderr.decode('utf-8', errors='replace')
+    return result
+
+
 def validate(config, *, connected=False):
     if config['kind'] != 'combat01-deployment-v1' or not re.fullmatch(r'[A-Za-z0-9_-]+', config['run_id']):
         raise ValueError('invalid COMBAT01 deployment identity')
@@ -308,7 +318,7 @@ def manage(config_path, action):
     def ssh(rank, script, timeout=180):
         cmd = ['ssh', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
                '-o', 'ConnectTimeout=15', '-p', str(rank['port']), f"root@{rank['host']}", f'timeout {max(1, timeout-5)} bash -se']
-        result = subprocess.run(cmd, input=script, text=True, capture_output=True, timeout=timeout)
+        result = run_ssh_script(cmd, script, timeout)
         with (output/f"ssh-rank{rank['rank']}.log").open('a', encoding='utf-8') as log:
             log.write(result.stdout + result.stderr)
         if result.returncode:

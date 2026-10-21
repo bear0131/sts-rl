@@ -11,6 +11,15 @@ from rl.training.distributed_sb3 import build_parser
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_remote_script_wire_preserves_posix_lines_and_utf8():
+    import sys
+    from experiments.launchers.combat_deployment import run_ssh_script
+    child = 'import sys; data=sys.stdin.buffer.read(); assert b"\\r" not in data; sys.stdout.buffer.write(data)'
+    result = run_ssh_script([sys.executable, '-c', child], 'mkdir /tmp/example\r\nprintf 测试\n', 10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == 'mkdir /tmp/example\nprintf 测试\n'
+
+
 def configuration():
     config = json.loads((ROOT/'experiments/launchers/combat01_876_4x5090.json').read_text(encoding='utf-8-sig'))
     config['remote_repo'] = '/root/autodl-tmp/combat01-new'
