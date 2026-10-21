@@ -30,11 +30,13 @@ class ExactInputCache:
         self.max_bytes = max_bytes
         self.entries = OrderedDict()
         self.scopes = OrderedDict()
+        self.next_scope = 0
         self.stats = dict.fromkeys(CACHE_METRICS, 0)
 
     def clear(self):
         self.entries.clear()
         self.scopes.clear()
+        self.next_scope = 0
         self.stats['bytes'] = 0
 
     def forward(self, observations, forward, *, namespace=()):
@@ -52,7 +54,10 @@ class ExactInputCache:
         if scope not in self.scopes:
             if len(self.scopes) >= 64:
                 self.scopes.popitem(last=False)
-            self.scopes[scope] = scope
+            # Hash the full schema once per batch, not once per row lookup.
+            # Never recycle a number while an older entry can still exist.
+            self.scopes[scope] = self.next_scope
+            self.next_scope += 1
         scope = self.scopes[scope]
         keys = [(scope, row.tobytes()) for row in packed]
         found, missing, pending = {}, [], {}

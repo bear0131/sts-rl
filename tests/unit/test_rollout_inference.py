@@ -63,3 +63,20 @@ def test_failed_forward_does_not_publish_results():
     with pytest.raises(RuntimeError, match='model failed'):
         cache.forward(dict(x=np.ones((2, 1))), fail)
     assert not cache.entries
+
+
+def test_schema_eviction_cannot_alias_live_cached_values():
+    cache = ExactInputCache(1_000_000)
+    obs = dict(x=np.ones((1, 1), np.float32))
+    calls = []
+    for namespace in [*range(65), 0, 64]:
+        def forward(batch):
+            calls.append(namespace)
+            return batch['x'] * namespace, np.array([namespace], np.float32)
+        logits, values = cache.forward(obs, forward, namespace=(namespace,))
+        np.testing.assert_array_equal(logits, [[namespace]])
+        np.testing.assert_array_equal(values, [namespace])
+    assert calls == [*range(65), 0]
+    cache.clear()
+    logits, _ = cache.forward(obs, lambda batch: (batch['x'] * 99, np.array([99.])))
+    np.testing.assert_array_equal(logits, [[99]])

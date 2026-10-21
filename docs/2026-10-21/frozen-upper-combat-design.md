@@ -264,7 +264,7 @@ checkpoint保存的实际876配置是主要证据：profile中的`source_checkpo
 
 复用对象为固定模型的原始logits/V。隐藏世界线或树节点身份不同，只要**实际网络输入及前向合同相同**，就允许复用；键不额外混入env/root/worldline编号。缓存不保存采样动作、Gumbel噪声、Q、visits、backup、reward前缀或完整模拟器transition。一次命中仍完成原有simulation和backup，每根128模拟不变。战斗出口仍由每条独立分支完整结算，之后只缓存上层V；`CombatExit.target(V)`须使用这条出口自己的reward/kind。死亡、烟雾逃跑、小偷偷钱和直接接续战斗保持原typed outcome语义。
 
-用户最新性能目标为384env/rank×512、128模拟下每轮rollout不超过18分钟（9×2），需要报告各rank及最慢rank；完整训练轮的反向、同步、保存另列。正式验收须用生产长度采样，不能用命中率、小批次或旧HP目标替代。
+用户已将性能上限收紧为每轮15分钟。采用更严格的完整训练轮≤900秒验收：384env/rank×512、128模拟、U40不变，包含采样、更新、同步和保存；分别报告各rank及最慢rank。正式验收须用生产长度采样，不能用命中率、小批次或旧HP目标替代。模型、optimizer、replay、RNG、环境journal及pending状态均完整恢复。
 
 ### 6.2 建议默认
 
