@@ -86,6 +86,7 @@ def training_command(config, profile, rank):
         '--native-search-threads', str(t['native_search_threads']), '--learning-rate', str(t['learning_rate']),
         '--max-grad-norm', str(t['max_grad_norm']), '--gamma', '1', '--gae-lambda', '1',
         '--amp-mode', t['lower_amp'], '--float32-matmul-precision', t['float32_matmul_precision'],
+        '--nosl-is-az-simulations', str(profile['search']['simulations']),
         '--nosl-is-az-batch-size', str(t['batch_size_per_rank']),
         '--nosl-is-az-micro-batch-size', str(t['micro_batch_size']),
         '--nosl-is-az-updates', str(t['optimizer_updates_per_round']), '--nosl-is-az-update-schedule', 'constant',

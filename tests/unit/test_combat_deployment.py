@@ -38,6 +38,7 @@ def test_deployment_preserves_whole_lower_training_and_876_geometry():
         assert args.rank == rank and args.world_size == 4 and len(args.peer) == 3
         assert args.gamma == 1. and args.learning_rate == 5e-5
         assert (args.n_envs, args.n_steps) == (384, 512)
+        assert args.nosl_is_az_simulations == 128
         assert (args.nosl_is_az_batch_size, args.nosl_is_az_micro_batch_size, args.nosl_is_az_updates) == (102400, 8192, 40)
         assert args.nosl_is_az_update_schedule == 'constant'
         assert args.hierarchical_combat_hp is None and args.resume_state is None and args.fork_state is None
