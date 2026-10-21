@@ -361,7 +361,7 @@ exec > >(tee -a provisioning.log) 2>&1
 tar xf bundle.tar
 tar xf source.tar
 export PATH="$HOME/.local/bin:$HOME/miniconda3/bin:$PATH"
-command -v uv >/dev/null || python3 -m pip install uv
+command -v uv >/dev/null || python3 -m pip install --index-url https://pypi.org/simple uv==0.13.4
 uv sync --frozen --extra cuda --group test --python 3.11
 export PATH="$PWD/.venv/bin:$PATH"
 cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-combat01 -G Ninja -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON -DPython_EXECUTABLE="$PWD/.venv/bin/python" -DSTS_ENABLE_RULE_TRACE=ON
