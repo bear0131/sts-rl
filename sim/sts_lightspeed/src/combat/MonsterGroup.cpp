@@ -4,6 +4,7 @@
 
 #include <cassert>
 #include <stdexcept>
+#include <string>
 
 #include "combat/MonsterGroup.h"
 #include "combat/BattleContext.h"
@@ -452,8 +453,9 @@ void MonsterGroup::createMonsters(BattleContext &bc, MonsterEncounter encounter)
 
         case MonsterEncounter::INVALID:
         default:
-            assert(false);
-            break;
+            throw std::invalid_argument("invalid combat encounter="
+                + std::to_string(static_cast<int>(encounter))
+                + " seed=" + std::to_string(bc.seed) + " floor=" + std::to_string(bc.floorNum));
     }
 }
 

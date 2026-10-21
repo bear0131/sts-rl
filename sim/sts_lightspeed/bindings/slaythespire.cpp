@@ -1975,11 +1975,14 @@ py::list legalOverworldPotions(const sts::GameContext &gc) {
 std::unique_ptr<sts::BattleContext> createBattle(const sts::GameContext &gc, const std::string &encounterName) {
     auto enc = sts::MonsterEncounter::INVALID;
     constexpr int n = sizeof(sts::monsterEncounterStrings) / sizeof(sts::monsterEncounterStrings[0]);
-    for (int i = 0; i < n; ++i) {
+    for (int i = 1; i < n; ++i) {
         if (encounterName == sts::monsterEncounterStrings[i]) {
             enc = static_cast<sts::MonsterEncounter>(i);
             break;
         }
+    }
+    if (enc == sts::MonsterEncounter::INVALID) {
+        throw std::invalid_argument("unknown combat encounter name: " + encounterName);
     }
     auto bc = std::make_unique<sts::BattleContext>();
     bc->init(gc, enc);

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include "combat/Monster.h"
 #include "game/Random.h"
 #include "combat/BattleContext.h"
@@ -1860,22 +1861,16 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             break;
 
 
-        case MMID::INVALID:
-#ifdef sts_asserts
-        {
-            std::cerr << bc.seed << " ";
-            auto x = static_cast<int>(moveHistory[0]);
-            if (x >= 0 && x <= static_cast<int>(MMID::WRITHING_MASS_STRONG_STRIKE)) {
-                std::cerr << monsterIdStrings[static_cast<int>(id)] << " " << monsterMoveStrings[x] << std::endl;
-            }
-            assert(false);
-        }
-#endif
         case MMID::GENERIC_ESCAPE_MOVE:
             bc.addToBot(Actions::EscapeAction(idx));
             break;
+
+        case MMID::INVALID:
         default:
-            break;
+            throw std::logic_error("invalid monster turn move="
+                + std::to_string(static_cast<int>(moveHistory[0]))
+                + " monster=" + std::to_string(static_cast<int>(id))
+                + " slot=" + std::to_string(idx) + " seed=" + std::to_string(bc.seed));
     }
 }
 
@@ -3346,15 +3341,15 @@ MMID Monster::getMoveForRoll(BattleContext &bc, int &monsterData, const int roll
             }
         }
 
-        case MonsterId::TORCH_HEAD: // setting in collector spawn move
+        case MonsterId::TORCH_HEAD:
+            return MMID::TORCH_HEAD_TACKLE;
+
         default:
             break;
     }
-#ifdef sts_asserts
-    std::cerr << "getMove did not return a value " << bc.seed << " " << static_cast<int>(id) << std::endl;
-    assert(false);
-#endif
-    return MMID::INVALID;
+    throw std::logic_error("cannot roll move for monster="
+        + std::to_string(static_cast<int>(id))
+        + " slot=" + std::to_string(idx) + " seed=" + std::to_string(bc.seed));
 }
 
 void Monster::initSpawnedMonster(BattleContext &bc, const MonsterId monsterId, const int monsterIdx, const int hp) {

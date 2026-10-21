@@ -718,17 +718,15 @@ class SimGameEnv:
         raise ValueError(f"unhandled semantic action: {action!r}")
 
     def _start_battle(self):
-        # An unresolved encounter name makes create_battle build an INVALID
-        # monster group, hitting createMonsters' `case INVALID: assert(false)` --
-        # a NATIVE abort that kills the whole process (uncatchable in Python ->
-        # takes down a vec-env worker in training). Validate first and surface a
-        # descriptive, catchable Python error instead.
+        # The native boundary also rejects unresolved names. Validate here first
+        # to include the whole-run floor/act/room in the error without attempting
+        # construction or depending on the native build's assertion settings.
         name = self._encounter_name()
         if name not in _ENCOUNTER_NAMES:
             raise RuntimeError(
                 f"unresolved encounter {name!r} (gc.encounter={self.gc.encounter}) "
                 f"at floor={self.gc.floor_num} act={self.gc.act} "
-                f"room={self.gc.cur_room}; create_battle would abort."
+                f"room={self.gc.cur_room}; refusing create_battle."
             )
         self.bc = sts.create_battle(self.gc, name)
 

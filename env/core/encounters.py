@@ -3,10 +3,10 @@
 These are the exact strings create_battle accepts. IMPORTANT: create_battle
 matches against sim's `monsterEncounterStrings` (MonsterEncounters.h), NOT the
 SaveFileMappings display names — the two differ ("Two Louse" vs "2 Louse",
-"Lots Of Slimes" vs "Lots of Slimes", etc). A name that doesn't match resolves
-to INVALID and spawns ZERO monsters (an unwinnable, non-terminating combat), so
-these MUST stay verbatim from monsterEncounterStrings. encounter_names() returns
-this same list — treat it as the source of truth.
+"Lots Of Slimes" vs "Lots of Slimes", etc). Unknown names and the INVALID
+sentinel are rejected rather than constructing an empty combat, so these MUST
+stay verbatim from monsterEncounterStrings. encounter_names() returns this same
+list without INVALID — treat it as the source of truth.
 
 Scope covers acts 1-3: each act has its own normal/elite/boss pools, exposed
 via ACT_POOLS below. The combat RNG (Random(seed+floor)) drives the encounter

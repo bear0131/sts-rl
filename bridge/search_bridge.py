@@ -120,8 +120,11 @@ def _find_shadow_battle(make_gc, wanted: tuple[str, ...], encounters,
             gc = make_gc(seed_nonce)
             try:
                 battle = sts.create_battle(gc, encounter)
-            except Exception:
-                continue
+            except Exception as exc:
+                raise RuntimeError(
+                    f"native shadow construction failed encounter={encounter!r} "
+                    f"seed_nonce={seed_nonce} wanted={wanted!r}: {exc}"
+                ) from exc
             try:
                 found = _monster_ids(battle.to_dict())
             except ValueError as exc:
