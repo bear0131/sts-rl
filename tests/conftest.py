@@ -266,3 +266,15 @@ def frozen_upper_source(tmp_path):
     core.eval()
     yield core, old_space, env, {k: torch.as_tensor(v[None]) for k, v in observation.items()}
     env.close()
+
+
+@pytest.fixture
+def outer_return_core(frozen_upper_source):
+    from rl.policies.outer_return import OuterReturnCore
+    source, source_space, _, _ = frozen_upper_source
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+                         outer_return_context=True)
+    env.reset(seed=42101)
+    core = OuterReturnCore(source, source_space, env.observation_space, source_sha256='1' * 64)
+    yield core, source, env
+    env.close()

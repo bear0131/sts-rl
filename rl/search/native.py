@@ -82,8 +82,12 @@ class NativeSearchConfig:
     model_victory_terminal: bool = False
     merge_equivalent_actions: bool = True
     boss_win_weight: float = 0.0
+    outer_return: bool = False
 
     def __post_init__(self):
+        if self.outer_return and (not self.fixed_worldline or self.boss_win_weight or
+                                  self.boss_transition_target or self.model_victory_terminal):
+            raise ValueError('outer return requires fixed worldline and no legacy HP objective')
         if not 0 <= self.boss_win_weight <= 1:
             raise ValueError('boss_win_weight must be in [0, 1]')
         if self.boss_win_weight and (self.boss_transition_target or self.model_victory_terminal):
@@ -106,6 +110,9 @@ class NativeSearchConfig:
     def from_model(cls, model, **overrides):
         values = {f.name: getattr(model, 'nosl_is_az_' + f.name, f.default) for f in fields(cls)}
         values['boss_win_weight'] = getattr(getattr(model, 'policy', None), 'entity_config', {}).get('boss_win_weight', 0.0)
+        from env.core.outer_return import OBJECTIVE
+        if getattr(getattr(getattr(model, 'policy', None), 'core', None), 'training_objective', None) == OBJECTIVE:
+            values.update(outer_return=True, boss_win_weight=0.0)
         values.update({key: value for key, value in overrides.items() if value is not None})
         return cls(**values)
 
@@ -509,7 +516,10 @@ def complete_searches_native(
             stats['inference_batch_size_max'] = max(stats['inference_batch_size_max'], count)
             started = time.perf_counter()
             decode_before = batch.decode_seconds
-            if direct_forward is not None:
+            if batch.outer_return:
+                logits, values = forward_outer_leaves(model, batch, autocast=autocast,
+                                                      leaf_backend=leaf_backend)
+            elif direct_forward is not None:
                 logits, values = direct_forward(batch)
             else:
                 observations = batch.observations()
@@ -537,6 +547,40 @@ def complete_searches_native(
     except BaseException:
         batch.clear()
         raise
+
+
+def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
+    """Route typed exits through complete settlement before evaluating a value."""
+    observations = batch.observations()
+    exits = batch.combat_exits()
+    logits = np.zeros((batch.rows, model.action_space.n), dtype=np.float32)
+    values = np.zeros(batch.rows, dtype=np.float32)
+    active = [i for i in range(batch.rows) if i not in exits]
+    if active:
+        logits[active], values[active] = forward_leaves(model,
+            {key: value[active] for key, value in observations.items()},
+            compact=True, autocast=autocast, leaf_backend=leaf_backend)
+    for kind in ('upper', 'combat'):
+        rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
+        if not rows:
+            continue
+        obs = {key: np.stack([exits[i][1][key] for i in rows]) for key in exits[rows[0]][1]}
+        if kind == 'upper':
+            # Teacher owns FP32/no-grad; never send a terminal BC through the
+            # lower HP encoder or convert teacher inference to lower AMP.
+            _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
+            continuation = continuation.float().flatten().cpu().numpy()
+        else:
+            _, continuation = forward_leaves(model, obs, compact=True,
+                                             autocast=autocast, leaf_backend=leaf_backend)
+        for i, value in zip(rows, continuation, strict=True):
+            values[i] = exits[i][0].target(value)
+    for i, (outcome, _) in exits.items():
+        if outcome.kind == 'terminal':
+            values[i] = outcome.target()
+    if not np.isfinite(values).all():
+        raise ValueError('outer-return search received a nonfinite value')
+    return logits, values
 
 
 def _leaf_count(response):

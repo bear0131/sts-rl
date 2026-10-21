@@ -254,6 +254,16 @@ class EntityCombatNetwork(nn.Module):
     def _pointer(self, state, entities):
         return torch.einsum('bd,bnd->bn',self.pointer_query(state),self.pointer_key(entities))*self.config.width**-.5
 
+    def _value(self, state, obs):
+        values, outputs = self.distribution(state)
+        if self.config.boss_win_weight:
+            from env.core.boss_value import win_hp_utility
+            weight = obs['combat_is_boss'].float() * self.config.boss_win_weight
+            values = win_hp_utility(outputs['win_logits'].sigmoid(),
+                                    outputs['hp_quantiles'].mean(-1, keepdim=True), weight)
+            outputs['boss_win_weight'] = weight
+        return values, outputs
+
     def forward(self, obs, *, active_relic_width=None, evaluate_subsets=True, auxiliary_actions=None,
                 card_table=None):
         state, blocks = self.encode(obs, active_relic_width, card_table=card_table)
@@ -268,13 +278,7 @@ class EntityCombatNetwork(nn.Module):
         logits = self.complete_head(source,state,torch.cat((blocks['hand'],blocks['potion']),1),
             blocks['monster'],obs['combat_legal'],evaluate_subsets=evaluate_subsets,
             selected=obs['select_hand_mask'], remaining=(obs['pick_remaining']*encode.PICK_SCALE).round())
-        values, outputs = self.distribution(state)
-        if self.config.boss_win_weight:
-            from env.core.boss_value import win_hp_utility
-            weight = obs["combat_is_boss"].float() * self.config.boss_win_weight
-            values = win_hp_utility(outputs["win_logits"].sigmoid(),
-                                    outputs["hp_quantiles"].mean(-1, keepdim=True), weight)
-            outputs["boss_win_weight"] = weight
+        values, outputs = self._value(state, obs)
         if auxiliary_actions is not None and self.config.auxiliary_loss_coef:
             actions = auxiliary_actions.long() + (C.JOINT_END if self.autoregressive_actions else 0)
             row = torch.arange(len(actions),device=actions.device)

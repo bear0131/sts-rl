@@ -20,6 +20,9 @@ class NativeSearchBatch:
         self.language = (_nosl_compact_lut()['language_card_index']
                          if self.envs[0]._card_language else None)
         first = self.envs[0]
+        self.outer_return = first.outer_return_context
+        if any(e.outer_return_context != self.outer_return for e in self.envs):
+            raise ValueError('native batch cannot mix outer-return and legacy environments')
         shapes = dict(_nosl_compact_empty(card_language=first._card_language))
         if first._joint_actions:
             shapes['combat_legal'] = np.zeros(first._neural_width, dtype=bool)
@@ -28,6 +31,11 @@ class NativeSearchBatch:
         # two fields made batched native leaves differ byte-for-byte from the
         # serial bridge path.
         self._prototypes = dict(shapes)
+        self._decoder_keys = frozenset(shapes)
+        if self.outer_return:
+            from env.core.outer_return import CONTEXT_KEYS
+            self._prototypes.update({key: np.zeros(first.observation_space[key].shape,
+                dtype=first.observation_space[key].dtype) for key in CONTEXT_KEYS})
         self._layouts = {}
         # Grow printed-card data only when a real leaf needs a higher upgrade
         # count, so Searing Blow remains exact without reserving the complete
@@ -58,6 +66,8 @@ class NativeSearchBatch:
         try:
             for index in self.indices:
                 args, kwargs = calls[index]
+                if bool(kwargs.get('outer_return')) != self.outer_return:
+                    raise ValueError('search objective and environment context disagree')
                 if kwargs.get('leaf_batch_size', 1) != 1 or not kwargs.get('compact_observation'):
                     raise ValueError('native cross-tree batching requires compact observations and one leaf per tree')
                 env = self.envs[index]
@@ -65,6 +75,8 @@ class NativeSearchBatch:
                                                         _defer_leaf_selection=True))
                 fields.append(env._native_packed_global_fields())
             self.global_fields = {key: np.stack([f[key] for f in fields]) for key in fields[0]}
+            self._decoder_globals = {key: value for key, value in self.global_fields.items()
+                                     if key in self._decoder_keys}
             relics = self.global_fields['relics']
             self._relic_widths = np.maximum(1, np.max(
                 (relics != 0) * np.arange(1, relics.shape[1]+1), axis=1))
@@ -81,9 +93,29 @@ class NativeSearchBatch:
     def observations(self):
         started = time.perf_counter()
         self._ensure_card_stats()
-        result = self.decoder.decode(self.payload, self.global_fields)
+        result = self.decoder.decode(self.payload, self._decoder_globals)
+        if self.outer_return:
+            from env.core.outer_return import CONTEXT_KEYS, MISC_SCALE
+            if self.payload.get('outer_return_schema') != 1:
+                raise RuntimeError('native outer-return leaf contract is missing')
+            owners = np.asarray(self.payload['owners'], dtype=np.intp)
+            result.update({key: self.global_fields[key][owners].copy() for key in CONTEXT_KEYS})
+            hp = result['player_scalars']
+            result['run_hp'][:, :2] = hp[:, :2]
+            result['run_hp'][:, 2] = np.divide(hp[:, 0], hp[:, 1],
+                out=np.zeros(len(hp), dtype=np.float32), where=hp[:, 1] != 0)
+            for row, changes in self.payload['permanent_misc'].items():
+                for index, value in changes.items():
+                    if result['deck_ids'][row, index] != 0:
+                        result['outer_deck_misc'][row, index] = value / MISC_SCALE
         self.decode_seconds += time.perf_counter()-started
         return result
+
+    def combat_exits(self):
+        if not self.outer_return:
+            return {}
+        return {row: self.envs[self.indices[self.payload['owners'][row]]].settle_search_combat_exit(battle)
+                for row, battle in self.payload['combat_exits'].items()}
 
     @property
     def rows(self):
@@ -103,9 +135,13 @@ class NativeSearchBatch:
 
     def write_observations(self, destination):
         """Fill caller-owned contiguous arrays before their next device upload."""
+        if self.outer_return:
+            for key, value in self.observations().items():
+                np.copyto(destination[key][:len(value)], value)
+            return
         started = time.perf_counter()
         self._ensure_card_stats()
-        self.decoder.decode(self.payload, self.global_fields, destination)
+        self.decoder.decode(self.payload, self._decoder_globals, destination)
         self.decode_seconds += time.perf_counter()-started
 
     def _ensure_card_stats(self):

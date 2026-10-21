@@ -81,6 +81,9 @@ struct NoslCombatSearchConfig {
     // Experimental: send a combat victory to the same value network used
     // for nonterminal leaves. Losses retain their exact zero value.
     bool modelVictoryTerminal = false;
+    // Finite unbounded outer return. Every combat exit is evaluated by the
+    // caller after settling its complete sampled run continuation.
+    bool outerReturn = false;
 };
 
 struct NoslCombatSearchStats {
@@ -187,6 +190,8 @@ public:
         bool autoregressivePolicy = false;
         std::vector<Action> legalActions;
         bool needsPolicy = true;
+        bool outerReturn = false;
+        bool combatExit = false;
     };
 
     NoslNeuralSearchSession(const BattleContext &rootState,
@@ -320,6 +325,7 @@ private:
     int gumbelRemaining_ = 0;
 
     static double hpValue(const BattleContext &bc);
+    double objectiveValue(double value) const;
     std::vector<Action> legalActions(const BattleContext &bc, int selected = 0) const;
     bool validAction(const Action &action, const BattleContext &bc, int selected) const;
     static int thinActionId(const Action &action, const BattleContext &state);

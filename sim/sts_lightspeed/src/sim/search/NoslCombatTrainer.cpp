@@ -1038,6 +1038,10 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     std::uint64_t searchNonce,
     double rootValue)
     : config_(config), rootState_(rootState), searchNonce_(searchNonce) {
+    if (config_.outerReturn && (!config_.fixedWorldline || config_.bossWinWeight != 0.0 ||
+            config_.bossTransitionValueMode != 0 || config_.modelVictoryTerminal))
+        throw std::invalid_argument("outer return requires a fixed worldline and no HP/Boss objective");
+    if (config_.outerReturn) objectiveValue(rootValue);
     if (!std::isfinite(config_.bossWinWeight) || config_.bossWinWeight < 0.0 ||
         config_.bossWinWeight > 1.0 || (config_.bossWinWeight > 0.0 &&
         (!config_.autoregressivePolicy || config_.bossTransitionValueMode != 0 || config_.modelVictoryTerminal)))
@@ -1127,7 +1131,7 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     root_.modelValueValid = std::isfinite(rootValue);
     root_.modelValue = root_.modelValueValid ? rootValue : 0.0;
     root_.networkValue = root_.modelValueValid
-        ? std::clamp(rootValue, 0.0, 1.0)
+        ? objectiveValue(rootValue)
         : hpValue(rootState_);
     root_.networkValueValid = true;
     root_.propagatedValue = root_.networkValue;
@@ -1135,6 +1139,14 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     expandWithLogits(root_, rootState_, legalActions(rootState_, config_.selectionPrefix), rootPolicyLogits);
     applyRootDirichletNoise();
     initializeGumbelRoot();
+}
+
+double NoslNeuralSearchSession::objectiveValue(double value) const {
+    if (config_.outerReturn) {
+        if (!std::isfinite(value)) throw std::invalid_argument("outer return must be finite");
+        return value;
+    }
+    return std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0;
 }
 
 void NoslNeuralSearchSession::initializeGumbelRoot() {
@@ -1698,8 +1710,7 @@ void NoslNeuralSearchSession::recomputeEdgeValue(Edge &edge) const {
             totalWeight += weight;
         }
         if (totalWeight > 0.0 && std::isfinite(totalWeight)) {
-            edge.propagatedValue = std::clamp(
-                weightedValue / totalWeight, 0.0, 1.0);
+            edge.propagatedValue = objectiveValue(weightedValue / totalWeight);
             edge.propagatedValid = true;
             return;
         }
@@ -1708,8 +1719,7 @@ void NoslNeuralSearchSession::recomputeEdgeValue(Edge &edge) const {
     // End-turn leaves and terminal actions do not have a child decision node;
     // their direct leaf samples are already the complete action value.
     if (edge.valueVisits > 0) {
-        edge.propagatedValue = std::clamp(
-            edge.valueSum / static_cast<double>(edge.valueVisits), 0.0, 1.0);
+        edge.propagatedValue = objectiveValue(edge.valueSum / static_cast<double>(edge.valueVisits));
         edge.propagatedValid = std::isfinite(edge.propagatedValue);
         return;
     }
@@ -1736,13 +1746,12 @@ void NoslNeuralSearchSession::recomputeNodeValue(Node &node) const {
             totalVisits += static_cast<double>(edge.visits);
         }
         if (totalVisits > 0.0 && std::isfinite(totalVisits)) {
-            node.propagatedValue = std::clamp(
-                weightedValue / totalVisits, 0.0, 1.0);
+            node.propagatedValue = objectiveValue(weightedValue / totalVisits);
             node.propagatedValid = std::isfinite(node.propagatedValue);
             return;
         }
         node.propagatedValue = node.networkValueValid
-            ? std::clamp(node.networkValue, 0.0, 1.0) : 0.0;
+            ? objectiveValue(node.networkValue) : 0.0;
         node.propagatedValid = node.networkValueValid &&
             std::isfinite(node.propagatedValue);
         return;
@@ -1757,20 +1766,18 @@ void NoslNeuralSearchSession::recomputeNodeValue(Node &node) const {
             const double sampleValue = edge.valueSum /
                 static_cast<double>(edge.valueVisits);
             if (std::isfinite(sampleValue)) {
-                values.push_back(std::clamp(sampleValue, 0.0, 1.0));
+                values.push_back(objectiveValue(sampleValue));
             }
         }
     }
 
     if (values.empty()) {
         if (node.valueVisits > 0) {
-            node.propagatedValue = std::clamp(
-                node.valueSum / static_cast<double>(node.valueVisits),
-                0.0, 1.0);
+            node.propagatedValue = objectiveValue(node.valueSum / static_cast<double>(node.valueVisits));
             node.propagatedValid = std::isfinite(node.propagatedValue);
         } else if (node.networkValueValid &&
                    std::isfinite(node.networkValue)) {
-            node.propagatedValue = std::clamp(node.networkValue, 0.0, 1.0);
+            node.propagatedValue = objectiveValue(node.networkValue);
             node.propagatedValid = true;
         } else {
             node.propagatedValue = 0.0;
@@ -1791,8 +1798,7 @@ void NoslNeuralSearchSession::recomputeNodeValue(Node &node) const {
                 std::max(1.0, config_.gumbelInteriorMaxMixVisits),
             0.0, 1.0);
     }
-    node.propagatedValue = std::clamp(
-        (1.0 - alpha) * meanValue + alpha * bestValue, 0.0, 1.0);
+    node.propagatedValue = objectiveValue((1.0 - alpha) * meanValue + alpha * bestValue);
     node.propagatedValid = std::isfinite(node.propagatedValue);
 }
 
@@ -1805,7 +1811,7 @@ double NoslNeuralSearchSession::edgeValueForSelection(
         const double sampleValue = edge.valueSum /
             static_cast<double>(edge.valueVisits);
         if (std::isfinite(sampleValue)) {
-            return std::clamp(sampleValue, 0.0, 1.0);
+            return objectiveValue(sampleValue);
         }
     }
     // First-play urgency remains anchored to the parent's network estimate.
@@ -1814,7 +1820,7 @@ double NoslNeuralSearchSession::edgeValueForSelection(
     const double fallback = (parent.networkValueValid
         ? parent.networkValue : nodeValueForSelection(parent)) -
         config_.fpuReduction;
-    return std::isfinite(fallback) ? std::clamp(fallback, 0.0, 1.0) : 0.0;
+    return std::isfinite(fallback) ? objectiveValue(fallback) : 0.0;
 }
 
 double NoslNeuralSearchSession::nodeValueForSelection(const Node &node) const {
@@ -1825,11 +1831,11 @@ double NoslNeuralSearchSession::nodeValueForSelection(const Node &node) const {
         const double sampleValue = node.valueSum /
             static_cast<double>(node.valueVisits);
         if (std::isfinite(sampleValue)) {
-            return std::clamp(sampleValue, 0.0, 1.0);
+            return objectiveValue(sampleValue);
         }
     }
     if (node.networkValueValid && std::isfinite(node.networkValue)) {
-        return std::clamp(node.networkValue, 0.0, 1.0);
+        return objectiveValue(node.networkValue);
     }
     return 0.0;
 }
@@ -2131,7 +2137,7 @@ void NoslNeuralSearchSession::backupStats(Pending &pending, double value) {
     if (!std::isfinite(value)) {
         value = 0.0;
     }
-    value = std::clamp(value, 0.0, 1.0);
+    value = objectiveValue(value);
     if (pending.leaf != nullptr && pending.needsPolicy &&
         pending.leaf->edges.empty()) {
         // The actual policy is installed by backprop(), which calls this
@@ -2367,7 +2373,12 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 --simulationsStarted_;
                 break;
             }
-            if (config_.modelVictoryTerminal &&
+            if (config_.outerReturn && state.outcome != Outcome::UNDECIDED) {
+                pending.leaf = node;
+                pending.legalActions.clear();
+                pending.needsPolicy = false;
+                haveLeaf = true;
+            } else if (config_.modelVictoryTerminal &&
                 state.outcome == Outcome::PLAYER_VICTORY) {
                 pending.leaf = node;
                 pending.legalActions.clear();
@@ -2376,11 +2387,15 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             }
         }
         if (!haveLeaf) {
+            if (config_.outerReturn)
+                throw std::runtime_error("outer-return search has no evaluable leaf");
             finishTerminal(pending, bossTransitionTerminalValue(
                 state, config_.bossTransitionValueMode, config_.bossWinWeight));
             continue;
         }
-        if ((state.outcome != Outcome::UNDECIDED &&
+        if (config_.outerReturn && pending.needsPolicy && pending.legalActions.empty())
+            throw std::runtime_error("nonterminal outer-return leaf has no legal action");
+        if ((!config_.outerReturn && state.outcome != Outcome::UNDECIDED &&
              !(config_.modelVictoryTerminal &&
                state.outcome == Outcome::PLAYER_VICTORY)) ||
             (pending.needsPolicy && pending.legalActions.empty())) {
@@ -2399,6 +2414,8 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         request.autoregressivePolicy = config_.autoregressivePolicy;
         request.legalActions = stored.legalActions;
         request.needsPolicy = stored.needsPolicy;
+        request.outerReturn = config_.outerReturn;
+        request.combatExit = config_.outerReturn && stored.state->outcome != Outcome::UNDECIDED;
         requests.push_back(std::move(request));
     }
     return requests;
@@ -2407,6 +2424,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
 void NoslNeuralSearchSession::backprop(
     std::uint64_t requestId, double value,
     const std::vector<double> &policyLogits) {
+    if (config_.outerReturn) objectiveValue(value);
     auto it = pending_.find(requestId);
     if (it == pending_.end()) {
         throw std::invalid_argument("unknown NOSL neural leaf request id");
@@ -2419,7 +2437,7 @@ void NoslNeuralSearchSession::backprop(
             pending.leaf->modelValue = pending.leaf->modelValueValid
                 ? value : 0.0;
             pending.leaf->networkValue = std::isfinite(value)
-                ? std::clamp(value, 0.0, 1.0)
+                ? objectiveValue(value)
                 : 0.0;
             pending.leaf->networkValueValid = true;
         }
@@ -2439,6 +2457,7 @@ void NoslNeuralSearchSession::backpropBatch(
         requestIds.size() != policyLogits.size()) {
         throw std::invalid_argument("NOSL backprop batch lengths differ");
     }
+    if (config_.outerReturn) for (double value : values) objectiveValue(value);
     std::vector<Pending> batch;
     batch.reserve(requestIds.size());
     for (std::size_t i = 0; i < requestIds.size(); ++i) {
@@ -2454,7 +2473,7 @@ void NoslNeuralSearchSession::backpropBatch(
                 pending.leaf->modelValue = pending.leaf->modelValueValid
                     ? values[i] : 0.0;
                 pending.leaf->networkValue = std::isfinite(values[i])
-                    ? std::clamp(values[i], 0.0, 1.0)
+                    ? objectiveValue(values[i])
                     : 0.0;
                 pending.leaf->networkValueValid = true;
             }
@@ -2482,6 +2501,8 @@ void NoslNeuralSearchSession::backpropBatchArray(
                       (policyWidth > 0 && policyLogits == nullptr))) {
         throw std::invalid_argument("null NOSL backprop array storage");
     }
+    if (config_.outerReturn)
+        for (std::size_t i = 0; i < count; ++i) objectiveValue(values[i]);
     if (count == 1) {
         auto it = pending_.find(requestIds[0]);
         if (it == pending_.end()) {
@@ -2494,7 +2515,7 @@ void NoslNeuralSearchSession::backpropBatchArray(
                 pending.leaf->modelValue = pending.leaf->modelValueValid
                     ? values[0] : 0.0;
                 pending.leaf->networkValue = std::isfinite(values[0])
-                    ? std::clamp(values[0], 0.0, 1.0) : 0.0;
+                    ? objectiveValue(values[0]) : 0.0;
                 pending.leaf->networkValueValid = true;
             }
             if (pending.needsPolicy && pending.leaf->edges.empty()) {
@@ -2522,7 +2543,7 @@ void NoslNeuralSearchSession::backpropBatchArray(
                 pending.leaf->modelValue = pending.leaf->modelValueValid
                     ? values[i] : 0.0;
                 pending.leaf->networkValue = std::isfinite(values[i])
-                    ? std::clamp(values[i], 0.0, 1.0)
+                    ? objectiveValue(values[i])
                     : 0.0;
                 pending.leaf->networkValueValid = true;
             }

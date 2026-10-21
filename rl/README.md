@@ -18,6 +18,19 @@
 
 ### 冻结上层 teacher
 
+`policies/outer_return.py` 提供 COMBAT01 策略组件：校验 manifest/逐文件 SHA 后加载
+提取材料，保留876 actor/encoder、新建FP32无界标量critic，删除旧HP分布/辅助头。
+`combat-public-run-context-v1` 为下层补充 act/floor/下一Boss/当前与最大HP/永久牌组
+ID、升级与misc/角色/进阶/keys；零初始化的上下文残差保证起始actor logits不变。
+旧boss标记仅保留为旧encoder输入，不能参与新value或搜索目标。
+
+native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。所有战斗
+出口返回拥有独立存储的typed终局BC，由resident NativeSearchBatch在同一采样GC上
+结算，按upper/combat/terminal分流；内部叶用新lower，出口用冻结teacher或自然终局
+真实reward。该路径绕过native直接解码的快捷入口，但可复用解码后lower CUDA graph；
+GPU完整生命周期尚须验证。非resident传输明确拒绝，不降级到HP。learner/启动接入
+状态以TODO COMBAT01为准，策略组件可加载不等于已完成训练验收。
+
 `policies.frozen_upper.FrozenUpperTeacher` 从已核验的 entity-joint core 复制上层
 tokenizer、actor、critic 和全部依赖；卡表 storage 与原下层分离。来源必须记录
 checkpoint SHA256。父模块 `train()` 不改变 teacher 的 eval/无梯度状态，外层

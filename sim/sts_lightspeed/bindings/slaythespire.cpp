@@ -2902,6 +2902,21 @@ std::uint32_t remapDrawSelection(const sts::BattleContext &sampled,
     return mapped.bits;
 }
 
+pybind11::dict permanentCardMisc(const BattleContext &bc) {
+    // Master-deck identity, never hidden pile order. Temporary upgrades are not
+    // permanent. Keep this aligned with BattleContext::updateCardsOnExit.
+    pybind11::dict changes;
+    const auto add = [&changes](const CardInstance &card) {
+        if (card.getId() == CardId::RITUAL_DAGGER && card.uniqueId < Deck::MAX_SIZE)
+            changes[pybind11::int_(card.uniqueId)] = card.specialData;
+    };
+    for (const auto &card : bc.cards.drawPile) add(card);
+    for (const auto &card : bc.cards.discardPile) add(card);
+    for (const auto &card : bc.cards.exhaustPile) add(card);
+    for (int i = 0; i < bc.cards.cardsInHand; ++i) add(bc.cards.hand[i]);
+    return changes;
+}
+
 pybind11::dict packedNeuralLeaves(
     const std::vector<sts::search::NoslNeuralSearchSession::LeafRequest> &requests,
     bool done, pybind11::object language_card_index) {
@@ -2964,6 +2979,8 @@ pybind11::dict packedNeuralLeaves(
     auto legal_count = legal_action_counts.mutable_unchecked<1>();
     pybind11::list needs_policy;
     pybind11::list selection_prefix;
+    pybind11::dict combat_exits;
+    pybind11::dict permanent_misc;
     for (pybind11::ssize_t row = 0; row < count; ++row) {
         const auto &request = requests[static_cast<std::size_t>(row)];
         const auto packed = compact_leaf::pack(*request.state);
@@ -2996,6 +3013,11 @@ pybind11::dict packedNeuralLeaves(
         }
         needs_policy.append(request.needsPolicy);
         selection_prefix.append(request.selectionPrefix);
+        if (request.combatExit)
+            combat_exits[pybind11::int_(row)] = pybind11::cast(BattleContext(*request.state));
+        if (request.outerReturn) {
+            permanent_misc[pybind11::int_(row)] = permanentCardMisc(*request.state);
+        }
     }
     pybind11::dict out;
     out["request_ids"] = request_ids;
@@ -3011,6 +3033,11 @@ pybind11::dict packedNeuralLeaves(
     out["needs_policy"] = needs_policy;
     out["selection_prefix"] = selection_prefix;
     out["done"] = done;
+    if (!permanent_misc.empty()) {
+        out["outer_return_schema"] = 1;
+        out["combat_exits"] = combat_exits;
+        out["permanent_misc"] = permanent_misc;
+    }
     return out;
 }
 
@@ -4257,6 +4284,11 @@ PYBIND11_MODULE(slaythespire, m) {
                 }
                 item["legal_action_bits"] = legal;
                 item["needs_policy"] = request.needsPolicy;
+                if (request.outerReturn) {
+                    item["outer_return_schema"] = 1;
+                    item["combat_exit"] = request.combatExit;
+                    if (request.combatExit) item["exit_state"] = pybind11::cast(BattleContext(*request.state));
+                }
                 out.append(item);
             }
             return out;
@@ -4546,7 +4578,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 bool fixed_worldline,
                 int boss_transition_value_mode, int selection_prefix,
                 bool model_victory_terminal, bool merge_equivalent_actions,
-                double boss_win_weight) {
+                double boss_win_weight, bool outer_return) {
                 std::vector<double> logits;
                 auto view = root_policy_logits.unchecked<1>();
                 logits.reserve(static_cast<std::size_t>(view.shape(0)));
@@ -4587,6 +4619,7 @@ PYBIND11_MODULE(slaythespire, m) {
                 config.modelVictoryTerminal = model_victory_terminal;
                 config.mergeEquivalentActions = merge_equivalent_actions;
                 config.bossWinWeight = boss_win_weight;
+                config.outerReturn = outer_return;
                 config.seed = nonce;
                 return std::make_shared<sts::search::NoslNeuralSearchSession>(
                     bc, logits, config, nonce, root_value);
@@ -4620,7 +4653,9 @@ PYBIND11_MODULE(slaythespire, m) {
              pybind11::arg("model_victory_terminal") = false,
              pybind11::arg("merge_equivalent_actions") = true,
              pybind11::arg("boss_win_weight") = 0.0,
+             pybind11::arg("outer_return") = false,
              "start a neural-guided C++ NOSL AlphaZero session")
+        .def("permanent_card_misc", &permanentCardMisc, "public permanent card growth by master-deck slot")
         .def("projected_exit_hp", [](const BattleContext &bc, const GameContext &gc) {
             GameContext projected = gc;
             projected.curHp = bc.player.curHp;

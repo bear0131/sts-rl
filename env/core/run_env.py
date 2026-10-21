@@ -332,8 +332,12 @@ class SlayTheSpireEnv(gym.Env):
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
                  interactive_reasoning=False, combat_action_contract='legacy',
-                 nosl_is_az_boss_transition_target=False):
+                 nosl_is_az_boss_transition_target=False, outer_return_context=False):
         super().__init__()
+        self.outer_return_context = bool(outer_return_context)
+        if self.outer_return_context and (combat_action_contract != C.AUTOREGRESSIVE_CONTRACT
+                                         or nosl_is_az_boss_transition_target):
+            raise ValueError('outer return requires AR actions and no legacy HP objective')
         if combat_action_contract not in ('legacy', 'native-v1', *C.NEURAL_CONTRACTS):
             raise ValueError('combat_action_contract must be legacy, native-v1 or joint-v2')
         self.combat_action_contract = combat_action_contract
@@ -415,6 +419,9 @@ class SlayTheSpireEnv(gym.Env):
             interactive_reasoning=interactive_reasoning,
         )
         self.action_space = spaces.Discrete(self._neural_size)
+        if self.outer_return_context:
+            self.observation_space.spaces['outer_deck_misc'] = spaces.Box(
+                low=0, high=np.inf, shape=(encode.DECK_SLOTS,), dtype=np.float32)
         if self._joint_actions:
             self.observation_space.spaces['combat_legal'] = spaces.Box(
                 low=0, high=1, shape=(self._neural_width,), dtype=bool)
@@ -565,10 +572,18 @@ class SlayTheSpireEnv(gym.Env):
 
     def fork_combat(self):
         """Return an isolated thin-env branch for combat-only lookahead."""
+        return self._fork(complete=False)
+
+    def fork_run(self, *, worldline=None):
+        return self._fork(complete=True, worldline=worldline)
+
+    def _fork(self, *, complete, worldline=None):
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("combat search requires a live combat state")
         branch = copy.copy(self)
-        branch.thick = self.thick.fork_combat()
+        branch.thick = (self.thick.fork_run(worldline=worldline) if complete
+                        else self.thick.fork_combat())
+        branch._nosl_outer_branch = None
         branch._pending = self._pending
         branch._multi = set(self._multi) if self._multi is not None else None
         branch._nosl_is_az_session = None
@@ -588,6 +603,16 @@ class SlayTheSpireEnv(gym.Env):
         )
         branch._invalidate_backend_cache()
         return branch
+
+    def settle_search_combat_exit(self, battle):
+        base = getattr(self, '_nosl_outer_branch', None)
+        if base is None:
+            raise RuntimeError('outer-return search has no sampled full-run continuation')
+        branch = base.fork_run()
+        branch.thick, outcome = base.thick.settle_combat_leaf(battle)
+        branch._pending = branch._multi = None
+        branch._invalidate_backend_cache()
+        return outcome, None if outcome.kind == 'terminal' else branch._obs()
 
     def combat_action_advances(self, action_id):
         """Whether a legal thin action completes one simulator decision."""
@@ -1509,7 +1534,12 @@ class SlayTheSpireEnv(gym.Env):
             })
             if global_state is not None:
                 self._nosl_cpp_encoded_global_template = cached
-        return cached[1]
+        result = dict(cached[1])
+        if self.outer_return_context:
+            from .outer_return import CONTEXT_KEYS
+            root_obs = self._obs()
+            result.update({key: root_obs[key] for key in CONTEXT_KEYS})
+        return result
 
     def _native_packed_observation_batch(self, response):
         """Decode the fixed-width native leaf transport into model tensors.
@@ -1920,9 +1950,16 @@ class SlayTheSpireEnv(gym.Env):
         _defer_leaf_selection: bool = False,
         merge_equivalent_actions: bool = True,
         boss_win_weight: float = 0.0,
+        outer_return: bool = False,
     ):
         """Start the batched neural C++ NOSL AlphaZero session."""
         from env.core.boss_value import is_boss_room
+        if outer_return and (not self.outer_return_context or not fixed_worldline or
+                             boss_win_weight or boss_transition_target or model_victory_terminal):
+            raise ValueError('outer return requires public run context, fixed worldline and no HP objective')
+        if outer_return and not _defer_leaf_selection:
+            raise ValueError('outer-return v1 requires the resident native batch transport')
+        self._nosl_outer_branch = self.fork_run(worldline=int(state_nonce) & ((1 << 64) - 1)) if outer_return else None
         if not 0 <= boss_win_weight <= 1:
             raise ValueError("boss_win_weight must be in [0, 1]")
         if boss_win_weight and (not self._autoregressive_actions or boss_transition_target or model_victory_terminal):
@@ -1958,6 +1995,9 @@ class SlayTheSpireEnv(gym.Env):
                 terminal_args = [sum(1 << i for i in (self._multi or ())),
                                  False, bool(merge_equivalent_actions),
                                  float(boss_win_weight) if is_boss_room(self.thick.gc.cur_room) else 0.0]
+            if outer_return:
+                terminal_args = [sum(1 << i for i in (self._multi or ())),
+                                 False, bool(merge_equivalent_actions), 0.0, True]
             self._nosl_cpp_az_session = session_factory(
                 np.asarray(prior_logits, dtype=np.float64),
                 int(simulations), int(depth), float(c_puct),
@@ -1980,6 +2020,8 @@ class SlayTheSpireEnv(gym.Env):
                 *terminal_args,
             )
         except TypeError as error:
+            if outer_return:
+                raise RuntimeError('outer return requires the matching native search build') from error
             if boss_win_weight:
                 raise RuntimeError('boss utility requires the matching native search build') from error
             if not merge_equivalent_actions:
@@ -2543,6 +2585,9 @@ class SlayTheSpireEnv(gym.Env):
 
         if self._joint_actions:
             obs['combat_legal'] = self.action_masks()[self._policy_offset:]
+        if self.outer_return_context:
+            from .outer_return import permanent_misc
+            obs['outer_deck_misc'] = permanent_misc(self.thick.gc, self.thick.bc)
         return obs
 
     def equivalent_action_groups(self):

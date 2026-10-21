@@ -3,6 +3,25 @@ from dataclasses import dataclass
 import math
 
 OBJECTIVE = 'combat-outer-return-frozen-upper-v1'
+CONTEXT_SCHEMA = 'combat-public-run-context-v1'
+CONTEXT_KEYS = frozenset(('act', 'floor', 'next_boss', 'run_hp', 'deck_ids',
+                          'deck_upgrades', 'outer_deck_misc', 'character', 'ascension', 'run_keys'))
+MISC_SCALE = 100.0
+
+
+def permanent_misc(gc, battle=None):
+    """Public permanent card growth, in the physical master-deck slots."""
+    import numpy as np
+    from .encode import DECK_SLOTS
+    result = np.zeros(DECK_SLOTS, dtype=np.float32)
+    deck = gc.deck_state()
+    for i, card in enumerate(deck):
+        result[i] = card['misc'] / MISC_SCALE
+    if battle is not None:
+        for index, value in battle.permanent_card_misc().items():
+            if 0 <= index < len(deck):
+                result[index] = value / MISC_SCALE
+    return result
 
 
 def strategic_reward(before_act, before_floor, stats, *, done, censored):
