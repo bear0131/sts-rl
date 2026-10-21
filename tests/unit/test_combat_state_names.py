@@ -46,6 +46,7 @@ def test_enum_tail_keeps_mutable_and_unhashable_fallback():
 def test_native_enum_cache_keeps_types_names_and_live_upgrades():
     import slaythespire as sts
     schema._fixed_enum_tail.cache_clear()
+    schema._native_enum_tail_value.cache_clear()
     for kind in (sts.CardId, sts.MonsterEncounter, sts.CharacterClass, sts.Room):
         for name, value in kind.__members__.items():
             expected = str(value).split('.')[-1]
@@ -58,6 +59,8 @@ def test_native_enum_cache_keeps_types_names_and_live_upgrades():
     reward.upgrade_count = 3
     assert schema._card_reward_entry(reward) == ('Strike_R', 3)
     assert schema._fixed_enum_tail.cache_info().currsize <= 512
+    assert schema._native_enum_tail_value.cache_info().hits > 0
+    assert schema._native_enum_tail_value.cache_info().currsize <= 2048
 
 
 @pytest.mark.native
@@ -68,6 +71,7 @@ def test_borrowed_native_enum_mutation_with_cache_eviction():
     from env.core.spiremap import _room_name
 
     schema._fixed_enum_tail.cache_clear()
+    schema._native_enum_tail_value.cache_clear()
     rng = random.Random(678)
     contexts = [sts.GameContext(sts.CharacterClass.IRONCLAD, i, 0) for i in range(384)]
     rooms = list(sts.Room.__members__.values())

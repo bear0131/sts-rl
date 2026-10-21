@@ -1316,13 +1316,24 @@ def _fixed_enum_tail(v):
     return str(v).split(".")[-1]
 
 
+@lru_cache(maxsize=2048)
+def _native_enum_tail_value(enum_type, value):
+    # Only the immutable class and an owned integer enter the cache. A native
+    # field proxy can change its numeric value after the game advances.
+    return str(enum_type(value)).split(".")[-1]
+
+
 def _enum_tail(v):
     """'MonsterEncounter.HEXAGHOST' / 'CharacterClass.IRONCLAD' -> bare tail."""
     # Native enum properties can reference mutable C++ fields. Their hash
     # changes in place: retaining them as LRU keys can corrupt eviction,
-    # return unrelated names, and crash CPython. Only cache owned strings.
+    # return unrelated names, and crash CPython. Cache owned strings or a
+    # type-qualified integer value, never the borrowed field proxy itself.
     if type(v) is str:
         return _fixed_enum_tail(v)
+    kind = type(v)
+    if kind.__module__ == 'slaythespire' and getattr(kind, '__int__', None) is not None:
+        return _native_enum_tail_value(kind, int(v))
     return str(v).split(".")[-1]
 
 
