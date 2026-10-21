@@ -611,10 +611,13 @@ class SlayTheSpireEnv(gym.Env):
         base = getattr(self, '_nosl_outer_branch', None)
         if base is None:
             raise RuntimeError('outer-return search has no sampled full-run continuation')
-        # The sampled continuation owns the complete simulator state. Settlement
-        # already makes its independent copy; do not clone it again or copy the
-        # live episode's recovery journal for a view used only to encode an obs.
-        thick, outcome = base.settle_combat_leaf(battle)
+        # This transient view only settles and encodes; it never resets or
+        # escapes to a caller. Clone the mutable GC and terminal BC, leaving
+        # reset RNG/read-only map alone. _rebuild_map replaces, not mutates, it.
+        # The public fork/settlement APIs still own independent reset state.
+        thick = copy.copy(base)
+        thick.gc = base.gc.clone()
+        outcome = thick._settle_combat_leaf(battle)
         if outcome.kind == 'terminal':
             return outcome, None
         branch = copy.copy(self)
@@ -1984,7 +1987,6 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('outer return requires public run context, fixed worldline and no HP objective')
         if outer_return and not _defer_leaf_selection:
             raise ValueError('outer-return v1 requires the resident native batch transport')
-        self._nosl_outer_branch = self.thick.fork_run(worldline=int(state_nonce) & ((1 << 64) - 1)) if outer_return else None
         if not 0 <= boss_win_weight <= 1:
             raise ValueError("boss_win_weight must be in [0, 1]")
         if boss_win_weight and (not self._autoregressive_actions or boss_transition_target or model_victory_terminal):
@@ -1993,6 +1995,14 @@ class SlayTheSpireEnv(gym.Env):
         self._nosl_merge_equivalent_actions = bool(merge_equivalent_actions)
         if self.thick is None or self._phase() != "combat":
             raise RuntimeError("native NOSL search requires a live combat state")
+        self._nosl_outer_branch = None
+        if outer_return:
+            # Retained only until this search completes. Settlement clones the
+            # GC again before mutation and owns its terminal BC; no reset or
+            # mutation of this view's shared BC/map/RNG is permitted.
+            self._nosl_outer_branch = copy.copy(self.thick)
+            self._nosl_outer_branch.gc = self.thick.gc.fork_combat_for_search(
+                int(state_nonce) & ((1 << 64) - 1))
         session_factory = getattr(self.thick.bc, "nosl_neural_search_begin", None)
         if session_factory is None:
             raise RuntimeError("simulator build lacks neural NOSL search")
@@ -2146,7 +2156,8 @@ class SlayTheSpireEnv(gym.Env):
         # Relics/deck/map metadata is invariant across hypothetical combat
         # branches.  Compute it once per root; only branch HP/potions are
         # overlaid in _native_leaf_observation().
-        self._nosl_cpp_global_template = normalize_sim_global(self.thick.gc, combat=True)
+        self._nosl_cpp_global_template = normalize_sim_global(
+            self.thick.gc, combat=True, for_encoding=True)
         self._nosl_cpp_encoded_global_template = None
         begin_seconds = time.perf_counter() - begin_started
         if _defer_leaf_selection:
@@ -2582,7 +2593,7 @@ class SlayTheSpireEnv(gym.Env):
         Reconciles the MULTI accumulator FIRST so obs and the action mask never
         disagree within one step (e.g. the frame that just LANDED on the screen)."""
         self._multi_desc()
-        canon = self.thick.obs_canonical()
+        canon = getattr(self.thick, 'encoding_canonical', self.thick.obs_canonical)()
         canon["arg_step"] = self._arg_step()
         canon["pending_card_slot"] = (
             int(self._pending[1]) + 1

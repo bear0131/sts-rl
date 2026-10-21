@@ -58,6 +58,38 @@ def _enter_combat(env):
     raise AssertionError('no combat within fixture budget')
 
 
+def test_tensor_encoding_omits_only_unused_snapshot_inventory(outer_return_core, monkeypatch):
+    _, _, env = outer_return_core
+    seen = set()
+    for _ in range(192):
+        full = env.thick.obs_canonical()
+        assert 'deck_state' in full['global']
+        if full['phase'] != 'combat':
+            assert {'deck', 'relics', 'keys'} <= full.keys()
+        compact = env.thick.encoding_canonical()
+        assert 'deck_state' not in compact['global']
+        actual = env._obs()
+        with monkeypatch.context() as patch:
+            patch.setattr(env.thick, 'encoding_canonical', env.thick.obs_canonical)
+            expected = env._obs()
+        assert actual.keys() == expected.keys()
+        for key in actual:
+            assert actual[key].dtype == expected[key].dtype
+            assert actual[key].tobytes() == expected[key].tobytes(), key
+        seen.add(full['phase'])
+        legal = np.flatnonzero(env.action_masks())
+        if env.thick.bc is not None:
+            env.thick.bc.set_player_strength(999)
+            plays = [a for a in legal if C.AUTOREGRESSIVE_PLAY <= a < C.AUTOREGRESSIVE_POTION]
+            action = plays[0] if plays else legal[0]
+        else:
+            action = legal[0]
+        _, _, done, truncated, _ = env.step(int(action))
+        if done or truncated:
+            break
+    assert {'event', 'map', 'combat', 'combat_reward'} <= seen
+
+
 def test_grid_leaf_choices_override_root_context_and_reach_lower(outer_return_core):
     import slaythespire as sts
     core, _, env = outer_return_core
@@ -237,6 +269,9 @@ def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_r
     history = copy.deepcopy(env._episode_action_journal)
     live = env.thick.bc.to_dict()
     base = env.thick.fork_run(worldline=42101)
+    reset_rng = copy.deepcopy(base._np_random.bit_generator.state)
+    map_before = base.rmap
+    gc_before = base.obs_canonical()
     leaf = env.thick.bc.clone()
     if ending == 'win':
         leaf.set_player_strength(999)
@@ -269,6 +304,9 @@ def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_r
                 np.testing.assert_array_equal(observation[key], expected[key], err_msg=key)
         assert env._episode_action_journal == history
         assert env.thick.bc.to_dict() == live
+        assert base._np_random.bit_generator.state == reset_rng
+        assert base.rmap is map_before
+        assert base.obs_canonical() == gc_before
     assert base.bc.to_dict() == live
     core.teacher.assert_integrity()
 

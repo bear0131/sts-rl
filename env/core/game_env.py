@@ -172,18 +172,22 @@ class SimGameEnv:
 
     def settle_combat_leaf(self, battle):
         """Settle a supplied terminal BC on a fresh complete continuation copy."""
+        branch = self.fork_run()
+        return branch, branch._settle_combat_leaf(battle)
+
+    def _settle_combat_leaf(self, battle):
+        """Settle on an owned GameContext; never consumes reset RNG or map data."""
         from .outer_return import CombatExit, strategic_reward
         if not battle.is_battle_over:
             raise ValueError('combat exit requires a terminal battle')
-        branch = self.fork_run()
-        before_act, before_floor = branch.gc.act, branch.gc.floor_num
-        branch.bc = battle.clone()
-        branch._settle()
-        reward = strategic_reward(before_act, before_floor, branch.run_stats(),
-                                  done=branch.is_over, censored=False)
-        kind = ('terminal' if branch.is_over else
-                'combat' if branch.bc is not None else 'upper')
-        return branch, CombatExit(reward, kind)
+        before_act, before_floor = self.gc.act, self.gc.floor_num
+        self.bc = battle.clone()
+        self._settle()
+        reward = strategic_reward(before_act, before_floor, self.run_stats(),
+                                  done=self.is_over, censored=False)
+        kind = ('terminal' if self.is_over else
+                'combat' if self.bc is not None else 'upper')
+        return CombatExit(reward, kind)
 
     def _rebuild_map(self):
         self.rmap = spiremap.RunMap(self.gc.seed, self._ascension, self.gc.act,
@@ -197,7 +201,7 @@ class SimGameEnv:
             return "combat"
         return sim_phase(self.gc)
 
-    def _canonical(self):
+    def _canonical(self, *, for_encoding=False):
         """Backend-agnostic state dict. In combat: the combat canonical (+phase).
         Out of combat: the overworld canonical, with map options filled in from
         the rebuilt SpireMap (the schema can't do that without depending on env)."""
@@ -211,7 +215,7 @@ class SimGameEnv:
             if self.bc.input_state == _CARD_SELECT_INPUT:
                 d["options"] = {"select": combat_select_options(self.bc.select_info())}
             return d
-        d = normalize_sim_overworld(self.gc)
+        d = normalize_sim_overworld(self.gc, for_encoding=for_encoding)
         if d["phase"] == "event" and self.gc.cur_event_name == "NEOW":
             # Keep each generated reward visible to human-facing tools.  These
             # are the actual options stored by the sim, including their costs;
@@ -257,8 +261,16 @@ class SimGameEnv:
         """The assembled OBS canonical: the combat-or-overworld block from
         _canonical(), plus the run-global block (present every phase, §3/§4).
         This is what encode.encode() consumes."""
-        d = self._canonical()
-        d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None)
+        return self._observation_canonical(for_encoding=False)
+
+    def encoding_canonical(self):
+        """Same tensor inputs, without unused differential-snapshot inventory."""
+        return self._observation_canonical(for_encoding=True)
+
+    def _observation_canonical(self, *, for_encoding):
+        d = self._canonical(for_encoding=for_encoding)
+        d["global"] = normalize_sim_global(self.gc, combat=self.bc is not None,
+                                           for_encoding=for_encoding)
         if self.bc is not None:
             d["global"]["potions"] = [
                 canonical_sim_potion(potion) for potion in self.bc.potions
@@ -268,7 +280,7 @@ class SimGameEnv:
     def obs(self):
         """The structured Dict observation (encode v2) for the current state."""
         return encode.encode(
-            self.obs_canonical(), global_map_view=self._global_map_view
+            self.encoding_canonical(), global_map_view=self._global_map_view
         )
 
     @staticmethod

@@ -1285,22 +1285,24 @@ def _card_reward_entry(card):
     return (_sim_card_id(enum_name), card.upgrade_count)
 
 
-def normalize_sim_overworld(gc):
+def normalize_sim_overworld(gc, *, for_encoding=False):
     phase = sim_phase(gc)
-    return {
+    result = {
         "floor": gc.floor_num,
         "hp": gc.cur_hp,
         "max_hp": gc.max_hp,
         "gold": gc.gold,
-        "deck": sorted((_sim_card_id(n), u) for n, u in gc.deck_ids()),
-        "relics": sorted(gc.relic_ids()),
-        "keys": {
-            semantic: bool(getattr(gc, fields["sim"]))
-            for semantic, fields in RUN_KEY_FIELDS.items()
-        },
         "phase": phase,
         "options": _sim_screen_options(gc, phase),
     }
+    if not for_encoding:
+        # Differential snapshots retain sorted inventory. Tensor encoding
+        # consumes the slot-preserving global block instead.
+        result.update(deck=sorted((_sim_card_id(n), u) for n, u in gc.deck_ids()),
+                      relics=sorted(gc.relic_ids()),
+                      keys={semantic: bool(getattr(gc, fields['sim']))
+                            for semantic, fields in RUN_KEY_FIELDS.items()})
+    return result
 
 
 # ----------------------------- obs global block -----------------------------
@@ -1347,7 +1349,7 @@ def canonical_sim_potion(value):
     return name
 
 
-def normalize_sim_global(gc, *, combat=None):
+def normalize_sim_global(gc, *, combat=None, for_encoding=False):
     """Run-global obs block (obs_design.md §3/§4). Backend-agnostic shape; the
     sim fills it from gc. `boss_relics` is only meaningful on a boss-relic
     screen (empty/duplicate otherwise) — callers gate on phase."""
@@ -1375,7 +1377,7 @@ def normalize_sim_global(gc, *, combat=None):
             for item in relic_state
         ]
     potions = [canonical_sim_potion(potion) for potion in gc.overworld_potions]
-    return {
+    result = {
         # True only for the search-only state immediately after the final
         # enemy action of End Turn, before next-turn setup/draw.
         # The boundary marker is a combat-search-only feature.  The run-global
@@ -1400,9 +1402,11 @@ def normalize_sim_global(gc, *, combat=None):
         },
         "gold": gc.gold,
         "deck": [(_sim_card_id(n), u) for n, u in gc.deck_ids()],
-        "deck_state": [dict(row, id=_sim_card_id(row['id'])) for row in gc.deck_state()],
         "boss_relics": boss_relics,
     }
+    if not for_encoding:
+        result['deck_state'] = [dict(row, id=_sim_card_id(row['id'])) for row in gc.deck_state()]
+    return result
 
 
 def diff_overworld(real, sim):
