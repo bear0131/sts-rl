@@ -174,6 +174,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument('--continuous-test', action='store_true',
                         help='Explicit authorization for automated main-menu starts; also requires --auto-start.')
+    parser.add_argument('--demo-controls', action='store_true',
+                        help='Require explicit game UI AUTO/start requests; never take over on launch.')
+    parser.add_argument('--demo-output-dir', default=None,
+                        help='Directory for interactive-demo requests, natural terminals and save backups.')
+    parser.add_argument('--demo-save-dir', default=None,
+                        help='Actual game saves directory, backed up before a UI-requested new demo.')
     parser.add_argument('--reward-policy-contract', choices=_model.REWARD_POLICY_CONTRACTS,
                         default='native',
                         help='Explicit checkpoint-v7-act3 preserves old key-free reward decisions; world state stays complete.')
@@ -942,13 +948,13 @@ class UiPauseClock:
         self.paused = False
         self.excluded = 0.0
 
-    def update(self, frame, now):
+    def update(self, frame, now, *, paused_by_user=False):
         gs = frame.get('game_state') or {}
         # Pile viewers can also hold a dying room or pending command open.
         # Match the actual raw screen enum, never a broad is_screen_up test:
         # real choice screens must keep their normal acknowledgement deadlines.
-        paused = (gs.get('is_screen_up') is True
-                  and gs.get('screen_name') in READ_ONLY_INSPECTION_SCREEN_SOURCES)
+        paused = (paused_by_user or (gs.get('is_screen_up') is True
+                  and gs.get('screen_name') in READ_ONLY_INSPECTION_SCREEN_SOURCES))
         if self.last is not None and self.paused:
             self.excluded += now - self.last
         self.last, self.paused = now, paused
@@ -994,7 +1000,7 @@ def restore_attached_search_index(args, search, gs) -> None:
 
 
 def rebuild_save_attachment(agent, model, args):
-    """Discard all prior battle/multi-selection state when reloading a fixed save."""
+    """Discard prior state on explicit save attachment or a new manual AUTO takeover."""
     from bridge.search_bridge import RealCombatSearch
     old_search = agent.combat_search
     if old_search is not None:
@@ -1012,6 +1018,13 @@ def rebuild_save_attachment(agent, model, args):
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.demo_controls and (
+            not args.demo_output_dir or not args.demo_save_dir
+            or args.start_seed or args.start_seeds or args.attach_existing_seed is not None
+            or args.character != 'IRONCLAD' or args.ascension != 0
+            or args.reward_policy_contract != 'checkpoint-v7-act3' or not args.combat_search):
+        raise SystemExit('--demo-controls requires explicit output/save directories, Ironclad A0 '
+                         'combat search/checkpoint-v7-act3, and no automatic campaign/save attachment')
     if args.attach_search_index is not None and (
             args.attach_search_index < 0 or args.attach_existing_seed is None
             or args.attach_existing_floor is None or not args.combat_search):
@@ -1059,6 +1072,10 @@ def main() -> None:
         combat_search=combat_search,
         reward_policy_contract=args.reward_policy_contract,
     )
+    demo = None
+    if args.demo_controls:
+        from bridge.client.interactive_demo import InteractiveDemo
+        demo = InteractiveDemo(args)
 
     try:
         send("ready")
@@ -1100,6 +1117,30 @@ def main() -> None:
                         send("STATE")
                         continue
                     raise RuntimeError(f"CommunicationMod rejected command: {frame['error']}")
+                if demo is not None:
+                    controls = demo.controls(frame)
+                    excluded_before = pause_clock.excluded
+                    now, paused = pause_clock.update(
+                        frame, time.monotonic(), paused_by_user=not controls['enabled'])
+                    adapter.exclude_wait_time(pause_clock.excluded - excluded_before)
+                    command = demo.gate(frame, controls)
+                    if demo.reset_requested:
+                        # A deliberate takeover may follow human actions; never reuse
+                        # an old prepared action, root, selection prefix or receipt.
+                        adapter, combat_search = rebuild_save_attachment(agent, model, args)
+                        pending_play_frame = pending_end_frame = unsent_search = None
+                        pending_play_since = pending_end_since = 0.0
+                        combat_stability = CombatFrameStability()
+                        smoke_ack, reward_ack = SmokeCommandAck(), RewardCommandAck()
+                        event_ack, map_ack = EventEffectAck(), MapCommandAck()
+                        pause_clock = UiPauseClock()
+                        log.info('explicit UI demo request=%s expected_seed=%s output=%s',
+                                 demo.request, demo.expected_seed, demo.output)
+                    if command is not None:
+                        if command == 'STATE':
+                            time.sleep(.1)
+                        send(command)
+                        continue
                 if frame.get('in_game') is False and args.attach_existing_seed is not None:
                     if attached_live:
                         # Menu round-trip is a save-load boundary, not an overlay.
@@ -1141,9 +1182,10 @@ def main() -> None:
                         attach_pending = False
                         attached_live = True
                         log.info('attached existing save seed=%s floor=%s; diagnostic SL resume', gs.get('seed'), gs.get('floor'))
-                excluded_before = pause_clock.excluded
-                now, paused = pause_clock.update(frame, time.monotonic())
-                adapter.exclude_wait_time(pause_clock.excluded - excluded_before)
+                if demo is None:
+                    excluded_before = pause_clock.excluded
+                    now, paused = pause_clock.update(frame, time.monotonic())
+                    adapter.exclude_wait_time(pause_clock.excluded - excluded_before)
                 if paused:
                     time.sleep(0.1)
                     send('STATE')
@@ -1219,7 +1261,10 @@ def main() -> None:
                 if combat_search is not None:
                     combat_search.note_error()
                 log.error("failed to handle frame:\n%s\n%s", line, traceback.format_exc())
-                send("STATE")
+                if demo is not None and not demo.faulted:
+                    send(demo.fail('bridge-error-see-agent-log'))
+                else:
+                    send("STATE")
     except Exception:
         # Iterator/wrapper failures occur before the per-frame try block. They
         # must reach the supervisor as errors, not look like a clean stdin EOF.

@@ -6,6 +6,11 @@ Runtime does not parse simulator headers.
 
 SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v41"
 
+# UI transport only; never a model action/feature or a missing-state substitute.
+DEMO_CONTROL_VERSION = 1
+DEMO_ACTIONS = frozenset({"NONE", "START", "ATTACH"})
+DEMO_STATUSES = frozenset({"READY", "RUNNING", "PAUSED", "STOPPED", "FINISHED", "ERROR"})
+
 # Raw AbstractDungeon.CurrentScreen names, not CommunicationMod ChoiceType.
 # These screens inspect state only; real MAP/GRID/HAND_SELECT/CARD_REWARD
 # choices must never enter this membership or their deadlines would disappear.

@@ -1,5 +1,30 @@
 # CommunicationMod Agent
 
+### 游戏内手动演示（Windows 本机部署）
+
+主菜单右侧显示“随机种子演示”；局内右上方显示 **AUTO：关 / 点击接管**。
+打开游戏、手动点 Continue 或进入一场战斗都不会自动接管。点击 AUTO 才从当前真实画面
+尝试建立严格模型状态，再次点击关闭。关闭后可能仍有一个已发出的动作正在结算；手动
+操作后再开 AUTO 会丢弃旧推测根/未发命令并重新接入，不复用过时动作或候选。
+不支持/信息不完整的当前状态会明确停止并显示错误，详情在 agent 日志；没有 PAD 或直接策略降级。
+这不保证任意历史中途档的隐藏 RNG 与从开局连续运行相同，不算固定版本胜率样本，也不是 SL 修复。
+
+`experiments/launchers/train47-demo.properties` 是当前本机最终 TRAIN47 的部署配置，
+使用 `--demo-controls`，与配套带 `InteractiveDemoControls` 的 Java jar 一起部署。
+菜单新开仍需两个明确授权参数 `--continuous-test --auto-start`，但这两个参数在 demo 模式
+**不会自行开局**：还必须有游戏内按钮的单次新请求。没有请求只发 STATE。
+每局新开前在 `--demo-output-dir` 的独立子目录保存所有原始 autosave/bak 与 SHA256，
+终局原始帧也写在该目录。最终/报错/返回菜单/3600 秒预算结束后停止，不自动再开。
+现有 campaign 和手动续档 CLI 在不传 `--demo-controls` 时行为不变。
+
+UI 控制合同 `demo_controls.version=1` 独立于观测和动作 codec：
+完整字段 `version/request_id/action/seed/enabled`，动作 `NONE/START/ATTACH`；
+单调请求号去重，开关关闭只刷新状态。`DEMO READY/RUNNING/PAUSED/STOPPED/FINISHED/ERROR`
+只是界面回执，由 Java 在原 gameplay dispatcher 前单独拦截，不是模型动作，不进入合法动作表、
+模型张量、RNG 或搜索预算。模型成功加载并完成搜索初始化后才发 READY，进程退出显示错误。
+导出器的非目标方法字节码保护包含新增的三个 UI 钩子；不要把旧诊断 supervisor 的 original.zip
+整体恢复到本次永久修复的生产 jar/config 上，避免重新启用已废弃入口。
+
 With `--combat-search`, `--gumbel-scale 0` disables search Gumbel noise.
 Omitting it preserves the checkpoint's setting. Upper decisions remain
 deterministic unless `--stochastic` is explicitly requested.

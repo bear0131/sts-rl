@@ -31,6 +31,7 @@ public final class ExposeCurrentIntent {
         for (int i : new int[]{0, 2, 3, 4}) pool.appendClassPath(args[i]);
         CtClass converter = pool.get("communicationmod.GameStateConverter");
         CtClass communication = pool.get("communicationmod.CommunicationMod");
+        CtClass executor = pool.get("communicationmod.CommandExecutor");
         CtMethod stateWriter = converter.getDeclaredMethod("getCommunicationState");
         CtMethod errorWriter = communication.getDeclaredMethod("receivePreUpdate");
         CtMethod gameMethod = converter.getDeclaredMethod("getGameState");
@@ -41,11 +42,15 @@ public final class ExposeCurrentIntent {
         CtMethod cardRewardMethod = converter.getDeclaredMethod("getCardRewardState");
         CtMethod shopMethod = converter.getDeclaredMethod("getShopScreenState");
         CtMethod cardMethod = converter.getDeclaredMethod("convertCardToJson");
+        CtMethod uiInit = communication.getDeclaredMethod("receivePostInitialize");
+        CtMethod uiConnection = communication.getDeclaredMethod("receivePostUpdate");
+        CtMethod uiCommand = executor.getDeclaredMethod("executeCommand");
         Set<CtMethod> changedMethods = new HashSet<CtMethod>(Arrays.asList(
             gameMethod, monsterMethod, combatMethod, gridMethod, handMethod,
-            cardRewardMethod, shopMethod, cardMethod, stateWriter, errorWriter));
+            cardRewardMethod, shopMethod, cardMethod, stateWriter, errorWriter,
+            uiInit, uiConnection, uiCommand));
         Map<String, byte[]> unchanged = new HashMap<>();
-        for (CtClass owner : new CtClass[]{converter, communication}) {
+        for (CtClass owner : new CtClass[]{converter, communication, executor}) {
             for (CtMethod candidate : owner.getDeclaredMethods()) {
                 if (!changedMethods.contains(candidate)) unchanged.put(candidate.getLongName(),
                     candidate.getMethodInfo().getCodeAttribute().getCode().clone());
@@ -56,6 +61,19 @@ public final class ExposeCurrentIntent {
         // distinction between an observed empty slot and a missing export.
         preserveJsonNulls(stateWriter);
         preserveJsonNulls(errorWriter);
+        final int[] uiWriters = {0};
+        stateWriter.instrument(new ExprEditor() {
+            public void edit(MethodCall call) throws CannotCompileException {
+                if (call.getClassName().equals("com.autoplay.gson.Gson") && call.getMethodName().equals("toJson")) {
+                    uiWriters[0]++;
+                    call.replace("{ communicationmod.InteractiveDemoControls.augment((java.util.Map)$1); $_ = $proceed($$); }");
+                }
+            }
+        });
+        if (uiWriters[0] != 1) throw new IllegalStateException("Unexpected demo frame writer count");
+        uiInit.insertAfter("{ communicationmod.InteractiveDemoControls.install(); }");
+        uiConnection.insertBefore("{ communicationmod.InteractiveDemoControls.connection(listener != null && listener.isAlive()); }");
+        uiCommand.insertBefore("{ if (communicationmod.InteractiveDemoControls.acceptStatus($1)) return false; }");
         final int[] replacements = {0};
         monsterMethod.instrument(new ExprEditor() {
             public void edit(MethodCall call) throws CannotCompileException {
@@ -91,7 +109,8 @@ public final class ExposeCurrentIntent {
         Map<String, byte[]> patched = new LinkedHashMap<String, byte[]>();
         patched.put("communicationmod/GameStateConverter.class", converter.toBytecode());
         patched.put("communicationmod/CommunicationMod.class", communication.toBytecode());
-        for (CtClass owner : new CtClass[]{converter, communication}) {
+        patched.put("communicationmod/CommandExecutor.class", executor.toBytecode());
+        for (CtClass owner : new CtClass[]{converter, communication, executor}) {
             for (CtMethod candidate : owner.getDeclaredMethods()) {
                 if (!changedMethods.contains(candidate) && !Arrays.equals(
                         unchanged.get(candidate.getLongName()),
@@ -100,6 +119,7 @@ public final class ExposeCurrentIntent {
             }
         }
         String[] helperTargets = new String[] {
+            "communicationmod/InteractiveDemoControls.class",
             "communicationmod/SimulatorParityExporter.class",
             "communicationmod/SimulatorParityExporter$DamagePatch.class",
             "communicationmod/SimulatorParityExporter$PreBattlePatch.class",
@@ -150,6 +170,6 @@ public final class ExposeCurrentIntent {
         }
         if (!changed.equals(patched.keySet())) throw new IllegalStateException("Target entries=" + changed);
         System.out.println(
-            "Patched eight serializers and two null-preserving JSON writers; read-only state hooks, no gameplay or RNG modified");
+            "Patched eight serializers, two JSON writers and explicit demo UI hooks; no policy/gameplay/RNG fallback");
     }
 }

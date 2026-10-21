@@ -10,12 +10,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+
 from env.core import vocab as V
 from env.core.cards_vocab import CARD_VOCAB, EMPTY
 from env.core.ironclad_cards import IRONCLAD_CARDS
 
 from . import combat_state as CS
 from .entity_ids import (
+    DEMO_ACTIONS, DEMO_CONTROL_VERSION, DEMO_STATUSES,
     BOSS_ALIASES,
     BOSS_CANONICAL_IDS,
     REAL_ACT_BOSS_KEYS,
@@ -671,6 +673,15 @@ def complete_word_tables():
         "native_card_snapshot_fields": NATIVE_CARD_SNAPSHOT_FIELDS,
         "native_master_deck_snapshot_fields": {'id': 'native CardId spelling', 'upgrades': 'explicit count', 'misc': 'explicit current native value', 'bottle': 'NONE/ATTACK/SKILL/POWER; physical slot kept'},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "interactive_demo_controls": {
+            "version": DEMO_CONTROL_VERSION,
+            "fields": ["version", "request_id", "action", "seed", "enabled"],
+            "actions": sorted(DEMO_ACTIONS),
+            "ui_receipts": sorted(DEMO_STATUSES),
+            "source": "Actual game UI button; monotonically increasing explicit request, never launch/Continue alone",
+            "consumer": "Opt-in CLI demo gate before policy/ACK dispatch; disabled refreshes STATE only, takeover reconstructs strict real root",
+            "boundary": "Dedicated DEMO UI receipts intercepted before gameplay dispatch, never model actions/observations or RNG; Ironclad A0 Acts1-3; unsupported state fails visibly; no automatic next run",
+        },
         "read_only_ui_pauses": {
             "raw_screen_sources": READ_ONLY_INSPECTION_SCREEN_SOURCES,
             "predicate": "Actual game_state.is_screen_up=true and exact raw game_state.screen_name membership; not screen_type/ChoiceType or missing-field inference",
