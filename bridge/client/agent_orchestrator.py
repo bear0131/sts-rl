@@ -30,7 +30,10 @@ import numpy as np
 from bridge.real_game_env import RealDecision, RealGameAdapter, validate_transport_frame
 from bridge.campaign import SeedCampaign
 from bridge.event_contract import EventEffectAck, FixedMatchTransport
-from bridge.schemas.entity_ids import CHEST_REWARD_SCREEN_CONTRACTS, REWARD_ROOM_EXIT_CONTRACTS
+from bridge.schemas.entity_ids import (
+    CHEST_REWARD_SCREEN_CONTRACTS, REWARD_ROOM_EXIT_CONTRACTS,
+    READ_ONLY_INSPECTION_SCREEN_SOURCES,
+)
 from env.core import action_space as A
 from env.core import game_actions as ga
 
@@ -941,10 +944,11 @@ class UiPauseClock:
 
     def update(self, frame, now):
         gs = frame.get('game_state') or {}
-        # A master-deck inspection can hold a dying room open, just as settings
-        # can suspend a pending command. Never pause real choice screens here.
+        # Pile viewers can also hold a dying room or pending command open.
+        # Match the actual raw screen enum, never a broad is_screen_up test:
+        # real choice screens must keep their normal acknowledgement deadlines.
         paused = (gs.get('is_screen_up') is True
-                  and gs.get('screen_name') in {'SETTINGS', 'MASTER_DECK_VIEW'})
+                  and gs.get('screen_name') in READ_ONLY_INSPECTION_SCREEN_SOURCES)
         if self.last is not None and self.paused:
             self.excluded += now - self.last
         self.last, self.paused = now, paused

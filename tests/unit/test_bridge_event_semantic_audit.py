@@ -537,11 +537,14 @@ def test_deferred_reward_preserves_claim_for_ack():
     assert d.semantic == ga.claim('gold', 0)
 
 
-def test_settings_pause_excludes_only_explicit_menu_duration():
+@pytest.mark.parametrize('screen', [
+    'SETTINGS', 'MASTER_DECK_VIEW', 'GAME_DECK_VIEW', 'DISCARD_VIEW', 'EXHAUST_VIEW',
+])
+def test_read_only_inspection_pause_excludes_only_explicit_duration(screen):
     from bridge.client.agent_orchestrator import UiPauseClock
     clock = UiPauseClock()
     active = {'game_state': {'screen_name': 'NONE', 'is_screen_up': False}}
-    menu = {'game_state': {'screen_name': 'SETTINGS', 'is_screen_up': True}}
+    menu = {'game_state': {'screen_name': screen, 'is_screen_up': True}}
     assert clock.update(active, 100) == (100, False)
     assert clock.update(menu, 104) == (104, True)
     assert clock.update(menu, 125) == (104, True)

@@ -6,6 +6,17 @@ Runtime does not parse simulator headers.
 
 SIMULATOR_PARITY_EXPORT_VERSION = "simulator-parity-v41"
 
+# Raw AbstractDungeon.CurrentScreen names, not CommunicationMod ChoiceType.
+# These screens inspect state only; real MAP/GRID/HAND_SELECT/CARD_REWARD
+# choices must never enter this membership or their deadlines would disappear.
+READ_ONLY_INSPECTION_SCREEN_SOURCES = {
+    "SETTINGS": "AbstractDungeon.CurrentScreen.SETTINGS; existing settings pause",
+    "MASTER_DECK_VIEW": "MasterDeckViewScreen.open; existing master-deck inspection",
+    "GAME_DECK_VIEW": "DrawPileViewScreen.open; actual draw-pile viewer enum (not DRAW_PILE_VIEW)",
+    "DISCARD_VIEW": "DiscardPileViewScreen.open; read-only discard-pile viewer",
+    "EXHAUST_VIEW": "ExhaustPileViewScreen.open; read-only exhaust-pile viewer",
+}
+
 # Supported native UseCardAction relic callbacks; order comes from the actual
 # acquisition-ordered global relic list, never from this membership inventory.
 ON_USE_CARD_RELIC_IDS = frozenset({

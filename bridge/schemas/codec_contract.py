@@ -86,6 +86,7 @@ from .entity_ids import (
     REAL_COMMAND_IDS,
     PREDISPATCH_REJECTION_COMMANDS,
     PREDISPATCH_OVERLAY_COMMAND_LISTS,
+    READ_ONLY_INSPECTION_SCREEN_SOURCES,
     REAL_SCREEN_TYPE_IDS,
     REAL_INTENT_COMPONENTS,
     REAL_CHARACTER_IDS,
@@ -670,6 +671,13 @@ def complete_word_tables():
         "native_card_snapshot_fields": NATIVE_CARD_SNAPSHOT_FIELDS,
         "native_master_deck_snapshot_fields": {'id': 'native CardId spelling', 'upgrades': 'explicit count', 'misc': 'explicit current native value', 'bottle': 'NONE/ATTACK/SKILL/POWER; physical slot kept'},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "read_only_ui_pauses": {
+            "raw_screen_sources": READ_ONLY_INSPECTION_SCREEN_SOURCES,
+            "predicate": "Actual game_state.is_screen_up=true and exact raw game_state.screen_name membership; not screen_type/ChoiceType or missing-field inference",
+            "clock": "Keep pending commands and receipts; exclude observed inspection duration from all ACK and settlement clocks, request STATE only, resume the same waits after the viewer closes",
+            "exclusions": "MAP, GRID, HAND_SELECT, CARD_REWARD, events and other real choices keep their deadlines and remain actionable; no blanket overlay pause (BRIDGE171)",
+            "source": "Actual desktop-1.0.jar Draw/Discard/ExhaustPileViewScreen.open sets isScreenUp=true and GAME_DECK_VIEW/DISCARD_VIEW/EXHAUST_VIEW; current Java41 getGameState exports the raw screen_name and is_screen_up",
+        },
         "predispatch_rejection_recovery": {
             "verbs": sorted(PREDISPATCH_REJECTION_COMMANDS),
             "exact_available_lists": [list(commands) for commands in PREDISPATCH_OVERLAY_COMMAND_LISTS],
@@ -734,7 +742,7 @@ def complete_word_tables():
         "monster_lifecycle_fields": MONSTER_LIFECYCLE_FIELDS,
         "combat_settlement_transport": {
             "source": "real COMBAT/NONE with every physical monster is_dying or is_escaping, exactly MonsterGroup.areMonstersBasicallyDead; never HP0 or is_gone (which includes half-dead revivers)",
-            "action": "await_combat_settlement refresh only, same-room pause-adjusted 10-second deadline; shared UiPauseClock excludes exact SETTINGS/MASTER_DECK_VIEW inspection time from all ACKs, not real selection screens. Other actual is_screen_up NONE overlays are not timed settlement frames and still forbid ordinary combat policy. No empty encounter attachment, policy END, synthetic victory, corpse removal or PAD; explicit empty roster is also only a wait (BRIDGE143)",
+            "action": "await_combat_settlement refresh only, same-room pause-adjusted 10-second deadline; shared UiPauseClock excludes exact read_only_ui_pauses raw-screen membership from all ACKs, not real selection screens. Other actual is_screen_up NONE overlays are not timed settlement frames and still forbid ordinary combat policy. No empty encounter attachment, policy END, synthetic victory, corpse removal or PAD; explicit empty roster is also only a wait (BRIDGE143/171)",
             "boundary": "actual HAND_SELECT/GRID/CARD_REWARD remain actionable; actual reward/room/terminal frames end the wait, immutable ready GAME_OVER alone records outcome; model layout/search nonce/budget unchanged",
         },
         "summon_slot_transport": {
@@ -881,6 +889,12 @@ def validate_codec_contract() -> dict[str, int]:
         raise RuntimeError("native leader feature is absent from the frozen monster vocabulary")
     if PREDISPATCH_REJECTION_COMMANDS - REAL_COMMAND_IDS:
         raise RuntimeError("pre-dispatch recovery names unknown command verbs")
+    if (not READ_ONLY_INSPECTION_SCREEN_SOURCES
+            or set(READ_ONLY_INSPECTION_SCREEN_SOURCES) & set(REAL_SCREEN_TYPE_IDS)
+            or any(not isinstance(name, str) or not name.isupper()
+                   or not isinstance(source, str) or not source
+                   for name, source in READ_ONLY_INSPECTION_SCREEN_SOURCES.items())):
+        raise RuntimeError("read-only pause word table is invalid or masks an actionable choice type")
     for commands in PREDISPATCH_OVERLAY_COMMAND_LISTS:
         if (not commands or len(commands) != len(set(commands))
                 or any(command != command.lower() or command.upper() not in REAL_COMMAND_IDS

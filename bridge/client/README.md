@@ -35,6 +35,14 @@ command. Recovery is bounded to three consecutive rejections and cannot apply
 to an unsent prepared command, another verb, an argument error or an unknown
 exception. Such errors remain failures; a normal STATE response alone does not
 reset the rejection budget (BRIDGE170).
+
+The shared raw-screen table also suspends ACK/settlement time while the user
+inspects settings, the master deck, or the draw/discard/exhaust pile. The draw
+viewer is actually `GAME_DECK_VIEW`, not `DRAW_PILE_VIEW`. Both the exact raw
+screen name and `is_screen_up=true` are required. Pending transactions remain
+intact; only STATE is requested until the viewer closes. Real map, event and
+card-selection screens are not blanket-paused (BRIDGE171).
+
 Simulator evaluation can select the same contract through
 `PolicyStrategy(..., reward_policy_contract="checkpoint-v7-act3")`; both paths
 use `rl.policies.model.action_mask_for_policy` without altering the environment.
