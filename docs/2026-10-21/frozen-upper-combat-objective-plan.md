@@ -4,7 +4,7 @@
 
 本计划对应 [TODO 的 COMBAT01](../../TODO.md)。它是设计交接，不表示已经提取 teacher、实现新目标或启动训练。进度只追加 [工作日志](../../worklog/2026-10-21.md#frozen-upper-combat-retraining-plan-intention)，任务状态只维护 TODO。
 
-本计划末尾五项交付的具体设计已写入[COMBAT01 实现设计](frozen-upper-combat-design.md)，区分已定合同、建议默认值和待核验接口。用户补充要求等待模拟器改动完成后一同并入；正式实现 commit 在整合后固定，EVAL31 仅作为 teacher 身份及对照依据。本轮尚未进入实现或训练。
+本计划末尾五项交付的具体设计已写入[COMBAT01 实现设计](frozen-upper-combat-design.md)，区分已定合同、建议默认值和待核验接口。用户已指定采用 `simulator-handoff-20261021-01`：运行时 `528d8aa1428fcd9f176830a581e500cd2e5db2f5`、交接分支tip `b5e92dc963c557dac39068ae8faed133f3fc6192`，详细构建/接口身份及OBS20/ACTION8旧teacher适配见实现设计第1节；EVAL31继续作为teacher身份及历史对照。版本已选定，接入验收与新目标实现尚未完成，未启动训练。
 
 ## 已确定的范围
 
@@ -99,7 +99,7 @@ V_combat(x_t) learns E[Y_t | x_t]
 | `rl/training/trainer.py`、`distributed_sb3.py`、checkpoint/replay | 上层完全冻结、新初始化、恢复/版本拒绝、实际生命周期 |
 | evaluation、Watch、bridge 的对应消费者 | 同一动作/观察/目标身份；新旧模型显式区分 |
 
-以上文件定位来自 EVAL31 冻结 `source/`，不代表当前仓库根目录都有相同实现。根目录还包含二代训练，不能把一代权重装进二代入口。新会话先选择可维护源码分支或完成必要兼容导入；忽略目录只作证据和运行材料，不作为正式修复唯一落点。
+以上历史文件定位来自 EVAL31 冻结 `source/`；正式实施已选用户指定的模拟器交接分支，具体commit/配套构建见实现设计第1节。根目录还包含二代训练，不能把一代权重装进二代入口；先在同源受控checkout完成OBS20/ACTION8兼容接入，再实现新目标。忽略目录只作证据和运行材料，不作为正式修复唯一落点。
 
 旧 `--nosl-is-az-inner-only` 与 `--nosl-is-az-reset-combat` 可作为复用入口的调查起点，但存在这些参数不等于已支持 entity-joint 的独立 teacher、新目标和所有恢复流程。须检查实际消费者后再给出可运行命令。
 

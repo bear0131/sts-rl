@@ -2,7 +2,7 @@
 
 本设计承接[原始计划](frozen-upper-combat-objective-plan.md)，交付其中五项设计结果。任务状态统一见 [TODO COMBAT01](../../TODO.md)，核查过程见[工作日志](../../worklog/2026-10-21.md#combat01-design-intention)。本轮只完成设计与只读加载核查，尚未提取 teacher、实现新目标或训练。
 
-本文使用三种标记：**已定合同**来自用户确定的方向及其必要语义约束；**建议默认**是可审查的首版技术选择，不冒充用户已指定；**待核验接口**必须在实现阶段用实际代码和测试关闭。用户补充“模拟器改动还需要继续等候，会一同并入”：设计继续，正式实现基线等待模拟器交付并整合后固定。
+本文使用三种标记：**已定合同**来自用户确定的方向及其必要语义约束；**建议默认**是可审查的首版技术选择，不冒充用户已指定；**待核验接口**必须在实现阶段用实际代码和测试关闭。用户先要求等待模拟器交付，随后明确指定采用 `simulator-handoff-20261021-01`；现已固定下述正式模拟器基线，进入接入验收准备，不再等待版本选定。
 
 ## 1. Teacher 身份、依赖与正式源码入口
 
@@ -25,9 +25,27 @@
 
 **正式源码落点与整合合同**：后续修改进入受版本控制的一代 canonical 包 `env/core`、`env/search`、`rl/policies`、`rl/algorithms`、`rl/training`、`rl/evaluation` 和 `sim/sts_lightspeed`，复用 `python -m rl.training.trainer` / `python -m rl.training.distributed_sb3` 及 `python -m rl.evaluation.eval`。不使用 `rl.training.sts2`，不把 EVAL31 忽略目录作为唯一实现落点。
 
-核查时根分支为 `codex/sts2-training@931086eaf41c1dac35bc76e3a4c1b342fafad3b5`；一代工作树为 `codex/train32-blue-search-simfix-20261003@8698cc81217d58922644da30a4586e518220a052`。后者相对参考 baseline 的 rl/env/sim 已有 70 文件变化，不能当作 EVAL31 等价版本。**按用户补充，等待模拟器改动完成后一同并入，再固定正式整合 commit、构建 SHA、依赖锁和运行入口；本轮不回退模拟器，也不从旧 baseline 另行启动实现。** 上述固定参考只用于 teacher 身份、提取对照及差异审查。
+**已定模拟器基线**：用户指定的交接包为 `D:/sts-rl/runs/local/clone-resume-worktree/runs/local/simulator-handoff-20261021-01/README.md`。后续实现以交接分支的受版本控制源码为基础，包内 `runtime/` 和 `native/` 供只读身份/接入对照；不从滚动开发分支取未审查的新tip，也不在忽略目录中保存唯一实现。此前 EVAL31 的源码/native 保留为历史teacher参照，不能与新包的Python或native交叉混用。
 
-**待核验接口 S1**：整合后逐项核对旧观察/动作编码、`exitBattle`、结算回调、恢复 journal、搜索随机流。模拟器有意修复的行为差异需记录具体例子与验收，不能要求修复后复现旧错误；teacher 同输入前推仍应一致。所有主比较必须在同一整合后模拟器重跑旧下层基线，EVAL31 的 93% 仅作历史参考。正式 commit 尚待该依赖交付，不虚填完成。
+| 正式基线对象 | 固定身份与接入合同 |
+|---|---|
+| 运行时源码 | `528d8aa1428fcd9f176830a581e500cd2e5db2f5` |
+| 交接分支与固定tip | `codex/simulator-handoff-20261021@b5e92dc963c557dac39068ae8faed133f3fc6192`；origin已核对一致，相对运行时基线仅4个文档/TODO/log文件变化 |
+| 源码归档 | `source.zip` SHA256 `263ad07c9b9375fabf5998fe836f568e4007695be8b215103fbfb36158ebbd22`；runtime含25个非runs根、1991文件 |
+| 原生扩展 | `native/slaythespire.cp311-win_amd64.pyd` SHA256 `94187a4857e72c15ca10a9f838cd36c35cd7bd77f3b6bab7916c2b5d8812cb34`，须与包内3件MinGW DLL配套 |
+| 构建身份 | 源码 `dda9970ed294bea6c6efc50823eef8fb1dc39a4e`；到528d8aa的sim/env/rl.policies/rl.search无差异；GCC14.2.0、CMake3.30.2、Ninja/Release/C++17、rule trace开启 |
+| 状态/动作版本 | OBS20、ACTION8、native compact layout9、combat card snapshot3；TRAIN47 combat仍为198列`autoregressive-v2`，不能因此忽略上层动作变化 |
+| 本机接入 | 新进程从包内runtime或同源受控checkout启动；导入前将`STS_LIGHTSPEED_BUILD_DIR`和`STS_LIGHTSPEED_DLL_DIRS`均指向包内native；不能保留旧进程已导入的模块 |
+| Python与依赖 | 既有`.venv-eval-gpu/Scripts/python.exe`/3.11.15；交接实际记录Torch2.11.0+cu128，锁文件为2.12.0/cu132。Linux/其他Python ABI须同源重建和验收，不复用Windows pyd、不修改共享venv |
+| teacher便携路径 | `checkpoints/final/train47-step-000688914432-eval31/model.zip`与`frozen-card-vectors.pt`；本轮重算SHA，分别与上表876模型/卡表完全一致 |
+
+本轮独立核验：manifest的8件产物哈希全部匹配，源码ZIP与runtime的1991/1991文件逐字节一致；与固定Git对象比较，183件字节一致、1808件仅CRLF→LF后相等。结果在 `runs/local/combat01-design-20261021/simulator-handoff-verification.json`。交接说明引用的真机F50→F51单局使用同native，但不是本轮行为测试或固定版本正式胜率；BRIDGE10 SL、BRIDGE28/37完整pending/特殊选择边界等仍保留。当前根分支只更新设计记录，尚未合并该运行时或切换正在运行的进程。
+
+**876兼容合同**：teacher必须按checkpoint自带observation space重建，用`rl/policies/model.py::observation_for_policy`投影新环境输入；不能直接按OBS20新建上层，添加`run_keys/reward_keys`或重置头部。前三幕使用交接版本既有的`reward_policy_contract=checkpoint-v7-act3`：只在策略mask中禁用旧模型未支持的CLAIM_KEY，canonical状态和真实合法动作保留；不自动领取、不替换logit、不改整局任务。该例外仅适用于无key输入的旧teacher，不能误对含新key字段的下层整体调用；训练采样须接入同一适配器，静态只确认evaluation已有消费者，不能假设trainer已支持。
+
+ACTION8新增上层REWARD_KEY id181，与combat编号按phase区分；必须先按phase/codec路由再投影mask，不能全局删除181。teacher manifest及replay/checkpoint需记录旧teacher字段/动作身份、新环境四个版本、reward-policy兼容合同、源码和native SHA。旧optimizer/replay不能通过这个推理适配器跨版本恢复。
+
+**待核验接口 S1**：版本身份已固定，仍须在上述基线执行876加载、一步预测、环境接入和新旧兼容路由测试，逐项核对旧观察/动作编码、`exitBattle`、结算回调、恢复journal、搜索随机流。模拟器有意修复的行为差异需记录例子，不能要求修复后复现旧错误；teacher同一旧schema输入的合法动作logits/概率及V仍需对齐。提取前后比较使用同一新基线加载的原876对象，跨源码比较单列新增且禁用的动作列。主比较B/C均在528d8aa及其明确记录的COMBAT01增量上重跑，EVAL31的93%仅作历史参考。本轮没有运行新包的模型/环境行为测试，不把包身份通过当作S1完成。
 
 ## 2. 提取边界、存储隔离与冻结不变量
 
@@ -104,7 +122,7 @@ learner 对实际执行轨迹记录每个 t 的累计奖励前缀 `R_t`，出口
 4. Python 搜索与 native 绑定复用同一结算 primitive/编码器，不能另写药水、回血、永久升级规则。cache key 必须含完整根上下文、teacher/目标/观察版本及世界线，不能仅以战斗HP或旧 state key 命中。
 5. 搜索使用其自己的 sampled worldline；BattleContext 回写的 RNG 和未被回写的 reward/事件 RNG 都要有明确来源。既有 NOSL 对战内隐藏未来重采样不自动覆盖结算 RNG。建议每根从公开信息和 nonce 生成一致的结算随机流，simulation 间按 fixed_worldline 合同复用；真实执行仍用真实环境 RNG。禁止用后来实际抽出的奖励候选给未执行分支估值；分支不强求与另一条实际随机路线相等。
 
-**待核验接口 S3（最关键的实现门槛）**：整合后 native 是否提供完整可复制/可恢复状态、如何正确重绑 continuation。参考 `GameContext` 有 `shared_ptr<Map>` 和 `std::function regainControlAction`，并存在捕获实例成员的闭包；C++ 默认复制或 Python deepcopy 不是隔离证明。需要显式分支 clone：可变 map 深拷贝或验证只读；闭包改成可重建的 continuation 描述或逐类安全重绑；保存所有 deck instance、永久增量、RNG 和事件来源。若采用 journal 重建，只能先用相同版本/seed重建根，再施加该搜索分支的世界线，不能重放 live RNG 冒充采样分支。整合后的 API 若已具备这些能力则复用，不再造平行接口。
+**待核验接口 S3（最关键的实现门槛）**：已对528d8aa静态复核，绑定中的clone仍是BattleContext，Python搜索分支仍共享gc且不完整结算；native新回报路径仍需实现。`GameContext` 的 `shared_ptr<Map>` 和 `std::function regainControlAction` 仍存在，并有捕获实例成员的闭包；C++默认复制或Python deepcopy不是隔离证明。需要显式分支clone：可变map深拷贝或验证只读；闭包改成可重建的continuation描述或逐类安全重绑；保存所有deck instance、永久增量、RNG和事件来源。若采用journal重建，只能先用相同版本/seed重建根，再施加该搜索分支的世界线，不能重放live RNG冒充采样分支。新包的规则修复不等于COMBAT01完整分支协议已经实现；inner-only上层更新和native的[0,1]裁剪也仍可在该源码定位。
 
 测试须让同一根、同一显式世界线、同一动作序列经真实环境副本/Python/native 到达相同完整状态、候选、reward、mask、teacher V，同时检查根及兄弟分支不变。普通/精英/Boss/事件结算、药水消耗与获得、Feed/Ritual Dagger/永久升级、战后遗物触发、逃跑偷金、复活/连战全部列入。分支能力未通过时禁止开启新目标 native 搜索；不能退回HP。
 
@@ -142,7 +160,7 @@ v1 不增加路线记忆或泄漏地图未来、抽牌顺序、隐藏随机种�
 
 | 阶段与模块 | 最小改动及验收 |
 |---|---|
-| 整合与基线：`sim/sts_lightspeed`、`env/core`、依赖锁 | 等模拟器改动一起并入，锁正式commit/构建；差异清单、旧模型加载/一步预测/环境接入、明确支持A0与可拒绝配置；不覆盖用户正在进行的修复 |
+| 接入已定基线：`sim/sts_lightspeed`、`env/core`、依赖锁 | 以交接tip b5e92dc（runtime 528d8aa）开始受控实现；接入OBS20/ACTION8配套状态协议与876投影/钥匙策略mask，先完成旧模型加载/一步预测/环境接入和S1差异清单；不覆盖滚动开发分支或共享运行环境 |
 | 合同测试先行：`tests/unit`、`tests/integration`、共享fixture | 先表达奖励时点、冻结与branch隔离预期；未实现测试不冒称通过，按阶段一起交付实现；不在运行时代码旁放test |
 | 提取：`rl/policies/entity_joint.py`、`split_policy.py`、`checkpoint.py`、`tools/checkpoints` | 独立teacher/manifest与转换；复用已有checkpoint工具入口，只有无法承载时才增CLI；保留旧checkpoint读取；拒绝模式/依赖不匹配 |
 | 边界：`env/core/game_env.py`、`run_env.py`、共用reward/outcome，native bindings/GameContext/BattleContext | 真实动作和搜索共用结算、完整分支、类型化边界、选择归属；`boss_value.py`只服务旧目标分派 |
@@ -161,7 +179,7 @@ v1 不增加路线记忆或泄漏地图未来、抽牌顺序、隐藏随机种�
 | 分支结算 | 同显式世界线同动作的真实副本/Python/native完整出口与reward一致；Feed、药水、永久牌、遗物回调、事件/奖励候选、RNG；根和兄弟不变；拒绝未知continuation |
 | 搜索与learner | 解析小树中`edge r + leaf V`与手算一致；不同出口请求正确匹配；混合/空批/取消；同真实执行路径的标签相等，未执行分支不获得实际轨迹标签；旧HP/Boss参数不能进入新模式 |
 | pending/replay/恢复 | 跨至少两次collection后回填，save/reload后reward前缀不漏不重；不同teacher/目标/动作/观察/构建拒绝；旧replay与Adam拒绝；同版本恢复续接 |
-| 兼容消费者 | 保留的876 entity-joint及其他现役checkpoint家族清单逐项加载/一步预测/环境接入；新模型evaluation/Watch/bridge能力矩阵，缺上下文显式失败；不误入二代 |
+| 兼容消费者 | 保留的876 entity-joint及其他现役checkpoint家族逐项加载/一步预测/环境接入；OBS20字段按旧space投影、上层CLAIM_KEY与combat id181区分、Act4拒绝、canonical状态不变，训练/evaluation同一兼容合同；新模型Watch/bridge能力矩阵，缺上下文显式失败；不误入二代 |
 | 真实生命周期 | 真实PPO与NOSL各至少两轮采样→更新→聚合→真实payload→checkpoint，外部W&B可用collector；NOSL新目标/冻结teacher、恢复后再一轮，覆盖pending；PPO回归不启用冻结上层训练 |
 | GPU生产长度 | 实际新目标配置完整512步collection，shape变化/缓存淘汰/临时存储释放后重放、真实同步与保存；检查teacher hash及内存，无CPU结果替代GPU验收 |
 
@@ -194,6 +212,6 @@ v1 不增加路线记忆或泄漏地图未来、抽牌顺序、隐藏随机种�
 
 这些种子是拟议分区；正式启动前与历史run manifest完整去重并封存清单，不能因数值较大就宣称从未使用。拟议输出根 `runs/local/combat01-{phase}-{run_id}/`；每次启动保存配置/seed/依赖/teacher manifest、退出码和超时原因，原子checkpoint保留2代并校验备份。禁止覆盖876/881及既有产物。
 
-**当前实际资源缺口**：本轮D盘剩余7626932224 bytes（约7.10GiB），没有满足建议的至少20GiB且足够“新输出＋两代完整bundle＋恢复临时副本”的空间门槛。这里只记录，不删除用户备份。模拟器整合commit、磁盘容量、GPU可用性、native完整分支接口均未验收，因此本设计不提供可直接执行的试训命令。
+**资源与运行验收缺口**：首轮设计时D盘剩余7626932224 bytes（约7.10GiB），低于建议的至少20GiB且足够“新输出＋两代完整bundle＋恢复临时副本”的门槛；正式启动须重测，不据历史余量决定当前容量，也不自动删除用户备份。模拟器版本已选定，S1模型/环境接入、GPU可用性和native完整分支接口仍未验收，因此本设计不提供可直接执行的试训命令。
 
 监控同时记录环境transition、codec token/完整原子动作、搜索simulation/leaf/出口teacher请求、有效combat样本、optimizer update；上层更新数单列恒0。计时覆盖warmup、采样、编码/IPC、teacher与lower前推、反向/同步、聚合/保存及总时长；GPU计时前后同步。每2秒采集进程树CPU时间/利用率、RSS（共享页可能重复）、系统可用内存、Torch allocated/reserved/peak、设备VRAM/util；取不到写null及原因。teacher分数上升不替代真实整局结果，UPPER09/10/11不会因本实验自动关闭。
