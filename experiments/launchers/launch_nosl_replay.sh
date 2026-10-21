@@ -3,6 +3,21 @@ set -euo pipefail
 
 rank=${1:?usage: launch_nosl_replay.sh rank}
 case "$rank" in 0|1|2|3) ;; *) echo 'rank must be 0..3' >&2; exit 2 ;; esac
+if [[ -n "${COMBAT01_CONFIG:-}" ]]; then
+  # Explicit COMBAT01 dispatch precedes every historical checkpoint/host default.
+  test -x .venv/bin/python
+  config=$(realpath "$COMBAT01_CONFIG")
+  run_dir=$(.venv/bin/python -c 'import sys; from pathlib import Path; from experiments.launchers.combat_deployment import read,validate; c=validate(read(sys.argv[1]),connected=True); print(Path(c["remote_repo"])/"runs"/c["run_id"])' "$config")
+  test -f "$run_dir/agreement.json"
+  test ! -e "$run_dir/rank$rank.lock"
+  test ! -e "$run_dir/rank$rank.exit.json"
+  nohup .venv/bin/python -u -c 'import sys; from experiments.launchers.combat_deployment import remote_start; sys.exit(remote_start(sys.argv[1],int(sys.argv[2])))' "$config" "$rank" >> "$run_dir/supervisor-rank$rank.log" 2>&1 < /dev/null &
+  supervisor=$!
+  sleep 2
+  kill -0 "$supervisor" 2>/dev/null || { cat "$run_dir/supervisor-rank$rank.log" >&2; exit 4; }
+  echo "started COMBAT01 rank=$rank supervisor=$supervisor log=$run_dir/rank$rank.log"
+  exit 0
+fi
 repo=${NOSL_REPO:-/root/autodl-tmp/sts-rl}
 run_id=${NOSL_RUN_ID:?set a persistent transport run ID}
 wandb_id=${NOSL_WANDB_ID:?set a persistent W&B run ID}

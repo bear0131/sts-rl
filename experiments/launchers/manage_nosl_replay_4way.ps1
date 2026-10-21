@@ -17,6 +17,8 @@
 
 [CmdletBinding()]
 param(
+    [string]$CombatDeployment = "",
+    [string]$CombatPython = "",
     [ValidateSet("plan", "preflight", "start", "status", "wait-update")]
     [string]$Action = "status",
     [ValidatePattern("^[A-Za-z0-9_-]+$")]
@@ -65,6 +67,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($CombatDeployment) {
+    if (-not $CombatPython) {
+        $CombatPython = (Get-Command python -ErrorAction Stop).Source
+    }
+    $combatCode = 'import sys; from experiments.launchers.combat_deployment import manage; manage(sys.argv[1], sys.argv[2])'
+    $combatConfigPath = (Resolve-Path -LiteralPath $CombatDeployment).Path
+    Push-Location (Resolve-Path (Join-Path $PSScriptRoot '../..'))
+    try {
+        & $CombatPython -c $combatCode $combatConfigPath $Action
+        if ($LASTEXITCODE -ne 0) { throw "COMBAT01 $Action failed (exit $LASTEXITCODE)" }
+    } finally { Pop-Location }
+    return
+}
 $WorldSize = 4
 
 if ($Ports.Count -ne $WorldSize) {

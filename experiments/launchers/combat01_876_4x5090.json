@@ -1,5 +1,5 @@
 {
-  "kind": "combat01-deployment-draft-v1",
+  "kind": "combat01-deployment-v1",
   "launch_ready": false,
   "profile": "configs/train/combat_outer_return_876_4x5090.json",
   "manager": "experiments/launchers/manage_nosl_replay_4way.ps1",
@@ -54,5 +54,13 @@
   "initial_global_step": 0,
   "full_training_max_seconds": null,
   "full_training_target_step": null,
-  "notice": "Offline preparation only; no SSH, launch or old endpoint reuse. Fill current machines and bounded budget after runtime acceptance."
+  "notice": "Fresh lower actor/encoder/value jointly train from update one. Only upper is frozen. Fill current endpoints and a new remote_repo; preflight provisions and checks all ranks, start uses the explicit bounded budget. No historical endpoints or jobs are resumed.",
+  "material_directory": "D:/sts-rl/runs/local/combat01-preparation-20261021/initialization",
+  "material_sha256": "807783c9c25cd1763485004c151d438d78a11acbb30fcd049c6cd7f2a4d79b36",
+  "ssh_key": "~/.ssh/sts_dist_shared_ed25519",
+  "budget": {
+    "rounds": 2,
+    "max_seconds": 3600,
+    "seed": 9001000
+  }
 }

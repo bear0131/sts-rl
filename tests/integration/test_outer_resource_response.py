@@ -137,5 +137,3 @@ def test_outer_graph_lifecycle(outer_return_core):
         cache.clear()
         core.to('cpu')
         torch.cuda.empty_cache()
-
-

@@ -1,5 +1,56 @@
 # Four-Rank NOSL Startup: Authoritative Procedure
 
+## COMBAT01：新run开机入口
+
+当前新目标使用同一manager的 `-CombatDeployment` 模式；本节参数优先于下文历史
+TRAIN47操作。它不会读取历史主机/HP模型/旧run默认值。训练profile保持876的
+384env/rank×512、128搜索、batch102400、micro8192、每轮40次同步更新；876上层
+永久冻结，完整下层随机初始化、从第一次更新同时训练actor/encoder/critic。
+
+1. 将 `experiments/launchers/combat01_876_4x5090.json` 复制到忽略目录
+   `runs/local/combat01-deployment.json`。填写当前四个SSH `host/port`、一个新的
+   `remote_repo`（如 `/root/autodl-tmp/combat01-876-new`）和本地转发 `ring_port`
+   （如29880）。核对 `material_directory` 与已授权的 `ssh_key`；不用旧机器地址。
+   四台均须有兼容驱动的5090/32GB、约90GB容器内存、SSH和C++构建工具。
+2. 用下列现有入口依次执行 `plan`、`preflight`、`start`、`wait-update`：
+
+```powershell
+& .\experiments\launchers\manage_nosl_replay_4way.ps1 `
+  -CombatDeployment .\runs\local\combat01-deployment.json `
+  -CombatPython D:\sts-rl\.venv-eval-gpu\Scripts\python.exe -Action plan
+```
+
+将最后的action改为相应阶段即可。`plan`只在本地生成配置审查结果，不连接机器。
+`preflight`要求受版本控制源码干净，打包当前HEAD；四台新目录必须不存在，避免覆盖。
+它安装锁定Python3.11环境、同源构建native，验证真实CPU生命周期/分支合同、876材料
+和资源响应、Linux编译图缓存生命周期，再比较四台源码/依赖/native/teacher/随机下层
+身份。预检每台至多40分钟，失败留日志和文件；修复后用新的独立目录重试。
+模型、native或配置在预检后变化会阻止start，不能跳过一致性检查。
+
+预检最低空闲量为28GiB显存、65GiB容器可用内存和30GiB磁盘；RAM同时检查cgroup
+上限，不能把宿主机内存误报成容器配额。四台生成各自run专用SSH密钥，交换公钥并
+检查全部12条peer连接；私钥不复制到其他机器。
+
+`start`并行启动四个有预算supervisor。默认首轮验收最多2轮、1572864个全局槽位step、
+80次同步lower更新、3600秒，seed9001000；这已真实训练整个下层，无预校准阶段。
+需要长训时在预检前显式设置 `budget.rounds/max_seconds/seed`。每台提前请求协同保存，
+到截止时终止进程组；硬截止只能恢复已经发布的共同代。不会无限自动重启。
+
+`wait-update`在有界时间内等待四台实际lower更新指标及共同checkpoint，校验四份bundle
+文件哈希后才宣布训练启动成功；PID存在不算通过。`status`显示现场进程出生身份、
+退出原因、最后指标和共同代。W&B可选，设置新的 `wandb_id` 即启用；不设置仍有完整
+JSON指标/资源记录和checkpoint。结果位于远端 `runs/<run_id>`，管理日志位于本地
+`runs/local/deployment-<run_id>`。保留2代完整recovery，临时大输出不入Git。
+
+该自动入口只创建新训练，不接收旧resume_step。之后恢复须按
+[训练恢复合同](../../rl/training/README.md)选择四台共同代、各自bundle与相同目标/native，
+明确有限预算后使用原distributed入口；不能把旧TRAIN47/HP状态作为COMBAT01恢复源。
+未来实际5090、Linux依赖和四rank训练结果仍由现场预检/验收生成，本地CPU/4060结果
+不替代它们。模板的 `launch_ready=false` 表示尚无现场四机验收；start实际依据四份预检
+报告及其一致性，不能手改该标记绕过检查。
+
+## Historical TRAIN47 procedure
+
 This is the visible, authoritative startup record for the four-machine NOSL
 trainer. The manager is the only supported production entry point:
 `manage_nosl_replay_4way.ps1`.
