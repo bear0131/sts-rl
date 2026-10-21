@@ -78,7 +78,7 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monkeypatch):
+def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monkeypatch, capsys):
     def make_env(*_):
         def factory():
             return TrainingStateWrapper(TimeLimit(SlayTheSpireEnv(backend_factory=QuickBackend,
@@ -157,6 +157,11 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     final = AccumulatingMaskablePPO.load(output, device='cpu')
     assert final.policy.core.teacher.assert_integrity() == teacher
     assert final.policy.optimizer.state
+    progress = [json.loads(line.removeprefix('ROLLOUT_PROGRESS '))
+                for line in capsys.readouterr().out.splitlines() if line.startswith('ROLLOUT_PROGRESS ')]
+    assert len(progress) == 3
+    assert all(p['vector_steps'] == p['target_steps'] == 128 and p['seconds'] > 0 for p in progress)
+    assert all(p['inference']['lower_cache_requests'] > 0 for p in progress)
 
 
 @pytest.mark.parametrize('abort', [False, True])

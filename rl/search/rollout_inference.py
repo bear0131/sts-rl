@@ -144,7 +144,7 @@ class RolloutInference:
         self.upper_graphs = None
         if torch.device(model.device).type == 'cuda' and getattr(model, '_native_leaf_inference', None) is not None:
             self.upper_graphs = CombatLeafGraphs(_UpperPhaseCore(model.policy.core.teacher),
-                model.device, amp='off', capacity=32, batch_multiple=8, compile_forward=False)
+                model.device, amp='off', capacity=32, batch_multiple=32, compile_forward=False)
         self.outer_settlement_seconds = 0.
         self.upper_prepare_seconds = 0.
 

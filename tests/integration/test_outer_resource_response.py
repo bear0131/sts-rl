@@ -154,7 +154,7 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core)
     runtime = RolloutInference(model, upper_bytes=0)
     runtime.upper_graphs.capacity = 2
     try:
-        for count, deck_width, relic_width in ((1, 1, 1), (9, 17, 5), (17, 33, 9),
+        for count, deck_width, relic_width in ((1, 1, 1), (33, 17, 5), (65, 33, 9),
                                               (1, 65, 17), (1, 1, 1), (1, 1, 1)):
             obs = {k: np.stack([v]*count) for k, v in env._obs().items()}
             card, relic = obs['deck_ids'][0, 0], obs['relics'][0, 0]

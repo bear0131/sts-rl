@@ -58,6 +58,27 @@ class NoopCallback(BaseCallback):
         return True
 
 
+class RolloutProgressCallback(NoopCallback):
+    """Low-frequency progress for unattended resource-monitored collections."""
+    def __init__(self, rank, steps):
+        super().__init__()
+        self.rank, self.steps = rank, steps
+
+    def _on_rollout_start(self):
+        self.started, self.completed = time.perf_counter(), 0
+
+    def _on_step(self):
+        self.completed += 1
+        if self.completed % 128 == 0 or self.completed == self.steps:
+            record = dict(rank=self.rank, vector_steps=self.completed, target_steps=self.steps,
+                          seconds=time.perf_counter()-self.started, at=time.time())
+            runtime = getattr(self.model, '_rollout_inference', None)
+            if runtime is not None:
+                record['inference'] = runtime.statistics()
+            print('ROLLOUT_PROGRESS ' + json.dumps(record, sort_keys=True), flush=True)
+        return True
+
+
 class StartupStaggerMetricsCallback(NoopCallback):
     def __init__(self) -> None:
         super().__init__()
@@ -2911,6 +2932,8 @@ def main() -> None:
             wandb.define_metric(metric, step_metric="legacy_step")
 
     callback = CallbackList([WholeRunTask().metrics_callback(args)])
+    if args.rollout_resource_interval:
+        callback.callbacks.append(RolloutProgressCallback(args.rank, args.n_steps))
     total_timesteps, callback = model._setup_learn(
         total_timesteps=args.updates * rollout_size,
         callback=callback,
