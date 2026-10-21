@@ -27,6 +27,14 @@ for forced END roots; `search_simulation_budget` retains decisions × configured
 budget. `search_simulation_accounting=strategy-diagnostics-v1` identifies this
 reporting contract. Older records without it used the budget product and must
 not be presented as measured work. Leaf evaluations are a different quantity.
+When a dispatched native-search command receives one of the exact pre-dispatch
+overlay availability rejections in the shared codec table, the production CLI
+rolls back the whole speculative transaction and its logical index, clears that
+rejected command's waits, and asks for fresh state. It does not replay the old
+command. Recovery is bounded to three consecutive rejections and cannot apply
+to an unsent prepared command, another verb, an argument error or an unknown
+exception. Such errors remain failures; a normal STATE response alone does not
+reset the rejection budget (BRIDGE170).
 Simulator evaluation can select the same contract through
 `PolicyStrategy(..., reward_policy_contract="checkpoint-v7-act3")`; both paths
 use `rl.policies.model.action_mask_for_policy` without altering the environment.

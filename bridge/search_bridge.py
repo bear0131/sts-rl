@@ -45,6 +45,8 @@ from schemas.entity_ids import (
     ON_USE_CARD_RELIC_IDS,
     ON_POST_DRAW_RELIC_IDS,
     OPENING_TURN_RELIC_COUNTER_CYCLES,
+    PREDISPATCH_REJECTION_COMMANDS,
+    PREDISPATCH_OVERLAY_COMMAND_LISTS,
     native_power_enum,
 )
 
@@ -230,18 +232,18 @@ class RealCombatSearch:
         self._rollback_thin = None
         self._awaiting_command = False
 
-    def observe_frame(self, frame: dict[str, Any]) -> None:
-        """Rollback an optimistically mirrored action when the mod rejects it."""
+    def observe_frame(self, frame: dict[str, Any]) -> bool:
+        """Return true only after a known pre-dispatch rejection was rolled back."""
         if "error" in frame and self._awaiting_command:
             # CommandExecutor checks availability before dispatch. This exact
             # rejection guarantees the command never ran; refresh and search again,
             # rather than replaying the stale command across an overlay.
             verb = getattr(self, "_awaiting_command_text", "").split(" ", 1)[0].upper()
             rejected_overlay_command = (
-                verb in {"END", "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN"}
+                verb in PREDISPATCH_REJECTION_COMMANDS
                 and frame["error"] in {
-                    f"Invalid command: {verb.lower()}. Possible commands: [key, click, wait, state]",
-                    f"Invalid command: {verb.lower()}. Possible commands: [choose, return, key, click, wait, state]",
+                    f"Invalid command: {verb.lower()}. Possible commands: [{', '.join(commands)}]"
+                    for commands in PREDISPATCH_OVERLAY_COMMAND_LISTS
                 }
             )
             self.cancel_unsent_command()
@@ -253,7 +255,7 @@ class RealCombatSearch:
                 LOG.warning("combat command rejected before dispatch; native rollback, fresh-state recovery; "
                             "transport_rejected_commands=%s error=%s",
                             self.run_rejected_commands, frame["error"])
-                return
+                return True
             LOG.error("CommunicationMod rejected the mirrored search action; native state rolled back: %s",
                       frame.get("error"))
         if "error" not in frame:
@@ -262,6 +264,7 @@ class RealCombatSearch:
             self._rollback_bc = None
             self._rollback_thin = None
             self._awaiting_command = False
+        return False
 
     def reset_run(self) -> None:
         self.adapter._combat_grid_receipt = None

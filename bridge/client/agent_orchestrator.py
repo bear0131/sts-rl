@@ -1081,6 +1081,20 @@ def main() -> None:
                 frame = json.loads(line)
                 validate_transport_frame(frame)
                 if "error" in frame:
+                    # An unsent prepared command cannot have been rejected by
+                    # the server. Only the matching dispatched native action
+                    # can authorize this exact, bounded rollback/recovery.
+                    if (unsent_search is None and combat_search is not None
+                            and combat_search.observe_frame(frame)):
+                        pending_play_frame = pending_end_frame = None
+                        pending_play_since = pending_end_since = 0.0
+                        combat_stability = CombatFrameStability()
+                        smoke_ack = SmokeCommandAck()
+                        reward_ack = RewardCommandAck()
+                        log.info("cleared waits for rejected native command; requesting fresh state")
+                        time.sleep(0.05)
+                        send("STATE")
+                        continue
                     raise RuntimeError(f"CommunicationMod rejected command: {frame['error']}")
                 if frame.get('in_game') is False and args.attach_existing_seed is not None:
                     if attached_live:

@@ -1092,6 +1092,16 @@ REAL_COMMAND_IDS = frozenset({
     "WAIT", "STATE",
 })
 
+# Exact CommandExecutor availability rejections, before any command dispatch.
+# List order is Java ArrayList.toString() order, not a subset/set comparison.
+PREDISPATCH_REJECTION_COMMANDS = frozenset({
+    "END", "PLAY", "POTION", "CHOOSE", "CONFIRM", "RETURN",
+})
+PREDISPATCH_OVERLAY_COMMAND_LISTS = (
+    ("key", "click", "wait", "state"),
+    ("choose", "return", "key", "click", "wait", "state"),
+)
+
 # Full Java enum keyword sets, checked against the installed game bytecode.
 # Composite intents keep every component here; the frozen observation's coarse
 # intent category is still derived identically from the canonical native move

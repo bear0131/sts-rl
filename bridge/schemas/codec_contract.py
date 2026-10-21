@@ -84,6 +84,8 @@ from .entity_ids import (
     POTION_ALIASES,
     REAL_REWARD_TYPE_IDS,
     REAL_COMMAND_IDS,
+    PREDISPATCH_REJECTION_COMMANDS,
+    PREDISPATCH_OVERLAY_COMMAND_LISTS,
     REAL_SCREEN_TYPE_IDS,
     REAL_INTENT_COMPONENTS,
     REAL_CHARACTER_IDS,
@@ -668,6 +670,15 @@ def complete_word_tables():
         "native_card_snapshot_fields": NATIVE_CARD_SNAPSHOT_FIELDS,
         "native_master_deck_snapshot_fields": {'id': 'native CardId spelling', 'upgrades': 'explicit count', 'misc': 'explicit current native value', 'bottle': 'NONE/ATTACK/SKILL/POWER; physical slot kept'},
         "search_boundary_relic_fields": {"Pocketwatch": "pocketwatch_cards_at_boundary"},
+        "predispatch_rejection_recovery": {
+            "verbs": sorted(PREDISPATCH_REJECTION_COMMANDS),
+            "exact_available_lists": [list(commands) for commands in PREDISPATCH_OVERLAY_COMMAND_LISTS],
+            "source": "CommandExecutor.executeCommand checks isCommandAvailable and throws exact Invalid command / Possible commands before parsing/dispatch. Invalid argument, unknown messages or another verb do not authorize retry (BRIDGE170)",
+            "entry": "Production CLI validates the error frame, then calls the shared native observer before its fatal-error gate only when no unsent prepared command exists. Recovery requires an awaiting matching dispatched native transaction; nonmatching errors still fail and count as errors",
+            "rollback": "Restore cloned BC including RNG/UIDs and before-prefix logical index, pending/MULTI and adapter selection receipts. Keep actual search-work accounting and the existing3-consecutive-rejection limit; do not clear the rejection budget on a mere STATE response",
+            "waits": "Only after confirmed rollback, clear rejected PLAY/END and Smoke/reward waits, restart frame stability, then request STATE. Never replay the old command, choose a substitute, START a game, reset the pause clock, or abandon another accepted event/map transaction",
+            "audit": "source/bytecode and consumer review; ordinary real success does not prove this availability race naturally occurred, and no synthetic rejection is injected",
+        },
         "search_action_semantics": {
             "producer": "NoslCombatTrainer.publicActionKey / hashActionCard -> both tabular and neural search edge remapping",
             "card_instance": "ID, specialData, base/turn cost, independent upgraded/freeToPlayOnce/retain/exhaust state and persistent RitualDagger/GeneticAlgorithm identity; MindBlast also preserves actual cachedBaseDamage. Single-card non-MindBlast keys keep their existing inputs",
@@ -868,6 +879,13 @@ def validate_codec_contract() -> dict[str, int]:
         raise RuntimeError("native leader feature names unknown monster species")
     if "Minion Leader" not in canonical_sets["monster_power"]:
         raise RuntimeError("native leader feature is absent from the frozen monster vocabulary")
+    if PREDISPATCH_REJECTION_COMMANDS - REAL_COMMAND_IDS:
+        raise RuntimeError("pre-dispatch recovery names unknown command verbs")
+    for commands in PREDISPATCH_OVERLAY_COMMAND_LISTS:
+        if (not commands or len(commands) != len(set(commands))
+                or any(command != command.lower() or command.upper() not in REAL_COMMAND_IDS
+                       for command in commands)):
+            raise RuntimeError("pre-dispatch recovery has an invalid ordered command list")
 
     for kind, table in REAL_TO_CANONICAL.items():
         targets = set(_targets(table))

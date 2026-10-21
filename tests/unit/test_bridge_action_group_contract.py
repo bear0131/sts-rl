@@ -401,7 +401,8 @@ def test_predispatch_end_rejection_is_audited_and_rolled_back(command, error, re
     bridge.env = SimpleNamespace(thick=SimpleNamespace(bc=object()),
                                  _invalidate_backend_cache=lambda: None)
     bridge.adapter = SimpleNamespace(multi_selected=set(), _joint_multi_plan=None)
-    bridge.observe_frame({"error": error})
+    recovered = bridge.observe_frame({"error": error})
+    assert recovered is recover
     assert bridge.env.thick.bc is saved
     assert bridge.decision_index == 39
     assert not bridge._awaiting_command
