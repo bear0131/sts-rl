@@ -61,7 +61,7 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
             throw new IllegalArgumentException("Unknown demo UI receipt");
         status = parts[1];
         connected = true;
-        detail = parts.length == 3 ? parts[2] : "";
+        detail = parts.length == 3 ? parts[2].trim() : "";
         if (status.equals("READY")) model = detail.equals("train47-step-000688914432-eval31")
                 ? "TRAIN47 FINAL 688914432" : detail;
         if (status.equals("ERROR") || status.equals("STOPPED") || status.equals("FINISHED"))
@@ -72,8 +72,9 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
 
     private static boolean inGame() { return CommandExecutor.isInDungeon(); }
 
-    private float centerX() { return Settings.WIDTH - 175f * Settings.scale; }
-    private float centerY() { return inGame() ? Settings.HEIGHT - 110f * Settings.scale : Settings.HEIGHT * .52f; }
+    // Leave the seed/deck/settings corner untouched; below the left relic strip.
+    private float centerX() { return inGame() ? 175f * Settings.scale : Settings.WIDTH - 175f * Settings.scale; }
+    private float centerY() { return inGame() ? Settings.HEIGHT - 175f * Settings.scale : Settings.HEIGHT * .52f; }
 
     public void receivePreUpdate() {
         if (BaseMod.modSettingsUp || (!inGame() && !CommandExecutor.isStartCommandAvailable())) return;
@@ -106,11 +107,11 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
 
     private static String statusText() {
         if (status.equals("READY")) return "模型就绪 · 等待点击";
-        if (status.equals("RUNNING")) return enabled ? "AUTO 开启 · 模型操作中" : "手动操作";
-        if (status.equals("PAUSED")) return "AUTO 关闭 · 手动操作";
-        if (status.equals("FINISHED")) return "本局演示结束 · 不会自动再开";
-        if (status.equals("STOPPED")) return "已停止 · 点击 AUTO 可重新接管";
-        if (status.equals("ERROR")) return "已停止：接口/模型错误 · 见日志";
+        if (status.equals("RUNNING")) return enabled ? "自动操作中 · 点击暂停" : "手动操作";
+        if (status.equals("PAUSED")) return "手动操作 · 点击接管";
+        if (status.equals("FINISHED")) return "演示结束 · 不自动开局";
+        if (status.equals("STOPPED")) return "已停止 · 点击重新接管";
+        if (status.equals("ERROR")) return "已停止 · 详见日志";
         return "正在加载模型，尚未接管";
     }
 
@@ -124,7 +125,7 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
             sb.setColor(connected && button.hovered ? new Color(.18f,.42f,.42f,1f) : new Color(.10f,.23f,.28f,1f));
             sb.draw(ImageMaster.WHITE_SQUARE_IMG, x - 145*s, y - 23*s, 290*s, 46*s);
             FontHelper.renderFontCentered(sb, FontHelper.buttonLabelFont,
-                    enabled ? "AUTO：开  ·  点击暂停" : "AUTO：关  ·  点击接管", x, y + 1*s,
+                    enabled ? "AUTO：开" : "AUTO：关", x, y + 1*s,
                     connected ? Color.WHITE : Color.GRAY);
             FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont, statusText(), x, y - 43*s,
                     status.equals("ERROR") ? Color.SALMON : Settings.CREAM_COLOR);
