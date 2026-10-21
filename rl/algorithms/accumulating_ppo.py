@@ -1381,7 +1381,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     native_batch = getattr(env, "native_search_batch", None)
                     if native_batch is not None:
                         result_by_index, shared_stats = complete_searches_native(
-                            self, native_batch, begin_calls, autocast=self.autocast_context)
+                            self, native_batch, begin_calls, autocast=self.autocast_context,
+                            root_observations=self._last_obs if self._outer_return else None)
                         for key in NATIVE_TIMING_KEYS:
                             nosl_timings[key] += shared_stats[key]
                     elif (

@@ -1544,7 +1544,7 @@ class SlayTheSpireEnv(gym.Env):
                 mask[C.legacy_action_id(int(policy_id))] = True
         return mask
 
-    def _native_packed_global_fields(self):
+    def _native_packed_global_fields(self, root_context=None):
         """Return the encoded root metadata shared by this tree's leaves."""
         global_state = self._nosl_cpp_global_template
         cached = self._nosl_cpp_encoded_global_template
@@ -1565,7 +1565,7 @@ class SlayTheSpireEnv(gym.Env):
         result = dict(cached[1])
         if self.outer_return_context:
             from .outer_return import CONTEXT_KEYS
-            root_obs = self._obs()
+            root_obs = self._obs() if root_context is None else root_context
             result.update({key: root_obs[key] for key in CONTEXT_KEYS})
         return result
 

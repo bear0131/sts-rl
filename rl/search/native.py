@@ -497,6 +497,7 @@ def complete_searches_native(
     *,
     autocast=nullcontext,
     leaf_backend=MODEL_LEAF_BACKEND,
+    root_observations=None,
 ):
     """Drive resident independent trees with one model call per native wave.
 
@@ -510,7 +511,10 @@ def complete_searches_native(
     stats.update({name: 0.0 for name in NATIVE_TIMING_KEYS})
     try:
         started = time.perf_counter()
-        batch.begin(begin_calls)
+        if root_observations is None:
+            batch.begin(begin_calls)
+        else:
+            batch.begin(begin_calls, root_observations=root_observations)
         stats['native_begin_seconds'] = time.perf_counter() - started
         backend = (getattr(model, '_native_leaf_inference', None)
                    if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)

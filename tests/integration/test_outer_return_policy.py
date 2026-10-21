@@ -217,6 +217,43 @@ def test_warm_actor_scalar_updates_and_frozen_teacher(outer_return_core):
         assert core.combat_actor_critic(obs)[1].item() == pytest.approx(2.7)
 
 
+def test_native_roots_reuse_collected_context_with_owned_storage(outer_return_core, monkeypatch):
+    _, _, env = outer_return_core
+    _enter_combat(env)
+    envs = [env.fork_run() for _ in range(3)]
+    for i, item in enumerate(envs):
+        item.thick.bc.apply_custom_state({'player': {'hp': 20+i*13, 'gold': 17+i*61}})
+        item._invalidate_backend_cache()
+    raw = [item._obs() for item in envs]
+    observations = {key: np.stack([row[key] for row in raw]) for key in raw[0]}
+    config = NativeSearchConfig(simulations=8, depth=1, outer_return=True,
+                                fixed_worldline=True, gumbel_scale=0.)
+    # Root subset and order must follow environment indices, not selected rows.
+    calls = {i: ((np.zeros(198, np.float32),), dict(**asdict(config), root_value=0.,
+                    state_nonce=42101+i, compact_observation=True)) for i in (2, 0)}
+    pool = NativeSearchBatch(envs, 2)
+    try:
+        pool.begin(calls)
+        reference = pool.observations()
+        pool.clear()
+        def unexpected_encode():
+            raise AssertionError('collector context must avoid a second full observation')
+        for item in envs:
+            monkeypatch.setattr(item, '_obs', unexpected_encode)
+        pool.begin(calls, root_observations=observations)
+        actual = pool.observations()
+        assert actual.keys() == reference.keys()
+        for key in reference:
+            assert actual[key].tobytes() == reference[key].tobytes(), key
+        observations['deck_ids'].fill(0)
+        assert pool.observations()['deck_ids'].tobytes() == reference['deck_ids'].tobytes()
+        invalid = dict(observations, floor=observations['floor'].astype(np.float64))
+        with pytest.raises(ValueError, match='root context batch.*floor'):
+            pool.begin(calls, root_observations=invalid)
+    finally:
+        pool.close()
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, device):
     if device == 'cuda' and not torch.cuda.is_available():

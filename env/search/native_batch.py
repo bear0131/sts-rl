@@ -55,9 +55,21 @@ class NativeSearchBatch:
         self.leaves = None
         self.native_seconds = self.pack_seconds = self.decode_seconds = 0.0
 
-    def begin(self, calls):
+    def begin(self, calls, *, root_observations=None):
         if not calls:
             raise ValueError('native search requires at least one tree')
+        context_keys = ()
+        if root_observations is not None:
+            from env.core.outer_return import CONTEXT_KEYS
+            if not self.outer_return:
+                raise ValueError('root context transport requires the outer-return objective')
+            context_keys = CONTEXT_KEYS
+            for key in context_keys:
+                space = self.envs[0].observation_space[key]
+                value = root_observations.get(key)
+                if (not isinstance(value, np.ndarray) or
+                        value.shape != (len(self.envs), *space.shape) or value.dtype != space.dtype):
+                    raise ValueError(f'root context batch disagrees with observation contract: {key}')
         self.indices = list(calls)
         self.leaves = np.zeros(len(self.indices), dtype=np.int64)
         self.native_seconds = self.pack_seconds = 0.0
@@ -73,7 +85,12 @@ class NativeSearchBatch:
                 env = self.envs[index]
                 sessions.append(env.nosl_is_az_cpp_begin(*args, **kwargs,
                                                         _defer_leaf_selection=True))
-                fields.append(env._native_packed_global_fields())
+                # Collector already encoded these exact current roots. Read
+                # the supplied arrays only during this call; stack below owns
+                # the search copy before the next environment transition.
+                context = ({key: root_observations[key][index] for key in context_keys}
+                           if root_observations is not None else None)
+                fields.append(env._native_packed_global_fields(context))
             self.global_fields = {key: np.stack([f[key] for f in fields]) for key in fields[0]}
             self._decoder_globals = {key: value for key, value in self.global_fields.items()
                                      if key in self._decoder_keys}
