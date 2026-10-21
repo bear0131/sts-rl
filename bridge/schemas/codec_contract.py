@@ -679,7 +679,7 @@ def complete_word_tables():
             "actions": sorted(DEMO_ACTIONS),
             "ui_receipts": sorted(DEMO_STATUSES),
             "source": "Actual game UI button; monotonically increasing explicit request, never launch/Continue alone",
-            "consumer": "Opt-in CLI demo gate before policy/ACK dispatch; disabled refreshes STATE only, takeover reconstructs strict real root",
+            "consumer": "Opt-in CLI demo gate before policy/ACK dispatch; disabled refreshes STATE only, latest OFF cancels an unread request; exact unchanged pause/resume preserves root/index/ACK, any observed state change/menu invalidates reuse; other takeover reconstructs strict real root",
             "boundary": "Dedicated DEMO UI receipts intercepted before gameplay dispatch, never model actions/observations or RNG; Ironclad A0 Acts1-3; unsupported state fails visibly; no automatic next run",
         },
         "read_only_ui_pauses": {

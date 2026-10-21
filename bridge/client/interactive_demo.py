@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import time
+from copy import deepcopy
 
 from bridge.campaign import seed_string_to_long
 from bridge.schemas.entity_ids import DEMO_ACTIONS, DEMO_CONTROL_VERSION, DEMO_STATUSES
@@ -23,6 +24,8 @@ class InteractiveDemo:
         self.faulted = False
         self.reset_requested = False
         self.output = None
+        self.paused_game_state = None
+        self.pending_menu_request = None
 
     def receipt(self, status, detail=""):
         if status not in DEMO_STATUSES:
@@ -55,12 +58,37 @@ class InteractiveDemo:
         request = (controls["request_id"], controls["action"], controls["seed"])
         if request[0] < self.request[0] or (request[0] == self.request[0] and request != self.request):
             raise ValueError("Regressed or mutated demo request")
+        if self.paused_game_state is not None and self.paused_game_state != frame.get("game_state"):
+            # A menu round-trip or any observed state change invalidates this
+            # optimization, even if the user later returns to the same picture.
+            self.paused_game_state = None
         if request[0] > self.request[0]:
+            if request[1] not in {"START", "ATTACH"}:
+                raise ValueError("New demo request has no supported action")
+            if (controls["enabled"] and request[1] == "START"
+                    and frame.get("in_game") is False and frame.get("ready_for_command") is False):
+                if self.pending_menu_request is None or self.pending_menu_request[0] != request[0]:
+                    self.pending_menu_request = (request[0], time.monotonic())
+                if time.monotonic() - self.pending_menu_request[1] > 30:
+                    self.request = request
+                    self.pending_menu_request = None
+                    return self.fail("menu-not-ready-for-30-seconds")
+                return "STATE"  # Keep the request pending until the menu is ready.
             self.request = request  # Consume once, including a request rejected below.
+            self.pending_menu_request = None
             if not controls["enabled"]:
-                raise ValueError("New demo request must explicitly enable AUTO")
+                # ON then OFF may be captured before the Python reader sees ON.
+                # The newer OFF cancels that request, never starts or errors.
+                self.paused_game_state = deepcopy(frame.get("game_state")) if self.active else None
+                self.active = False
+                return self.receipt("PAUSED", "request-cancelled-before-dispatch")
             gs = frame.get("game_state") or {}
             start = request[1] == "START"
+            same_paused_state = (
+                request[1] == "ATTACH" and self.status == "PAUSED" and not self.faulted
+                and self.entered and self.expected_seed == gs.get("seed")
+                and self.paused_game_state is not None and self.paused_game_state == gs
+            )
             if start:
                 if (frame.get("in_game") is not False or frame.get("ready_for_command") is not True
                         or "START" not in {v.upper() for v in frame["available_commands"]}
@@ -74,8 +102,6 @@ class InteractiveDemo:
                         or gs.get("screen_type") == "GAME_OVER"):
                     raise ValueError("AUTO takeover requires a live Ironclad A0 Act1-3 state")
                 self.expected_seed = gs["seed"]
-            else:
-                raise ValueError("New demo request has no supported action")
             output = Path(self.args.demo_output_dir) / str(time.time_ns())
             output.mkdir(parents=True, exist_ok=False)
             if start:
@@ -97,15 +123,21 @@ class InteractiveDemo:
                 "kind": "interactive-demo-not-formal-evaluation", "request": request,
                 "expected_seed": self.expected_seed, "checkpoint": self.args.checkpoint,
                 "source": "explicit game UI button", "timeout_seconds": 3600,
+                "same_state_pause_resume": same_paused_state,
             }, indent=2), encoding="utf-8")
             self.output = output
-            self.started = time.monotonic()
+            if not same_paused_state:
+                self.started = time.monotonic()
             self.entered = not start
-            self.active, self.faulted, self.reset_requested = True, False, True
+            self.active, self.faulted, self.reset_requested = True, False, not same_paused_state
+            self.paused_game_state = None
             self.status = "RUNNING" if start else None
             return f"START IRONCLAD 0 {request[2]}" if start else self.receipt("RUNNING", "current-screen-takeover")
         if not controls["enabled"]:
             if self.active and self.status != "PAUSED":
+                # Capture once. Subsequent human/engine changes must not make
+                # a different state look like an unchanged pause/resume.
+                self.paused_game_state = deepcopy(frame.get("game_state"))
                 self.active = False
                 return self.receipt("PAUSED")
             return "STATE"
