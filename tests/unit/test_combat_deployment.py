@@ -42,6 +42,7 @@ def test_deployment_preserves_whole_lower_training_and_876_geometry():
         assert args.nosl_is_az_update_schedule == 'constant'
         assert args.hierarchical_combat_hp is None and args.resume_state is None and args.fork_state is None
         assert args.leaf_inference == 'cuda-graph' and args.leaf_compile
+        assert args.barrier_timeout == 900
         assert args.updates == 2 and args.save_every_updates == 1 and args.max_checkpoints == 2
         assert 'train47' not in str(args.checkpoint)
         assert str(args.checkpoint).replace('\\', '/').endswith('/material/initial.zip')

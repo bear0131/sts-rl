@@ -98,7 +98,7 @@ def training_command(config, profile, rank):
         '--rollout-resource-interval', str(t['resource_interval_seconds']),
         '--training-state-dir', str(run/'recovery'), '--save-every-updates', '1', '--max-checkpoints', '2',
         '--stop-file', str(run/'STOP'), '--remote-root', str(run/'transport'),
-        '--ssh-control-dir', '/tmp/combat01-ssh', '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '300',
+        '--ssh-control-dir', '/tmp/combat01-ssh', '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '900',
         '--gradient-transport', 'ssh-ring', '--ring-port', str(config['ring_port'])]
     for peer in config['ranks']:
         if peer['rank'] != rank:
@@ -278,10 +278,16 @@ def remote_start(config_path, rank):
         stream.write(str(os.getpid()))
     command = training_command(config, read(root/config['profile']), rank)
     write(run/f'command-rank{rank}.json', command)
+    environment = os.environ.copy()
+    # Match TRAIN47's allocator policy, using the current Torch variable name.
+    environment['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
+    write(run/f'runtime-environment-rank{rank}.json',
+          {'PYTORCH_ALLOC_CONF': environment['PYTORCH_ALLOC_CONF']})
     start, code = time.monotonic(), 1
     try:
         with (run/f'rank{rank}.log').open('a', encoding='utf-8') as log:
-            process = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            process = subprocess.Popen(command, cwd=root, env=environment,
+                                       stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             import psutil
             write(run/f'rank{rank}.pid.json', dict(supervisor=os.getpid(), trainer=process.pid,
                                                    created=psutil.Process(process.pid).create_time()))
