@@ -678,6 +678,7 @@ def complete_word_tables():
             "fields": ["version", "request_id", "action", "seed", "enabled"],
             "actions": sorted(DEMO_ACTIONS),
             "ui_receipts": sorted(DEMO_STATUSES),
+            "receipt_framing": "Actual DataReader drops LF but retains CR from Windows CRLF. Trim outer whitespace and split whitespace into verb/status/optional detail for every known status, including bare PAUSED/RUNNING; reserve only exact DEMO verb. Invalid DEMO receipts disable AUTO with visible ERROR, never throw into the game update thread or fall through to gameplay",
             "takeover_rejections": ["requires-live-run", "requires-Ironclad", "missing-run-facts", "requires-A0-current-A{actual_integer_ascension}", "requires-Act1-3", "run-already-finished"],
             "retry": "Every new explicit request resets its failure receipt; rejected takeover returns ERROR and disables the actual UI toggle. Never reuse an old failed request when entering another run",
             "source": "Actual game UI button; monotonically increasing explicit request, never launch/Continue alone",

@@ -30,6 +30,9 @@ UI 控制合同 `demo_controls.version=1` 独立于观测和动作 codec：
 单调请求号去重，开关关闭只刷新状态。`DEMO READY/RUNNING/PAUSED/STOPPED/FINISHED/ERROR`
 只是界面回执，由 Java 在原 gameplay dispatcher 前单独拦截，不是模型动作，不进入合法动作表、
 模型张量、RNG 或搜索预算。模型成功加载并完成搜索初始化后才发 READY，进程退出显示错误。
+Java会先移除实际DataReader在Windows CRLF中残留的行尾CR，再按空白拆分状态与可选说明；裸PAUSED/RUNNING
+与带说明回执采用同一规则。非法DEMO回执关闭AUTO并显示错误，不抛异常到游戏主线程，
+也不会当作普通游戏命令执行（BRIDGE173）。
 导出器的非目标方法字节码保护包含新增的三个 UI 钩子；不要把旧诊断 supervisor 的 original.zip
 整体恢复到本次永久修复的生产 jar/config 上，避免重新启用已废弃入口。
 

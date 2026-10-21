@@ -53,19 +53,29 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
 
     /** Dedicated UI receipt, intercepted before the ordinary gameplay dispatcher. */
     public static boolean acceptStatus(String command) {
-        if (!command.startsWith("DEMO ")) return false;
-        String[] parts = command.split(" ", 3);
+        // DataReader stops at LF but preserves the CR of Windows CRLF. A bare
+        // "DEMO PAUSED\r" must not acquire a carriage return in its status token.
+        // Match the exact reserved verb; leave every non-UI command untouched.
+        String[] parts = command.trim().split("\\s+", 3);
+        if (!parts[0].equals("DEMO")) return false;
+        connected = true;
         if (parts.length < 2 || !(parts[1].equals("READY") || parts[1].equals("RUNNING")
                 || parts[1].equals("PAUSED") || parts[1].equals("STOPPED")
-                || parts[1].equals("FINISHED") || parts[1].equals("ERROR")))
-            throw new IllegalArgumentException("Unknown demo UI receipt");
-        status = parts[1];
-        connected = true;
-        detail = parts.length == 3 ? parts[2].trim() : "";
-        if (status.equals("READY")) model = detail.equals("train47-step-000688914432-eval31")
-                ? "TRAIN47 FINAL 688914432" : detail;
-        if (status.equals("ERROR") || status.equals("STOPPED") || status.equals("FINISHED"))
+                || parts[1].equals("FINISHED") || parts[1].equals("ERROR"))) {
+            // This hook runs on the game's update thread, outside the stock
+            // InvalidCommandException handler. Reject UI protocol errors here
+            // without throwing into render or forwarding them to gameplay.
+            status = "ERROR";
+            detail = "invalid-demo-receipt";
             enabled = false;
+        } else {
+            status = parts[1];
+            detail = parts.length == 3 ? parts[2].trim() : "";
+            if (status.equals("READY")) model = detail.equals("train47-step-000688914432-eval31")
+                    ? "TRAIN47 FINAL 688914432" : detail;
+            if (status.equals("ERROR") || status.equals("STOPPED") || status.equals("FINISHED"))
+                enabled = false;
+        }
         CommunicationMod.mustSendGameState = true;
         return true;
     }
@@ -119,6 +129,7 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
             if (detail.equals("requires-Act1-3")) return "仅支持前三幕";
             if (detail.equals("run-already-finished")) return "本局已结束，不能接管";
             if (detail.equals("missing-run-facts")) return "状态信息缺失，已停止";
+            if (detail.equals("invalid-demo-receipt")) return "界面回执错误，已停止";
             return "接管失败，可重试 · 详见日志";
         }
         return "正在加载模型，尚未接管";
@@ -140,7 +151,7 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
                     status.equals("ERROR") ? Color.SALMON : Settings.CREAM_COLOR);
             FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont, model, x, y - 68*s, Settings.GOLD_COLOR);
             FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont,
-                    "战士 A0 / 前三幕 / 点击接管或暂停", x, y - 93*s, Settings.CREAM_COLOR);
+                    "战士 A0 / 前三幕", x, y - 93*s, Settings.CREAM_COLOR);
             sb.setColor(old);
             return;
         }
