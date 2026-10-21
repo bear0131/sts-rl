@@ -2,7 +2,7 @@
 
 **用户后续修正（优先于本文原建议）**：用户明确“这次只是冻结上层，下层没必要先冻结一部分”，并允许从头训练下层。当前实现/四机profile选择下层随机初始化，actor、encoder、context和新scalar critic从第一轮同时训练；876仅提供全程冻结的上层actor/critic及其依赖。删除critic预校准及局部冻结阶段，不以留出MSE门槛阻止联合训练。原建议的876下层warm start仅保留为明确选择的兼容加载/对照能力，不是默认训练。既有固定卡牌向量是输入数据buffer，沿用876的数据表示，非冻结下层可训练参数。血量/药水/奖励金币响应检查仍执行并报告，初始随机critic不要求单调。原始计划保留历史建议；本文当前合同和启动入口遵循此修正。
 
-本设计承接[原始计划](frozen-upper-combat-objective-plan.md)，交付其中五项设计结果。任务状态统一见 [TODO COMBAT01](../../TODO.md)，实际实现/测试证据见[工作日志](../../worklog/2026-10-21.md#combat01-training-implementation-intention)。当前已实现teacher永久冻结、完整分支统一目标、随机下层联合learner、恢复和四机启动入口；云机尚未启动。下述S1—S4保留设计时的检查范围，现已关闭项和仍待现场验收项在5.4区分，不把历史缺口误作当前代码结论。
+本设计承接[原始计划](frozen-upper-combat-objective-plan.md)，交付其中五项设计结果。任务状态统一见 [TODO COMBAT01](../../TODO.md)，实际实现/测试证据见[工作日志](../../worklog/2026-10-21.md#combat01-training-implementation-intention)。teacher永久冻结、完整分支统一目标、随机下层联合learner、恢复和四机启动入口已实现，四机首轮更新/共同恢复代/W&B已[现场验收](../../worklog/2026-10-22.md#combat01-four-rank-first-update-verified)。下述S1—S4和5.4—5.5保留设计/开机准备时的检查范围与预算建议；当前运行状态和用户后续预算以TODO与日志为准，不把历史缺口误作当前代码结论。第6节是后续rollout推理结果缓存设计，尚未实现或部署。
 
 本文使用三种标记：**已定合同**来自用户确定的方向及其必要语义约束；**建议默认**是可审查的首版技术选择，不冒充用户已指定；**待核验接口**必须在实现阶段用实际代码和测试关闭。用户先要求等待模拟器交付，随后明确指定采用 `simulator-handoff-20261021-01`；现已固定下述正式模拟器基线，进入接入验收准备，不再等待版本选定。
 
@@ -255,3 +255,33 @@ checkpoint保存的实际876配置是主要证据：profile中的`source_checkpo
 **建议默认已落入启动配置**：4×5090/32GB/90GB，876 geometry和学习参数，首轮最多2轮/3600秒/seed9001000；新远端目录和通信端口已填写。可编辑副本在工作树runs/local/combat01-deployment.json，只待当前四台host/port。启动依次plan/preflight/start/wait-update，preflight必须基于干净、已提交源码。
 
 **待现场核验**：Linux锁定依赖、同源native/compiled CUDA graph、5090显存与容器内存、四rankSSH同步及共同恢复代由自动预检和首次有限训练实测。当前未连接或启动云机；模板launch_ready=false保留此事实，不能手改标记绕过agreement。完整游戏留出比较在训练产生候选后执行；Watch/dashboard/真实bridge的新目标适配仍不在本次开机训练支持范围。
+
+## 6. Rollout 作用域的模型输入缓存
+
+### 6.1 已定合同
+
+用户将缓存寿命明确为“一轮rollout内长期保留”，用于跨搜索、跨战斗和同rank环境共享完全相同模型输入的前向结果。upper和lower均在采样开始建立空缓存，采样正常结束、callback提前退出或异常时销毁；下轮重新建立。参数更新、加载新模型、改变设备或推理模式后绝不使用旧结果。缓存不写checkpoint、不进入replay、不跨rank联网查询，也不因teacher永久冻结而跨轮保留。
+
+复用对象为固定模型的原始logits/V。隐藏世界线或树节点身份不同，只要**实际网络输入及前向合同相同**，就允许复用；键不额外混入env/root/worldline编号。缓存不保存采样动作、Gumbel噪声、Q、visits、backup、reward前缀或完整模拟器transition。一次命中仍完成原有simulation和backup，每根128模拟不变。战斗出口仍由每条独立分支完整结算，之后只缓存上层V；`CombatExit.target(V)`须使用这条出口自己的reward/kind。死亡、烟雾逃跑、小偷偷钱和直接接续战斗保持原typed outcome语义。
+
+用户最新性能目标为384env/rank×512、128模拟下每轮rollout不超过18分钟（9×2），需要报告各rank及最慢rank；完整训练轮的反向、同步、保存另列。正式验收须用生产长度采样，不能用命中率、小批次或旧HP目标替代。
+
+### 6.2 建议默认
+
+1. **入口与寿命**：在`AccumulatingMaskablePPO.collect_rollouts`的既有try/finally中拥有一个临时cache对象；清空前复制小型计数器。实例内部区分lower与upper/phase命名空间，在`rl/search`中提供批量查询/补算/还原行序的无CLI实现。训练前向不经过该缓存。
+2. **实际输入**：upper先复用`observation_for_policy`投影到teacher旧space，再按`OVERWORLD_OBSERVATION_KEYS`和phase keys取实际读取字段；lower使用`core.combat_observation_keys`，包含完整context-v2、pending与已选牌。字段名称、dtype、单行shape和连续原始字节组成输入身份，不按HP/金币分桶，不丢掉遗物计数或候选顺序。兼容投影/shape校验在查缓存前执行，命中不能绕过合法性检查。
+3. **命名空间**：每个rollout对象绑定模型实例/权重代、输入合同、upper/lower、device、AMP与推理后端；不同数值路径不共享。参与前向的`active_relic_width`必须纳入合同，查表前确定并让miss前向保持同一width。根节点若走不同的eager/精度/width路径，独立命名空间；符合相同合同后才允许与普通搜索节点共享，不从GPU反拷输入只为命中。
+4. **批量处理**：在现有CPU观测物化处打包键，先查跨调用缓存，再对本批miss去重；只对唯一miss前向，按原索引散回，全部命中时不调用模型。哈希采用C实现；同一digest还核对原始输入字节，强制碰撞只造成miss，不得返回别人的结果。批量打包避免每行反复排序字段/拼接Python小对象。
+5. **容量**：建议初始每rank最多512MiB缓存记账空间，upper128MiB、lower384MiB分开LRU，以免普通节点挤掉较贵的上层结果。键、输出和索引开销都记账，单条超限不入库；真实RSS与记账偏差另测。容量是待实测调整的默认值，不是用户合同。输出为独立CPU FP32拷贝，不保留计算图、CUDA临时张量或graph输出view。
+6. **指标**：每类分别记录输入行数、前向批数、跨调用命中、本批去重、唯一miss、eviction、当前/峰值字节，以及pack/hash、lookup/scatter、前向时间；计数定义互斥，不能把重叠命中相加。另单列出口结算/编码和upper调用，修正当前`cpp_leaf_model_seconds`同时含lower、结算及teacher的解释歧义。CUDA事件未开启时相应时间记为不可用，不把旧0值当0开销。
+
+### 6.3 待核验接口与验收
+
+- 首版接入当前COMBAT01 resident native/outer-return路径：`forward_leaves`普通战斗叶及直接接续战斗、`forward_outer_leaves`的已结算upper输入。根节点`core.actor_critic`和`FrozenUpperTeacher.decide`先核对路由/精度，复用统一输入合同；不以只覆盖出口V声称所有节点都已缓存。旧PPO/NOSL、evaluation/bridge不自动启用。
+- 明确当前teacher兼容投影前后字段和phase依赖；仅改变未读取字段应允许命中，改变HP、钱包、药水、奖励金币/卡牌/遗物、pending/context、shape/dtype或模型代必须miss。原序列和乱序批次的散回结果、全命中/全miss、强制哈希碰撞、LRU淘汰与调用方修改返回数组都需测试。
+- 两次真实collection之间做lower更新，验证第二轮重新前向；callback中断、异常、模型恢复均释放缓存，teacher继续冻结。缓存不进入保存结果；两个rank/两个模型对象不得串用。
+- 精确输入复用不等于跨batch形状GPU逐位相等：去重后的batch/padding可能改变GEMM舍入。固定同设备、同依赖、同后端/shape检验原始输出；变batch对logits、合法概率和V使用有依据容差，并检查动作、visits、模拟预算。不能拿CPU逐位结果代替BF16/TF32证据。
+- CUDA测试覆盖shape变化、缓存/graph淘汰、释放底层临时内存后重放、采样后释放graph再训练；至少384×512完整collection，另验证更新后下一轮及保存恢复。记录warmup/采样/更新/同步/保存、进程树CPU/RSS、容器与系统内存、Torch allocated/reserved/peak、设备VRAM/util。
+- 保持模型、seed、轨迹起点、线程、128预算、384×512、精度、依赖与资源采样间隔作受控开关对照；随机初始化/训练后策略不同导致的出口比例不能算缓存收益。现有小样本只计重复且仍执行全部前向，没有启用有界LRU，不能冒称实际命中率或吞吐验收。
+
+这项缓存仅省神经前向，不会省去查缓存前的模拟器结算和观测编码。若分支复制或恢复journal深拷贝成为主要开销，应作为独立的语义等价优化处理，不能用模型输入哈希冒充完整状态等价。观测结果和后续归因记录见[日志](../../worklog/2026-10-22.md#combat01-model-input-cache-intention)。
