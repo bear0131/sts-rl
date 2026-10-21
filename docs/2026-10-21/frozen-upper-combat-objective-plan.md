@@ -4,6 +4,8 @@
 
 本计划对应 [TODO 的 COMBAT01](../../TODO.md)。它是设计交接，不表示已经提取 teacher、实现新目标或启动训练。进度只追加 [工作日志](../../worklog/2026-10-21.md#frozen-upper-combat-retraining-plan-intention)，任务状态只维护 TODO。
 
+本计划末尾五项交付的具体设计已写入[COMBAT01 实现设计](frozen-upper-combat-design.md)，区分已定合同、建议默认值和待核验接口。用户补充要求等待模拟器改动完成后一同并入；正式实现 commit 在整合后固定，EVAL31 仅作为 teacher 身份及对照依据。本轮尚未进入实现或训练。
+
 ## 已确定的范围
 
 - 面向一代杀戮尖塔 TRAIN47 模型；首先覆盖既有 Ironclad、A0、第三幕通关目标与真实自然终局。
