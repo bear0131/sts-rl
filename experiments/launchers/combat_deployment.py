@@ -357,8 +357,10 @@ def manage(config_path, action):
             scp(rank, bundle, root+'/bundle.tar')
             invoke = f"from experiments.launchers.combat_deployment import remote_preflight; remote_preflight('deployment.json', {rank['rank']})"
             setup = f"""cd {shlex.quote(root)}
+exec > >(tee -a provisioning.log) 2>&1
 tar xf bundle.tar
 tar xf source.tar
+export PATH="$HOME/.local/bin:$HOME/miniconda3/bin:$PATH"
 command -v uv >/dev/null || python3 -m pip install uv
 uv sync --frozen --extra cuda --group test --python 3.11
 export PATH="$PWD/.venv/bin:$PATH"
