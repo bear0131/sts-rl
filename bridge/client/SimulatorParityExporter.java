@@ -68,6 +68,26 @@ public final class SimulatorParityExporter {
         }
     }
 
+    // endBattle() clears the manager while its room can still be COMBAT for a
+    // post-update export. Observe this actual lifecycle event, including a
+    // one-turn battle where the turn number itself does not change.
+    @SpirePatch(clz = GameActionManager.class, method = "clear")
+    public static final class CardUseClearPatch {
+        @SpirePostfixPatch
+        public static void afterClear(GameActionManager __instance) {
+            // A clear before preBattlePrep or on another manager is not proof
+            // that this exporter observed that player's card-use history.
+            if (cardUseOwner == null || cardUseOwner != AbstractDungeon.player
+                    || cardUseActions != __instance) return;
+            if (GameActionManager.turn != 1 || !__instance.cardsPlayedThisTurn.isEmpty()
+                    || !__instance.cardsPlayedThisCombat.isEmpty())
+                throw new IllegalStateException("Unexpected action-manager clear result");
+            cardUseTurn = GameActionManager.turn;
+            attacksUsedThisTurn = 0;
+            skillsUsedThisTurn = 0;
+        }
+    }
+
     @SpirePatch(clz = ShopScreen.class, method = "init")
     public static class ShopInitPatch {
         @SpirePostfixPatch

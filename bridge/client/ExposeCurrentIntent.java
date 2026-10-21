@@ -124,6 +124,7 @@ public final class ExposeCurrentIntent {
             "communicationmod/SimulatorParityExporter$DamagePatch.class",
             "communicationmod/SimulatorParityExporter$PreBattlePatch.class",
             "communicationmod/SimulatorParityExporter$CardUsePatch.class",
+            "communicationmod/SimulatorParityExporter$CardUseClearPatch.class",
             "communicationmod/SimulatorParityExporter$ShopInitPatch.class",
             "communicationmod/SimulatorParityExporter$ShopPurchasePatch.class",
         };

@@ -233,7 +233,12 @@ overload delegates to it), including purge copies but excluding failed autoplay.
 The constructor hook declares the patched `UseCardAction` instance followed by
 both constructor arguments, as required by the installed ModTheSpire binding.
 `preBattlePrep` initializes the observer, and the actual action-manager turn
-resets its per-turn counts. Unobserved ownership or a regressed turn fails;
+resets its per-turn counts. An actual `GameActionManager.clear()` also resets
+the already-observed manager's counts: battle completion calls it before the
+room's COMBAT phase necessarily changes, clearing both admission lists and
+resetting turn to 1. This event also matters after a one-turn battle. It never
+initializes an unobserved owner or another manager. Unobserved ownership or a
+regressed turn without an observed reset still fails (BRIDGE174);
 the exporter never guesses a use count from a relic's modulo-three display.
 An admitted copy skipped for a half-dead/null enemy still counts for Choker,
 Normality and Pocketwatch, but not Kunai/Shuriken/Fan/Letter Opener/Art of War.
