@@ -272,7 +272,7 @@ checkpoint保存的实际876配置是主要证据：profile中的`source_checkpo
 2. **实际输入**：upper先复用`observation_for_policy`投影到teacher旧space，再按`OVERWORLD_OBSERVATION_KEYS`和phase keys取实际读取字段；lower使用`core.combat_observation_keys`，包含完整context-v2、pending与已选牌。字段名称、dtype、单行shape和连续原始字节组成输入身份，不按HP/金币分桶，不丢掉遗物计数或候选顺序。兼容投影/shape校验在查缓存前执行，命中不能绕过合法性检查。
 3. **命名空间**：每个rollout对象绑定模型实例/权重代、输入合同、upper/lower、device、AMP与推理后端；不同数值路径不共享。参与前向的`active_relic_width`必须纳入合同，查表前确定并让miss前向保持同一width。根节点若走不同的eager/精度/width路径，独立命名空间；符合相同合同后才允许与普通搜索节点共享，不从GPU反拷输入只为命中。
 4. **批量处理**：在现有CPU观测物化处打包键，先查跨调用缓存，再对本批miss去重；只对唯一miss前向，按原索引散回，全部命中时不调用模型。哈希采用C实现；同一digest还核对原始输入字节，强制碰撞只造成miss，不得返回别人的结果。批量打包避免每行反复排序字段/拼接Python小对象。
-5. **容量**：建议初始每rank最多512MiB缓存记账空间，upper128MiB、lower384MiB分开LRU，以免普通节点挤掉较贵的上层结果。键、输出和索引开销都记账，单条超限不入库；真实RSS与记账偏差另测。容量是待实测调整的默认值，不是用户合同。输出为独立CPU FP32拷贝，不保留计算图、CUDA临时张量或graph输出view。
+5. **容量与实测选择**：初始候选为upper128MiB、lower384MiB独立LRU。384×64现场检查发现lower约30%命中仍不足抵消打包/查表开销，因此当前默认upper128MiB、lower0（直通，不打包/去重）；通用lower缓存实现保留，启用须证明净收益。上层graph对原本已mask的deck/relic PAD宽度使用有限桶，避免反复重建；不减少有效token。键、输出和索引开销都记账，单条超限不入库；真实RSS与记账偏差另测。这些是性能实测决定的默认值，不是改变目标/搜索的合同。缓存输出为独立CPU FP32拷贝，不保留计算图、CUDA临时张量或graph输出view。
 6. **指标**：每类分别记录输入行数、前向批数、跨调用命中、本批去重、唯一miss、eviction、当前/峰值字节，以及pack/hash、lookup/scatter、前向时间；计数定义互斥，不能把重叠命中相加。另单列出口结算/编码和upper调用，修正当前`cpp_leaf_model_seconds`同时含lower、结算及teacher的解释歧义。CUDA事件未开启时相应时间记为不可用，不把旧0值当0开销。
 
 ### 6.3 待核验接口与验收

@@ -44,6 +44,12 @@ class ExactInputCache:
         count = len(next(iter(observations.values())))
         if not count or any(len(v) != count for v in observations.values()):
             raise ValueError('cache inputs require an equal nonempty batch')
+        if self.max_bytes == 0:
+            self.stats['requests'] += count
+            self.stats['misses'] += count
+            result = forward(observations)
+            self.stats['forward_seconds'] += time.perf_counter()-started
+            return result
         schema = tuple((k, v.shape[1:], v.dtype.str) for k, v in sorted(observations.items()))
         # Batch-wise packing avoids a Python field loop for every leaf. Python
         # bytes keys use hash tables with full equality on collision.
@@ -113,8 +119,25 @@ class _UpperPhaseCore:
         return self.teacher.forward_phase(observations, phase, (deck, relics))
 
 
+def _upper_graph_inputs(observations, widths, capacities):
+    """Group masked padding widths so small deck changes do not recapture.
+
+    Token IDs, positions and counters stay intact. Only already masked PAD
+    tokens are added, within the frozen checkpoint's positional capacity.
+    """
+    padded = tuple(min(cap, max(minimum, 1 << (width - 1).bit_length()))
+                   for width, cap, minimum in zip(widths, capacities, (16, 4), strict=True))
+    result = dict(observations)
+    for keys, width, target in zip((('deck_ids', 'deck_upgrades'), ('relics', 'relic_counters')),
+                                   widths, padded, strict=True):
+        for key in keys:
+            if width != target:
+                result[key] = np.pad(observations[key], ((0, 0), (0, target-width)))
+    return result, padded
+
+
 class RolloutInference:
-    def __init__(self, model, *, upper_bytes=128*1024**2, lower_bytes=384*1024**2):
+    def __init__(self, model, *, upper_bytes=128*1024**2, lower_bytes=0):
         self.model = model
         self.upper = ExactInputCache(upper_bytes)
         self.lower = ExactInputCache(lower_bytes)
@@ -132,6 +155,10 @@ class RolloutInference:
         self.upper_prepare_seconds += time.perf_counter()-started
         output = None
         for indices, phase, widths, obs in groups:
+            if self.upper_graphs is not None:
+                capacities = tuple(teacher.observation_space.spaces[key].shape[0]
+                                   for key in ('deck_ids', 'relics'))
+                obs, widths = _upper_graph_inputs(obs, widths, capacities)
             signature = (phase, *widths)
             def forward(batch):
                 if self.upper_graphs is not None:

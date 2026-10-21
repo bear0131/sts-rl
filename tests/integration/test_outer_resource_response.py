@@ -154,8 +154,15 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core)
     runtime = RolloutInference(model, upper_bytes=0)
     runtime.upper_graphs.capacity = 2
     try:
-        for count in (1, 9, 17, 1, 1):
+        for count, deck_width, relic_width in ((1, 1, 1), (9, 17, 5), (17, 33, 9),
+                                              (1, 65, 17), (1, 1, 1), (1, 1, 1)):
             obs = {k: np.stack([v]*count) for k, v in env._obs().items()}
+            card, relic = obs['deck_ids'][0, 0], obs['relics'][0, 0]
+            assert card and relic
+            for key in ('deck_ids', 'deck_upgrades', 'relics', 'relic_counters'):
+                obs[key][:] = 0
+            obs['deck_ids'][:, :deck_width] = card
+            obs['relics'][:, :relic_width] = relic
             # Distinct actual inputs prevent batch dedup hiding shape changes.
             obs['run_hp'][:, 0] += np.arange(count, dtype=np.float32)*.001
             reference = core.teacher(observation_as_tensor(obs, 'cuda'))

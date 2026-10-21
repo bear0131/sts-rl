@@ -65,6 +65,22 @@ def test_failed_forward_does_not_publish_results():
     assert not cache.entries
 
 
+def test_zero_capacity_bypasses_packing_and_batch_deduplication():
+    cache = ExactInputCache(0)
+    obs = dict(x=np.ones((3, 2), np.float32))
+    calls = []
+    def forward(batch):
+        assert batch is obs
+        calls.append(len(batch['x']))
+        return batch['x']*2, batch['x'].sum(axis=1)
+    for _ in range(2):
+        np.testing.assert_array_equal(cache.forward(obs, forward)[0], obs['x']*2)
+    assert calls == [3, 3]
+    assert not cache.entries and not cache.scopes
+    assert cache.stats['requests'] == cache.stats['misses'] == 6
+    assert cache.stats['key_seconds'] == cache.stats['batch_duplicates'] == 0
+
+
 def test_schema_eviction_cannot_alias_live_cached_values():
     cache = ExactInputCache(1_000_000)
     obs = dict(x=np.ones((1, 1), np.float32))
