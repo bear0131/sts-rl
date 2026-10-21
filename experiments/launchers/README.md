@@ -8,9 +8,9 @@ TRAIN47操作。它不会读取历史主机/HP模型/旧run默认值。训练pro
 永久冻结，完整下层随机初始化、从第一次更新同时训练actor/encoder/critic。
 
 1. 将 `experiments/launchers/combat01_876_4x5090.json` 复制到忽略目录
-   `runs/local/combat01-deployment.json`。填写当前四个SSH `host/port`、一个新的
-   `remote_repo`（如 `/root/autodl-tmp/combat01-876-new`）和本地转发 `ring_port`
-   （如29880）。核对 `material_directory` 与已授权的 `ssh_key`；不用旧机器地址。
+   `runs/local/combat01-deployment.json`。填写当前四个SSH `host/port`。默认新的
+   `remote_repo=/root/autodl-tmp/combat01-876-20261021`、转发 `ring_port=29880`已提供；
+   重试时须改为尚不存在的独立目录。核对 `material_directory` 与已授权的 `ssh_key`；不用旧机器地址。
    四台均须有兼容驱动的5090/32GB、约90GB容器内存、SSH和C++构建工具。
 2. 用下列现有入口依次执行 `plan`、`preflight`、`start`、`wait-update`：
 

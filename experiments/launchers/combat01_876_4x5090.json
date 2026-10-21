@@ -6,8 +6,8 @@
   "launcher": "experiments/launchers/launch_nosl_replay.sh",
   "run_id": "combat01-876-outer-v1-4x5090",
   "wandb_id": null,
-  "remote_repo": null,
-  "ring_port": null,
+  "remote_repo": "/root/autodl-tmp/combat01-876-20261021",
+  "ring_port": 29880,
   "ranks": [
     {
       "rank": 0,

@@ -247,3 +247,11 @@ checkpoint保存的实际876配置是主要证据：profile中的`source_checkpo
 **实际接入检查**：以指定native SHA94187a48、新runtime528d8aa、CPU2线程/Torch2.11.0+cu128、seed9000000—9000003，每seed128动作、总512动作，29.524秒完成（180秒进程上限）。原876按旧space加载并合法预测，覆盖358战斗动作、154上层动作（map/reward/event/rest/shop/chest/card_select）；全部154条独立上层材料的原始logits/V与同源码原模型在同CPU FP32下逐位相等，卡表storage不共享、全部lower初始化tensor相等。结果`runs/local/combat01-preparation-20261021/runtime-material-audit.json`。此检查未调用optimizer、未跑新目标native搜索，不代表全phase/终局/恢复、GPU或四机训练验收；前推一致也不证明冻结teacher价值校准正确。
 
 **默认开跑验收预算**：现场预检通过后，四rank按384×512跑2轮，最多1572864个全局槽位step、80次lower同步更新、3600秒，seed9001000、上层更新恒0。每轮保存完整代；墙钟到期提前请求协同保存，硬超时只能恢复此前完整共同代，不能宣称未完成轮已保存。正式长训在部署配置中显式填写rounds/max_seconds/seed，不恢复旧1B/通宵任务。完整游戏质量晋级仍用独立留出对照，开机可运行不等于已经训练成功。
+
+### 5.5 开机交付状态与剩余现场边界
+
+**已定合同与本机实现已验**：876上层永久冻结；整个随机下层共同训练，无critic预校准。CPU真实两轮与恢复、旧checkpoint/旧PPO/NOSL兼容、完整分支、烟雾/偷钱/单世界线、GRID选择及资源响应均有日志证据。本机4060/Windows/Torch2.11+cu128以32env×512、128sim、BF16/no-compile完成完整collection及2次更新，恢复32环境/10902 replay/147 pending，teacher哈希不变。具体预算、耗时、资源和失败修复历史见worklog，不把这些数字外推为5090吞吐。
+
+**建议默认已落入启动配置**：4×5090/32GB/90GB，876 geometry和学习参数，首轮最多2轮/3600秒/seed9001000；新远端目录和通信端口已填写。可编辑副本在工作树runs/local/combat01-deployment.json，只待当前四台host/port。启动依次plan/preflight/start/wait-update，preflight必须基于干净、已提交源码。
+
+**待现场核验**：Linux锁定依赖、同源native/compiled CUDA graph、5090显存与容器内存、四rankSSH同步及共同恢复代由自动预检和首次有限训练实测。当前未连接或启动云机；模板launch_ready=false保留此事实，不能手改标记绕过agreement。完整游戏留出比较在训练产生候选后执行；Watch/dashboard/真实bridge的新目标适配仍不在本次开机训练支持范围。

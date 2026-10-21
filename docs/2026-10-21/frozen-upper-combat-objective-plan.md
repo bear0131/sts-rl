@@ -1,5 +1,7 @@
 # 冻结最强上层并以外层价值重训战斗层的设计计划
 
+> 后续用户已明确：只冻结上层，下层actor/encoder/critic可以随机初始化并从首轮共同训练，不设部分冻结或critic预校准。当前实现合同、五项设计交付与开机入口见[实现设计](frozen-upper-combat-design.md)和[launchers说明](../../experiments/launchers/README.md)。本文保留原始阶段建议，冲突处以上述用户修正为准。
+
 用户已确定方向：**提取当前最强参数的上层并冻结，用它的外层价值定义战斗目标，重新训练下层。** 新会话首先完成实现设计，随后按独立预算推进实现和实验。本阶段上层策略、上层价值及其输入含义保持固定，不交替训练上下层。
 
 本计划对应 [TODO 的 COMBAT01](../../TODO.md)。它是设计交接，不表示已经提取 teacher、实现新目标或启动训练。进度只追加 [工作日志](../../worklog/2026-10-21.md#frozen-upper-combat-retraining-plan-intention)，任务状态只维护 TODO。
