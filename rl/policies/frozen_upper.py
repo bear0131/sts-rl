@@ -112,8 +112,7 @@ class FrozenUpperTeacher(nn.Module):
             raise RuntimeError('frozen upper parameter or buffer changed')
         return self._expected_state_digest
 
-    @torch.no_grad()
-    def forward(self, observations):
+    def _validated_observations(self, observations):
         if any(p.requires_grad for p in self.parameters()) or any(m.training for m in self.modules()):
             raise RuntimeError('frozen upper was made trainable')
         observations = observation_for_policy(self, observations)
@@ -121,6 +120,51 @@ class FrozenUpperTeacher(nn.Module):
         for name, space in self.observation_space.spaces.items():
             if tuple(observations[name].shape) != (batch_size, *space.shape):
                 raise ValueError(f'frozen upper observation shape changed: {name}')
+        return observations
+
+    def prepare_numpy(self, observations):
+        """Validate full checkpoint schema, then project/route on the CPU.
+
+        The returned widths are computed before deduplication so cache hits or
+        graph padding cannot silently change the encoder's physical token width.
+        """
+        observations = self._validated_observations(observations)
+        phase = np.asarray(observations['phase']).astype(np.int64).reshape(-1)
+        if not len(phase) or (phase == V.PHASE_VOCAB_INDEX['combat']).any():
+            raise ValueError('upper teacher requires nonempty upper decision rows')
+        groups = []
+        for phase_id in np.unique(phase):
+            selected = np.flatnonzero(phase == phase_id)
+            keys = OVERWORLD_OBSERVATION_KEYS | OVERWORLD_PHASE_OBSERVATION_KEYS.get(int(phase_id), frozenset())
+            batch = {key: np.asarray(value)[selected].astype(np.float32, copy=False)
+                     if np.issubdtype(value.dtype, np.floating) else np.asarray(value)[selected]
+                     for key, value in observations.items() if key in keys}
+            widths = []
+            for key in ('deck_ids', 'relics'):
+                active = np.flatnonzero(np.any(batch[key] != 0, axis=0))
+                widths.append(int(active[-1])+1 if len(active) else 1)
+            # The encoder already discards these padding tails. Do that before
+            # transport too, without changing token positions or model weights.
+            for key in ('deck_ids', 'deck_upgrades'):
+                batch[key] = batch[key][:, :widths[0]]
+            for key in ('relics', 'relic_counters'):
+                batch[key] = batch[key][:, :widths[1]]
+            groups.append((selected, int(phase_id), tuple(widths), batch))
+        return groups
+
+    @torch.no_grad()
+    def forward_phase(self, observations, phase_id, active_widths=None):
+        """Internal phase entry for already validated/projected inputs."""
+        device = next(self.parameters()).device
+        with torch.autocast(device_type=device.type, enabled=False):
+            logits, values = self.overworld(observations, self.upper_tokenizer, phase_id,
+                                           upper_active_widths=active_widths)
+        return logits.float(), values.float()
+
+    @torch.no_grad()
+    def forward(self, observations):
+        observations = self._validated_observations(observations)
+        batch_size = len(observations['phase'])
         phase = observations['phase'].long().flatten()
         if not batch_size or (phase == V.PHASE_VOCAB_INDEX['combat']).any():
             raise ValueError('upper teacher requires nonempty upper decision rows')
@@ -132,7 +176,7 @@ class FrozenUpperTeacher(nn.Module):
                 keys = OVERWORLD_OBSERVATION_KEYS | OVERWORLD_PHASE_OBSERVATION_KEYS.get(phase_id, frozenset())
                 batch = {key: value[selected].float() if value.is_floating_point() else value[selected]
                          for key, value in observations.items() if key in keys}
-                out, value = self.overworld(batch, self.upper_tokenizer, phase_id)
+                out, value = self.forward_phase(batch, phase_id)
                 indices.append(selected)
                 logits.append(out.float())
                 values.append(value.float())

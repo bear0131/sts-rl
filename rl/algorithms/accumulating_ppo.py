@@ -474,6 +474,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         return [
             *super()._excluded_save_params(),
             "_native_leaf_inference",
+            "_rollout_inference",
             "_nosl_leaf_batch_controller",
             "_reasoning_rollout_samples",
             "_nosl_is_az_samples",
@@ -952,6 +953,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             env.step_wait = MethodType(capture_reasoning_step_wait, env)
 
         try:
+            if self._outer_return:
+                from rl.search.rollout_inference import RolloutInference
+                self._rollout_inference = RolloutInference(self)
             with self.autocast_context():
                 if self.nosl_is_az:
                     result = self._collect_nosl_is_az_rollouts(
@@ -968,6 +972,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
         finally:
             env.step_wait = original_step_wait
             env.step_async = original_step_async
+            runtime = self.__dict__.pop('_rollout_inference', None)
+            if runtime is not None:
+                try:
+                    for key, value in runtime.statistics().items():
+                        self.logger.record(f'nosl_is_az/{key}', value)
+                finally:
+                    runtime.clear()
 
         if result and self.hierarchical_combat_hp:
             self._apply_hierarchical_returns(rollout_buffer, captured)

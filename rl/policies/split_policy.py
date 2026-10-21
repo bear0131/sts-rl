@@ -745,13 +745,13 @@ class OverworldEncoder(_SpecialistEncoder):
 
     def _card_block(
         self, obs, shared, role, ids_key, upgrades_key, extra=None,
-        trim_trailing_padding=False,
+        trim_trailing_padding=False, active_width=None,
     ):
         ids = obs[ids_key]
         upgrades = obs[upgrades_key]
         position = self.position[role]
         if trim_trailing_padding:
-            width = _active_prefix_width(ids)
+            width = _active_prefix_width(ids) if active_width is None else active_width
             ids = ids[:, :width]
             upgrades = upgrades[:, :width]
             position = position[:width]
@@ -764,14 +764,14 @@ class OverworldEncoder(_SpecialistEncoder):
 
     def _relic_block(
         self, obs, shared, role, ids_key, counters=None, extra=None,
-        trim_trailing_padding=False,
+        trim_trailing_padding=False, active_width=None,
     ):
         ids = obs[ids_key]
         if counters is None:
             counters = torch.zeros_like(ids, dtype=torch.float32)
         position = self.position[role]
         if trim_trailing_padding:
-            width = _active_prefix_width(ids)
+            width = _active_prefix_width(ids) if active_width is None else active_width
             ids = ids[:, :width]
             counters = counters[:, :width]
             position = position[:width]
@@ -794,6 +794,7 @@ class OverworldEncoder(_SpecialistEncoder):
         obs: dict[str, torch.Tensor],
         shared: SharedSemanticTokenizer,
         phase_id: int,
+        active_widths=None,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         batch_size = obs["phase"].shape[0]
         global_parts = [
@@ -814,10 +815,12 @@ class OverworldEncoder(_SpecialistEncoder):
             self._card_block(
                 obs, shared, "deck", "deck_ids", "deck_upgrades",
                 trim_trailing_padding=True,
+                active_width=None if active_widths is None else active_widths[0],
             ),
             self._relic_block(
                 obs, shared, "relic", "relics", obs["relic_counters"],
                 trim_trailing_padding=True,
+                active_width=None if active_widths is None else active_widths[1],
             ),
             self._potion_block(obs, shared, "potion", "potions"),
         ]
@@ -990,14 +993,15 @@ class _SpecialistActorCritic(nn.Module):
         logits[:, base:base + A.N_COLS] = map_scores
 
     def forward(
-        self, obs, shared, phase_id=None, *, active_relic_width=None, evaluate_subsets=True
+        self, obs, shared, phase_id=None, *, active_relic_width=None, evaluate_subsets=True,
+        upper_active_widths=None,
     ):
         if self.kind == "combat":
             global_token, blocks = self.encoder(
                 obs, shared, active_relic_width=active_relic_width
             )
         else:
-            global_token, blocks = self.encoder(obs, shared, phase_id)
+            global_token, blocks = self.encoder(obs, shared, phase_id, active_widths=upper_active_widths)
         blocks["__global__"] = global_token
         logits = self.fixed_head(global_token).clone()
         if self.kind != "combat":

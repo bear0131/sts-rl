@@ -351,21 +351,27 @@ def forward_leaves(model, observations, *, compact=True, lock=None, autocast=nul
                    leaf_backend=MODEL_LEAF_BACKEND):
     backend = (getattr(model, '_native_leaf_inference', None)
                if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
-    if backend is not None and compact:
+    width = None
+    if compact:
         active = np.flatnonzero(np.any(observations['relics'] != 0, axis=0))
         width = int(active[-1]) + 1 if active.size else 1
-        with lock or nullcontext():
-            return backend(observations, width)
-    tensor = observation_as_tensor(observations, model.device)
-    core = model.policy.core
-    with lock or nullcontext(), th.inference_mode(), autocast():
-        if compact:
-            active = np.flatnonzero(np.any(observations['relics'] != 0, axis=0))
-            width = int(active[-1]) + 1 if active.size else 1
-            logits, values = core.combat_actor_critic(tensor, active_relic_width=width)
-        else:
-            logits, values = core.actor_critic(tensor)
-    return logits.float().cpu().numpy(), values.float().reshape(-1).cpu().numpy()
+    def evaluate(batch):
+        if backend is not None and compact:
+            with lock or nullcontext():
+                return backend(batch, width)
+        tensor = observation_as_tensor(batch, model.device)
+        core = model.policy.core
+        with lock or nullcontext(), th.inference_mode(), autocast():
+            if compact:
+                logits, values = core.combat_actor_critic(tensor, active_relic_width=width)
+            else:
+                logits, values = core.actor_critic(tensor)
+        return logits.float().cpu().numpy(), values.float().reshape(-1).cpu().numpy()
+    runtime = getattr(model, '_rollout_inference', None)
+    if runtime is not None:
+        return runtime.lower.forward(observations, evaluate,
+                                     namespace=(compact, width, id(backend)))
+    return evaluate(observations)
 
 
 def decode_leaves(responses):
@@ -552,7 +558,11 @@ def complete_searches_native(
 def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
     """Route typed exits through complete settlement before evaluating a value."""
     observations = batch.observations()
+    started = time.perf_counter()
     exits = batch.combat_exits()
+    runtime = getattr(model, '_rollout_inference', None)
+    if runtime is not None:
+        runtime.outer_settlement_seconds += time.perf_counter()-started
     logits = np.zeros((batch.rows, model.action_space.n), dtype=np.float32)
     values = np.zeros(batch.rows, dtype=np.float32)
     active = [i for i in range(batch.rows) if i not in exits]
@@ -568,8 +578,11 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
         if kind == 'upper':
             # Teacher owns FP32/no-grad; never send a terminal BC through the
             # lower HP encoder or convert teacher inference to lower AMP.
-            _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
-            continuation = continuation.float().flatten().cpu().numpy()
+            if runtime is None:
+                _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
+                continuation = continuation.float().flatten().cpu().numpy()
+            else:
+                _, continuation = runtime.forward_upper(obs)
         else:
             _, continuation = forward_leaves(model, obs, compact=True,
                                              autocast=autocast, leaf_backend=leaf_backend)

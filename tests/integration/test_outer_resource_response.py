@@ -137,3 +137,42 @@ def test_outer_graph_lifecycle(outer_return_core):
         cache.clear()
         core.to('cpu')
         torch.cuda.empty_cache()
+
+
+def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core):
+    import gc
+    from types import SimpleNamespace
+    import torch
+    from rl.search.rollout_inference import RolloutInference
+    assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
+    core, _, env = outer_return_core
+    assert env._phase() != 'combat'
+    core.to('cuda').eval()
+    frozen = core.teacher.assert_integrity()
+    model = SimpleNamespace(policy=SimpleNamespace(core=core), device='cuda',
+                            _native_leaf_inference=object())
+    runtime = RolloutInference(model, upper_bytes=0)
+    runtime.upper_graphs.capacity = 2
+    try:
+        for count in (1, 9, 17, 1, 1):
+            obs = {k: np.stack([v]*count) for k, v in env._obs().items()}
+            # Distinct actual inputs prevent batch dedup hiding shape changes.
+            obs['run_hp'][:, 0] += np.arange(count, dtype=np.float32)*.001
+            reference = core.teacher(observation_as_tensor(obs, 'cuda'))
+            logits, values = runtime.forward_upper(obs)
+            # FP32 batch padding may alter GEMM reduction order by a few ULPs.
+            np.testing.assert_allclose(values, reference[1].cpu().numpy().flatten(), atol=2e-5, rtol=2e-5)
+            expected = reference[0].cpu().numpy()
+            valid = np.abs(expected) < 1e6
+            np.testing.assert_allclose(logits[valid], expected[valid], atol=2e-5, rtol=2e-5)
+            del reference
+            gc.collect()
+            torch._C._cuda_clearCublasWorkspaces()
+            torch.cuda.empty_cache()
+        stats = runtime.upper_graphs.statistics()
+        assert stats['evictions'] >= 2 and stats['hits'] >= 1
+        assert core.teacher.assert_integrity() == frozen
+    finally:
+        runtime.clear()
+        core.to('cpu')
+        torch.cuda.empty_cache()

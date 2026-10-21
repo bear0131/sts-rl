@@ -124,6 +124,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
     assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
     assert all(p['nosl_is_az/updates'] == 2 for p in payloads)
+    assert all(p['nosl_is_az/lower_cache_requests'] > 0 for p in payloads)
+    assert all(p['nosl_is_az/upper_cache_requests'] > 0 for p in payloads)
+    assert all(p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher
@@ -132,6 +135,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
     restore_learner(restored, bundle, rank=0, world_size=1)
     assert restored._recovery_environment_restored
+    assert not hasattr(restored, '_rollout_inference')
     replay = restored._ensure_nosl_is_az_replay()
     assert replay.size > 0 and np.isfinite(replay.value_targets[:replay.size]).all()
     state = replay.state_dict()
@@ -148,3 +152,36 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     final = AccumulatingMaskablePPO.load(output, device='cpu')
     assert final.policy.core.teacher.assert_integrity() == teacher
     assert final.policy.optimizer.state
+
+
+@pytest.mark.parametrize('abort', [False, True])
+def test_rollout_cache_clears_on_callback_abort_and_exception(outer_material, monkeypatch, abort):
+    from rl.search.rollout_inference import RolloutInference
+    env = VecMonitor(NativeSearchVecEnv([lambda: SlayTheSpireEnv(
+        global_map_view=True, combat_action_contract='autoregressive-v2',
+        outer_return_context=True)], threads=1))
+    model = AccumulatingMaskablePPO(OuterReturnPolicy, env, policy_kwargs=outer_material,
+        n_steps=2, batch_size=2, device='cpu', seed=42101, gamma=1.,
+        nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
+        nosl_is_az_fixed_worldline=True, nosl_is_az_upper_strategy='model',
+        nosl_is_az_leaf_batch_size=1)
+    _, callback = model._setup_learn(2)
+    runtimes = []
+    def collect(*args):
+        runtime = model._rollout_inference
+        runtimes.append(runtime)
+        runtime.lower.forward(dict(x=np.ones((1, 1), np.float32)), lambda x: (x['x'], x['x']))
+        if abort:
+            return False
+        raise RuntimeError('collector failed')
+    monkeypatch.setattr(model, '_collect_nosl_is_az_rollouts', collect)
+    try:
+        if abort:
+            assert not model.collect_rollouts(env, callback, model.rollout_buffer, 2)
+        else:
+            with pytest.raises(RuntimeError, match='collector failed'):
+                model.collect_rollouts(env, callback, model.rollout_buffer, 2)
+        assert not hasattr(model, '_rollout_inference')
+        assert not runtimes[0].lower.entries
+    finally:
+        env.close()

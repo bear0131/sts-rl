@@ -101,6 +101,27 @@ def test_freeze_guards_and_input_scope(frozen_upper_source):
         teacher.assert_integrity()
 
 
+def test_cpu_projection_and_explicit_widths_match_teacher(frozen_upper_source):
+    from rl.search.rollout_inference import RolloutInference
+    from types import SimpleNamespace
+    core, space, _, obs = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    raw = {key: value.numpy() for key, value in obs.items()}
+    reference = teacher(obs)
+    runtime = RolloutInference(SimpleNamespace(policy=SimpleNamespace(
+        core=SimpleNamespace(teacher=teacher)), device='cpu'))
+    actual = runtime.forward_upper(raw)
+    for expected, got in zip(reference, actual):
+        np.testing.assert_allclose(got.reshape(expected.shape), expected.numpy(), rtol=0, atol=0)
+    again = runtime.forward_upper(raw)
+    np.testing.assert_array_equal(actual[0], again[0])
+    assert runtime.upper.stats['hits'] == len(raw['phase'])
+    assert runtime.upper.stats['misses'] == len(raw['phase'])
+    runtime.clear()
+    assert not runtime.upper.entries
+    teacher.assert_integrity()
+
+
 def test_checkpoint_key_mask_is_phase_specific(frozen_upper_source):
     core, space, env, obs = frozen_upper_source
     teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)

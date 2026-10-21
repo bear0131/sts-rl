@@ -1,0 +1,65 @@
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+
+from rl.search.rollout_inference import ExactInputCache
+
+
+def test_exact_cache_reuses_across_batches_and_owns_outputs():
+    cache = ExactInputCache(4096)
+    calls = []
+    def forward(obs):
+        calls.append(obs['x'].copy())
+        return obs['x']*2., obs['x'].sum(axis=1)
+    obs = dict(x=np.array([[1, 2], [1, 2], [2, 1]], np.float32))
+    logits, values = cache.forward(obs, forward)
+    np.testing.assert_array_equal(logits, obs['x']*2.)
+    np.testing.assert_array_equal(values, [3, 3, 3])
+    assert len(calls[0]) == 2
+    logits[:] = -100
+    values[:] = -100
+    again = cache.forward(dict(x=obs['x'][::-1].copy()), forward)
+    np.testing.assert_array_equal(again[0], obs['x'][::-1]*2.)
+    assert len(calls) == 1
+    assert cache.stats['hits'] == 3 and cache.stats['batch_duplicates'] == 1
+    cache.forward(obs, forward, namespace=('other-physical-width',))
+    assert len(calls) == 2
+
+
+def test_exact_cache_distinguishes_dtype_shape_field_and_value():
+    cache = ExactInputCache(1_000_000)
+    calls = []
+    def forward(obs):
+        calls.append(obs)
+        return np.zeros((1, 2), np.float32), np.ones(1, np.float32)
+    for obs in (dict(x=np.array([[1, 2]], np.int32)),
+                dict(x=np.array([[1, 2]], np.float32)),
+                dict(x=np.array([[[1, 2]]], np.int32)),
+                dict(y=np.array([[1, 2]], np.int32)),
+                dict(x=np.array([[2, 1]], np.int32))):
+        cache.forward(obs, forward)
+    assert len(calls) == 5
+
+
+def test_exact_cache_evicts_and_clear_invalidates_new_weights():
+    cache = ExactInputCache(600)
+    weight = 1
+    def forward(obs):
+        return obs['x']*weight, obs['x'].sum(axis=1)*weight
+    obs = dict(x=np.array([[1], [2], [1]], np.float32))
+    np.testing.assert_array_equal(cache.forward(obs, forward)[0], obs['x'])
+    assert cache.stats['bytes'] <= 600 and cache.stats['evictions'] == 1
+    cache.clear()
+    assert not cache.entries and cache.stats['bytes'] == 0
+    weight = 2
+    np.testing.assert_array_equal(cache.forward(obs, forward)[0], obs['x']*2)
+
+
+def test_failed_forward_does_not_publish_results():
+    cache = ExactInputCache(4096)
+    def fail(_):
+        raise RuntimeError('model failed')
+    with pytest.raises(RuntimeError, match='model failed'):
+        cache.forward(dict(x=np.ones((2, 1))), fail)
+    assert not cache.entries

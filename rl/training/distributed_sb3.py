@@ -19,6 +19,7 @@ from rl.algorithms.updates import ppo_forward, optimizer_step, reasoning_microba
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, update_upper
 from rl.algorithms.update_schedule import parse_update_schedule
 from rl.search.native import NATIVE_TIMING_KEYS, WORKER_TIMING_KEYS, apply_strict_training_settings
+from rl.search.rollout_inference import ROLLOUT_INFERENCE_METRICS
 
 import argparse
 import hashlib
@@ -1969,6 +1970,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/cpp_begin_rpc_seconds",
     "nosl_is_az/cpp_leaf_decode_seconds",
     "nosl_is_az/cpp_leaf_model_seconds",
+    *(f"nosl_is_az/{name}" for name in ROLLOUT_INFERENCE_METRICS),
     "nosl_is_az/cpp_backprop_rpc_seconds",
     "nosl_is_az/cpp_stream_wait_seconds",
     "nosl_is_az/cpp_ready_empty_wait_seconds",
