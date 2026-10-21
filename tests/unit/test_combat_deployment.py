@@ -47,6 +47,20 @@ def test_deployment_preserves_whole_lower_training_and_876_geometry():
         assert str(args.checkpoint).replace('\\', '/').endswith('/material/initial.zip')
 
 
+def test_production_ssh_socket_fits_even_with_long_deployment_paths():
+    from rl.training.distributed_sb3 import parse_peer, ssh_control_directory, ssh_options
+    config = configuration()
+    config['remote_repo'] = '/root/autodl-tmp/' + 'long-deployment-' * 8
+    config['run_id'] = 'combat01-876-outer-v1-4x5090-retry'
+    profile = json.loads((ROOT/config['profile']).read_text())
+    for rank in range(4):
+        args = build_parser().parse_args(training_command(config, profile, rank)[4:])
+        directory = ssh_control_directory(Path(args.ssh_control_dir), args.run_id, rank)
+        options = ssh_options(parse_peer(args.peer[0]), Path(args.ssh_key), directory)
+        assert 'ControlMaster=auto' in options
+        assert len(str(directory).encode()) + 1 + 40 + 17 < 104
+
+
 @pytest.mark.parametrize('mutation', [
     lambda c: c['ranks'][0].update(host=None),
     lambda c: c['ranks'][1].update(host=c['ranks'][0]['host'], port=c['ranks'][0]['port']),

@@ -98,7 +98,7 @@ def training_command(config, profile, rank):
         '--rollout-resource-interval', str(t['resource_interval_seconds']),
         '--training-state-dir', str(run/'recovery'), '--save-every-updates', '1', '--max-checkpoints', '2',
         '--stop-file', str(run/'STOP'), '--remote-root', str(run/'transport'),
-        '--ssh-control-dir', str(run/'ssh-mux'), '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '300',
+        '--ssh-control-dir', '/tmp/combat01-ssh', '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '300',
         '--gradient-transport', 'ssh-ring', '--ring-port', str(config['ring_port'])]
     for peer in config['ranks']:
         if peer['rank'] != rank:
