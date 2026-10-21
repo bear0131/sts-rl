@@ -317,6 +317,7 @@ def manage(config_path, action):
     run = f'{root}/runs/{run_id}'
     def ssh(rank, script, timeout=180):
         cmd = ['ssh', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new',
+               '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
                '-o', 'ConnectTimeout=15', '-p', str(rank['port']), f"root@{rank['host']}", f'timeout {max(1, timeout-5)} bash -se']
         result = run_ssh_script(cmd, script, timeout)
         with (output/f"ssh-rank{rank['rank']}.log").open('a', encoding='utf-8') as log:
@@ -326,6 +327,7 @@ def manage(config_path, action):
         return result.stdout
     def scp(rank, path, target):
         subprocess.run(['scp','-i',str(key),'-o','BatchMode=yes','-o','StrictHostKeyChecking=accept-new',
+                        '-o','ServerAliveInterval=15','-o','ServerAliveCountMax=4',
                         '-P',str(rank['port']),str(path),f"root@{rank['host']}:{target}"], check=True, timeout=600)
     prelude = f'cd {shlex.quote(root)}\nexport STS_LIGHTSPEED_BUILD_DIR={shlex.quote(root+"/sim/sts_lightspeed/build-combat01")}\nexport OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1\n'
     if action == 'preflight':
@@ -362,7 +364,7 @@ tar xf bundle.tar
 tar xf source.tar
 export PATH="$HOME/.local/bin:$HOME/miniconda3/bin:$PATH"
 command -v uv >/dev/null || python3 -m pip install --index-url https://pypi.org/simple uv==0.13.4
-uv sync --frozen --extra cuda --group test --python 3.11
+uv sync --frozen --extra cuda --group test --python 3.11.15
 export PATH="$PWD/.venv/bin:$PATH"
 cmake -S sim/sts_lightspeed -B sim/sts_lightspeed/build-combat01 -G Ninja -DCMAKE_BUILD_TYPE=Release -DPYBIND11_FINDPYTHON=ON -DPython_EXECUTABLE="$PWD/.venv/bin/python" -DSTS_ENABLE_RULE_TRACE=ON
 cmake --build sim/sts_lightspeed/build-combat01 --target slaythespire game-context-contract --parallel 8
