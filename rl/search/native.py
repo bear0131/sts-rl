@@ -557,17 +557,39 @@ def complete_searches_native(
 
 def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
     """Route typed exits through complete settlement before evaluating a value."""
-    started = time.perf_counter()
-    exits = batch.combat_exits()
     runtime = getattr(model, '_rollout_inference', None)
-    if runtime is not None:
-        runtime.outer_settlement_seconds += time.perf_counter()-started
     logits = np.zeros((batch.rows, model.action_space.n), dtype=np.float32)
     values = np.zeros(batch.rows, dtype=np.float32)
-    active = [i for i in range(batch.rows) if i not in exits]
-    if active:
-        backend = (getattr(model, '_native_leaf_inference', None)
-                   if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
+    exit_rows = batch.combat_exit_rows
+    active = [i for i in range(batch.rows) if i not in exit_rows]
+    backend = (getattr(model, '_native_leaf_inference', None)
+               if leaf_backend is MODEL_LEAF_BACKEND else leaf_backend)
+    deferred = getattr(backend, 'forward_native_deferred', None)
+    pending = None
+    if active and exit_rows and deferred is not None and (runtime is None or runtime.lower.max_bytes == 0):
+        started = time.perf_counter()
+        pending = deferred(batch, rows=active)
+        if runtime is not None:
+            runtime.outer_overlap_batches += 1
+            runtime.outer_overlap_rows += len(active)
+            runtime.lower.stats['requests'] += len(active)
+            runtime.lower.stats['misses'] += len(active)
+            runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
+    try:
+        started = time.perf_counter()
+        exits = batch.combat_exits()
+        if runtime is not None:
+            runtime.outer_settlement_seconds += time.perf_counter()-started
+    finally:
+        # Even a settlement exception must drain the graph before its pinned
+        # inputs can be overwritten or released. CPU work does not change the
+        # ordinary leaves, batch geometry, search order or random draws.
+        if pending is not None:
+            started = time.perf_counter()
+            logits[active], values[active] = pending()
+            if runtime is not None:
+                runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
+    if active and pending is None:
         direct = getattr(backend, 'forward_native', None)
         if direct is not None and (runtime is None or runtime.lower.max_bytes == 0):
             rows = active if exits else None

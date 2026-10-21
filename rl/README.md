@@ -19,9 +19,10 @@
 ### 冻结上层 teacher
 
 `policies/outer_return.py` 提供 COMBAT01 策略组件：校验 manifest/逐文件 SHA 后加载
-提取材料，保留876 actor/encoder、新建FP32无界标量critic，删除旧HP分布/辅助头。
-`combat-public-run-context-v1` 为下层补充 act/floor/下一Boss/当前与最大HP/永久牌组
-ID、升级与misc/角色/进阶/keys；零初始化的上下文残差保证起始actor logits不变。
+提取材料，876提供永久冻结上层；正式实验的整个下层随机初始化并共同训练，
+使用FP32无界标量critic，不沿用旧HP分布/辅助头。`combat-public-run-context-v2`
+为下层补充 act/floor/下一Boss/当前与最大HP/永久牌组ID、升级与misc/角色/进阶/keys，
+并保留GRID已选牌的进度。显式876下层初始化仅为兼容对照，不能称从头训练。
 旧boss标记仅保留为旧encoder输入，不能参与新value或搜索目标。
 
 native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。所有战斗
@@ -29,6 +30,11 @@ native `outer_return=true` 要求 fixed_worldline，并拒绝旧HP/Boss效用。
 结算，按upper/combat/terminal分流；内部叶用新lower，出口用冻结teacher或自然终局
 真实reward。普通叶子先在packed数据上选行，再由同一native decoder直接填充lower
 graph输入区，保留root归属、实时HP/钱包、GRID进度与永久成长；出口仍按完整GC结算。
+混合batch在lower缓存关闭时先发起普通叶子的GPU传输/前推，CPU同时结算出口；
+返回搜索前等待传输完成并复制输出。每个图实例最多一个未完成调用，重复提交报错，
+clear或结算异常也先完成传输，不能在设备使用中覆盖或回收pinned输入。该重叠不跨
+search advance、learner更新或checkpoint边界；计时中的output_seconds是实际等待，
+可能小于设备总工作时间，outer_overlap_batches/rows记录实际参与重叠的工作量。
 非resident传输明确拒绝，不降级到HP。GPU完整轮验证与learner/启动接入
 状态以TODO COMBAT01为准，策略组件可加载不等于已完成训练验收。
 
@@ -41,8 +47,8 @@ autocast 不改变其 FP32 前推；移动设备可以，转换权重精度明�
 
 teacher 按旧 observation space 投影输入，`decide()` 复用 checkpoint-v7-act3
 动作适配和 masked argmax，只接受上层决策；真实死亡、截断和连战必须由调用方
-区分。该模块本身不提供新的战斗回报、搜索结算或训练入口；COMBAT01 完整接入
-验收前，四机 profile 保持 `launch_ready=false`。
+区分。该模块本身不提供新的战斗回报、搜索结算或训练入口；正式训练入口和已验证配置
+见 `../experiments/launchers/README.md`，当前训练与性能验收以 TODO COMBAT01/02 为准。
 
 ## Entity combat 实验架构
 

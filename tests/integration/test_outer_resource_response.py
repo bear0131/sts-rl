@@ -139,7 +139,8 @@ def test_outer_graph_lifecycle(outer_return_core):
         torch.cuda.empty_cache()
 
 
-def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core):
+@pytest.mark.parametrize('matmul_precision', ['highest', 'high'])
+def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core, matmul_precision):
     import gc
     from types import SimpleNamespace
     import torch
@@ -153,6 +154,8 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core)
                             _native_leaf_inference=object())
     runtime = RolloutInference(model, upper_bytes=0)
     runtime.upper_graphs.capacity = 2
+    previous_precision = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision(matmul_precision)
     try:
         for count, deck_width, relic_width in ((1, 1, 1), (33, 17, 5), (65, 33, 9),
                                               (1, 65, 17), (1, 1, 1), (1, 1, 1)):
@@ -167,11 +170,15 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core)
             obs['run_hp'][:, 0] += np.arange(count, dtype=np.float32)*.001
             reference = core.teacher(observation_as_tensor(obs, 'cuda'))
             logits, values = runtime.forward_upper(obs)
-            # FP32 batch padding may alter GEMM reduction order by a few ULPs.
-            np.testing.assert_allclose(values, reference[1].cpu().numpy().flatten(), atol=2e-5, rtol=2e-5)
+            # Explicit full-FP32 gate is independent of earlier trainer tests.
+            # Production's 'high' also permits TF32 (10-bit input mantissa);
+            # padding may select a different kernel. Bound it separately, not
+            # by silently applying the full-FP32 tolerance to mixed settings.
+            atol, rtol = (2e-5, 2e-5) if matmul_precision == 'highest' else (2e-4, 2e-3)
+            np.testing.assert_allclose(values, reference[1].cpu().numpy().flatten(), atol=atol, rtol=rtol)
             expected = reference[0].cpu().numpy()
             valid = np.abs(expected) < 1e6
-            np.testing.assert_allclose(logits[valid], expected[valid], atol=2e-5, rtol=2e-5)
+            np.testing.assert_allclose(logits[valid], expected[valid], atol=atol, rtol=rtol)
             del reference
             gc.collect()
             torch._C._cuda_clearCublasWorkspaces()
@@ -183,3 +190,4 @@ def test_upper_rollout_graph_eviction_release_and_exact_cache(outer_return_core)
         runtime.clear()
         core.to('cpu')
         torch.cuda.empty_cache()
+        torch.set_float32_matmul_precision(previous_precision)

@@ -167,6 +167,16 @@ def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_r
                 reference = reference_graphs({k: v[rows] for k, v in full.items()}, pool.relic_width(rows))
                 for a, b in zip(actual, reference, strict=True):
                     assert a.tobytes() == b.tobytes()
+                pending = graphs.forward_native_deferred(pool, rows)
+                with pytest.raises(RuntimeError, match='finish pending'):
+                    graphs.forward_native(pool, rows)
+                if len(rows) == 1:
+                    # Clearing during a pending transfer must drain it first;
+                    # the caller still owns the completed prediction.
+                    graphs.clear()
+                for a, b in zip(pending(), reference, strict=True):
+                    assert a.tobytes() == b.tobytes()
+                assert graphs._pending is None
                 torch._C._cuda_clearCublasWorkspaces()
                 torch.cuda.empty_cache()
         core.teacher.assert_integrity()
@@ -309,6 +319,73 @@ def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_r
         assert base.obs_canonical() == gc_before
     assert base.bc.to_dict() == live
     core.teacher.assert_integrity()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CPU settlement overlaps a real CUDA graph')
+def test_mixed_exit_settlement_overlaps_lower_without_changing_search(outer_return_core, monkeypatch):
+    import slaythespire as sts
+    from rl.search.inference import CombatLeafGraphs
+    from rl.search.rollout_inference import RolloutInference
+    from rl.search.native import forward_outer_leaves
+    core, _, env = outer_return_core
+    _enter_combat(env)
+    env.thick.gc.set_deck([('STRIKE_RED', 0)] * 10)
+    env.thick.bc = sts.create_battle(env.thick.gc, 'Looter')
+    ordinary = env.fork_run()
+    env.thick.bc.set_player_strength(999)
+    env._invalidate_backend_cache()
+    core.to('cuda').eval()
+    graph = CombatLeafGraphs(core, 'cuda', amp='bf16', compile_forward=False)
+    model = SimpleNamespace(policy=SimpleNamespace(core=core), device=torch.device('cuda'),
+                            action_space=env.action_space, _native_leaf_inference=graph)
+    config = NativeSearchConfig(simulations=8, fixed_worldline=True, outer_return=True,
+                               gumbel_scale=0., gumbel_value_scale=1., gumbel_rescale_q=False)
+    logits = np.zeros(198, np.float32)
+    logits[C.AUTOREGRESSIVE_PLAY:C.AUTOREGRESSIVE_POTION] = 20
+    calls = {i: ((logits,), dict(**asdict(config), root_value=2.7,
+             state_nonce=42101, compact_observation=True)) for i in range(2)}
+    pool = NativeSearchBatch([env, ordinary], 2)
+    seen = []
+    settle = pool.combat_exits
+    def capture():
+        if 0 < len(pool.combat_exit_rows) < pool.rows:
+            seen.append(graph._pending is not None)
+        return settle()
+    monkeypatch.setattr(pool, 'combat_exits', capture)
+    try:
+        results = []
+        for overlap in (False, True):
+            graph.clear()
+            model._native_leaf_inference = graph if overlap else SimpleNamespace(forward_native=graph.forward_native)
+            model._rollout_inference = RolloutInference(model)
+            result, _ = complete_searches_native(model, pool, calls)
+            results.append(result)
+            model._rollout_inference.clear()
+        assert False in seen and True in seen
+        for index in results[0]:
+            for key in ('visit_policy', 'root_visit_policy', 'root_visits', 'root_value', 'action'):
+                np.testing.assert_array_equal(results[0][index][key], results[1][index][key])
+        # Failure after launch must not leave a transfer using recyclable input.
+        model._native_leaf_inference = graph
+        model._rollout_inference = RolloutInference(model)
+        pool.begin(calls)
+        for _ in range(16):
+            if 0 < len(pool.combat_exit_rows) < pool.rows:
+                break
+            pool.advance(*forward_outer_leaves(model, pool))
+        assert 0 < len(pool.combat_exit_rows) < pool.rows
+        def fail():
+            assert graph._pending is not None
+            raise ValueError('settlement failure after GPU launch')
+        monkeypatch.setattr(pool, 'combat_exits', fail)
+        with pytest.raises(ValueError, match='settlement failure'):
+            forward_outer_leaves(model, pool)
+        assert graph._pending is None
+        core.teacher.assert_integrity()
+    finally:
+        pool.close()
+        graph.clear()
+        model._rollout_inference.clear()
 
 
 def test_material_manifest_guard(tmp_path):

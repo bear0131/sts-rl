@@ -37,6 +37,7 @@ class CombatLeafGraphs:
         self.compiled_forward = (torch.compile(self.graph_forward, fullgraph=True, dynamic=True)
             if self.compile_forward and self.graph_forward is not None else None)
         self.entries = OrderedDict()
+        self._pending = None
         self.hits = self.captures = 0
         self.failure_path = failure_path
         self.profile_interval = int(profile_interval)
@@ -60,18 +61,36 @@ class CombatLeafGraphs:
             subset_eager_rows=self.subset_eager_rows, timing_scope='captured-device-events')
 
     def clear(self):
+        if self._pending is not None:
+            self._pending()
         self.entries.clear()
 
-    def forward_native(self, batch, rows=None):
+    def forward_native_deferred(self, batch, rows=None):
+        """Launch one independent batch; caller must finish before advancing."""
+        finish = self.forward_native(batch, rows, deferred=True)
+        def finish_native():
+            try:
+                return finish()
+            except RuntimeError:
+                if self.failure_path is not None:
+                    self._save_failure(batch.observations(rows), batch.relic_width(rows))
+                raise
+        return finish_native
+
+    def forward_native(self, batch, rows=None, *, deferred=False):
         # Joint subset evaluation inspects actual legal rows before splitting;
         # it retains the ordinary materialized observation path.
         if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
-            return self(batch.observations(rows), batch.relic_width(rows))
+            result = self(batch.observations(rows), batch.relic_width(rows))
+            return (lambda: result) if deferred else result
         return self(batch.observation_layout(rows), batch.relic_width(rows),
                     writer=lambda destination: batch.write_observations(destination, rows),
-                    failure_observations=lambda: batch.observations(rows))
+                    failure_observations=lambda: batch.observations(rows), deferred=deferred)
 
-    def __call__(self, observations, width, *, writer=None, failure_observations=None):
+    def __call__(self, observations, width, *, writer=None, failure_observations=None,
+                 deferred=False):
+        if self._pending is not None:
+            raise RuntimeError('finish pending leaf inference before another submission')
         try:
             if self.core.training:
                 raise RuntimeError('leaf graphs require eval mode')
@@ -102,19 +121,23 @@ class CombatLeafGraphs:
                         normal_result = self._forward({key: value[normal] for key, value in observations.items()}, width)
                         result_logits[normal], result_values[normal] = normal_result
                     return result_logits, result_values
-            return self._forward(observations, width, writer=writer)
+            return self._forward(observations, width, writer=writer, deferred=deferred)
         except RuntimeError:
             # CUDA errors can poison the context: save only CPU inputs here.
             if self.failure_path is not None:
-                target = Path(self.failure_path)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                np.savez(target, **(failure_observations() if failure_observations else observations))
-                target.with_suffix('.json').write_text(json.dumps(dict(
-                    width=width, amp=self.amp, captures=self.captures, hits=self.hits,
-                    signatures=[repr(s) for s in self.entries])), encoding='utf-8')
+                self._save_failure(failure_observations() if failure_observations else observations, width)
             raise
 
-    def _forward(self, observations, width, *, writer=None):
+    def _save_failure(self, observations, width):
+        if self.failure_path is not None:
+            target = Path(self.failure_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            np.savez(target, **observations)
+            target.with_suffix('.json').write_text(json.dumps(dict(
+                width=width, amp=self.amp, captures=self.captures, hits=self.hits,
+                signatures=[repr(s) for s in self.entries])), encoding='utf-8')
+
+    def _forward(self, observations, width, *, writer=None, deferred=False):
         if self.core.training:
             raise RuntimeError('leaf graphs require eval mode')
         batch = len(next(iter(observations.values())))
@@ -141,21 +164,32 @@ class CombatLeafGraphs:
         self._copy(entry, observations, writer=writer)
         self.copy_seconds += time.perf_counter()-started
         entry['graph'].replay()
-        started = time.perf_counter()
-        # The graph owns the pinned input/output buffers and all transfers.
-        # One completion wait covers H2D, computation and D2H; copying the small
-        # CPU result preserves callers' ownership across later replays/eviction.
-        entry['done'].synchronize()
-        output = entry['host_output_array'][:batch].copy()
-        result = output[:, :-1], output[:, -1]
-        self.output_seconds += time.perf_counter()-started
-        if self.profile_interval and (self.hits+self.captures) % self.profile_interval == 0:
-            events = entry['events']
-            self.h2d_ms += events[0].elapsed_time(events[1])
-            self.replay_ms += events[1].elapsed_time(events[2])
-            self.d2h_ms += events[2].elapsed_time(events[3])
-            self.profile_samples += 1
-        return result
+        result = None
+
+        def finish():
+            nonlocal result
+            if result is not None:
+                return result
+            started = time.perf_counter()
+            try:
+                # Keep the graph, pinned buffers and event alive until every
+                # transfer completes. CPU-only settlement may run in between.
+                entry['done'].synchronize()
+                output = entry['host_output_array'][:batch].copy()
+                result = output[:, :-1], output[:, -1]
+                if self.profile_interval and (self.hits+self.captures) % self.profile_interval == 0:
+                    events = entry['events']
+                    self.h2d_ms += events[0].elapsed_time(events[1])
+                    self.replay_ms += events[1].elapsed_time(events[2])
+                    self.d2h_ms += events[2].elapsed_time(events[3])
+                    self.profile_samples += 1
+                return result
+            finally:
+                self.output_seconds += time.perf_counter()-started
+                self._pending = None
+
+        self._pending = finish
+        return finish if deferred else finish()
 
     @staticmethod
     def _copy(entry, observations, *, writer=None):

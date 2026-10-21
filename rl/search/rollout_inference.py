@@ -19,7 +19,7 @@ GRAPH_METRICS = ('captures', 'hits', 'evictions', 'cached_graphs',
 ROLLOUT_INFERENCE_METRICS = (
     *(f'{side}_cache_{key}' for side in ('upper', 'lower') for key in CACHE_METRICS),
     *(f'upper_graph_{key}' for key in GRAPH_METRICS),
-    'outer_settlement_seconds', 'upper_prepare_seconds',
+    'outer_settlement_seconds', 'upper_prepare_seconds', 'outer_overlap_batches', 'outer_overlap_rows',
 )
 
 
@@ -147,6 +147,7 @@ class RolloutInference:
                 model.device, amp='off', capacity=32, batch_multiple=8, compile_forward=False)
         self.outer_settlement_seconds = 0.
         self.upper_prepare_seconds = 0.
+        self.outer_overlap_batches = self.outer_overlap_rows = 0
 
     def forward_upper(self, observations):
         started = time.perf_counter()
@@ -179,7 +180,9 @@ class RolloutInference:
         graph = self.upper_graphs.statistics() if self.upper_graphs else dict.fromkeys(GRAPH_METRICS, 0)
         result.update({f'upper_graph_{k}': graph[k] for k in GRAPH_METRICS})
         result.update(outer_settlement_seconds=self.outer_settlement_seconds,
-                      upper_prepare_seconds=self.upper_prepare_seconds)
+                      upper_prepare_seconds=self.upper_prepare_seconds,
+                      outer_overlap_batches=self.outer_overlap_batches,
+                      outer_overlap_rows=self.outer_overlap_rows)
         return result
 
     def clear(self):

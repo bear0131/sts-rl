@@ -134,6 +134,10 @@ class NativeSearchBatch:
                 for row, battle in self.payload['combat_exits'].items()}
 
     @property
+    def combat_exit_rows(self):
+        return self.payload['combat_exits'].keys() if self.outer_return else ()
+
+    @property
     def rows(self):
         return len(self.payload['owners'])
 
