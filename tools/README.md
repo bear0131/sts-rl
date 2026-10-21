@@ -3,6 +3,10 @@
 `analysis/` 放诊断/绘图/实验分析，`benchmarks/` 放低层性能探针，`checkpoints/` 放 checkpoint 迁移/向量合并，`validation/` 放有预算的跨版本数值检查。
 运行方式：仓库根目录 `python -m tools.<package>.<command> --help`。这些命令允许依赖运行时，rl/env 不反向导入 tools。诊断结果不是源代码，写入 runs/local；需要长期复用的实验参数放 configs。
 
+`python -m tools.checkpoints.replace_combat --mode entity-material --source checkpoints/final/train47-step-000688914432-eval31/model.zip --card-vectors checkpoints/final/train47-step-000688914432-eval31/frozen-card-vectors.pt --profile configs/train/combat_outer_return_876_4x5090.json --out runs/local/combat01-preparation-20261021/initialization`
+导出COMBAT01初始化材料，默认仍保留原`--mode mlp`行为。新模式先核对固定SHA及源配置，再用Torch的weights-only读取policy；分别复制上层actor/critic和下层actor/encoder，丢弃旧下层distribution/transition头，不导入Adam、replay或进度。输出目录须不存在，失败不发布完整manifest。只需要CPU/Torch，不导入模拟器或分配rollout。
+输出有逐tensor/文件SHA、卡表依赖和原checkpoint的space JSON；这些space仍是原SB3序列化记录，仅供验SHA后的可信加载，本工具不执行其反序列化。`constructor.json`保留原架构信息，不是新loss配置。材料明确`launch_ready=false`，不是可以交给现有trainer的模型；运行时冻结、新标量critic、完整搜索结算和新目标训练仍按[COMBAT01设计](../docs/2026-10-21/frozen-upper-combat-design.md)实现/验收。权重放忽略目录，不能上传到Git。
+
 `python -m tools.analysis.probe_nosl_updates BUNDLE --batch-sizes 1024 --updates 10 --max-seconds 120 --output runs/local/update-probe.json`
 对不可变的完整恢复包做有预算的 **克隆 learner 拟合诊断**（默认 CPU，可选 CUDA），复用真实 NOSL learner、保存的 Adam/replay；不启动训练环境、W&B、SSH 或保存训练 checkpoint。
 这一入口独立于纯推理 HP CLI，因为它会在私有模型副本上执行 optimizer；不能把这种操作混进日常只读推理接口。

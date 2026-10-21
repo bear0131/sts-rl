@@ -6,6 +6,8 @@
 - `eval/`：policy 与严格 Full Gumbel 固定小场景冒烟；训练 128 simulations 和烟测 8 simulations 是不同用途。
 - 地址、rank、ring、checkpoint、W&B run 身份仍在 `experiments/launchers/` 部署脚本。其余历史脚本是尚未规范化的可执行部署预设，不能当作算法实现。
 
+`train/combat_outer_return_876_4x5090.json` 是 COMBAT01 的四机准备数据：固定876来源、原下层参数和新目标合同，供初始化材料导出核对。它不是`.args`，现有trainer尚未实现其中的新目标，`launch_ready=false`；不能删掉这个标记后沿旧HP入口开训。当前范围、必须迁移的参数和有限验收预算见[设计5.4](../docs/2026-10-21/frozen-upper-combat-design.md#54-四机876参数与初始化材料)。
+
 例：`python -m rl.evaluation.eval CHECKPOINT @configs/eval/policy_smoke.args`。
 严格场景：`python -m rl.evaluation.nosl.eval_full_gumbel_bash_clash CHECKPOINT @configs/eval/strict_full_gumbel_smoke.args --output runs/local/strict-eval.json`。
 这些评估自身未全部实现统一 wall timeout，自动化运行需父进程 timeout（见 tools.validation 和 [tests/README.md](../tests/README.md)）。

@@ -53,3 +53,7 @@ Every 30 minutes, perform a direct human check using manager `status` and a
 direct `df -h /root/autodl-tmp` query on all four hosts. Record process state,
 latest common checkpoint, latest metric, free space, and any traceback in the
 dated worklog. Do not replace this with a resident monitoring script.
+
+## COMBAT01 四机准备
+
+`combat01_876_4x5090.json` 保存4×5090（每机32GB显存、90GB内存）的部署草案，算法参数引用`configs/train/combat_outer_return_876_4x5090.json`。地址、W&B身份、Linux构建SHA和正式预算待开机后填入；未执行SSH或启动。该JSON尚未由manager消费，不是可执行启动预设；新目标能力及四机验收通过后接入现有`manage_nosl_replay_4way.ps1`与`launch_nosl_replay.sh`。不能把旧HP args或旧resume generation代入草案宣称COMBAT01已实现。详见[四机准备](../../docs/2026-10-21/frozen-upper-combat-design.md#54-四机876参数与初始化材料)。

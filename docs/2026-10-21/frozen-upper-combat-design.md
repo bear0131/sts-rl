@@ -1,6 +1,6 @@
 # COMBAT01：冻结上层与整局回报战斗层实现设计
 
-本设计承接[原始计划](frozen-upper-combat-objective-plan.md)，交付其中五项设计结果。任务状态统一见 [TODO COMBAT01](../../TODO.md)，核查过程见[工作日志](../../worklog/2026-10-21.md#combat01-design-intention)。本轮只完成设计与只读加载核查，尚未提取 teacher、实现新目标或训练。
+本设计承接[原始计划](frozen-upper-combat-objective-plan.md)，交付其中五项设计结果。任务状态统一见 [TODO COMBAT01](../../TODO.md)，核查过程见[工作日志](../../worklog/2026-10-21.md#combat01-design-intention)。后续四机准备已提取876上层和下层初始化权重，见[四机准备](#54-四机876参数与初始化材料)；这还不是完成运行时冻结和新目标实现的训练checkpoint，未启动训练。
 
 本文使用三种标记：**已定合同**来自用户确定的方向及其必要语义约束；**建议默认**是可审查的首版技术选择，不冒充用户已指定；**待核验接口**必须在实现阶段用实际代码和测试关闭。用户先要求等待模拟器交付，随后明确指定采用 `simulator-handoff-20261021-01`；现已固定下述正式模拟器基线，进入接入验收准备，不再等待版本选定。
 
@@ -45,7 +45,7 @@
 
 ACTION8新增上层REWARD_KEY id181，与combat编号按phase区分；必须先按phase/codec路由再投影mask，不能全局删除181。teacher manifest及replay/checkpoint需记录旧teacher字段/动作身份、新环境四个版本、reward-policy兼容合同、源码和native SHA。旧optimizer/replay不能通过这个推理适配器跨版本恢复。
 
-**待核验接口 S1**：版本身份已固定，仍须在上述基线执行876加载、一步预测、环境接入和新旧兼容路由测试，逐项核对旧观察/动作编码、`exitBattle`、结算回调、恢复journal、搜索随机流。模拟器有意修复的行为差异需记录例子，不能要求修复后复现旧错误；teacher同一旧schema输入的合法动作logits/概率及V仍需对齐。提取前后比较使用同一新基线加载的原876对象，跨源码比较单列新增且禁用的动作列。主比较B/C均在528d8aa及其明确记录的COMBAT01增量上重跑，EVAL31的93%仅作历史参考。本轮没有运行新包的模型/环境行为测试，不把包身份通过当作S1完成。
+**待核验接口 S1**：版本身份已固定，须在上述基线验证876加载、一步预测、环境接入和新旧兼容路由，逐项核对旧观察/动作编码、`exitBattle`、结算回调、恢复journal、搜索随机流。模拟器有意修复的行为差异需记录例子，不能要求修复后复现旧错误；teacher同一旧schema输入的合法动作logits/概率及V仍需对齐。提取前后比较使用同一新基线加载的原876对象，跨源码比较单列新增且禁用的动作列。主比较B/C均在528d8aa及其明确记录的COMBAT01增量上重跑，EVAL31的93%仅作历史参考。最初包核验未做行为测试；后续5.4的512动作CPU检查已覆盖部分接入/前推，尚未完成全部S1边界。
 
 ## 2. 提取边界、存储隔离与冻结不变量
 
@@ -185,7 +185,9 @@ v1 不增加路线记忆或泄漏地图未来、抽牌顺序、隐藏随机种�
 
 明确加载扩展绝对路径与SHA；缺扩展/依赖是未执行，不算测试通过。语义测试用可手算reward/可控假teacher验证代数，真实teacher测试只验证冻结和真实状态；资源增加不必然令这个teacher V增加，排序质量用真实续打另测。合同错误、teacher变化、身份不符、NaN或错误终局任何一项均停止后续阶段。
 
-### 5.3 建议预算与停止条件（尚未执行）
+### 5.3 初版开发验证预算与停止条件
+
+下列为最初设计的本机开发预算，保留用于小规模语义检查。用户随后指定四台5090并要求参考876下层参数，正式四机的geometry、batch、学习率、更新数和新数据replay以5.4为准，替代这里的单机32env联合试训建议。校准仍先于新目标搜索；任何云端执行和正式总预算另行落定。
 
 机器建议为本机CPU和已存在的RTX 4060 Laptop，独占使用条件须开跑前核对。所有阶段新增租机费用上限为0；若本机不能满足则停在该阶段另立资源预算，不恢复旧四机/SSH/heartbeat。记录实际硬件、线程、依赖、batch和峰值；下面是上限，命中任一上限即保存并退出，不自动加量。
 
@@ -215,3 +217,31 @@ v1 不增加路线记忆或泄漏地图未来、抽牌顺序、隐藏随机种�
 **资源与运行验收缺口**：首轮设计时D盘剩余7626932224 bytes（约7.10GiB），低于建议的至少20GiB且足够“新输出＋两代完整bundle＋恢复临时副本”的门槛；正式启动须重测，不据历史余量决定当前容量，也不自动删除用户备份。模拟器版本已选定，S1模型/环境接入、GPU可用性和native完整分支接口仍未验收，因此本设计不提供可直接执行的试训命令。
 
 监控同时记录环境transition、codec token/完整原子动作、搜索simulation/leaf/出口teacher请求、有效combat样本、optimizer update；上层更新数单列恒0。计时覆盖warmup、采样、编码/IPC、teacher与lower前推、反向/同步、聚合/保存及总时长；GPU计时前后同步。每2秒采集进程树CPU时间/利用率、RSS（共享页可能重复）、系统可用内存、Torch allocated/reserved/peak、设备VRAM/util；取不到写null及原因。teacher分数上升不替代真实整局结果，UPPER09/10/11不会因本实验自动关闭。
+
+### 5.4 四机876参数与初始化材料
+
+**用户已定**：之后启动4台机器，每台5090、32GB显存、90GB内存；从876开始训练下层，训练参数参考876下层。已查到历史实例为32607MiB显存、容器90GiB、25核quota（[原始硬件核查](../../worklog/2026-10-21.md#train47-gpu-cost-and-cpu-attribution-results)）。这是历史记录，未来四台仍须各自核验GPU、容器配额、空闲显存/内存与磁盘；不从GPU型号推断CPU配额或复用已关机的旧地址。
+
+唯一参数数据在[四机准备profile](../../configs/train/combat_outer_return_876_4x5090.json)，部署身份在[四rank部署草案](../../experiments/launchers/combat01_876_4x5090.json)。二者明确`launch_ready=false`：不是现有trainer可执行的`.args`，也未由现有manager消费。复用已有manager/launcher作为后续接入落点；不生成一个实际仍执行旧HP目标的启动命令。正式预算、四机地址、Linux构建身份留空，不复制历史run/W&B/SSH端点。
+
+| 参数 | 四机准备值与来源 |
+|---|---|
+| 采样规模 | 每rank384env×512步；全局1536env，每轮786432个vector槽位step。AR prefix不一定产生模拟器transition，需另外计数 |
+| 下层优化 | LR=5e-5、grad norm=0.5、每轮40次同步optimizer update；每rank batch=102400、micro=8192。数据充足时单次全局最多409600样本；不足时记录实际有效样本，不能将102400误称全局batch |
+| 损失系数 | policy=1、scalar value=0.5；不沿用quantile mean=0.25或Boss胜率混合权重0.9作为新目标 |
+| Replay | 每rank容量524288、min size=1、旧样本比例上限0.9；仅指**本次新目标run**中较早产生的兼容样本，从空replay开始。校准数据/旧HP搜索policy target/876 replay均不导入 |
+| 搜索 | Full Gumbel128、strict paper、depth0、fixed worldline、候选16、训练root noise=1、value scale=1、rescale_q=false、mixed value=true、visit init50、等价动作合并；评测noise0单列 |
+| 推理/线程 | native16线程、leaf batch128、fixed_wait/0ms；lower BF16、graph batch multiple32、matmul high。teacher、V/reward/target固定FP32，新模式GPU/graph生命周期通过后启用graph |
+| 保存/资源 | 每轮保存，各rank保留2个完整共同代；每2秒资源采样；新run、进度0、空Adam，不恢复旧876/881环境journal |
+
+checkpoint保存的实际876配置是主要证据：profile中的`source_checkpoint_contract`逐项直接取自SHA693670e4…模型，并由导出工具核对。native线程/graph/资源间隔等未存在模型metadata中的项，来自同TRAIN47在step451411968的实际四rank运行manifest（2026-10-16 preflight），之后881诊断也记录16线程；不能冒称876压缩包本身保存了这些字段。历史嵌套`.args`中还留4线程，不能只读那个默认就覆盖实际生产证据。40次同步更新不是四机总计160次独立模型更新。
+
+**合同覆盖项**：源`gamma=.999`改为本目标`gamma=1`；876 upper optimizer永不导入；876下层actor/encoder warm start，新建无界FP32标量critic；独立teacher storage，冻结actor/critic及卡表；按旧space重建并投影OBS20，Act1–3使用`checkpoint-v7-act3`策略mask。保持旧boss公开输入维度不等于沿用Boss效用。初始critic校准沿用LR5e-5，其余小预算参数用于校准验证，不作为四机正式吞吐声明。
+
+**已完成的初始化材料**：复用`tools.checkpoints.replace_combat --mode entity-material`，从已核SHA的原始zip以`weights_only=True`读取policy tensors。输出包含`upper.pt`（132 tensors、5000641元素，含4905665参数及94976卡表元素）、`lower-init.pt`（93 tensors、3783154元素）、原卡表依赖、原始space/构造元数据和逐tensor/文件SHA manifest。上下层分别clone后存储；丢弃旧distribution/transition的12 tensors、273448元素。没有复制两个Adam、replay、RNG或训练计数，构造元数据保留旧架构只为重建，不能当新loss配置。
+
+当前产物位于忽略目录`runs/local/combat01-preparation-20261021/initialization/`，大权重不入Git；上层文件SHA`3e4fc4367869e5624be113b2a929a110246105349c01bf0e2f75a2ab8289832c`，下层初始化SHA`f01230434a03a04a7d26cdd2574e5398dde7a37d04a00b9d25b02ab11ac2ff9c`。独立材料导出还不等于可训练策略对象：仍需实现永久冻结的teacher封装、新critic/context、整局边界回填、native完整分支和统一值域、跨rank冻结与恢复验收。材料没有`model.zip`，不能误交给旧trainer继续训练。
+
+**实际接入检查**：以指定native SHA94187a48、新runtime528d8aa、CPU2线程/Torch2.11.0+cu128、seed9000000—9000003，每seed128动作、总512动作，29.524秒完成（180秒进程上限）。原876按旧space加载并合法预测，覆盖358战斗动作、154上层动作（map/reward/event/rest/shop/chest/card_select）；全部154条独立上层材料的原始logits/V与同源码原模型在同CPU FP32下逐位相等，卡表storage不共享、全部lower初始化tensor相等。结果`runs/local/combat01-preparation-20261021/runtime-material-audit.json`。此检查未调用optimizer、未跑新目标native搜索，不代表全phase/终局/恢复、GPU或四机训练验收；前推一致也不证明冻结teacher价值校准正确。
+
+**建议开跑验收预算**：上述接口和critic校准通过后，四rank按384×512跑2轮，上限1572864个全局槽位step、80次lower更新、3600秒，先到者退出并保存完整共同代；seed9001000、上层更新恒0。这是准备值，尚未启动，也不是无限训练许可。正式训练步数/墙钟预算尚未提供，不直接复制旧1B总步数或旧通宵计划。启动前再封存种子清单、Linux构建/依赖及所有机器的实际资源，完成5.2测试矩阵。

@@ -79,3 +79,50 @@ def sts2_choice_env(request):
     env.step(index)
     yield env
     env.close()
+
+
+@pytest.fixture
+def entity_material_source(tmp_path):
+    """Small tensor-only checkpoint with the real cross-layer buffer alias."""
+    import hashlib
+    import io
+    import json
+    from zipfile import ZipFile
+
+    card = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    state = {
+        'core.upper_tokenizer.card.vectors': card,
+        'core.upper_tokenizer.projection.weight': torch.ones(2, 3),
+        'core.overworld.actor.weight': torch.ones(2, 2),
+        'core.overworld.value.weight': torch.ones(1, 2),
+        'core.combat.card.vectors': card,
+        'core.combat.encoder.weight': torch.ones(2, 3),
+        'core.combat.pointer_query.weight': torch.ones(2, 2),
+        'core.combat.distribution.win.weight': torch.ones(1, 2),
+        'core.combat.transition.0.weight': torch.ones(2, 2),
+    }
+    metadata = {
+        'num_timesteps': 123, 'policy_class': {'__module__': 'rl.policies.entity_joint'},
+        'observation_space': {'fixture': 'original-space'}, 'action_space': {'n': 198},
+        'policy_kwargs': {'entity_config': {'card_vector_checkpoint': '/old/cards.pt'}},
+    }
+    source, cards, profile, out = [tmp_path / n for n in ('source.zip', 'cards.pt', 'profile.json', 'material')]
+    payload = io.BytesIO()
+    torch.save(state, payload)
+    with ZipFile(source, 'w') as archive:
+        archive.writestr('data', json.dumps(metadata))
+        archive.writestr('policy.pth', payload.getvalue())
+        archive.writestr('policy.optimizer.pth', b'must never be imported')
+    torch.save({'vectors': card}, cards)
+    plan = {
+        'kind': 'combat01-preparation-v1', 'launch_ready': False,
+        'source': {'model_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+                   'card_vectors_sha256': hashlib.sha256(cards.read_bytes()).hexdigest()},
+        'source_checkpoint_contract': {'num_timesteps': 123},
+        'source_components': {'upper': {'tensors': 4, 'elements': 24},
+                              'lower_init': {'tensors': 3, 'elements': 22},
+                              'discarded': {'tensors': 2, 'elements': 6}},
+        'simulator': {'runtime_commit': 'fixture'},
+    }
+    profile.write_text(json.dumps(plan), encoding='utf-8')
+    return source, cards, profile, out, state, plan
