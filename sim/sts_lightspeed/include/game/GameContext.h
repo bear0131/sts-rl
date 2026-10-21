@@ -153,6 +153,9 @@ namespace sts {
         static constexpr bool disableMatchAndKeep = true;
         static constexpr bool disablePrismaticShard = true;
         bool skipBattles = false;
+        // A sampled search continuation owns its reward streams. Combat RNG
+        // consumption must not resample the pending room's reward worldline.
+        bool fixedRewardWorldline = false;
 
         // ********* hidden from player *********
         std::uint64_t seed;
@@ -236,8 +239,17 @@ namespace sts {
 
         GameContextAction regainControlAction = nullptr;
 
+        // Immutable pre-decision state for event combats whose unrevealed loot
+        // was sampled before entering the fight. Search replays that decision
+        // under an independent worldline, conditional on the observed encounter.
+        std::shared_ptr<const GameContext> combatEntryState;
+        int combatEntryOption = -1;
+
         GameContext() = default;
         GameContext(CharacterClass cc, std::uint64_t seed, int ascensionLevel);
+
+        [[nodiscard]] GameContext clone() const;
+        [[nodiscard]] GameContext forkCombatForSearch(std::uint64_t worldline) const;
 
         void initFromSave(const SaveFile &s);
         void initRelicsFromSave(const SaveFile &s);

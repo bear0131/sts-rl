@@ -3246,6 +3246,11 @@ PYBIND11_MODULE(slaythespire, m) {
 
     pybind11::class_<GameContext> gameContext(m, "GameContext");
     gameContext.def(pybind11::init<CharacterClass, std::uint64_t, int>())
+        .def("clone", &GameContext::clone,
+             "copy complete run state with independent map and value-owned continuations")
+        .def("fork_combat_for_search", &GameContext::forkCombatForSearch,
+             pybind11::arg("worldline"),
+             "sample hidden continuation independently, conditional on the observed combat")
         .def("pick_reward_card", &sts::py::pickRewardCard, "choose to obtain the card at the specified index in the card reward list")
         .def("skip_reward_cards", &sts::py::skipRewardCards, "choose to skip the card reward (increases max_hp by 2 with singing bowl)")
         .def("get_card_reward", &sts::py::getCardReward, "return the current card reward list")

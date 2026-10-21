@@ -6,6 +6,7 @@ import numpy as np
 import torch
 
 from env.core import encode, vocab as V
+from env.core.outer_return import strategic_reward
 from rl.algorithms.ppo import ppo_loss_components
 from rl.algorithms.updates import optimizer_step
 from rl.policies.split_policy import OVERWORLD_OBSERVATION_KEYS, OVERWORLD_PHASE_OBSERVATION_KEYS
@@ -43,20 +44,6 @@ def combat_update(function):
         with train_phase(model):
             return function(model, *args, **kwargs)
     return call
-
-
-def strategic_reward(before_act, before_floor, stats, *, done, censored):
-    """Unit-scale progress plus final victory; no card, HP or boss tactics labels."""
-    if censored:
-        return 0.0
-    reward = .002 * max(0, int(stats['floor']) - before_floor)
-    for act, bonus in ((1, .1), (2, .2)):
-        if before_act <= act < int(stats['act']):
-            reward += bonus
-    # Native Act-3 victory need not increment act. Match the run metric contract.
-    if done and (stats['act'] > 3 or stats['outcome'] == 'PLAYER_VICTORY'):
-        reward += 1.0
-    return reward
 
 
 def capture_step(model, obs, actions, masks, values, log_probs, new_obs, dones, infos):

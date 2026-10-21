@@ -564,9 +564,9 @@ void BattleContext::exitBattle(GameContext &g) const {
     // not sure its really necessary to sync these every time, (i believe colosseum is the only time two battles occur on the same floor)
     g.aiRng = aiRng;
     g.cardRandomRng = cardRandomRng;
-    g.miscRng = miscRng;
+    if (!g.fixedRewardWorldline) g.miscRng = miscRng;
     g.monsterHpRng = monsterHpRng;
-    g.potionRng = potionRng;
+    if (!g.fixedRewardWorldline) g.potionRng = potionRng;
     g.shuffleRng = shuffleRng;
 
     g.curHp = player.curHp;

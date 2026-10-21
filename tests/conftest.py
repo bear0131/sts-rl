@@ -66,6 +66,28 @@ def short_combat_env_type():
 
 
 @pytest.fixture
+def run_combat_factory():
+    """Controlled battle with a real run exit continuation; seed 42101."""
+    from env.core.game_env import SimGameEnv
+
+    def make(encounter='Looter', potions=()):
+        env = SimGameEnv()
+        env.reset(seed=42101)
+        for _ in range(64):
+            if env.bc is not None:
+                break
+            env.step(env.legal_semantic_actions()[0])
+        assert env.bc is not None, 'fixture failed to enter a real combat room'
+        env.gc.gold = 99
+        env.gc.set_deck([('STRIKE_RED', 0)] * 10)
+        env.gc.set_potion_state(list(potions))
+        env.bc = sts.create_battle(env.gc, encounter)
+        return env
+
+    return make
+
+
+@pytest.fixture
 def replayable_selection_env():
     from env.core.game_env import SimGameEnv
     from env.core import native_actions as C
@@ -164,7 +186,7 @@ def game_context_executable():
     run_env = os.environ.copy()
     if sys.platform == 'win32':
         compiler = next(line.split('=', 1)[1] for line in cache.splitlines()
-                        if line.startswith('CMAKE_CXX_COMPILER:FILEPATH='))
+                        if line.startswith('CMAKE_CXX_COMPILER:'))
         # add_dll_directory handles in the Python parent do not reach a native child.
         run_env['PATH'] = str(Path(compiler).parent) + os.pathsep + run_env.get('PATH', '')
     return executable, run_env

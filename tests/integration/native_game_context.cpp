@@ -128,6 +128,64 @@ static void checkBossCallback(int act, int ascension) {
     require(sameRng(detached.miscRng, child.miscRng), "detached act transition differs");
 }
 
+static void checkSearchWorldline(int variant, int ascension) {
+    GameContext root(CharacterClass::IRONCLAD, 42101, ascension);
+    if (variant < 5) {
+        prepareEvent(root, variant);
+    } else {
+        root.act = variant == 6 ? 2 : 1;
+        root.floorNum = variant == 6 ? 33 : 8;
+        root.curRoom = variant == 6 ? Room::BOSS : Room::ELITE;
+        root.regainControlAction = [](GameContext &gc) { gc.afterBattle(); };
+        root.enterBattle(MonsterEncounter::GREMLIN_NOB);
+    }
+    const auto before = root.clone();
+    auto world = root.forkCombatForSearch(4210101);
+    require(world.fixedRewardWorldline, "search reward streams must be fixed");
+    require(world.map.get() != root.map.get(), "map aliases real game");
+    auto a = world.clone(), b = world.clone();
+    require(a.map.get() != b.map.get(), "sibling maps alias");
+    a.map->nodes[0][0].room = Room::SHOP;
+    require(b.map->nodes[0][0].room == world.map->nodes[0][0].room,
+            "map mutation escaped branch");
+    BattleContext leaf;
+    leaf.init(world);
+    leaf.outcome = Outcome::PLAYER_VICTORY;
+    leaf.player.curHp = 31;
+    auto otherLeaf = leaf;
+    // Different combat paths consume a different amount of combat randomness.
+    // They must not alter the sampled pending reward's random choices.
+    for (int i = 0; i < 29; ++i) {
+        otherLeaf.miscRng.randomLong();
+        otherLeaf.potionRng.randomLong();
+        otherLeaf.cardRandomRng.randomLong();
+    }
+    leaf.exitBattle(a);
+    otherLeaf.exitBattle(b);
+    requireSameRewardState(a, b);
+    require(a.curHp == b.curHp && a.gold == b.gold, "branch public settlement differs");
+    auto repeat = root.forkCombatForSearch(4210101);
+    leaf.exitBattle(repeat);
+    requireSameRewardState(a, repeat);
+    requireSameRewardState(root, before);
+    require(root.commonRelicPool == before.commonRelicPool &&
+            root.rareRelicPool == before.rareRelicPool, "real relic pool consumed");
+    // Perturb every hidden future of the real root. The same sampled nonce
+    // must still give the same result; there is no real-future oracle.
+    root.miscRng.randomLong(); root.potionRng.randomLong();
+    root.treasureRng.randomLong(); root.cardRng.randomLong();
+    std::reverse(root.commonRelicPool.begin(), root.commonRelicPool.end());
+    std::reverse(root.rareRelicPool.begin(), root.rareRelicPool.end());
+    auto independent = root.forkCombatForSearch(4210101);
+    leaf.exitBattle(independent);
+    requireSameRewardState(a, independent);
+    if (variant == 5) {
+        require(a.info.rewardsContainer.relicCount == 1, "elite relic missing");
+        require(a.info.rewardsContainer.cardRewardCount == 1, "elite cards missing");
+        require(a.info.rewardsContainer.goldRewardCount == 1, "elite gold missing");
+    }
+}
+
 
 static void checkReward(int variant, int ascension) {
     using A = search::GameAction;
@@ -913,8 +971,9 @@ int main(int argc, char **argv) {
             std::cout << "PASS" << std::endl;
             return 0;
         }
-        if (mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade") {
-            if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
+        if (mode == "worldline" || mode == "event" || mode == "boss" || mode == "reward" || mode == "shop-price" || mode == "shop-legality" || mode == "shop-egg" || mode == "shop-restock" || mode == "deck-upgrade" || mode == "bottle-transform" || mode == "relic-selection" || mode == "transform-upgrade") {
+            if (mode == "worldline") checkSearchWorldline(std::stoi(argv[2]), std::stoi(argv[3]));
+            else if (mode == "event") checkEventCallback(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "reward") checkReward(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-price") checkShopPrice(std::stoi(argv[2]), std::stoi(argv[3]));
             else if (mode == "shop-legality") checkShopLegality(std::stoi(argv[2]), std::stoi(argv[3]));

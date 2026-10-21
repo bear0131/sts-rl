@@ -16,6 +16,22 @@
 
 测试在 ../tests。实体槽位、pending 来源、候选区域和 gauntlet 持久状态的验收范围见根 TODO F01/F02/F03/F07。
 
+## 冻结上层实验的完整结算
+
+`SimGameEnv.fork_run()` 复制完整 GameContext、战斗及可变地图；传 `worldline`
+时独立采样隐藏的整局后续，必须在一次搜索开始时调用一次，叶节点只复制该样本。
+同一世界线内的奖励随机数流和遗物池顺序固定，叶节点战斗消耗的随机数不覆盖
+奖励流。精英奖励的遗物、卡牌与金币重放相同；不同 nonce 可得到不同后续。
+事件在进入战斗的决策前保留不可变状态，以同一 nonce 重放奖励生成并条件化于已知
+遭遇，不能复用真实游戏预抽的隐藏奖励。缺少完整事件入口的状态明确拒绝搜索。
+
+`settle_combat_leaf(battle)` 在新副本上执行真实 `exitBattle`，停在下一个决策，
+不自动领取奖励。返回 `CombatExit` 的 `upper/combat/terminal` 类型；上层出口接
+冻结上层 value，直接连战接下层 value，自然终局不 bootstrap。统一回报定义在
+`core/outer_return.py`，保持原 TRAIN47 外层奖励和 gamma=1，不裁剪到 [0,1]。
+烟雾弹可能仍进入空奖励页，但无掉落；偷走的钱先从钱包扣除，追回金币仅成为待领
+奖励，领取前不能计入钱包。截断样本不能充当死亡标签。
+
 ## 完整战斗动作契约 native-v1
 
 新策略可显式创建 `SlayTheSpireEnv(combat_action_contract="native-v1")`。默认 `legacy`

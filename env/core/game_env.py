@@ -156,6 +156,35 @@ class SimGameEnv:
             raise RuntimeError("combat state can only be forked during a live battle")
         return _CombatBranchGameEnv(self)
 
+    def fork_run(self, *, worldline=None):
+        """Independent complete branch; optional sampled hidden combat future."""
+        import copy
+        branch = copy.copy(self)
+        branch.gc = (self.gc.clone() if worldline is None else
+                     self.gc.fork_combat_for_search(int(worldline)))
+        branch.bc = self.bc.clone() if self.bc is not None else None
+        # RunMap's native topology is read-only; the wrapper's act/seed fields
+        # are independent. The mutable simulator map was deep-copied by clone.
+        branch.rmap = copy.copy(self.rmap)
+        branch._np_random = copy.deepcopy(self._np_random)
+        branch._last_reasoning_trace = None
+        return branch
+
+    def settle_combat_leaf(self, battle):
+        """Settle a supplied terminal BC on a fresh complete continuation copy."""
+        from .outer_return import CombatExit, strategic_reward
+        if not battle.is_battle_over:
+            raise ValueError('combat exit requires a terminal battle')
+        branch = self.fork_run()
+        before_act, before_floor = branch.gc.act, branch.gc.floor_num
+        branch.bc = battle.clone()
+        branch._settle()
+        reward = strategic_reward(before_act, before_floor, branch.run_stats(),
+                                  done=branch.is_over, censored=False)
+        kind = ('terminal' if branch.is_over else
+                'combat' if branch.bc is not None else 'upper')
+        return branch, CombatExit(reward, kind)
+
     def _rebuild_map(self):
         self.rmap = spiremap.RunMap(self.gc.seed, self._ascension, self.gc.act,
                                     burning=False)
@@ -750,6 +779,8 @@ class SimGameEnv:
         if self.bc is not None and self.bc.is_battle_over:
             self.bc.exit_battle(self.gc)
             self.bc = None
+            if not self.is_over and _tail(self.gc) == "BATTLE":
+                self._start_battle()
         # act bumped (cleared the boss) -> rebuild the map for the new act.
         if self.gc.act != self.rmap.act and not self.is_over:
             self._rebuild_map()

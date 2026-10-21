@@ -25,6 +25,58 @@ const GameContextAction returnToMapAction = [](auto &gs) {
     gs.regainControlAction = nullptr;
 };
 
+GameContext GameContext::clone() const {
+    GameContext result(*this);
+    if (map) result.map = std::make_shared<Map>(*map);
+    // Deck/shop/rewards/RNGs are value members. Continuations capture values
+    // and receive the target GameContext explicitly; no callback captures this.
+    // combatEntryState is deliberately shared const, never mutated by a fork.
+    return result;
+}
+
+namespace {
+void resampleRunFuture(GameContext &gc, std::uint64_t nonce) {
+    gc.fixedRewardWorldline = true;
+    gc.seed = Random::murmurHash3(nonce);
+    Random *streams[] = {&gc.aiRng, &gc.cardRandomRng, &gc.cardRng, &gc.eventRng,
+        &gc.mathUtilRng, &gc.merchantRng, &gc.miscRng, &gc.monsterHpRng,
+        &gc.monsterRng, &gc.neowRng, &gc.potionRng, &gc.relicRng,
+        &gc.shuffleRng, &gc.treasureRng};
+    for (std::size_t i = 0; i < std::size(streams); ++i)
+        *streams[i] = Random(Random::murmurHash3(nonce + i + 1));
+    std::vector<RelicId> *pools[] = {&gc.commonRelicPool, &gc.uncommonRelicPool,
+        &gc.rareRelicPool, &gc.shopRelicPool, &gc.bossRelicPool};
+    for (auto *pool : pools) {
+        std::sort(pool->begin(), pool->end());
+        for (int i = static_cast<int>(pool->size()) - 1; i > 0; --i)
+            std::swap((*pool)[i], (*pool)[gc.relicRng.random(i)]);
+    }
+}
+}
+
+GameContext GameContext::forkCombatForSearch(std::uint64_t worldline) const {
+    if (screenState != ScreenState::BATTLE || !regainControlAction)
+        throw std::invalid_argument("outer-return search requires a complete live GameContext continuation");
+    if (combatEntryState) {
+        // Dead Adventurer's encounter roll is conditioned on the battle already
+        // observed. Rejection sampling never consults the real hidden RNG/loot.
+        for (int attempt = 0; attempt < 256; ++attempt) {
+            auto candidate = combatEntryState->clone();
+            candidate.combatEntryState.reset();
+            resampleRunFuture(candidate, Random::murmurHash3(worldline + attempt));
+            candidate.chooseEventOption(combatEntryOption);
+            if (candidate.screenState == ScreenState::BATTLE &&
+                candidate.info.encounter == info.encounter) return candidate;
+        }
+        throw std::runtime_error("could not sample the observed event-combat continuation");
+    }
+    if (curRoom == Room::EVENT && curEvent != Event::COLOSSEUM)
+        throw std::invalid_argument("event-combat search requires its pre-decision continuation state");
+    auto result = clone();
+    resampleRunFuture(result, worldline);
+    return result;
+}
+
 namespace {
 int combatGoldWithIdol(const GameContext &gc, int baseGold) {
     // RewardItem applies the bonus when the drop is created, not when taken.
@@ -1167,6 +1219,8 @@ void GameContext::enterAct3VictoryRoom() {
 }
 
 void GameContext::enterBattle(MonsterEncounter encounter) {
+    combatEntryState.reset();
+    combatEntryOption = -1;
     screenState = ScreenState::BATTLE;
     info.encounter = encounter;
     if (skipBattles) {
@@ -1246,7 +1300,7 @@ void GameContext::afterBattle() {
 
         case Room::BOSS:
             if (act == 1 || act == 2) {
-                regainControlAction = [=](GameContext &gc) {
+                regainControlAction = [](GameContext &gc) {
                     gc.enterBossTreasureRoom();
                 };
                 openCombatRewardScreen(createBossCombatReward());
@@ -2608,6 +2662,23 @@ void GameContext::chooseTreasureRoomOption(bool openChest) {
 }
 
 void GameContext::chooseEventOption(int idx) {
+    struct RememberCombatEntry {
+        GameContext &gc;
+        int option;
+        std::shared_ptr<GameContext> before;
+        ~RememberCombatEntry() {
+            if (before && gc.screenState == ScreenState::BATTLE) {
+                gc.combatEntryState = std::move(before);
+                gc.combatEntryOption = option;
+            }
+        }
+    } remember{*this, idx, nullptr};
+    if (curEvent == Event::COLOSSEUM || curEvent == Event::DEAD_ADVENTURER ||
+        curEvent == Event::MINDBLOOM || curEvent == Event::MASKED_BANDITS ||
+        curEvent == Event::HYPNOTIZING_COLORED_MUSHROOMS || curEvent == Event::MYSTERIOUS_SPHERE) {
+        remember.before = std::make_shared<GameContext>(clone());
+        remember.before->combatEntryState.reset();
+    }
 //    regainControlAction = [](auto &gs) {
 //        gs.screenState = ScreenState::MAP_SCREEN;
 //        gs.regainControlAction = nullptr;
@@ -3331,7 +3402,7 @@ void GameContext::chooseEventOption(int idx) {
                 const RelicId rareRelic = returnRandomScreenlessRelic(RelicTier::RARE);
                 info.bossRelics[0] = rareRelic;
                 info.gold = goldAmt;
-                regainControlAction = [=](GameContext &gc) {
+                regainControlAction = [](GameContext &gc) {
                     gc.afterBattle();
                 };
                 enterBattle(MonsterEncounter::MYSTERIOUS_SPHERE_EVENT);
