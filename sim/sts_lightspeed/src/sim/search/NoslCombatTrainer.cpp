@@ -2386,6 +2386,14 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 break;
             }
             if (config_.outerReturn && state.outcome != Outcome::UNDECIDED) {
+                // A session fixes the entire worldline and its evaluator.
+                // Reaching the same terminal node again cannot change its
+                // settled continuation. Preserve every simulation/backup,
+                // but do not repeat Python settlement and teacher inference.
+                if (node->networkValueValid) {
+                    finishTerminal(pending, node->networkValue);
+                    continue;
+                }
                 pending.leaf = node;
                 pending.legalActions.clear();
                 pending.needsPolicy = false;
