@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import torch
 
-from env.core.outer_return import OBJECTIVE
+from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA
 from env.core.run_env import SlayTheSpireEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.outer_return import OuterReturnPolicy, load_initialization_material
@@ -62,7 +62,8 @@ def prepare(args):
     if args.output.exists():
         raise FileExistsError(args.output)
     profile = json.loads(args.prepare_combat_outer.read_text(encoding='utf-8'))
-    if profile['contract']['objective_id'] != OBJECTIVE or profile['contract']['lower_init'] != 'random':
+    if (profile['contract']['objective_id'] != OBJECTIVE or profile['contract']['lower_init'] != 'random' or
+            profile['contract'].get('lower_context') != CONTEXT_SCHEMA):
         raise ValueError('production profile requires frozen upper with a fresh trainable lower network')
     args.n_envs, args.n_steps, args.seed = 1, 2, int(profile['training']['seed'])
     args.vec, args.ascension, args.interactive_reasoning = 'native', 0, False

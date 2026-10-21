@@ -90,6 +90,13 @@ class OuterCombatNetwork(EntityCombatNetwork):
                                             obs['outer_deck_misc'][..., None]), -1).to(dtype))
         mask = ids.ne(0)[..., None]
         pooled = (cards * mask).sum(1) / mask.sum(1).clamp_min(1)
+        # Public pending GRID choices remain in the source pile until the last
+        # pick. Encode them separately so actor and critic see selection progress.
+        selected = obs['selected_card_ids'].long()
+        upgrades = obs['selected_card_upgrades'][..., None]
+        chosen = self.context_deck(torch.cat((table[selected, upgrades.squeeze(-1).gt(0).long()],
+                                             upgrades, torch.zeros_like(upgrades)), -1).to(dtype))
+        pooled = pooled + (chosen * selected.ne(0)[..., None]).sum(1)
         scalars = torch.cat([obs[key].float() for key in ('act', 'floor', 'run_hp', 'ascension', 'run_keys')], -1)
         context = torch.cat((pooled, scalars, self.context_boss(obs['next_boss'].long().flatten()),
                              self.context_character(obs['character'].long().flatten())), -1)
@@ -141,6 +148,11 @@ class OuterReturnCore(EntityCombatCore):
 
 
 class OuterReturnPolicy(EntityCombatPolicy):
+    def obs_to_tensor(self, observation):
+        if not isinstance(observation, dict) or not CONTEXT_KEYS <= observation.keys():
+            raise ValueError('outer-return checkpoint requires the complete public run context; use its train/eval environment')
+        return super().obs_to_tensor(observation)
+
     def __init__(self, *args, material_directory, material_sha256, source_sha256,
                  lower_initialization='random', **kwargs):
         self.material_directory = str(material_directory)

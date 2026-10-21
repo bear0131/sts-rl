@@ -58,6 +58,36 @@ def _enter_combat(env):
     raise AssertionError('no combat within fixture budget')
 
 
+def test_grid_leaf_choices_override_root_context_and_reach_lower(outer_return_core):
+    import slaythespire as sts
+    core, _, env = outer_return_core
+    _enter_combat(env)
+    env.thick.gc.set_relics(['SacredBark'])
+    env.thick.gc.set_potion_state(['Liquid Memories'])
+    env.thick.bc = sts.create_battle(env.thick.gc, 'Looter')
+    env.thick.bc.apply_custom_state({'discard': [('BASH', 1), ('DEFEND_RED', 0), ('ANGER', 0)]})
+    env.thick.bc.execute(sts.Action(sts.ActionType.POTION, 0, 0))
+    env._invalidate_backend_cache()
+    assert not env._obs()['selected_card_ids'].any()
+    batch = NativeSearchBatch([env], 1)
+    config = NativeSearchConfig(simulations=4, depth=1, outer_return=True, fixed_worldline=True, gumbel_scale=0.)
+    try:
+        batch.begin({0: ((np.zeros(198, np.float32),), dict(**asdict(config), root_value=0.,
+                         state_nonce=42101, compact_observation=True))})
+        observed = batch.observations()
+        assert np.count_nonzero(observed['selected_card_ids']) == 1
+        tensor = observation_as_tensor(observed, 'cpu')
+        core.eval()
+        with torch.inference_mode():
+            chosen_context = core.combat.context_features(tensor, torch.float32)
+            without_choice = dict(tensor, selected_card_ids=torch.zeros_like(tensor['selected_card_ids']))
+            assert not torch.equal(chosen_context, core.combat.context_features(without_choice, torch.float32))
+        assert not env._obs()['selected_card_ids'].any()
+        core.teacher.assert_integrity()
+    finally:
+        batch.close()
+
+
 def test_warm_actor_scalar_updates_and_frozen_teacher(outer_return_core):
     core, source, env = outer_return_core
     _enter_combat(env)

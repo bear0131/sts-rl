@@ -50,6 +50,9 @@
 OBS_VERSION=20、ACTION_VERSION=8、native compact layout v9 必须配套使用。
 layout v9新增两张GRID已选牌的传输列，复用现有selected_card_ids/upgrades模型槽；
 液态记忆按已有PICK动作积累选择，选齐后统一结算，不使用手牌MULTI位图。
+compact leaf模板也必须保留selected_card_ids/upgrades，Python/native两种解码均从
+叶状态写入，不从根元数据覆盖。旧策略仍按其原字段白名单投影；COMBAT01公开上下文
+v2显式消费这些已选牌，actor/critic共用该表示，v1新目标checkpoint不可跨版本resume。
 原生状态保留已选UID，搜索身份保留已选内容与顺序，剩余候选不再包含已选实例。
 v18将真实布尔能力/减益写入player_buffs（激活为1，再按BUFF_SCALE归一化），
 包括腐化、壁垒、混乱、Hex及钢笔尖就绪；数值buff仍保留实际层数。

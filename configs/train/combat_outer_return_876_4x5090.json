@@ -96,6 +96,7 @@
     "upper_optimizer_updates": 0,
     "reward_policy_contract": "checkpoint-v7-act3",
     "lower_init": "random",
+    "lower_context": "combat-public-run-context-v2",
     "lower_value": "new-FP32-unbounded-scalar-MSE",
     "old_optimizer": "discard",
     "old_replay": "discard",

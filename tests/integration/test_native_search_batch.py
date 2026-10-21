@@ -315,3 +315,39 @@ def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factor
             np.testing.assert_array_equal(actual[key][0], value, err_msg=key)
     finally:
         pool.close()
+
+
+@pytest.mark.native
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize('contract', ['legacy', 'autoregressive-v2'])
+def test_liquid_memories_grid_progress_survives_both_leaf_decoders(combat_factory, contract):
+    import slaythespire as sts
+    from env.search.native_batch import NativeSearchBatch
+    env = combat_factory(['STRIKE_RED']*5, relics=['SacredBark'],
+                         combat_action_contract=contract)
+    env.thick.bc.apply_custom_state({'discard': [('BASH', 1), ('DEFEND_RED', 0), ('ANGER', 0)],
+                                     'potions': ['Liquid Memories']})
+    env.thick.bc.execute(sts.Action(sts.ActionType.POTION, 0, 0))
+    env.thick.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, 0))
+    env._invalidate_backend_cache()
+    root = env._obs()
+    assert np.count_nonzero(root['selected_card_ids']) == 1
+    pool = NativeSearchBatch([env], 1)
+    try:
+        packed = {key: value[None, :].copy() for key, value in env.thick.bc.compact_leaf_arrays().items()}
+        packed.update(owners=[0], selection_prefix=[0], legal_policy_ids=np.empty((1, 0), np.int32))
+        fields = {key: value[None, :] for key, value in env._native_packed_global_fields().items()}
+        serial = env._native_packed_observation_batch(packed)
+        native = pool.decoder.decode(packed, fields)
+        for key in ('selected_card_ids', 'selected_card_upgrades', 'pick_remaining', 'select_card_ids'):
+            np.testing.assert_array_equal(serial[key][0], root[key], err_msg=key)
+            np.testing.assert_array_equal(native[key], serial[key], err_msg=key)
+        assert root['selected_card_upgrades'][0] > 0
+        # The first card remains in discard until the mandatory second choice.
+        assert len(env.thick.bc.to_dict()['discard']) == 3
+        env.thick.bc.execute(sts.Action(sts.ActionType.SINGLE_CARD_SELECT, 1))
+        env._invalidate_backend_cache()
+        assert not env._obs()['selected_card_ids'].any()
+        assert len(env.thick.bc.to_dict()['discard']) == 1
+    finally:
+        pool.close()

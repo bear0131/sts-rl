@@ -627,6 +627,8 @@ def _empty_combat(*, card_language=False, combat_language=False):
     post-enemy-turn boundary bit.
     """
     o = {
+        "selected_card_ids": np.zeros(SELECT_PICK_SLOTS, _CAT),
+        "selected_card_upgrades": np.zeros(SELECT_PICK_SLOTS, _SCALAR),
         "select_card_ids": np.zeros(G_MAX, _CAT),
         "select_card_upgrades": np.zeros(G_MAX, _SCALAR),
         "select_card_costs": np.zeros(G_MAX, _SCALAR),

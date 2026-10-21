@@ -3,9 +3,10 @@ from dataclasses import dataclass
 import math
 
 OBJECTIVE = 'combat-outer-return-frozen-upper-v1'
-CONTEXT_SCHEMA = 'combat-public-run-context-v1'
+CONTEXT_SCHEMA = 'combat-public-run-context-v2'
 CONTEXT_KEYS = frozenset(('act', 'floor', 'next_boss', 'run_hp', 'deck_ids',
-                          'deck_upgrades', 'outer_deck_misc', 'character', 'ascension', 'run_keys'))
+                          'deck_upgrades', 'outer_deck_misc', 'character', 'ascension', 'run_keys',
+                          'selected_card_ids', 'selected_card_upgrades'))
 MISC_SCALE = 100.0
 
 

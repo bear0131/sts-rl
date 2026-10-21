@@ -99,7 +99,9 @@ class NativeSearchBatch:
             if self.payload.get('outer_return_schema') != 1:
                 raise RuntimeError('native outer-return leaf contract is missing')
             owners = np.asarray(self.payload['owners'], dtype=np.intp)
-            result.update({key: self.global_fields[key][owners].copy() for key in CONTEXT_KEYS})
+            # GRID picks are branch state decoded above, never root metadata.
+            result.update({key: self.global_fields[key][owners].copy() for key in CONTEXT_KEYS
+                           if key not in ('selected_card_ids', 'selected_card_upgrades')})
             hp = result['player_scalars']
             result['run_hp'][:, :2] = hp[:, :2]
             result['run_hp'][:, 2] = np.divide(hp[:, 0], hp[:, 1],
