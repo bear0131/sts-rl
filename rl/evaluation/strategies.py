@@ -102,10 +102,33 @@ def strategy_manifest(strategy):
                 capacity=backend.capacity, batch_multiple=backend.batch_multiple,
                 compile_forward=backend.compile_forward,
                 statistics=backend.statistics())
+    if isinstance(strategy, FrozenUpperStrategy):
+        result.update(deterministic=True, precision='FP32',
+                      teacher_sha256=strategy.model.policy.core.teacher.assert_integrity(),
+                      reward_policy_contract='checkpoint-v7-act3')
     if isinstance(strategy, PolicyStrategy):
         result['deterministic'] = strategy.deterministic
         result['reward_policy_contract'] = strategy.reward_policy_contract
     return result
+
+
+class FrozenUpperStrategy:
+    name = 'frozen-upper'
+
+    def __init__(self, model, lock=None):
+        self.model, self.lock = model, lock
+        self.combat_action_contract = C.policy_contract(model.observation_space)
+
+    def decide(self, requests, *, check=lambda: None):
+        if not requests:
+            return []
+        check()
+        observations = {key: np.stack([r.observation[key] for r in requests]) for key in requests[0].observation}
+        masks = np.stack([r.env.action_masks() for r in requests])
+        with self.lock or nullcontext():
+            tensor, _ = self.model.policy.obs_to_tensor(observations)
+            actions, _ = self.model.policy.core.teacher.decide(tensor, masks)
+        return [Decision(int(action), self.name) for action in actions.cpu().tolist()]
 
 
 class PolicyStrategy:
@@ -173,9 +196,10 @@ class PolicyStrategy:
             else:
                 actions, _ = self.model.predict(observation_for_policy(self.model, observations),
                                                 action_masks=masks, deterministic=self.deterministic)
+        # Contract identity belongs to strategy_manifest; per-step diagnostics
+        # are numeric counters accumulated by the generic episode runner.
         return [Decision(int(action), self.name,
-                         {'reward_policy_contract': self.reward_policy_contract,
-                          **({'equivalent_play_mass_decisions': 1} if grouped else {})})
+                         {'equivalent_play_mass_decisions': 1} if grouped else {})
                 for action in np.asarray(actions).reshape(-1)]
 
 
@@ -404,11 +428,16 @@ class MapRouteStrategy:
 def policy_strategy(model, args, lock=None):
     autocast = (bf16_autocast if getattr(args, 'leaf_amp', 'off') == 'bf16'
                 else nullcontext)
-    return PolicyStrategy(
-        model, deterministic=not args.stochastic, lock=lock, autocast=autocast)
+    combat = PolicyStrategy(model, deterministic=not args.stochastic, lock=lock, autocast=autocast)
+    if getattr(getattr(model.policy, 'core', None), 'frozen_upper', False):
+        return PhaseStrategy(FrozenUpperStrategy(model, lock), {'combat': combat})
+    return combat
 
 
 def native_strategy(model, args, lock=None):
+    if (getattr(getattr(model.policy, 'core', None), 'frozen_upper', False) and
+            getattr(args, 'native_search_threads', 0) < 1):
+        raise ValueError('frozen-upper search requires --native-search-threads >= 1 for complete run exits')
     leaf_inference = getattr(args, 'leaf_inference', 'eager')
     backend = None
     if leaf_inference not in ('eager', 'cuda-graph'):
@@ -500,6 +529,13 @@ STRATEGIES = {'policy': policy_strategy, 'native': native_strategy, 'value': val
 
 def compose_strategy(upper_model, args, combat_model=None, *, trace=None):
     """Compose independently chosen upper/combat components outside the runner."""
+    frozen = getattr(getattr(getattr(upper_model, 'policy', None), 'core', None), 'frozen_upper', False)
+    if frozen and (getattr(args, 'upper_strategy', 'model') != 'model' or getattr(args, 'route', 'model') != 'model'):
+        raise ValueError('frozen upper evaluation cannot override its actor or map route')
+    if frozen and (args.solver not in ('policy', 'native') or combat_model is not None):
+        raise ValueError('frozen-upper evaluation supports its own lower with policy/native only')
+    if combat_model is not None and getattr(getattr(combat_model.policy, 'core', None), 'frozen_upper', False):
+        raise ValueError('use the complete frozen-upper checkpoint; a separate upper would change its teacher contract')
     strategy = STRATEGIES[args.solver](combat_model if combat_model is not None else upper_model, args)
     if args.solver == 'turn-planner':
         strategy.routes['combat'].trace = trace

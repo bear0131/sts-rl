@@ -494,6 +494,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--leaf-inference", choices=("eager", "cuda-graph"), default="eager",
                         help="Runtime combat leaf backend; search and update semantics are unchanged")
+    parser.add_argument('--leaf-compile', action=argparse.BooleanOptionalAction, default=True,
+                        help='Compile graph forward; disable explicitly on platforms without Triton')
     parser.add_argument("--leaf-graph-profile-interval", type=int, default=0,
                         help="Sample CUDA stream stage timings every N leaf calls; 0 disables")
     parser.add_argument("--leaf-graph-batch-multiple", type=int, default=0,
@@ -2810,6 +2812,7 @@ def main() -> None:
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
+            compile_forward=args.leaf_compile,
             profile_interval=args.leaf_graph_profile_interval,
             batch_multiple=args.leaf_graph_batch_multiple,
             failure_path=(args.training_state_dir / f'failed-leaves-rank{args.rank}.npz')

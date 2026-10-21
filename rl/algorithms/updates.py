@@ -34,6 +34,8 @@ def ppo_forward(model, batch, clip_range, clip_range_vf, *, indices=None, after_
 
 def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, max_grad_norm=None):
     """Average accumulation once, clip once, then Adam and clear gradients."""
+    if value_only and getattr(model, '_outer_return', False):
+        raise ValueError('frozen-upper objective trains the entire lower network from update one')
     if micro_batches < 1:
         return 0.0
     if value_only:

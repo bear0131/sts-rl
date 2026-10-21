@@ -1,0 +1,141 @@
+"""Frozen evaluation dispatch and paired resource response contracts."""
+from types import SimpleNamespace
+import numpy as np
+import pytest
+import torch
+
+from rl.evaluation.resource_response import audit
+from rl.evaluation.strategies import DecisionRequest, policy_strategy, compose_strategy
+from rl.search.native import observation_as_tensor
+
+pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
+
+
+def model_for(core, env):
+    return SimpleNamespace(policy=SimpleNamespace(core=core,
+        obs_to_tensor=lambda o: (observation_as_tensor(o, 'cpu'), True),
+        set_training_mode=core.train),
+        device='cpu', observation_space=env.observation_space, action_space=env.action_space,
+        nosl_is_az_fixed_worldline=True, nosl_is_az_gumbel_scale=0.)
+
+
+def test_frozen_upper_evaluation_ignores_lower_stochastic_flag(outer_return_core):
+    core, _, env = outer_return_core
+    model = model_for(core, env)
+    strategy = policy_strategy(model, SimpleNamespace(stochastic=True, leaf_amp='off'))
+    obs, info = env.reset(seed=42101)
+    expected, _ = core.teacher.decide(observation_as_tensor({k:v[None] for k,v in obs.items()}, 'cpu'),
+                                     env.action_masks()[None])
+    requests = [DecisionRequest(env, obs, info, 42101, 0)]
+    assert all(strategy.decide(requests)[0].action == int(expected[0]) for _ in range(3))
+
+
+def test_response_audit_reports_axes_without_forcing_monotonicity(outer_return_core):
+    core, _, env = outer_return_core
+    result = audit(model_for(core, env), env, seed=42101, max_steps=256, timeout=90, simulations=4)
+    assert {r['axis'] for r in result['combat']} == {'hp', 'potions'}
+    assert {r['axis'] for r in result['upper']} == {'hp', 'potions', 'wallet_gold', 'reward_gold'}
+    assert all(np.isfinite(r['upper_value']) for r in result['upper'])
+    assert all(np.isfinite(r['lower_value']) and np.isfinite(r['search_value']) for r in result['combat'])
+    assert result['search_simulations'] == 4
+    assert result['teacher_sha256'] == core.teacher.assert_integrity()
+
+
+@pytest.mark.parametrize('override', [dict(upper_strategy='rules'), dict(route='min-elite-max-rest'),
+                                  dict(solver='value'), dict(solver='leftmost'),
+                                  dict(solver='native', native_search_threads=0)])
+def test_frozen_evaluation_rejects_incomplete_or_changed_contract(outer_return_core, override):
+    core, _, env = outer_return_core
+    args = SimpleNamespace(solver='policy', stochastic=False, upper_strategy='model', route='model')
+    vars(args).update(override)
+    with pytest.raises(ValueError, match='frozen'):
+        compose_strategy(model_for(core, env), args)
+
+
+def test_outer_checkpoint_relocation_validates_material_and_context(outer_material, tmp_path, monkeypatch):
+    import shutil
+    from env.core.run_env import SlayTheSpireEnv
+    from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
+    from rl.algorithms.updates import optimizer_step
+    from rl.policies.outer_return import OuterReturnPolicy
+    from rl.policies.checkpoint import load_checkpoint
+    from rl.training.native_vec_env import NativeSearchVecEnv
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2', outer_return_context=True)
+    vector = NativeSearchVecEnv([lambda: env], threads=1)
+    model = AccumulatingMaskablePPO(OuterReturnPolicy, vector, policy_kwargs=outer_material,
+        n_steps=2, batch_size=2, device='cpu', gamma=1., nosl_is_az=True, nosl_is_az_cpp=True,
+        nosl_is_az_inner_only=True, nosl_is_az_upper_strategy='model', nosl_is_az_fixed_worldline=True,
+        nosl_is_az_leaf_batch_size=1)
+    path = tmp_path/'model.zip'
+    model.save(path)
+    relocated = tmp_path/'moved'
+    shutil.copytree(outer_material['material_directory'], relocated)
+    monkeypatch.setenv('STS_OUTER_MATERIAL_DIR', str(relocated))
+    restored = load_checkpoint(path, device='cpu', inference_only=True)
+    assert restored._outer_return
+    assert restored.policy.core.teacher.assert_integrity() == model.policy.core.teacher.assert_integrity()
+    obs, _ = env.reset(seed=42101)
+    restored.predict(obs, deterministic=True, action_masks=env.action_masks())
+    obs.pop('outer_deck_misc')
+    with pytest.raises(ValueError, match='context'):
+        restored.predict(obs, deterministic=True, action_masks=env.action_masks())
+    with pytest.raises(ValueError, match='entire lower'):
+        optimizer_step(restored, value_only=True)
+    (relocated/'upper.pt').write_bytes(b'invalid')
+    with pytest.raises(ValueError, match='hash|SHA|digest'):
+        load_checkpoint(path, device='cpu', inference_only=True)
+    vector.close()
+
+
+@pytest.mark.timeout(600)
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
+def test_outer_graph_lifecycle(outer_return_core):
+    """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
+    import gc
+    import os
+    import torch
+    from rl.search.inference import CombatLeafGraphs
+    from rl.policies.precision import bf16_autocast
+    assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
+    core, _, env = outer_return_core
+    for _ in range(64):
+        if env._phase() == 'combat':
+            break
+        env.step(int(np.flatnonzero(env.action_masks())[0]))
+    assert env._phase() == 'combat'
+    core.to('cuda').eval()
+    frozen = core.teacher.assert_integrity()
+    cache = CombatLeafGraphs(core, 'cuda', amp='bf16', capacity=2, batch_multiple=32,
+                             compile_forward=os.name != 'nt')
+    try:
+        for count in (1, 33, 65, 1, 1):
+            obs = {k: np.stack([v]*count) for k, v in env._obs().items()
+                   if k in core.combat_observation_keys}
+            tensor = observation_as_tensor(obs, 'cuda')
+            with torch.inference_mode(), bf16_autocast():
+                reference = core.combat_actor_critic(tensor, active_relic_width=1)
+            logits, values = cache(obs, 1)
+            # BF16 batch padding / compiled fusion can round at 1/128 scale.
+            np.testing.assert_allclose(values, reference[1].float().cpu().numpy().flatten(), atol=.02, rtol=.02)
+            assert np.isfinite(logits).all()
+            reference_logits = reference[0].float().cpu().numpy()
+            finite_actions = np.abs(reference_logits) < 1e6
+            np.testing.assert_allclose(logits[finite_actions], reference_logits[finite_actions], atol=.02, rtol=.02)
+            del tensor, reference, obs
+            gc.collect()
+            torch._C._cuda_clearCublasWorkspaces()
+            torch.cuda.empty_cache()
+        assert cache.statistics()['evictions'] >= 2 and cache.statistics()['hits'] >= 1
+        before = values.copy()
+        with torch.no_grad():
+            core.combat.scalar[-1].bias.add_(1.)
+        obs = {k: v[None] for k, v in env._obs().items() if k in core.combat_observation_keys}
+        _, changed = cache(obs, 1)
+        np.testing.assert_allclose(changed-before, 1., atol=.002, rtol=0)
+        assert core.teacher.assert_integrity() == frozen
+    finally:
+        cache.clear()
+        core.to('cpu')
+        torch.cuda.empty_cache()
+
+

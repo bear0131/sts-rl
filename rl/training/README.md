@@ -6,6 +6,42 @@
 
 当前实验入口为 `python -m rl.training.distributed_sb3`。算法参数、机器地址、结果目录分别见 configs/train、experiments/launchers 和忽略的 runs/local。
 
+## COMBAT01：876冻结上层、完整随机下层
+
+`configs/train/combat_outer_return_876_4x5090.json` 定义当前合同。876只提供独立的
+上层actor/critic及依赖；下层actor、encoder、公开context和FP32标量critic随机初始化，
+所有下层Parameter从第一轮共同更新。固定卡向量是输入buffer。没有预校准、局部冻结或
+上层optimizer；禁止旧HP/Boss目标、value-only更新和旧Adam/replay恢复。
+
+材料导出见 `tools.checkpoints.replace_combat --mode entity-material`；现有入口创建新step0：
+
+```text
+python -m rl.training.distributed_sb3 --rank 0 --world-size 1 \
+  --prepare-combat-outer configs/train/combat_outer_return_876_4x5090.json \
+  --material-directory MATERIAL --material-sha256 MANIFEST_SHA256 \
+  --output runs/local/combat01/initial.zip --device cpu --native-search-threads 2
+```
+
+该操作只构造并核验，不训练；目标文件必须不存在。输出JSON记录profile/native/teacher
+身份、空Adam/replay、step0和可训练参数数量。必须使用当前源码重建的显式
+`STS_LIGHTSPEED_BUILD_DIR`；原交接二进制没有新目标接口，不能直接使用。
+
+训练支持resident `--vec native`、每树一个在途叶、完整GameContext单世界线。
+实际退出按自然终局、上层决策、直接连战分别结算；跨collection未结束的战斗保留
+reward前缀和pending，截断不冒充死亡。上层始终FP32 masked argmax，奖励仍是
+TRAIN47整局定义、gamma1；新目标版本为 `combat-outer-return-frozen-upper-v1`。
+通过[四机manager](../../experiments/launchers/README.md)启动新run，参数沿用876，预算显式有限。
+
+新checkpoint和replay带目标、teacher、native、公开上下文与搜索身份，改变身份即拒绝
+resume。移动完整材料时可设置 `STS_OUTER_MATERIAL_DIR`，文件及manifest SHA仍必须一致。
+恢复用每rank相同global step的完整bundle；不能混用旧TRAIN47恢复状态或仅复制rank0。
+CUDA恢复必须保留CUDA RNG。恢复本身不承诺异步搜索轨迹逐位重演。
+
+CPU eager和CUDA graph训练、whole-run policy/native评测已接入该合同；Watch、dashboard
+和真实bridge尚未适配完整上下文，不能直接部署新checkpoint。缺字段会明确拒绝。
+Windows开发GPU可显式 `--no-leaf-compile`；四机Linux保持compile开启，其现场图缓存和
+完整训练验收不能由Windows结果替代。
+
 PPO、NOSL 与 reasoning 使用同一个梯度同步边界（ring 或 file transport）和 algorithms/updates.py 的 optimizer 更新；编排负责 rank、barrier、批次调度和日志。新的策略/学习方法应显式选择其目标和采样方式，不能通过复制整套 trainer 来添加算法。大 main 的生命周期拆分仍待做。
 
 环境构造与 checkpoint schema 适配在 `environments.py`，采样基准复用同一工厂。

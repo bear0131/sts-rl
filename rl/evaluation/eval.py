@@ -26,6 +26,8 @@ def build_parser():
                         help='Separate combat model; positional checkpoint remains the upper policy')
     parser.add_argument('--compare-combats', type=int, default=0,
                         help='Audit first N combat starts against rules, policy and native on identical forks')
+    parser.add_argument('--resource-response', action='store_true',
+                        help='Audit frozen-upper HP/potion/gold responses and exit; requires --output')
     parser.add_argument('--trace', type=Path, help='Combat states, chosen actions and rule explanations as JSONL')
     parser.add_argument('--card-vector-checkpoint', type=Path)
     parser.add_argument('--task', choices=['wholerun', 'combat'], default='wholerun')
@@ -121,6 +123,7 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
         return SlayTheSpireEnv(
             backend_factory=backend_factory,
             ascension=args.ascension,
+            outer_return_context=any(getattr(getattr(m.policy, 'core', None), 'frozen_upper', False) for m in models),
             combat_action_contract=combat_action_contract,
             global_map_view=uses(policy_model.uses_global_map_observation),
             card_language=uses(policy_model.uses_card_language),
@@ -181,6 +184,22 @@ def main():
                             card_vector_checkpoint=args.card_vector_checkpoint,
                             inference_only=True)
     model.set_random_seed(args.seed)
+    if args.resource_response:
+        from rl.evaluation.resource_response import audit
+        from env.core.native_actions import policy_contract
+        if not args.output or args.task != 'wholerun' or args.combat_checkpoint:
+            raise ValueError('resource response requires output and one whole-run checkpoint')
+        env = make_scenario(model, args, combat_action_contract=policy_contract(model.observation_space)).make_env()
+        try:
+            result = audit(model, env, seed=args.seed, max_steps=args.max_steps,
+                           timeout=args.timeout, simulations=args.simulations or 128)
+            result['checkpoint'] = file_identity(args.checkpoint)
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
+            print(json.dumps(result, indent=2))
+        finally:
+            env.close()
+        return
     combat_model = model
     if args.combat_checkpoint:
         if args.task != 'wholerun' or args.solver not in ('policy', 'native', 'value', 'rules', 'turn-planner'):

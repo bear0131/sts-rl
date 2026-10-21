@@ -1,5 +1,6 @@
 """Load SB3 checkpoints with relocated encoder dependencies resolved first."""
 import os
+import json
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -18,6 +19,13 @@ def custom_objects(checkpoint, card_vector_checkpoint=None):
     with ZipFile(checkpoint) as archive:
         data = json_to_data(archive.read('data').decode('utf-8'))
     policy_kwargs = dict(data.get('policy_kwargs') or {})
+    if policy_kwargs.get('material_directory'):
+        explicit = os.environ.get('STS_OUTER_MATERIAL_DIR')
+        if explicit:
+            policy_kwargs['material_directory'] = str(Path(explicit).expanduser().resolve(strict=True))
+            # The policy constructor still validates the unchanged manifest and file hashes.
+            return {'policy_kwargs': policy_kwargs}
+        return {}
     entity_config = dict(policy_kwargs.get('entity_config') or {})
     saved = (entity_config.get('card_vector_checkpoint')
              or policy_kwargs.get('card_vector_checkpoint'))
@@ -69,9 +77,11 @@ def load_checkpoint(checkpoint, *, device='auto', card_vector_checkpoint=None,
         path = Path(str(path) + '.zip')
     algorithm = MaskablePPO
     with ZipFile(path) as archive:
-        if 'policy.upper_optimizer.pth' in archive.namelist():
+        if ('policy.upper_optimizer.pth' in archive.namelist() or
+                'outer_return_contract' in json.loads(archive.read('data'))):
             # The joint policy owns two optimizers. Its training class declares
-            # both saved state dictionaries; the generic SB3 loader knows one.
+            # both saved state dictionaries; COMBAT01 also validates its native
+            # objective identity in this loader, including inference-only use.
             from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
             algorithm = AccumulatingMaskablePPO
     overrides = custom_objects(path, card_vector_checkpoint)

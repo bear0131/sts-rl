@@ -1,5 +1,25 @@
 # 评估后端
 
+COMBAT01 checkpoint自动启用公开下层context和冻结上层策略。只支持其自身的
+whole-run `--solver policy` 或 `native`；native须指定 `--native-search-threads 1`
+或更大值，使用完整战斗出口结算。不能覆盖上层/路线、拼接其他combat checkpoint或
+使用旧value搜索。`--stochastic`只影响下层，teacher仍固定masked argmax。
+显式指定 `STS_LIGHTSPEED_BUILD_DIR`；材料迁移可用 `STS_OUTER_MATERIAL_DIR`，哈希不变。
+
+资源响应诊断复用本CLI：
+
+```text
+python -m rl.evaluation.eval INITIAL.zip --resource-response --seed 9030000 \
+  --max-steps 256 --timeout 150 --device cpu --simulations 128 \
+  --output runs/local/combat01/resource-response.json
+```
+
+它在首场真实战斗配对HP和持有药水状态，固定搜索nonce/世界线、关闭根噪声，记录
+actor动作、lower V、搜索动作/V；真实受控击杀后的奖励页另测upper对HP、药水、钱包
+金币和待领金币的响应。待领金币敏感性是单字段观测干预，钱包不变，不向lower泄漏
+隐藏奖励。结果只验证有限响应与分支隔离，不强制teacher或随机下层单调，也不是胜率
+验证。每次调用须另有外部硬超时，内部预算只能在native调用之间检查。
+
 `entity-combat` checkpoint自动组合规则上层与所选战斗策略，不存在神经上层
 回退。可显式传 `--upper-strategy rules` 记录实验意图。真实bridge遇到非战斗
 决策时等待手动操作；尚不支持通过该战斗模型自动完成整局。
