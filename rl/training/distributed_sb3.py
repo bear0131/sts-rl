@@ -2971,6 +2971,7 @@ def main() -> None:
     callback.on_training_start(locals(), globals())
 
     records = []
+    last_bundle_step = None
     training_failed = False
     resource_stack = ExitStack()
     try:
@@ -3544,6 +3545,7 @@ def main() -> None:
                 save_bundle(model, args.training_state_dir, rank=args.rank, world_size=args.world_size,
                     run_id=run_id, wandb_id=args.wandb_id, config=vars(args))
                 prune_bundles(args.training_state_dir, rank=args.rank, keep=args.max_checkpoints)
+                last_bundle_step = int(model.num_timesteps)
                 # Do not start the next collection until every rank published its generation.
                 average_scalar_dict({'checkpoint_ready': 1.0}, ring_transport)
             record['checkpoint_sec'] = time.perf_counter() - checkpoint_started
@@ -3717,7 +3719,10 @@ def main() -> None:
 
         if args.output is not None:
             model.save(str(args.output.with_suffix("")))
-        if args.training_state_dir is not None:
+        # A boundary save already published this complete generation. Pruning
+        # before another idempotent save would discard a fallback without
+        # creating a replacement, shrinking retention on every clean exit.
+        if args.training_state_dir is not None and last_bundle_step != int(model.num_timesteps):
             prune_bundles(
                 args.training_state_dir,
                 rank=args.rank,

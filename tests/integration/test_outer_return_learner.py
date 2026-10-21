@@ -116,11 +116,14 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
         '--vec', 'native', '--reasoning-updates', '0', '--reasoning-coef', '0', '--no-interactive-reasoning',
         '--remote-root', str(tmp_path/'transport'), '--ssh-control-dir', str(tmp_path/'ssh'),
         '--run-id', 'ci-outer', '--wandb', '--wandb-id', 'ci-outer',
-        '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '3',
+        '--training-state-dir', str(tmp_path/'state'), '--save-every-updates', '1', '--max-checkpoints', '2',
         '--rollout-resource-interval', '0.1']
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
+    from rl.training.checkpoints import read_bundle
+    generations = sorted((tmp_path/'state'/'rank0').glob('step-*'))
+    assert [read_bundle(path, rank=0, world_size=1)['global_step'] for path in generations] == [1024, 2048]
     assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
     assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
     assert all(p['nosl_is_az/updates'] == 2 for p in payloads)
@@ -149,6 +152,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 3 and payloads[-1]['global_step'] == 3072
+    generations = sorted((tmp_path/'state'/'rank0').glob('step-*'))
+    assert [read_bundle(path, rank=0, world_size=1)['global_step'] for path in generations] == [2048, 3072]
     final = AccumulatingMaskablePPO.load(output, device='cpu')
     assert final.policy.core.teacher.assert_integrity() == teacher
     assert final.policy.optimizer.state
