@@ -70,6 +70,7 @@ from .entity_ids import (
     EVENT_ALIASES,
     MONSTER_ALIASES,
     NATIVE_MONSTER_STATUS_IDS,
+    NATIVE_MINION_LEADER_SPECIES,
     NATIVE_PLAYER_STATUS_IDS,
     HIT_REACTION_CONTRACTS,
     CARD_DAMAGE_TIMING_CONTRACTS,
@@ -384,6 +385,14 @@ def complete_word_tables():
             "lagavulin_sleep": "idle1/2 directly sets SLEEP then rolls SLEEP again, hence two history appends but one AI draw. Keep the separate stunned wake, attack/siphon, and idle3 natural opening behavior; do not double-shift every NoOpRollMove caller",
             "consumers": "native setMove retains all three exact history entries; binding canonical export, strict real root restore/readback and NOSL key already consume them. Frozen OBS20 projects current monster_move only; no added model column, default history, Java field, weights or search-budget change",
             "audit": "source/caller audit plus necessary native build; actual natural coverage is recorded separately in TODO167/worklog, not inferred from compile success or unrelated wins",
+        },
+        "native_minion_leader_feature": {
+            "always_species": sorted(NATIVE_MINION_LEADER_SPECIES),
+            "source": "Monster.preBattleAction sets MINION_LEADER for these four species. It is an existing native type/model feature, not an AbstractPower in Java; real canonical powers explicitly carry this mapped feature alongside, without modifying, actual Java powers (BRIDGE169)",
+            "awakened_one": "First life has no marker; REBIRTH sets it only in second life. Derive from the existing strongly typed AwakenedOne + room.cannotLose export: unawakened=false, never from missing UnawakenedPower, HP or nextMove guesses",
+            "lifecycle": "Native finishDeath does not clear the type bit and removeDebuffs does not remove it. Preserve the known species/form marker on corpses and escaping entities as well; the existing OBS20 gone-power mask handles policy projection. Do not clear actual powers, erase corpse identities, add battle-ending behavior or infer another rebirth",
+            "consumers": "Only real canonical normalization adds the exact mapped feature. Ordinary/opening-selection strict roots restore it through the existing power table and native readback; packed/canonical model encoders and NOSL retain the original slot/value. Never fill normalize_sim or remove the diff field to hide a wrong native bit",
+            "compatibility": "No new wire/Java field, model channel/token, action/reward layout, checkpoint or search parameter. Source/consumer/word-table checks are not natural coverage of all four species or every lifecycle phase",
         },
         "invalid_native_combat_dispatch": {
             "encounter_name": "create_battle accepts only an exact non-INVALID monsterEncounterStrings name and rejects unknown/empty/INVALID before constructing a BattleContext; encounter_names remains the unchanged valid-name source. Shared MonsterGroup.createMonsters also rejects invalid/unknown numeric encounters instead of assert-only empty construction (BRIDGE168)",
@@ -854,6 +863,11 @@ def validate_codec_contract() -> dict[str, int]:
         "select_context": set(V.SELECT_CONTEXT_VOCAB) - {"PAD"},
         "character": set(V.CHARACTER_VOCAB) - {"INVALID"},
     }
+
+    if (NATIVE_MINION_LEADER_SPECIES | {"AwakenedOne"}) - canonical_sets["monster"]:
+        raise RuntimeError("native leader feature names unknown monster species")
+    if "Minion Leader" not in canonical_sets["monster_power"]:
+        raise RuntimeError("native leader feature is absent from the frozen monster vocabulary")
 
     for kind, table in REAL_TO_CANONICAL.items():
         targets = set(_targets(table))

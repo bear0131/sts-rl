@@ -44,6 +44,7 @@ from .entity_ids import (
     THIEF_STATE_FIELDS,
     LAGAVULIN_STATE_FIELDS,
     MONSTER_MOVE_STATE_CONTRACTS,
+    NATIVE_MINION_LEADER_SPECIES,
     ON_EXHAUST_POWER_IDS,
     ON_PLAYER_END_TURN_RELIC_IDS,
     END_TURN_POWER_PRIORITIES,
@@ -408,6 +409,12 @@ def _monster_real(m, *, intents_hidden=False):
     (move, move_id), (last_move, last_move_id), (second_last_move, second_last_move_id) = moves
     if move == "INVALID" and (not gone or lifecycle["half_dead"]):
         raise ValueError(f"active/reviving real monster {m['id']!r} has no current move")
+    powers = _monster_powers_real(m["powers"])
+    # Match the simulator's existing species/form feature, not a fictitious
+    # Java power. Its bit survives death; the frozen model masks gone powers.
+    if (canonical_id in NATIVE_MINION_LEADER_SPECIES
+            or canonical_id == "AwakenedOne" and not m["unawakened"]):
+        powers["Minion Leader"] = 1
     return {
         "id": canonical_id,
         "hp": hp,
@@ -435,7 +442,7 @@ def _monster_real(m, *, intents_hidden=False):
             and any(p["id"] == "Compulsive" for p in m["powers"])
         ),
         # Dead/halfDead entities can still have pending power callbacks.
-        "powers": _monster_powers_real(m["powers"]),
+        "powers": powers,
         # CommunicationMod and the simulator use different numeric move-id
         # spaces. Translate the real byte through the explicit per-monster
         # table, then publish the actual MOVE_VOCAB index. A live monster with a

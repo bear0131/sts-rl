@@ -23,6 +23,12 @@ ON_PLAYER_END_TURN_RELIC_IDS = frozenset({
 # This is membership, never a default order for the acquired relics.
 ON_POST_DRAW_RELIC_IDS = frozenset({"Pocketwatch", "WarpedTongs"})
 
+# Native model/type metadata, not a Java power. AwakenedOne has the same bit
+# only in its second life, derived separately from the explicit form latch.
+NATIVE_MINION_LEADER_SPECIES = frozenset({
+    "GremlinLeader", "BronzeAutomaton", "Reptomancer", "TheCollector",
+})
+
 # Membership only: real order comes from the existing ordered player powers.
 ON_EXHAUST_POWER_IDS = frozenset({"Dark Embrace", "Feel No Pain"})
 
