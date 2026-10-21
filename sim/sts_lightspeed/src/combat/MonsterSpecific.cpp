@@ -423,6 +423,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::POINTY_ATTACK:
             attackPlayerHelper(bc, asc2 ? 6 : 5, 2);
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::POINTY_ATTACK));
             break;
 
         case MMID::ROMEO_AGONIZING_SLASH:
@@ -634,34 +635,32 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             }
 
             if (doesEscapeNext()) {
-                setMove(MMID::GENERIC_ESCAPE_MOVE);
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::GENERIC_ESCAPE_MOVE));
             } else {
-                bc.addToBot(Actions::NoOpRollMove());
+                bc.addToBot(Actions::RollMove(idx));
             }
             break;
         }
 
         case MMID::MAD_GREMLIN_SCRATCH: {
             attackPlayerHelper(bc, asc2 ? 5 : 4);
-            if (doesEscapeNext()) {
-                setMove(MMID::GENERIC_ESCAPE_MOVE);
-            } else {
-                bc.addToBot(Actions::NoOpRollMove());
-            }
+            // SetMoveAction repeats the intent/history without consuming AI RNG.
+            bc.addToBot(Actions::SetMonsterMove(idx, doesEscapeNext()
+                ? MMID::GENERIC_ESCAPE_MOVE : MMID::MAD_GREMLIN_SCRATCH));
             break;
         }
 
         case MMID::SNEAKY_GREMLIN_PUNCTURE: {
             attackPlayerHelper(bc, asc2 ? 10 : 9);
-            if (doesEscapeNext()) {
-                setMove(MMID::GENERIC_ESCAPE_MOVE);
-            }
+            bc.addToBot(Actions::SetMonsterMove(idx, doesEscapeNext()
+                ? MMID::GENERIC_ESCAPE_MOVE : MMID::SNEAKY_GREMLIN_PUNCTURE));
             break;
         }
 
         case MMID::CULTIST_DARK_STRIKE:
             attackPlayerHelper(bc, 6);
-            bc.addToBot(Actions::NoOpRollMove());
+            // Even a fixed roll appends another occurrence to move history.
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         case MMID::CULTIST_INCANTATION: {
@@ -759,8 +758,12 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::GREMLIN_WIZARD_CHARGING: { // 2
             ++miscInfo;
-            if (miscInfo == 3) {
-                setMove(MMID::GREMLIN_WIZARD_ULTIMATE_BLAST);
+            if (doesEscapeNext()) {
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::GENERIC_ESCAPE_MOVE));
+            } else if (miscInfo == 3) {
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::GREMLIN_WIZARD_ULTIMATE_BLAST));
+            } else {
+                setMove(MMID::GREMLIN_WIZARD_CHARGING);
             }
             break;
         }
@@ -768,8 +771,11 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
         case MMID::GREMLIN_WIZARD_ULTIMATE_BLAST: { // 1
             miscInfo = 0; // Java resets currentCharge even when A17 repeats Blast.
             attackPlayerHelper(bc, asc2 ? 30 : 25);
-            if (!asc17) {
-                setMove(MMID::GREMLIN_WIZARD_CHARGING);
+            if (doesEscapeNext()) {
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::GENERIC_ESCAPE_MOVE));
+            } else {
+                setMove(asc17 ? MMID::GREMLIN_WIZARD_ULTIMATE_BLAST
+                    : MMID::GREMLIN_WIZARD_CHARGING);
             }
             break;
         }
@@ -877,7 +883,8 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
                 // Natural opening uses SetMoveAction, not RollMoveAction.
             } else {
                 setMove(MMID::LAGAVULIN_SLEEP);
-                bc.noOpRollMove();
+                // Java directly sets SLEEP, then rolls SLEEP again on idle1/2.
+                bc.addToBot(Actions::RollMove(idx));
             }
             break;
 
@@ -1055,14 +1062,19 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             const int blockAmounts[] = {7,8,11};
             const int blockAmount = blockAmounts[getTriIdx(asc, 7, 17)];
             bc.addToBot( Actions::GainBlockRandomEnemy(idx, blockAmount) );
-            if (bc.monsters.getAliveCount() <= 1)  {
-                setMove(MMID::SHIELD_GREMLIN_SHIELD_BASH);
+            if (doesEscapeNext()) {
+                bc.addToBot(Actions::SetMonsterMove(idx, MMID::GENERIC_ESCAPE_MOVE));
+            } else {
+                setMove(bc.monsters.getAliveCount() > 1
+                    ? MMID::SHIELD_GREMLIN_PROTECT : MMID::SHIELD_GREMLIN_SHIELD_BASH);
             }
             break;
         }
 
         case MMID::SHIELD_GREMLIN_SHIELD_BASH:
             attackPlayerHelper(bc, asc2 ? 8 : 6);
+            bc.addToBot(Actions::SetMonsterMove(idx, doesEscapeNext()
+                ? MMID::GENERIC_ESCAPE_MOVE : MMID::SHIELD_GREMLIN_SHIELD_BASH));
             break;
 
         // ************ SLIME BOSS ************
@@ -1184,7 +1196,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::SPIKE_SLIME_S_TACKLE: {
             attackPlayerHelper(bc, asc2 ? 6 : 5);
-            bc.addToBot(Actions::NoOpRollMove());
+            bc.addToBot(Actions::RollMove(idx));
             break;
         }
 
@@ -1202,7 +1214,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             } else {
                 bc.addToBot( Actions::MakeTempCardInDiscard({CardId::WOUND}) );
             }
-            bc.noOpRollMove();
+            bc.addToBot(Actions::RollMove(idx));
             break;
 
         // ************ THE CHAMP ************
@@ -1344,6 +1356,7 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
 
         case MMID::TORCH_HEAD_TACKLE:
             attackPlayerHelper(bc, 7);
+            bc.addToBot(Actions::SetMonsterMove(idx, MMID::TORCH_HEAD_TACKLE));
             break;
 
         // ************ SHAPES ************
@@ -1484,7 +1497,8 @@ void Monster::takeTurn(BattleContext &bc) {     // todo, maybe for monsters that
             if (getStatus<MS::FADING>() == 1) {
                 bc.addToBot( Actions::SuicideAction(idx, false) );
             }
-            bc.noOpRollMove();
+            // Transient.takeTurn calls setMove directly, not rollMove.
+            setMove(MMID::TRANSIENT_ATTACK);
             decrementStatus<MS::FADING>();
             break;
         }
