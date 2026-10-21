@@ -23,6 +23,7 @@ def _native_sha():
 def contract(model):
     teacher = model.policy.core.teacher
     return dict(objective=OBJECTIVE, context=CONTEXT_SCHEMA, gamma=1.,
+                lower_initialization=model.policy.core.lower_initialization,
                 teacher=teacher.get_extra_state(), native_sha256=_native_sha(),
                 observation_version=encode.OBS_VERSION, boundary='settled-run-exit-v1',
                 search={name: getattr(model, 'nosl_is_az_' + name) for name in
@@ -48,6 +49,8 @@ def setup(model):
     model.outer_return_contract = identity
     model.nosl_value_contract = OBJECTIVE
     model.policy.core.teacher.assert_integrity()
+    if not all(parameter.requires_grad for parameter in model.policy.core.combat.parameters()):
+        raise ValueError('outer return trains all lower actor/encoder/critic parameters from the first update')
 
 
 def begin_collection(model, count):
@@ -135,6 +138,9 @@ def finish_step(model, before, after, dones, infos, pending):
             if not np.isfinite(value):
                 raise ValueError('outer-return target is not finite')
             sample['value_target'] = value
+            sample['outer_exit_kind'] = exit.kind
+            sample['outer_episode_seed'] = infos[i]['run_stats'].get('seed')
+            sample['outer_outcome'] = infos[i]['run_stats']['outcome']
             metrics = model._outer_collection
             metrics['target_sum'] += value
             metrics['target_min'] = value if metrics['target_min'] is None else min(metrics['target_min'], value)

@@ -97,6 +97,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
         nosl_is_az_batch_size=64, nosl_is_az_micro_batch_size=32,
         nosl_is_az_replay_capacity=2048)
     initial = tmp_path / 'initial.zip'
+    assert model.policy.core.lower_initialization == 'random'
+    assert all(p.requires_grad for p in model.policy.core.combat.parameters())
+    lower_before = {key: value.clone() for key, value in model.policy.core.combat.state_dict().items()}
     model.save(initial)
     teacher = model.policy.core.teacher.assert_integrity()
     env.close()
@@ -124,6 +127,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher
+    for key in ('transformer.layers.0.linear1.weight', 'scalar.2.weight', 'end.weight'):
+        assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
     restore_learner(restored, bundle, rank=0, world_size=1)
     assert restored._recovery_environment_restored

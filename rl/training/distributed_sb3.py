@@ -340,7 +340,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ssh-control-dir", default="/tmp/sts_dist_ssh_mux")
     parser.add_argument("--remote-root", default="/tmp/sts_dist_sb3")
     parser.add_argument("--run-id", default=None)
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument('--prepare-combat-outer', type=Path,
+                        help='Construct a fresh lower actor/critic and frozen upper from this profile, save step zero, then exit')
+    parser.add_argument('--material-directory', type=Path)
+    parser.add_argument('--material-sha256')
     parser.add_argument(
         "--card-vector-checkpoint",
         type=Path,
@@ -2055,6 +2059,11 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.prepare_combat_outer is not None:
+        from rl.training.combat_outer import prepare
+        return prepare(args)
+    if args.checkpoint is None and args.resume_state is None and args.fork_state is None:
+        raise ValueError('supply a checkpoint or explicitly prepare new combat material')
     if args.upper_micro_batch_size is not None and args.upper_micro_batch_size < 1:
         raise ValueError('--upper-micro-batch-size must be positive')
     if args.upper_gae_lambda is not None and not 0.0 <= args.upper_gae_lambda <= 1.0:
@@ -2888,6 +2897,7 @@ def main() -> None:
             "nosl_is_az/*",
             "boss/*",
             "upper/*",
+            "outer_return/*",
             "global_step",
             "time/total_timesteps",
             "env_steps_per_second",

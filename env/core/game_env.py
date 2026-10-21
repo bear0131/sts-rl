@@ -291,6 +291,7 @@ class SimGameEnv:
         of the scaled observation. outcome is the module-level GameOutcome name
         (UNDECIDED / PLAYER_VICTORY / PLAYER_LOSS)."""
         return {
+            "seed": int(self.gc.seed),
             "outcome": self.gc.outcome.name,
             "act": self.gc.act,
             "floor": self.gc.floor_num,
@@ -715,7 +716,13 @@ class SimGameEnv:
         if verb == ga.BOSS_RELIC:
             gc.choose_boss_relic(action[1]); return
         if verb == ga.PROCEED:
-            gc.reward_proceed(); return
+            if self.phase() == 'rest':
+                if 6 not in gc.legal_campfire_options():
+                    raise ValueError('campfire skip is not legal')
+                gc.choose_campfire_option(6)
+            else:
+                gc.reward_proceed()
+            return
         if verb == ga.SHOP_PROCEED:
             gc.shop_proceed(); return
         if verb == ga.SHOP_BUY:

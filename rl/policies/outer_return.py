@@ -1,4 +1,4 @@
-"""Warm-started combat actor, new scalar critic and immutable upper teacher."""
+"""Trainable combat actor/critic and an immutable upper teacher."""
 from copy import deepcopy
 from dataclasses import asdict, replace
 import hashlib
@@ -52,16 +52,19 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 
 class OuterCombatNetwork(EntityCombatNetwork):
-    def __init__(self, source, source_space, space):
+    def __init__(self, source, source_space, space, *, initialization='random'):
+        if initialization not in ('random', '876'):
+            raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.)
         # The old boss flag remains an encoder input for exact actor warm start;
         # it never selects a boss/HP value objective in this class.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
-        state = {key: value for key, value in source.state_dict().items()
-                 if not key.startswith(('distribution.', 'transition.'))}
-        missing, unexpected = self.load_state_dict(state, strict=False)
-        if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
-            raise ValueError('lower warm-start architecture mismatch')
+        if initialization == '876':
+            state = {key: value for key, value in source.state_dict().items()
+                     if not key.startswith(('distribution.', 'transition.'))}
+            missing, unexpected = self.load_state_dict(state, strict=False)
+            if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
+                raise ValueError('lower warm-start architecture mismatch')
         del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -69,23 +72,28 @@ class OuterCombatNetwork(EntityCombatNetwork):
         self.context_deck = nn.Linear(int(self.card.embedding_dim) + 2, width)
         # Public act/floor/run HP/ascension/keys plus boss/character/deck summary.
         self.context = nn.Sequential(nn.Linear(width + 33, width), nn.GELU(), nn.Linear(width, width))
-        nn.init.zeros_(self.context[-1].weight)
-        nn.init.zeros_(self.context[-1].bias)
+        if initialization == '876':
+            nn.init.zeros_(self.context[-1].weight)
+            nn.init.zeros_(self.context[-1].bias)
         self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
         state, blocks = super().encode(obs, active_relic_width, card_table=card_table)
+        context = self.context_features(obs, state.dtype, card_table=card_table)
+        return state + self.context(context), blocks
+
+    def context_features(self, obs, dtype, *, card_table=None):
         table = self._encode_card_table() if card_table is None else card_table
         ids = obs['deck_ids'].long()
         vectors = table[ids, obs['deck_upgrades'].gt(0).long()]
         cards = self.context_deck(torch.cat((vectors, obs['deck_upgrades'][..., None],
-                                            obs['outer_deck_misc'][..., None]), -1).to(state.dtype))
+                                            obs['outer_deck_misc'][..., None]), -1).to(dtype))
         mask = ids.ne(0)[..., None]
         pooled = (cards * mask).sum(1) / mask.sum(1).clamp_min(1)
         scalars = torch.cat([obs[key].float() for key in ('act', 'floor', 'run_hp', 'ascension', 'run_keys')], -1)
         context = torch.cat((pooled, scalars, self.context_boss(obs['next_boss'].long().flatten()),
                              self.context_character(obs['character'].long().flatten())), -1)
-        return state + self.context(context.to(state.dtype)), blocks
+        return context.to(dtype)
 
     def _value(self, state, obs):
         with torch.autocast(device_type=state.device.type, enabled=False):
@@ -100,11 +108,12 @@ class OuterReturnCore(EntityCombatCore):
     joint_upper = False
     frozen_upper = True
 
-    def __init__(self, source, source_space, space, *, source_sha256):
+    def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random'):
         nn.Module.__init__(self)
         if not CONTEXT_KEYS <= space.spaces.keys():
             raise ValueError('outer-return policy requires public run context')
-        self.combat = OuterCombatNetwork(source.combat, source_space, space)
+        self.lower_initialization = lower_initialization
+        self.combat = OuterCombatNetwork(source.combat, source_space, space, initialization=lower_initialization)
         self.config = self.combat.config
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
@@ -132,21 +141,24 @@ class OuterReturnCore(EntityCombatCore):
 
 
 class OuterReturnPolicy(EntityCombatPolicy):
-    def __init__(self, *args, material_directory, material_sha256, source_sha256, **kwargs):
+    def __init__(self, *args, material_directory, material_sha256, source_sha256,
+                 lower_initialization='random', **kwargs):
         self.material_directory = str(material_directory)
         self.material_sha256 = material_sha256
         self.source_sha256 = source_sha256
+        self.lower_initialization = lower_initialization
         super().__init__(*args, **kwargs)
 
     def _build(self, lr_schedule):
         source, source_space = load_initialization_material(self.material_directory,
             manifest_sha256=self.material_sha256, source_sha256=self.source_sha256)
         self.core = OuterReturnCore(source, source_space, self.observation_space,
-                                    source_sha256=self.source_sha256)
+                                    source_sha256=self.source_sha256, lower_initialization=self.lower_initialization)
         self.entity_config = asdict(self.core.config)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
 
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), material_directory=self.material_directory,
-                    material_sha256=self.material_sha256, source_sha256=self.source_sha256)
+                    material_sha256=self.material_sha256, source_sha256=self.source_sha256,
+                    lower_initialization=self.lower_initialization)

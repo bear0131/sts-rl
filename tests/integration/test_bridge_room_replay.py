@@ -49,6 +49,28 @@ def test_replay_campfire_without_available_actions_can_leave(room_driver):
     assert resources(gc) == before
 
 
+def test_training_campfire_skip_uses_campfire_continuation(room_driver):
+    from env.core import action_space as A
+    import numpy as np
+    driver = room_driver('REST', ['Coffee Dripper', 'Fusion Hammer'])
+    gc = driver.gc
+    gc.red_key = True
+    assert gc.legal_campfire_options() == [6]
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+                         outer_return_context=True)
+    try:
+        env.reset(seed=42)
+        env.thick.gc, env.thick.bc = gc, None
+        env._invalidate_backend_cache()
+        before = resources(gc)
+        action = next(int(a) for a in np.flatnonzero(env.action_masks()) if A.segment_of(int(a))[0] == 'PROCEED')
+        obs, reward, done, truncated, info = env.step(action)
+        assert info['phase'] == 'map' and not done and not truncated and reward == 0
+        assert resources(gc) == before
+    finally:
+        env.close()
+
+
 @pytest.mark.parametrize('option', ['rest', 'smith'])
 def test_replay_campfire_followup_does_not_repeat_completed_action(room_driver, option):
     driver = room_driver('REST')

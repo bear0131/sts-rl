@@ -87,7 +87,7 @@
     "linux_native": "rebuild from pinned source and record Linux binary hash; Windows hash is not a Linux acceptance hash"
   },
   "contract": {
-    "objective_id": "combat-outer-return-v1",
+    "objective_id": "combat-outer-return-frozen-upper-v1",
     "reward_id": "train47-strategic-return-v1",
     "boundary_id": "settled-run-exit-v1",
     "gamma": 1.0,
@@ -95,7 +95,7 @@
     "upper_critic": "frozen-876-FP32",
     "upper_optimizer_updates": 0,
     "reward_policy_contract": "checkpoint-v7-act3",
-    "lower_init": "876-actor-encoder-warm-start",
+    "lower_init": "random",
     "lower_value": "new-FP32-unbounded-scalar-MSE",
     "old_optimizer": "discard",
     "old_replay": "discard",
@@ -167,7 +167,7 @@
     "max_lower_updates": 80,
     "save_every_round": true,
     "retain_complete_generations": 2,
-    "applies_after": "CPU contracts, critic calibration and Linux native acceptance pass; not a full training budget"
+    "applies_after": "CPU contracts, resource response audit and Linux native acceptance pass; all lower parameters train from the first update"
   },
   "required_runtime_capabilities": [
     "isolated-frozen-teacher-with-hash-checked-restore",
@@ -181,5 +181,5 @@
     "two-round-real-lifecycle-and-production-length-GPU-collection"
   ],
   "full_training_budget": null,
-  "notice": "Preparation data only. Existing trainer does not implement this objective. Do not convert this profile to old HP arguments or resume TRAIN47."
+  "notice": "Fresh random lower actor/encoder/critic; only the 876 upper actor/critic are frozen. No critic-only calibration gate. Deployment acceptance is tracked separately from learner implementation."
 }

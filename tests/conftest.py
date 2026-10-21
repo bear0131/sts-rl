@@ -275,7 +275,8 @@ def outer_return_core(frozen_upper_source):
     env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
                          outer_return_context=True)
     env.reset(seed=42101)
-    core = OuterReturnCore(source, source_space, env.observation_space, source_sha256='1' * 64)
+    core = OuterReturnCore(source, source_space, env.observation_space, source_sha256='1' * 64,
+                           lower_initialization='876')
     yield core, source, env
     env.close()
 
