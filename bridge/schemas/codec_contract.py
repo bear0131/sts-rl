@@ -678,6 +678,8 @@ def complete_word_tables():
             "fields": ["version", "request_id", "action", "seed", "enabled"],
             "actions": sorted(DEMO_ACTIONS),
             "ui_receipts": sorted(DEMO_STATUSES),
+            "takeover_rejections": ["requires-live-run", "requires-Ironclad", "missing-run-facts", "requires-A0-current-A{actual_integer_ascension}", "requires-Act1-3", "run-already-finished"],
+            "retry": "Every new explicit request resets its failure receipt; rejected takeover returns ERROR and disables the actual UI toggle. Never reuse an old failed request when entering another run",
             "source": "Actual game UI button; monotonically increasing explicit request, never launch/Continue alone",
             "consumer": "Opt-in CLI demo gate before policy/ACK dispatch; disabled refreshes STATE only, latest OFF cancels an unread request; exact unchanged pause/resume preserves root/index/ACK, any observed state change/menu invalidates reuse; other takeover reconstructs strict real root",
             "boundary": "Dedicated DEMO UI receipts intercepted before gameplay dispatch, never model actions/observations or RNG; Ironclad A0 Acts1-3; unsupported state fails visibly; no automatic next run",

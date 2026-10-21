@@ -1137,6 +1137,8 @@ def main() -> None:
                         log.info('explicit UI demo request=%s expected_seed=%s output=%s',
                                  demo.request, demo.expected_seed, demo.output)
                     if command is not None:
+                        if command.startswith('DEMO ERROR '):
+                            log.warning('demo request rejected request=%s receipt=%s', demo.request, command)
                         if command == 'STATE':
                             time.sleep(.1)
                         send(command)

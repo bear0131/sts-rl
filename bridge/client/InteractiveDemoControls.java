@@ -111,7 +111,16 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
         if (status.equals("PAUSED")) return "手动操作 · 点击接管";
         if (status.equals("FINISHED")) return "演示结束 · 不自动开局";
         if (status.equals("STOPPED")) return "已停止 · 点击重新接管";
-        if (status.equals("ERROR")) return "已停止 · 详见日志";
+        if (status.equals("ERROR")) {
+            if (detail.startsWith("requires-A0-current-A"))
+                return "仅支持A0，当前" + detail.substring("requires-A0-current-".length());
+            if (detail.equals("requires-Ironclad")) return "仅支持战士，请换战士局";
+            if (detail.equals("requires-live-run")) return "请先进入战士A0局";
+            if (detail.equals("requires-Act1-3")) return "仅支持前三幕";
+            if (detail.equals("run-already-finished")) return "本局已结束，不能接管";
+            if (detail.equals("missing-run-facts")) return "状态信息缺失，已停止";
+            return "接管失败，可重试 · 详见日志";
+        }
         return "正在加载模型，尚未接管";
     }
 
@@ -121,7 +130,7 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
         Color old = new Color(sb.getColor());
         sb.setColor(0.025f, .04f, .06f, .94f);
         if (inGame()) {
-            sb.draw(ImageMaster.WHITE_SQUARE_IMG, x - 165*s, y - 77*s, 330*s, 110*s);
+            sb.draw(ImageMaster.WHITE_SQUARE_IMG, x - 165*s, y - 102*s, 330*s, 135*s);
             sb.setColor(connected && button.hovered ? new Color(.18f,.42f,.42f,1f) : new Color(.10f,.23f,.28f,1f));
             sb.draw(ImageMaster.WHITE_SQUARE_IMG, x - 145*s, y - 23*s, 290*s, 46*s);
             FontHelper.renderFontCentered(sb, FontHelper.buttonLabelFont,
@@ -130,6 +139,8 @@ public final class InteractiveDemoControls implements PreUpdateSubscriber, PostR
             FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont, statusText(), x, y - 43*s,
                     status.equals("ERROR") ? Color.SALMON : Settings.CREAM_COLOR);
             FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont, model, x, y - 68*s, Settings.GOLD_COLOR);
+            FontHelper.renderFontCentered(sb, FontHelper.tipBodyFont,
+                    "战士 A0 / 前三幕 / 点击接管或暂停", x, y - 93*s, Settings.CREAM_COLOR);
             sb.setColor(old);
             return;
         }

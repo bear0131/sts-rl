@@ -76,6 +76,10 @@ class InteractiveDemo:
                 return "STATE"  # Keep the request pending until the menu is ready.
             self.request = request  # Consume once, including a request rejected below.
             self.pending_menu_request = None
+            # Each new explicit attempt owns a fresh failure receipt. Keeping a
+            # previous fault here suppresses the caller's ERROR on later retries
+            # and leaves the Java toggle looking enabled while no policy runs.
+            self.faulted = False
             if not controls["enabled"]:
                 # ON then OFF may be captured before the Python reader sees ON.
                 # The newer OFF cancels that request, never starts or errors.
@@ -96,11 +100,18 @@ class InteractiveDemo:
                     raise ValueError("Random demo requires an explicit idle-menu request and launch authorization")
                 self.expected_seed = seed_string_to_long(request[2])
             elif request[1] == "ATTACH":
-                if (frame.get("in_game") is not True or type(gs.get("seed")) is not int
-                        or gs.get("class") != "IRONCLAD" or gs.get("ascension_level") != 0
-                        or type(gs.get("act")) is not int or not 1 <= gs["act"] <= 3
-                        or gs.get("screen_type") == "GAME_OVER"):
-                    raise ValueError("AUTO takeover requires a live Ironclad A0 Act1-3 state")
+                if frame.get("in_game") is not True:
+                    return self.fail("requires-live-run")
+                if gs.get("class") != "IRONCLAD":
+                    return self.fail("requires-Ironclad")
+                if type(gs.get("ascension_level")) is not int or type(gs.get("seed")) is not int:
+                    return self.fail("missing-run-facts")
+                if gs["ascension_level"] != 0:
+                    return self.fail(f"requires-A0-current-A{gs['ascension_level']}")
+                if type(gs.get("act")) is not int or not 1 <= gs["act"] <= 3:
+                    return self.fail("requires-Act1-3")
+                if gs.get("screen_type") == "GAME_OVER":
+                    return self.fail("run-already-finished")
                 self.expected_seed = gs["seed"]
             output = Path(self.args.demo_output_dir) / str(time.time_ns())
             output.mkdir(parents=True, exist_ok=False)
