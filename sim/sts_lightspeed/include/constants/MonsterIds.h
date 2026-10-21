@@ -152,14 +152,14 @@ namespace sts {
             {{65,69},{68,72}}, // ACID_SLIME_L
             {{28,32},{29,34}}, // ACID_SLIME_M
             {{8,12},{9,13}}, // ACID_SLIME_S
-            {{300,300},{300,320}}, // AWAKENED_ONE
-            {{38,52},{40,44}}, // BEAR
+            {{300,300},{320,320}}, // AWAKENED_ONE: A9+ is fixed 320, not a 300..320 roll.
+            {{38,42},{40,44}}, // BEAR: BanditBear A0..6 upper HP is 42.
             {{46,50},{48,52}}, // BLUE_SLAVER
             {{160,164},{168,172}}, // BOOK_OF_STABBING
             {{300,300},{320,320}}, // BRONZE_AUTOMATON
             {{52,58},{54,60}}, // BRONZE_ORB
             {{25,31},{26,33}}, // BYRD
-            {{76,80},{76,83}}, // CENTURION
+            {{76,80},{78,83}}, // CENTURION: A7+ lower HP is 78.
             {{95,99},{98,103}}, // CHOSEN
             {{750,750},{800,800}}, // CORRUPT_HEART
             {{48,54},{50,56}}, // CULTIST

@@ -6,6 +6,28 @@ Python binding 位于 sts_lightspeed/ 的绑定源码；第三方 json/pybind11 
 按 ../tests/README.md 从本仓库源码构建。用绝对 STS_LIGHTSPEED_BUILD_DIR 选择 .pyd/.so；测试需要 STS_ENABLE_RULE_TRACE=ON。不要把已存在的 build-gumbel-current 目录当成“当前源码已重建”的证据。
 改规则需同时验证 canonical/packed 观测、合法动作与结算边界；一次训练 smoke 不能验证全部游戏规则。
 
+## 生命范围勘误：monster-hp-ranges-v2（SIM10）
+
+`sts_lightspeed/include/constants/MonsterIds.h::monsterHpRange` 修正三个生成规则：
+
+| 怪物 / 适用进阶 | 旧规则 | 当前游戏 / 修正规则 |
+|---|---|---|
+| BanditBear，A0–A6 | 38–52 | 38–42 |
+| Centurion，A7+ | 76–83 | 78–83 |
+| AwakenedOne，A9+ | 300–320 | 固定 320 |
+
+65 个物种的低/高生命范围及进阶门槛已对照参考源码；当前实际游戏 jar 的 204 个
+HP 常量与参考源码一致，以上三处另核实际构造字节码。该核对是静态来源审查，
+不是行为测试或全规则验收。现有 checkpoint 的观测/动作几何与原生 API 不变，
+没有重训或改权重；新原生的实际模型加载/运行证据须与旧版本分开记录。
+
+已发布的 `codex/simulator-handoff-20261021`（b5e92dc / 94187a48 原生）保持不可变，
+仍含上述三个旧规则，不应当把它描述为已经包含本次勘误。本次修正的独立本机构建
+位于 `sts_lightspeed/build-real-search-hp-ranges-v2`；不得覆盖已导入旧扩展的进程。
+当前最终 TRAIN47 的 A0 范围只涉及第一项：旧模拟器可能把这一事件生成得偏难，
+不能据此推算总胜率变化或声称权重不可用。真实桥接先按实际 HP 恢复根，不应把
+构造模板的这一差异直接当作出牌/目标映射错误。
+
 ## Python 环境交接
 
 Python 的 `env/`、`bridge/schemas/`、模型适配器和原生扩展必须来自同一源码版本，
