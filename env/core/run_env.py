@@ -486,6 +486,7 @@ class SlayTheSpireEnv(gym.Env):
         return {
             "schema_version": 1,
             "combat_action_contract": self.combat_action_contract,
+            "outer_return_context": self.outer_return_context,
             "backend_seed": int(self._episode_backend_seed),
             "backend_identity": (self.thick.training_identity()
                                  if hasattr(self.thick, 'training_identity') else None),
@@ -509,6 +510,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError("unsupported environment state schema")
         if state.get("combat_action_contract") != self.combat_action_contract:
             raise ValueError("environment combat action contract mismatch")
+        if state.get('outer_return_context', False) != self.outer_return_context:
+            raise ValueError('environment outer-return context mismatch')
 
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
@@ -760,10 +763,11 @@ class SlayTheSpireEnv(gym.Env):
         raise ValueError(f"illegal combat search action: {aid}")
 
     def _backend_step(self, semantic):
+        before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         capture_nosl_value = self._nosl_value_capture_pending
         self._nosl_value_capture_pending = False
         boundary_observation = None
-        if capture_nosl_value and semantic == ga.combat(actions.END_TURN):
+        if capture_nosl_value and not self.outer_return_context and semantic == ga.combat(actions.END_TURN):
             preview_boundary = getattr(
                 self.thick, "preview_native_end_turn_boundary", None
             )
@@ -779,9 +783,11 @@ class SlayTheSpireEnv(gym.Env):
             result,
             boundary_observation=boundary_observation,
             include_terminal=capture_nosl_value,
+            before=before,
         )
 
     def _backend_step_native_combat(self, action_bits):
+        before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
         step_native = getattr(self.thick, "step_native_combat", None)
         if step_native is None:
@@ -790,7 +796,7 @@ class SlayTheSpireEnv(gym.Env):
         preview_boundary = getattr(
             self.thick, "preview_native_end_turn_boundary", None
         )
-        if preview_boundary is not None:
+        if preview_boundary is not None and not self.outer_return_context:
             raw_boundary = preview_boundary(int(action_bits))
             if raw_boundary is not None:
                 boundary_observation = self._native_leaf_observation(
@@ -799,15 +805,25 @@ class SlayTheSpireEnv(gym.Env):
         result = step_native(int(action_bits))
         self._invalidate_backend_cache()
         return self._with_nosl_value_observations(
-            result, boundary_observation=boundary_observation, include_terminal=True
+            result, boundary_observation=boundary_observation, include_terminal=True, before=before
         )
 
     def _with_nosl_value_observations(
-        self, result, *, boundary_observation=None, include_terminal=False
+        self, result, *, boundary_observation=None, include_terminal=False, before=None
     ):
         canon, reward, terminated, transition_info = result
         has_terminal_state = "nosl_value_terminal_state" in transition_info
         has_terminal_target = "nosl_value_terminal_target" in transition_info
+        if self.outer_return_context:
+            from .outer_return import strategic_reward
+            if before is None:
+                raise RuntimeError('outer-return transition omitted its before state')
+            reward = strategic_reward(*before, self.thick.run_stats(), done=terminated, censored=False)
+            transition_info = {key: value for key, value in transition_info.items()
+                               if not key.startswith('nosl_value_terminal_')}
+            if has_terminal_state:
+                transition_info['outer_combat_exit'] = True
+            return canon, reward, terminated, transition_info
         if (
             boundary_observation is None
             and not has_terminal_state
@@ -1046,7 +1062,7 @@ class SlayTheSpireEnv(gym.Env):
         if not terminated and self._no_legal_action():
             return self._truncate_dead()
         info = self._info()
-        for key in ("chest_opened", "chest_relic_taken"):
+        for key in ("chest_opened", "chest_relic_taken", "outer_combat_exit"):
             if key in (transition_info or {}):
                 info[key] = transition_info[key]
         trace = (transition_info or {}).get("reasoning_trace")

@@ -59,6 +59,7 @@ class NOSLISAZReplayBuffer:
         action_dim: int,
         value_contract: str = VALUE_CONTRACT,
         supervision_contract: str = 'scalar-hp-v1',
+        objective_identity: dict | None = None,
     ) -> None:
         if capacity < 1:
             raise ValueError("replay capacity must be positive")
@@ -81,9 +82,14 @@ class NOSLISAZReplayBuffer:
         self._joint_dense_targets: np.ndarray | None = None
         self.value_contract = str(value_contract)
         from rl.algorithms.combat_distribution import CONTRACT
-        if supervision_contract not in ('scalar-hp-v1', CONTRACT):
+        from env.core.outer_return import OBJECTIVE
+        if supervision_contract not in ('scalar-hp-v1', CONTRACT, OBJECTIVE):
             raise ValueError('unsupported replay supervision contract')
         self.supervision_contract = supervision_contract
+        from copy import deepcopy
+        self.objective_identity = deepcopy(objective_identity)
+        if supervision_contract == OBJECTIVE and not objective_identity:
+            raise ValueError('outer-return replay requires immutable objective identity')
         self.combat_targets = None
         self.observation_keys = keys
         self._observation_spaces = {
@@ -126,7 +132,7 @@ class NOSLISAZReplayBuffer:
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
         names = ('action_masks', 'policy_targets', 'action_groups', 'policy_weights', 'value_targets', 'sample_ids')
-        if self.supervision_contract != 'scalar-hp-v1':
+        if self.supervision_contract == 'combat-outcome-quantiles-v1':
             names += ('combat_targets',)
         joint = None
         if self.joint_rows is not None:
@@ -136,6 +142,7 @@ class NOSLISAZReplayBuffer:
                          probabilities=np.concatenate([row[1] for row in rows]) if rows else np.empty(0, np.float32))
         from rl.algorithms.action_groups import CONTRACT
         return dict(version=4, action_group_contract=CONTRACT,
+            objective_identity=self.objective_identity,
             supervision_contract=self.supervision_contract,
             value_contract=self.value_contract, policy_contract=self.policy_contract,
             joint=joint,
@@ -148,6 +155,8 @@ class NOSLISAZReplayBuffer:
 
     def load_state_dict(self, state):
         from rl.algorithms.action_groups import CONTRACT, validate_groups
+        if state.get('objective_identity') != self.objective_identity:
+            raise ValueError('replay objective identity mismatch')
         if state.get('version') in (2,3) and self.policy_contract == 'legacy-thin':
             # Legacy actions never merged; their historical grouping is known.
             state = dict(state, version=4, action_group_contract=CONTRACT,
@@ -173,7 +182,9 @@ class NOSLISAZReplayBuffer:
         if size < self.capacity and position != size:
             raise ValueError('invalid partially filled replay cursor')
         if state['observations'] is not None:
-            if self.supervision_contract != 'scalar-hp-v1':
+            if not np.isfinite(state['arrays']['value_targets']).all():
+                raise ValueError('replay value targets must be finite')
+            if self.supervision_contract == 'combat-outcome-quantiles-v1':
                 from rl.algorithms.combat_distribution import validate_targets
                 if state['arrays'].get('combat_targets') is None:
                     raise ValueError('missing combat distribution targets')
@@ -247,7 +258,7 @@ class NOSLISAZReplayBuffer:
         self.action_groups = np.empty((self.capacity,self.group_width),dtype=np.int16)
         self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
-        if self.supervision_contract != 'scalar-hp-v1':
+        if self.supervision_contract == 'combat-outcome-quantiles-v1':
             from rl.algorithms.combat_distribution import TARGET_WIDTH
             self.combat_targets = np.empty((self.capacity,TARGET_WIDTH),dtype=np.float32)
         self.sample_ids = np.empty(self.capacity, dtype=np.uint64)
@@ -301,7 +312,7 @@ class NOSLISAZReplayBuffer:
             [sample["value_target"] for sample in labelled], dtype=np.float32
         )
         combat_targets = None
-        if self.supervision_contract != 'scalar-hp-v1':
+        if self.supervision_contract == 'combat-outcome-quantiles-v1':
             from rl.algorithms.combat_distribution import validate_targets
             combat_targets = np.stack([sample['combat_targets'] for sample in labelled]).astype(np.float32)
             validate_targets(combat_targets,value_targets, action_dim=self.action_dim)
@@ -535,7 +546,7 @@ class NOSLISAZReplayBuffer:
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize
         )
-        if self.supervision_contract != 'scalar-hp-v1':
+        if self.supervision_contract == 'combat-outcome-quantiles-v1':
             from rl.algorithms.combat_distribution import TARGET_WIDTH
             per_sample += 4*TARGET_WIDTH
         return self.capacity * per_sample

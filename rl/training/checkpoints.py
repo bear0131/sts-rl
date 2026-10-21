@@ -158,6 +158,10 @@ def read_bundle(path, *, rank, world_size):
 
 
 def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
+    identity = getattr(model, 'outer_return_contract', None)
+    if identity is not None:
+        from rl.algorithms import outer_return
+        outer_return.setup(model)
     root = Path(root) / f'rank{rank}'
     root.mkdir(parents=True, exist_ok=True)
     step = int(model.num_timesteps)
@@ -188,6 +192,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
         model.save(temporary / 'model.zip')
         replay = getattr(model, '_nosl_is_az_replay', None)
         state = dict(schema_version=schema_version, global_step=step,
+            outer_return_contract=identity,
             replay=None if replay is None else replay.state_dict(),
             numpy_rng=np.random.get_state(), python_rng=random.getstate(),
             torch_rng=torch.get_rng_state(),
@@ -200,6 +205,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
                 nosl_is_az_pending_fights=copy.deepcopy(getattr(
                     model, '_nosl_is_az_pending_fights', None,
                 )),
+                outer_pending_rewards=copy.deepcopy(getattr(model, '_outer_pending_rewards', None)),
                 upper_pending=copy.deepcopy(getattr(model, '_upper_pending', None)),
                 upper_episode_ids=copy.deepcopy(getattr(model, '_upper_episode_ids', None)),
                 ep_info_buffer=copy.deepcopy(list(model.ep_info_buffer or ())),
@@ -216,6 +222,7 @@ def save_bundle(model, root, *, rank, world_size, run_id, wandb_id, config):
             files.append('environment.pt')
         from env.core.encode import OBS_VERSION
         manifest = dict(schema_version=schema_version, observation_version=OBS_VERSION,
+            outer_return_contract=identity,
             rank=rank, world_size=world_size,
             global_step=step, run_id=run_id, wandb_id=wandb_id,
             environment_resume=(
@@ -249,9 +256,17 @@ def restore_learner(
     environment episodes and their pending fight labels are reset.
     """
     manifest = read_bundle(path, rank=rank, world_size=world_size)
+    identity = getattr(model, 'outer_return_contract', None)
+    if manifest.get('outer_return_contract') != identity:
+        raise ValueError('recovery objective/teacher/context/native contract mismatch')
+    if identity is not None:
+        from rl.algorithms import outer_return
+        outer_return.setup(model)
     if manifest['global_step'] != model.num_timesteps:
         raise ValueError('policy and learner global steps disagree')
     state = torch.load(Path(path) / 'learner.pt', map_location='cpu', weights_only=False)
+    if state.get('outer_return_contract') != identity:
+        raise ValueError('learner objective/teacher/context/native contract mismatch')
     if state['schema_version'] != manifest['schema_version'] or state['global_step'] != model.num_timesteps:
         raise ValueError('invalid learner recovery state')
     if state['replay'] is not None:
@@ -295,6 +310,9 @@ def restore_learner(
             model._nosl_is_az_pending_fights = copy.deepcopy(
                 state['nosl_is_az_pending_fights']
             )
+            model._outer_pending_rewards = copy.deepcopy(state.get('outer_pending_rewards'))
+            if identity is not None:
+                outer_return.validate_pending(model, env.num_envs)
             model._upper_pending = copy.deepcopy(state.get('upper_pending'))
             model._upper_episode_ids = copy.deepcopy(state.get('upper_episode_ids'))
             if model.ep_info_buffer is not None:
@@ -319,6 +337,7 @@ def restore_learner(
         model._nosl_is_az_pending_fights = [
             [] for _ in range(env.num_envs)
         ]
+        model._outer_pending_rewards = np.zeros(env.num_envs, dtype=np.float64)
         model._upper_pending = None
         model._upper_episode_ids = None
         if hasattr(env, 'episode_returns'):

@@ -278,3 +278,31 @@ def outer_return_core(frozen_upper_source):
     core = OuterReturnCore(source, source_space, env.observation_space, source_sha256='1' * 64)
     yield core, source, env
     env.close()
+
+
+@pytest.fixture
+def outer_material(frozen_upper_source, tmp_path):
+    """Real small source architecture in the production immutable material format."""
+    import hashlib
+    import json
+    from dataclasses import asdict
+    from stable_baselines3.common.save_util import data_to_json
+    core, space, env, _ = frozen_upper_source
+    directory = tmp_path / 'material'
+    directory.mkdir()
+    state = core.state_dict()
+    torch.save({'core.' + k: v for k, v in state.items()
+                if k.startswith(('overworld.', 'upper_tokenizer.'))}, directory / 'upper.pt')
+    torch.save({'core.' + k: v for k, v in state.items() if k.startswith('combat.')
+                and not k.startswith(('combat.distribution.', 'combat.transition.'))}, directory / 'lower-init.pt')
+    shutil.copy2(core.config.card_vector_checkpoint, directory / 'frozen-card-vectors.pt')
+    (directory / 'constructor.json').write_text(data_to_json(dict(observation_space=space,
+        action_space=env.action_space, policy_kwargs=dict(entity_config=asdict(core.config),
+                                                        upper_config=asdict(core.upper_config)))))
+    digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    manifest = dict(schema='entity-joint-initialization-material-v1', source_model_sha256='1' * 64,
+                    optimizer_imported=False, replay_imported=False,
+                    files={p.name: dict(sha256=digest(p)) for p in directory.iterdir()})
+    (directory / 'manifest.json').write_text(json.dumps(manifest))
+    return dict(material_directory=str(directory), material_sha256=digest(directory / 'manifest.json'),
+                source_sha256='1' * 64)

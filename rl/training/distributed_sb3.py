@@ -1063,7 +1063,7 @@ def logger_scalars(model: AccumulatingMaskablePPO) -> dict[str, float]:
     scalars = {}
     for key, value in model.logger.name_to_value.items():
         if key.startswith((
-            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/"
+            "game/", "boss/", "upper/", "rollout/", "speed/", "hierarchical/", "nosl_is_az/", "outer_return/"
         )):
             if isinstance(value, np.generic):
                 value = value.item()
@@ -2282,7 +2282,7 @@ def main() -> None:
         raise ValueError('--upper-gae-lambda requires joint strategic PPO')
     args.policy_architecture = type(probe_model.policy).__name__
     args.combat_supervision_contract = getattr(probe_model,'nosl_supervision_contract','scalar-hp-v1')
-    if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model):
+    if getattr(getattr(probe_model.policy,'core',None),'combat_only',False) or joint_upper(probe_model) or getattr(probe_model, '_outer_return', False):
         args.entity_config = dict(probe_model.policy.entity_config)
         if joint_upper(probe_model):
             args.upper_config = dict(probe_model.policy.upper_config)
@@ -2465,7 +2465,8 @@ def main() -> None:
     args.nosl_is_az_upper_strategy_version = (
         OVERWORLD_RULE_VERSION if upper_strategy == "rules" else "checkpoint-model"
     )
-    fallback_label = ('disabled' if getattr(getattr(model.policy,'core',None),'combat_only',False)
+    fallback_label = ('frozen-masked-argmax' if getattr(model, '_outer_return', False)
+                      else 'disabled' if getattr(getattr(model.policy,'core',None),'combat_only',False)
                       else 'masked-argmax' if upper_strategy == 'rules' else 'sampled')
     print(f"[rank {args.rank}] NOSL upper strategy: {upper_strategy} "
           f"version={args.nosl_is_az_upper_strategy_version} "
@@ -2793,6 +2794,10 @@ def main() -> None:
     # new deterministic seed block rather than replaying the run's first games.
     model.set_random_seed(args.seed + args.rank * 1_000_003 +
                           (int(model.num_timesteps) if recovery_state is not None else 0))
+    if getattr(model, '_outer_return', False):
+        from rl.algorithms import outer_return
+        outer_return.setup(model)
+        args.outer_return_contract = model.outer_return_contract
     if args.leaf_inference == 'cuda-graph':
         from rl.search.inference import CombatLeafGraphs
         model._native_leaf_inference = CombatLeafGraphs(model.policy.core, model.device, amp=args.amp_mode,
@@ -3448,6 +3453,10 @@ def main() -> None:
                 key: float(callback_scalars.get(key, 0.0))
                 for key in _DISTRIBUTED_NOSL_METRIC_KEYS
             })
+            if getattr(model, '_outer_return', False):
+                model.policy.core.teacher.assert_integrity()
+                aggregate_scalars.update({key: value for key, value in callback_scalars.items()
+                                          if key.startswith('outer_return/')})
             if args.hierarchical_combat_hp:
                 aggregate_scalars.update({
                     "combat_value_loss_mean": float(
@@ -3663,6 +3672,8 @@ def main() -> None:
                     })
                 _add_game_metrics_to_wandb_payload(wandb_payload, record)
                 wandb_payload.update({'upper/' + key: value for key, value in upper_update.items()})
+                wandb_payload.update({key: value for key, value in record.items()
+                                      if key.startswith('outer_return/')})
                 wandb_payload.update({
                     key: record[key]
                     for key in _DISTRIBUTED_NOSL_METRIC_KEYS

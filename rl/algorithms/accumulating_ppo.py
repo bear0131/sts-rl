@@ -35,6 +35,7 @@ from rl.search.native import apply_strict_training_settings
 from rl.algorithms.hierarchical_returns import compute_hierarchical_returns
 from rl.algorithms.upper_ppo import enabled as joint_upper, combat_update, capture_step, update_upper
 from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
+from rl.algorithms import outer_return as outer
 
 
 NOSL_IS_AZ_SEARCH_MODES = {
@@ -312,6 +313,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.rulebase_planner_leaf_profile = str(rulebase_planner_leaf_profile)
         self.rulebase_planner_nonce = int(rulebase_planner_nonce)
         self.nosl_is_az_cpp = bool(nosl_is_az_cpp)
+        self._hierarchical_hp_requested = bool(hierarchical_combat_hp)
         self.hierarchical_combat_hp = bool(
             hierarchical_combat_hp or self.nosl_is_az
         )
@@ -433,6 +435,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
+        self._outer_return = self.nosl_supervision_contract == outer.OBJECTIVE
+        if self._outer_return:
+            if self._hierarchical_hp_requested:
+                raise ValueError('outer return cannot enable hierarchical HP targets')
+            self.hierarchical_combat_hp = False
+            outer.setup(self)
         from rl.algorithms.update_schedule import CombatUpdateSchedule
         CombatUpdateSchedule.from_config(self.nosl_is_az_update_schedule).validate_model(self)
         if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
@@ -471,6 +479,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "_nosl_is_az_samples",
             "_nosl_is_az_fresh_samples",
             "_nosl_is_az_pending_fights",
+            "_outer_pending_rewards", "_outer_collection",
             "_upper_pending", "_upper_completed", "_upper_episode_ids",
             "_nosl_is_az_replay",
             "_nosl_is_az_replay_prepare_stats",
@@ -515,6 +524,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             if getattr(self, "nosl_is_az_boss_transition_target", False)
             else VALUE_CONTRACT
         )
+        if getattr(self, '_outer_return', False):
+            value_contract = outer.OBJECTIVE
         if replay is not None:
             if replay.supervision_contract != getattr(self,'nosl_supervision_contract','scalar-hp-v1'):
                 raise ValueError("NOSL replay supervision changed; collect new replay")
@@ -538,6 +549,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             action_dim=action_dim,
             value_contract=value_contract,
             supervision_contract=getattr(self,'nosl_supervision_contract','scalar-hp-v1'),
+            objective_identity=getattr(self, 'outer_return_contract', None),
         )
         self._nosl_is_az_replay = replay
         return replay
@@ -656,6 +668,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
             raise ValueError("NOSL-IS-AZ inner-only mode is not enabled")
         core = getattr(self.policy, "core", None)
         combat = getattr(core, "combat", None)
+        if getattr(core, 'frozen_upper', False):
+            if train_shared_embeddings:
+                raise ValueError('frozen upper does not permit shared-embedding training')
+            core.teacher.assert_integrity()
+            return (sum(p.numel() for p in core.teacher.parameters()),
+                    sum(p.numel() for p in combat.parameters() if p.requires_grad))
         if getattr(core,'combat_only',False) or joint_upper(self):
             for parameter in self.policy.parameters():
                 parameter.requires_grad_(True)
@@ -726,6 +744,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
         reset_combat_value: bool = False,
         reset_seed: int = 0,
     ) -> int:
+        if getattr(self, '_outer_return', False):
+            if enabled or reset_combat_value:
+                raise ValueError('outer return cannot enable or reset an HP value head')
+            self.hierarchical_combat_hp = False
+            return 0
         if not 0.0 <= combat_gamma <= 1.0:
             raise ValueError("combat_gamma must be in [0, 1]")
         if not 0.0 <= combat_gae_lambda <= 1.0:
@@ -1013,6 +1036,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         ):
             active_combat_samples = [[] for _ in range(env.num_envs)]
         self._nosl_is_az_pending_fights = active_combat_samples
+        if self._outer_return:
+            outer.begin_collection(self, env.num_envs)
         incomplete_combat_roots = 0
         completed_combat_roots = 0
         collected_value_boundaries = 0
@@ -1170,6 +1195,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             )
 
             actions_np = actions.cpu().numpy().reshape(-1)
+            if self._outer_return:
+                outer.upper_actions(self, self._last_obs, action_masks, actions_np)
             # BF16 autocast tensors do not have a numpy representation on
             # several PyTorch versions; IPC always receives public FP32 logits.
             logits_np = logits.detach().float().cpu().numpy()
@@ -1187,6 +1214,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 # into the next fight.
                 incomplete_combat_roots += len(active_combat_samples[env_index])
                 active_combat_samples[env_index] = []
+                if self._outer_return:
+                    self._outer_pending_rewards[env_index] = 0.
             if action_masks is None:
                 action_masks = np.ones(
                     (env.num_envs, int(self.action_space.n)), dtype=bool
@@ -1292,7 +1321,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
                                 "gumbel_scale": self.nosl_is_az_gumbel_scale,
                                 "merge_equivalent_actions": self.nosl_is_az_merge_equivalent_actions,
-                                "boss_win_weight": getattr(self.policy, "entity_config", {}).get("boss_win_weight", 0.0),
+                                "boss_win_weight": 0.0 if self._outer_return else getattr(self.policy, "entity_config", {}).get("boss_win_weight", 0.0),
+                                "outer_return": self._outer_return,
                                 "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
                                 "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
@@ -1560,7 +1590,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
             # though combat samples are excluded from the PPO objective below.
             log_probs = distribution.log_prob(actions).float()
             env_started = time.perf_counter()
+            if self._outer_return:
+                outer.stamp_roots(self, active_combat_samples)
             new_obs, rewards, dones, infos = env.step(actions_np)
+            if self._outer_return:
+                completed, discarded, fights = outer.finish_step(self, self._last_obs,
+                    new_obs, dones, infos, active_combat_samples)
+                completed_combat_roots += completed
+                incomplete_combat_roots += discarded
+                completed_combats += fights
             if joint_upper(self):
                 capture_step(self, self._last_obs, actions_np, action_masks,
                     values_np, log_probs.detach().cpu().numpy(), new_obs, dones, infos)
@@ -1592,6 +1630,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 new_obs, dones, infos
             )
             for env_index in range(env.num_envs):
+                if self._outer_return:
+                    continue
                 if (
                     int(phase[env_index]) != combat_phase
                     or env_index in startup_paused
@@ -1693,6 +1733,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     done
                     and infos[idx].get("terminal_observation") is not None
                     and infos[idx].get("TimeLimit.truncated", False)
+                    and not self._outer_return
                 ):
                     terminal_obs = self.policy.obs_to_tensor(
                         infos[idx]["terminal_observation"]
@@ -1725,9 +1766,14 @@ class AccumulatingMaskablePPO(MaskablePPO):
             values = self.policy.predict_values(
                 obs_as_tensor(new_obs, self.device)
             )
-        rollout_buffer.compute_returns_and_advantage(
-            last_values=values, dones=dones
-        )
+        if self._outer_return:
+            # Only completed segment targets train this experiment. PPO's
+            # rollout is retained for transport/lifecycle, never an HP target.
+            rollout_buffer.returns.fill(np.nan)
+            rollout_buffer.advantages.fill(0.)
+            outer.finish_collection(self)
+        else:
+            rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
         callback.on_rollout_end()
         pending_combat_roots = sum(len(pending) for pending in active_combat_samples)
         self.logger.record(
