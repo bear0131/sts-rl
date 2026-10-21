@@ -1434,9 +1434,12 @@ class SlayTheSpireEnv(gym.Env):
         action = self._native_action_to_thin(int(bits))
         if (action is None or not 0 <= action < self.action_space.n
                 or not live_mask[action]):
+            selection = self.thick.select_descriptor() or {}
             raise RuntimeError(
                 f"native NOSL returned an unmapped or illegal root action: "
-                f"bits={int(bits)} thin={action!r}"
+                f"bits={int(bits)} thin={action!r} "
+                f"selection={selection.get('context')!r} "
+                f"handles={[c['native_index'] for c in selection.get('candidates', ())]!r}"
             )
         return int(action)
 

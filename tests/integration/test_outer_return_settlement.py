@@ -3,6 +3,7 @@ import pytest
 import slaythespire as sts
 
 from env.core.outer_return import CombatExit, strategic_reward
+from env.core.encode import GOLD_SCALE
 from schemas.combat_state import normalize_sim_global
 
 
@@ -47,6 +48,10 @@ def test_stolen_money_is_not_credited_before_claim(run_combat_factory, kill_thie
     _end_turn(leaf)
     stolen = 99 - leaf.to_dict()['player']['gold']
     assert stolen > 0
+    in_combat = root.fork_run()
+    in_combat.bc = leaf.clone()
+    assert in_combat.gc.gold == 99  # GC is intentionally not committed until exit.
+    assert in_combat.obs()['gold'][0] * GOLD_SCALE == pytest.approx(99-stolen)
     if kill_thief:
         leaf.set_player_strength(999)
         leaf.execute(sts.Action(sts.ActionType.CARD, 0, 0))

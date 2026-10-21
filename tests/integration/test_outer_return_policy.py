@@ -12,6 +12,44 @@ from rl.search.native import NativeSearchConfig, complete_searches_native, obser
 pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
+@pytest.mark.parametrize('card,eligible', [('SECRET_TECHNIQUE', ['DEFEND_RED', 'SHRUG_IT_OFF']),
+                                         ('SECRET_WEAPON', ['STRIKE_RED', 'BASH'])])
+@pytest.mark.parametrize('nonce', [1, 42, 42101])
+def test_draw_selection_root_preserves_public_handles_and_priors(outer_return_core, card, eligible, nonce):
+    import slaythespire as sts
+    core, _, env = outer_return_core
+    _enter_combat(env)
+    excluded = 'STRIKE_RED' if card == 'SECRET_TECHNIQUE' else 'DEFEND_RED'
+    env.thick.bc.apply_custom_state({'hand': [card], 'draw': [excluded]*12 + eligible})
+    env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0))
+    env._invalidate_backend_cache()
+    before = env.thick.bc.to_dict()
+    candidates = env.thick.bc.select_info()['candidates']
+    public_index = next(i for i, candidate in enumerate(candidates)
+                        if candidate['card'][0] == eligible[1])
+    expected = C.AUTOREGRESSIVE_PICK + public_index
+    assert env.action_masks()[expected]
+    logits = np.full(env.action_space.n, -100., np.float32)
+    logits[expected] = 100.
+    pool = NativeSearchBatch([env], 1)
+    try:
+        config = NativeSearchConfig(simulations=4, depth=1, fixed_worldline=True,
+                                    outer_return=True, gumbel_scale=0.)
+        pool.begin({0: ((logits,), dict(**asdict(config), root_value=0.,
+                                      state_nonce=nonce, compact_observation=True))})
+        while not pool.done:
+            pool.advance(np.zeros((pool.rows, env.action_space.n), np.float32), np.zeros(pool.rows, np.float32))
+        result = pool.results()[0]
+        assert result['action'] == expected
+        assert result['native_action_bits'] == (2 << 29 | 13)
+        assert env.thick.bc.to_dict() == before
+        env.step(expected)
+        assert env.thick.bc.to_dict()['hand'][-1][0] == eligible[1]
+    finally:
+        pool.close()
+
+
+
 def _enter_combat(env):
     for _ in range(64):
         if env.thick.bc is not None:

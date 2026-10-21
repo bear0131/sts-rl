@@ -62,6 +62,9 @@ namespace sts::search {
         // C++ trainer does not need to reconstruct the action layout itself.
         static std::vector<Action> enumerateCombatActions(const BattleContext &bc);
         static std::vector<Action> enumerateCardSelectActions(const BattleContext &bc);
+        static std::uint32_t remapDrawSelection(const BattleContext &sampled,
+                                               const BattleContext &source,
+                                               std::uint32_t actionBits);
         static bool equivalentCards(const CardInstance &a, const CardInstance &b);
         // Same play effect, preserving all runtime card fields. Selection
         // prefixes are positional decisions and are deliberately not grouped.

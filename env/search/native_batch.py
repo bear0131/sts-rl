@@ -106,7 +106,7 @@ class NativeSearchBatch:
                 out=np.zeros(len(hp), dtype=np.float32), where=hp[:, 1] != 0)
             for row, changes in self.payload['permanent_misc'].items():
                 for index, value in changes.items():
-                    if result['deck_ids'][row, index] != 0:
+                    if 0 <= index < result['deck_ids'].shape[1] and result['deck_ids'][row, index] != 0:
                         result['outer_deck_misc'][row, index] = value / MISC_SCALE
         self.decode_seconds += time.perf_counter()-started
         return result

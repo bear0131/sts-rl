@@ -294,6 +294,9 @@ private:
 
     NoslCombatSearchConfig config_;
     BattleContext rootState_;
+    // Public draw-selection handles belong to the live root, while the
+    // sampled world owns an independently permuted hidden draw pile.
+    std::unique_ptr<BattleContext> rootSelectionSource_;
     std::uint64_t searchNonce_ = 0;
     Node root_;
     int simulationsStarted_ = 0;

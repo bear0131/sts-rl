@@ -1038,6 +1038,12 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     std::uint64_t searchNonce,
     double rootValue)
     : config_(config), rootState_(rootState), searchNonce_(searchNonce) {
+    const auto task = rootState.cardSelectInfo.cardSelectTask;
+    if (rootState.inputState == InputState::CARD_SELECT &&
+        (task == CardSelectTask::SECRET_TECHNIQUE || task == CardSelectTask::SECRET_WEAPON ||
+         task == CardSelectTask::SEEK)) {
+        rootSelectionSource_ = std::make_unique<BattleContext>(rootState);
+    }
     if (config_.outerReturn && (!config_.fixedWorldline || config_.bossWinWeight != 0.0 ||
             config_.bossTransitionValueMode != 0 || config_.modelVictoryTerminal))
         throw std::invalid_argument("outer return requires a fixed worldline and no HP/Boss objective");
@@ -1136,7 +1142,9 @@ NoslNeuralSearchSession::NoslNeuralSearchSession(
     root_.networkValueValid = true;
     root_.propagatedValue = root_.networkValue;
     root_.propagatedValid = true;
-    expandWithLogits(root_, rootState_, legalActions(rootState_, config_.selectionPrefix), rootPolicyLogits);
+    // Root logits and returned action/visit/policy handles describe the live
+    // public root. Only execution is mapped into the sampled hidden world.
+    expandWithLogits(root_, rootState, legalActions(rootState, config_.selectionPrefix), rootPolicyLogits);
     applyRootDirichletNoise();
     initializeGumbelRoot();
 }
@@ -2283,7 +2291,11 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
             Edge *edge = edgeIndex >= 0 ? &node->edges[edgeIndex] : nullptr;
             Action executableAction;
             bool foundAction = false;
-            if (edge != nullptr && validAction(edge->action, state, pending.selectionPrefix) &&
+            if (edge != nullptr && node == &root_ && rootSelectionSource_) {
+                executableAction = Action(Action::remapDrawSelection(
+                    state, *rootSelectionSource_, edge->action.bits));
+                foundAction = true;
+            } else if (edge != nullptr && validAction(edge->action, state, pending.selectionPrefix) &&
                 publicActionKey(state, edge->action) == edge->semanticKey) {
                 executableAction = edge->action;
                 foundAction = true;

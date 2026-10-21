@@ -304,6 +304,10 @@ def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factor
                             legal_policy_ids=np.empty((1, 0), np.int32))
         pool.global_fields = {key: value[None, :] for key, value
                               in env._native_packed_global_fields().items()}
+        # This fixture injects packed leaves without begin(); initialize its
+        # legacy decoder projection as the real transport does at begin().
+        pool._decoder_globals = {key: value for key, value in pool.global_fields.items()
+                                 if key in pool._decoder_keys}
         actual = pool.observations()
         expected = env._native_leaf_observation(env.thick.bc.to_dict(), combat_only=True)
         assert actual['hand_damage'][0, 0] * encode.DMG_SCALE == 8917

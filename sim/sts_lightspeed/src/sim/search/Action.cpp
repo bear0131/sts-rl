@@ -5,6 +5,8 @@
 #include "sim/search/Action.h"
 
 #include <functional>
+#include <algorithm>
+#include <stdexcept>
 
 using namespace sts;
 
@@ -734,3 +736,45 @@ std::vector<search::Action> search::Action::enumerateCardSelectActions(const Bat
 
 
 
+
+std::uint32_t search::Action::remapDrawSelection(const sts::BattleContext &sampled,
+                                const sts::BattleContext &source,
+                                std::uint32_t actionBits) {
+    using namespace sts;
+    using namespace sts::search;
+    const search::Action original(actionBits);
+    const auto task = source.cardSelectInfo.cardSelectTask;
+    if (source.outcome != Outcome::UNDECIDED || sampled.outcome != Outcome::UNDECIDED ||
+        source.inputState != InputState::CARD_SELECT ||
+        sampled.inputState != InputState::CARD_SELECT ||
+        sampled.cardSelectInfo.cardSelectTask != task ||
+        (task != CardSelectTask::SECRET_TECHNIQUE &&
+         task != CardSelectTask::SECRET_WEAPON && task != CardSelectTask::SEEK) ||
+        original.getActionType() != ActionType::SINGLE_CARD_SELECT ||
+        !original.isValidAction(source)) {
+        throw std::invalid_argument("draw-selection remap requires matching live draw-select screens and a legal source action");
+    }
+    const auto &card = source.cards.drawPile[original.getSelectIdx()];
+    const auto uid = card.getUniqueId();
+    const auto sameIdentity = [uid](const CardInstance &other) {
+        return other.getUniqueId() == uid;
+    };
+    if (uid < 0 || std::count_if(source.cards.drawPile.begin(), source.cards.drawPile.end(), sameIdentity) != 1 ||
+        std::count_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity) != 1) {
+        throw std::invalid_argument("draw-selection remap requires one matching card entity in each pile");
+    }
+    const auto found = std::find_if(sampled.cards.drawPile.begin(), sampled.cards.drawPile.end(), sameIdentity);
+    if (card.id != found->id || card.specialData != found->specialData ||
+        card.cachedBaseDamage != found->cachedBaseDamage ||
+        card.upgraded != found->upgraded || card.cost != found->cost ||
+        card.costForTurn != found->costForTurn || card.freeToPlayOnce != found->freeToPlayOnce ||
+        card.retain != found->retain || card.exhaust != found->exhaust) {
+        throw std::invalid_argument("draw-selection entity changed after sampling");
+    }
+    const search::Action mapped(ActionType::SINGLE_CARD_SELECT,
+                        static_cast<int>(found - sampled.cards.drawPile.begin()));
+    if (!mapped.isValidAction(sampled)) {
+        throw std::invalid_argument("remapped draw selection is not legal in sampled state");
+    }
+    return mapped.bits;
+}
