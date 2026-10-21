@@ -145,3 +145,45 @@ def test_checkpoint_key_mask_is_phase_specific(frozen_upper_source):
     invalid = dict(obs, act=torch.ones_like(obs['act']) * (4 / encode.ACT_SCALE))
     with pytest.raises(ValueError, match='act=4'):
         teacher.decide(invalid, mask)
+
+
+def test_search_row_projection_matches_full_schema_and_rejects_bad_fields(frozen_upper_source):
+    from rl.search.rollout_inference import RolloutInference
+    from types import SimpleNamespace
+    core, space, env, _ = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    rows = [env._obs()]
+    for _ in range(16):
+        env.step(int(np.flatnonzero(env.action_masks())[0]))
+        if env._phase() == 'map':
+            rows.extend([env._obs(), rows[0], env._obs()])
+            break
+    assert len(rows) == 4
+    batch = {key: np.stack([row[key] for row in rows]) for key in rows[0]}
+    expected = teacher.prepare_numpy(batch)
+    actual = teacher.prepare_search_numpy(rows)
+    for (ei, ep, ew, eb), (ai, ap, aw, ab) in zip(expected, actual, strict=True):
+        np.testing.assert_array_equal(ei, ai)
+        assert ep == ap and ew == aw and eb.keys() == ab.keys()
+        for key in eb:
+            assert eb[key].dtype == ab[key].dtype
+            assert eb[key].tobytes() == ab[key].tobytes(), key
+    runtime = RolloutInference(SimpleNamespace(policy=SimpleNamespace(
+        core=SimpleNamespace(teacher=teacher)), device='cpu'))
+    reference = runtime.forward_upper(batch)
+    actual = runtime.forward_upper_rows(rows)
+    for a, b in zip(actual, reference, strict=True):
+        assert a.tobytes() == b.tobytes()
+    assert runtime.upper.stats['hits'] >= len(rows)
+    with pytest.raises(ValueError, match='shape changed: run_hp'):
+        teacher.prepare_search_numpy([dict(rows[0], run_hp=np.zeros(2, np.float32))])
+    missing = dict(rows[0])
+    del missing['run_hp']
+    with pytest.raises(KeyError, match='run_hp'):
+        teacher.prepare_search_numpy([missing])
+    # Public inference still requires the checkpoint's complete schema.
+    incomplete = dict(batch)
+    del incomplete['hand_ids']
+    with pytest.raises(ValueError, match='fields missing'):
+        teacher.prepare_numpy(incomplete)
+    teacher.assert_integrity()

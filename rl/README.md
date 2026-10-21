@@ -52,6 +52,9 @@ teacher 按旧 observation space 投影输入，`decide()` 复用 checkpoint-v7-
 动作适配和 masked argmax，只接受上层决策；真实死亡、截断和连战必须由调用方
 区分。该模块本身不提供新的战斗回报、搜索结算或训练入口；正式训练入口和已验证配置
 见 `../experiments/launchers/README.md`，当前训练与性能验收以 TODO COMBAT01/02 为准。
+搜索内部按phase先选teacher真正消费的字段再stack，逐字段核对旧checkpoint形状，
+复用同一padding裁剪和网络；公开forward/prepare_numpy仍要求完整checkpoint schema。
+upper_prepare_seconds包含这一内部字段堆叠，普通GPU等待不包含同时进行的CPU结算。
 
 ## Entity combat 实验架构
 

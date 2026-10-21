@@ -151,9 +151,18 @@ class RolloutInference:
 
     def forward_upper(self, observations):
         started = time.perf_counter()
-        teacher = self.model.policy.core.teacher
-        groups = teacher.prepare_numpy(observations)
+        groups = self.model.policy.core.teacher.prepare_numpy(observations)
         self.upper_prepare_seconds += time.perf_counter()-started
+        return self._forward_upper(groups, len(observations['phase']))
+
+    def forward_upper_rows(self, observations):
+        started = time.perf_counter()
+        groups = self.model.policy.core.teacher.prepare_search_numpy(observations)
+        self.upper_prepare_seconds += time.perf_counter()-started
+        return self._forward_upper(groups, len(observations))
+
+    def _forward_upper(self, groups, count):
+        teacher = self.model.policy.core.teacher
         output = None
         for indices, phase, widths, obs in groups:
             if self.upper_graphs is not None:
@@ -169,7 +178,7 @@ class RolloutInference:
                 return logits.cpu().numpy(), values.reshape(-1).cpu().numpy()
             logits, values = self.upper.forward(obs, forward, namespace=signature)
             if output is None:
-                output = np.empty((len(observations['phase']), logits.shape[1]), np.float32)
+                output = np.empty((count, logits.shape[1]), np.float32)
                 result_values = np.empty(len(output), np.float32)
             output[indices], result_values[indices] = logits, values
         return output, result_values

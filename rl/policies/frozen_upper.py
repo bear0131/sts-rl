@@ -113,14 +113,57 @@ class FrozenUpperTeacher(nn.Module):
         return self._expected_state_digest
 
     def _validated_observations(self, observations):
-        if any(p.requires_grad for p in self.parameters()) or any(m.training for m in self.modules()):
-            raise RuntimeError('frozen upper was made trainable')
+        self._validate_inference_mode()
         observations = observation_for_policy(self, observations)
         batch_size = len(observations['phase'])
         for name, space in self.observation_space.spaces.items():
             if tuple(observations[name].shape) != (batch_size, *space.shape):
                 raise ValueError(f'frozen upper observation shape changed: {name}')
         return observations
+
+    def _validate_inference_mode(self):
+        if any(p.requires_grad for p in self.parameters()) or any(m.training for m in self.modules()):
+            raise RuntimeError('frozen upper was made trainable')
+
+    @staticmethod
+    def _trim_numpy_padding(batch):
+        widths = []
+        for key in ('deck_ids', 'relics'):
+            active = np.flatnonzero(np.any(batch[key] != 0, axis=0))
+            widths.append(int(active[-1])+1 if len(active) else 1)
+        for key in ('deck_ids', 'deck_upgrades'):
+            batch[key] = batch[key][:, :widths[0]]
+        for key in ('relics', 'relic_counters'):
+            batch[key] = batch[key][:, :widths[1]]
+        return tuple(widths)
+
+    def prepare_search_numpy(self, observations):
+        """Stack only this phase's consumed fields from settled search rows.
+
+        This internal transport validates every consumed field against the
+        checkpoint. The ordinary forward/prepare_numpy full-schema contract
+        remains strict; unrelated combat arrays never enter this transport.
+        """
+        self._validate_inference_mode()
+        if not observations or any(np.asarray(row['phase']).shape != (1,) for row in observations):
+            raise ValueError('upper search requires nonempty rows with scalar phase')
+        phase = np.asarray([row['phase'][0] for row in observations], dtype=np.int64)
+        if (phase == V.PHASE_VOCAB_INDEX['combat']).any():
+            raise ValueError('upper teacher requires nonempty upper decision rows')
+        groups = []
+        for phase_id in np.unique(phase):
+            selected = np.flatnonzero(phase == phase_id)
+            keys = OVERWORLD_OBSERVATION_KEYS | OVERWORLD_PHASE_OBSERVATION_KEYS.get(int(phase_id), frozenset())
+            batch = {}
+            for key, space in self.observation_space.spaces.items():
+                if key not in keys:
+                    continue
+                value = np.stack([observations[index][key] for index in selected])
+                if value.shape != (len(selected), *space.shape):
+                    raise ValueError(f'frozen upper observation shape changed: {key}')
+                batch[key] = value.astype(np.float32, copy=False) if np.issubdtype(value.dtype, np.floating) else value
+            groups.append((selected, int(phase_id), self._trim_numpy_padding(batch), batch))
+        return groups
 
     def prepare_numpy(self, observations):
         """Validate full checkpoint schema, then project/route on the CPU.
@@ -139,17 +182,9 @@ class FrozenUpperTeacher(nn.Module):
             batch = {key: np.asarray(value)[selected].astype(np.float32, copy=False)
                      if np.issubdtype(value.dtype, np.floating) else np.asarray(value)[selected]
                      for key, value in observations.items() if key in keys}
-            widths = []
-            for key in ('deck_ids', 'relics'):
-                active = np.flatnonzero(np.any(batch[key] != 0, axis=0))
-                widths.append(int(active[-1])+1 if len(active) else 1)
             # The encoder already discards these padding tails. Do that before
             # transport too, without changing token positions or model weights.
-            for key in ('deck_ids', 'deck_upgrades'):
-                batch[key] = batch[key][:, :widths[0]]
-            for key in ('relics', 'relic_counters'):
-                batch[key] = batch[key][:, :widths[1]]
-            groups.append((selected, int(phase_id), tuple(widths), batch))
+            groups.append((selected, int(phase_id), self._trim_numpy_padding(batch), batch))
         return groups
 
     @torch.no_grad()

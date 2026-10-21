@@ -611,7 +611,9 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
         rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
         if not rows:
             continue
-        obs = {key: np.stack([exits[i][1][key] for i in rows]) for key in exits[rows[0]][1]}
+        observations = [exits[i][1] for i in rows]
+        obs = (None if kind == 'upper' and runtime is not None else
+               {key: np.stack([row[key] for row in observations]) for key in observations[0]})
         if kind == 'upper':
             # Teacher owns FP32/no-grad; never send a terminal BC through the
             # lower HP encoder or convert teacher inference to lower AMP.
@@ -619,7 +621,7 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
                 _, continuation = model.policy.core.teacher(observation_as_tensor(obs, model.device))
                 continuation = continuation.float().flatten().cpu().numpy()
             else:
-                _, continuation = runtime.forward_upper(obs)
+                _, continuation = runtime.forward_upper_rows(observations)
         else:
             _, continuation = forward_leaves(model, obs, compact=True,
                                              autocast=autocast, leaf_backend=leaf_backend)
