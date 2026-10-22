@@ -10,7 +10,8 @@ from torch import nn
 from stable_baselines3.common.save_util import json_to_data
 
 from env.core import vocab as V
-from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS
+from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+from env.core.finite_curves import FiniteCurveBank
 from rl.policies.entity_combat import (
     EntityCombatConfig, EntityCombatCore, EntityCombatNetwork, EntityCombatPolicy,
 )
@@ -54,14 +55,14 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 class OuterCombatNetwork(EntityCombatNetwork):
     def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE):
-        if objective not in (OBJECTIVE, COMBAT_OBJECTIVE):
+        if objective not in (*SCALAR_OBJECTIVES, COMBAT_OBJECTIVE):
             raise ValueError('unsupported frozen-upper lower objective')
         if objective == COMBAT_OBJECTIVE and initialization != 'random':
             raise ValueError('TRAIN47 context control requires a fresh random lower')
         self.objective = objective
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
-        config = replace(source.config, auxiliary_loss_coef=0.) if objective == OBJECTIVE else source.config
+        config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
         # The old boss flag remains an encoder input for exact actor warm start;
         # it never selects a boss/HP value objective in this class.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
@@ -71,7 +72,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        if objective == OBJECTIVE:
+        if objective in SCALAR_OBJECTIVES:
             del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -82,7 +83,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization == '876':
             nn.init.zeros_(self.context[-1].weight)
             nn.init.zeros_(self.context[-1].bias)
-        if objective == OBJECTIVE:
+        if objective in SCALAR_OBJECTIVES:
             self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
@@ -126,7 +127,7 @@ class OuterReturnCore(EntityCombatCore):
     frozen_upper = True
 
     def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random',
-                 objective=OBJECTIVE):
+                 objective=OBJECTIVE, finite_curve_bank=None):
         nn.Module.__init__(self)
         if not CONTEXT_KEYS <= space.spaces.keys():
             raise ValueError('outer-return policy requires public run context')
@@ -137,6 +138,11 @@ class OuterReturnCore(EntityCombatCore):
         self.config = self.combat.config
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
+        self.finite_curve_bank = FiniteCurveBank(finite_curve_bank) if finite_curve_bank is not None else None
+        if (objective == FINITE_OBJECTIVE) != (self.finite_curve_bank is not None):
+            raise ValueError('finite curve objective requires exactly one embedded bank')
+        if self.finite_curve_bank is not None and self.finite_curve_bank.identity['teacher_sha256'] != self.teacher.assert_integrity():
+            raise ValueError('finite curve bank teacher mismatch')
         self.map_dag_enabled = source.map_dag_enabled
 
     def disable_transition_auxiliary(self):
@@ -168,8 +174,9 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return super().obs_to_tensor(observation)
 
     def __init__(self, *args, material_directory, material_sha256, source_sha256,
-                 lower_initialization='random', objective=OBJECTIVE, **kwargs):
+                 lower_initialization='random', objective=OBJECTIVE, finite_curve_bank=None, **kwargs):
         self.objective = objective
+        self.finite_curve_bank_data = deepcopy(finite_curve_bank)
         self.material_directory = str(material_directory)
         self.material_sha256 = material_sha256
         self.source_sha256 = source_sha256
@@ -181,7 +188,7 @@ class OuterReturnPolicy(EntityCombatPolicy):
             manifest_sha256=self.material_sha256, source_sha256=self.source_sha256)
         self.core = OuterReturnCore(source, source_space, self.observation_space,
             source_sha256=self.source_sha256, lower_initialization=self.lower_initialization,
-            objective=self.objective)
+            objective=self.objective, finite_curve_bank=self.finite_curve_bank_data)
         self.entity_config = asdict(self.core.config)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
@@ -189,4 +196,5 @@ class OuterReturnPolicy(EntityCombatPolicy):
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), material_directory=self.material_directory,
                     material_sha256=self.material_sha256, source_sha256=self.source_sha256,
-                    lower_initialization=self.lower_initialization, objective=self.objective)
+                    lower_initialization=self.lower_initialization, objective=self.objective,
+                    finite_curve_bank=self.finite_curve_bank_data)

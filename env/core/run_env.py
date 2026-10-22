@@ -336,10 +336,11 @@ class SlayTheSpireEnv(gym.Env):
                  combat_value_objective=None):
         super().__init__()
         self.outer_return_context = bool(outer_return_context)
-        from .outer_return import OBJECTIVE
-        if self.outer_return_context and combat_value_objective not in (None, OBJECTIVE, 'combat-outcome-quantiles-v1'):
+        from .outer_return import OBJECTIVE, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+        if self.outer_return_context and combat_value_objective not in (None, *SCALAR_OBJECTIVES, 'combat-outcome-quantiles-v1'):
             raise ValueError('unsupported public-context combat objective')
-        self.outer_return_objective = self.outer_return_context and combat_value_objective in (None, OBJECTIVE)
+        self.outer_return_objective = self.outer_return_context and combat_value_objective in (None, *SCALAR_OBJECTIVES)
+        self.finite_curve_objective = combat_value_objective == FINITE_OBJECTIVE
         if self.outer_return_context and (combat_action_contract != C.AUTOREGRESSIVE_CONTRACT
                                          or nosl_is_az_boss_transition_target):
             raise ValueError('outer return requires AR actions and no legacy HP objective')
@@ -435,6 +436,7 @@ class SlayTheSpireEnv(gym.Env):
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
+        self.thick._finite_curve_objective = self.finite_curve_objective
         if self._joint_actions and not hasattr(self.thick, 'bc'):
             raise ValueError('joint-v2 requires the native combat backend')
         if self._nosl_is_az_boss_transition_target:
@@ -493,6 +495,7 @@ class SlayTheSpireEnv(gym.Env):
             "combat_action_contract": self.combat_action_contract,
             "outer_return_context": self.outer_return_context,
             "outer_return_objective": self.outer_return_objective,
+            "finite_curve_objective": self.finite_curve_objective,
             "backend_seed": int(self._episode_backend_seed),
             "backend_identity": (self.thick.training_identity()
                                  if hasattr(self.thick, 'training_identity') else None),
@@ -520,6 +523,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError('environment outer-return context mismatch')
         if state.get('outer_return_objective', state.get('outer_return_context', False)) != self.outer_return_objective:
             raise ValueError('environment combat objective mismatch')
+        if state.get('finite_curve_objective', False) != self.finite_curve_objective:
+            raise ValueError('environment finite curve objective mismatch')
 
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
@@ -847,7 +852,7 @@ class SlayTheSpireEnv(gym.Env):
             reward = strategic_reward(*before, self.thick.run_stats(), done=terminated, censored=False)
             transition_info = {key: value for key, value in transition_info.items()
                                if not key.startswith('nosl_value_terminal_')}
-            if has_terminal_state:
+            if has_terminal_state or transition_info.get('finite_curve_exit') is not None:
                 transition_info['outer_combat_exit'] = True
             return canon, reward, terminated, transition_info
         if (
@@ -1088,7 +1093,7 @@ class SlayTheSpireEnv(gym.Env):
         if not terminated and self._no_legal_action():
             return self._truncate_dead()
         info = self._info()
-        for key in ("chest_opened", "chest_relic_taken", "outer_combat_exit"):
+        for key in ("chest_opened", "chest_relic_taken", "outer_combat_exit", "finite_curve_exit"):
             if key in (transition_info or {}):
                 info[key] = transition_info[key]
         trace = (transition_info or {}).get("reasoning_trace")

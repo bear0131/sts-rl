@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from env.core import encode, vocab as V
-from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward
+from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
 from rl.search.native import observation_as_tensor
 
 COMBAT = V.PHASE_VOCAB_INDEX['combat']
@@ -32,7 +32,9 @@ def contract(model):
                          'paper_full_gumbel', 'gumbel_candidates', 'gumbel_scale',
                          'gumbel_value_scale', 'gumbel_rescale_q', 'gumbel_use_mixed_value',
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
-    if objective != OBJECTIVE:
+    if objective == FINITE_OBJECTIVE:
+        identity['finite_curves'] = model.policy.core.finite_curve_bank.identity
+    elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
                         mean_loss_coef=config.mean_loss_coef, auxiliary_loss_coef=config.auxiliary_loss_coef,
@@ -54,7 +56,7 @@ def setup(model):
     if previous is not None and previous != identity:
         raise ValueError('outer-return checkpoint teacher/context/native identity changed')
     model.outer_return_contract = identity
-    model.nosl_value_contract = OBJECTIVE if model._outer_return else 'combat-end-hp-v1'
+    model.nosl_value_contract = model.policy.core.training_objective if model._outer_return else 'combat-end-hp-v1'
     model.policy.core.teacher.assert_integrity()
     if not all(parameter.requires_grad for name, parameter in model.policy.core.combat.named_parameters()
                if not (not model._outer_return and not model.policy.core.config.auxiliary_loss_coef
@@ -105,6 +107,7 @@ def upper_actions(model, observations, masks, actions):
 def finish_step(model, before, after, dones, infos, pending):
     """Label only executed roots, including roots retained across collections."""
     completed = discarded = fights = 0
+    bank = getattr(model.policy.core, 'finite_curve_bank', None)
     exits = {}
     for i, info in enumerate(infos):
         if int(before['phase'][i, 0]) != COMBAT:
@@ -131,6 +134,13 @@ def finish_step(model, before, after, dones, infos, pending):
     for kind in ('upper', 'combat'):
         indices = [i for i, exit in exits.items() if exit.kind == kind]
         if not indices:
+            continue
+        if bank is not None:
+            for i in indices:
+                state = infos[i].get('finite_curve_exit')
+                if state is None:
+                    raise ValueError('finite curve collection omitted terminal encounter/resources')
+                bootstraps[i] = bank.value(state)
             continue
         obs = observation_as_tensor({key: value[indices] for key, value in after.items()}, model.device)
         with torch.no_grad():

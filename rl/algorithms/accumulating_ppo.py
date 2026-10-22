@@ -435,7 +435,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
-        self._outer_return = self.nosl_supervision_contract == outer.OBJECTIVE
+        self._outer_return = self.nosl_supervision_contract in outer.SCALAR_OBJECTIVES
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
             if self._hierarchical_hp_requested:
@@ -528,7 +528,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             else VALUE_CONTRACT
         )
         if getattr(self, '_outer_return', False):
-            value_contract = outer.OBJECTIVE
+            value_contract = self.nosl_supervision_contract
         if replay is not None:
             if replay.supervision_contract != getattr(self,'nosl_supervision_contract','scalar-hp-v1'):
                 raise ValueError("NOSL replay supervision changed; collect new replay")

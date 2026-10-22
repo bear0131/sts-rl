@@ -181,13 +181,15 @@ class SimGameEnv:
         if not battle.is_battle_over:
             raise ValueError('combat exit requires a terminal battle')
         before_act, before_floor = self.gc.act, self.gc.floor_num
+        from .finite_curves import exit_identity, settled_exit
+        curve = exit_identity(self.gc, battle) if getattr(self, '_finite_curve_objective', False) else None
         self.bc = battle.clone()
         self._settle()
         reward = strategic_reward(before_act, before_floor, self.run_stats(),
                                   done=self.is_over, censored=False)
         kind = ('terminal' if self.is_over else
                 'combat' if self.bc is not None else 'upper')
-        return CombatExit(reward, kind)
+        return CombatExit(reward, kind, settled_exit(curve, self.gc))
 
     def _rebuild_map(self):
         self.rmap = spiremap.RunMap(self.gc.seed, self._ascension, self.gc.act,
@@ -456,6 +458,8 @@ class SimGameEnv:
         terminal_combat_state = self._winning_combat_value_state()
         terminal_combat_target = self._nosl_value_terminal_target()
         terminal_combat_outcome = self._nosl_value_terminal_outcome()
+        from .finite_curves import exit_identity, settled_exit
+        curve = exit_identity(self.gc, self.bc) if getattr(self, '_finite_curve_objective', False) else None
         self._settle()  # pump through any auto-resolving screens to next decision
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
@@ -478,6 +482,8 @@ class SimGameEnv:
             reward = 1.0 if (cleared_run or won) else -1.0
         info = self._info()
         # One event per treasure opportunity, not per reward-screen click.
+        if curve is not None:
+            info['finite_curve_exit'] = settled_exit(curve, self.gc)
         # Journal replay reconstructs pending offers across checkpoint boundaries.
         if action[0] == ga.CHEST:
             info["chest_opened"] = bool(action[1])
@@ -517,6 +523,8 @@ class SimGameEnv:
         terminal_combat_state = self._winning_combat_value_state()
         terminal_combat_target = self._nosl_value_terminal_target()
         terminal_combat_outcome = self._nosl_value_terminal_outcome()
+        from .finite_curves import exit_identity, settled_exit
+        curve = exit_identity(self.gc, self.bc) if getattr(self, '_finite_curve_objective', False) else None
         self._settle()
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp
@@ -528,6 +536,8 @@ class SimGameEnv:
         info = self._info()
         if terminal_combat_state is not None:
             info["nosl_value_terminal_state"] = terminal_combat_state
+        if curve is not None:
+            info['finite_curve_exit'] = settled_exit(curve, self.gc)
         if terminal_combat_target is not None:
             info["nosl_value_terminal_target"] = terminal_combat_target
             info["nosl_value_terminal_outcome"] = terminal_combat_outcome

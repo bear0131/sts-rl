@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT05 | 开始诊断与有限曲线目标实验 | 用户授权先测同根动作价值误差，再按怪物组合/Boss及药水数量抽取有限HP曲线、暂忽略实时遗物/金币/牌组，随机重训下层约32轮。876上层永久冻结，384×512/128sim/U40保持；这是目标消融而非等价优化。须保存原始曲线/参考状态/聚合规则/SHA，死亡与烟雾逃跑分开，learner/search同一目标、完整恢复身份与两轮生命周期验证；当前COMBAT04在新实验就绪前继续，在完整保存边界切换并保护旧状态，W&B独立run。验收比较同根局部差值、预测误差、同预算训练走势及固定留出，不把训练窗口当独立评测。见[实验意图](worklog/2026-10-23.md#combat05-finite-curves-intent)。 |
 | COMBAT04 | 四机对照运行中；首完整周期已验收 | 保留全局context分支、TRAIN47胜负/HP分位数/Boss0.9目标，随机下层、空Adam/replay、876冻结。e52a83db/native897bb49f，Linux83项含CUDA通过；首轮global786432/40更新/upper0，四机lower与Adam全状态一致、teacher不变，完整恢复包SHA及384环境/机重放通过，W&B已上报。首轮最慢751.362秒；滚动400局通关0、平均楼层5.955仅为随机起点，尚无质量提升结论。run combat04-train47-context-frozen876-r1，45轮/28800秒预算，384×512/128sim/U40保持。见[首周期验收](worklog/2026-10-23.md#combat04-first-production-cycle-accepted)。 |
 | COMBAT02-DECODER | 候选保留未部署，随用户切换任务暂停 | 遗物尾PAD扫描优化同输入组件ABBA快53.26%，完整CPU搜索输入/动作/访问分布摘要一致；GPU生产长度验收未做，不属于新COMBAT04运行依赖。性能目标暂停、600秒未达，旧a12已停。见[候选交接](worklog/2026-10-23.md#combat02-decoder-candidate-paused)。 |
 | TEST-LIVE-RELIC-BASELINE | 旧native与候选均复现，待修 | tests/integration/test_native_leaf_live_relics.py::test_du_vu_observation_and_strength_derive_from_all_master_deck_curses设置3张诅咒后relic_state counter预期3实际0，发生在解码前；不能把此项算作通过。验收需核对原生Du-Vu Doll状态/战斗力量与观测合同，并让该回归通过。见[候选交接](worklog/2026-10-23.md#combat02-decoder-candidate-paused)。 |

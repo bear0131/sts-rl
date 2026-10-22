@@ -18,6 +18,19 @@
 
 ### 冻结上层 teacher
 
+COMBAT05 的 `combat-finite-upper-curves-v1` 是独立目标实验：下层沿 COMBAT01 的随机
+scalar actor/critic/context 架构，整个下层共同训练；876 上层仍永久冻结。战斗真实结算
+之后，按原始 encounter、Act、胜利/玩家逃跑出口、持有药水数和 HP/maxHP 查询有限
+冻结曲线，替代实时上层 continuation V；死亡/最终通关仍使用真实终局回报，截断不标注。
+搜索和实际轨迹共用 `env.core.finite_curves.FiniteCurveBank`，保持奖励前缀和单世界线。
+曲线不查询实时牌组、遗物、金币、奖励内容或药水种类；这些变量对真实战斗及结算的影响
+仍由模拟器执行。小偷逃走与玩家烟雾逃跑仍是不同出口；本消融不评价失去金币的机会成本。
+曲线来自固定参考状态的 FP32 teacher，按参考样本取均值，线性插值，不强制单调。
+参考稀少的事件组只允许 bank 中显式列出的别名，缺少映射时报错，不能隐式退回 teacher。
+bank 内容嵌入 checkpoint constructor，其 SHA/teacher 身份进入 replay 和完整恢复合同；
+不能混入 COMBAT01/04 replay。准备材料额外需 `curve-bank.json`，profile 固定其文件 SHA。
+抽取证据与生产验收见 TODO COMBAT05，支持范围为 resident native、A0 战士、Act1–3。
+
 `policies/outer_return.py` 提供 COMBAT01 策略组件：校验 manifest/逐文件 SHA 后加载
 提取材料，876提供永久冻结上层；正式实验的整个下层随机初始化并共同训练，
 使用FP32无界标量critic，不沿用旧HP分布/辅助头。`combat-public-run-context-v2`

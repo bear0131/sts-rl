@@ -78,10 +78,13 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-@pytest.mark.parametrize('objective', [outer.OBJECTIVE, 'combat-outcome-quantiles-v1'])
-def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monkeypatch, capsys, objective):
-    control = objective != outer.OBJECTIVE
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE, 'combat-outcome-quantiles-v1'])
+def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
+    control = objective not in outer.SCALAR_OBJECTIVES
+    finite = objective == outer.FINITE_OBJECTIVE
     outer_material = dict(outer_material, objective=objective)
+    if finite:
+        outer_material['finite_curve_bank'] = finite_curve_bank
     def make_env(*_):
         def factory():
             return TrainingStateWrapper(TimeLimit(SlayTheSpireEnv(backend_factory=QuickBackend,
@@ -141,7 +144,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     assert all(p['nosl_is_az/updates'] == 2 for p in payloads)
     if not control:
         assert all(p['nosl_is_az/lower_cache_requests'] > 0 for p in payloads)
-        assert all(p['nosl_is_az/upper_cache_requests'] > 0 for p in payloads)
+        assert all((p['nosl_is_az/upper_cache_requests'] == 0 if finite else
+                    p['nosl_is_az/upper_cache_requests'] > 0) for p in payloads)
         assert all(p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
@@ -155,6 +159,14 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     assert not hasattr(restored, '_rollout_inference')
     replay = restored._ensure_nosl_is_az_replay()
     assert replay.size > 0 and np.isfinite(replay.value_targets[:replay.size]).all()
+    if finite:
+        assert replay.value_contract == outer.FINITE_OBJECTIVE
+        assert replay.objective_identity['finite_curves'] == restored.policy.core.finite_curve_bank.identity
+        changed = replay.state_dict()
+        changed['objective_identity'] = copy.deepcopy(changed['objective_identity'])
+        changed['objective_identity']['finite_curves']['sha256'] = '0'*64
+        with pytest.raises(ValueError, match='objective identity'):
+            replay.load_state_dict(changed)
     if control:
         assert replay.value_contract == 'combat-end-hp-v1'
         assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= 1))

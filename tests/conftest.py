@@ -307,3 +307,21 @@ def outer_material(frozen_upper_source, tmp_path):
     (directory / 'manifest.json').write_text(json.dumps(manifest))
     return dict(material_directory=str(directory), material_sha256=digest(directory / 'manifest.json'),
                 source_sha256='1' * 64)
+
+
+@pytest.fixture
+def finite_curve_bank(frozen_upper_source):
+    from env.core.finite_curves import SCHEMA, curve_key
+    from rl.policies.frozen_upper import FrozenUpperTeacher
+    import slaythespire as sts
+    source, space, _, _ = frozen_upper_source
+    teacher = FrozenUpperTeacher(source, space, source_sha256='1'*64)
+    curves = {}
+    for act in (1, 2, 3):
+        for encounter in sts.encounter_names():
+            for outlet in ('win', 'escape'):
+                base, slope = (.2, .3) if outlet == 'win' else (.1, .2)
+                curves[curve_key(act, encounter.upper().replace(' ', '_'), outlet)] = [
+                    [base+.025*p+slope*x for x in (.01, .5, 1.)] for p in range(6)]
+    return dict(schema=SCHEMA, teacher_sha256=teacher.assert_integrity(),
+                hp_fractions=[.01, .5, 1.], potion_counts=list(range(6)), curves=curves)

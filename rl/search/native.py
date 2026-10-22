@@ -110,8 +110,8 @@ class NativeSearchConfig:
     def from_model(cls, model, **overrides):
         values = {f.name: getattr(model, 'nosl_is_az_' + f.name, f.default) for f in fields(cls)}
         values['boss_win_weight'] = getattr(getattr(model, 'policy', None), 'entity_config', {}).get('boss_win_weight', 0.0)
-        from env.core.outer_return import OBJECTIVE
-        if getattr(getattr(getattr(model, 'policy', None), 'core', None), 'training_objective', None) == OBJECTIVE:
+        from env.core.outer_return import SCALAR_OBJECTIVES
+        if getattr(getattr(getattr(model, 'policy', None), 'core', None), 'training_objective', None) in SCALAR_OBJECTIVES:
             values.update(outer_return=True, boss_win_weight=0.0)
         values.update({key: value for key, value in overrides.items() if value is not None})
         return cls(**values)
@@ -562,6 +562,7 @@ def complete_searches_native(
 def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MODEL_LEAF_BACKEND):
     """Route typed exits through complete settlement before evaluating a value."""
     runtime = getattr(model, '_rollout_inference', None)
+    bank = getattr(model.policy.core, 'finite_curve_bank', None)
     logits = np.zeros((batch.rows, model.action_space.n), dtype=np.float32)
     values = np.zeros(batch.rows, dtype=np.float32)
     exit_rows = batch.combat_exit_rows
@@ -612,6 +613,13 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
     for kind in ('upper', 'combat'):
         rows = [i for i, (outcome, _) in exits.items() if outcome.kind == kind]
         if not rows:
+            continue
+        if bank is not None:
+            for i in rows:
+                outcome = exits[i][0]
+                if outcome.curve_state is None:
+                    raise ValueError('finite curve search omitted terminal encounter/resources')
+                values[i] = outcome.target(bank.value(outcome.curve_state))
             continue
         observations = [exits[i][1] for i in rows]
         obs = (None if kind == 'upper' and runtime is not None else

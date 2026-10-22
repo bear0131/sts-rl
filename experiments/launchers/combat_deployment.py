@@ -45,6 +45,7 @@ def validate(config, *, connected=False):
     if config['kind'] != 'combat01-deployment-v1' or not re.fullmatch(r'[A-Za-z0-9_-]+', config['run_id']):
         raise ValueError('invalid COMBAT01 deployment identity')
     if config['profile'] not in ('configs/train/combat_outer_return_876_4x5090.json',
+                                 'configs/train/combat_finite_curves_876_4x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')
     if not re.fullmatch(r'[0-9a-f]{64}', config['material_sha256']):
@@ -315,7 +316,7 @@ def manage(config_path, action):
     config = validate(read(config_path), connected=action != 'plan')
     profile = read(repo/config['profile'])
     if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
-            'combat-outer-return-frozen-upper-v1', 'combat-outcome-quantiles-v1'):
+            'combat-outer-return-frozen-upper-v1', 'combat-finite-upper-curves-v1', 'combat-outcome-quantiles-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"
     output.mkdir(parents=True, exist_ok=True)
@@ -370,6 +371,10 @@ def manage(config_path, action):
             archive.add(config_path, arcname='deployment.json')
             for name in ('manifest.json','constructor.json','upper.pt','lower-init.pt','frozen-card-vectors.pt'):
                 archive.add(material/name, arcname='material/'+name)
+            if profile['contract']['objective_id'] == 'combat-finite-upper-curves-v1':
+                if digest(material/'curve-bank.json') != profile['contract']['curve_bank_file_sha256']:
+                    raise ValueError('finite curve material does not match the profile')
+                archive.add(material/'curve-bank.json', arcname='material/curve-bank.json')
         def provision(rank):
             ssh(rank, f'test ! -e {shlex.quote(root)}\nmkdir -p {shlex.quote(root)}\n')
             scp(rank, bundle, root+'/bundle.tar')
