@@ -581,7 +581,9 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
             runtime.lower.stats['forward_seconds'] += time.perf_counter()-started
     try:
         started = time.perf_counter()
-        exits = batch.combat_exits()
+        # Only RolloutInference's explicit sparse teacher transport accepts
+        # these upper rows. The ordinary full-schema teacher path stays intact.
+        exits = batch.combat_exits(upper_value_only=runtime is not None)
         if runtime is not None:
             runtime.outer_settlement_seconds += time.perf_counter()-started
     finally:

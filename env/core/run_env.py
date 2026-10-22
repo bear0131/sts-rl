@@ -607,7 +607,11 @@ class SlayTheSpireEnv(gym.Env):
         branch._invalidate_backend_cache()
         return branch
 
-    def settle_search_combat_exit(self, battle):
+    def settle_search_combat_exit(self, battle, *, upper_value_only=False):
+        """Settle independently; optionally omit upper-value transport's unused fields.
+
+        Combat continuations always retain the complete observation contract.
+        """
         base = getattr(self, '_nosl_outer_branch', None)
         if base is None:
             raise RuntimeError('outer-return search has no sampled full-run continuation')
@@ -624,7 +628,8 @@ class SlayTheSpireEnv(gym.Env):
         branch.thick = thick
         branch._pending = branch._multi = None
         branch._invalidate_backend_cache()
-        return outcome, branch._obs()
+        return outcome, branch._obs(
+            upper_value_only=upper_value_only and outcome.kind == 'upper')
 
     def combat_action_advances(self, action_id):
         """Whether a legal thin action completes one simulator decision."""
@@ -2583,7 +2588,7 @@ class SlayTheSpireEnv(gym.Env):
             return A.PICK_HAND
         return A.arg_step_name(self._pending, self._legal(), self._phase())
 
-    def _obs(self):
+    def _obs(self, *, upper_value_only=False):
         """Structured Dict obs (encode v3): the thick layer's assembled canonical
         plus the thin layer's `arg_step` (which the backend cannot know). On a
         combat MULTI screen we also patch the thin-only progress into the select
@@ -2591,10 +2596,21 @@ class SlayTheSpireEnv(gym.Env):
         pick_max - already-selected (the sim can't know our pending set).
 
         Reconciles the MULTI accumulator FIRST so obs and the action mask never
-        disagree within one step (e.g. the frame that just LANDED on the screen)."""
+        disagree within one step (e.g. the frame that just LANDED on the screen).
+        upper_value_only is the internal sparse teacher transport, never a Gym
+        observation or action-selection input."""
+        if upper_value_only and self._phase() == 'combat':
+            raise ValueError('upper value observations require a settled noncombat state')
         self._multi_desc()
         canon = getattr(self.thick, 'encoding_canonical', self.thick.obs_canonical)()
-        canon["arg_step"] = self._arg_step()
+        # Search's upper-value transport consumes neither a combat action mask
+        # nor permanent combat card growth. Outside combat the argument step
+        # depends only on pending/phase, so it needs no legal-action enumeration.
+        # Ordinary environment observations keep their complete schema below.
+        canon["arg_step"] = (
+            A.PICK_HAND if self._multi is not None else
+            A.arg_step_name(self._pending, (), self._phase())
+        ) if upper_value_only else self._arg_step()
         canon["pending_card_slot"] = (
             int(self._pending[1]) + 1
             if self._pending is not None and self._pending[0] == "play" else 0)
@@ -2619,9 +2635,9 @@ class SlayTheSpireEnv(gym.Env):
             interactive_reasoning=self._interactive_reasoning,
         )
 
-        if self._joint_actions:
+        if self._joint_actions and not upper_value_only:
             obs['combat_legal'] = self.action_masks()[self._policy_offset:]
-        if self.outer_return_context:
+        if self.outer_return_context and not upper_value_only:
             from .outer_return import permanent_misc
             obs['outer_deck_misc'] = permanent_misc(self.thick.gc, self.thick.bc)
         return obs

@@ -144,10 +144,11 @@ class NativeSearchBatch:
         self.decode_seconds += time.perf_counter()-started
         return result
 
-    def combat_exits(self):
+    def combat_exits(self, *, upper_value_only=False):
         if not self.outer_return:
             return {}
-        return {row: self.envs[self.indices[self.payload['owners'][row]]].settle_search_combat_exit(battle)
+        return {row: self.envs[self.indices[self.payload['owners'][row]]].settle_search_combat_exit(
+                    battle, upper_value_only=upper_value_only)
                 for row, battle in self.payload['combat_exits'].items()}
 
     @property

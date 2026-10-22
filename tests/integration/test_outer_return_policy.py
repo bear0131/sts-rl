@@ -76,6 +76,15 @@ def test_tensor_encoding_omits_only_unused_snapshot_inventory(outer_return_core,
         for key in actual:
             assert actual[key].dtype == expected[key].dtype
             assert actual[key].tobytes() == expected[key].tobytes(), key
+        if full['phase'] == 'combat':
+            with pytest.raises(ValueError, match='settled noncombat'):
+                env._obs(upper_value_only=True)
+        else:
+            value_input = env._obs(upper_value_only=True)
+            assert value_input.keys() == actual.keys() - {'combat_legal', 'outer_deck_misc'}
+            for key in value_input:
+                assert value_input[key].dtype == actual[key].dtype
+                assert value_input[key].tobytes() == actual[key].tobytes(), key
         seen.add(full['phase'])
         legal = np.flatnonzero(env.action_masks())
         if env.thick.bc is not None:
@@ -290,8 +299,8 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, devi
     batch = NativeSearchBatch([env], 2)
     seen = []
     original = batch.combat_exits
-    def capture():
-        exits = original()
+    def capture(**kwargs):
+        exits = original(**kwargs)
         seen.extend(exits.values())
         return exits
     batch.combat_exits = capture
@@ -310,7 +319,8 @@ def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, devi
 
 
 @pytest.mark.parametrize('ending', ['win', 'smoke', 'death'])
-def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_return_core, ending):
+@pytest.mark.parametrize('upper_value_only', [False, True])
+def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_return_core, ending, upper_value_only):
     import copy
     import slaythespire as sts
     core, _, env = outer_return_core
@@ -347,14 +357,26 @@ def test_search_exit_view_matches_complete_branch_and_keeps_live_history(outer_r
     expected = None if expected_exit.kind == 'terminal' else reference._obs()
     env._nosl_outer_branch = base
     for _ in range(2):
-        outcome, observation = env.settle_search_combat_exit(leaf)
+        outcome, observation = env.settle_search_combat_exit(leaf, upper_value_only=upper_value_only)
         assert outcome == expected_exit
         if expected is None:
             assert observation is None
         else:
-            assert observation.keys() == expected.keys()
-            for key in expected:
-                np.testing.assert_array_equal(observation[key], expected[key], err_msg=key)
+            omitted = {'combat_legal', 'outer_deck_misc'} if upper_value_only and outcome.kind == 'upper' else set()
+            assert observation.keys() == expected.keys() - omitted
+            for key in observation:
+                assert observation[key].dtype == expected[key].dtype
+                assert observation[key].tobytes() == expected[key].tobytes(), key
+            if outcome.kind == 'upper':
+                wanted = core.teacher.prepare_search_numpy([expected])
+                actual = core.teacher.prepare_search_numpy([observation])
+                assert len(actual) == len(wanted)
+                for (indices, phase, widths, rows), (want_indices, want_phase, want_widths, want_rows) in zip(actual, wanted, strict=True):
+                    np.testing.assert_array_equal(indices, want_indices)
+                    assert phase == want_phase and widths == want_widths
+                    assert rows.keys() == want_rows.keys()
+                    for key in rows:
+                        assert rows[key].tobytes() == want_rows[key].tobytes(), key
         assert env._episode_action_journal == history
         assert env.thick.bc.to_dict() == live
         assert base._np_random.bit_generator.state == reset_rng
@@ -390,10 +412,10 @@ def test_mixed_exit_settlement_overlaps_lower_without_changing_search(outer_retu
     pool = NativeSearchBatch([env, ordinary], 2)
     seen = []
     settle = pool.combat_exits
-    def capture():
+    def capture(**kwargs):
         if 0 < len(pool.combat_exit_rows) < pool.rows:
             seen.append(graph._pending is not None)
-        return settle()
+        return settle(**kwargs)
     monkeypatch.setattr(pool, 'combat_exits', capture)
     try:
         results = []
@@ -417,7 +439,7 @@ def test_mixed_exit_settlement_overlaps_lower_without_changing_search(outer_retu
                 break
             pool.advance(*forward_outer_leaves(model, pool))
         assert 0 < len(pool.combat_exit_rows) < pool.rows
-        def fail():
+        def fail(**kwargs):
             assert graph._pending is not None
             raise ValueError('settlement failure after GPU launch')
         monkeypatch.setattr(pool, 'combat_exits', fail)
