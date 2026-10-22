@@ -311,7 +311,7 @@ def restore_learner(
                 state['nosl_is_az_pending_fights']
             )
             model._outer_pending_rewards = copy.deepcopy(state.get('outer_pending_rewards'))
-            if identity is not None:
+            if getattr(model, '_outer_return', False):
                 outer_return.validate_pending(model, env.num_envs)
             model._upper_pending = copy.deepcopy(state.get('upper_pending'))
             model._upper_episode_ids = copy.deepcopy(state.get('upper_episode_ids'))

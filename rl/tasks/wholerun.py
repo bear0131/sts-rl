@@ -544,12 +544,13 @@ class WholeRunTask(Task):
                 event_option_observation=args.event_option_observation,
                 interactive_reasoning=interactive_reasoning,
                 outer_return_context=bool(getattr(args, 'outer_return_context', False)),
+                combat_value_objective=getattr(args, 'combat_value_objective', None),
                 combat_action_contract=getattr(args, "combat_action_contract", None) or "legacy",
                 nosl_is_az_boss_transition_target=bool(
                     getattr(args, "nosl_is_az_boss_transition_target", False)
                 ),
             )
-            if not getattr(args, 'outer_return_context', False):
+            if not env.outer_return_objective:
                 env = ShapedRewardWrapper(env)
             # TimeLimit last so it sees the same steps the policy takes and its
             # truncated=True passes straight through ShapedRewardWrapper.step

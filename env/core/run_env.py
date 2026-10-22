@@ -332,9 +332,14 @@ class SlayTheSpireEnv(gym.Env):
                  deck_size_observation=False, neow_observation=False,
                  event_option_observation=False,
                  interactive_reasoning=False, combat_action_contract='legacy',
-                 nosl_is_az_boss_transition_target=False, outer_return_context=False):
+                 nosl_is_az_boss_transition_target=False, outer_return_context=False,
+                 combat_value_objective=None):
         super().__init__()
         self.outer_return_context = bool(outer_return_context)
+        from .outer_return import OBJECTIVE
+        if self.outer_return_context and combat_value_objective not in (None, OBJECTIVE, 'combat-outcome-quantiles-v1'):
+            raise ValueError('unsupported public-context combat objective')
+        self.outer_return_objective = self.outer_return_context and combat_value_objective in (None, OBJECTIVE)
         if self.outer_return_context and (combat_action_contract != C.AUTOREGRESSIVE_CONTRACT
                                          or nosl_is_az_boss_transition_target):
             raise ValueError('outer return requires AR actions and no legacy HP objective')
@@ -487,6 +492,7 @@ class SlayTheSpireEnv(gym.Env):
             "schema_version": 1,
             "combat_action_contract": self.combat_action_contract,
             "outer_return_context": self.outer_return_context,
+            "outer_return_objective": self.outer_return_objective,
             "backend_seed": int(self._episode_backend_seed),
             "backend_identity": (self.thick.training_identity()
                                  if hasattr(self.thick, 'training_identity') else None),
@@ -512,6 +518,8 @@ class SlayTheSpireEnv(gym.Env):
             raise ValueError("environment combat action contract mismatch")
         if state.get('outer_return_context', False) != self.outer_return_context:
             raise ValueError('environment outer-return context mismatch')
+        if state.get('outer_return_objective', state.get('outer_return_context', False)) != self.outer_return_objective:
+            raise ValueError('environment combat objective mismatch')
 
         # Bypass subclass reset hooks: production state is defined by this
         # environment's backend seed and journal, not fixture/setup actions.
@@ -777,11 +785,13 @@ class SlayTheSpireEnv(gym.Env):
         raise ValueError(f"illegal combat search action: {aid}")
 
     def _backend_step(self, semantic):
+        if self.outer_return_context and not self.outer_return_objective:
+            self._nosl_context_before = self._obs()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         capture_nosl_value = self._nosl_value_capture_pending
         self._nosl_value_capture_pending = False
         boundary_observation = None
-        if capture_nosl_value and not self.outer_return_context and semantic == ga.combat(actions.END_TURN):
+        if capture_nosl_value and not self.outer_return_objective and semantic == ga.combat(actions.END_TURN):
             preview_boundary = getattr(
                 self.thick, "preview_native_end_turn_boundary", None
             )
@@ -801,6 +811,8 @@ class SlayTheSpireEnv(gym.Env):
         )
 
     def _backend_step_native_combat(self, action_bits):
+        if self.outer_return_context and not self.outer_return_objective:
+            self._nosl_context_before = self._obs()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
         step_native = getattr(self.thick, "step_native_combat", None)
@@ -810,7 +822,7 @@ class SlayTheSpireEnv(gym.Env):
         preview_boundary = getattr(
             self.thick, "preview_native_end_turn_boundary", None
         )
-        if preview_boundary is not None and not self.outer_return_context:
+        if preview_boundary is not None and not self.outer_return_objective:
             raw_boundary = preview_boundary(int(action_bits))
             if raw_boundary is not None:
                 boundary_observation = self._native_leaf_observation(
@@ -828,7 +840,7 @@ class SlayTheSpireEnv(gym.Env):
         canon, reward, terminated, transition_info = result
         has_terminal_state = "nosl_value_terminal_state" in transition_info
         has_terminal_target = "nosl_value_terminal_target" in transition_info
-        if self.outer_return_context:
+        if self.outer_return_objective:
             from .outer_return import strategic_reward
             if before is None:
                 raise RuntimeError('outer-return transition omitted its before state')
@@ -1521,6 +1533,20 @@ class SlayTheSpireEnv(gym.Env):
                 card_language=self._card_language,
                 combat_language=self._combat_language,
             )
+            if self.outer_return_context:
+                from .outer_return import CONTEXT_KEYS, MISC_SCALE
+                context = getattr(self, '_nosl_context_before', None)
+                if context is None:
+                    context = self._obs()
+                obs.update({key: context[key].copy() for key in CONTEXT_KEYS})
+                hp, maximum = raw_state['player']['hp'], raw_state['player']['max_hp']
+                obs['run_hp'][:] = (hp / encode.HP_SCALE, maximum / encode.HP_SCALE,
+                                     hp / maximum if maximum else 0.)
+                if 'permanent_misc' not in raw_state:
+                    raise RuntimeError('public-context HP labels require native permanent misc metadata')
+                for index, value in raw_state['permanent_misc'].items():
+                    if 0 <= index < len(obs['deck_ids']) and obs['deck_ids'][index] != 0:
+                        obs['outer_deck_misc'][index] = value / MISC_SCALE
             return self._with_joint_legal(obs, raw_state.get('joint_action_ids', ()))
         obs = encode.encode(
             canon,
@@ -2038,6 +2064,11 @@ class SlayTheSpireEnv(gym.Env):
             if outer_return:
                 terminal_args = [sum(1 << i for i in (self._multi or ())),
                                  False, bool(merge_equivalent_actions), 0.0, True]
+            if self.outer_return_context and not outer_return:
+                terminal_args = [sum(1 << i for i in (self._multi or ())),
+                    False, bool(merge_equivalent_actions),
+                    float(boss_win_weight) if is_boss_room(self.thick.gc.cur_room) else 0.0,
+                    False, True]
             self._nosl_cpp_az_session = session_factory(
                 np.asarray(prior_logits, dtype=np.float64),
                 int(simulations), int(depth), float(c_puct),

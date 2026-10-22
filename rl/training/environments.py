@@ -406,7 +406,9 @@ def make_env(model: AccumulatingMaskablePPO, args: argparse.Namespace):
     env_args = EnvArgs()
     env_args.combat_action_contract = C.policy_contract(model.observation_space)
     env_args.ascension = args.ascension
-    env_args.outer_return_context = bool(getattr(model, '_outer_return', False))
+    env_args.outer_return_context = bool(getattr(getattr(model.policy, 'core', None), 'frozen_upper', False)
+                                         or getattr(model, '_outer_return', False))
+    env_args.combat_value_objective = getattr(getattr(model.policy, 'core', None), 'training_objective', None)
     env_args.global_map_view = flags["global_map_view"]
     env_args.card_language = flags["card_language"]
     env_args.combat_language = flags["combat_language"]

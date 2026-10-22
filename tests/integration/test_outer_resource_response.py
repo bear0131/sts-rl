@@ -89,7 +89,8 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-def test_outer_graph_lifecycle(outer_return_core):
+@pytest.mark.parametrize('control', [False, True])
+def test_outer_graph_lifecycle(outer_return_core, control):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
     import gc
     import os
@@ -97,7 +98,11 @@ def test_outer_graph_lifecycle(outer_return_core):
     from rl.search.inference import CombatLeafGraphs
     from rl.policies.precision import bf16_autocast
     assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
-    core, _, env = outer_return_core
+    core, source, env = outer_return_core
+    if control:
+        from rl.policies.outer_return import OuterReturnCore
+        core = OuterReturnCore(source, core.teacher.observation_space, env.observation_space,
+            source_sha256='1'*64, objective='combat-outcome-quantiles-v1')
     for _ in range(64):
         if env._phase() == 'combat':
             break
@@ -128,10 +133,19 @@ def test_outer_graph_lifecycle(outer_return_core):
         assert cache.statistics()['evictions'] >= 2 and cache.statistics()['hits'] >= 1
         before = values.copy()
         with torch.no_grad():
-            core.combat.scalar[-1].bias.add_(1.)
+            if control:
+                core.combat.distribution.win.bias.add_(1.)
+            else:
+                core.combat.scalar[-1].bias.add_(1.)
         obs = {k: v[None] for k, v in env._obs().items() if k in core.combat_observation_keys}
         _, changed = cache(obs, 1)
-        np.testing.assert_allclose(changed-before, 1., atol=.002, rtol=0)
+        if control:
+            assert np.all(changed > before)
+            with torch.inference_mode(), bf16_autocast():
+                expected = core.combat_actor_critic(observation_as_tensor(obs, 'cuda'), active_relic_width=1)[1]
+            np.testing.assert_allclose(changed, expected.float().cpu().numpy().flatten(), atol=.02, rtol=.02)
+        else:
+            np.testing.assert_allclose(changed-before, 1., atol=.002, rtol=0)
         assert core.teacher.assert_integrity() == frozen
     finally:
         cache.clear()

@@ -17,6 +17,7 @@ from rl.policies.entity_combat import (
 from rl.policies.entity_joint import EntityJointCore, UpperConfig
 from rl.policies.frozen_upper import FrozenUpperTeacher
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
+from rl.algorithms.combat_distribution import CONTRACT as COMBAT_OBJECTIVE
 
 
 def _sha(path):
@@ -52,10 +53,15 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 
 class OuterCombatNetwork(EntityCombatNetwork):
-    def __init__(self, source, source_space, space, *, initialization='random'):
+    def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE):
+        if objective not in (OBJECTIVE, COMBAT_OBJECTIVE):
+            raise ValueError('unsupported frozen-upper lower objective')
+        if objective == COMBAT_OBJECTIVE and initialization != 'random':
+            raise ValueError('TRAIN47 context control requires a fresh random lower')
+        self.objective = objective
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
-        config = replace(source.config, auxiliary_loss_coef=0.)
+        config = replace(source.config, auxiliary_loss_coef=0.) if objective == OBJECTIVE else source.config
         # The old boss flag remains an encoder input for exact actor warm start;
         # it never selects a boss/HP value objective in this class.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
@@ -65,7 +71,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        del self.distribution, self.transition
+        if objective == OBJECTIVE:
+            del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
         self.context_character = nn.Embedding(int(space['character'].high.max()) + 1, 8)
@@ -75,7 +82,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization == '876':
             nn.init.zeros_(self.context[-1].weight)
             nn.init.zeros_(self.context[-1].bias)
-        self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
+        if objective == OBJECTIVE:
+            self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
         state, blocks = super().encode(obs, active_relic_width, card_table=card_table)
@@ -103,6 +111,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
         return context.to(dtype)
 
     def _value(self, state, obs):
+        if self.objective == COMBAT_OBJECTIVE:
+            return super()._value(state, obs)
         with torch.autocast(device_type=state.device.type, enabled=False):
             return self.scalar(state.float()), {}
 
@@ -115,19 +125,23 @@ class OuterReturnCore(EntityCombatCore):
     joint_upper = False
     frozen_upper = True
 
-    def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random'):
+    def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random',
+                 objective=OBJECTIVE):
         nn.Module.__init__(self)
         if not CONTEXT_KEYS <= space.spaces.keys():
             raise ValueError('outer-return policy requires public run context')
         self.lower_initialization = lower_initialization
-        self.combat = OuterCombatNetwork(source.combat, source_space, space, initialization=lower_initialization)
+        self.training_objective = objective
+        self.combat = OuterCombatNetwork(source.combat, source_space, space,
+            initialization=lower_initialization, objective=objective)
         self.config = self.combat.config
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
         self.map_dag_enabled = source.map_dag_enabled
 
     def disable_transition_auxiliary(self):
-        return None
+        if self.training_objective == COMBAT_OBJECTIVE:
+            super().disable_transition_auxiliary()
 
     def actor_critic(self, obs, **kwargs):
         phase = obs['phase'].long().flatten()
@@ -154,7 +168,8 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return super().obs_to_tensor(observation)
 
     def __init__(self, *args, material_directory, material_sha256, source_sha256,
-                 lower_initialization='random', **kwargs):
+                 lower_initialization='random', objective=OBJECTIVE, **kwargs):
+        self.objective = objective
         self.material_directory = str(material_directory)
         self.material_sha256 = material_sha256
         self.source_sha256 = source_sha256
@@ -165,7 +180,8 @@ class OuterReturnPolicy(EntityCombatPolicy):
         source, source_space = load_initialization_material(self.material_directory,
             manifest_sha256=self.material_sha256, source_sha256=self.source_sha256)
         self.core = OuterReturnCore(source, source_space, self.observation_space,
-                                    source_sha256=self.source_sha256, lower_initialization=self.lower_initialization)
+            source_sha256=self.source_sha256, lower_initialization=self.lower_initialization,
+            objective=self.objective)
         self.entity_config = asdict(self.core.config)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
@@ -173,4 +189,4 @@ class OuterReturnPolicy(EntityCombatPolicy):
     def _get_constructor_parameters(self):
         return dict(super()._get_constructor_parameters(), material_directory=self.material_directory,
                     material_sha256=self.material_sha256, source_sha256=self.source_sha256,
-                    lower_initialization=self.lower_initialization)
+                    lower_initialization=self.lower_initialization, objective=self.objective)

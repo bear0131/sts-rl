@@ -54,7 +54,7 @@ def optimizer_step(model, micro_batches=1, *, value_only=False, optimizer=None, 
     optimizer = model.policy.optimizer if optimizer is None else optimizer
     optimizer.step()
     optimizer.zero_grad()
-    if getattr(model, '_outer_return', False):
+    if getattr(getattr(model.policy, 'core', None), 'frozen_upper', False):
         model.policy.core.teacher.assert_integrity()
     # Leave logging's device synchronization to callers that consume the norm.
     return norm.detach()

@@ -2435,6 +2435,7 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
         request.legalActions = stored.legalActions;
         request.needsPolicy = stored.needsPolicy;
         request.outerReturn = config_.outerReturn;
+        request.publicRunContext = config_.publicRunContext;
         request.combatExit = config_.outerReturn && stored.state->outcome != Outcome::UNDECIDED;
         requests.push_back(std::move(request));
     }

@@ -6,6 +6,24 @@
 
 当前实验入口为 `python -m rl.training.distributed_sb3`。算法参数、机器地址、结果目录分别见 configs/train、experiments/launchers 和忽略的 runs/local。
 
+## COMBAT04：保留context的TRAIN47目标对照
+
+`configs/train/combat_train47_context_876_4x5090.json` 沿用上述入口的
+`--prepare-combat-outer` 材料准备模式。876上层继续冻结、FP32 masked argmax；
+下层及context分支随机初始化，采用TRAIN47的胜负BCE、胜利条件HP分位数及utility MSE，
+Boss权重0.9，转移辅助损失系数0。无效的transition头保持源配置的停用状态；其他下层
+参数从第一次更新共同训练。优化器、replay、计数全部从零开始。
+
+`OuterReturnPolicy` 的显式 `objective='combat-outcome-quantiles-v1'` 选择该受支持变体；
+默认值仍是COMBAT01。`outer_return_context` 只决定额外输入，环境的
+`combat_value_objective` 独立决定真实终局标签；旧环境未指定目标时保持原行为。
+原生 `public_run_context` 仅传输叶的永久卡牌成长，不改变TRAIN47搜索终值。
+必须使用包含该传输扩展的新native，恢复身份严格记录目标、损失配置、teacher和native。
+沿用历史持久字段名 `outer_return_contract` 保存这两种冻结上层合同，其存在不代表选择外层目标。
+
+本对照保留额外context，因此不是原始TRAIN47架构的完全重跑；上层value不参与下层监督。
+部署仍需两轮真实生命周期和GPU graph形状/淘汰/权重变化/资源释放验收。
+
 ## COMBAT01：876冻结上层、完整随机下层
 
 `configs/train/combat_outer_return_876_4x5090.json` 定义当前合同。876只提供独立的

@@ -84,6 +84,7 @@ struct NoslCombatSearchConfig {
     // Finite unbounded outer return. Every combat exit is evaluated by the
     // caller after settling its complete sampled run continuation.
     bool outerReturn = false;
+    bool publicRunContext = false;  // Observation metadata only; no value/terminal change.
 };
 
 struct NoslCombatSearchStats {
@@ -191,6 +192,7 @@ public:
         std::vector<Action> legalActions;
         bool needsPolicy = true;
         bool outerReturn = false;
+        bool publicRunContext = false;
         bool combatExit = false;
     };
 

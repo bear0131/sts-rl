@@ -20,8 +20,10 @@ class NativeSearchBatch:
         self.language = (_nosl_compact_lut()['language_card_index']
                          if self.envs[0]._card_language else None)
         first = self.envs[0]
-        self.outer_return = first.outer_return_context
-        if any(e.outer_return_context != self.outer_return for e in self.envs):
+        self.public_context = first.outer_return_context
+        self.outer_return = first.outer_return_objective
+        if any((e.outer_return_context, e.outer_return_objective) !=
+               (self.public_context, self.outer_return) for e in self.envs):
             raise ValueError('native batch cannot mix outer-return and legacy environments')
         shapes = dict(_nosl_compact_empty(card_language=first._card_language))
         if first._joint_actions:
@@ -31,7 +33,7 @@ class NativeSearchBatch:
         # two fields made batched native leaves differ byte-for-byte from the
         # serial bridge path.
         self._prototypes = dict(shapes)
-        if self.outer_return:
+        if self.public_context:
             from env.core.outer_return import CONTEXT_KEYS
             self._prototypes.update({key: np.zeros(first.observation_space[key].shape,
                 dtype=first.observation_space[key].dtype) for key in CONTEXT_KEYS})
@@ -61,7 +63,7 @@ class NativeSearchBatch:
         context_keys = ()
         if root_observations is not None:
             from env.core.outer_return import CONTEXT_KEYS
-            if not self.outer_return:
+            if not self.public_context:
                 raise ValueError('root context transport requires the outer-return objective')
             context_keys = CONTEXT_KEYS
             for key in context_keys:
@@ -123,7 +125,7 @@ class NativeSearchBatch:
                 if key in payload:
                     payload[key] = np.asarray(payload[key])[rows]
         result = self.decoder.decode(payload, self._decoder_globals, destination)
-        if self.outer_return:
+        if self.public_context:
             from env.core.outer_return import MISC_SCALE
             if self.payload.get('outer_return_schema') != 1:
                 raise RuntimeError('native outer-return leaf contract is missing')

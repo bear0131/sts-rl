@@ -10,16 +10,21 @@ from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA
 from env.core.run_env import SlayTheSpireEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.outer_return import OuterReturnPolicy, load_initialization_material
+from rl.algorithms.combat_distribution import CONTRACT as COMBAT_OBJECTIVE
 from rl.training.environments import make_env, observation_flags
 
 
 def construct(args, profile):
     material = dict(material_directory=str(args.material_directory.resolve()),
                     material_sha256=args.material_sha256, source_sha256=profile['source']['model_sha256'],
-                    lower_initialization=profile['contract']['lower_init'])
+                    lower_initialization=profile['contract']['lower_init'],
+                    objective=profile['contract']['objective_id'])
     source, space = load_initialization_material(directory=material['material_directory'],
         manifest_sha256=material['material_sha256'], source_sha256=material['source_sha256'])
-    prototype = SimpleNamespace(policy=SimpleNamespace(core=source), observation_space=space, _outer_return=True)
+    source.frozen_upper = True
+    source.training_objective = material['objective']
+    prototype = SimpleNamespace(policy=SimpleNamespace(core=source), observation_space=space,
+                                _outer_return=material['objective'] == OBJECTIVE)
     # Preserve optional source observation fields; the lower extension is explicit.
     schema_env = SlayTheSpireEnv(combat_action_contract='autoregressive-v2', outer_return_context=True,
                                 **observation_flags(prototype))
@@ -62,7 +67,7 @@ def prepare(args):
     if args.output.exists():
         raise FileExistsError(args.output)
     profile = json.loads(args.prepare_combat_outer.read_text(encoding='utf-8'))
-    if (profile['contract']['objective_id'] != OBJECTIVE or profile['contract']['lower_init'] != 'random' or
+    if (profile['contract']['objective_id'] not in (OBJECTIVE, COMBAT_OBJECTIVE) or profile['contract']['lower_init'] != 'random' or
             profile['contract'].get('lower_context') != CONTEXT_SCHEMA):
         raise ValueError('production profile requires frozen upper with a fresh trainable lower network')
     args.n_envs, args.n_steps, args.seed = 1, 2, int(profile['training']['seed'])

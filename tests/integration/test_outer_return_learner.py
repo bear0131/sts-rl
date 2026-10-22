@@ -78,12 +78,15 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, 'combat-outcome-quantiles-v1'])
+def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monkeypatch, capsys, objective):
+    control = objective != outer.OBJECTIVE
+    outer_material = dict(outer_material, objective=objective)
     def make_env(*_):
         def factory():
             return TrainingStateWrapper(TimeLimit(SlayTheSpireEnv(backend_factory=QuickBackend,
                 global_map_view=True, combat_action_contract='autoregressive-v2',
-                outer_return_context=True), max_episode_steps=500))
+                outer_return_context=True, combat_value_objective=objective), max_episode_steps=500))
         env = VecMonitor(NativeSearchVecEnv([factory for _ in range(8)], threads=2))
         env.seed(42101)
         return env
@@ -98,7 +101,11 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
         nosl_is_az_replay_capacity=2048)
     initial = tmp_path / 'initial.zip'
     assert model.policy.core.lower_initialization == 'random'
-    assert all(p.requires_grad for p in model.policy.core.combat.parameters())
+    assert all(p.requires_grad for name, p in model.policy.core.combat.named_parameters()
+               if not (control and name.startswith('transition.')))
+    assert model._combat_distribution == control and model._outer_return != control
+    assert not hasattr(model.policy, 'upper_optimizer')
+    assert not model.policy.optimizer.state
     lower_before = {key: value.clone() for key, value in model.policy.core.combat.state_dict().items()}
     model.save(initial)
     teacher = model.policy.core.teacher.assert_integrity()
@@ -124,16 +131,23 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     from rl.training.checkpoints import read_bundle
     generations = sorted((tmp_path/'state'/'rank0').glob('step-*'))
     assert [read_bundle(path, rank=0, world_size=1)['global_step'] for path in generations] == [1024, 2048]
-    assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
-    assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
+    if control:
+        assert all('outer_return/labelled_roots' not in p for p in payloads)
+        assert all('upper/updates' not in p or p['upper/updates'] == 0 for p in payloads)
+        assert all(p['nosl_is_az/win_bce'] >= 0 for p in payloads)
+    else:
+        assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
+        assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
     assert all(p['nosl_is_az/updates'] == 2 for p in payloads)
-    assert all(p['nosl_is_az/lower_cache_requests'] > 0 for p in payloads)
-    assert all(p['nosl_is_az/upper_cache_requests'] > 0 for p in payloads)
-    assert all(p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
+    if not control:
+        assert all(p['nosl_is_az/lower_cache_requests'] > 0 for p in payloads)
+        assert all(p['nosl_is_az/upper_cache_requests'] > 0 for p in payloads)
+        assert all(p['nosl_is_az/outer_settlement_seconds'] > 0 for p in payloads)
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher
-    for key in ('transformer.layers.0.linear1.weight', 'scalar.2.weight', 'end.weight'):
+    value_key = 'distribution.win.weight' if control else 'scalar.2.weight'
+    for key in ('transformer.layers.0.linear1.weight', value_key, 'end.weight', 'context.2.weight'):
         assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
     restore_learner(restored, bundle, rank=0, world_size=1)
@@ -141,6 +155,11 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
     assert not hasattr(restored, '_rollout_inference')
     replay = restored._ensure_nosl_is_az_replay()
     assert replay.size > 0 and np.isfinite(replay.value_targets[:replay.size]).all()
+    if control:
+        assert replay.value_contract == 'combat-end-hp-v1'
+        assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= 1))
+        assert replay.supervision_contract == 'combat-outcome-quantiles-v1'
+        assert not restored.policy.core.teacher.training
     state = replay.state_dict()
     state['objective_identity'] = dict(state['objective_identity'], gamma=.99)
     with pytest.raises(ValueError, match='objective identity'):
@@ -161,7 +180,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, tmp_path, monk
                 for line in capsys.readouterr().out.splitlines() if line.startswith('ROLLOUT_PROGRESS ')]
     assert len(progress) == 3
     assert all(p['vector_steps'] == p['target_steps'] == 128 and p['seconds'] > 0 for p in progress)
-    assert all(p['inference']['lower_cache_requests'] > 0 for p in progress)
+    if not control:
+        assert all(p['inference']['lower_cache_requests'] > 0 for p in progress)
 
 
 @pytest.mark.parametrize('abort', [False, True])

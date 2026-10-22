@@ -22,7 +22,8 @@ def _native_sha():
 
 def contract(model):
     teacher = model.policy.core.teacher
-    return dict(objective=OBJECTIVE, context=CONTEXT_SCHEMA, gamma=1.,
+    objective = model.policy.core.training_objective
+    identity = dict(objective=objective, context=CONTEXT_SCHEMA, gamma=1.,
                 lower_initialization=model.policy.core.lower_initialization,
                 teacher=teacher.get_extra_state(), native_sha256=_native_sha(),
                 observation_version=encode.OBS_VERSION, boundary='settled-run-exit-v1',
@@ -31,13 +32,19 @@ def contract(model):
                          'paper_full_gumbel', 'gumbel_candidates', 'gumbel_scale',
                          'gumbel_value_scale', 'gumbel_rescale_q', 'gumbel_use_mixed_value',
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
+    if objective != OBJECTIVE:
+        config = model.policy.core.config
+        identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
+                        mean_loss_coef=config.mean_loss_coef, auxiliary_loss_coef=config.auxiliary_loss_coef,
+                        quantiles=config.quantiles)
+    return identity
 
 
 def setup(model):
     if not (model.nosl_is_az and model.nosl_is_az_inner_only and model.nosl_is_az_cpp and
             model.nosl_is_az_upper_strategy == 'model' and model.nosl_is_az_combat_strategy == 'model' and
             model.nosl_is_az_fixed_worldline and not model.nosl_is_az_boss_transition_target and
-            not model.nosl_is_az_end_turn_as_leaf and not model.hierarchical_combat_hp and
+            not model.nosl_is_az_end_turn_as_leaf and (not model._outer_return or not model.hierarchical_combat_hp) and
             model.nosl_is_az_leaf_batch_size == 1 and model.gamma == 1.):
         raise ValueError('outer return requires gamma=1, fixed-worldline native inner-only NOSL and frozen model upper')
     if model.get_env() is not None and getattr(model.get_env(), 'native_search_batch', None) is None:
@@ -47,9 +54,11 @@ def setup(model):
     if previous is not None and previous != identity:
         raise ValueError('outer-return checkpoint teacher/context/native identity changed')
     model.outer_return_contract = identity
-    model.nosl_value_contract = OBJECTIVE
+    model.nosl_value_contract = OBJECTIVE if model._outer_return else 'combat-end-hp-v1'
     model.policy.core.teacher.assert_integrity()
-    if not all(parameter.requires_grad for parameter in model.policy.core.combat.parameters()):
+    if not all(parameter.requires_grad for name, parameter in model.policy.core.combat.named_parameters()
+               if not (not model._outer_return and not model.policy.core.config.auxiliary_loss_coef
+                       and name.startswith('transition.'))):
         raise ValueError('outer return trains all lower actor/encoder/critic parameters from the first update')
 
 

@@ -436,15 +436,17 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
         self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
         self._outer_return = self.nosl_supervision_contract == outer.OBJECTIVE
+        self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
             if self._hierarchical_hp_requested:
                 raise ValueError('outer return cannot enable hierarchical HP targets')
             self.hierarchical_combat_hp = False
+        if self._frozen_upper:
             outer.setup(self)
         from rl.algorithms.update_schedule import CombatUpdateSchedule
         CombatUpdateSchedule.from_config(self.nosl_is_az_update_schedule).validate_model(self)
         if self._combat_distribution and not (self.nosl_is_az and self.nosl_is_az_inner_only
-                and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == ('model' if joint_upper(self) else 'rules')):
+                and self.nosl_is_az_cpp and self.nosl_is_az_upper_strategy == ('model' if joint_upper(self) or self._frozen_upper else 'rules')):
             raise ValueError('entity-combat training requires C++ inner-only NOSL and rules upper strategy')
         self.combat_action_contract = C.policy_contract(self.observation_space)
         if self.combat_action_contract in C.NEURAL_CONTRACTS:
@@ -1206,7 +1208,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             )
 
             actions_np = actions.cpu().numpy().reshape(-1)
-            if self._outer_return:
+            if self._frozen_upper:
                 outer.upper_actions(self, self._last_obs, action_masks, actions_np)
             # BF16 autocast tensors do not have a numpy representation on
             # several PyTorch versions; IPC always receives public FP32 logits.
@@ -1382,7 +1384,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     if native_batch is not None:
                         result_by_index, shared_stats = complete_searches_native(
                             self, native_batch, begin_calls, autocast=self.autocast_context,
-                            root_observations=self._last_obs if self._outer_return else None)
+                            root_observations=self._last_obs if self._frozen_upper else None)
                         for key in NATIVE_TIMING_KEYS:
                             nosl_timings[key] += shared_stats[key]
                     elif (
@@ -1786,6 +1788,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
             outer.finish_collection(self)
         else:
             rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+        if self._frozen_upper:
+            self.policy.core.teacher.assert_integrity()
+            self.logger.record('frozen_upper/upper_updates', 0)
         callback.on_rollout_end()
         pending_combat_roots = sum(len(pending) for pending in active_combat_samples)
         self.logger.record(

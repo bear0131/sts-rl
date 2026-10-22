@@ -79,3 +79,44 @@ def test_model_save_reload_graph_forward_and_search_contract(combat_factory,tmp_
     assert env.action_masks()[result['action']]
     with pytest.raises(ValueError,match='must match'):
         search(loaded,env,obs,NativeSearchConfig(simulations=4),nonce=42)
+
+
+@pytest.mark.parametrize('boss,expected', [(False, .05), (True, .905)])
+def test_context_control_keeps_exact_train47_terminal_and_observed_hp(boss, expected):
+    from env.core.run_env import SlayTheSpireEnv
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract=C.AUTOREGRESSIVE_CONTRACT,
+        outer_return_context=True, combat_value_objective='combat-outcome-quantiles-v1')
+    try:
+        env.reset(seed=42101)
+        for _ in range(64):
+            if env.thick.bc is not None:
+                break
+            env.step(int(np.flatnonzero(env.action_masks())[0]))
+        assert env.thick.bc is not None
+        env.thick.bc = sts.create_battle(env.thick.gc, 'Jaw Worm')
+        env.thick.gc.cur_room = sts.Room.BOSS if boss else sts.Room.MONSTER
+        env.thick.bc.apply_custom_state({'hand': ['STRIKE_RED'], 'player': {'hp': 10, 'energy': 3}})
+        env.thick.bc.set_player_strength(999)
+        env._invalidate_backend_cache()
+        action = next(int(a) for a in np.flatnonzero(env.action_masks())
+                      if C.AUTOREGRESSIVE_PLAY <= a < C.AUTOREGRESSIVE_POTION)
+        logits = np.full(env.action_space.n, -1000.)
+        logits[action] = 1000.
+        pool = NativeSearchBatch([env], 1)
+        try:
+            pool.begin({0: ((logits,), dict(state_nonce=42, simulations=1, depth=0,
+                root_search_mode=0, paper_full_gumbel=False, boss_win_weight=.9,
+                fixed_worldline=True, compact_observation=True))})
+            assert pool.done  # Exact terminal; no upper critic or neural bootstrap.
+            assert pool.results()[0]['root_value'] == pytest.approx(expected)
+        finally:
+            pool.close()
+        _, _, _, _, info = env.step(action)
+        assert info['nosl_value_terminal_target'] == pytest.approx(.05)
+        assert info['nosl_value_terminal_outcome'] == 'win'
+        terminal = info['nosl_value_terminal_observation']
+        assert terminal['run_hp'][0] == pytest.approx(10 / encode.HP_SCALE)
+        assert {'outer_deck_misc', 'deck_ids', 'floor'} <= terminal.keys()
+        assert 'outer_combat_exit' not in info
+    finally:
+        env.close()

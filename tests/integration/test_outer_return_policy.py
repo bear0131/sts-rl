@@ -475,3 +475,44 @@ def test_permanent_growth_context_matches_real_settlement(outer_return_core):
     branch, _ = env.thick.settle_combat_leaf(env.thick.bc)
     assert branch.gc.deck_state()[0]['misc'] == 18
     assert permanent_misc(branch.gc)[0] == pytest.approx(.18)
+
+
+def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upper_source):
+    import slaythespire as sts
+    from env.core.run_env import SlayTheSpireEnv
+    from rl.policies.outer_return import OuterReturnCore
+    source, space, _, _ = frozen_upper_source
+    env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
+        outer_return_context=True, combat_value_objective='combat-outcome-quantiles-v1')
+    pool = None
+    try:
+        env.reset(seed=42101)
+        _enter_combat(env)
+        env.thick.gc.set_deck_state([dict(id='RITUAL_DAGGER', upgrades=0, misc=15, bottle='NONE')])
+        env.thick.bc = sts.create_battle(env.thick.gc, 'Looter')
+        env.thick.bc.apply_custom_state({'player': {'hp': 11}})
+        env._invalidate_backend_cache()
+        core = OuterReturnCore(source, space, env.observation_space, source_sha256='1'*64,
+                               objective='combat-outcome-quantiles-v1')
+        assert not hasattr(core.combat, 'scalar') and hasattr(core.combat, 'distribution')
+        assert not torch.equal(core.combat.end.weight, source.combat.end.weight)
+        pool = NativeSearchBatch([env], 1)
+        pool.begin({0: ((np.zeros(env.action_space.n),), dict(state_nonce=42, simulations=4,
+            depth=1, compact_observation=True, fixed_worldline=True, boss_win_weight=.9))})
+        assert not pool.done
+        obs = pool.observations()
+        np.testing.assert_array_equal(obs['run_hp'][:, :2], obs['player_scalars'][:, :2])
+        assert np.all(obs['outer_deck_misc'][:, 0] == np.float32(.15))
+        with torch.no_grad():
+            logits, values = core.combat_actor_critic(observation_as_tensor(obs, 'cpu'))
+        assert torch.isfinite(logits).all() and torch.isfinite(values).all()
+        env.thick.bc.set_player_strength(999)
+        env.thick.bc.execute(sts.Action(sts.ActionType.CARD, 0, 0))
+        raw = env.thick.bc.to_dict()
+        assert raw['permanent_misc'][0] == 18
+        encoded = env._native_leaf_observation(raw, combat_only=True)
+        assert encoded['outer_deck_misc'][0] == pytest.approx(.18)
+    finally:
+        if pool is not None:
+            pool.close()
+        env.close()

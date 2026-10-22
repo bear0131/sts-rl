@@ -124,6 +124,8 @@ def make_scenario(model, args, combat_model=None, combat_action_contract='legacy
             backend_factory=backend_factory,
             ascension=args.ascension,
             outer_return_context=any(getattr(getattr(m.policy, 'core', None), 'frozen_upper', False) for m in models),
+            combat_value_objective=next((m.policy.core.training_objective for m in models
+                if getattr(getattr(m.policy, 'core', None), 'frozen_upper', False)), None),
             combat_action_contract=combat_action_contract,
             global_map_view=uses(policy_model.uses_global_map_observation),
             card_language=uses(policy_model.uses_card_language),

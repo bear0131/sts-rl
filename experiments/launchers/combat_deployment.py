@@ -44,7 +44,8 @@ def run_ssh_script(command, script, timeout):
 def validate(config, *, connected=False):
     if config['kind'] != 'combat01-deployment-v1' or not re.fullmatch(r'[A-Za-z0-9_-]+', config['run_id']):
         raise ValueError('invalid COMBAT01 deployment identity')
-    if config['profile'] != 'configs/train/combat_outer_return_876_4x5090.json':
+    if config['profile'] not in ('configs/train/combat_outer_return_876_4x5090.json',
+                                 'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')
     if not re.fullmatch(r'[0-9a-f]{64}', config['material_sha256']):
         raise ValueError('material SHA256 required')
@@ -55,6 +56,8 @@ def validate(config, *, connected=False):
         raise ValueError('explicit positive round and wall-time budgets are required')
     if type(budget['seed']) is not int or budget['seed'] < 0:
         raise ValueError('an explicit nonnegative seed is required')
+    if config.get('minimum_free_disk_gib', 30) < 14:
+        raise ValueError('retain at least 14 GiB for two generations plus an atomic save and reserve')
     if len(config['ranks']) != 4 or [r['rank'] for r in config['ranks']] != list(range(4)):
         raise ValueError('exactly ranks 0..3 are required')
     if config.get('wandb_id') and not re.fullmatch(r'[A-Za-z0-9_-]+', config['wandb_id']):
@@ -131,12 +134,15 @@ def remote_preflight(config_path, rank):
         raise ValueError('insufficient advertised VRAM/RAM for 876 geometry')
     if ram_free < 65 * 1024**3 or torch.cuda.mem_get_info()[0] < 28 * 1024**3:
         raise ValueError('need 65 GiB free RAM and 28 GiB free VRAM before launch')
-    if shutil.disk_usage(root).free < 30 * 1024**3:
-        raise ValueError('need 30 GiB free disk for two recovery generations')
+    if shutil.disk_usage(root).free < config.get('minimum_free_disk_gib', 30) * 1024**3:
+        raise ValueError('insufficient free disk for retained generations plus an atomic save')
     model = load_checkpoint(root/'material/initial.zip', device='cpu', inference_only=True)
     if model.outer_profile_sha256 != digest(root/config['profile']) or model.num_timesteps != 0:
         raise ValueError('initial checkpoint must be step zero from the exact deployment profile')
-    if model.policy.core.lower_initialization != 'random' or not all(p.requires_grad for p in model.policy.core.combat.parameters()):
+    if model.policy.core.lower_initialization != 'random' or not all(
+            p.requires_grad for name, p in model.policy.core.combat.named_parameters()
+            if not (model._combat_distribution and not model.policy.core.config.auxiliary_loss_coef
+                    and name.startswith('transition.'))):
         raise ValueError('the entire fresh lower network must be trainable')
     source = read(root/'deployment-source.json')
     report = dict(rank=rank, source_commit=source['commit'], config_sha256=digest(config_path),
@@ -147,6 +153,8 @@ def remote_preflight(config_path, rank):
                       for v in model.policy.core.combat.state_dict().values())).hexdigest(),
                   torch=torch.__version__, python=sys.version.split()[0], gpu=device.name,
                   vram_bytes=device.total_memory, available_ram=ram_free, ram_total=ram_total,
+                  free_disk_bytes=shutil.disk_usage(root).free,
+                  minimum_free_disk_gib=config.get('minimum_free_disk_gib', 30),
                   cgroup_memory_limit=limit,
                   runtime_files={p: digest(root/p) for p in source['files']})
     if report['runtime_files'] != source['files']:
@@ -252,8 +260,8 @@ def common_update(states):
     for state in states:
         metric = state['metric']
         if (not metric or metric['global_timesteps'] < step or metric['optimizer_steps'] < 1 or
-                metric.get('outer_return/upper_updates') != 0 or
-                metric.get('outer_return/labelled_roots', 0) < 1):
+                metric.get('frozen_upper/upper_updates', metric.get('outer_return/upper_updates')) != 0 or
+                metric.get('nosl_is_az/completed_combat_roots', metric.get('outer_return/labelled_roots', 0)) < 1):
             return None
     return step
 
@@ -306,7 +314,8 @@ def manage(config_path, action):
     config_path = Path(config_path).resolve()
     config = validate(read(config_path), connected=action != 'plan')
     profile = read(repo/config['profile'])
-    if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] != 'combat-outer-return-frozen-upper-v1':
+    if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
+            'combat-outer-return-frozen-upper-v1', 'combat-outcome-quantiles-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"
     output.mkdir(parents=True, exist_ok=True)

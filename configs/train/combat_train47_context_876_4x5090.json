@@ -1,0 +1,183 @@
+{
+  "kind": "combat04-preparation-v1",
+  "launch_ready": false,
+  "source": {
+    "model": "checkpoints/final/train47-step-000688914432-eval31/model.zip",
+    "model_sha256": "693670e4405f73a2d41d1b92002d520331fb8720b2298e29b5e839b355369e3a",
+    "card_vectors": "checkpoints/final/train47-step-000688914432-eval31/frozen-card-vectors.pt",
+    "card_vectors_sha256": "5b1689cd201562a99a312171edf97a6e0ee5538a4d89924b5bed0a44daf5d4da",
+    "teacher_round": 876
+  },
+  "source_checkpoint_contract": {
+    "num_timesteps": 688914432,
+    "n_envs": 384,
+    "n_steps": 512,
+    "learning_rate": 5e-05,
+    "max_grad_norm": 0.5,
+    "amp_mode": "bf16",
+    "nosl_is_az_batch_size": 102400,
+    "nosl_is_az_micro_batch_size": 8192,
+    "nosl_is_az_updates": 40,
+    "nosl_is_az_policy_coef": 1.0,
+    "nosl_is_az_value_coef": 0.5,
+    "nosl_is_az_replay_enabled": true,
+    "nosl_is_az_replay_capacity": 524288,
+    "nosl_is_az_replay_min_size": 1,
+    "nosl_is_az_replay_max_old_fraction": 0.9,
+    "nosl_is_az_simulations": 128,
+    "nosl_is_az_depth": 0,
+    "nosl_is_az_end_turn_as_leaf": false,
+    "nosl_is_az_fixed_worldline": true,
+    "nosl_is_az_search_mode": "full_gumbel",
+    "nosl_is_az_paper_full_gumbel": true,
+    "nosl_is_az_gumbel_candidates": 16,
+    "nosl_is_az_gumbel_scale": 1.0,
+    "nosl_is_az_gumbel_value_scale": 1.0,
+    "nosl_is_az_gumbel_rescale_q": false,
+    "nosl_is_az_gumbel_use_mixed_value": true,
+    "nosl_is_az_gumbel_max_visit_init": 50.0,
+    "nosl_is_az_merge_equivalent_actions": true,
+    "nosl_is_az_inference_batch_size": 128,
+    "nosl_is_az_inference_max_wait_ms": 0.0,
+    "nosl_is_az_inference_schedule": "fixed_wait",
+    "nosl_supervision_contract": "combat-outcome-quantiles-v1",
+    "nosl_value_contract": "combat-end-hp-v1"
+  },
+  "source_components": {
+    "upper": {
+      "tensors": 132,
+      "elements": 5000641
+    },
+    "lower_init": {
+      "tensors": 93,
+      "elements": 3783154
+    },
+    "discarded": {
+      "tensors": 12,
+      "elements": 273448
+    }
+  },
+  "provenance": {
+    "saved_model_data": "source_checkpoint_contract is read from the exact 876 model, not guessed from a preset name",
+    "runtime_evidence": {
+      "path": "runs/local/train47-perf-deploy-20261016/preflight-rank0.json",
+      "sha256": "0c2a79dcb2506ccaa41bc96b34d78b339a811726faba8c814b9955de74684097",
+      "step": 451411968,
+      "fields": {
+        "native_search_threads": 16,
+        "vec": "native",
+        "leaf_inference": "cuda-graph",
+        "leaf_graph_batch_multiple": 32,
+        "leaf_graph_profile_interval": 0,
+        "float32_matmul_precision": "high",
+        "rollout_resource_interval": 2.0
+      }
+    },
+    "hardware_evidence": "worklog/2026-10-21.md#train47-gpu-cost-and-cpu-attribution-results"
+  },
+  "simulator": {
+    "runtime_commit": "528d8aa1428fcd9f176830a581e500cd2e5db2f5",
+    "handoff_commit": "b5e92dc963c557dac39068ae8faed133f3fc6192",
+    "source_zip_sha256": "263ad07c9b9375fabf5998fe836f568e4007695be8b215103fbfb36158ebbd22",
+    "reference_windows_native_sha256": "94187a4857e72c15ca10a9f838cd36c35cd7bd77f3b6bab7916c2b5d8812cb34",
+    "observation_version": 20,
+    "action_version": 8,
+    "compact_layout": 9,
+    "combat_card_snapshot": 3,
+    "linux_native": "rebuild from pinned source and record Linux binary hash; Windows hash is not a Linux acceptance hash"
+  },
+  "contract": {
+    "objective_id": "combat-outcome-quantiles-v1",
+    "reward_id": "combat-end-hp-v1",
+    "boundary_id": "combat-end-hp-v1",
+    "gamma": 1.0,
+    "upper_actor": "frozen-876-masked-argmax",
+    "upper_critic": "frozen-876-unused-for-combat-targets",
+    "upper_optimizer_updates": 0,
+    "reward_policy_contract": "checkpoint-v7-act3",
+    "lower_init": "random",
+    "lower_context": "combat-public-run-context-v2",
+    "lower_value": "TRAIN47-win-BCE-HP-quantiles-utility-MSE",
+    "old_optimizer": "discard",
+    "old_replay": "discard",
+    "progress": "reset-to-zero",
+    "task": {
+      "character": "IRONCLAD",
+      "ascension": 0,
+      "last_act": 3
+    }
+  },
+  "training": {
+    "world_size": 4,
+    "n_envs_per_rank": 384,
+    "n_steps": 512,
+    "slot_steps_per_rank_per_round": 196608,
+    "slot_steps_global_per_round": 786432,
+    "seed": 9001000,
+    "native_search_threads": 32,
+    "vec": "native",
+    "learning_rate": 5e-05,
+    "max_grad_norm": 0.5,
+    "batch_size_per_rank": 102400,
+    "max_global_samples_per_optimizer_update": 409600,
+    "micro_batch_size": 8192,
+    "optimizer_updates_per_round": 40,
+    "policy_loss_coefficient": 1.0,
+    "value_loss_coefficient": 0.5,
+    "replay": {
+      "enabled": true,
+      "capacity_per_rank": 524288,
+      "min_size": 1,
+      "max_old_fraction": 0.9,
+      "initial_size": 0,
+      "accepted_labels": "same objective, teacher, observation, boundary and search identities only"
+    },
+    "lower_amp": "bf16",
+    "teacher_value_target_precision": "not-used",
+    "float32_matmul_precision": "high",
+    "leaf_inference": "cuda-graph-after-control-lifecycle-validation",
+    "leaf_graph_batch_multiple": 32,
+    "leaf_graph_profile_interval": 0,
+    "resource_interval_seconds": 2.0
+  },
+  "search": {
+    "simulations": 128,
+    "depth": 0,
+    "end_turn_as_leaf": false,
+    "mode": "full_gumbel",
+    "paper_full_gumbel": true,
+    "fixed_worldline": true,
+    "gumbel_candidates": 16,
+    "gumbel_scale": 1.0,
+    "gumbel_value_scale": 1.0,
+    "gumbel_max_visit_init": 50.0,
+    "gumbel_rescale_q": false,
+    "gumbel_use_mixed_value": true,
+    "merge_equivalent_actions": true,
+    "inference_batch_size": 128,
+    "inference_max_wait_ms": 0.0,
+    "inference_schedule": "fixed_wait"
+  },
+  "proposed_acceptance_budget": {
+    "status": "not-launched",
+    "seed": 9001000,
+    "world_size": 4,
+    "rounds": 2,
+    "max_global_slot_steps": 1572864,
+    "max_wall_seconds": 3600,
+    "max_lower_updates": 80,
+    "save_every_round": true,
+    "retain_complete_generations": 2,
+    "applies_after": "CPU contracts, resource response audit and Linux native acceptance pass; all lower parameters train from the first update"
+  },
+  "required_runtime_capabilities": [
+    "frozen-876-upper-masked-argmax",
+    "random-context-lower-TRAIN47-objective",
+    "combat-end-hp-labels-with-public-context",
+    "no-upper-updates",
+    "versioned-replay-and-environment-recovery",
+    "two-round-real-lifecycle-and-production-length-GPU-collection"
+  ],
+  "full_training_budget": null,
+  "notice": "COMBAT04 control: retain public run context, reset lower and all training state, restore TRAIN47 fight-local objective. Upper actor is frozen 876; upper value never labels combat."
+}
