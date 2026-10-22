@@ -16,6 +16,49 @@ class LiveRelicObservationMismatch(AssertionError):
     """Only the known OBS02 field mismatch is an expected failure."""
 
 
+@pytest.mark.parametrize('slots', [(), (0,), (7,), (0, 7), (-1,), (7, -1)])
+def test_live_counter_preserves_empty_and_duplicate_relic_slots(combat_factory, slots):
+    env = combat_factory(['STRIKE_RED'] * 5, relics=['Pen Nib'])
+    env.thick.bc.apply_custom_state({'player': {'counters': {'pen_nib': 3}}})
+    env._invalidate_backend_cache()
+    raw = env.thick.bc.compact_leaf_arrays()
+    packed = dict(categorical=np.asarray(raw['categorical'])[None],
+                  scalars=np.asarray(raw['scalars'])[None],
+                  owners=np.array([0], np.int64),
+                  selection_prefix=np.array([0], np.int32),
+                  legal_policy_ids=np.empty((1, 0), np.int32))
+    globals = {key: value[None].copy() for key, value in env._native_packed_global_fields().items()}
+    relic = int(globals['relics'][0, 0])
+    assert relic != 0
+    globals['relics'].fill(0)
+    globals['relic_counters'].fill(0)
+    for slot in slots:
+        globals['relics'][0, slot] = relic
+    expected = np.zeros_like(globals['relic_counters'])
+    for slot in slots:
+        expected[0, slot] = np.float32(3 / 10)
+    pool = NativeSearchBatch([env], 1)
+    try:
+        actual = pool.decoder.decode(packed, globals)
+        np.testing.assert_array_equal(actual['relics'], globals['relics'])
+        np.testing.assert_array_equal(actual['relic_counters'], expected)
+        destination = {key: np.full((3, *value.shape[1:]), 7, value.dtype)
+                       for key, value in actual.items()}
+        padding = {key: value[1:].tobytes() for key, value in destination.items()}
+        pool.decoder.decode(packed, globals, destination)
+        for key, value in actual.items():
+            assert destination[key][:1].tobytes() == value.tobytes(), key
+            assert destination[key][1:].tobytes() == padding[key], key
+        # A live flag must still reject missing ownership even for an entirely
+        # empty inventory; the empty prefix cannot bypass validation.
+        packed['scalars'] = packed['scalars'].copy()
+        packed['scalars'][0, -4] = 1
+        with pytest.raises(ValueError, match='active relic flag has no owned relic'):
+            pool.decoder.decode(packed, globals)
+    finally:
+        pool.close()
+
+
 @pytest.mark.parametrize("relics", [
     ["Centennial Puzzle"], ["Lizard Tail"], ["Happy Flower", "Pen Nib", "InkBottle"],
     ["Kunai", "Letter Opener", "Ornamental Fan", "Pocketwatch", "Shuriken"],

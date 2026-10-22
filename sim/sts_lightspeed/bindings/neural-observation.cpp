@@ -174,6 +174,11 @@ public:
             const float neow=s[selectStart+201];
             if (!std::isfinite(neow) || neow<0.0f || neow>3.0f || neow!=std::nearbyint(neow))
                 throw std::invalid_argument("native Neow remainder is outside 0..3");
+            // Keep every slot and duplicate identity; only trailing PAD cannot
+            // match a nonzero live relic. Compute its boundary once per row.
+            auto activeRelicWidth = relicWidth;
+            while (activeRelicWidth && relics[r*relicWidth+activeRelicWidth-1] == 0)
+                --activeRelicWidth;
             for (py::ssize_t k=0; k<liveRelicIds.size(); ++k) {
                 const auto column=liveColumns.data()[k];
                 if (column < -5 || column >= counters)
@@ -184,7 +189,8 @@ public:
                 if (stop && value>=stop) value=0.0f;
                 if (column!=-1 && column!=-2) value/=counterScale;
                 bool owned=false;
-                for (py::ssize_t slot=0; slot<relicWidth; ++slot)
+                const auto scanWidth = liveRelicIds.data()[k] == 0 ? relicWidth : activeRelicWidth;
+                for (py::ssize_t slot=0; slot<scanWidth; ++slot)
                     if (relics[r*relicWidth+slot]==liveRelicIds.data()[k]) {
                         relicCounters[r*relicWidth+slot]=value;
                         owned=true;
