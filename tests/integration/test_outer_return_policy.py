@@ -153,8 +153,14 @@ def test_outer_native_writer_preserves_selected_rows_context_and_padding(outer_r
         full = pool.observations()
         assert full['outer_deck_misc'][2, 0] == np.float32(.41)
         assert full['outer_deck_misc'][0, 1] == np.float32(.17)
+        empty = pool.observations([])
+        for key, value in full.items():
+            assert empty[key].shape == (0, *value.shape[1:])
+            assert empty[key].dtype == value.dtype
+        with pytest.raises(IndexError):
+            pool.observations([0.5])
         target = {k: np.full((5, *v.shape[1:]), 3, dtype=v.dtype) for k, v in full.items()}
-        for rows in ([2, 0], [1], [0, 1, 2], [2, 1]):
+        for rows in ([2, 0], [1], [0, 1, 2], [2, 1], np.array([2, 0], dtype=np.int32)):
             padding = {k: v[len(rows):].tobytes() for k, v in target.items()}
             pool.write_observations(target, rows)
             selected = pool.observations(rows)
