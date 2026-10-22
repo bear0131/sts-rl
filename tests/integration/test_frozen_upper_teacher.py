@@ -101,6 +101,40 @@ def test_freeze_guards_and_input_scope(frozen_upper_source):
         teacher.assert_integrity()
 
 
+@pytest.mark.parametrize('mutation', ['parameter', 'mode', 'replacement', 'registration', 'shared'])
+def test_inference_guard_checks_current_module_tree(frozen_upper_source, mutation):
+    core, space, _, obs = frozen_upper_source
+    teacher = FrozenUpperTeacher(core, space, source_sha256='1' * 64)
+    rows = [{key: value[0].numpy() for key, value in obs.items()}]
+    # Optional registrations and aliases are legal and must not hide a later
+    # change, including after an earlier successful inference check.
+    holder = nn.Module().eval()
+    holder.register_parameter('optional', None)
+    holder.add_module('optional_child', None)
+    teacher.add_module('guard_fixture', holder)
+    teacher.prepare_search_numpy(rows)
+    if mutation == 'parameter':
+        next(teacher.overworld.parameters()).requires_grad_(True)
+    elif mutation == 'mode':
+        teacher.overworld.train()
+    elif mutation == 'replacement':
+        teacher.guard_fixture = nn.Linear(1, 1).eval()
+    elif mutation == 'registration':
+        holder.register_parameter('added', nn.Parameter(torch.ones(1)))
+    else:
+        shared = nn.Linear(1, 1).requires_grad_(False).eval()
+        holder.add_module('left', shared)
+        holder.add_module('right', shared)
+        teacher.prepare_search_numpy(rows)
+        shared.train()
+    # All inference routes use the guard before projecting or executing.
+    batch = {key: value.numpy() for key, value in obs.items()}
+    for invoke in (lambda: teacher(obs), lambda: teacher.prepare_numpy(batch),
+                   lambda: teacher.prepare_search_numpy(rows)):
+        with pytest.raises(RuntimeError, match='made trainable'):
+            invoke()
+
+
 def test_cpu_projection_and_explicit_widths_match_teacher(frozen_upper_source):
     from rl.search.rollout_inference import RolloutInference
     from types import SimpleNamespace
@@ -159,6 +193,16 @@ def test_search_row_projection_matches_full_schema_and_rejects_bad_fields(frozen
             rows.extend([env._obs(), rows[0], env._obs()])
             break
     assert len(rows) == 4
+    # Projection must preserve values/dtype promotion even for strided rows
+    # and mixed float widths, rather than assuming encoder-owned contiguous
+    # float32 arrays. The public full-batch route is the independent oracle.
+    for index, row in enumerate(rows):
+        row = {key: value.copy() for key, value in row.items()}
+        storage = np.zeros(row['deck_ids'].size * 2, dtype=row['deck_ids'].dtype)
+        storage[::2] = row['deck_ids']
+        row['deck_ids'] = storage[::2]
+        row['run_hp'] = row['run_hp'].astype(np.float64 if index % 2 else np.float32)
+        rows[index] = row
     batch = {key: np.stack([row[key] for row in rows]) for key in rows[0]}
     expected = teacher.prepare_numpy(batch)
     actual = teacher.prepare_search_numpy(rows)

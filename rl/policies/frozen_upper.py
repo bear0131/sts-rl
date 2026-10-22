@@ -122,8 +122,22 @@ class FrozenUpperTeacher(nn.Module):
         return observations
 
     def _validate_inference_mode(self):
-        if any(p.requires_grad for p in self.parameters()) or any(m.training for m in self.modules()):
-            raise RuntimeError('frozen upper was made trainable')
+        # Inspect the current registries in one pass. named_parameters() and
+        # modules() separately walk the whole tree and build unused names on
+        # every small search batch. Do not cache references: replacing a child
+        # or registering a parameter must be noticed on the very next call.
+        pending, seen = [self], set()
+        while pending:
+            module = pending.pop()
+            if id(module) in seen:
+                continue
+            seen.add(id(module))
+            if module.training:
+                raise RuntimeError('frozen upper was made trainable')
+            for parameter in module._parameters.values():
+                if parameter is not None and parameter.requires_grad:
+                    raise RuntimeError('frozen upper was made trainable')
+            pending.extend(child for child in module._modules.values() if child is not None)
 
     @staticmethod
     def _trim_numpy_padding(batch):
@@ -158,7 +172,10 @@ class FrozenUpperTeacher(nn.Module):
             for key, space in self.observation_space.spaces.items():
                 if key not in keys:
                     continue
-                value = np.stack([observations[index][key] for index in selected])
+                # These rows already own equally shaped encoded arrays. The
+                # sequence constructor adds the batch axis directly, without
+                # stack's per-row expanded views and concatenate dispatch.
+                value = np.asarray([observations[index][key] for index in selected])
                 if value.shape != (len(selected), *space.shape):
                     raise ValueError(f'frozen upper observation shape changed: {key}')
                 batch[key] = value.astype(np.float32, copy=False) if np.issubdtype(value.dtype, np.floating) else value
