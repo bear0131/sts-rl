@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| BRIDGE175 | 正式录屏/AUTO进行中，12局未完成 | 用户确认200208–200219全程AUTO，04:22:56已正式录制；04:29种子208到A1/F14，无ERROR，非菜单等待。OBS30.2.2独立窗口/进程声音源，3072×1920/60/HEVC CQP20/单AAC，正式视频抽帧及实际非静音已核，无桌面/mic源。最终TRAIN47/128/94187/22fbd78快照；临时6ce031e8只不安装随机交互演示UI，保06 exporter/clear修复。6h/单局1h/48GiB/预留10GiB，真实败局继续、异常停录停AUTO不SL；原存档/config/jar已备份，结束恢复待验。原始视频/状态在D:/sts-rl/runs/local/auto-recording-200208-219-20261024，不入Git、不承诺重跑连胜。见worklog/2026-10-24.md。 |
 | BRIDGE174 | 06已构建部署；手动收尾修复待实机验收 | b5e388b/06 e0f218af：23:04:13/F18/AUTO已关，用户手动击杀后真实clear将turn重置1/清两入队列表，room仍COMBAT导出，旧计数守卫误判回退导致render退出。新增clear postfix只同步已有相同owner/manager的观察值；保未观察/无reset证据守卫，成品含新内部类/注解。23:10:52生产hash核验、deployment-04保存2acbdf22备份不改，已退出原崩溃进程，没重新开游戏。遵从CU物理Escape，不再操作；只有源码/字节码/编译/部署通过，174结算未动态验证，保权重/128/94187/SL/冻结交接。 |
 | BRIDGE173 | 05已部署，用户自然关闭的裸PAUSED已通过；继续专项未覆 | 956dfbc/05 ddccd4d4修Windows CRLF残留CR；全部六状态统一trim+空白split，非法DEMO关闭AUTO报错、不抛主线程/不执行gameplay。23:03:42.297实际Python裸DEMO PAUSED/Java成功消费，后31秒仅STATE、手动正常出牌；23:04:13退出为独立174，不是同解析异常。只成功点击一次开启后，CU被物理Escape停止，没有再输入，ON/OFF/ON专项未完成，不报全通过。短范围说明已实际可见。原F18保存2acbdf22备份deployment-03、原模型/128/94187/seed未START，无离线测试/SL改动。 |
 | SIM10 | 三项源修/独立原生构建完成，待新原生上机 | 65物种静态逐源核范围/门槛；57直接门槛+4复合分支+4构造特例，实际jar204 HP常量0差异，三错值另核实际bytecode。BEAR A<7 38–52→38–42，CENTURION A>=7 76–83→78–83，AWAKENED_ONE A>=9 300–320→固定320。F29实际BanditBear38HP、旧模板48经根同步后继续，分类原生生成错误，不是目标映射；A0只第一项影响规则，不推算胜率或说旧权重失效。独立Release/GCC14.2/Py311/traceON新native ee99d9bb构建exit0，无离线行为测试/模型加载；当前真实演示仍94187/Java02，新范围未动态验，不改权重/ABI/SL/冻结交接b5。用法/旧包勘误见sim/README.md，当前不热换模块。 |
