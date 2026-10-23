@@ -434,7 +434,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_action_group_contract = (CONTRACT if self.nosl_is_az and
             self.nosl_is_az_merge_equivalent_actions else 'individual-actions')
         self.nosl_supervision_contract = getattr(self.policy.core,'training_objective','scalar-hp-v1') if hasattr(self.policy,'core') else 'scalar-hp-v1'
-        self._combat_distribution = self.nosl_supervision_contract == 'combat-outcome-quantiles-v1'
+        from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
+        # Both heads share observed outcome labels and the combat replay pipeline.
+        self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.SCALAR_OBJECTIVES
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
@@ -2329,8 +2331,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             "finite_fraction",
         )
         if getattr(self,'_combat_distribution',False):
-            from rl.algorithms.combat_distribution import METRICS
-            monitor_names += METRICS
+            from rl.algorithms.combat_distribution import metrics_for
+            monitor_names += metrics_for(self.nosl_supervision_contract)
         monitor_sum = {name: 0.0 for name in monitor_names}
         monitor_sumsq = {name: 0.0 for name in monitor_names}
         monitor_min = {name: float("inf") for name in monitor_names}
@@ -2520,11 +2522,15 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         reduction="none",
                     )
                     if getattr(self,'_combat_distribution',False):
-                        from rl.algorithms.combat_distribution import distribution_loss
-                        value_loss_per_sample, distribution_metrics = distribution_loss(
-                            distribution_outputs,combat_targets,value_targets,
-                            mean_coef=core.config.mean_loss_coef,
-                            auxiliary_coef=core.config.auxiliary_loss_coef)
+                        from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, MEAN_CONTRACT
+                        if self.nosl_supervision_contract == MEAN_CONTRACT:
+                            value_loss_per_sample, distribution_metrics = mean_outcome_loss(
+                                distribution_outputs, combat_targets, value_targets)
+                        else:
+                            value_loss_per_sample, distribution_metrics = distribution_loss(
+                                distribution_outputs,combat_targets,value_targets,
+                                mean_coef=core.config.mean_loss_coef,
+                                auxiliary_coef=core.config.auxiliary_loss_coef)
                     loss_per_sample = self.nosl_is_az_value_coef * value_loss_per_sample
                     if _update >= value_only_updates:
                         loss_per_sample = (loss_per_sample + self.nosl_is_az_policy_coef

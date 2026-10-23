@@ -9,6 +9,7 @@ import torch
 from env.core import encode, vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
 from rl.search.native import observation_as_tensor
+from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
 COMBAT = V.PHASE_VOCAB_INDEX['combat']
 
@@ -37,8 +38,12 @@ def contract(model):
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
-                        mean_loss_coef=config.mean_loss_coef, auxiliary_loss_coef=config.auxiliary_loss_coef,
-                        quantiles=config.quantiles)
+                        mean_loss_coef=config.mean_loss_coef, auxiliary_loss_coef=config.auxiliary_loss_coef)
+        if objective == MEAN_CONTRACT:
+            identity.update(value_head='win-probability-and-conditional-hp-mean-v1',
+                            loss='win-bce-plus-win-masked-hp-mse-v1')
+        else:
+            identity['quantiles'] = config.quantiles
     return identity
 
 

@@ -10,6 +10,7 @@ import numpy as np
 from gymnasium import spaces
 from env.core.combat_value import VALUE_CONTRACT
 from env.core import native_actions as C
+from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
 
 
 def _compact_integer_dtype(space: spaces.Box) -> np.dtype:
@@ -132,7 +133,7 @@ class NOSLISAZReplayBuffer:
     def state_dict(self):
         """Persist occupied slots only; never serialize uninitialized capacity."""
         names = ('action_masks', 'policy_targets', 'action_groups', 'policy_weights', 'value_targets', 'sample_ids')
-        if self.supervision_contract == 'combat-outcome-quantiles-v1':
+        if self.supervision_contract in OUTCOME_CONTRACTS:
             names += ('combat_targets',)
         joint = None
         if self.joint_rows is not None:
@@ -184,7 +185,7 @@ class NOSLISAZReplayBuffer:
         if state['observations'] is not None:
             if not np.isfinite(state['arrays']['value_targets']).all():
                 raise ValueError('replay value targets must be finite')
-            if self.supervision_contract == 'combat-outcome-quantiles-v1':
+            if self.supervision_contract in OUTCOME_CONTRACTS:
                 from rl.algorithms.combat_distribution import validate_targets
                 if state['arrays'].get('combat_targets') is None:
                     raise ValueError('missing combat distribution targets')
@@ -258,7 +259,7 @@ class NOSLISAZReplayBuffer:
         self.action_groups = np.empty((self.capacity,self.group_width),dtype=np.int16)
         self.policy_weights = np.empty(self.capacity, dtype=np.float16)
         self.value_targets = np.empty(self.capacity, dtype=np.float32)
-        if self.supervision_contract == 'combat-outcome-quantiles-v1':
+        if self.supervision_contract in OUTCOME_CONTRACTS:
             from rl.algorithms.combat_distribution import TARGET_WIDTH
             self.combat_targets = np.empty((self.capacity,TARGET_WIDTH),dtype=np.float32)
         self.sample_ids = np.empty(self.capacity, dtype=np.uint64)
@@ -312,7 +313,7 @@ class NOSLISAZReplayBuffer:
             [sample["value_target"] for sample in labelled], dtype=np.float32
         )
         combat_targets = None
-        if self.supervision_contract == 'combat-outcome-quantiles-v1':
+        if self.supervision_contract in OUTCOME_CONTRACTS:
             from rl.algorithms.combat_distribution import validate_targets
             combat_targets = np.stack([sample['combat_targets'] for sample in labelled]).astype(np.float32)
             validate_targets(combat_targets,value_targets, action_dim=self.action_dim)
@@ -546,7 +547,7 @@ class NOSLISAZReplayBuffer:
             + np.dtype(np.float32).itemsize
             + np.dtype(np.uint64).itemsize
         )
-        if self.supervision_contract == 'combat-outcome-quantiles-v1':
+        if self.supervision_contract in OUTCOME_CONTRACTS:
             from rl.algorithms.combat_distribution import TARGET_WIDTH
             per_sample += 4*TARGET_WIDTH
         return self.capacity * per_sample

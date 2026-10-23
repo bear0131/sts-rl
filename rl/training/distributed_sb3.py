@@ -1481,8 +1481,8 @@ def distributed_nosl_is_az_update(
             "replay_old_fraction", "replay_current_fraction",
         }
         if getattr(model, '_combat_distribution', False):
-            from rl.algorithms.combat_distribution import METRICS
-            metric_keys.update(METRICS)
+            from rl.algorithms.combat_distribution import metrics_for
+            metric_keys.update(metrics_for(model.nosl_supervision_contract))
         additive_keys = {
             "roots", "global_roots", "gradient_batches", "updates", "metric_count",
             "replay_sampled_roots", "backward_sec", "sync_sec",
@@ -1608,8 +1608,8 @@ def distributed_nosl_is_az_update(
         "finite_fraction",
     )
     if getattr(model, '_combat_distribution', False):
-        from rl.algorithms.combat_distribution import METRICS
-        diagnostic_names += METRICS
+        from rl.algorithms.combat_distribution import metrics_for
+        diagnostic_names += metrics_for(model.nosl_supervision_contract)
     local_metric_sums = getattr(model, "_nosl_is_az_metric_sums", {})
     local_metric_sumsq = getattr(model, "_nosl_is_az_metric_sumsq", {})
     legacy_metric_count = float(getattr(
@@ -2073,6 +2073,7 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/gradient_norm_preclip",
     "nosl_is_az/learning_rate",
     "nosl_is_az/win_bce",
+    "nosl_is_az/hp_mse",
     "nosl_is_az/hp_pinball",
     "nosl_is_az/utility_mse",
     "nosl_is_az/transition_loss",

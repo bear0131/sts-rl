@@ -89,7 +89,7 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-@pytest.mark.parametrize('control', [False, True, 'finite'])
+@pytest.mark.parametrize('control', [False, True, 'finite', 'means'])
 def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
     import gc
@@ -104,7 +104,8 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
         from env.core.finite_curves import OBJECTIVE
         core = OuterReturnCore(source, core.teacher.observation_space, env.observation_space,
             source_sha256='1'*64,
-            objective=OBJECTIVE if control == 'finite' else 'combat-outcome-quantiles-v1',
+            objective=OBJECTIVE if control == 'finite' else (
+                'combat-outcome-means-v1' if control == 'means' else 'combat-outcome-quantiles-v1'),
             finite_curve_bank=finite_curve_bank if control == 'finite' else None)
     for _ in range(64):
         if env._phase() == 'combat':
@@ -138,11 +139,13 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
         with torch.no_grad():
             if control is True:
                 core.combat.distribution.win.bias.add_(1.)
+            elif control == 'means':
+                core.combat.means.win.bias.add_(1.)
             else:
                 core.combat.scalar[-1].bias.add_(1.)
         obs = {k: v[None] for k, v in env._obs().items() if k in core.combat_observation_keys}
         _, changed = cache(obs, 1)
-        if control is True:
+        if control is True or control == 'means':
             assert np.all(changed > before)
             with torch.inference_mode(), bf16_autocast():
                 expected = core.combat_actor_critic(observation_as_tensor(obs, 'cuda'), active_relic_width=1)[1]

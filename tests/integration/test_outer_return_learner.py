@@ -78,10 +78,12 @@ class QuickBackend(SimGameEnv):
             self.bc.set_player_strength(999)
 
 
-@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE, 'combat-outcome-quantiles-v1'])
+@pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
+                                     'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
     control = objective not in outer.SCALAR_OBJECTIVES
     finite = objective == outer.FINITE_OBJECTIVE
+    means = objective == 'combat-outcome-means-v1'
     outer_material = dict(outer_material, objective=objective)
     if finite:
         outer_material['finite_curve_bank'] = finite_curve_bank
@@ -138,6 +140,14 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert all('outer_return/labelled_roots' not in p for p in payloads)
         assert all('upper/updates' not in p or p['upper/updates'] == 0 for p in payloads)
         assert all(p['nosl_is_az/win_bce'] >= 0 for p in payloads)
+        if means:
+            assert not hasattr(model.policy.core.combat, 'distribution')
+            assert not hasattr(model.policy.core.combat, 'transition')
+            assert model.policy.core.config.mean_loss_coef == 0
+            assert all(p['nosl_is_az/hp_mse'] >= 0 for p in payloads)
+            for p in payloads:
+                assert p['nosl_is_az/value_loss'] == pytest.approx(
+                    p['nosl_is_az/win_bce'] + p['nosl_is_az/hp_mse'], rel=1e-5)
     else:
         assert all(p['outer_return/labelled_roots'] > 0 for p in payloads)
         assert all(p['outer_return/upper_updates'] == 0 for p in payloads)
@@ -150,7 +160,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher
-    value_key = 'distribution.win.weight' if control else 'scalar.2.weight'
+    value_key = 'means.win.weight' if means else ('distribution.win.weight' if control else 'scalar.2.weight')
     for key in ('transformer.layers.0.linear1.weight', value_key, 'end.weight', 'context.2.weight'):
         assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
@@ -170,8 +180,12 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     if control:
         assert replay.value_contract == 'combat-end-hp-v1'
         assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= 1))
-        assert replay.supervision_contract == 'combat-outcome-quantiles-v1'
+        assert replay.supervision_contract == objective
         assert not restored.policy.core.teacher.training
+        incompatible = replay.state_dict()
+        incompatible['supervision_contract'] = 'combat-outcome-quantiles-v1' if means else 'combat-outcome-means-v1'
+        with pytest.raises(ValueError, match='supervision contract'):
+            replay.load_state_dict(incompatible)
     state = replay.state_dict()
     state['objective_identity'] = dict(state['objective_identity'], gamma=.99)
     with pytest.raises(ValueError, match='objective identity'):

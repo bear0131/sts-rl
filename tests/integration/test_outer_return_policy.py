@@ -477,13 +477,14 @@ def test_permanent_growth_context_matches_real_settlement(outer_return_core):
     assert permanent_misc(branch.gc)[0] == pytest.approx(.18)
 
 
-def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upper_source):
+@pytest.mark.parametrize('objective', ['combat-outcome-quantiles-v1', 'combat-outcome-means-v1'])
+def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upper_source, objective):
     import slaythespire as sts
     from env.core.run_env import SlayTheSpireEnv
     from rl.policies.outer_return import OuterReturnCore
     source, space, _, _ = frozen_upper_source
     env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
-        outer_return_context=True, combat_value_objective='combat-outcome-quantiles-v1')
+        outer_return_context=True, combat_value_objective=objective)
     pool = None
     try:
         env.reset(seed=42101)
@@ -493,8 +494,10 @@ def test_train47_context_branch_receives_leaf_hp_and_permanent_growth(frozen_upp
         env.thick.bc.apply_custom_state({'player': {'hp': 11}})
         env._invalidate_backend_cache()
         core = OuterReturnCore(source, space, env.observation_space, source_sha256='1'*64,
-                               objective='combat-outcome-quantiles-v1')
-        assert not hasattr(core.combat, 'scalar') and hasattr(core.combat, 'distribution')
+                               objective=objective)
+        assert not hasattr(core.combat, 'scalar')
+        assert hasattr(core.combat, 'distribution') == (objective == 'combat-outcome-quantiles-v1')
+        assert hasattr(core.combat, 'means') == (objective == 'combat-outcome-means-v1')
         assert not torch.equal(core.combat.end.weight, source.combat.end.weight)
         pool = NativeSearchBatch([env], 1)
         pool.begin({0: ((np.zeros(env.action_space.n),), dict(state_nonce=42, simulations=4,

@@ -18,6 +18,16 @@
 
 ### 冻结上层 teacher
 
+COMBAT06（用户的1号实验）的 `combat-outcome-means-v1` 保留旧战斗终点HP标签和
+Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数头。loss只有胜负BCE与
+胜利样本的HP MSE，两者均按完整逻辑batch归一化；死亡不给条件HP分支零标签。
+无合成utility MSE或transition辅助。搜索普通战斗用 `p_win * hp_mean`，Boss用
+`p_win * (0.9 + 0.1 * hp_mean)`；HP效用沿旧定义为结算前 `min(HP,200)/200`。
+上层876永久冻结，全下层含actor/context随机初始化共同训练；独立profile为
+`configs/train/combat_two_means_876_4x5090.json`，复用已有准备/分布式入口。
+新head/loss身份进入checkpoint及replay合同，不能沿用分位数或有限曲线的replay。
+当前仅支持冻结上层、resident native、A0战士Act1–3实验；2号单HP均值尚未实施。
+
 COMBAT05 的 `combat-finite-upper-curves-v1` 是独立目标实验：下层沿 COMBAT01 的随机
 scalar actor/critic/context 架构，整个下层共同训练；876 上层仍永久冻结。战斗真实结算
 之后，按原始 encounter、Act、胜利/玩家逃跑出口、持有药水数和 HP/maxHP 查询有限

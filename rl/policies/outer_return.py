@@ -18,7 +18,8 @@ from rl.policies.entity_combat import (
 from rl.policies.entity_joint import EntityJointCore, UpperConfig
 from rl.policies.frozen_upper import FrozenUpperTeacher
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
-from rl.algorithms.combat_distribution import CONTRACT as COMBAT_OBJECTIVE
+from rl.algorithms.combat_distribution import CONTRACT as COMBAT_OBJECTIVE, MEAN_CONTRACT, OUTCOME_CONTRACTS
+from rl.policies.combat_distribution import CombatMeanHead
 
 
 def _sha(path):
@@ -55,16 +56,18 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 class OuterCombatNetwork(EntityCombatNetwork):
     def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE):
-        if objective not in (*SCALAR_OBJECTIVES, COMBAT_OBJECTIVE):
+        if objective not in (*SCALAR_OBJECTIVES, *OUTCOME_CONTRACTS):
             raise ValueError('unsupported frozen-upper lower objective')
-        if objective == COMBAT_OBJECTIVE and initialization != 'random':
+        if objective in OUTCOME_CONTRACTS and initialization != 'random':
             raise ValueError('TRAIN47 context control requires a fresh random lower')
         self.objective = objective
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
-        # The old boss flag remains an encoder input for exact actor warm start;
-        # it never selects a boss/HP value objective in this class.
+        if objective == MEAN_CONTRACT:
+            config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
+        # Scalar objectives only encode the boss flag. Outcome objectives retain
+        # the source's fight-local Boss utility when combining their predictions.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
         if initialization == '876':
             state = {key: value for key, value in source.state_dict().items()
@@ -72,7 +75,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        if objective in SCALAR_OBJECTIVES:
+        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT):
             del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -85,6 +88,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
             nn.init.zeros_(self.context[-1].bias)
         if objective in SCALAR_OBJECTIVES:
             self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
+        elif objective == MEAN_CONTRACT:
+            self.means = CombatMeanHead(width)
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
         state, blocks = super().encode(obs, active_relic_width, card_table=card_table)
@@ -114,6 +119,12 @@ class OuterCombatNetwork(EntityCombatNetwork):
     def _value(self, state, obs):
         if self.objective == COMBAT_OBJECTIVE:
             return super()._value(state, obs)
+        if self.objective == MEAN_CONTRACT:
+            from env.core.boss_value import win_hp_utility
+            _, outputs = self.means(state)
+            weight = obs['combat_is_boss'].float() * self.config.boss_win_weight
+            outputs['boss_win_weight'] = weight
+            return win_hp_utility(outputs['win_logits'].sigmoid(), outputs['hp_mean'], weight), outputs
         with torch.autocast(device_type=state.device.type, enabled=False):
             return self.scalar(state.float()), {}
 

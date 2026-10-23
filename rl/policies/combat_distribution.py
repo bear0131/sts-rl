@@ -20,3 +20,18 @@ class CombatDistributionHead(nn.Module):
         hp = self.spacings(features).float().softmax(-1).cumsum(-1)[:, :-1]
         value = win.sigmoid() * hp.mean(-1, keepdim=True)
         return value, dict(win_logits=win, hp_quantiles=hp)
+
+
+class CombatMeanHead(nn.Module):
+    """Two expectations only: victory probability and survivor HP utility."""
+    def __init__(self, width):
+        super().__init__()
+        self.trunk = nn.Sequential(nn.LayerNorm(width), nn.Linear(width, width), nn.GELU())
+        self.win = nn.Linear(width, 1)
+        self.hp = nn.Linear(width, 1)
+
+    def forward(self, state):
+        features = self.trunk(state)
+        win = self.win(features).float()
+        hp = self.hp(features).float().sigmoid()
+        return win.sigmoid() * hp, dict(win_logits=win, hp_mean=hp)
