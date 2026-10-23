@@ -438,6 +438,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.OUTER_OBJECTIVES
+        self._settled_combat_search = self._outer_return or self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
             if self._hierarchical_hp_requested:
@@ -1336,8 +1337,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 "gumbel_candidates": self.nosl_is_az_gumbel_candidates,
                                 "gumbel_scale": self.nosl_is_az_gumbel_scale,
                                 "merge_equivalent_actions": self.nosl_is_az_merge_equivalent_actions,
-                                "boss_win_weight": 0.0 if self._outer_return else getattr(self.policy, "entity_config", {}).get("boss_win_weight", 0.0),
-                                "outer_return": self._outer_return,
+                                "boss_win_weight": 0.0 if self._settled_combat_search else getattr(self.policy, "entity_config", {}).get("boss_win_weight", 0.0),
+                                "outer_return": self._settled_combat_search,
                                 "gumbel_value_scale": self.nosl_is_az_gumbel_value_scale,
                                 "gumbel_max_visit_init": self.nosl_is_az_gumbel_max_visit_init,
                                 "gumbel_rescale_q": self.nosl_is_az_gumbel_rescale_q,
@@ -1711,6 +1712,10 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     if outcome not in ('win','loss') or not np.isfinite(terminal_target):
                         incomplete_combat_roots += len(pending)
                         continue
+                    if self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE:
+                        terminal_target = outer.matched_terminal_target(self,
+                            {key: value[env_index] for key, value in self._last_obs.items()},
+                            infos[env_index], dones[env_index])
                     outcome_targets(
                         pending, outcome,
                         include_transition=bool(self.policy.core.config.auxiliary_loss_coef),
@@ -2522,11 +2527,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         reduction="none",
                     )
                     if getattr(self,'_combat_distribution',False):
-                        from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, conditional_value_loss, MEAN_CONTRACT, FACTORED_OBJECTIVE
+                        from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, conditional_value_loss, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE
                         if self.nosl_supervision_contract == FACTORED_OBJECTIVE:
                             value_loss_per_sample, distribution_metrics = conditional_value_loss(
                                 distribution_outputs, combat_targets, value_targets)
-                        elif self.nosl_supervision_contract == MEAN_CONTRACT:
+                        elif self.nosl_supervision_contract in (MEAN_CONTRACT, MATCHED_OBJECTIVE):
                             value_loss_per_sample, distribution_metrics = mean_outcome_loss(
                                 distribution_outputs, combat_targets, value_targets)
                         else:

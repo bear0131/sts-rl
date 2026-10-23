@@ -21,8 +21,8 @@ class NativeSearchBatch:
                          if self.envs[0]._card_language else None)
         first = self.envs[0]
         self.public_context = first.outer_return_context
-        self.outer_return = first.outer_return_objective
-        if any((e.outer_return_context, e.outer_return_objective) !=
+        self.outer_return = first.settled_combat_search
+        if any((e.outer_return_context, e.settled_combat_search) !=
                (self.public_context, self.outer_return) for e in self.envs):
             raise ValueError('native batch cannot mix outer-return and legacy environments')
         shapes = dict(_nosl_compact_empty(card_language=first._card_language))

@@ -336,11 +336,13 @@ class SlayTheSpireEnv(gym.Env):
                  combat_value_objective=None):
         super().__init__()
         self.outer_return_context = bool(outer_return_context)
-        from .outer_return import OBJECTIVE, OUTER_OBJECTIVES, CURVE_OBJECTIVES
-        if self.outer_return_context and combat_value_objective not in (None, *OUTER_OBJECTIVES, 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
+        from .outer_return import OBJECTIVE, OUTER_OBJECTIVES, SETTLED_SEARCH_OBJECTIVES, CURVE_OBJECTIVES, MATCHED_OBJECTIVE
+        if self.outer_return_context and combat_value_objective not in (None, *SETTLED_SEARCH_OBJECTIVES, 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
             raise ValueError('unsupported public-context combat objective')
         self.outer_return_objective = self.outer_return_context and combat_value_objective in (None, *OUTER_OBJECTIVES)
         self.finite_curve_objective = combat_value_objective in CURVE_OBJECTIVES
+        self.matched_curve_objective = combat_value_objective == MATCHED_OBJECTIVE
+        self.settled_combat_search = self.outer_return_objective or self.matched_curve_objective
         if self.outer_return_context and (combat_action_contract != C.AUTOREGRESSIVE_CONTRACT
                                          or nosl_is_az_boss_transition_target):
             raise ValueError('outer return requires AR actions and no legacy HP objective')
@@ -437,6 +439,7 @@ class SlayTheSpireEnv(gym.Env):
         super().reset(seed=seed)
         self.thick = self._backend_factory()
         self.thick._finite_curve_objective = self.finite_curve_objective
+        self.thick._matched_curve_objective = self.matched_curve_objective
         if self._joint_actions and not hasattr(self.thick, 'bc'):
             raise ValueError('joint-v2 requires the native combat backend')
         if self._nosl_is_az_boss_transition_target:

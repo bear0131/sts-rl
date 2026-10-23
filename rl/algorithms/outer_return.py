@@ -8,7 +8,7 @@ import torch
 
 from env.core import encode, vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, OUTER_OBJECTIVES
-from env.core.finite_curves import FACTORED_OBJECTIVE, CURVE_OBJECTIVES, winning_exit_target
+from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, MATCHED_VALUE_SCALE, CURVE_OBJECTIVES, winning_exit_target, matched_exit_value
 from rl.search.native import observation_as_tensor
 from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
@@ -40,6 +40,13 @@ def contract(model):
             identity.update(value_head='win-probability-and-conditional-curve-mean-v1',
                             loss='win-bce-plus-win-masked-curve-mse-v1',
                             non_victory='loss-and-player-escape-zero-v1')
+        elif objective == MATCHED_OBJECTIVE:
+            identity.update(boundary='combat06-observed-boundaries-settled-payoff-v1',
+                            value_head='win-probability-and-conditional-hp-mean-v1',
+                            loss='win-bce-plus-win-masked-hp-mse-v1',
+                            value_scale=MATCHED_VALUE_SCALE,
+                            samples='combat06-roots-boundaries-terminals-v1',
+                            escape='combat06-search-hp-omit-supervision-v1')
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
@@ -66,12 +73,25 @@ def setup(model):
     if previous is not None and previous != identity:
         raise ValueError('outer-return checkpoint teacher/context/native identity changed')
     model.outer_return_contract = identity
-    model.nosl_value_contract = model.policy.core.training_objective if model._outer_return else 'combat-end-hp-v1'
+    model.nosl_value_contract = (model.policy.core.training_objective
+        if model._outer_return or model.policy.core.training_objective == MATCHED_OBJECTIVE else 'combat-end-hp-v1')
     model.policy.core.teacher.assert_integrity()
     if not all(parameter.requires_grad for name, parameter in model.policy.core.combat.named_parameters()
                if not (not model._outer_return and not model.policy.core.config.auxiliary_loss_coef
                        and name.startswith('transition.'))):
         raise ValueError('outer return trains all lower actor/encoder/critic parameters from the first update')
+
+
+def matched_terminal_target(model, before, info, done):
+    """Payoff adapter only; COMBAT06 owns sampling, outcome masks and replay."""
+    state = info.get('finite_curve_exit')
+    if state is None:
+        raise ValueError('matched collector omitted observed terminal resources')
+    stats = info['run_stats']
+    reward = strategic_reward(round(float(before['act'][0]) * encode.ACT_SCALE),
+        round(float(before['floor'][0]) * encode.FLOOR_SCALE), stats, done=bool(done), censored=False)
+    exit = CombatExit(reward, 'terminal' if done else 'upper', state)
+    return matched_exit_value(exit, model.policy.core.finite_curve_bank)
 
 
 def begin_collection(model, count):

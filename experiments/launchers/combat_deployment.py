@@ -319,7 +319,8 @@ def manage(config_path, action):
     profile = read(repo/config['profile'])
     if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
             'combat-outer-return-frozen-upper-v1', 'combat-finite-upper-curves-v1',
-            'combat-finite-curves-win-conditional-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1'):
+            'combat-finite-curves-win-conditional-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
+            'combat06-matched-finite-curves-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"
     output.mkdir(parents=True, exist_ok=True)
@@ -375,7 +376,8 @@ def manage(config_path, action):
             for name in ('manifest.json','constructor.json','upper.pt','lower-init.pt','frozen-card-vectors.pt'):
                 archive.add(material/name, arcname='material/'+name)
             if profile['contract']['objective_id'] in (
-                    'combat-finite-upper-curves-v1', 'combat-finite-curves-win-conditional-v1'):
+                    'combat-finite-upper-curves-v1', 'combat-finite-curves-win-conditional-v1',
+                    'combat06-matched-finite-curves-v1'):
                 if digest(material/'curve-bank.json') != profile['contract']['curve_bank_file_sha256']:
                     raise ValueError('finite curve material does not match the profile')
                 archive.add(material/'curve-bank.json', arcname='material/curve-bank.json')

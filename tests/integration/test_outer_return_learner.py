@@ -79,12 +79,13 @@ class QuickBackend(SimGameEnv):
 
 
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
-                                     'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE])
+                                     'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
+                                     outer.MATCHED_OBJECTIVE])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
     control = objective not in outer.OUTER_OBJECTIVES
     finite = objective in outer.CURVE_OBJECTIVES
     factored = objective == outer.FACTORED_OBJECTIVE
-    means = objective == 'combat-outcome-means-v1'
+    means = objective in ('combat-outcome-means-v1', outer.MATCHED_OBJECTIVE)
     outer_material = dict(outer_material, objective=objective)
     if finite:
         outer_material['finite_curve_bank'] = finite_curve_bank
@@ -142,6 +143,10 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert all('upper/updates' not in p or p['upper/updates'] == 0 for p in payloads)
         assert all(p['nosl_is_az/win_bce'] >= 0 for p in payloads)
         if means:
+            assert all(p['nosl_is_az/value_only_samples'] > 0 for p in payloads)
+            assert all(p['nosl_is_az/collected_value_boundaries'] > 0 for p in payloads)
+            assert all(p['nosl_is_az/collected_combat_terminals'] > 0 for p in payloads)
+        if means:
             assert not hasattr(model.policy.core.combat, 'distribution')
             assert not hasattr(model.policy.core.combat, 'transition')
             assert model.policy.core.config.mean_loss_coef == 0
@@ -197,7 +202,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         with pytest.raises(ValueError, match='supervision contract'):
             replay.load_state_dict(changed)
     if control:
-        assert replay.value_contract == 'combat-end-hp-v1'
+        assert replay.value_contract == (objective if finite else 'combat-end-hp-v1')
         assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= 1))
         assert replay.supervision_contract == objective
         assert not restored.policy.core.teacher.training

@@ -182,7 +182,7 @@ class SimGameEnv:
             raise ValueError('combat exit requires a terminal battle')
         before_act, before_floor = self.gc.act, self.gc.floor_num
         from .finite_curves import exit_identity, settled_exit
-        curve = exit_identity(self.gc, battle) if getattr(self, '_finite_curve_objective', False) else None
+        curve = exit_identity(self.gc, battle, include_combat_hp=getattr(self, '_matched_curve_objective', False)) if getattr(self, '_finite_curve_objective', False) else None
         self.bc = battle.clone()
         self._settle()
         reward = strategic_reward(before_act, before_floor, self.run_stats(),
@@ -459,7 +459,7 @@ class SimGameEnv:
         terminal_combat_target = self._nosl_value_terminal_target()
         terminal_combat_outcome = self._nosl_value_terminal_outcome()
         from .finite_curves import exit_identity, settled_exit
-        curve = exit_identity(self.gc, self.bc) if getattr(self, '_finite_curve_objective', False) else None
+        curve = exit_identity(self.gc, self.bc, include_combat_hp=getattr(self, '_matched_curve_objective', False)) if getattr(self, '_finite_curve_objective', False) else None
         self._settle()  # pump through any auto-resolving screens to next decision
 
         if self._interactive_reasoning and self._last_reasoning_trace is None:
@@ -524,7 +524,7 @@ class SimGameEnv:
         terminal_combat_target = self._nosl_value_terminal_target()
         terminal_combat_outcome = self._nosl_value_terminal_outcome()
         from .finite_curves import exit_identity, settled_exit
-        curve = exit_identity(self.gc, self.bc) if getattr(self, '_finite_curve_objective', False) else None
+        curve = exit_identity(self.gc, self.bc, include_combat_hp=getattr(self, '_matched_curve_objective', False)) if getattr(self, '_finite_curve_objective', False) else None
         self._settle()
         terminated = self.is_over
         self._prev_hp = self.gc.cur_hp

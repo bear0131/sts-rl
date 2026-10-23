@@ -8,7 +8,9 @@ import numpy as np
 
 OBJECTIVE = 'combat-finite-upper-curves-v1'
 FACTORED_OBJECTIVE = 'combat-finite-curves-win-conditional-v1'
-CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE)
+MATCHED_OBJECTIVE = 'combat06-matched-finite-curves-v1'
+MATCHED_VALUE_SCALE = 2.0
+CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE)
 SCHEMA = 'frozen-upper-hp-curve-bank-v1'
 
 
@@ -16,7 +18,7 @@ def curve_key(act, encounter, outlet):
     return f'{int(act)}|{encounter}|{outlet}'
 
 
-def exit_identity(gc, battle):
+def exit_identity(gc, battle, *, include_combat_hp=False):
     """Capture the original encounter before settlement can advance the game."""
     if battle is None or not battle.is_battle_over:
         return None
@@ -24,7 +26,11 @@ def exit_identity(gc, battle):
     outcome = combat_terminal_outcome(battle)
     if outcome not in ('win', 'escape', 'loss'):
         raise ValueError('unknown finite-curve combat outcome')
-    return dict(act=int(gc.act), encounter=str(gc.encounter).split('.')[-1], outlet=outcome)
+    identity = dict(act=int(gc.act), encounter=str(gc.encounter).split('.')[-1], outlet=outcome)
+    if include_combat_hp:
+        from .combat_value import combat_end_hp
+        identity['combat_hp'] = combat_end_hp(battle)
+    return identity
 
 
 def settled_exit(identity, gc):
@@ -52,6 +58,28 @@ def winning_exit_target(exit, bank, *, reward_prefix=0.):
         return 0., 0.
     bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
     return 1., exit.target(bootstrap) - reward_prefix
+
+
+def matched_exit_value(exit, bank):
+    """COMBAT06 collector/head, replacing only the observed victory payoff.
+
+    The fixed scale covers the complete reward-plus-curve target. Never clip
+    curve values to fit a sigmoid. Escape retains COMBAT06's native search HP
+    payoff and is excluded from training by the unchanged outcome collector.
+    """
+    if exit.kind == 'censored' or exit.curve_state is None:
+        raise ValueError('matched curve target requires an observed combat exit')
+    if exit.curve_state['outlet'] == 'escape':
+        hp = float(exit.curve_state['combat_hp'])
+        if not math.isfinite(hp) or hp < 0:
+            raise ValueError('invalid pre-settlement escape HP')
+        from .encode import HP_SCALE
+        return min(hp / HP_SCALE, 1.)
+    _, value = winning_exit_target(exit, bank)
+    value /= MATCHED_VALUE_SCALE
+    if not math.isfinite(value) or not 0. <= value <= 1.:
+        raise ValueError('matched curve payoff outside fixed sigmoid range')
+    return value
 
 
 class FiniteCurveBank:

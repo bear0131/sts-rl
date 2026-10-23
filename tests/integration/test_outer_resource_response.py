@@ -89,7 +89,7 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'conditional'])
+@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'conditional', 'matched'])
 def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
     import gc
@@ -101,12 +101,12 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
     core, source, env = outer_return_core
     if control:
         from rl.policies.outer_return import OuterReturnCore
-        from env.core.finite_curves import OBJECTIVE, FACTORED_OBJECTIVE
+        from env.core.finite_curves import OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE
         core = OuterReturnCore(source, core.teacher.observation_space, env.observation_space,
             source_sha256='1'*64,
-            objective=FACTORED_OBJECTIVE if control == 'conditional' else OBJECTIVE if control == 'finite' else (
+            objective=MATCHED_OBJECTIVE if control == 'matched' else FACTORED_OBJECTIVE if control == 'conditional' else OBJECTIVE if control == 'finite' else (
                 'combat-outcome-means-v1' if control == 'means' else 'combat-outcome-quantiles-v1'),
-            finite_curve_bank=finite_curve_bank if control in ('finite', 'conditional') else None)
+            finite_curve_bank=finite_curve_bank if control in ('finite', 'conditional', 'matched') else None)
     for _ in range(64):
         if env._phase() == 'combat':
             break
@@ -139,7 +139,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
         with torch.no_grad():
             if control is True:
                 core.combat.distribution.win.bias.add_(1.)
-            elif control == 'means':
+            elif control in ('means', 'matched'):
                 core.combat.means.win.bias.add_(1.)
             elif control == 'conditional':
                 core.combat.conditional.value[-1].bias.add_(1.)
@@ -147,7 +147,7 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, control):
                 core.combat.scalar[-1].bias.add_(1.)
         obs = {k: v[None] for k, v in env._obs().items() if k in core.combat_observation_keys}
         _, changed = cache(obs, 1)
-        if control is True or control in ('means', 'conditional'):
+        if control is True or control in ('means', 'conditional', 'matched'):
             assert np.all(changed > before)
             with torch.inference_mode(), bf16_autocast():
                 expected = core.combat_actor_critic(observation_as_tensor(obs, 'cuda'), active_relic_width=1)[1]

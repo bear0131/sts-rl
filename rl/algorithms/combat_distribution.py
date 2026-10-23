@@ -8,11 +8,11 @@ No inferred win labels, censored fights, or imagined search leaves are accepted.
 import numpy as np
 import torch
 from torch.nn import functional as F
-from env.core.finite_curves import FACTORED_OBJECTIVE
+from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVE
 
 CONTRACT = 'combat-outcome-quantiles-v1'
 MEAN_CONTRACT = 'combat-outcome-means-v1'
-OUTCOME_CONTRACTS = (CONTRACT, MEAN_CONTRACT, FACTORED_OBJECTIVE)
+OUTCOME_CONTRACTS = (CONTRACT, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE)
 AUX_WIDTH = 6
 # win, executed complete action, auxiliary weight, six observed transition deltas
 TARGET_WIDTH = 3 + AUX_WIDTH
@@ -25,7 +25,7 @@ CONDITIONAL_METRICS = ('win_bce', 'conditional_value_mse', 'win_probability', 'w
 def metrics_for(contract):
     if contract == FACTORED_OBJECTIVE:
         return CONDITIONAL_METRICS
-    return MEAN_METRICS if contract == MEAN_CONTRACT else METRICS
+    return MEAN_METRICS if contract in (MEAN_CONTRACT, MATCHED_OBJECTIVE) else METRICS
 
 
 def mean_outcome_loss(outputs, targets, values):

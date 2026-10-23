@@ -11,7 +11,7 @@ from stable_baselines3.common.save_util import json_to_data
 
 from env.core import vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
-from env.core.finite_curves import FiniteCurveBank, FACTORED_OBJECTIVE, CURVE_OBJECTIVES
+from env.core.finite_curves import FiniteCurveBank, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, CURVE_OBJECTIVES
 from rl.policies.entity_combat import (
     EntityCombatConfig, EntityCombatCore, EntityCombatNetwork, EntityCombatPolicy,
 )
@@ -64,7 +64,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
-        if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE):
+        if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
         # Only the historical HP outcome objectives retain the Boss utility.
         # Curve objectives use the boss flag as an input, without a value bonus.
@@ -75,7 +75,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT, FACTORED_OBJECTIVE):
+        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE):
             del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -88,7 +88,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             nn.init.zeros_(self.context[-1].bias)
         if objective in SCALAR_OBJECTIVES:
             self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
-        elif objective == MEAN_CONTRACT:
+        elif objective in (MEAN_CONTRACT, MATCHED_OBJECTIVE):
             self.means = CombatMeanHead(width)
         elif objective == FACTORED_OBJECTIVE:
             self.conditional = CombatConditionalValueHead(width)
@@ -123,10 +123,12 @@ class OuterCombatNetwork(EntityCombatNetwork):
             return self.conditional(state)
         if self.objective == COMBAT_OBJECTIVE:
             return super()._value(state, obs)
-        if self.objective == MEAN_CONTRACT:
+        if self.objective in (MEAN_CONTRACT, MATCHED_OBJECTIVE):
             from env.core.boss_value import win_hp_utility
             _, outputs = self.means(state)
             weight = obs['combat_is_boss'].float() * self.config.boss_win_weight
+            if self.objective == MATCHED_OBJECTIVE:
+                weight = torch.zeros_like(weight)
             outputs['boss_win_weight'] = weight
             return win_hp_utility(outputs['win_logits'].sigmoid(), outputs['hp_mean'], weight), outputs
         with torch.autocast(device_type=state.device.type, enabled=False):

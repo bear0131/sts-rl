@@ -28,6 +28,20 @@ Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数�
 新head/loss身份进入checkpoint及replay合同，不能沿用分位数或有限曲线的replay。
 当前仅支持冻结上层、resident native、A0战士Act1–3实验；2号单HP均值尚未实施。
 
+COMBAT08 的 `combat06-matched-finite-curves-v1` 以 COMBAT06 为严格对照，仅替换
+获胜 payoff：`(实际结算战略奖励 + 冻结曲线值) / 2`；整局胜利只有终局奖励除以2。
+固定比例适用于整个目标，不裁剪，超出 sigmoid 范围即报错。搜索所有房间统一为
+`P(win) * E[normalized value | win]`，不应用旧 Boss 0.9 公式。
+架构完全复用 COMBAT06 的 `CombatMeanHead`（共同 LayerNorm/Linear/GELU 和两个
+sigmoid 头）、BF16 前推、初始化 seed9001000、全部初始 tensor，以及原采样/更新。
+真实动作根、回合结束边界、战斗终局均按 COMBAT06 原权重监督；边界和终局不加政策
+监督。死亡条件均值梯度为零，玩家逃跑监督丢弃、搜索仍取结算前 HP/200，截断丢弃。
+旧指标名 `hp_mse`/`hp_given_win` 在本目标中表示归一化曲线 MSE/条件均值，以保持
+相同 loss/payload 路径；不是 HP 单位。目标/比例/bank 身份隔离旧 replay 和 Adam。
+独立 profile `configs/train/combat_matched_curves_876_4x5090.json` 固定必须相同的配置
+段。typed terminal transport 用相同 HP payoff 验证搜索排序等价；需要同 Linux native
+执行门禁。支持范围仍为 resident native、A0 战士 Act1–3。
+
 COMBAT07 的 `combat-finite-curves-win-conditional-v1` 在 COMBAT05 的同一固定曲线上
 分开预测战斗胜率与获胜后的曲线回报均值，普通战与 Boss 搜索都使用
 `P(win) * E[value | win]`。条件价值分支保留绿色标量网络的结构和无界输出；
