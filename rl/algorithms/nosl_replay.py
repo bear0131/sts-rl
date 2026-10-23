@@ -82,9 +82,8 @@ class NOSLISAZReplayBuffer:
         self._joint_dense_masks: np.ndarray | None = None
         self._joint_dense_targets: np.ndarray | None = None
         self.value_contract = str(value_contract)
-        from rl.algorithms.combat_distribution import CONTRACT
         from env.core.outer_return import SCALAR_OBJECTIVES
-        if supervision_contract not in ('scalar-hp-v1', CONTRACT, *SCALAR_OBJECTIVES):
+        if supervision_contract not in ('scalar-hp-v1', *OUTCOME_CONTRACTS, *SCALAR_OBJECTIVES):
             raise ValueError('unsupported replay supervision contract')
         self.supervision_contract = supervision_contract
         from copy import deepcopy

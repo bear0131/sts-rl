@@ -6,6 +6,26 @@ from rl.algorithms.nosl_replay import NOSLISAZReplayBuffer
 from env.core.combat_value import VALUE_CONTRACT
 
 
+@pytest.mark.parametrize('contract', ['combat-outcome-quantiles-v1', 'combat-outcome-means-v1'])
+def test_outcome_replay_preserves_labels_and_rejects_different_head(contract):
+    def make(kind):
+        return NOSLISAZReplayBuffer(capacity=4, action_dim=3, supervision_contract=kind,
+            observation_keys=['x'], observation_space=spaces.Dict({
+                'x': spaces.Box(0, 10, shape=(2,), dtype=np.int64)}))
+    first, restored = make(contract), make(contract)
+    target = np.zeros(9, np.float32)
+    target[0] = 1
+    first.add_samples([dict(observation={'x': np.array([1, 2])},
+        action_mask=np.ones(3, dtype=bool), policy_target=np.array([.2, .3, .5]),
+        value_target=.7, combat_targets=target)])
+    state = first.state_dict()
+    restored.load_state_dict(state)
+    np.testing.assert_array_equal(restored.combat_targets[:1], target[None])
+    other = 'combat-outcome-means-v1' if contract == 'combat-outcome-quantiles-v1' else 'combat-outcome-quantiles-v1'
+    with pytest.raises(ValueError, match='supervision contract'):
+        make(other).load_state_dict(state)
+
+
 @pytest.mark.parametrize('count', [0, 2, 6])
 def test_empty_partial_and_wrapped_replay_restore(count):
     def make():
