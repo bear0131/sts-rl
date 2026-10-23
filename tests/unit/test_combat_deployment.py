@@ -20,6 +20,23 @@ def test_remote_script_wire_preserves_posix_lines_and_utf8():
     assert result.stdout == 'mkdir /tmp/example\nprintf 测试\n'
 
 
+def test_factored_curve_profile_uses_existing_deployment_plan(tmp_path, monkeypatch, capsys):
+    from experiments.launchers import combat_deployment as deployment
+    config = configuration()
+    config['profile'] = 'configs/train/combat_finite_win_876_4x5090.json'
+    profile = tmp_path/config['profile']
+    profile.parent.mkdir(parents=True)
+    profile.write_bytes((ROOT/config['profile']).read_bytes())
+    path = tmp_path/'deployment.json'
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(deployment, '__file__', str(tmp_path/'experiments/launchers/combat_deployment.py'))
+    monkeypatch.setattr(deployment.subprocess, 'check_output', lambda *a, **kw: 'test-commit')
+    deployment.manage(path, 'plan')
+    plan = json.loads(capsys.readouterr().out)
+    assert plan['upper_updates'] == 0 and plan['global_slots'] == 2*786432
+    assert plan['maximum_updates'] == 80
+
+
 def configuration():
     config = json.loads((ROOT/'experiments/launchers/combat01_876_4x5090.json').read_text(encoding='utf-8-sig'))
     config['remote_repo'] = '/root/autodl-tmp/combat01-new'

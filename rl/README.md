@@ -28,6 +28,18 @@ Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数�
 新head/loss身份进入checkpoint及replay合同，不能沿用分位数或有限曲线的replay。
 当前仅支持冻结上层、resident native、A0战士Act1–3实验；2号单HP均值尚未实施。
 
+COMBAT07 的 `combat-finite-curves-win-conditional-v1` 在 COMBAT05 的同一固定曲线上
+分开预测战斗胜率与获胜后的曲线回报均值，普通战与 Boss 搜索都使用
+`P(win) * E[value | win]`。条件价值分支保留绿色标量网络的结构和无界输出；
+胜率分支是新增线性头。保留 Boss 公共输入，但不应用旧 HP 目标的 Boss 0.9 加分。
+价值损失为胜负 BCE 加获胜 mask 的条件价值 MSE；政策搜索监督及原系数不变，
+没有分位数、乘积 MSE 或 transition 辅助。失败和玩家烟雾逃跑的目标为零，
+只给胜率分支直接监督；真实 escape 标记及无 loot 结算不变，截断不作负例。
+获胜标签沿 COMBAT05 的结算后曲线及实际剩余战略奖励，自然整局结束不 bootstrap。
+新目标、损失、非胜利语义、bank/teacher/native 身份写入 checkpoint/replay，
+不接受旧目标 replay 或 optimizer；准备入口复用 `combat_outer`，profile 为
+`configs/train/combat_finite_win_876_4x5090.json`，支持范围同 COMBAT05。
+
 COMBAT05 的 `combat-finite-upper-curves-v1` 是独立目标实验：下层沿 COMBAT01 的随机
 scalar actor/critic/context 架构，整个下层共同训练；876 上层仍永久冻结。战斗真实结算
 之后，按原始 encounter、Act、胜利/玩家逃跑出口、持有药水数和 HP/maxHP 查询有限
