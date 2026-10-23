@@ -2074,6 +2074,8 @@ _DISTRIBUTED_NOSL_METRIC_KEYS = (
     "nosl_is_az/learning_rate",
     "nosl_is_az/win_bce",
     "nosl_is_az/hp_mse",
+    "nosl_is_az/conditional_value_mse",
+    "nosl_is_az/value_given_win",
     "nosl_is_az/hp_pinball",
     "nosl_is_az/utility_mse",
     "nosl_is_az/transition_loss",

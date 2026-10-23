@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
 import torch
+from types import SimpleNamespace
 
-from env.core.finite_curves import FiniteCurveBank, OBJECTIVE
+from env.core.finite_curves import FiniteCurveBank, OBJECTIVE, FACTORED_OBJECTIVE, winning_exit_target
 from env.core.run_env import SlayTheSpireEnv
 from rl.algorithms import outer_return as outer
 
@@ -10,10 +11,11 @@ pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
 @pytest.mark.parametrize('outlet', ['win', 'escape', 'loss'])
-def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_bank, outlet):
+@pytest.mark.parametrize('objective', [OBJECTIVE, FACTORED_OBJECTIVE])
+def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_bank, outlet, objective):
     import slaythespire as sts
     env = SlayTheSpireEnv(global_map_view=True, combat_action_contract='autoregressive-v2',
-                         outer_return_context=True, combat_value_objective=OBJECTIVE)
+                         outer_return_context=True, combat_value_objective=objective)
     env.reset(seed=42101)
     for _ in range(64):
         if env.thick.bc is not None: break
@@ -52,4 +54,16 @@ def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_b
         assert loot['card_count']==0
         assert not loot['gold'] and not loot['relics'] and not loot['potions']
     if outlet=='loss':assert done and outcome.target()==0
+    if objective == FACTORED_OBJECTIVE:
+        label, value = winning_exit_target(outcome, bank)
+        assert label == (outlet == 'win')
+        assert value == (outcome.target(bank.value(state)) if outlet == 'win' else 0.)
+        from rl.search.native import forward_outer_leaves
+        # Route the actual native settlement through the production leaf evaluator.
+        batch = SimpleNamespace(rows=1, combat_exit_rows={0},
+                                combat_exits=lambda **kwargs: {0: (outcome, None)})
+        model = SimpleNamespace(action_space=env.action_space, policy=SimpleNamespace(
+            core=SimpleNamespace(training_objective=objective, finite_curve_bank=bank)))
+        _, leaf_values = forward_outer_leaves(model, batch)
+        assert leaf_values[0] == pytest.approx(value)
     env.close()

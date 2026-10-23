@@ -7,7 +7,8 @@ import numpy as np
 import torch
 
 from env.core import encode, vocab as V
-from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CombatExit, strategic_reward, SCALAR_OBJECTIVES, FINITE_OBJECTIVE, OUTER_OBJECTIVES
+from env.core.finite_curves import FACTORED_OBJECTIVE, CURVE_OBJECTIVES, winning_exit_target
 from rl.search.native import observation_as_tensor
 from rl.algorithms.combat_distribution import MEAN_CONTRACT
 
@@ -33,8 +34,12 @@ def contract(model):
                          'paper_full_gumbel', 'gumbel_candidates', 'gumbel_scale',
                          'gumbel_value_scale', 'gumbel_rescale_q', 'gumbel_use_mixed_value',
                          'gumbel_max_visit_init', 'merge_equivalent_actions')})
-    if objective == FINITE_OBJECTIVE:
+    if objective in CURVE_OBJECTIVES:
         identity['finite_curves'] = model.policy.core.finite_curve_bank.identity
+        if objective == FACTORED_OBJECTIVE:
+            identity.update(value_head='win-probability-and-conditional-curve-mean-v1',
+                            loss='win-bce-plus-win-masked-curve-mse-v1',
+                            non_victory='loss-and-player-escape-zero-v1')
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,
@@ -113,6 +118,7 @@ def finish_step(model, before, after, dones, infos, pending):
     """Label only executed roots, including roots retained across collections."""
     completed = discarded = fights = 0
     bank = getattr(model.policy.core, 'finite_curve_bank', None)
+    factored = getattr(model.policy.core, 'training_objective', None) == FACTORED_OBJECTIVE
     exits = {}
     for i, info in enumerate(infos):
         if int(before['phase'][i, 0]) != COMBAT:
@@ -134,7 +140,7 @@ def finish_step(model, before, after, dones, infos, pending):
             model._outer_collection['censored_segments'] += 1
             continue
         kind = 'terminal' if dones[i] else ('combat' if int(after['phase'][i, 0]) == COMBAT else 'upper')
-        exits[i] = CombatExit(float(model._outer_pending_rewards[i]), kind)
+        exits[i] = CombatExit(float(model._outer_pending_rewards[i]), kind, info.get('finite_curve_exit'))
     bootstraps = {}
     for kind in ('upper', 'combat'):
         indices = [i for i, exit in exits.items() if exit.kind == kind]
@@ -145,7 +151,8 @@ def finish_step(model, before, after, dones, infos, pending):
                 state = infos[i].get('finite_curve_exit')
                 if state is None:
                     raise ValueError('finite curve collection omitted terminal encounter/resources')
-                bootstraps[i] = bank.value(state)
+                if not factored:
+                    bootstraps[i] = bank.value(state)
             continue
         obs = observation_as_tensor({key: value[indices] for key, value in after.items()}, model.device)
         with torch.no_grad():
@@ -156,9 +163,18 @@ def finish_step(model, before, after, dones, infos, pending):
                     _, values = model.policy.core.combat_actor_critic(obs)
         bootstraps.update(zip(indices, values.float().flatten().cpu().numpy(), strict=True))
     for i, exit in exits.items():
-        target = exit.target(bootstraps.get(i))
+        if factored:
+            from rl.algorithms.combat_distribution import TARGET_WIDTH
+            win, target = winning_exit_target(exit, bank)
+        else:
+            target = exit.target(bootstraps.get(i))
         for sample in pending[i]:
-            value = target - sample['outer_reward_prefix']
+            if factored:
+                value = target - sample['outer_reward_prefix'] if win else 0.
+                sample['combat_targets'] = np.zeros(TARGET_WIDTH, dtype=np.float32)
+                sample['combat_targets'][0] = win
+            else:
+                value = target - sample['outer_reward_prefix']
             if not np.isfinite(value):
                 raise ValueError('outer-return target is not finite')
             sample['value_target'] = value

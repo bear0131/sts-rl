@@ -11,7 +11,7 @@ from stable_baselines3.common.save_util import json_to_data
 
 from env.core import vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
-from env.core.finite_curves import FiniteCurveBank
+from env.core.finite_curves import FiniteCurveBank, FACTORED_OBJECTIVE, CURVE_OBJECTIVES
 from rl.policies.entity_combat import (
     EntityCombatConfig, EntityCombatCore, EntityCombatNetwork, EntityCombatPolicy,
 )
@@ -19,7 +19,7 @@ from rl.policies.entity_joint import EntityJointCore, UpperConfig
 from rl.policies.frozen_upper import FrozenUpperTeacher
 from rl.policies.split_policy import COMBAT_OBSERVATION_KEYS
 from rl.algorithms.combat_distribution import CONTRACT as COMBAT_OBJECTIVE, MEAN_CONTRACT, OUTCOME_CONTRACTS
-from rl.policies.combat_distribution import CombatMeanHead
+from rl.policies.combat_distribution import CombatMeanHead, CombatConditionalValueHead
 
 
 def _sha(path):
@@ -64,10 +64,12 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
-        if objective == MEAN_CONTRACT:
+        if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
-        # Scalar objectives only encode the boss flag. Outcome objectives retain
-        # the source's fight-local Boss utility when combining their predictions.
+        if objective == FACTORED_OBJECTIVE:
+            config = replace(config, boss_win_weight=0.)
+        # Only the historical HP outcome objectives retain the Boss utility.
+        # Curve objectives use the boss flag as an input, without a value bonus.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
         if initialization == '876':
             state = {key: value for key, value in source.state_dict().items()
@@ -75,7 +77,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT):
+        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT, FACTORED_OBJECTIVE):
             del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -90,6 +92,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
             self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
         elif objective == MEAN_CONTRACT:
             self.means = CombatMeanHead(width)
+        elif objective == FACTORED_OBJECTIVE:
+            self.conditional = CombatConditionalValueHead(width)
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
         state, blocks = super().encode(obs, active_relic_width, card_table=card_table)
@@ -117,6 +121,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
         return context.to(dtype)
 
     def _value(self, state, obs):
+        if self.objective == FACTORED_OBJECTIVE:
+            return self.conditional(state)
         if self.objective == COMBAT_OBJECTIVE:
             return super()._value(state, obs)
         if self.objective == MEAN_CONTRACT:
@@ -150,7 +156,7 @@ class OuterReturnCore(EntityCombatCore):
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
         self.finite_curve_bank = FiniteCurveBank(finite_curve_bank) if finite_curve_bank is not None else None
-        if (objective == FINITE_OBJECTIVE) != (self.finite_curve_bank is not None):
+        if (objective in CURVE_OBJECTIVES) != (self.finite_curve_bank is not None):
             raise ValueError('finite curve objective requires exactly one embedded bank')
         if self.finite_curve_bank is not None and self.finite_curve_bank.identity['teacher_sha256'] != self.teacher.assert_integrity():
             raise ValueError('finite curve bank teacher mismatch')

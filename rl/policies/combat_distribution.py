@@ -35,3 +35,18 @@ class CombatMeanHead(nn.Module):
         win = self.win(features).float()
         hp = self.hp(features).float().sigmoid()
         return win.sigmoid() * hp, dict(win_logits=win, hp_mean=hp)
+
+
+class CombatConditionalValueHead(nn.Module):
+    """Win probability times an unbounded conditional curve-return mean."""
+    def __init__(self, width):
+        super().__init__()
+        # Preserve the finite scalar baseline's value branch architecture.
+        self.value = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
+        self.win = nn.Linear(width, 1)
+
+    def forward(self, state):
+        with torch.autocast(device_type=state.device.type, enabled=False):
+            win = self.win(state.float())
+            value = self.value(state.float())
+            return win.sigmoid() * value, dict(win_logits=win, value_given_win=value)

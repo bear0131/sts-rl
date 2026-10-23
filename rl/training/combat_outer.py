@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import torch
 
-from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
+from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, OUTER_OBJECTIVES, CURVE_OBJECTIVES
 from env.core.run_env import SlayTheSpireEnv
 from rl.algorithms.accumulating_ppo import AccumulatingMaskablePPO
 from rl.policies.outer_return import OuterReturnPolicy, load_initialization_material
@@ -19,7 +19,7 @@ def construct(args, profile):
                     material_sha256=args.material_sha256, source_sha256=profile['source']['model_sha256'],
                     lower_initialization=profile['contract']['lower_init'],
                     objective=profile['contract']['objective_id'])
-    if material['objective'] == FINITE_OBJECTIVE:
+    if material['objective'] in CURVE_OBJECTIVES:
         bank_path = args.material_directory / 'curve-bank.json'
         if hashlib.sha256(bank_path.read_bytes()).hexdigest() != profile['contract']['curve_bank_file_sha256']:
             raise ValueError('finite curve bank file SHA256 mismatch')
@@ -29,7 +29,7 @@ def construct(args, profile):
     source.frozen_upper = True
     source.training_objective = material['objective']
     prototype = SimpleNamespace(policy=SimpleNamespace(core=source), observation_space=space,
-                                _outer_return=material['objective'] in SCALAR_OBJECTIVES)
+                                _outer_return=material['objective'] in OUTER_OBJECTIVES)
     # Preserve optional source observation fields; the lower extension is explicit.
     schema_env = SlayTheSpireEnv(combat_action_contract='autoregressive-v2', outer_return_context=True,
                                 **observation_flags(prototype))
@@ -72,7 +72,7 @@ def prepare(args):
     if args.output.exists():
         raise FileExistsError(args.output)
     profile = json.loads(args.prepare_combat_outer.read_text(encoding='utf-8'))
-    if (profile['contract']['objective_id'] not in (*SCALAR_OBJECTIVES, *OUTCOME_CONTRACTS) or profile['contract']['lower_init'] != 'random' or
+    if (profile['contract']['objective_id'] not in (*OUTER_OBJECTIVES, *OUTCOME_CONTRACTS) or profile['contract']['lower_init'] != 'random' or
             profile['contract'].get('lower_context') != CONTEXT_SCHEMA):
         raise ValueError('production profile requires frozen upper with a fresh trainable lower network')
     args.n_envs, args.n_steps, args.seed = 1, 2, int(profile['training']['seed'])

@@ -82,13 +82,13 @@ class NOSLISAZReplayBuffer:
         self._joint_dense_masks: np.ndarray | None = None
         self._joint_dense_targets: np.ndarray | None = None
         self.value_contract = str(value_contract)
-        from env.core.outer_return import SCALAR_OBJECTIVES
-        if supervision_contract not in ('scalar-hp-v1', *OUTCOME_CONTRACTS, *SCALAR_OBJECTIVES):
+        from env.core.outer_return import OUTER_OBJECTIVES
+        if supervision_contract not in ('scalar-hp-v1', *OUTCOME_CONTRACTS, *OUTER_OBJECTIVES):
             raise ValueError('unsupported replay supervision contract')
         self.supervision_contract = supervision_contract
         from copy import deepcopy
         self.objective_identity = deepcopy(objective_identity)
-        if supervision_contract in SCALAR_OBJECTIVES and not objective_identity:
+        if supervision_contract in OUTER_OBJECTIVES and not objective_identity:
             raise ValueError('outer-return replay requires immutable objective identity')
         self.combat_targets = None
         self.observation_keys = keys

@@ -7,6 +7,8 @@ import math
 import numpy as np
 
 OBJECTIVE = 'combat-finite-upper-curves-v1'
+FACTORED_OBJECTIVE = 'combat-finite-curves-win-conditional-v1'
+CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE)
 SCHEMA = 'frozen-upper-hp-curve-bank-v1'
 
 
@@ -31,6 +33,25 @@ def settled_exit(identity, gc):
     return dict(identity, hp=int(gc.cur_hp), max_hp=int(gc.max_hp),
                 potions=sum(str(p) not in ('EMPTY_POTION_SLOT', 'INVALID')
                             for p in gc.overworld_potions))
+
+
+def winning_exit_target(exit, bank, *, reward_prefix=0.):
+    """Observed win label and conditional curve return, shared by search/learner.
+
+    Player escape remains an explicit simulator outcome but is not victory.
+    Natural game terminals never bootstrap; censored segments have no label.
+    """
+    if exit.kind == 'censored' or exit.curve_state is None:
+        raise ValueError('winning curve target requires an observed combat exit')
+    outcome = exit.curve_state['outlet']
+    if outcome not in ('win', 'loss', 'escape'):
+        raise ValueError('unknown winning curve outcome')
+    if not math.isfinite(reward_prefix):
+        raise ValueError('invalid reward prefix')
+    if outcome != 'win':
+        return 0., 0.
+    bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
+    return 1., exit.target(bootstrap) - reward_prefix
 
 
 class FiniteCurveBank:

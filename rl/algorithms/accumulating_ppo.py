@@ -437,7 +437,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         from rl.algorithms.combat_distribution import OUTCOME_CONTRACTS
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
-        self._outer_return = self.nosl_supervision_contract in outer.SCALAR_OBJECTIVES
+        self._outer_return = self.nosl_supervision_contract in outer.OUTER_OBJECTIVES
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
             if self._hierarchical_hp_requested:
@@ -2522,8 +2522,11 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         reduction="none",
                     )
                     if getattr(self,'_combat_distribution',False):
-                        from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, MEAN_CONTRACT
-                        if self.nosl_supervision_contract == MEAN_CONTRACT:
+                        from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, conditional_value_loss, MEAN_CONTRACT, FACTORED_OBJECTIVE
+                        if self.nosl_supervision_contract == FACTORED_OBJECTIVE:
+                            value_loss_per_sample, distribution_metrics = conditional_value_loss(
+                                distribution_outputs, combat_targets, value_targets)
+                        elif self.nosl_supervision_contract == MEAN_CONTRACT:
                             value_loss_per_sample, distribution_metrics = mean_outcome_loss(
                                 distribution_outputs, combat_targets, value_targets)
                         else:
@@ -2597,8 +2600,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 diagnostics_end = diagnostics_offset + 3 + len(monitor_names) * micro_count
                 th.cat([
                     *(value.detach().reshape(-1) for value in loss_sums),
-                    *(value.detach().float().reshape(-1)
-                      for value in monitor_values.values()),
+                    *(monitor_values[name].detach().float().reshape(-1)
+                      for name in monitor_names),
                 ], out=diagnostics_device[diagnostics_offset:diagnostics_end])
                 diagnostics_offset = diagnostics_end
 

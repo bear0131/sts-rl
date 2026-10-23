@@ -8,19 +8,23 @@ No inferred win labels, censored fights, or imagined search leaves are accepted.
 import numpy as np
 import torch
 from torch.nn import functional as F
+from env.core.finite_curves import FACTORED_OBJECTIVE
 
 CONTRACT = 'combat-outcome-quantiles-v1'
 MEAN_CONTRACT = 'combat-outcome-means-v1'
-OUTCOME_CONTRACTS = (CONTRACT, MEAN_CONTRACT)
+OUTCOME_CONTRACTS = (CONTRACT, MEAN_CONTRACT, FACTORED_OBJECTIVE)
 AUX_WIDTH = 6
 # win, executed complete action, auxiliary weight, six observed transition deltas
 TARGET_WIDTH = 3 + AUX_WIDTH
 METRICS = ('win_bce','hp_pinball','utility_mse','transition_loss',
            'win_probability','win_target','hp_given_win')
 MEAN_METRICS = ('win_bce', 'hp_mse', 'win_probability', 'win_target', 'hp_given_win')
+CONDITIONAL_METRICS = ('win_bce', 'conditional_value_mse', 'win_probability', 'win_target', 'value_given_win')
 
 
 def metrics_for(contract):
+    if contract == FACTORED_OBJECTIVE:
+        return CONDITIONAL_METRICS
     return MEAN_METRICS if contract == MEAN_CONTRACT else METRICS
 
 
@@ -30,13 +34,23 @@ def mean_outcome_loss(outputs, targets, values):
     Losses contain no information about HP conditional on victory. Their HP
     gradient is zero; do not label survivor HP as zero on a death.
     """
+    return _conditional_mean_loss(outputs, targets, values, 'hp_mean', 'hp_mse', 'hp_given_win')
+
+
+def conditional_value_loss(outputs, targets, values):
+    """BCE plus win-masked curve-return MSE; no loss on the product."""
+    return _conditional_mean_loss(outputs, targets, values,
+                                  'value_given_win', 'conditional_value_mse', 'value_given_win')
+
+
+def _conditional_mean_loss(outputs, targets, values, output_key, mse_key, mean_key):
     win = targets[:, 0].float()
     logits = outputs['win_logits'].float().flatten()
-    hp = outputs['hp_mean'].float().flatten()
+    mean = outputs[output_key].float().flatten()
     bce = F.binary_cross_entropy_with_logits(logits, win, reduction='none')
-    hp_mse = (hp - values.float().flatten()).square() * win
-    return bce + hp_mse, dict(win_bce=bce, hp_mse=hp_mse,
-        win_probability=logits.sigmoid(), win_target=win, hp_given_win=hp)
+    mse = (mean - values.float().flatten()).square() * win
+    return bce + mse, {'win_bce': bce, mse_key: mse,
+                      'win_probability': logits.sigmoid(), 'win_target': win, mean_key: mean}
 
 
 def transition_features(obs):

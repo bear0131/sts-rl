@@ -47,6 +47,7 @@ def validate(config, *, connected=False):
     if config['profile'] not in ('configs/train/combat_outer_return_876_4x5090.json',
                                  'configs/train/combat_finite_curves_876_4x5090.json',
                                  'configs/train/combat_two_means_876_4x5090.json',
+                                 'configs/train/combat_finite_win_876_4x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')
     if not re.fullmatch(r'[0-9a-f]{64}', config['material_sha256']):
