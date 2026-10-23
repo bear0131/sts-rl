@@ -28,14 +28,20 @@ Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数�
 新head/loss身份进入checkpoint及replay合同，不能沿用分位数或有限曲线的replay。
 当前仅支持冻结上层、resident native、A0战士Act1–3实验；2号单HP均值尚未实施。
 
-COMBAT08 的 `combat06-matched-finite-curves-v1` 以 COMBAT06 为严格对照，仅替换
-获胜 payoff：`(实际结算战略奖励 + 冻结曲线值) / 2`；整局胜利只有终局奖励除以2。
+COMBAT08 的 `combat06-matched-finite-curves-v1` 对齐 COMBAT06 头和训练方法，替换
+存活出口 payoff：`(实际结算战略奖励 + 冻结曲线值) / 2`；整局胜利只有终局奖励除以2。
 固定比例适用于整个目标，不裁剪，超出 sigmoid 范围即报错。搜索所有房间统一为
-`P(win) * E[normalized value | win]`，不应用旧 Boss 0.9 公式。
+`P(存活离开) * E[normalized value | 存活离开]`，不应用旧 Boss 0.9 公式。
 架构完全复用 COMBAT06 的 `CombatMeanHead`（共同 LayerNorm/Linear/GELU 和两个
 sigmoid 头）、BF16 前推、初始化 seed9001000、全部初始 tensor，以及原采样/更新。
 真实动作根、回合结束边界、战斗终局均按 COMBAT06 原权重监督；边界和终局不加政策
-监督。死亡条件均值梯度为零，玩家逃跑监督丢弃、搜索仍取结算前 HP/200，截断丢弃。
+监督。用户另行批准的差异是：玩家烟雾逃跑也作为存活正例，包括真实终局value-only
+观测，条件值使用原bank独立escape曲线；死亡仍为0且无条件均值梯度，截断丢弃。
+小偷逃走在模拟器仍是玩家存活胜利，按逃走小偷数量使用独立固定曲线；曲线来自原
+获胜参考状态中每名小偷损失30金币（A0两次偷窃）的冻结876配对差值，参考金币不足时
+扣至0，再加回原win曲线。30是明确的固定参考假设，不是每场实际损失；不读实时金币，
+不改真实HP，不额外惩罚reward，不作单调投影。原bank其他曲线逐值保留，扩展bank单独锁SHA。
+因此与历史06相比，必须同时披露目标曲线及用户批准的逃跑标签/样本差异。
 旧指标名 `hp_mse`/`hp_given_win` 在本目标中表示归一化曲线 MSE/条件均值，以保持
 相同 loss/payload 路径；不是 HP 单位。目标/比例/bank 身份隔离旧 replay 和 Adam。
 独立 profile `configs/train/combat_matched_curves_876_4x5090.json` 固定必须相同的配置

@@ -30,6 +30,12 @@ def exit_identity(gc, battle, *, include_combat_hp=False):
     if include_combat_hp:
         from .combat_value import combat_end_hp
         identity['combat_hp'] = combat_end_hp(battle)
+        # Enemy escape is still native PLAYER_VICTORY, unlike player smoke.
+        # Keep both facts: survival label and the finite outlet price.
+        thieves = [m for m in battle.to_dict()['monsters']
+                   if m.get('thief_state') is not None and m.get('is_escaping') and m['hp'] > 0]
+        identity['escaped_thieves'] = len(thieves)
+        identity['escaped_thief_gold'] = sum(m['thief_state']['stolen_gold'] for m in thieves)
     return identity
 
 
@@ -61,22 +67,21 @@ def winning_exit_target(exit, bank, *, reward_prefix=0.):
 
 
 def matched_exit_value(exit, bank):
-    """COMBAT06 collector/head, replacing only the observed victory payoff.
+    """COMBAT06 head with the user-approved surviving-exit payoff.
 
     The fixed scale covers the complete reward-plus-curve target. Never clip
-    curve values to fit a sigmoid. Escape retains COMBAT06's native search HP
-    payoff and is excluded from training by the unchanged outcome collector.
+    curve values to fit a sigmoid. Player escape has its own nonzero curve;
+    deaths have zero payoff. The probability head represents surviving exit.
     """
     if exit.kind == 'censored' or exit.curve_state is None:
         raise ValueError('matched curve target requires an observed combat exit')
-    if exit.curve_state['outlet'] == 'escape':
-        hp = float(exit.curve_state['combat_hp'])
-        if not math.isfinite(hp) or hp < 0:
-            raise ValueError('invalid pre-settlement escape HP')
-        from .encode import HP_SCALE
-        return min(hp / HP_SCALE, 1.)
-    _, value = winning_exit_target(exit, bank)
-    value /= MATCHED_VALUE_SCALE
+    outcome = exit.curve_state['outlet']
+    if outcome == 'loss':
+        return 0.
+    if outcome not in ('win', 'escape'):
+        raise ValueError('unknown surviving curve outcome')
+    bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
+    value = exit.target(bootstrap) / MATCHED_VALUE_SCALE
     if not math.isfinite(value) or not 0. <= value <= 1.:
         raise ValueError('matched curve payoff outside fixed sigmoid range')
     return value
@@ -130,6 +135,11 @@ class FiniteCurveBank:
                 maximum <= 0 or hp <= 0 or hp > maximum or int(count) != count or not 0 <= count <= 5):
             raise ValueError('invalid finite curve resources')
         key = curve_key(state['act'], state['encounter'], state['outlet'])
+        if state['outlet'] == 'win' and state.get('escaped_thieves', 0):
+            count = state['escaped_thieves']
+            if int(count) != count or not 1 <= count <= 2:
+                raise ValueError('invalid escaped thief count')
+            key = curve_key(state['act'], state['encounter'], f'thief_escape_{int(count)}')
         key = self.aliases.get(key, key)
         if key not in self.curves:
             raise ValueError(f'finite curve bank has no encounter/outlet: {key}')

@@ -1710,7 +1710,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if getattr(self,'_combat_distribution',False):
                     from rl.algorithms.combat_distribution import outcome_targets
                     outcome = infos[env_index].get('nosl_value_terminal_outcome')
-                    if outcome not in ('win','loss') or not np.isfinite(terminal_target):
+                    surviving_exit = self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE
+                    accepted = ('win', 'loss', 'escape') if surviving_exit else ('win', 'loss')
+                    if outcome not in accepted or not np.isfinite(terminal_target):
                         incomplete_combat_roots += len(pending)
                         continue
                     if self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE:
@@ -1720,6 +1722,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     outcome_targets(
                         pending, outcome,
                         include_transition=bool(self.policy.core.config.auxiliary_loss_coef),
+                        surviving_exit=surviving_exit,
                     )
                 target = next_hp[env_index]
                 if np.isfinite(terminal_target):

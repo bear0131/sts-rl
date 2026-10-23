@@ -18,7 +18,7 @@ def test_fixed_normalization_includes_reward_and_never_clips():
     assert matched_exit_value(CombatExit(.2, 'upper', win), bank) == pytest.approx(.75)
     assert matched_exit_value(CombatExit(1.002, 'terminal', win), bank) == pytest.approx(.501)
     assert matched_exit_value(CombatExit(0., 'terminal', dict(outlet='loss')), bank) == 0.
-    assert matched_exit_value(CombatExit(0., 'upper', dict(outlet='escape', combat_hp=80)), bank) == .4
+    assert matched_exit_value(CombatExit(0., 'upper', dict(outlet='escape', combat_hp=80)), bank) == .65
     with pytest.raises(ValueError, match='fixed sigmoid range'):
         matched_exit_value(CombatExit(.8, 'upper', win), bank)
     with pytest.raises(ValueError, match='observed'):
@@ -36,6 +36,17 @@ def test_same_two_losses_and_no_conditional_gradient_on_death():
     assert means.grad[0].item() == pytest.approx(-.1)
     assert means.grad[1].item() == 0.
     assert (logits.grad != 0).all()
+
+
+def test_player_escape_is_survival_only_for_the_new_contract():
+    from rl.algorithms.combat_distribution import outcome_targets
+    sample = {}
+    with pytest.raises(ValueError):
+        outcome_targets([sample], 'escape', include_transition=False)
+    outcome_targets([sample], 'escape', include_transition=False, surviving_exit=True)
+    assert sample['combat_targets'][0] == 1
+    outcome_targets([sample], 'loss', include_transition=False, surviving_exit=True)
+    assert sample['combat_targets'][0] == 0
 
 
 def test_profile_changes_only_declared_payoff_contract():

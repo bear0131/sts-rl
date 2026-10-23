@@ -563,7 +563,9 @@ class SimGameEnv:
         if self.bc is None or not self.bc.is_battle_over:
             return None
         state = self.bc.to_dict()
-        if state.get("outcome") != combat_env._OUTCOME_VICTORY:
+        surviving_escape = (getattr(self, '_matched_curve_objective', False)
+                            and combat_terminal_outcome(state) == 'escape')
+        if state.get("outcome") != combat_env._OUTCOME_VICTORY and not surviving_escape:
             return None
         return state
 

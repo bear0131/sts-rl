@@ -53,10 +53,20 @@ def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_b
         assert reward==outcome.reward
     else:
         assert reward == (-1. if outlet == 'loss' else 0.)
-        assert ('nosl_value_terminal_observation' in info) == (outlet == 'win')
+        assert ('nosl_value_terminal_observation' in info) == (outlet != 'loss')
         from rl.algorithms.outer_return import matched_terminal_target
         target_model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(finite_curve_bank=bank)))
         assert matched_terminal_target(target_model, before, info, done) == pytest.approx(matched_exit_value(outcome, bank))
+        from rl.algorithms.combat_distribution import outcome_targets, mean_outcome_loss
+        sample = {}
+        outcome_targets([sample], info['nosl_value_terminal_outcome'],
+                        include_transition=False, surviving_exit=True)
+        assert sample['combat_targets'][0] == (outlet != 'loss')
+        prediction = torch.tensor([.5], requires_grad=True)
+        loss, _ = mean_outcome_loss(dict(win_logits=torch.zeros(1, requires_grad=True), hp_mean=prediction),
+            torch.tensor(sample['combat_targets'][None]), torch.tensor([matched_exit_value(outcome, bank)]))
+        loss.sum().backward()
+        assert (prediction.grad.item() == 0.) == (outlet == 'loss')
     if outlet=='escape':
         loot=env.thick.gc.get_reward_info()
         assert loot['card_count']==0
@@ -69,8 +79,7 @@ def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_b
             assert value == (outcome.target(bank.value(state)) if outlet == 'win' else 0.)
         else:
             value = matched_exit_value(outcome, bank)
-            assert value == pytest.approx(30/200 if outlet == 'escape' else
-                0. if outlet == 'loss' else outcome.target(bank.value(state))/2)
+            assert value == pytest.approx(0. if outlet == 'loss' else outcome.target(bank.value(state))/2)
         from rl.search.native import forward_outer_leaves
         # Route the actual native settlement through the production leaf evaluator.
         batch = SimpleNamespace(rows=1, combat_exit_rows={0},

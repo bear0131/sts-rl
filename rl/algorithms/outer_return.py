@@ -42,11 +42,11 @@ def contract(model):
                             non_victory='loss-and-player-escape-zero-v1')
         elif objective == MATCHED_OBJECTIVE:
             identity.update(boundary='combat06-observed-boundaries-settled-payoff-v1',
-                            value_head='win-probability-and-conditional-hp-mean-v1',
-                            loss='win-bce-plus-win-masked-hp-mse-v1',
+                            value_head='survival-probability-and-conditional-normalized-value-v1',
+                            loss='survival-bce-plus-survival-masked-value-mse-v1',
                             value_scale=MATCHED_VALUE_SCALE,
                             samples='combat06-roots-boundaries-terminals-v1',
-                            escape='combat06-search-hp-omit-supervision-v1')
+                            escape='observed-surviving-exit-separate-curve-v1')
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,

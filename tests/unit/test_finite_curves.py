@@ -41,3 +41,17 @@ def test_settled_resource_count_preserves_physical_empty_slots():
     gc = SimpleNamespace(cur_hp=35,max_hp=80,overworld_potions=['EMPTY_POTION_SLOT','Fire Potion','EMPTY_POTION_SLOT','Blood Potion'])
     state = settled_exit(dict(act=2, encounter='TWO_THIEVES', outlet='win'),gc)
     assert state['potions'] == 2 and state['hp'] == 35
+
+
+def test_enemy_escape_uses_its_own_curve_without_changing_survival_or_hp():
+    data = bank_data()
+    for count in (1, 2):
+        data['curves'][f'2|TWO_THIEVES|thief_escape_{count}'] = [[.1/count]*3 for _ in range(6)]
+    bank = FiniteCurveBank(data)
+    state = dict(act=2, encounter='TWO_THIEVES', outlet='win', hp=60, max_hp=80, potions=2)
+    assert bank.value(dict(state, escaped_thieves=2)) < bank.value(dict(state, escaped_thieves=1)) < bank.value(state)
+    assert state['hp'] == 60 and state['outlet'] == 'win'
+    # Player smoke retains a separate outlet even if a thief has already left.
+    assert bank.value(dict(state, outlet='escape', escaped_thieves=1)) == bank.value(dict(state, outlet='escape'))
+    with pytest.raises(ValueError, match='no encounter/outlet'):
+        FiniteCurveBank(bank_data()).value(dict(state, escaped_thieves=1))

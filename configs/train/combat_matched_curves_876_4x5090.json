@@ -97,7 +97,7 @@
     "reward_policy_contract": "checkpoint-v7-act3",
     "lower_init": "random",
     "lower_context": "combat-public-run-context-v2",
-    "lower_value": "combat06-dual-sigmoid-win-BCE-win-masked-normalized-curve-MSE",
+    "lower_value": "combat06-dual-sigmoid-survival-BCE-survival-masked-normalized-curve-MSE",
     "old_optimizer": "discard",
     "old_replay": "discard",
     "progress": "reset-to-zero",
@@ -108,12 +108,12 @@
     },
     "experiment_number": "COMBAT08",
     "value_scale": 2.0,
-    "comparison": "COMBAT06: only observed victory payoff changes; original escape search HP and discarded escape samples preserved",
-    "curve_bank_file_sha256": "8b59c7f20ce5da1c3a7df0fc39fae86bf7d93f21c9161ed717f09bfc375416d5",
+    "comparison": "COMBAT06 architecture/initialization/learning matched; user-approved survival escape labels and separate finite exit curves",
+    "curve_bank_file_sha256": "5253c3123ff8410e851f5a1e1bee6bd31d9a0d1b57ed48bcf398e0850b93917c",
     "curve_bank_identity": {
       "objective": "combat-finite-upper-curves-v1",
       "schema": "frozen-upper-hp-curve-bank-v1",
-      "sha256": "0b674a09efccba796fb411f981e84bee739bd1f228e804961e8096f2eb113b7b",
+      "sha256": "3d1f7d63cfd6892c57bef53ef3ec426b6d5c9178c846461d86fbdd0c066fd661",
       "teacher_sha256": "257a446b125787f0baaadab2d4cdc4d495bf607dee7a9f0331e3ee4fe51f9b79"
     }
   },
@@ -194,7 +194,7 @@
     "segment_max_wall_seconds": 18000,
     "continuation": "full-state checkpoint boundaries only"
   },
-  "notice": "COMBAT06 / experiment 1: old fight-local HP and Boss utility, win BCE + conditional survivor HP MSE only; no quantiles, utility MSE or transition auxiliary. Frozen 876 upper; fresh whole lower. Independent run and replay.",
+  "notice": "COMBAT08: COMBAT06 architecture and initialization, normalized fixed exit curves; probability means surviving exit including player escape. Death zero; two value losses only. Separate fixed thief escape curves, no live gold input.",
   "strict_control": {
     "profile": "configs/train/combat_two_means_876_4x5090.json",
     "production_commit": "bbdad98",
@@ -203,7 +203,8 @@
     "allowed_changes": [
       "objective/payoff identity",
       "fixed curve bank and normalization divisor 2",
-      "typed terminal settlement transport to compute the replacement payoff"
+      "typed terminal settlement transport to compute the replacement payoff",
+      "user-approved surviving-exit label including player escape; finite enemy-thief-escape curves"
     ],
     "required_equal_sections": [
       "source",
@@ -213,6 +214,6 @@
       "training",
       "search"
     ],
-    "escape": "same COMBAT06: search pre-settlement HP/200, training discarded"
+    "escape": "user-approved survival positive with separate fixed escape payoff; actual escape terminal value-only sample included"
   }
 }

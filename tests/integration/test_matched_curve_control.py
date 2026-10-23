@@ -11,6 +11,23 @@ from rl.policies.outer_return import OuterCombatNetwork
 pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
+def test_actual_enemy_escape_survives_without_fake_hp_damage(run_combat_factory):
+    from types import SimpleNamespace
+    import slaythespire as sts
+    from env.core.finite_curves import exit_identity
+    root = run_combat_factory(encounter='Two Thieves')
+    root.bc.apply_custom_state(dict(player=dict(hp=50), monsters=[
+        dict(move='LOOTER_ESCAPE'), dict(move='MUGGER_ESCAPE')]))
+    root.bc.execute(sts.Action(sts.ActionType.END_TURN))
+    assert root.bc.is_battle_over
+    identity = exit_identity(SimpleNamespace(act=2, encounter='TWO_THIEVES'), root.bc, include_combat_hp=True)
+    assert identity['outlet'] == 'win' and identity['escaped_thieves'] == 2
+    assert identity['combat_hp'] == 50
+    # Historical objectives do not acquire the new pricing input.
+    old = exit_identity(SimpleNamespace(act=2, encounter='TWO_THIEVES'), root.bc)
+    assert 'escaped_thieves' not in old
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_all_weights_heads_and_nonboss_gradients_match(outer_return_core, frozen_upper_source, device):
     if device == 'cuda' and not torch.cuda.is_available():
