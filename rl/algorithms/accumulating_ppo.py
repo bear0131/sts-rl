@@ -530,7 +530,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
             if getattr(self, "nosl_is_az_boss_transition_target", False)
             else VALUE_CONTRACT
         )
-        if getattr(self, '_outer_return', False):
+        if (getattr(self, '_outer_return', False)
+                or self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE):
             value_contract = self.nosl_supervision_contract
         if replay is not None:
             if replay.supervision_contract != getattr(self,'nosl_supervision_contract','scalar-hp-v1'):

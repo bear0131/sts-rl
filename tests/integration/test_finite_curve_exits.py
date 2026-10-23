@@ -53,7 +53,7 @@ def test_real_search_settlement_and_executed_exit_resources_match(finite_curve_b
         assert reward==outcome.reward
     else:
         assert reward == (-1. if outlet == 'loss' else 0.)
-        assert 'nosl_value_terminal_observation' in info
+        assert ('nosl_value_terminal_observation' in info) == (outlet == 'win')
         from rl.algorithms.outer_return import matched_terminal_target
         target_model = SimpleNamespace(policy=SimpleNamespace(core=SimpleNamespace(finite_curve_bank=bank)))
         assert matched_terminal_target(target_model, before, info, done) == pytest.approx(matched_exit_value(outcome, bank))

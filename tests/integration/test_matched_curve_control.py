@@ -62,6 +62,7 @@ def test_scripted_actual_end_turn_and_terminal_observations_identical():
             if terminal:
                 for env in envs:
                     env.thick.bc.apply_custom_state(dict(hand=['CLEAVE'],player=dict(energy=3,strength=999)))
+                    env.thick.bc.set_player_strength(999)
                     env._invalidate_backend_cache()
             bits = 0 if terminal else 4 << 29
             infos = []
@@ -128,7 +129,7 @@ def test_typed_terminal_transport_preserves_search_when_payoff_is_held_fixed(run
         else:
             pytest.fail('bounded search did not finish')
         results.append(session.result())
-    for key in ('action', 'root_visits', 'total_root_visits'):
+    for key in ('action_bits', 'root_visits', 'total_root_visits'):
         assert results[0][key] == results[1][key], key
     assert results[0]['root_value'] == pytest.approx(results[1]['root_value'], abs=1e-7)
     assert battle.to_dict() == original
