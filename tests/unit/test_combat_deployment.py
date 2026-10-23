@@ -20,10 +20,11 @@ def test_remote_script_wire_preserves_posix_lines_and_utf8():
     assert result.stdout == 'mkdir /tmp/example\nprintf 测试\n'
 
 
-def test_factored_curve_profile_uses_existing_deployment_plan(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('profile_name', ['combat_finite_win', 'combat_matched_curves'])
+def test_curve_profile_uses_existing_deployment_plan(tmp_path, monkeypatch, capsys, profile_name):
     from experiments.launchers import combat_deployment as deployment
     config = configuration()
-    config['profile'] = 'configs/train/combat_finite_win_876_4x5090.json'
+    config['profile'] = f'configs/train/{profile_name}_876_4x5090.json'
     profile = tmp_path/config['profile']
     profile.parent.mkdir(parents=True)
     profile.write_bytes((ROOT/config['profile']).read_bytes())
@@ -46,8 +47,11 @@ def configuration():
     return config
 
 
-def test_deployment_preserves_whole_lower_training_and_876_geometry():
-    config = validate(configuration(), connected=True)
+@pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves'])
+def test_deployment_preserves_whole_lower_training_and_876_geometry(profile_name):
+    config = configuration()
+    config['profile'] = f'configs/train/{profile_name}_876_4x5090.json'
+    config = validate(config, connected=True)
     profile = json.loads((ROOT/config['profile']).read_text())
     for rank in range(4):
         command = training_command(config, profile, rank)
