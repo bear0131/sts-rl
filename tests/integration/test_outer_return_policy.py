@@ -12,6 +12,24 @@ from rl.search.native import NativeSearchConfig, complete_searches_native, obser
 pytestmark = [pytest.mark.native, pytest.mark.timeout(120)]
 
 
+def test_factored_curves_preserve_baseline_inputs_and_random_initial_weights(outer_return_core, frozen_upper_source):
+    from env.core.finite_curves import OBJECTIVE, FACTORED_OBJECTIVE
+    from rl.policies.outer_return import OuterCombatNetwork
+    _, source, env = outer_return_core
+    networks = []
+    for objective in (OBJECTIVE, FACTORED_OBJECTIVE):
+        with torch.random.fork_rng():
+            torch.manual_seed(42101)
+            networks.append(OuterCombatNetwork(source.combat, frozen_upper_source[1],
+                env.observation_space, initialization='random', objective=objective))
+    baseline, factored = networks
+    assert 'combat_is_boss' in factored.scalar_keys == baseline.scalar_keys
+    actual = factored.state_dict()
+    for key, expected in baseline.state_dict().items():
+        mapped = key.replace('scalar.', 'conditional.value.') if key.startswith('scalar.') else key
+        torch.testing.assert_close(actual[mapped], expected, rtol=0, atol=0)
+
+
 @pytest.mark.parametrize('card,eligible', [('SECRET_TECHNIQUE', ['DEFEND_RED', 'SHRUG_IT_OFF']),
                                          ('SECRET_WEAPON', ['STRIKE_RED', 'BASH'])])
 @pytest.mark.parametrize('nonce', [1, 42, 42101])

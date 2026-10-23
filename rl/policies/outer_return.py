@@ -66,8 +66,6 @@ class OuterCombatNetwork(EntityCombatNetwork):
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
         if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
-        if objective == FACTORED_OBJECTIVE:
-            config = replace(config, boss_win_weight=0.)
         # Only the historical HP outcome objectives retain the Boss utility.
         # Curve objectives use the boss flag as an input, without a value bonus.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
