@@ -55,3 +55,16 @@ def test_enemy_escape_uses_its_own_curve_without_changing_survival_or_hp():
     assert bank.value(dict(state, outlet='escape', escaped_thieves=1)) == bank.value(dict(state, outlet='escape'))
     with pytest.raises(ValueError, match='no encounter/outlet'):
         FiniteCurveBank(bank_data()).value(dict(state, escaped_thieves=1))
+
+
+@pytest.mark.parametrize('potions', range(6))
+@pytest.mark.parametrize('escaped_thieves', [1, 2])
+def test_enemy_escape_keeps_actual_held_potion_count(potions, escaped_thieves):
+    data = bank_data()
+    for thieves, base in ((1, .10), (2, .05)):
+        data['curves'][f'2|TWO_THIEVES|thief_escape_{thieves}'] = [
+            [base + .02 * held] * 3 for held in range(6)]
+    state = dict(act=2, encounter='TWO_THIEVES', outlet='win', hp=60,
+                 max_hp=80, potions=potions, escaped_thieves=escaped_thieves)
+    base = .10 if escaped_thieves == 1 else .05
+    assert FiniteCurveBank(data).value(state) == pytest.approx(base + .02 * potions)

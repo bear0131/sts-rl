@@ -80,9 +80,13 @@ class QuickBackend(SimGameEnv):
 
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
-                                     outer.MATCHED_OBJECTIVE, 'matched-raw-units'])
+                                     outer.MATCHED_OBJECTIVE, 'matched-raw-units',
+                                     'manual-strict-qnorm', 'curves-strict-qnorm'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
     unit_scale = 2. if objective == 'matched-raw-units' else 1.
+    normalized = objective in ('manual-strict-qnorm', 'curves-strict-qnorm')
+    if normalized:
+        objective = 'combat-outcome-means-v1' if objective == 'manual-strict-qnorm' else outer.MATCHED_OBJECTIVE
     if unit_scale == 2.:
         objective = outer.MATCHED_OBJECTIVE
     control = objective not in outer.OUTER_OBJECTIVES
@@ -104,6 +108,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     unit_kwargs = (dict(nosl_is_az_search_mode='full_gumbel', nosl_is_az_paper_full_gumbel=True,
                        nosl_is_az_gumbel_rescale_q=False, nosl_is_az_gumbel_value_scale=2.)
                    if unit_scale == 2. else {})
+    if normalized:
+        unit_kwargs = dict(nosl_is_az_search_mode='full_gumbel', nosl_is_az_paper_full_gumbel=True,
+                           nosl_is_az_gumbel_rescale_q=True, nosl_is_az_gumbel_value_scale=.1)
     model = AccumulatingMaskablePPO(OuterReturnPolicy, env, policy_kwargs=outer_material,
         n_steps=128, batch_size=32, n_epochs=1, gamma=1., device='cpu', seed=42101,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
@@ -248,6 +255,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     generations = sorted((tmp_path/'state'/'rank0').glob('step-*'))
     assert [read_bundle(path, rank=0, world_size=1)['global_step'] for path in generations] == [2048, 3072]
     final = AccumulatingMaskablePPO.load(output, device='cpu')
+    if normalized:
+        assert final.nosl_is_az_paper_full_gumbel and final.nosl_is_az_gumbel_rescale_q
+        assert final.nosl_is_az_gumbel_value_scale == .1 and final.nosl_value_unit_scale == 1.
     assert final.policy.core.teacher.assert_integrity() == teacher
     assert final.policy.optimizer.state
     progress = [json.loads(line.removeprefix('ROLLOUT_PROGRESS '))

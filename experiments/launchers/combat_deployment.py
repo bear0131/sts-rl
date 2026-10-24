@@ -50,6 +50,8 @@ def validate(config, *, connected=False):
                                  'configs/train/combat_finite_win_876_4x5090.json',
                                  'configs/train/combat_matched_curves_876_4x5090.json',
                                  'configs/train/combat_value_units_876_4x5090.json',
+                                 'configs/train/combat10_curves_876_2x5090.json',
+                                 'configs/train/combat10_manual_876_2x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')
     if not re.fullmatch(r'[0-9a-f]{64}', config['material_sha256']):
@@ -63,8 +65,9 @@ def validate(config, *, connected=False):
         raise ValueError('an explicit nonnegative seed is required')
     if config.get('minimum_free_disk_gib', 30) < 14:
         raise ValueError('retain at least 14 GiB for two generations plus an atomic save and reserve')
-    if len(config['ranks']) != 4 or [r['rank'] for r in config['ranks']] != list(range(4)):
-        raise ValueError('exactly ranks 0..3 are required')
+    world = config.get('world_size', 4)
+    if world not in (2, 4) or len(config['ranks']) != world or [r['rank'] for r in config['ranks']] != list(range(world)):
+        raise ValueError('require every local rank of an explicit two- or four-machine group')
     if config.get('wandb_id') and not re.fullmatch(r'[A-Za-z0-9_-]+', config['wandb_id']):
         raise ValueError('invalid W&B id')
     if connected:
@@ -76,8 +79,8 @@ def validate(config, *, connected=False):
         for rank in config['ranks']:
             if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]*', rank.get('host') or '') or not 1 <= int(rank.get('port') or 0) <= 65535:
                 raise ValueError('fill current machine host/port for every rank; no historical fallback')
-        if len({(r['host'], r['port']) for r in config['ranks']}) != 4:
-            raise ValueError('four distinct SSH endpoints are required')
+        if len({(r['host'], r['port']) for r in config['ranks']}) != world:
+            raise ValueError('distinct SSH endpoints are required within each group')
     return config
 
 
@@ -86,8 +89,11 @@ def training_command(config, profile, rank):
     root = Path(config['remote_repo'])
     run = root/'runs'/config['run_id']
     t, budget = profile['training'], config['budget']
+    world = config.get('world_size', 4)
+    if t['world_size'] != world or rank not in range(world):
+        raise ValueError('profile/deployment world size or local rank mismatch')
     cmd = [str(root/'.venv/bin/python'), '-u', '-m', 'rl.training.distributed_sb3',
-        '--rank', str(rank), '--world-size', '4', '--run-id', config['run_id'],
+        '--rank', str(rank), '--world-size', str(world), '--run-id', config['run_id'],
         '--checkpoint', str(root/'material/initial.zip'), '--output', str(run/f'rank{rank}.zip'),
         '--updates', str(budget['rounds']), '--n-envs', str(t['n_envs_per_rank']), '--n-steps', str(t['n_steps']),
         '--seed', str(budget['seed']), '--device', 'cuda', '--vec', 'native',
@@ -168,8 +174,8 @@ def remote_preflight(config_path, rank):
     print(f"rank {rank} preflight passed")
 
 
-def agree(reports):
-    if len(reports) != 4 or {r['rank'] for r in reports} != set(range(4)):
+def agree(reports, world_size=4):
+    if world_size not in (2, 4) or len(reports) != world_size or {r['rank'] for r in reports} != set(range(world_size)):
         raise ValueError('all four preflight reports are required')
     for key in ('source_commit', 'config_sha256', 'profile_sha256', 'native_sha256', 'teacher_sha256', 'objective_identity',
                 'lower_sha256', 'torch', 'python', 'runtime_files'):
@@ -244,7 +250,7 @@ def remote_status(config_path, rank, *, verify=False):
     for path in sorted((run/'recovery'/f'rank{rank}').glob('step-*/manifest.json')):
         if verify:
             from rl.training.checkpoints import read_bundle
-            manifest = read_bundle(path.parent, rank=rank, world_size=4)
+            manifest = read_bundle(path.parent, rank=rank, world_size=config.get('world_size', 4))
         else:
             manifest = read(path)
         if manifest['run_id'] != config['run_id'] or manifest['rank'] != rank:
@@ -255,8 +261,8 @@ def remote_status(config_path, rank, *, verify=False):
     return state
 
 
-def common_update(states):
-    if len(states) != 4 or {s['rank'] for s in states} != set(range(4)):
+def common_update(states, world_size=4):
+    if world_size not in (2, 4) or len(states) != world_size or {s['rank'] for s in states} != set(range(world_size)):
         raise ValueError('all four rank statuses are required')
     common = set.intersection(*(set(s['generations']) for s in states))
     if not common:
@@ -328,7 +334,7 @@ def manage(config_path, action):
     output.mkdir(parents=True, exist_ok=True)
     if action == 'plan':
         plan = dict(config=config, unresolved=[f"rank{r['rank']} endpoint" for r in config['ranks'] if not r.get('host') or not r.get('port')],
-                    global_slots=4*profile['training']['n_envs_per_rank']*profile['training']['n_steps']*config['budget']['rounds'],
+                    global_slots=config.get('world_size', 4)*profile['training']['n_envs_per_rank']*profile['training']['n_steps']*config['budget']['rounds'],
                     maximum_updates=profile['training']['optimizer_updates_per_round']*config['budget']['rounds'],
                     upper_updates=0, lower_trainable='all parameters from first update',
                     source_commit=subprocess.check_output(['git','rev-parse','HEAD'], cwd=repo, text=True).strip())
@@ -410,7 +416,7 @@ timeout 120 .venv/bin/python -c {shlex.quote(invoke)}
             return json.loads(ssh(rank, f'cat {run}/preflight-rank{rank["rank"]}.json\n'))
         with ThreadPoolExecutor(max_workers=4) as pool:
             reports = list(pool.map(provision, config['ranks']))
-        write(output/'agreement.json', agree(reports))
+        write(output/'agreement.json', agree(reports, config.get('world_size', 4)))
         public_keys = [ssh(r, f'cat {run}/ssh/id_ed25519.pub\n').strip() for r in config['ranks']]
         for rank in config['ranks']:
             script = 'mkdir -p /root/.ssh\nchmod 700 /root/.ssh\n'
@@ -425,7 +431,7 @@ timeout 120 .venv/bin/python -c {shlex.quote(invoke)}
         print('Four-rank source/model/native agreement accepted; no training started.')
     elif action == 'start':
         reports = [json.loads(ssh(r, f'cat {run}/preflight-rank{r["rank"]}.json\n')) for r in config['ranks']]
-        agree(reports)
+        agree(reports, config.get('world_size', 4))
         if any(r['config_sha256'] != digest(config_path) for r in reports):
             raise ValueError('local deployment configuration differs from the preflighted one')
         def start(rank):

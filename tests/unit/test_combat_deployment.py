@@ -47,6 +47,44 @@ def configuration():
     return config
 
 
+@pytest.mark.parametrize('arm,physical', [('curves', (0, 1)), ('manual', (2, 3))])
+def test_strict_pair_isolated_local_ranks_and_workload(arm, physical):
+    config = configuration()
+    config.update(world_size=2, profile=f'configs/train/combat10_{arm}_876_2x5090.json')
+    config['ranks'] = [dict(config['ranks'][p], rank=i) for i, p in enumerate(physical)]
+    validate(config, connected=True)
+    profile = json.loads((ROOT/config['profile']).read_text())
+    assert profile['contract']['external_value_unit_scale'] == 1
+    assert profile['training']['slot_steps_global_per_round'] == 49152
+    assert profile['search']['gumbel_rescale_q'] is True
+    assert profile['search']['gumbel_value_scale'] == .1
+    from rl.search.native import NativeSearchConfig
+    search = NativeSearchConfig.from_mapping(profile['search'])
+    assert search.paper_full_gumbel and search.gumbel_rescale_q
+    assert search.gumbel_value_scale == .1 and search.leaf_batch_size == 1
+    for rank in range(2):
+        args = build_parser().parse_args(training_command(config, profile, rank)[4:])
+        assert (args.rank, args.world_size, args.n_envs, args.n_steps) == (rank, 2, 96, 256)
+        assert args.peer == [f'{1-rank}=root@localhost:{22000+physical[1-rank]}']
+        assert args.nosl_is_az_updates == 40 and args.nosl_is_az_simulations == 128
+    with pytest.raises(ValueError, match='world size'):
+        training_command(dict(config, world_size=4), profile, 0)
+
+
+def test_pair_agreement_and_common_save_require_both_local_ranks():
+    reports = [dict(rank=i, source_commit='x', config_sha256='x', profile_sha256='x',
+        native_sha256='x', teacher_sha256='x', lower_sha256='x', torch='x', python='x',
+        objective_identity={}, runtime_files={}) for i in range(2)]
+    assert len(agree(reports, 2)) == 2
+    with pytest.raises(ValueError):
+        agree(reports[:1], 2)
+    states = [dict(rank=i, generations=[49152], metric=dict(global_timesteps=49152,
+        optimizer_steps=40, **{'frozen_upper/upper_updates': 0, 'nosl_is_az/completed_combat_roots': 10})) for i in range(2)]
+    assert common_update(states, 2) == 49152
+    states[1]['generations'] = []
+    assert common_update(states, 2) is None
+
+
 @pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves', 'combat_value_units'])
 def test_deployment_preserves_whole_lower_training_and_876_geometry(profile_name):
     config = configuration()
