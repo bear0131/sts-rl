@@ -85,6 +85,26 @@ def test_pair_agreement_and_common_save_require_both_local_ranks():
     assert common_update(states, 2) is None
 
 
+def test_raw_six_profile_changes_only_curve_scale_contract():
+    old = json.loads((ROOT/'configs/train/combat11_six_curves_876_2x5090.json').read_text())
+    raw_path = 'configs/train/combat12_six_curves_raw_876_2x5090.json'
+    raw = json.loads((ROOT/raw_path).read_text())
+    for key in ('source', 'source_checkpoint_contract', 'training', 'search', 'simulator'):
+        assert raw[key] == old[key]
+    changed = {k for k in set(old['contract']) | set(raw['contract'])
+               if old['contract'].get(k) != raw['contract'].get(k)}
+    assert changed == {'experiment_number', 'comparison', 'curve_bank_file_sha256',
+                       'curve_bank_identity', 'payoff', 'full_hp_target'}
+    config = configuration()
+    config.update(world_size=2, profile=raw_path)
+    config['ranks'] = config['ranks'][:2]
+    validate(config, connected=True)
+    for rank in (0, 1):
+        args = build_parser().parse_args(training_command(config, raw, rank)[4:])
+        assert (args.rank, args.world_size, args.n_envs, args.n_steps) == (rank, 2, 96, 256)
+        assert args.nosl_is_az_updates == 40 and args.nosl_is_az_simulations == 128
+
+
 @pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves', 'combat_value_units'])
 def test_deployment_preserves_whole_lower_training_and_876_geometry(profile_name):
     config = configuration()

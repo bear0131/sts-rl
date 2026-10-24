@@ -314,3 +314,5 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 无需等整局结束即可上报。对应 `*_window` 分子/分母也写入日志；没有分母时
 不报告0概率。普通resume与其他滚动指标相同，显示窗口重新累计，已打开待领
 宝箱的归属由环境journal重放恢复；这些计数不改变奖励、观测或训练目标。
+
+六曲线HP实验复用matched双均值头，只读结算回血前HP/maxHP及幕/Boss类别，win与escape共享价格、死亡0、截断丢弃，无战略结算reward。COMBAT11 payoff `combat-end-hp-six-curves-full08-no-settlement-v1` 要求每条raw满血1.6（最终监督0.8）；COMBAT12 `combat-end-hp-six-curves-no-settlement-reward-v1` 保留冻结参考原尺度（最终Boss raw常数1，即监督0.5）。两者均固定除2，独立bank SHA/payoff隔离恢复与replay，不能跨目标沿用Adam。COMBAT12只改变逐曲线倍率；配置为 `configs/train/combat12_six_curves_raw_876_2x5090.json`。

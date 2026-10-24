@@ -14,6 +14,7 @@ CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE)
 SCHEMA = 'frozen-upper-hp-curve-bank-v1'
 SIX_SCHEMA = 'frozen-upper-act-room-hp-curves-v1'
 SIX_PAYOFF = 'combat-end-hp-six-curves-full08-no-settlement-v1'
+SIX_RAW_PAYOFF = 'combat-end-hp-six-curves-no-settlement-reward-v1'
 
 
 def curve_key(act, encounter, outlet):
@@ -88,7 +89,7 @@ def matched_exit_value(exit, bank):
         raise ValueError('unknown surviving curve outcome')
     if getattr(bank, 'hp_only', False):
         # A fixed HP price, independent of all strategic settlement increments.
-        # The final act's Boss curve is explicitly the terminal constant 1.6 (normalized 0.8).
+        # The final Boss constant follows the bank's immutable scale contract.
         value = bank.value(exit.curve_state) / MATCHED_VALUE_SCALE
     else:
         bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
@@ -127,11 +128,16 @@ class FiniteCurveBank:
         if self.hp_only:
             keys = {f'{act}|{room}' for act in (1, 2, 3) for room in ('boss', 'nonboss')}
             if (set(self.curves) != keys or self.aliases or 'potion_counts' in data or
-                    data.get('payoff') != SIX_PAYOFF or
-                    not np.all(self.curves['3|boss'] == 1.6) or
-                    any(x[-1] != 1.6 for x in self.curves.values()) or
+                    data.get('payoff') not in (SIX_PAYOFF, SIX_RAW_PAYOFF) or
                     any(np.any((x < 0) | (x > 2)) for x in self.curves.values())):
-                raise ValueError('six curves require exactly act/room HP prices and full-HP 1.6 and final Boss constant 1.6')
+                raise ValueError('six curves require exactly act/room HP prices and a supported payoff')
+            if data['payoff'] == SIX_PAYOFF:
+                if (not np.all(self.curves['3|boss'] == 1.6) or
+                        any(x[-1] != 1.6 for x in self.curves.values())):
+                    raise ValueError('full08 six curves require full-HP 1.6 and final Boss constant 1.6')
+            elif (not np.all(self.curves['3|boss'] == 1.) or
+                    any(x[-1] <= 0 for x in self.curves.values())):
+                raise ValueError('raw six curves require positive full-HP prices and final Boss constant 1')
         if any(key in self.curves or value not in self.curves for key, value in self.aliases.items()):
             raise ValueError('invalid finite curve aliases')
         for array in (self.grid, *self.curves.values()):
@@ -144,6 +150,10 @@ class FiniteCurveBank:
 
     def data(self):
         return deepcopy(self._data)
+
+    @property
+    def payoff(self):
+        return self._data.get('payoff')
 
     def value(self, state):
         # Natural losses never bootstrap. Censored outcomes must be discarded.

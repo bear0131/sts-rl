@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from env.core.finite_curves import (FiniteCurveBank, SIX_SCHEMA, SIX_PAYOFF,
+from env.core.finite_curves import (FiniteCurveBank, SIX_SCHEMA, SIX_PAYOFF, SIX_RAW_PAYOFF,
                                   exit_identity, settled_exit, matched_exit_value)
 from env.core.outer_return import CombatExit
 
@@ -64,3 +64,39 @@ def test_exact_six_and_no_silent_clipping(bank):
         if mutate == 'terminal': data['curves']['3|boss'][0] = .5
         if mutate == 'range': data['curves']['1|boss'][0] = 2.1
         with pytest.raises(ValueError): FiniteCurveBank(data)
+
+
+def test_raw_prices_preserve_shape_and_exit_semantics_without_full08(bank):
+    data = bank.data()
+    data['payoff'] = SIX_RAW_PAYOFF
+    factors = {'1|boss': 1.3, '1|nonboss': 1.4, '2|boss': 1.5,
+               '2|nonboss': 1.6, '3|boss': 1.6, '3|nonboss': 1.7}
+    data['curves'] = {k: [v / factors[k] for v in values]
+                      for k, values in data['curves'].items()}
+    raw = FiniteCurveBank(data)
+    assert raw.payoff == SIX_RAW_PAYOFF and raw.identity != bank.identity
+    assert FiniteCurveBank(raw.data()).identity == raw.identity
+    for key, factor in factors.items():
+        act, room = key.split('|')
+        for hp in (1, 20, 40, 60, 80):
+            state = dict(act=int(act), is_boss=room == 'boss', combat_hp=hp,
+                         combat_max_hp=80, outlet='win')
+            expected = matched_exit_value(CombatExit(0., 'upper', state), bank) / factor
+            for outlet in ('win', 'escape'):
+                for potions in range(6):
+                    changed = dict(state, outlet=outlet, potions=potions, hp=100,
+                                   max_hp=100, gold=999, escaped_thieves=2,
+                                   encounter='UNSEEN')
+                    for reward in (-100., 100.):
+                        assert matched_exit_value(CombatExit(reward, 'upper', changed), raw) == pytest.approx(expected)
+            assert matched_exit_value(CombatExit(100., 'terminal', dict(state, outlet='loss')), raw) == 0.
+            with pytest.raises(ValueError, match='observed'):
+                matched_exit_value(CombatExit(0., 'censored', state), raw)
+    assert matched_exit_value(CombatExit(999., 'terminal', dict(state, is_boss=True)), raw) == .5
+    for malformed in ('terminal', 'range', 'unknown-payoff', 'pretend-full08'):
+        changed = raw.data()
+        if malformed == 'terminal': changed['curves']['3|boss'][0] = .9
+        if malformed == 'range': changed['curves']['1|boss'][0] = 2.1
+        if malformed == 'unknown-payoff': changed['payoff'] = 'unknown'
+        if malformed == 'pretend-full08': changed['payoff'] = SIX_PAYOFF
+        with pytest.raises(ValueError): FiniteCurveBank(changed)

@@ -81,13 +81,19 @@ class QuickBackend(SimGameEnv):
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
                                      outer.MATCHED_OBJECTIVE, 'matched-raw-units',
-                                     'manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm'])
+                                     'manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm',
+                                     'six-curves-raw-strict-qnorm'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, six_curve_bank, tmp_path, monkeypatch, capsys, objective):
-    six = objective == 'six-curves-strict-qnorm'
+    six = objective in ('six-curves-strict-qnorm', 'six-curves-raw-strict-qnorm')
     if six:
-        finite_curve_bank = six_curve_bank
+        finite_curve_bank = copy.deepcopy(six_curve_bank)
+        if objective == 'six-curves-raw-strict-qnorm':
+            from env.core.finite_curves import SIX_RAW_PAYOFF
+            finite_curve_bank['payoff'] = SIX_RAW_PAYOFF
+            finite_curve_bank['curves'] = {k: [v / 1.6 for v in values]
+                                           for k, values in finite_curve_bank['curves'].items()}
     unit_scale = 2. if objective == 'matched-raw-units' else 1.
-    normalized = objective in ('manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm')
+    normalized = six or objective in ('manual-strict-qnorm', 'curves-strict-qnorm')
     if normalized:
         objective = 'combat-outcome-means-v1' if objective == 'manual-strict-qnorm' else outer.MATCHED_OBJECTIVE
     if unit_scale == 2.:
@@ -222,9 +228,15 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     if finite:
         assert replay.value_contract == objective
         if six:
-            from env.core.finite_curves import SIX_PAYOFF
-            assert replay.objective_identity['payoff'] == SIX_PAYOFF
+            from env.core.finite_curves import SIX_PAYOFF, SIX_RAW_PAYOFF
+            assert replay.objective_identity['payoff'] == finite_curve_bank['payoff']
             assert replay.objective_identity['boundary'] == 'combat-end-hp-before-settlement-v1'
+            wrong_scale = replay.state_dict()
+            wrong_scale['objective_identity'] = copy.deepcopy(wrong_scale['objective_identity'])
+            wrong_scale['objective_identity']['payoff'] = (SIX_RAW_PAYOFF
+                if finite_curve_bank['payoff'] == SIX_PAYOFF else SIX_PAYOFF)
+            with pytest.raises(ValueError, match='objective identity'):
+                replay.load_state_dict(wrong_scale)
         assert replay.objective_identity['finite_curves'] == restored.policy.core.finite_curve_bank.identity
         changed = replay.state_dict()
         changed['objective_identity'] = copy.deepcopy(changed['objective_identity'])
