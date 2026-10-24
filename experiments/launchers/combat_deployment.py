@@ -462,13 +462,13 @@ timeout 120 .venv/bin/python -c {shlex.quote(invoke)}
                 break
             if any(s['exit'] is not None and s['exit']['exit_code'] != 0 for s in states):
                 raise RuntimeError('a trainer failed; inspect deployment status.json')
-            step = common_update(states)
+            step = common_update(states, config.get('world_size', 4))
             if step is not None:
                 # Hash-check the actual per-rank bundles before accepting startup.
                 with ThreadPoolExecutor(max_workers=4) as pool:
                     verified = list(pool.map(lambda r: status(r, True), config['ranks']))
                 write(output/'verified-update.json', verified)
-                verified_step = common_update(verified)
+                verified_step = common_update(verified, config.get('world_size', 4))
                 if verified_step is None:
                     raise RuntimeError('common generation changed during verification; retry wait-update')
                 print(f'All ranks trained lower only and verified common generation {verified_step}.')
