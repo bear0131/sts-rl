@@ -325,3 +325,14 @@ def finite_curve_bank(frozen_upper_source):
                     [base+.025*p+slope*x for x in (.01, .5, 1.)] for p in range(6)]
     return dict(schema=SCHEMA, teacher_sha256=teacher.assert_integrity(),
                 hp_fractions=[.01, .5, 1.], potion_counts=list(range(6)), curves=curves)
+
+
+@pytest.fixture
+def six_curve_bank(finite_curve_bank):
+    from env.core.finite_curves import SIX_SCHEMA, SIX_PAYOFF
+    return dict(schema=SIX_SCHEMA, payoff=SIX_PAYOFF,
+                teacher_sha256=finite_curve_bank['teacher_sha256'],
+                hp_fractions=[.01, .5, 1.],
+                curves={f'{act}|{room}': ([1., 1., 1.] if act == 3 and room == 'boss'
+                        else [.2 + .1*act, .4 + .1*act, .7 + .1*act])
+                        for act in (1, 2, 3) for room in ('boss', 'nonboss')})

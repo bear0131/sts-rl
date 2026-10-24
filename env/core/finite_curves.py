@@ -12,6 +12,8 @@ MATCHED_OBJECTIVE = 'combat06-matched-finite-curves-v1'
 MATCHED_VALUE_SCALE = 2.0
 CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE)
 SCHEMA = 'frozen-upper-hp-curve-bank-v1'
+SIX_SCHEMA = 'frozen-upper-act-room-hp-curves-v1'
+SIX_PAYOFF = 'combat-end-hp-six-curves-no-settlement-reward-v1'
 
 
 def curve_key(act, encounter, outlet):
@@ -30,6 +32,10 @@ def exit_identity(gc, battle, *, include_combat_hp=False):
     if include_combat_hp:
         from .combat_value import combat_end_hp
         identity['combat_hp'] = combat_end_hp(battle)
+        identity['combat_max_hp'] = battle.to_dict()['player']['max_hp']
+        if hasattr(gc, 'cur_room'):
+            from .boss_value import is_boss_room
+            identity['is_boss'] = is_boss_room(gc.cur_room)
         # Enemy escape is still native PLAYER_VICTORY, unlike player smoke.
         # Keep both facts: survival label and the finite outlet price.
         thieves = [m for m in battle.to_dict()['monsters']
@@ -80,8 +86,13 @@ def matched_exit_value(exit, bank):
         return 0.
     if outcome not in ('win', 'escape'):
         raise ValueError('unknown surviving curve outcome')
-    bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
-    value = exit.target(bootstrap) / MATCHED_VALUE_SCALE
+    if getattr(bank, 'hp_only', False):
+        # A fixed HP price, independent of all strategic settlement increments.
+        # The final act's Boss curve is explicitly the terminal constant one.
+        value = bank.value(exit.curve_state) / MATCHED_VALUE_SCALE
+    else:
+        bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
+        value = exit.target(bootstrap) / MATCHED_VALUE_SCALE
     if not math.isfinite(value) or not 0. <= value <= 1.:
         raise ValueError('matched curve payoff outside fixed sigmoid range')
     return value
@@ -98,19 +109,28 @@ class FiniteCurveBank:
         self._data = deepcopy(data)
         canonical = json.dumps(data, sort_keys=True, separators=(',', ':'), allow_nan=False)
         self.sha256 = hashlib.sha256(canonical.encode()).hexdigest()
-        if data.get('schema') != SCHEMA:
+        self.hp_only = data.get('schema') == SIX_SCHEMA
+        if data.get('schema') not in (SCHEMA, SIX_SCHEMA):
             raise ValueError('unsupported finite curve bank schema')
         self.grid = np.asarray(data['hp_fractions'], dtype=np.float64)
         if (len(self.grid) < 2 or self.grid[0] <= 0 or self.grid[-1] != 1. or
                 not np.isfinite(self.grid).all() or not np.all(np.diff(self.grid) > 0)):
             raise ValueError('invalid finite curve HP grid')
-        if data.get('potion_counts') != list(range(6)):
+        if not self.hp_only and data.get('potion_counts') != list(range(6)):
             raise ValueError('finite curves require all six held-potion counts')
         self.curves = {key: np.asarray(value, dtype=np.float64) for key, value in data['curves'].items()}
-        if not self.curves or any(x.shape != (6, len(self.grid)) or not np.isfinite(x).all()
+        shape = (len(self.grid),) if self.hp_only else (6, len(self.grid))
+        if not self.curves or any(x.shape != shape or not np.isfinite(x).all()
                                   for x in self.curves.values()):
             raise ValueError('invalid finite curve values')
         self.aliases = dict(data.get('aliases', {}))
+        if self.hp_only:
+            keys = {f'{act}|{room}' for act in (1, 2, 3) for room in ('boss', 'nonboss')}
+            if (set(self.curves) != keys or self.aliases or 'potion_counts' in data or
+                    data.get('payoff') != SIX_PAYOFF or
+                    not np.all(self.curves['3|boss'] == 1.) or
+                    any(np.any((x < 0) | (x > 2)) for x in self.curves.values())):
+                raise ValueError('six curves require exactly act/room HP prices and final Boss constant one')
         if any(key in self.curves or value not in self.curves for key, value in self.aliases.items()):
             raise ValueError('invalid finite curve aliases')
         for array in (self.grid, *self.curves.values()):
@@ -118,7 +138,7 @@ class FiniteCurveBank:
 
     @property
     def identity(self):
-        return dict(objective=OBJECTIVE, schema=SCHEMA, sha256=self.sha256,
+        return dict(objective=OBJECTIVE, schema=self._data['schema'], sha256=self.sha256,
                     teacher_sha256=self._data['teacher_sha256'])
 
     def data(self):
@@ -130,6 +150,14 @@ class FiniteCurveBank:
             return 0.
         if state['outlet'] not in ('win', 'escape'):
             raise ValueError('unknown finite curve outlet')
+        if self.hp_only:
+            hp, maximum, act, boss = (state[k] for k in ('combat_hp', 'combat_max_hp', 'act', 'is_boss'))
+            if (not all(math.isfinite(float(x)) for x in (hp, maximum)) or
+                    maximum <= 0 or hp <= 0 or hp > maximum or
+                    type(boss) is not bool or act not in (1, 2, 3)):
+                raise ValueError('invalid six-curve combat HP or room identity')
+            key = f'{act}|{"boss" if boss else "nonboss"}'
+            return float(np.interp(hp / maximum, self.grid, self.curves[key]))
         hp, maximum, potion_count = state['hp'], state['max_hp'], state['potions']
         if (not all(math.isfinite(float(x)) for x in (hp, maximum, potion_count)) or
                 maximum <= 0 or hp <= 0 or hp > maximum or

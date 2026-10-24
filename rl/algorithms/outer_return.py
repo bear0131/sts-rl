@@ -53,6 +53,11 @@ def contract(model):
                             value_scale=MATCHED_VALUE_SCALE,
                             samples='combat06-roots-boundaries-terminals-v1',
                             escape='observed-surviving-exit-separate-curve-v1')
+            if model.policy.core.finite_curve_bank.hp_only:
+                from env.core.finite_curves import SIX_PAYOFF
+                identity.update(boundary='combat-end-hp-before-settlement-v1',
+                                payoff=SIX_PAYOFF,
+                                escape='surviving-exit-shared-act-room-hp-curve-v1')
             if unit_scale != 1.:
                 identity['external_value_units'] = dict(schema='raw-curve-value-units-v1',
                     scale=unit_scale, conditional_mse_coefficient=unit_scale ** 2,

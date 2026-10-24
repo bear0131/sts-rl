@@ -462,3 +462,5 @@
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
 | COMBAT10-DECODE | 修复待生产验收 | env/search/native_batch.py；旧native选牌溢出等效别名-182标记恢复为-1，严验公共slot/handle、不改搜索；tests/integration/test_combat_choices.py覆盖搜索内部叶和96/105边界；需曲线41全状态恢复后完整256/U40/保存及下一轮验收，人工目标不变。 |
+
+| COMBAT11 | implemented; Linux/GPU gates pending | Six fixed teacher HP curves, pre-settlement HP fraction, no live resource/outlet conditioning or strategic reward. New schema isolates model/replay; same heads/initial seed/Qnorm/MSE1. tests/unit/test_six_curves.py and real two-round lifecycle; only physical0+1. User requires continuous training without cumulative limit. |

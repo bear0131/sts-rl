@@ -81,10 +81,13 @@ class QuickBackend(SimGameEnv):
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
                                      outer.MATCHED_OBJECTIVE, 'matched-raw-units',
-                                     'manual-strict-qnorm', 'curves-strict-qnorm'])
-def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
+                                     'manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm'])
+def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, six_curve_bank, tmp_path, monkeypatch, capsys, objective):
+    six = objective == 'six-curves-strict-qnorm'
+    if six:
+        finite_curve_bank = six_curve_bank
     unit_scale = 2. if objective == 'matched-raw-units' else 1.
-    normalized = objective in ('manual-strict-qnorm', 'curves-strict-qnorm')
+    normalized = objective in ('manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm')
     if normalized:
         objective = 'combat-outcome-means-v1' if objective == 'manual-strict-qnorm' else outer.MATCHED_OBJECTIVE
     if unit_scale == 2.:
@@ -218,6 +221,10 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     assert replay.size > 0 and np.isfinite(replay.value_targets[:replay.size]).all()
     if finite:
         assert replay.value_contract == objective
+        if six:
+            from env.core.finite_curves import SIX_PAYOFF
+            assert replay.objective_identity['payoff'] == SIX_PAYOFF
+            assert replay.objective_identity['boundary'] == 'combat-end-hp-before-settlement-v1'
         assert replay.objective_identity['finite_curves'] == restored.policy.core.finite_curve_bank.identity
         changed = replay.state_dict()
         changed['objective_identity'] = copy.deepcopy(changed['objective_identity'])
