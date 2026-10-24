@@ -174,6 +174,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         nosl_is_az_update_schedule: str | dict | None = None,
         nosl_is_az_policy_coef: float = 1.0,
         nosl_is_az_value_coef: float = 0.5,
+        nosl_value_unit_scale: float = 1.0,
         **kwargs,
     ) -> None:
         if gradient_accumulation_steps < 1:
@@ -409,6 +410,9 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self.nosl_is_az_update_schedule = CombatUpdateSchedule.from_config(nosl_is_az_update_schedule).config()
         self.nosl_is_az_policy_coef = float(nosl_is_az_policy_coef)
         self.nosl_is_az_value_coef = float(nosl_is_az_value_coef)
+        if nosl_value_unit_scale not in (1., 2.):
+            raise ValueError('supported value units are legacy 1 or matched-curve compensation 2')
+        self.nosl_value_unit_scale = float(nosl_value_unit_scale)
         self._nosl_is_az_samples = []
         # When replay is disabled, this transient list is the complete
         # effective batch for the current update.  It is intentionally not
@@ -439,6 +443,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.OUTER_OBJECTIVES
         self._settled_combat_search = self._outer_return or self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE
+        if self.nosl_value_unit_scale != 1. and self.nosl_supervision_contract != outer.MATCHED_OBJECTIVE:
+            raise ValueError('external value-unit compensation supports only matched-curve supervision')
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
         if self._outer_return:
             if self._hierarchical_hp_requested:
@@ -2537,7 +2543,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                                 distribution_outputs, combat_targets, value_targets)
                         elif self.nosl_supervision_contract in (MEAN_CONTRACT, MATCHED_OBJECTIVE):
                             value_loss_per_sample, distribution_metrics = mean_outcome_loss(
-                                distribution_outputs, combat_targets, value_targets)
+                                distribution_outputs, combat_targets, value_targets,
+                                value_unit_scale=self.nosl_value_unit_scale)
                         else:
                             value_loss_per_sample, distribution_metrics = distribution_loss(
                                 distribution_outputs,combat_targets,value_targets,

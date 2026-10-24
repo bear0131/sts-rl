@@ -80,8 +80,11 @@ class QuickBackend(SimGameEnv):
 
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
-                                     outer.MATCHED_OBJECTIVE])
+                                     outer.MATCHED_OBJECTIVE, 'matched-raw-units'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
+    unit_scale = 2. if objective == 'matched-raw-units' else 1.
+    if unit_scale == 2.:
+        objective = outer.MATCHED_OBJECTIVE
     control = objective not in outer.OUTER_OBJECTIVES
     finite = objective in outer.CURVE_OBJECTIVES
     factored = objective == outer.FACTORED_OBJECTIVE
@@ -98,6 +101,9 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         env.seed(42101)
         return env
     env = make_env()
+    unit_kwargs = (dict(nosl_is_az_search_mode='full_gumbel', nosl_is_az_paper_full_gumbel=True,
+                       nosl_is_az_gumbel_rescale_q=False, nosl_is_az_gumbel_value_scale=2.)
+                   if unit_scale == 2. else {})
     model = AccumulatingMaskablePPO(OuterReturnPolicy, env, policy_kwargs=outer_material,
         n_steps=128, batch_size=32, n_epochs=1, gamma=1., device='cpu', seed=42101,
         nosl_is_az=True, nosl_is_az_cpp=True, nosl_is_az_inner_only=True,
@@ -105,7 +111,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         nosl_is_az_simulations=4, nosl_is_az_updates=2,
         nosl_is_az_leaf_batch_size=1,
         nosl_is_az_batch_size=64, nosl_is_az_micro_batch_size=32,
-        nosl_is_az_replay_capacity=2048)
+        nosl_is_az_replay_capacity=2048, nosl_value_unit_scale=unit_scale, **unit_kwargs)
     initial = tmp_path / 'initial.zip'
     assert model.policy.core.lower_initialization == 'random'
     assert all(p.requires_grad for name, p in model.policy.core.combat.named_parameters()
@@ -118,6 +124,13 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     teacher = model.policy.core.teacher.assert_integrity()
     env.close()
     payloads = []
+    from rl.algorithms import combat_distribution
+    original_mean_loss = combat_distribution.mean_outcome_loss
+    seen_units = []
+    def observed_mean_loss(*args, **kwargs):
+        seen_units.append(kwargs.get('value_unit_scale', 1.))
+        return original_mean_loss(*args, **kwargs)
+    monkeypatch.setattr(combat_distribution, 'mean_outcome_loss', observed_mean_loss)
     monkeypatch.setitem(sys.modules, 'wandb', SimpleNamespace(
         init=lambda **kw: SimpleNamespace(finish=lambda **kw: None),
         config=SimpleNamespace(update=lambda *a, **kw: None), define_metric=lambda *a, **kw: None,
@@ -135,6 +148,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     monkeypatch.setattr(sys, 'argv', argv)
     distributed_sb3.main()
     assert len(payloads) == 2
+    if means:
+        assert seen_units and set(seen_units) == {unit_scale}
     from rl.training.checkpoints import read_bundle
     generations = sorted((tmp_path/'state'/'rank0').glob('step-*'))
     assert [read_bundle(path, rank=0, world_size=1)['global_step'] for path in generations] == [1024, 2048]
@@ -181,6 +196,15 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
     restore_learner(restored, bundle, rank=0, world_size=1)
+    assert restored.nosl_value_unit_scale == unit_scale
+    if unit_scale == 2.:
+        assert restored.outer_return_contract['external_value_units']['conditional_mse_coefficient'] == 4.
+        assert restored.nosl_is_az_gumbel_value_scale == 2.
+        incompatible = restored._ensure_nosl_is_az_replay().state_dict()
+        incompatible['objective_identity'] = dict(incompatible['objective_identity'])
+        incompatible['objective_identity'].pop('external_value_units')
+        with pytest.raises(ValueError, match='objective identity'):
+            restored._ensure_nosl_is_az_replay().load_state_dict(incompatible)
     assert restored._recovery_environment_restored
     assert not hasattr(restored, '_rollout_inference')
     replay = restored._ensure_nosl_is_az_replay()

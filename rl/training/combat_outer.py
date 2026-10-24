@@ -52,6 +52,7 @@ def construct(args, profile):
             nosl_is_az_updates=training['optimizer_updates_per_round'],
             nosl_is_az_policy_coef=training['policy_loss_coefficient'],
             nosl_is_az_value_coef=training['value_loss_coefficient'],
+            nosl_value_unit_scale=profile['contract'].get('external_value_unit_scale', 1.),
             nosl_is_az_replay_capacity=training['replay']['capacity_per_rank'],
             nosl_is_az_replay_min_size=training['replay']['min_size'],
             nosl_is_az_replay_max_old_fraction=training['replay']['max_old_fraction'], **search_kwargs)

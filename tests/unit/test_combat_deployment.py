@@ -20,7 +20,7 @@ def test_remote_script_wire_preserves_posix_lines_and_utf8():
     assert result.stdout == 'mkdir /tmp/example\nprintf 测试\n'
 
 
-@pytest.mark.parametrize('profile_name', ['combat_finite_win', 'combat_matched_curves'])
+@pytest.mark.parametrize('profile_name', ['combat_finite_win', 'combat_matched_curves', 'combat_value_units'])
 def test_curve_profile_uses_existing_deployment_plan(tmp_path, monkeypatch, capsys, profile_name):
     from experiments.launchers import combat_deployment as deployment
     config = configuration()
@@ -47,7 +47,7 @@ def configuration():
     return config
 
 
-@pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves'])
+@pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves', 'combat_value_units'])
 def test_deployment_preserves_whole_lower_training_and_876_geometry(profile_name):
     config = configuration()
     config['profile'] = f'configs/train/{profile_name}_876_4x5090.json'

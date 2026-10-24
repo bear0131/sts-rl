@@ -25,6 +25,12 @@ def _native_sha():
 def contract(model):
     teacher = model.policy.core.teacher
     objective = model.policy.core.training_objective
+    unit_scale = getattr(model, 'nosl_value_unit_scale', 1.)
+    if unit_scale != 1. and (objective != MATCHED_OBJECTIVE or unit_scale != MATCHED_VALUE_SCALE
+            or model.nosl_is_az_gumbel_value_scale != unit_scale
+            or model.nosl_is_az_gumbel_rescale_q or not model.nosl_is_az_paper_full_gumbel
+            or model.nosl_is_az_search_mode != 'full_gumbel'):
+        raise ValueError('value-unit compensation requires matched curves and raw full-Gumbel Q at the same scale')
     identity = dict(objective=objective, context=CONTEXT_SCHEMA, gamma=1.,
                 lower_initialization=model.policy.core.lower_initialization,
                 teacher=teacher.get_extra_state(), native_sha256=_native_sha(),
@@ -47,6 +53,10 @@ def contract(model):
                             value_scale=MATCHED_VALUE_SCALE,
                             samples='combat06-roots-boundaries-terminals-v1',
                             escape='observed-surviving-exit-separate-curve-v1')
+            if unit_scale != 1.:
+                identity['external_value_units'] = dict(schema='raw-curve-value-units-v1',
+                    scale=unit_scale, conditional_mse_coefficient=unit_scale ** 2,
+                    search_q_coefficient=unit_scale)
     elif objective != OBJECTIVE:
         config = model.policy.core.config
         identity.update(boundary='combat-end-hp-v1', boss_win_weight=config.boss_win_weight,

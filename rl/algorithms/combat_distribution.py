@@ -28,13 +28,14 @@ def metrics_for(contract):
     return MEAN_METRICS if contract in (MEAN_CONTRACT, MATCHED_OBJECTIVE) else METRICS
 
 
-def mean_outcome_loss(outputs, targets, values):
-    """Exactly BCE + survivor HP MSE, with the common logical-batch denominator.
+def mean_outcome_loss(outputs, targets, values, *, value_unit_scale=1.):
+    """BCE + survivor MSE in declared external units, with one batch denominator.
 
     Losses contain no information about HP conditional on victory. Their HP
     gradient is zero; do not label survivor HP as zero on a death.
     """
-    return _conditional_mean_loss(outputs, targets, values, 'hp_mean', 'hp_mse', 'hp_given_win')
+    return _conditional_mean_loss(outputs, targets, values, 'hp_mean', 'hp_mse', 'hp_given_win',
+                                  value_unit_scale=value_unit_scale)
 
 
 def conditional_value_loss(outputs, targets, values):
@@ -43,12 +44,14 @@ def conditional_value_loss(outputs, targets, values):
                                   'value_given_win', 'conditional_value_mse', 'value_given_win')
 
 
-def _conditional_mean_loss(outputs, targets, values, output_key, mse_key, mean_key):
+def _conditional_mean_loss(outputs, targets, values, output_key, mse_key, mean_key, *, value_unit_scale=1.):
     win = targets[:, 0].float()
     logits = outputs['win_logits'].float().flatten()
     mean = outputs[output_key].float().flatten()
     bce = F.binary_cross_entropy_with_logits(logits, win, reduction='none')
-    mse = (mean - values.float().flatten()).square() * win
+    # Convert the residual to the objective's external units before squaring.
+    # The metric is the actual MSE contribution, in those same units.
+    mse = ((mean - values.float().flatten()) * value_unit_scale).square() * win
     return bce + mse, {'win_bce': bce, mse_key: mse,
                       'win_probability': logits.sigmoid(), 'win_target': win, mean_key: mean}
 
