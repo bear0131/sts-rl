@@ -460,3 +460,5 @@
 | UPPER08 | TRAIN45下降机制阶段诊断完成；最早估值偏差来源待定位 | 27/38双分布3817同状态、四机384×512局部损失对照、32独立现场512配对续打、23200 macro账本及FP32编码复算完成；已确认学习出的普遍遗物负V、晚期GAE/MC方向冲突及动量/熵下降作用。进度与遗物数混淆是待证因果假说，不能宣判共享value梯度或某旧优化为唯一初因。生产STOP与27/38锚点不变；后续固定样本/真实结局目标对照，验收须改善反事实V排序且不以窗口噪声/单rank更新代替因果。见worklog/2026-10-09.md#upper08-train45-reversal-diagnosis-results。 |
 
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
+
+| COMBAT10-DECODE | 修复待生产验收 | env/search/native_batch.py；旧native选牌溢出等效别名-182标记恢复为-1，严验公共slot/handle、不改搜索；tests/integration/test_combat_choices.py覆盖搜索内部叶和96/105边界；需曲线41全状态恢复后完整256/U40/保存及下一轮验收，人工目标不变。 |

@@ -115,7 +115,7 @@ class NativeSearchBatch:
     def _decode_observations(self, destination=None, rows=None):
         started = time.perf_counter()
         self._ensure_card_stats()
-        payload = self.payload
+        payload = self._decoder_payload()
         if rows is not None:
             # Select the few packed arrays before decoding, not every expanded
             # observation field afterwards. Owners retain original root IDs.
@@ -145,6 +145,44 @@ class NativeSearchBatch:
                         result['outer_deck_misc'][row, index] = value / MISC_SCALE
         self.decode_seconds += time.perf_counter()-started
         return result
+
+    def _decoder_payload(self):
+        """Translate the legacy shifted absent-ID sentinel for compacted piles.
+
+        Native search already omits these equivalent nonrepresentative handles
+        when expanding logits. Its old batch packer subtracts JOINT_END from
+        the absent ID too, yielding -182 instead of the decoder's -1 sentinel.
+        Keep search actions and values untouched; validate the public handle
+        mapping before repairing this transport-only representation.
+        """
+        payload = self.payload
+        if not self.envs[0]._autoregressive_actions:
+            return payload
+        from env.core.native_actions import JOINT_END, JOINT_PICK
+        ids = np.asarray(payload['legal_policy_ids'])
+        absent = ids == -1 - JOINT_END
+        if not absent.any():
+            return payload
+        for row in np.flatnonzero(absent.any(axis=1)):
+            count = int(payload['legal_action_counts'][row])
+            categorical = payload['categorical'][row]
+            handles = categorical[127:223]
+            handles = handles[handles != 0] - 1
+            bits = np.asarray(payload['legal_action_bits'][row, :count], dtype=np.uint32)
+            native_handles = bits & ((1 << 29) - 1)
+            represented = ~absent[row, :count]
+            expected = JOINT_PICK - JOINT_END + np.arange(len(handles))
+            valid = (count > 96 and int(categorical[223]) in (2, 3, 4)
+                     and len(handles) <= 96 and not absent[row, count:].any()
+                     and np.all((bits >> 29) == 2)
+                     and sorted(zip(ids[row, :count][represented], native_handles[represented]))
+                         == list(zip(expected, handles))
+                     and not np.isin(native_handles[~represented], handles).any())
+            if not valid:
+                raise ValueError('invalid compacted selection alias transport')
+        decoded = dict(payload)
+        decoded['legal_policy_ids'] = np.where(absent, -1, ids)
+        return decoded
 
     def combat_exits(self, *, upper_value_only=False):
         if not self.outer_return:

@@ -140,6 +140,63 @@ def test_distinct_candidate_overflow_still_fails_explicitly(combat_factory):
         battle.compact_leaf_arrays()
 
 
+@pytest.mark.parametrize('contract', ['joint-v2', 'autoregressive-v2'])
+@pytest.mark.parametrize('count', [96, 105])
+@pytest.mark.parametrize('card,zone,zone_id', [('EXHUME', 'exhaust', 4),
+                                            ('HEADBUTT', 'discard', 3),
+                                            ('SECRET_TECHNIQUE', 'draw', 2)])
+def test_search_leaf_overflow_uses_public_selection_handles(combat_factory, contract, count, card, zone, zone_id):
+    """Enter Exhume inside search, rather than starting on the select screen."""
+    from env.search.native_batch import NativeSearchBatch
+    from env.core import native_actions as C
+    env = combat_factory([card] * 5, combat_action_contract=contract, card_language=True)
+    env.thick.bc.apply_custom_state({'player': {'energy': 3}, 'hand': [card],
+                                    zone: ['DEFEND_RED'] * (count - 1) + ['SHRUG_IT_OFF']})
+    env._invalidate_backend_cache()
+    logits = np.full(env.action_space.n, -20., np.float32)
+    offset = C.JOINT_END if contract == 'autoregressive-v2' else 0
+    play = np.flatnonzero(env.action_masks()[C.JOINT_PLAY-offset:C.JOINT_PLAY+6-offset])[0]
+    logits[C.JOINT_PLAY + play - offset] = 20.
+    pool = NativeSearchBatch([env], 1)
+    seen = 0
+    try:
+        pool.begin({0: ((logits,), dict(simulations=16, depth=3, state_nonce=42,
+            root_search_mode=2, paper_full_gumbel=True, gumbel_scale=0,
+            compact_observation=True, leaf_batch_size=1, fixed_worldline=True))})
+        while not pool.done:
+            raw_ids = pool.payload['legal_policy_ids'].copy()
+            observations = pool.observations()
+            np.testing.assert_array_equal(pool.payload['legal_policy_ids'], raw_ids)
+            for row, ids in enumerate(pool.payload['legal_policy_ids']):
+                active = ids[:int(pool.payload['legal_action_counts'][row])]
+                if int(pool.payload['categorical'][row, 223]) == zone_id:
+                    seen += 1
+                    expected = count if count <= 96 else 2
+                    mask = observations['combat_legal'][row]
+                    np.testing.assert_array_equal(np.flatnonzero(mask),
+                        np.arange(C.JOINT_PICK - C.JOINT_END, C.JOINT_PICK - C.JOINT_END + expected))
+                    handles = observations['select_native_indices'][row, :expected] - 1
+                    if zone_id != 2:  # draw choices use public order, never hidden pile order
+                        assert list(map(int, handles)) == (list(range(count)) if count <= 96 else [0, count - 1])
+                    if count > 96 and contract == 'autoregressive-v2':
+                        column = int(np.flatnonzero(ids >= 0)[0])
+                        saved = ids[column]
+                        ids[column] = -1 - C.JOINT_END
+                        try:
+                            with pytest.raises(ValueError, match='invalid compacted selection alias transport'):
+                                pool.observations()
+                        finally:
+                            ids[column] = saved
+            assert all(np.all(np.isfinite(x)) for x in observations.values())
+            pool.advance(np.tile(logits, (pool.rows, 1)), np.full(pool.rows, .5, np.float32))
+        assert seen > 0
+        result = pool.results()[0]
+        assert env.action_masks()[result['action']]
+        env.step(result['action'])
+    finally:
+        pool.close()
+
+
 def test_codex_skip_is_a_public_candidate(combat_factory):
     env = combat_factory(["STRIKE_RED"] * 5, relics=("Nilry's Codex",))
     battle = env.thick.bc
