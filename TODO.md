@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT12 | 原尺度六曲线实现与本地54测试通过，待Linux/GPU生产验收 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；仅取消full08倍率，同初始化空Adam/replay，独立bank/payoff。物理0+1替换11，保留人工组。两轮真实payload恢复与完整首周期门禁后启动/验收。 |
+| COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
 | COMBAT10 | 双组准备中 | 用户确认96×256×2，物理0+1曲线、2+3人工COMBAT06 HP/Boss0.9；strict-paper Q norm/c_scale0.1、MSE系数1，小偷索引修复；相同初始化与公共超参，历史escape监督差异披露。35轮/18000秒，独立run/空Adam/replay；验收组内rank隔离、全CPU/GPU/两轮恢复与首完整生产/下一轮。管理证据combat01-worktree/runs/local/combat10-strict-pair-20261024。 |
 | COMBAT09 | 单位补偿门禁中，未启动 | 基于08生产396ef57，仅统一搜索Q×2与条件MSE×4，BCE/actor/标签/模型和初始241tensor不变；已知THIEF缺陷不混修。独立35轮/18000秒段，门禁及完整保存边界切换，保护旧恢复状态；原单位搜索和loss/梯度等价、两轮恢复与四机生命周期验收。 |
 | COMBAT08 | 严格对齐COMBAT06，实施中；旧07保持有界训练 | 用户要求新实验仅内层目标曲线不同，已同意统一除常数归一，并授权自行启动/每半小时维护。固定06双sigmoid头/LayerNorm共享trunk/初始化seed9001000及全部张量、原collector真实root+回合边界+终局样本、BCE+win mask MSE/actor监督/精度/超参/搜索随机流；仅获胜payoff改为(固定bank+实际结算reward)/2，无裁剪。最新用户批准概率改为存活离开；烟雾逃跑正例及真实末态监督/独立escape曲线，死亡0/截断丢弃。小偷逃走独立有限曲线按每名30金币固定参考损失的冻结teacher配对差值生成（不改真实HP）；须披露此标签/样本例外，不能继续称与历史06仅一变量；普通/Boss目标函数差异属于唯一允许变量。独立35轮、每段18000秒，384×512/128sim/U40/BF16/FP32冻结876不变，空Adam/replay并独立run；比较同第25轮并保留35锚点。验收需逐tensor/非目标配置同一、scripted轨迹非标签样本一致、旧家族兼容/新replay隔离、两轮payload恢复、四机CPU/GPU及首完整512/U40/保存/下轮生命周期。结果runs/local/combat08-matched-curves-20261024，门禁后旧完整共同边界切换，保留旧恢复状态。 |
