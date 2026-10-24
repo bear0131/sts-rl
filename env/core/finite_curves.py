@@ -130,17 +130,18 @@ class FiniteCurveBank:
             return 0.
         if state['outlet'] not in ('win', 'escape'):
             raise ValueError('unknown finite curve outlet')
-        hp, maximum, count = state['hp'], state['max_hp'], state['potions']
-        if (not all(math.isfinite(float(x)) for x in (hp, maximum, count)) or
-                maximum <= 0 or hp <= 0 or hp > maximum or int(count) != count or not 0 <= count <= 5):
+        hp, maximum, potion_count = state['hp'], state['max_hp'], state['potions']
+        if (not all(math.isfinite(float(x)) for x in (hp, maximum, potion_count)) or
+                maximum <= 0 or hp <= 0 or hp > maximum or
+                int(potion_count) != potion_count or not 0 <= potion_count <= 5):
             raise ValueError('invalid finite curve resources')
         key = curve_key(state['act'], state['encounter'], state['outlet'])
         if state['outlet'] == 'win' and state.get('escaped_thieves', 0):
-            count = state['escaped_thieves']
-            if int(count) != count or not 1 <= count <= 2:
+            thief_count = state['escaped_thieves']
+            if int(thief_count) != thief_count or not 1 <= thief_count <= 2:
                 raise ValueError('invalid escaped thief count')
-            key = curve_key(state['act'], state['encounter'], f'thief_escape_{int(count)}')
+            key = curve_key(state['act'], state['encounter'], f'thief_escape_{int(thief_count)}')
         key = self.aliases.get(key, key)
         if key not in self.curves:
             raise ValueError(f'finite curve bank has no encounter/outlet: {key}')
-        return float(np.interp(hp/maximum, self.grid, self.curves[key][int(count)]))
+        return float(np.interp(hp/maximum, self.grid, self.curves[key][int(potion_count)]))
