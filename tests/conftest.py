@@ -333,6 +333,6 @@ def six_curve_bank(finite_curve_bank):
     return dict(schema=SIX_SCHEMA, payoff=SIX_PAYOFF,
                 teacher_sha256=finite_curve_bank['teacher_sha256'],
                 hp_fractions=[.01, .5, 1.],
-                curves={f'{act}|{room}': ([1., 1., 1.] if act == 3 and room == 'boss'
-                        else [.2 + .1*act, .4 + .1*act, .7 + .1*act])
+                curves={f'{act}|{room}': ([1.6, 1.6, 1.6] if act == 3 and room == 'boss'
+                        else [.2 + .1*act, .4 + .1*act, 1.6])
                         for act in (1, 2, 3) for room in ('boss', 'nonboss')})

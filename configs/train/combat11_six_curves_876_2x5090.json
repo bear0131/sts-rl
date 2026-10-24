@@ -109,15 +109,16 @@
     "experiment_number": "COMBAT11",
     "value_scale": 2.0,
     "comparison": "COMBAT10 architecture/search/sampling retained; six HP-only fixed reference prices; pre-settlement HP, no strategic reward, shared survive exits",
-    "curve_bank_file_sha256": "1ef3129447858baa88d304d971987773113d3cb52434ba3c2d4a888494f7b428",
+    "curve_bank_file_sha256": "08b1f04013025ede4cba3bb20d5af94ed41a145f1d7c0ce9096ced49fe2c45e8",
     "curve_bank_identity": {
       "objective": "combat-finite-upper-curves-v1",
       "schema": "frozen-upper-act-room-hp-curves-v1",
-      "sha256": "156ef2ffc15114f7bfafaa09d684aa173e2697846b21296eb57cb7aee041f579",
+      "sha256": "eacf9566ea29bbc070b6f7f08306cc3328fd29d8caa0c06dd2f58571e6cf7c42",
       "teacher_sha256": "257a446b125787f0baaadab2d4cdc4d495bf607dee7a9f0331e3ee4fe51f9b79"
     },
     "external_value_unit_scale": 1.0,
-    "payoff": "combat-end-hp-six-curves-no-settlement-reward-v1"
+    "payoff": "combat-end-hp-six-curves-full08-no-settlement-v1",
+    "full_hp_target": 0.8
   },
   "training": {
     "world_size": 2,
@@ -197,7 +198,7 @@
     "continuation": "automatically renew complete-state operational segments indefinitely until user stops",
     "total_round_limit": null
   },
-  "notice": "Six frozen876 HP prices (3 acts x boss/nonboss). Pre-settlement HP fraction; fixed zero-potion win references. Act3 Boss raw1 constant. No runtime nuisance resource/encounter/outlet branch or strategic reward. Same dual sigmoid/Qnorm/MSE1/initial seed. Continuous training with no cumulative round ceiling.",
+  "notice": "Six frozen876 HP prices (3 acts x boss/nonboss). Pre-settlement HP fraction; fixed zero-potion win references. Act3 Boss raw1 constant. No runtime nuisance resource/encounter/outlet branch or strategic reward. Same dual sigmoid/Qnorm/MSE1/initial seed. Continuous training with no cumulative round ceiling. All six curves are scaled by positive constants to supervised full-HP value 0.8, including the final Boss constant; no shape projection.",
   "paired_experiment": {
     "id": "COMBAT11",
     "arm": "six-curves",
