@@ -463,6 +463,6 @@
 
 | COMBAT10-DECODE | 修复待生产验收 | env/search/native_batch.py；旧native选牌溢出等效别名-182标记恢复为-1，严验公共slot/handle、不改搜索；tests/integration/test_combat_choices.py覆盖搜索内部叶和96/105边界；需曲线41全状态恢复后完整256/U40/保存及下一轮验收，人工目标不变。 |
 
-| COMBAT11 | implemented; Linux/GPU gates pending | Six fixed teacher HP curves, pre-settlement HP fraction, no live resource/outlet conditioning or strategic reward. New schema isolates model/replay; same heads/initial seed/Qnorm/MSE1. tests/unit/test_six_curves.py and real two-round lifecycle; only physical0+1. User requires continuous training without cumulative limit. |
+| COMBAT11 | 长驻训练已验收，无计划换段 | 物理[2, 3]现役combat11-six-curves-20261025-resident/ring30602，trainer609823/592894，固定dda7d013；从自身完整114全状态恢复，首115及同进程连续两轮/全SHA审计116通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat11-six-curves-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
 
-| COMBAT-CONTINUOUS | 实施中 | full08固定0f692825仅生命周期补丁；无轮数/时长换段、完整保存/STOP/恢复，Linux两轮与生产验收待完成；唯一运维入口管理树11 active-training.json。 |
+| COMBAT-CONTINUOUS | 已完成并生产验收 | 13/11同一进程长驻：显式--continuous，无轮数或时长终止，无自动换段manager；各自完整状态一次性恢复、首新周期及同进程连续两轮全SHA/W&B通过。保留定期两代保存、协调STOP、真实故障恢复与30分钟健康检查；源目标/seed/训练参数不变，详见worklog/2026-10-25.md及管理树13/11 active-training.json。 |
