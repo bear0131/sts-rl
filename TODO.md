@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT13 | 实施中 | 保留生存sigmoid与BCE，条件value改上层同结构无界Linear-GELU-Linear；六曲线不除2，新seed9002000空Adam/replay，物理0/1替换停止raw，11继续。目标/搜索/边界/真实两轮保存恢复与GPU门禁后启动；唯一运行清单见管理树。 |
+| COMBAT13 | 生产首周期已验收，持续训练 | 保留生存sigmoid与BCE，条件value改上层同结构无界Linear-GELU-Linear；六曲线不除2，新seed9002000空Adam/replay，物理0/1替换停止raw，11继续。两机CPU各160通过、GPU各18通过；11:47独立启动，首49152及次轮128/全状态/96环境独立重放/实际W&B通过。固定生产aec0b2d，唯一运行清单与自动续接状态见管理树13 active-training.json。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
 | COMBAT10 | 双组准备中 | 用户确认96×256×2，物理0+1曲线、2+3人工COMBAT06 HP/Boss0.9；strict-paper Q norm/c_scale0.1、MSE系数1，小偷索引修复；相同初始化与公共超参，历史escape监督差异披露。35轮/18000秒，独立run/空Adam/replay；验收组内rank隔离、全CPU/GPU/两轮恢复与首完整生产/下一轮。管理证据combat01-worktree/runs/local/combat10-strict-pair-20261024。 |
 | COMBAT09 | 单位补偿门禁中，未启动 | 基于08生产396ef57，仅统一搜索Q×2与条件MSE×4，BCE/actor/标签/模型和初始241tensor不变；已知THIEF缺陷不混修。独立35轮/18000秒段，门禁及完整保存边界切换，保护旧恢复状态；原单位搜索和loss/梯度等价、两轮恢复与四机生命周期验收。 |
