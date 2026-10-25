@@ -273,12 +273,17 @@ def test_native_roots_reuse_collected_context_with_owned_storage(outer_return_co
             raise AssertionError('collector context must avoid a second full observation')
         for item in envs:
             monkeypatch.setattr(item, '_obs', unexpected_encode)
+        # Complete root observations also eliminate redundant GameContext
+        # serialization; context-only callers retain the older fallback.
+        import env.core.run_env as run_env
+        monkeypatch.setattr(run_env, 'normalize_sim_global', unexpected_encode)
         pool.begin(calls, root_observations=observations)
         actual = pool.observations()
         assert actual.keys() == reference.keys()
         for key in reference:
             assert actual[key].tobytes() == reference[key].tobytes(), key
         observations['deck_ids'].fill(0)
+        observations['relics'].fill(0)
         assert pool.observations()['deck_ids'].tobytes() == reference['deck_ids'].tobytes()
         invalid = dict(observations, floor=observations['floor'].astype(np.float64))
         with pytest.raises(ValueError, match='root context batch.*floor'):

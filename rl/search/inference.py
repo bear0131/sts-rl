@@ -83,12 +83,14 @@ class CombatLeafGraphs:
         if getattr(self.core, 'joint_actions', False) and not getattr(self.core, 'autoregressive_actions', False):
             result = self(batch.observations(rows), batch.relic_width(rows))
             return (lambda: result) if deferred else result
-        return self(batch.observation_layout(rows), batch.relic_width(rows),
-                    writer=lambda destination: batch.write_observations(destination, rows),
-                    failure_observations=lambda: batch.observations(rows), deferred=deferred)
+        layout, compact = batch.transport_layout(rows)
+        return self(layout, batch.relic_width(rows),
+                    writer=lambda destination: batch.write_transport(destination, rows),
+                    failure_observations=lambda: batch.observations(rows), deferred=deferred,
+                    compact=compact)
 
     def __call__(self, observations, width, *, writer=None, failure_observations=None,
-                 deferred=False):
+                 deferred=False, compact=False):
         if self._pending is not None:
             raise RuntimeError('finish pending leaf inference before another submission')
         try:
@@ -121,7 +123,7 @@ class CombatLeafGraphs:
                         normal_result = self._forward({key: value[normal] for key, value in observations.items()}, width)
                         result_logits[normal], result_values[normal] = normal_result
                     return result_logits, result_values
-            return self._forward(observations, width, writer=writer, deferred=deferred)
+            return self._forward(observations, width, writer=writer, deferred=deferred, compact=compact)
         except RuntimeError:
             # CUDA errors can poison the context: save only CPU inputs here.
             if self.failure_path is not None:
@@ -137,7 +139,7 @@ class CombatLeafGraphs:
                 width=width, amp=self.amp, captures=self.captures, hits=self.hits,
                 signatures=[repr(s) for s in self.entries])), encoding='utf-8')
 
-    def _forward(self, observations, width, *, writer=None, deferred=False):
+    def _forward(self, observations, width, *, writer=None, deferred=False, compact=False):
         if self.core.training:
             raise RuntimeError('leaf graphs require eval mode')
         batch = len(next(iter(observations.values())))
@@ -145,14 +147,14 @@ class CombatLeafGraphs:
             raise ValueError('leaf observations require equal nonempty batches')
         padded = ((batch + self.batch_multiple - 1) // self.batch_multiple * self.batch_multiple
                   if self.batch_multiple else batch)
-        signature = (width, tuple((k, (padded, *v.shape[1:]), v.dtype.str)
+        signature = (width, compact, tuple((k, (padded, *v.shape[1:]), v.dtype.str)
                                   for k, v in observations.items()))
         if signature not in self.entries:
             if len(self.entries) >= self.capacity:
                 self.entries.popitem(last=False)
                 self.evictions += 1
             started = time.perf_counter()
-            self.entries[signature] = self._capture(observations, width, padded, writer=writer)
+            self.entries[signature] = self._capture(observations, width, padded, writer=writer, compact=compact)
             self.capture_seconds += time.perf_counter()-started
             self.captures += 1
         else:
@@ -211,7 +213,7 @@ class CombatLeafGraphs:
                     target[len(value):] = value[0]
         entry['initialized'] = True
 
-    def _capture(self, observations, width, padded, *, writer=None):
+    def _capture(self, observations, width, padded, *, writer=None, compact=False):
         groups = {}
         for key, value in observations.items():
             groups.setdefault(value.dtype, []).append((key, value))
@@ -236,18 +238,30 @@ class CombatLeafGraphs:
             device.copy_(host, non_blocking=True)
         current = torch.cuda.current_stream(self.device)
         stream = torch.cuda.Stream(device=self.device)
+        upgrade_table = None
+        if compact:
+            from env.core.encode import UPGRADE_SCALE
+            # Table lookup retains exactly the existing CPU float32 division
+            # bits; a fused GPU reciprocal multiply need not round identically.
+            upgrade_table = torch.as_tensor(np.arange(256, dtype=np.float32) / UPGRADE_SCALE,
+                                            device=self.device)
         stream.wait_stream(current)
         def forward():
+            model_inputs = tensors
+            if compact:
+                model_inputs = {key: (value.long() if value.dtype == torch.int16
+                    else upgrade_table[value.long()] if value.dtype == torch.uint8
+                    and key.endswith('_upgrades') else value) for key, value in tensors.items()}
             with torch.inference_mode(), bf16_autocast(
                     enabled=self.amp == 'bf16', cache_enabled=False):
                 extra = {'evaluate_subsets': False} if getattr(self.core, 'joint_actions', False) else {}
                 if self.graph_forward is None:
-                    logits, values = self.core.combat_actor_critic(tensors, active_relic_width=width, **extra)
+                    logits, values = self.core.combat_actor_critic(model_inputs, active_relic_width=width, **extra)
                 elif self.compiled_forward is None:
                     logits, values = self.graph_forward(
-                        tensors, width, self.core.combat.inference_card_table())
+                        model_inputs, width, self.core.combat.inference_card_table())
                 else:
-                    logits, values = self.compiled_forward(tensors, width,
+                    logits, values = self.compiled_forward(model_inputs, width,
                         self.core.combat.inference_card_table())
                 return torch.cat((logits.float(), values.float().reshape(-1, 1)), dim=1)
         with torch.cuda.stream(stream):
@@ -276,5 +290,6 @@ class CombatLeafGraphs:
         current.wait_stream(stream)
         torch._C._cuda_clearCublasWorkspaces()
         entry.update(graph=graph, output=output, host_output=host_output,
+                     upgrade_table=upgrade_table,
                      host_output_array=host_output.numpy(), events=events, done=done)
         return entry
