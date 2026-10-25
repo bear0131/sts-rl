@@ -6,7 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT15-ROLLOUT | 实施中：用户授权暂停与优化 | 内层搜索/解码/CPU-GPU传输可大幅调整，冻结外层876及其观测保持；完整状态保全、语义/旧checkpoint兼容、GPU生命周期与同硬件固定工作量完整rollout对照后恢复。证据管理COMBAT15目录rollout-optimization，详见worklog/2026-10-26.md。 |
+| COMBAT15-4090 | 独立性能/容量对照完成；不选作当前平替 | Gold6430+4090复测541.222秒，5090同预算353.633–361.616秒；按2.18/2.88每元采样产出86–88%，world1 U40/micro16384显存峰20.20GiB通过。队列move候选完整SHA一致但548.146秒，无已证明提速，未部署；四机生产持续。证据管理COMBAT15/rollout-optimization/new4090-*，见worklog/2026-10-26.md。 |
+| COMBAT15-ROLLOUT | 等价优化已恢复生产；4090实验独立完成 | 内层搜索/解码/CPU-GPU传输可大幅调整，冻结外层876及其观测保持；完整状态保全、语义/旧checkpoint兼容、GPU生命周期与同硬件固定工作量完整rollout对照后恢复。证据管理COMBAT15目录rollout-optimization，详见worklog/2026-10-26.md。 |
 | COMBAT14 | 用户要求停止69，完整状态保全 | 为新COMBAT15让出物理2/3；正常exit0非hardtimeout且退出，最后68/69两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT13 | 用户要求停止159，完整状态保全 | 为新COMBAT15让出物理0/1；正常exit0非hardtimeout且退出，最后158/159两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
@@ -472,4 +473,4 @@
 
 | COMBAT-CONTINUOUS | COMBAT15 world4同进程长驻已验收 | 显式--continuous，无轮数/时长上限、无自动换段manager；每轮完整两代保存，用户STOP/真实故障完整恢复保留。旧13/14已按用户停止保全，11/manual/12及更早任务保持停止。combat05仅每30分钟只读监控COMBAT15，实际入口与验收见COMBAT15，不按旧20轮或18000秒重启。 |
 
-| COMBAT15 | 四机小模型COMBAT06已启动，首完整生产周期通过 | 独立fresh resident，原人工means/Boss0.9/rawQ/384x512x4/seed9001000；全部内层860956/3929756=21.908638%，128宽3层4头，micro16384/infer128。固定758e84b，四机CPU174/GPU20；首786432/U40/全SHA/384环境重放+次轮128/W&B passed。13停159、14停69完整保全，不恢复；同进程长驻无计划换段。管理入口runs/local/combat15-small-manual-20261025/active-training.json，验收first-cycle-acceptance.json，详见worklog/2026-10-26.md。 |
+| COMBAT15 | 四机小模型COMBAT06已启动，首完整生产周期通过 | 独立fresh resident，原人工means/Boss0.9/rawQ/384x512x4/seed9001000；全部内层860956/3929756=21.908638%，128宽3层4头，micro16384/infer128。原首启758e84b；当前等价优化生产2a2f0817/native3fb1650f，四机CPU377/GPU42及完整21→22恢复/全SHA/384环境重放+次轮128/W&B passed。13停159、14停69完整保全，不恢复；同进程长驻无计划换段。管理入口runs/local/combat15-small-manual-20261025/active-training.json，验收first-cycle-acceptance.json，详见worklog/2026-10-26.md。 |
