@@ -314,3 +314,7 @@ Python `NativeTurnPlanner.choose` 保留为串行参考。符文圆顶与未完�
 无需等整局结束即可上报。对应 `*_window` 分子/分母也写入日志；没有分母时
 不报告0概率。普通resume与其他滚动指标相同，显示窗口重新累计，已打开待领
 宝箱的归属由环境journal重放恢复；这些计数不改变奖励、观测或训练目标。
+
+### 常驻训练
+
+`rl.training.distributed_sb3 --continuous` 仅支持冻结上层、inner-only NOSL、显式固定学习率且无reasoning更新的训练；不能同时指定有限更新次数或total-steps。必须启用完整恢复目录、至少两代保留和协调STOP文件。它在同一进程中持续采样、更新、上报与原子保存，STOP在完整轮保存后协调退出，不按轮数换段。调用方的监督时限也必须显式取消；`combat_deployment.supervise(..., budget=None)`仅等待退出，不定时请求STOP或发送终止信号。默认有预算入口不变。

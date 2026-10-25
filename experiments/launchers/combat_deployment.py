@@ -187,7 +187,9 @@ def agree(reports, world_size=4):
 
 
 def supervise(process, stop_file, budget):
-    """Request a checkpoint before the deadline, then bound the process group."""
+    """Wait without a deadline when explicitly unbounded, otherwise enforce budget."""
+    if budget is None:
+        return process.wait()
     started = time.time()
     deadline = started + budget
     soft_stop = started + max(budget * .8, budget-120)

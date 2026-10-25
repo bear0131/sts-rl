@@ -464,3 +464,5 @@
 | COMBAT10-DECODE | 修复待生产验收 | env/search/native_batch.py；旧native选牌溢出等效别名-182标记恢复为-1，严验公共slot/handle、不改搜索；tests/integration/test_combat_choices.py覆盖搜索内部叶和96/105边界；需曲线41全状态恢复后完整256/U40/保存及下一轮验收，人工目标不变。 |
 
 | COMBAT11 | implemented; Linux/GPU gates pending | Six fixed teacher HP curves, pre-settlement HP fraction, no live resource/outlet conditioning or strategic reward. New schema isolates model/replay; same heads/initial seed/Qnorm/MSE1. tests/unit/test_six_curves.py and real two-round lifecycle; only physical0+1. User requires continuous training without cumulative limit. |
+
+| COMBAT-CONTINUOUS | 实施中 | full08固定0f692825仅生命周期补丁；无轮数/时长换段、完整保存/STOP/恢复，Linux两轮与生产验收待完成；唯一运维入口管理树11 active-training.json。 |
