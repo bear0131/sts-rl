@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT13 | 生产首周期已验收，持续训练 | 保留生存sigmoid与BCE，条件value改上层同结构无界Linear-GELU-Linear；六曲线不除2，新seed9002000空Adam/replay，物理0/1替换停止raw，11继续。两机CPU各160通过、GPU各18通过；11:47独立启动，首49152及次轮128/全状态/96环境独立重放/实际W&B通过。固定生产aec0b2d，唯一运行清单与自动续接状态见管理树13 active-training.json。 |
+| COMBAT13 | 长驻训练已验收，无计划换段 | 物理[0, 1]现役combat13-unscaled-conditional-20261025-resident/ring30600，trainer622530/588092，固定2ea7fa1a；从自身完整41全状态恢复，首42及同进程连续两轮/全SHA审计43通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat13-unscaled-conditional-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
 | COMBAT10 | 双组准备中 | 用户确认96×256×2，物理0+1曲线、2+3人工COMBAT06 HP/Boss0.9；strict-paper Q norm/c_scale0.1、MSE系数1，小偷索引修复；相同初始化与公共超参，历史escape监督差异披露。35轮/18000秒，独立run/空Adam/replay；验收组内rank隔离、全CPU/GPU/两轮恢复与首完整生产/下一轮。管理证据combat01-worktree/runs/local/combat10-strict-pair-20261024。 |
 | COMBAT09 | 单位补偿门禁中，未启动 | 基于08生产396ef57，仅统一搜索Q×2与条件MSE×4，BCE/actor/标签/模型和初始241tensor不变；已知THIEF缺陷不混修。独立35轮/18000秒段，门禁及完整保存边界切换，保护旧恢复状态；原单位搜索和loss/梯度等价、两轮恢复与四机生命周期验收。 |
@@ -465,6 +465,6 @@
 
 | COMBAT10-DECODE | 修复待生产验收 | env/search/native_batch.py；旧native选牌溢出等效别名-182标记恢复为-1，严验公共slot/handle、不改搜索；tests/integration/test_combat_choices.py覆盖搜索内部叶和96/105边界；需曲线41全状态恢复后完整256/U40/保存及下一轮验收，人工目标不变。 |
 
-| COMBAT11 | implemented; Linux/GPU gates pending | Six fixed teacher HP curves, pre-settlement HP fraction, no live resource/outlet conditioning or strategic reward. New schema isolates model/replay; same heads/initial seed/Qnorm/MSE1. tests/unit/test_six_curves.py and real two-round lifecycle; only physical0+1. User requires continuous training without cumulative limit. |
+| COMBAT11 | 长驻训练已验收，无计划换段 | 物理[2, 3]现役combat11-six-curves-20261025-resident/ring30602，trainer609823/592894，固定dda7d013；从自身完整114全状态恢复，首115及同进程连续两轮/全SHA审计116通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat11-six-curves-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
 
-| COMBAT-CONTINUOUS | 实施中：用户取消计划换段 | rl/training/distributed_sb3.py、experiments/launchers/combat_deployment.py及13/11运行清单；显式长驻采样/更新/完整保存，取消轮数和supervisor时长终止，各组一次完整状态切换，保持目标/seed/W&B。真实连续两轮、协调STOP/恢复与生产验收后完成；不重启旧退休组。 |
+| COMBAT-CONTINUOUS | 已完成并生产验收 | 13/11同一进程长驻：显式--continuous，无轮数或时长终止，无自动换段manager；各自完整状态一次性恢复、首新周期及同进程连续两轮全SHA/W&B通过。保留定期两代保存、协调STOP、真实故障恢复与30分钟健康检查；源目标/seed/训练参数不变，详见worklog/2026-10-25.md及管理树13/11 active-training.json。 |
