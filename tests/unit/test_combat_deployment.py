@@ -252,3 +252,16 @@ def test_supervisor_finishes_or_requests_save_then_kills_at_deadline(tmp_path, m
     else:
         assert code == 0 and not signals
         assert stop.exists() == (exit_at > 80.)
+
+
+def test_explicit_unbounded_supervision_never_requests_timed_stop(tmp_path, monkeypatch):
+    import experiments.launchers.combat_deployment as deployment
+    def unexpected_clock():
+        raise AssertionError('unbounded supervision must not set a deadline')
+    monkeypatch.setattr(deployment.time, 'time', unexpected_clock)
+    class Process:
+        def wait(self):
+            return 0
+    stop = tmp_path/'STOP'
+    assert supervise(Process(), stop, None) == 0
+    assert not stop.exists()
