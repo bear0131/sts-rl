@@ -98,6 +98,9 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, six_curve_b
     from rl.search.inference import CombatLeafGraphs
     from rl.policies.precision import bf16_autocast
     assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
+    # Each production process owns one architecture. Isolate compiler state across
+    # parametrized architectures; retain all shape/eviction checks within this case.
+    torch._dynamo.reset()
     core, source, env = outer_return_core
     small = control in ('small-unscaled', 'small-means')
     if small:
