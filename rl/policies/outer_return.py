@@ -11,7 +11,7 @@ from stable_baselines3.common.save_util import json_to_data
 
 from env.core import vocab as V
 from env.core.outer_return import OBJECTIVE, CONTEXT_SCHEMA, CONTEXT_KEYS, SCALAR_OBJECTIVES, FINITE_OBJECTIVE
-from env.core.finite_curves import FiniteCurveBank, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, CURVE_OBJECTIVES
+from env.core.finite_curves import FiniteCurveBank, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE, SIX_RAW_PAYOFF, CURVE_OBJECTIVES
 from rl.policies.entity_combat import (
     EntityCombatConfig, EntityCombatCore, EntityCombatNetwork, EntityCombatPolicy,
 )
@@ -64,7 +64,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
-        if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE):
+        if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
         # Only the historical HP outcome objectives retain the Boss utility.
         # Curve objectives use the boss flag as an input, without a value bonus.
@@ -75,7 +75,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if unexpected or any(not key.startswith(('distribution.', 'transition.')) for key in missing):
                 raise ValueError('lower warm-start architecture mismatch')
-        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE):
+        if objective in (*SCALAR_OBJECTIVES, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE):
             del self.distribution, self.transition
         width = config.width
         self.context_boss = nn.Embedding(int(space['next_boss'].high.max()) + 1, 16)
@@ -90,7 +90,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
             self.scalar = nn.Sequential(nn.Linear(width, width), nn.GELU(), nn.Linear(width, 1))
         elif objective in (MEAN_CONTRACT, MATCHED_OBJECTIVE):
             self.means = CombatMeanHead(width)
-        elif objective == FACTORED_OBJECTIVE:
+        elif objective in (FACTORED_OBJECTIVE, UNSCALED_OBJECTIVE):
             self.conditional = CombatConditionalValueHead(width)
 
     def encode(self, obs, active_relic_width=None, *, card_table=None):
@@ -119,7 +119,7 @@ class OuterCombatNetwork(EntityCombatNetwork):
         return context.to(dtype)
 
     def _value(self, state, obs):
-        if self.objective == FACTORED_OBJECTIVE:
+        if self.objective in (FACTORED_OBJECTIVE, UNSCALED_OBJECTIVE):
             return self.conditional(state)
         if self.objective == COMBAT_OBJECTIVE:
             return super()._value(state, obs)
@@ -160,6 +160,9 @@ class OuterReturnCore(EntityCombatCore):
             raise ValueError('finite curve objective requires exactly one embedded bank')
         if self.finite_curve_bank is not None and self.finite_curve_bank.identity['teacher_sha256'] != self.teacher.assert_integrity():
             raise ValueError('finite curve bank teacher mismatch')
+        if objective == UNSCALED_OBJECTIVE and (not self.finite_curve_bank.hp_only
+                or self.finite_curve_bank.payoff != SIX_RAW_PAYOFF):
+            raise ValueError('unscaled conditional head requires raw six curves')
         self.map_dag_enabled = source.map_dag_enabled
 
     def disable_transition_auxiliary(self):

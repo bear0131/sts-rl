@@ -69,10 +69,10 @@ def _append_nosl_value_only_sample(
 
 
 def _fill_nosl_combat_value_targets(
-    samples: list[dict], final_hp: float
+    samples: list[dict], final_hp: float, *, unscaled_curve=False
 ) -> int:
-    """Assign one normalized terminal-HP target to every root in a fight."""
-    target = float(np.clip(final_hp, 0.0, 1.0))
+    """Assign the fight target, preserving the unscaled curve's declared units."""
+    target = float(final_hp if unscaled_curve else np.clip(final_hp, 0.0, 1.0))
     if not np.isfinite(target):
         raise ValueError("final combat HP must be finite")
     for sample in samples:
@@ -442,7 +442,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
         # Both heads share observed outcome labels and the combat replay pipeline.
         self._combat_distribution = self.nosl_supervision_contract in OUTCOME_CONTRACTS
         self._outer_return = self.nosl_supervision_contract in outer.OUTER_OBJECTIVES
-        self._settled_combat_search = self._outer_return or self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE
+        self._settled_combat_search = self._outer_return or self.nosl_supervision_contract in outer.MATCHED_OBJECTIVES
         if self.nosl_value_unit_scale != 1. and self.nosl_supervision_contract != outer.MATCHED_OBJECTIVE:
             raise ValueError('external value-unit compensation supports only matched-curve supervision')
         self._frozen_upper = bool(getattr(getattr(self.policy, 'core', None), 'frozen_upper', False))
@@ -537,7 +537,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
             else VALUE_CONTRACT
         )
         if (getattr(self, '_outer_return', False)
-                or self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE):
+                or self.nosl_supervision_contract in outer.MATCHED_OBJECTIVES):
             value_contract = self.nosl_supervision_contract
         if replay is not None:
             if replay.supervision_contract != getattr(self,'nosl_supervision_contract','scalar-hp-v1'):
@@ -1716,12 +1716,12 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 if getattr(self,'_combat_distribution',False):
                     from rl.algorithms.combat_distribution import outcome_targets
                     outcome = infos[env_index].get('nosl_value_terminal_outcome')
-                    surviving_exit = self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE
+                    surviving_exit = self.nosl_supervision_contract in outer.MATCHED_OBJECTIVES
                     accepted = ('win', 'loss', 'escape') if surviving_exit else ('win', 'loss')
                     if outcome not in accepted or not np.isfinite(terminal_target):
                         incomplete_combat_roots += len(pending)
                         continue
-                    if self.nosl_supervision_contract == outer.MATCHED_OBJECTIVE:
+                    if self.nosl_supervision_contract in outer.MATCHED_OBJECTIVES:
                         terminal_target = outer.matched_terminal_target(self,
                             {key: value[env_index] for key, value in self._last_obs.items()},
                             infos[env_index], dones[env_index])
@@ -1745,7 +1745,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         rollout_hp_order_count += 1
                         if estimated_value > current_hp and current_hp >= future_hp:
                             rollout_hp_order_matches += 1
-                completed = _fill_nosl_combat_value_targets(pending, target)
+                completed = _fill_nosl_combat_value_targets(pending, target,
+                    unscaled_curve=self.nosl_supervision_contract == outer.UNSCALED_OBJECTIVE)
                 self._nosl_is_az_samples.extend(pending)
                 completed_combat_roots += completed
                 completed_combats += 1
@@ -2538,7 +2539,7 @@ class AccumulatingMaskablePPO(MaskablePPO):
                     )
                     if getattr(self,'_combat_distribution',False):
                         from rl.algorithms.combat_distribution import distribution_loss, mean_outcome_loss, conditional_value_loss, MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE
-                        if self.nosl_supervision_contract == FACTORED_OBJECTIVE:
+                        if self.nosl_supervision_contract in (FACTORED_OBJECTIVE, outer.UNSCALED_OBJECTIVE):
                             value_loss_per_sample, distribution_metrics = conditional_value_loss(
                                 distribution_outputs, combat_targets, value_targets)
                         elif self.nosl_supervision_contract in (MEAN_CONTRACT, MATCHED_OBJECTIVE):

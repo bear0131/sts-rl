@@ -82,15 +82,19 @@ class QuickBackend(SimGameEnv):
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1', outer.FACTORED_OBJECTIVE,
                                      outer.MATCHED_OBJECTIVE, 'matched-raw-units',
                                      'manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm',
-                                     'six-curves-raw-strict-qnorm'])
+                                     'six-curves-raw-strict-qnorm', 'six-curves-unscaled-conditional'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, six_curve_bank, tmp_path, monkeypatch, capsys, objective):
-    six = objective in ('six-curves-strict-qnorm', 'six-curves-raw-strict-qnorm')
+    unscaled = objective == 'six-curves-unscaled-conditional'
+    six = unscaled or objective in ('six-curves-strict-qnorm', 'six-curves-raw-strict-qnorm')
     if six:
         finite_curve_bank = copy.deepcopy(six_curve_bank)
-        if objective == 'six-curves-raw-strict-qnorm':
+        if objective == 'six-curves-raw-strict-qnorm' or unscaled:
             from env.core.finite_curves import SIX_RAW_PAYOFF
             finite_curve_bank['payoff'] = SIX_RAW_PAYOFF
             finite_curve_bank['curves'] = {k: [v / 1.6 for v in values]
+                                           for k, values in finite_curve_bank['curves'].items()}
+        if unscaled:
+            finite_curve_bank['curves'] = {k: [v * (1. if k == '3|boss' else 1.2) for v in values]
                                            for k, values in finite_curve_bank['curves'].items()}
     unit_scale = 2. if objective == 'matched-raw-units' else 1.
     normalized = six or objective in ('manual-strict-qnorm', 'curves-strict-qnorm')
@@ -98,9 +102,11 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         objective = 'combat-outcome-means-v1' if objective == 'manual-strict-qnorm' else outer.MATCHED_OBJECTIVE
     if unit_scale == 2.:
         objective = outer.MATCHED_OBJECTIVE
+    if unscaled:
+        objective = outer.UNSCALED_OBJECTIVE
     control = objective not in outer.OUTER_OBJECTIVES
     finite = objective in outer.CURVE_OBJECTIVES
-    factored = objective == outer.FACTORED_OBJECTIVE
+    factored = objective in (outer.FACTORED_OBJECTIVE, outer.UNSCALED_OBJECTIVE)
     means = objective in ('combat-outcome-means-v1', outer.MATCHED_OBJECTIVE)
     outer_material = dict(outer_material, objective=objective)
     if finite:
@@ -173,7 +179,7 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert all('outer_return/labelled_roots' not in p for p in payloads)
         assert all('upper/updates' not in p or p['upper/updates'] == 0 for p in payloads)
         assert all(p['nosl_is_az/win_bce'] >= 0 for p in payloads)
-        if means:
+        if means or unscaled:
             assert all(p['nosl_is_az/value_only_samples'] > 0 for p in payloads)
             assert all(p['nosl_is_az/collected_value_boundaries'] > 0 for p in payloads)
             assert all(p['nosl_is_az/collected_combat_terminals'] > 0 for p in payloads)
@@ -253,7 +259,11 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
             replay.load_state_dict(changed)
     if control:
         assert replay.value_contract == (objective if finite else 'combat-end-hp-v1')
-        assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= 1))
+        assert np.all((replay.value_targets[:replay.size] >= 0) & (replay.value_targets[:replay.size] <= (2 if unscaled else 1)))
+        if unscaled:
+            assert replay.value_targets[:replay.size].max() > 1
+            assert restored.outer_return_contract['value_scale'] == 1.
+            assert 'unbounded' in restored.outer_return_contract['value_head']
         assert replay.supervision_contract == objective
         assert not restored.policy.core.teacher.training
         incompatible = replay.state_dict()

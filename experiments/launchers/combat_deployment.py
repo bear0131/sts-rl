@@ -53,6 +53,7 @@ def validate(config, *, connected=False):
                                  'configs/train/combat10_curves_876_2x5090.json',
                                  'configs/train/combat11_six_curves_876_2x5090.json',
                                  'configs/train/combat12_six_curves_raw_876_2x5090.json',
+                                 'configs/train/combat13_unscaled_conditional_876_2x5090.json',
                                  'configs/train/combat10_manual_876_2x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')
@@ -330,7 +331,7 @@ def manage(config_path, action):
     if profile['contract']['lower_init'] != 'random' or profile['contract']['objective_id'] not in (
             'combat-outer-return-frozen-upper-v1', 'combat-finite-upper-curves-v1',
             'combat-finite-curves-win-conditional-v1', 'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
-            'combat06-matched-finite-curves-v1'):
+            'combat06-matched-finite-curves-v1', 'combat13-six-curves-unscaled-conditional-v1'):
         raise ValueError('requires a wholly trainable fresh lower network with frozen upper')
     output = repo/'runs/local'/f"deployment-{config['run_id']}"
     output.mkdir(parents=True, exist_ok=True)
@@ -387,7 +388,7 @@ def manage(config_path, action):
                 archive.add(material/name, arcname='material/'+name)
             if profile['contract']['objective_id'] in (
                     'combat-finite-upper-curves-v1', 'combat-finite-curves-win-conditional-v1',
-                    'combat06-matched-finite-curves-v1'):
+                    'combat06-matched-finite-curves-v1', 'combat13-six-curves-unscaled-conditional-v1'):
                 if digest(material/'curve-bank.json') != profile['contract']['curve_bank_file_sha256']:
                     raise ValueError('finite curve material does not match the profile')
                 archive.add(material/'curve-bank.json', arcname='material/curve-bank.json')

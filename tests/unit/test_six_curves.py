@@ -100,3 +100,42 @@ def test_raw_prices_preserve_shape_and_exit_semantics_without_full08(bank):
         if malformed == 'unknown-payoff': changed['payoff'] = 'unknown'
         if malformed == 'pretend-full08': changed['payoff'] = SIX_PAYOFF
         with pytest.raises(ValueError): FiniteCurveBank(changed)
+
+
+def test_unscaled_conditional_keeps_values_above_one_and_death_mask(bank):
+    from env.core.finite_curves import UNSCALED_OBJECTIVE
+    from rl.algorithms.accumulating_ppo import _fill_nosl_combat_value_targets
+    from rl.algorithms.combat_distribution import conditional_value_loss, outcome_targets
+    import torch
+    data = bank.data(); data['payoff'] = SIX_RAW_PAYOFF
+    data['curves']['3|boss'] = [1., 1., 1.]
+    raw = FiniteCurveBank(data)
+    state = dict(act=1, is_boss=False, combat_hp=80, combat_max_hp=80, outlet='win')
+    for outlet in ('win', 'escape'):
+        for reward in (-100., 100.):
+            value = matched_exit_value(CombatExit(reward, 'upper', dict(state, outlet=outlet)),
+                                       raw, objective=UNSCALED_OBJECTIVE)
+            assert value == 1.6
+            samples = [dict(sample_kind=k) for k in ('combat_root', 'end_turn_boundary', 'combat_terminal')]
+            _fill_nosl_combat_value_targets(samples, value, unscaled_curve=True)
+            assert all(x['value_target'] == 1.6 for x in samples)
+    assert matched_exit_value(CombatExit(99., 'terminal', dict(state, act=3, is_boss=True)),
+                              raw, objective=UNSCALED_OBJECTIVE) == 1.
+    assert matched_exit_value(CombatExit(99., 'terminal', dict(state, outlet='loss')),
+                              raw, objective=UNSCALED_OBJECTIVE) == 0.
+    with pytest.raises(ValueError, match='observed'):
+        matched_exit_value(CombatExit(0., 'censored', state), raw, objective=UNSCALED_OBJECTIVE)
+    with pytest.raises(ValueError, match='raw six'):
+        matched_exit_value(CombatExit(0., 'upper', state), bank, objective=UNSCALED_OBJECTIVE)
+    logits = torch.tensor([0., 0.], requires_grad=True)
+    means = torch.tensor([1.2, 5.], requires_grad=True)
+    samples = [{}, {}]
+    outcome_targets(samples[:1], 'escape', include_transition=False, surviving_exit=True)
+    outcome_targets(samples[1:], 'loss', include_transition=False, surviving_exit=True)
+    labels = torch.tensor(np.stack([x['combat_targets'] for x in samples]))
+    loss, metrics = conditional_value_loss(dict(win_logits=logits, value_given_win=means),
+                                         labels, torch.tensor([1.6, 0.]))
+    torch.testing.assert_close(loss, metrics['win_bce'] + metrics['conditional_value_mse'])
+    loss.mean().backward()
+    assert means.grad[0] < 0 and means.grad[1] == 0
+    assert torch.all(logits.grad != 0)

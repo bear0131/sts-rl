@@ -1,12 +1,12 @@
 """TRAIN47's outer reward and the new combat continuation-value contract."""
 from dataclasses import dataclass
 import math
-from .finite_curves import OBJECTIVE as FINITE_OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, CURVE_OBJECTIVES
+from .finite_curves import OBJECTIVE as FINITE_OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, MATCHED_OBJECTIVES, UNSCALED_OBJECTIVE, CURVE_OBJECTIVES
 
 OBJECTIVE = 'combat-outer-return-frozen-upper-v1'
 SCALAR_OBJECTIVES = (OBJECTIVE, FINITE_OBJECTIVE)
 OUTER_OBJECTIVES = (*SCALAR_OBJECTIVES, FACTORED_OBJECTIVE)
-SETTLED_SEARCH_OBJECTIVES = (*OUTER_OBJECTIVES, MATCHED_OBJECTIVE)
+SETTLED_SEARCH_OBJECTIVES = (*OUTER_OBJECTIVES, *MATCHED_OBJECTIVES)
 CONTEXT_SCHEMA = 'combat-public-run-context-v2'
 CONTEXT_KEYS = frozenset(('act', 'floor', 'next_boss', 'run_hp', 'deck_ids',
                           'deck_upgrades', 'outer_deck_misc', 'character', 'ascension', 'run_keys',

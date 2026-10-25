@@ -9,8 +9,10 @@ import numpy as np
 OBJECTIVE = 'combat-finite-upper-curves-v1'
 FACTORED_OBJECTIVE = 'combat-finite-curves-win-conditional-v1'
 MATCHED_OBJECTIVE = 'combat06-matched-finite-curves-v1'
+UNSCALED_OBJECTIVE = 'combat13-six-curves-unscaled-conditional-v1'
+MATCHED_OBJECTIVES = (MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE)
 MATCHED_VALUE_SCALE = 2.0
-CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE)
+CURVE_OBJECTIVES = (OBJECTIVE, FACTORED_OBJECTIVE, *MATCHED_OBJECTIVES)
 SCHEMA = 'frozen-upper-hp-curve-bank-v1'
 SIX_SCHEMA = 'frozen-upper-act-room-hp-curves-v1'
 SIX_PAYOFF = 'combat-end-hp-six-curves-full08-no-settlement-v1'
@@ -73,7 +75,7 @@ def winning_exit_target(exit, bank, *, reward_prefix=0.):
     return 1., exit.target(bootstrap) - reward_prefix
 
 
-def matched_exit_value(exit, bank):
+def matched_exit_value(exit, bank, *, objective=MATCHED_OBJECTIVE):
     """COMBAT06 head with the user-approved surviving-exit payoff.
 
     The fixed scale covers the complete reward-plus-curve target. Never clip
@@ -82,6 +84,12 @@ def matched_exit_value(exit, bank):
     """
     if exit.kind == 'censored' or exit.curve_state is None:
         raise ValueError('matched curve target requires an observed combat exit')
+    if objective not in MATCHED_OBJECTIVES:
+        raise ValueError('unsupported matched curve objective')
+    unscaled = objective == UNSCALED_OBJECTIVE
+    if unscaled and (not bank.hp_only or bank.payoff != SIX_RAW_PAYOFF):
+        raise ValueError('unscaled conditional head requires raw six curves')
+    scale = 1. if unscaled else MATCHED_VALUE_SCALE
     outcome = exit.curve_state['outlet']
     if outcome == 'loss':
         return 0.
@@ -90,12 +98,13 @@ def matched_exit_value(exit, bank):
     if getattr(bank, 'hp_only', False):
         # A fixed HP price, independent of all strategic settlement increments.
         # The final Boss constant follows the bank's immutable scale contract.
-        value = bank.value(exit.curve_state) / MATCHED_VALUE_SCALE
+        value = bank.value(exit.curve_state) / scale
     else:
         bootstrap = None if exit.kind == 'terminal' else bank.value(exit.curve_state)
-        value = exit.target(bootstrap) / MATCHED_VALUE_SCALE
-    if not math.isfinite(value) or not 0. <= value <= 1.:
-        raise ValueError('matched curve payoff outside fixed sigmoid range')
+        value = exit.target(bootstrap) / scale
+    if not math.isfinite(value) or not 0. <= value <= (2. if unscaled else 1.):
+        raise ValueError('unscaled curve payoff outside declared target range' if unscaled
+                         else 'matched curve payoff outside fixed sigmoid range')
     return value
 
 

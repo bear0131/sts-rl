@@ -150,3 +150,24 @@ def test_typed_terminal_transport_preserves_search_when_payoff_is_held_fixed(run
         assert results[0][key] == results[1][key], key
     assert results[0]['root_value'] == pytest.approx(results[1]['root_value'], abs=1e-7)
     assert battle.to_dict() == original
+
+
+def test_unscaled_conditional_head_matches_upper_architecture_and_keeps_probability(outer_return_core):
+    from env.core.finite_curves import UNSCALED_OBJECTIVE
+    from torch import nn
+    core, source, env = outer_return_core
+    torch.manual_seed(9002000)
+    net = OuterCombatNetwork(source.combat, core.teacher.observation_space,
+        env.observation_space, initialization='random', objective=UNSCALED_OBJECTIVE)
+    expected = [*source.overworld.value_mlp.children(), source.overworld.value_head]
+    actual = list(net.conditional.value.children())
+    assert [type(x) for x in actual] == [type(x) for x in expected]
+    assert [(x.in_features, x.out_features) for x in actual if isinstance(x, nn.Linear)] == [
+        (x.in_features, x.out_features) for x in expected if isinstance(x, nn.Linear)]
+    with torch.no_grad():
+        net.conditional.value[-1].weight.zero_(); net.conditional.value[-1].bias.fill_(1.4)
+        net.conditional.win.weight.zero_(); net.conditional.win.bias.zero_()
+    value, outputs = net._value(torch.zeros(2, net.config.width), {})
+    torch.testing.assert_close(outputs['value_given_win'], torch.full((2, 1), 1.4))
+    torch.testing.assert_close(value, torch.full((2, 1), .7))
+    assert not hasattr(net, 'means') and not hasattr(net, 'distribution')

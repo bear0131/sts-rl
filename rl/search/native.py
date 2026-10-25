@@ -619,9 +619,9 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
                 outcome = exits[i][0]
                 if outcome.curve_state is None:
                     raise ValueError('finite curve search omitted terminal encounter/resources')
-                from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, winning_exit_target, matched_exit_value
-                values[i] = (matched_exit_value(outcome, bank)
-                    if getattr(model.policy.core, 'training_objective', None) == MATCHED_OBJECTIVE else
+                from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVES, winning_exit_target, matched_exit_value
+                values[i] = (matched_exit_value(outcome, bank, objective=model.policy.core.training_objective)
+                    if getattr(model.policy.core, 'training_objective', None) in MATCHED_OBJECTIVES else
                     winning_exit_target(outcome, bank)[1]
                     if getattr(model.policy.core, 'training_objective', None) == FACTORED_OBJECTIVE else
                     outcome.target(bank.value(outcome.curve_state)))
@@ -644,9 +644,9 @@ def forward_outer_leaves(model, batch, *, autocast=nullcontext, leaf_backend=MOD
             values[i] = exits[i][0].target(value)
     for i, (outcome, _) in exits.items():
         if outcome.kind == 'terminal':
-            from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, winning_exit_target, matched_exit_value
-            values[i] = (matched_exit_value(outcome, bank)
-                if getattr(model.policy.core, 'training_objective', None) == MATCHED_OBJECTIVE else
+            from env.core.finite_curves import FACTORED_OBJECTIVE, MATCHED_OBJECTIVES, winning_exit_target, matched_exit_value
+            values[i] = (matched_exit_value(outcome, bank, objective=model.policy.core.training_objective)
+                if getattr(model.policy.core, 'training_objective', None) in MATCHED_OBJECTIVES else
                 winning_exit_target(outcome, bank)[1]
                 if getattr(model.policy.core, 'training_objective', None) == FACTORED_OBJECTIVE else outcome.target())
     if not np.isfinite(values).all():
