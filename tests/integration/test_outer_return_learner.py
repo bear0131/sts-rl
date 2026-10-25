@@ -85,12 +85,14 @@ class QuickBackend(SimGameEnv):
                                      'six-curves-raw-strict-qnorm', 'six-curves-unscaled-conditional',
                                      'six-curves-strict-qnorm-continuous',
                                      'six-curves-unscaled-conditional-continuous',
-                                     'six-curves-small-conditional-continuous'])
+                                     'six-curves-small-conditional-continuous', 'small-means-continuous'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, six_curve_bank, tmp_path, monkeypatch, capsys, objective):
     continuous = objective.endswith('-continuous')
     objective = objective.removesuffix('-continuous')
-    small = objective == 'six-curves-small-conditional'
-    unscaled = small or objective == 'six-curves-unscaled-conditional'
+    small = objective in ('six-curves-small-conditional', 'small-means')
+    if objective == 'small-means':
+        objective = 'combat-outcome-means-v1'
+    unscaled = objective == 'six-curves-small-conditional' or objective == 'six-curves-unscaled-conditional'
     six = unscaled or objective in ('six-curves-strict-qnorm', 'six-curves-raw-strict-qnorm')
     if six:
         finite_curve_bank = copy.deepcopy(six_curve_bank)

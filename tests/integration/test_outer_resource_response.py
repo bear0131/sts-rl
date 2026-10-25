@@ -89,7 +89,7 @@ def test_outer_checkpoint_relocation_validates_material_and_context(outer_materi
 
 @pytest.mark.timeout(600)
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='GPU-only graph contract; deployment separately requires CUDA')
-@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'conditional', 'matched', 'unscaled', 'small-unscaled'])
+@pytest.mark.parametrize('control', [False, True, 'finite', 'means', 'conditional', 'matched', 'unscaled', 'small-unscaled', 'small-means'])
 def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, six_curve_bank, control):
     """Explicit GPU gate: missing CUDA is a failure when this test is selected."""
     import gc
@@ -99,9 +99,9 @@ def test_outer_graph_lifecycle(outer_return_core, finite_curve_bank, six_curve_b
     from rl.policies.precision import bf16_autocast
     assert torch.cuda.is_available(), 'select this acceptance test on the GPU host'
     core, source, env = outer_return_core
-    small = control == 'small-unscaled'
+    small = control in ('small-unscaled', 'small-means')
     if small:
-        control = 'unscaled'
+        control = control.removeprefix('small-')
     if control:
         from rl.policies.outer_return import OuterReturnCore
         from env.core.finite_curves import OBJECTIVE, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE, SIX_RAW_PAYOFF

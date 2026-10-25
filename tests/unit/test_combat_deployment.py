@@ -300,3 +300,26 @@ def test_continuous_deployment_has_no_finite_training_target():
     config['continuous'] = False
     with pytest.raises(ValueError, match='positive round'):
         validate(config, connected=True)
+
+
+def test_small_manual_keeps_combat06_workload_and_uses_resident_four_ranks():
+    config = configuration()
+    config.update(continuous=True, profile='configs/train/combat15_small_manual_876_4x5090.json')
+    config['budget'].update(rounds=None, max_seconds=None, seed=9001000)
+    validate(config, connected=True)
+    profile = json.loads((ROOT/config['profile']).read_text())
+    original = json.loads((ROOT/'configs/train/combat_two_means_876_4x5090.json').read_text())
+    for key in ('source','source_checkpoint_contract','simulator'):
+        assert profile[key] == original[key]
+    assert {k for k in profile['contract'] if profile['contract'][k] != original['contract'][k]} == {'experiment_number'}
+    for section, performance_key in (('training','micro_batch_size'),('search','inference_batch_size')):
+        assert {k:v for k,v in profile[section].items() if k != performance_key} == {k:v for k,v in original[section].items() if k != performance_key}
+    assert profile['lower_geometry'] == dict(width=128,layers=3,heads=4)
+    assert profile['full_training_budget']['rounds'] is None
+    for rank in range(4):
+        cmd = training_command(config,profile,rank)
+        args = build_parser().parse_args(cmd[4:])
+        assert args.continuous and '--updates' not in cmd and '--total-steps' not in cmd
+        assert (args.rank,args.world_size,args.n_envs,args.n_steps,args.seed) == (rank,4,384,512,9001000)
+        assert len(args.peer) == 3 and args.nosl_is_az_updates == 40
+        assert args.nosl_is_az_micro_batch_size == profile['training']['micro_batch_size']

@@ -79,8 +79,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
         if lower_geometry is not None:
-            if initialization != 'random' or objective != UNSCALED_OBJECTIVE:
-                raise ValueError('lower geometry requires fresh unscaled conditional training')
+            if initialization != 'random' or objective not in (MEAN_CONTRACT, UNSCALED_OBJECTIVE):
+                raise ValueError('lower geometry requires fresh means or unscaled conditional training')
             config = replace(config, **asdict(LowerGeometry(**lower_geometry)))
         if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
