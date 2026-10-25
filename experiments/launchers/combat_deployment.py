@@ -62,7 +62,13 @@ def validate(config, *, connected=False):
     if config.get('resume_step', 0):
         raise ValueError('fresh deployment only; resume a verified common generation through the trainer')
     budget = config['budget']
-    if any(type(budget[k]) is not int or budget[k] < 1 for k in ('rounds', 'max_seconds')):
+    continuous = config.get('continuous', False)
+    if type(continuous) is not bool:
+        raise ValueError('continuous must be an explicit boolean')
+    if continuous:
+        if budget['rounds'] is not None or budget['max_seconds'] is not None:
+            raise ValueError('continuous deployment requires null round and wall-time limits')
+    elif any(type(budget[k]) is not int or budget[k] < 1 for k in ('rounds', 'max_seconds')):
         raise ValueError('explicit positive round and wall-time budgets are required')
     if type(budget['seed']) is not int or budget['seed'] < 0:
         raise ValueError('an explicit nonnegative seed is required')
@@ -118,6 +124,10 @@ def training_command(config, profile, rank):
         '--stop-file', str(run/'STOP'), '--remote-root', str(run/'transport'),
         '--ssh-control-dir', '/tmp/combat01-ssh', '--ssh-key', str(run/'ssh/id_ed25519'), '--barrier-timeout', '900',
         '--gradient-transport', 'ssh-ring', '--ring-port', str(config['ring_port'])]
+    if config.get('continuous', False):
+        i = cmd.index('--updates')
+        del cmd[i:i+2]
+        cmd += ['--continuous']
     for peer in config['ranks']:
         if peer['rank'] != rank:
             cmd += ['--peer', f"{peer['rank']}=root@{peer['host']}:{peer['port']}"]
@@ -339,8 +349,8 @@ def manage(config_path, action):
     output.mkdir(parents=True, exist_ok=True)
     if action == 'plan':
         plan = dict(config=config, unresolved=[f"rank{r['rank']} endpoint" for r in config['ranks'] if not r.get('host') or not r.get('port')],
-                    global_slots=config.get('world_size', 4)*profile['training']['n_envs_per_rank']*profile['training']['n_steps']*config['budget']['rounds'],
-                    maximum_updates=profile['training']['optimizer_updates_per_round']*config['budget']['rounds'],
+                    global_slots=(None if config.get('continuous') else config.get('world_size', 4)*profile['training']['n_envs_per_rank']*profile['training']['n_steps']*config['budget']['rounds']),
+                    maximum_updates=(None if config.get('continuous') else profile['training']['optimizer_updates_per_round']*config['budget']['rounds']),
                     upper_updates=0, lower_trainable='all parameters from first update',
                     source_commit=subprocess.check_output(['git','rev-parse','HEAD'], cwd=repo, text=True).strip())
         write(output/'plan.json', plan)
@@ -450,10 +460,11 @@ timeout 120 .venv/bin/python -c {shlex.quote(invoke)}
                 try:
                     ssh(rank, f'touch {run}/STOP\n', timeout=30)
                 except Exception:
-                    pass  # Each independent supervisor still enforces its hard budget.
+                    pass  # Keep the original launch error; inspect every rank before retrying.
             raise
     elif action in ('status', 'wait-update'):
-        deadline = time.monotonic() + config['budget']['max_seconds'] + 60
+        # This is a startup acceptance deadline, never a trainer stop deadline.
+        deadline = time.monotonic() + (1500 if config.get('continuous') else config['budget']['max_seconds'] + 60)
         def status(rank, verify=False):
             invoke = f"import json; from experiments.launchers.combat_deployment import remote_status; print(json.dumps(remote_status('deployment.json', {rank['rank']}, verify={verify})))"
             return json.loads(ssh(rank, prelude+f'.venv/bin/python -c {shlex.quote(invoke)}\n'))

@@ -265,3 +265,22 @@ def test_explicit_unbounded_supervision_never_requests_timed_stop(tmp_path, monk
     stop = tmp_path/'STOP'
     assert supervise(Process(), stop, None) == 0
     assert not stop.exists()
+
+
+def test_continuous_deployment_has_no_finite_training_target():
+    config = configuration()
+    config['continuous'] = True
+    with pytest.raises(ValueError, match='null round'):
+        validate(config, connected=True)
+    config['budget'].update(rounds=None, max_seconds=None)
+    validate(config, connected=True)
+    profile = json.loads((ROOT/config['profile']).read_text())
+    command = training_command(config, profile, 0)
+    args = build_parser().parse_args(command[4:])
+    assert args.continuous and args.total_steps is None
+    assert '--updates' not in command and '--total-steps' not in command
+    assert args.stop_file and args.training_state_dir
+    assert args.save_every_updates == 1 and args.max_checkpoints == 2
+    config['continuous'] = False
+    with pytest.raises(ValueError, match='positive round'):
+        validate(config, connected=True)
