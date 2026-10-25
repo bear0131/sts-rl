@@ -1,6 +1,6 @@
 """Trainable combat actor/critic and an immutable upper teacher."""
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 import hashlib
 import json
 from pathlib import Path
@@ -25,6 +25,19 @@ from rl.policies.combat_distribution import CombatMeanHead, CombatConditionalVal
 def _sha(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+@dataclass(frozen=True)
+class LowerGeometry:
+    """Explicit fresh-lower geometry; the frozen source teacher is untouched."""
+    width: int
+    layers: int
+    heads: int
+
+    def __post_init__(self):
+        if (any(type(v) is not int or v < 1 for v in (self.width, self.layers, self.heads))
+                or self.width % self.heads):
+            raise ValueError('invalid lower transformer geometry')
 
 
 def load_initialization_material(directory, *, manifest_sha256, source_sha256):
@@ -55,7 +68,8 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 
 class OuterCombatNetwork(EntityCombatNetwork):
-    def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE):
+    def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE,
+                 lower_geometry=None):
         if objective not in (*SCALAR_OBJECTIVES, *OUTCOME_CONTRACTS):
             raise ValueError('unsupported frozen-upper lower objective')
         if objective in OUTCOME_CONTRACTS and initialization != 'random':
@@ -64,6 +78,10 @@ class OuterCombatNetwork(EntityCombatNetwork):
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
+        if lower_geometry is not None:
+            if initialization != 'random' or objective != UNSCALED_OBJECTIVE:
+                raise ValueError('lower geometry requires fresh unscaled conditional training')
+            config = replace(config, **asdict(LowerGeometry(**lower_geometry)))
         if objective in (MEAN_CONTRACT, FACTORED_OBJECTIVE, MATCHED_OBJECTIVE, UNSCALED_OBJECTIVE):
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
         # Only the historical HP outcome objectives retain the Boss utility.
@@ -144,14 +162,16 @@ class OuterReturnCore(EntityCombatCore):
     frozen_upper = True
 
     def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random',
-                 objective=OBJECTIVE, finite_curve_bank=None):
+                 objective=OBJECTIVE, finite_curve_bank=None, lower_geometry=None):
         nn.Module.__init__(self)
         if not CONTEXT_KEYS <= space.spaces.keys():
             raise ValueError('outer-return policy requires public run context')
         self.lower_initialization = lower_initialization
+        self.lower_geometry = (asdict(LowerGeometry(**lower_geometry))
+                               if lower_geometry is not None else None)
         self.training_objective = objective
         self.combat = OuterCombatNetwork(source.combat, source_space, space,
-            initialization=lower_initialization, objective=objective)
+            initialization=lower_initialization, objective=objective, lower_geometry=self.lower_geometry)
         self.config = self.combat.config
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
@@ -194,13 +214,15 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return super().obs_to_tensor(observation)
 
     def __init__(self, *args, material_directory, material_sha256, source_sha256,
-                 lower_initialization='random', objective=OBJECTIVE, finite_curve_bank=None, **kwargs):
+                 lower_initialization='random', objective=OBJECTIVE, finite_curve_bank=None,
+                 lower_geometry=None, **kwargs):
         self.objective = objective
         self.finite_curve_bank_data = deepcopy(finite_curve_bank)
         self.material_directory = str(material_directory)
         self.material_sha256 = material_sha256
         self.source_sha256 = source_sha256
         self.lower_initialization = lower_initialization
+        self.lower_geometry = deepcopy(lower_geometry)
         super().__init__(*args, **kwargs)
 
     def _build(self, lr_schedule):
@@ -208,7 +230,8 @@ class OuterReturnPolicy(EntityCombatPolicy):
             manifest_sha256=self.material_sha256, source_sha256=self.source_sha256)
         self.core = OuterReturnCore(source, source_space, self.observation_space,
             source_sha256=self.source_sha256, lower_initialization=self.lower_initialization,
-            objective=self.objective, finite_curve_bank=self.finite_curve_bank_data)
+            objective=self.objective, finite_curve_bank=self.finite_curve_bank_data,
+            lower_geometry=self.lower_geometry)
         self.entity_config = asdict(self.core.config)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
@@ -217,4 +240,4 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return dict(super()._get_constructor_parameters(), material_directory=self.material_directory,
                     material_sha256=self.material_sha256, source_sha256=self.source_sha256,
                     lower_initialization=self.lower_initialization, objective=self.objective,
-                    finite_curve_bank=self.finite_curve_bank_data)
+                    finite_curve_bank=self.finite_curve_bank_data, lower_geometry=self.lower_geometry)

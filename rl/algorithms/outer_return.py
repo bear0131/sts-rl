@@ -74,6 +74,9 @@ def contract(model):
                             loss='win-bce-plus-win-masked-hp-mse-v1')
         else:
             identity['quantiles'] = config.quantiles
+    geometry = getattr(model.policy.core, 'lower_geometry', None)
+    if geometry is not None:
+        identity['lower_geometry'] = dict(geometry)
     return identity
 
 

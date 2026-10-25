@@ -105,6 +105,22 @@ def test_raw_six_profile_changes_only_curve_scale_contract():
         assert args.nosl_is_az_updates == 40 and args.nosl_is_az_simulations == 128
 
 
+def test_small_conditional_profile_uses_resident_two_rank_deployment():
+    config = configuration()
+    config.update(world_size=2, continuous=True,
+        profile='configs/train/combat14_small_conditional_876_2x5090.json')
+    config['ranks'] = [dict(config['ranks'][i+2],rank=i) for i in range(2)]
+    config['budget'].update(rounds=None,max_seconds=None,seed=9002000)
+    validate(config,connected=True)
+    profile = json.loads((ROOT/config['profile']).read_text())
+    for rank in range(2):
+        cmd=training_command(config,profile,rank)
+        args=build_parser().parse_args(cmd[4:])
+        assert args.continuous and '--updates' not in cmd and '--total-steps' not in cmd
+        assert (args.rank,args.world_size,args.n_envs,args.n_steps,args.seed)==(rank,2,96,256,9002000)
+        assert args.nosl_is_az_updates==40 and args.nosl_is_az_simulations==128
+
+
 @pytest.mark.parametrize('profile_name', ['combat_outer_return', 'combat_matched_curves', 'combat_value_units'])
 def test_deployment_preserves_whole_lower_training_and_876_geometry(profile_name):
     config = configuration()

@@ -54,6 +54,7 @@ def validate(config, *, connected=False):
                                  'configs/train/combat11_six_curves_876_2x5090.json',
                                  'configs/train/combat12_six_curves_raw_876_2x5090.json',
                                  'configs/train/combat13_unscaled_conditional_876_2x5090.json',
+                                 'configs/train/combat14_small_conditional_876_2x5090.json',
                                  'configs/train/combat10_manual_876_2x5090.json',
                                  'configs/train/combat_train47_context_876_4x5090.json'):
         raise ValueError('this launcher requires the COMBAT01 production profile')

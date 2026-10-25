@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT14 | 小内层实现及本地门禁通过，Linux生产验收待执行 | 仅支持新随机unscaled条件value模型的显式lower_geometry，并写入checkpoint/replay身份；候选128宽3层4头，原13目标/seed/teacher/其余训练不变。全部内层参数<=25%本地测试通过，真实生产计数与两机CPU/GPU/首完整生产周期待门禁。管理入口combat01-worktree/runs/local/combat14-small-conditional-20261025。 |
 | COMBAT13 | 长驻训练已验收，无计划换段 | 物理[0, 1]现役combat13-unscaled-conditional-20261025-resident/ring30600，trainer622530/588092，固定2ea7fa1a；从自身完整41全状态恢复，首42及同进程连续两轮/全SHA审计43通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat13-unscaled-conditional-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
 | COMBAT10 | 双组准备中 | 用户确认96×256×2，物理0+1曲线、2+3人工COMBAT06 HP/Boss0.9；strict-paper Q norm/c_scale0.1、MSE系数1，小偷索引修复；相同初始化与公共超参，历史escape监督差异披露。35轮/18000秒，独立run/空Adam/replay；验收组内rank隔离、全CPU/GPU/两轮恢复与首完整生产/下一轮。管理证据combat01-worktree/runs/local/combat10-strict-pair-20261024。 |

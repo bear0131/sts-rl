@@ -27,6 +27,16 @@ schema builds2781 inputs/900022 parameters; enabling it is a different experimen
 This is a lossy
 architecture experiment, not semantic equivalence to the Transformer.
 
+Frozen-upper conditional-value profiles can specify `lower_geometry` with
+integer `width`, `layers`, and `heads`. This is supported for a fresh random
+lower network under the unscaled conditional objective. It changes the combat
+encoder, context, actor and value heads while keeping the frozen source upper
+network and card vectors intact. Omitting it retains the source geometry and
+historical checkpoint identity. Explicit geometry is saved in policy constructor
+data and replay/checkpoint identity; states from a different geometry cannot be
+resumed into the new model. Count all `core.combat.parameters()` when reporting
+the lower parameter ratio, excluding the frozen teacher and nonparameter buffers.
+
 To replace only the combat model while preserving a source's frozen upper:
 
 ```bash

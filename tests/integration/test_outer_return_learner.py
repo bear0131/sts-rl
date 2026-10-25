@@ -84,11 +84,13 @@ class QuickBackend(SimGameEnv):
                                      'manual-strict-qnorm', 'curves-strict-qnorm', 'six-curves-strict-qnorm',
                                      'six-curves-raw-strict-qnorm', 'six-curves-unscaled-conditional',
                                      'six-curves-strict-qnorm-continuous',
-                                     'six-curves-unscaled-conditional-continuous'])
+                                     'six-curves-unscaled-conditional-continuous',
+                                     'six-curves-small-conditional-continuous'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, six_curve_bank, tmp_path, monkeypatch, capsys, objective):
     continuous = objective.endswith('-continuous')
     objective = objective.removesuffix('-continuous')
-    unscaled = objective == 'six-curves-unscaled-conditional'
+    small = objective == 'six-curves-small-conditional'
+    unscaled = small or objective == 'six-curves-unscaled-conditional'
     six = unscaled or objective in ('six-curves-strict-qnorm', 'six-curves-raw-strict-qnorm')
     if six:
         finite_curve_bank = copy.deepcopy(six_curve_bank)
@@ -113,6 +115,8 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     factored = objective in (outer.FACTORED_OBJECTIVE, outer.UNSCALED_OBJECTIVE)
     means = objective in ('combat-outcome-means-v1', outer.MATCHED_OBJECTIVE)
     outer_material = dict(outer_material, objective=objective)
+    if small:
+        outer_material['lower_geometry'] = dict(width=16, layers=1, heads=2)
     if finite:
         outer_material['finite_curve_bank'] = finite_curve_bank
     def make_env(*_):
@@ -232,6 +236,14 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
         assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
     bundle = tmp_path/'state'/'rank0'/'step-000000002048'
     restore_learner(restored, bundle, rank=0, world_size=1)
+    if small:
+        assert restored.policy.core.config.width == 16
+        assert restored.outer_return_contract['lower_geometry'] == outer_material['lower_geometry']
+        wrong_geometry = restored._ensure_nosl_is_az_replay().state_dict()
+        wrong_geometry['objective_identity'] = dict(wrong_geometry['objective_identity'])
+        wrong_geometry['objective_identity'].pop('lower_geometry')
+        with pytest.raises(ValueError, match='objective identity'):
+            restored._ensure_nosl_is_az_replay().load_state_dict(wrong_geometry)
     assert restored.nosl_value_unit_scale == unit_scale
     if unit_scale == 2.:
         assert restored.outer_return_contract['external_value_units']['conditional_mse_coefficient'] == 4.
