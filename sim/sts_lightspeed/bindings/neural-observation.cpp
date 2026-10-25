@@ -62,7 +62,10 @@ public:
             // the inference backend, which initializes it from a valid row.
             py::ssize_t rowBytes = array.itemsize();
             for (int d=1; d<array.ndim(); ++d) rowBytes *= array.shape(d);
-            std::memset(array.mutable_data(), 0, n * rowBytes);
+            // Root globals below overwrite every real row. Clearing their
+            // deck/relic/context arrays first only doubles the memory writes.
+            if (!globals.contains(item.first))
+                std::memset(array.mutable_data(), 0, n * rowBytes);
             arrays.emplace(name, array); out[item.first] = array;
         }
         // Resolve all pointers once per batch, with no dictionary per leaf.
@@ -174,6 +177,9 @@ public:
             const float neow=s[selectStart+201];
             if (!std::isfinite(neow) || neow<0.0f || neow>3.0f || neow!=std::nearbyint(neow))
                 throw std::invalid_argument("native Neow remainder is outside 0..3");
+            auto activeRelicWidth = relicWidth;
+            while (activeRelicWidth && relics[r*relicWidth+activeRelicWidth-1] == 0)
+                --activeRelicWidth;
             for (py::ssize_t k=0; k<liveRelicIds.size(); ++k) {
                 const auto column=liveColumns.data()[k];
                 if (column < -5 || column >= counters)
@@ -184,7 +190,11 @@ public:
                 if (stop && value>=stop) value=0.0f;
                 if (column!=-1 && column!=-2) value/=counterScale;
                 bool owned=false;
-                for (py::ssize_t slot=0; slot<relicWidth; ++slot)
+                // Keep holes, duplicate IDs and their original slots. Only
+                // trailing PADs can be omitted (an ID-zero table still scans
+                // the complete row, preserving the decoder's general API).
+                const auto scanWidth = liveRelicIds.data()[k] == 0 ? relicWidth : activeRelicWidth;
+                for (py::ssize_t slot=0; slot<scanWidth; ++slot)
                     if (relics[r*relicWidth+slot]==liveRelicIds.data()[k]) {
                         relicCounters[r*relicWidth+slot]=value;
                         owned=true;

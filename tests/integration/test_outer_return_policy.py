@@ -287,6 +287,59 @@ def test_native_roots_reuse_collected_context_with_owned_storage(outer_return_co
         pool.close()
 
 
+@pytest.mark.parametrize('native_action', [False, True])
+def test_combat_label_context_reuses_observation_without_aliasing_or_staleness(
+        short_combat_env_type, monkeypatch, native_action):
+    from env.core.outer_return import CONTEXT_KEYS
+    from env.core import game_actions as ga, actions
+
+    env = short_combat_env_type(global_map_view=True,
+        combat_action_contract='autoregressive-v2', outer_return_context=True,
+        combat_value_objective='combat-outcome-means-v1')
+    env.reset(seed=42101)
+    reference = env.fork_run()
+    try:
+        observation = env._obs()
+        expected = {key: observation[key].copy() for key in CONTEXT_KEYS}
+        # Mutating collector-owned storage must not corrupt a terminal label.
+        for key in CONTEXT_KEYS:
+            observation[key].fill(0)
+
+        def transition(item):
+            return (item._backend_step_native_combat(4 << 29) if native_action
+                    else item._backend_step(ga.combat(actions.END_TURN)))
+
+        reference._nosl_value_capture_pending = True
+        expected_result = transition(reference)
+        env._nosl_value_capture_pending = True
+        with monkeypatch.context() as patch:
+            patch.setattr(env, '_obs', lambda **_: pytest.fail('redundant full observation'))
+            actual_result = transition(env)
+        assert actual_result[:3] == expected_result[:3]
+        actual_info, expected_info = actual_result[3], expected_result[3]
+        assert actual_info.keys() == expected_info.keys()
+        for key in actual_info:
+            if key.endswith('_observation'):
+                for field in actual_info[key]:
+                    assert actual_info[key][field].tobytes() == expected_info[key][field].tobytes(), field
+            else:
+                assert actual_info[key] == expected_info[key], key
+        for key in CONTEXT_KEYS:
+            assert env._nosl_context_before[key].tobytes() == expected[key].tobytes(), key
+        assert env._nosl_current_context is None, 'transition must invalidate the current-state cache'
+        refreshed = env._obs()
+        env._capture_nosl_context()
+        for key in CONTEXT_KEYS:
+            assert env._nosl_context_before[key].tobytes() == refreshed[key].tobytes(), key
+        env.reset(seed=42102)
+        # reset emits a new observation; it must never retain pre-reset context.
+        for key in CONTEXT_KEYS:
+            assert env._nosl_current_context[key].tobytes() == env._obs()[key].tobytes(), key
+    finally:
+        reference.close()
+        env.close()
+
+
 @pytest.mark.parametrize('device', ['cpu', 'cuda'])
 def test_native_exit_uses_teacher_on_settled_reward_page(outer_return_core, device):
     if device == 'cuda' and not torch.cuda.is_available():

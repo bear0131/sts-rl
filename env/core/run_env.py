@@ -673,6 +673,7 @@ class SlayTheSpireEnv(gym.Env):
         self._cached_action_mask = None
 
     def _invalidate_backend_cache(self):
+        self._nosl_current_context = None
         self._cached_phase = _UNCACHED
         self._cached_legal = _UNCACHED
         self._cached_multi_desc = _UNCACHED
@@ -792,9 +793,19 @@ class SlayTheSpireEnv(gym.Env):
                 return ga.combat(native_id)
         raise ValueError(f"illegal combat search action: {aid}")
 
+    def _capture_nosl_context(self):
+        # The collector has already observed this state. Keep only the owned
+        # public context needed for pre-settlement labels, rather than encoding
+        # the entire current combat a second time immediately before acting.
+        context = getattr(self, '_nosl_current_context', None)
+        if context is None:
+            self._obs()
+            context = self._nosl_current_context
+        self._nosl_context_before = context
+
     def _backend_step(self, semantic):
         if self.outer_return_context and not self.outer_return_objective:
-            self._nosl_context_before = self._obs()
+            self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         capture_nosl_value = self._nosl_value_capture_pending
         self._nosl_value_capture_pending = False
@@ -820,7 +831,7 @@ class SlayTheSpireEnv(gym.Env):
 
     def _backend_step_native_combat(self, action_bits):
         if self.outer_return_context and not self.outer_return_objective:
-            self._nosl_context_before = self._obs()
+            self._capture_nosl_context()
         before = (self.thick.gc.act, self.thick.gc.floor_num) if self.outer_return_context else None
         self._nosl_value_capture_pending = False
         step_native = getattr(self.thick, "step_native_combat", None)
@@ -2677,8 +2688,11 @@ class SlayTheSpireEnv(gym.Env):
         if self._joint_actions and not upper_value_only:
             obs['combat_legal'] = self.action_masks()[self._policy_offset:]
         if self.outer_return_context and not upper_value_only:
-            from .outer_return import permanent_misc
+            from .outer_return import CONTEXT_KEYS, permanent_misc
             obs['outer_deck_misc'] = permanent_misc(self.thick.gc, self.thick.bc)
+            # A vector environment may reuse or mutate its observation storage.
+            # These small arrays must survive that and the upcoming transition.
+            self._nosl_current_context = {key: obs[key].copy() for key in CONTEXT_KEYS}
         return obs
 
     def equivalent_action_groups(self):
