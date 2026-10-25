@@ -224,7 +224,8 @@ def test_fixed_worldline_keeps_one_child_per_action_path():
 
 
 @pytest.mark.parametrize('batch_size', [1, 4])
-def test_fixed_worldline_repeated_value_leaves_preserve_simulator_state(batch_size):
+@pytest.mark.parametrize('nonce', [1, 1729, 9001000])
+def test_fixed_worldline_repeated_value_leaves_preserve_simulator_state(batch_size, nonce):
     game = sts.GameContext(sts.CharacterClass.IRONCLAD, 8, 0)
     battle = sts.create_battle(game, 'Jaw Worm')
     original = battle.to_dict()
@@ -233,10 +234,10 @@ def test_fixed_worldline_repeated_value_leaves_preserve_simulator_state(batch_si
     # The first redeterminized simulation samples the same hidden future as
     # fixed mode. It supplies an uncached reference without using the live RNG.
     reference = battle.nosl_neural_search_begin(logits, simulations=1, depth=1,
-        nonce=1729, c_puct=1000., fixed_worldline=False)
+        nonce=nonce, c_puct=1000., fixed_worldline=False)
     expected = normalize_sim(reference.next_batch(1)[0]['state'])
     session = battle.nosl_neural_search_begin(logits, simulations=16, depth=1,
-        nonce=1729, c_puct=1000., fixed_worldline=True)
+        nonce=nonce, c_puct=1000., fixed_worldline=True)
     count = 0
     while not session.done():
         requests = session.next_batch(batch_size)
@@ -254,6 +255,8 @@ def test_fixed_worldline_repeated_value_leaves_preserve_simulator_state(batch_si
     end_turn = next(edge for edge in root['children'] if edge['action_bits'] >> 29 == 4)
     assert end_turn['visits'] == 16
     assert end_turn['child_states'] == 1
+    assert end_turn['sample_q'] == pytest.approx(.285)
+    assert root['sample_value'] == pytest.approx(.285)
 
 
 def test_end_turn_value_boundary_is_fully_settled_and_non_random():
