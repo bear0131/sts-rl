@@ -102,21 +102,6 @@ def test_native_batch_preserves_each_leaf_and_result(combat_factory, threads, fi
                 for key, value in obs.items():
                     assert target[key][:len(owners)].tobytes() == value.tobytes(), key
                     assert target[key][len(owners):].tobytes() == padding[key], key
-                layout, compact = pool.transport_layout()
-                transport = {key: np.zeros((len(owners)+2, *value.shape[1:]), dtype=value.dtype)
-                             for key, value in layout.items()}
-                pool.write_transport(transport)
-                for key, expected in obs.items():
-                    value = transport[key][:len(owners)]
-                    if value.dtype == np.uint8 and key.endswith('_upgrades'):
-                        from env.core.encode import UPGRADE_SCALE
-                        value = value.astype(np.float32) / UPGRADE_SCALE
-                    else:
-                        value = value.astype(expected.dtype)
-                    assert value.tobytes() == expected.tobytes(), key
-                    assert not transport[key][len(owners):].any(), key
-                if compact:
-                    assert sum(v[0].nbytes for v in layout.values()) < sum(v[0].nbytes for v in obs.values())
                 active = np.flatnonzero(obs['relics'].any(axis=0))
                 assert pool.active_relic_width == (int(active[-1])+1 if active.size else 1)
                 values = np.asarray(.2 + .6 * obs['player_scalars'][:, 0], dtype=np.float32)
@@ -305,12 +290,11 @@ def test_compact_decoders_reject_unmapped_identity_instead_of_clamping(
 
 
 @pytest.mark.native
-@pytest.mark.parametrize('upgrade', [130, 255, 256, 1024])
-def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factory, upgrade):
+def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factory):
     from env.search.native_batch import NativeSearchBatch
     from env.core import encode
     env = combat_factory(['SEARING_BLOW'] * 5)
-    env.thick.bc.apply_custom_state({'hand': [('SEARING_BLOW', upgrade, 2)]})
+    env.thick.bc.apply_custom_state({'hand': [('SEARING_BLOW', 130, 2)]})
     env._invalidate_backend_cache()
     pool = NativeSearchBatch([env], 1)
     try:
@@ -324,26 +308,11 @@ def test_packed_searing_blow_above_old_upgrade_cache_remains_exact(combat_factor
         # legacy decoder projection as the real transport does at begin().
         pool._decoder_globals = {key: value for key, value in pool.global_fields.items()
                                  if key in pool._decoder_keys}
-        pool._compact_globals = pool._compact_root_fields()
         actual = pool.observations()
         expected = env._native_leaf_observation(env.thick.bc.to_dict(), combat_only=True)
-        assert actual['hand_damage'][0, 0] == np.float32((12 + upgrade*(upgrade+7)//2) / encode.DMG_SCALE)
+        assert actual['hand_damage'][0, 0] * encode.DMG_SCALE == 8917
         for key, value in expected.items():
             np.testing.assert_array_equal(actual[key][0], value, err_msg=key)
-        layout, compact = pool.transport_layout()
-        assert compact == (upgrade <= 255)
-        transport = {key: np.empty_like(value) for key, value in layout.items()}
-        pool.write_transport(transport)
-        for key, expected_value in actual.items():
-            value = transport[key]
-            value = (value.astype(np.float32) / encode.UPGRADE_SCALE
-                     if value.dtype == np.uint8 else value.astype(expected_value.dtype))
-            assert value.tobytes() == expected_value.tobytes(), key
-        # A pile stores upgrade SUMS, not individual card counts. A byte for
-        # each card is not evidence that an aggregate also fits in one byte.
-        pool.payload['language_features'] = np.array([[[[2., 2., 400.]]]], np.float32)
-        pool._transport_choice = None
-        assert pool.transport_layout()[1] is False
     finally:
         pool.close()
 

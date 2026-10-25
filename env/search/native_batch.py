@@ -46,25 +46,14 @@ class NativeSearchBatch:
         # count, so Searing Blow remains exact without reserving the complete
         # int16 range in every search worker.
         self._card_stats = _nosl_card_stats()
-        decoder_args = (_nosl_compact_lut(), self._card_stats,
+        self.decoder = sts.NeuralObservationDecoder(
+            self._prototypes, _nosl_compact_lut(), self._card_stats,
             {key: getattr(encode, key+'_SCALE') for key in
                 ('HP','BLOCK','ENERGY','TURN','BUFF','COUNTER','DMG','HITS','UPGRADE','PICK','GOLD')},
             dict(counters=encode.COMBAT_COUNTERS, moves=encode.V.MOVE_VOCAB_CAPACITY,
                  intents=len(encode.V.INTENT_CATEGORY), contexts=encode.V.SELECT_CONTEXT_VOCAB_CAPACITY),
             first._policy_offset, first._neural_width if first._joint_actions else 0,
             first._autoregressive_actions)
-        self.decoder = sts.NeuralObservationDecoder(self._prototypes, *decoder_args)
-        # Private leaf transport only. Public observations, replay and the
-        # frozen outer model retain their existing types and normalized values.
-        self._transport_prototypes = {
-            key: np.zeros(value.shape, dtype=(np.int16 if value.dtype == np.int64
-                and key != 'select_native_indices' else np.uint8 if key.endswith('_upgrades')
-                else value.dtype)) for key, value in self._prototypes.items()}
-        self._transport_decoder = (sts.NeuralObservationDecoder(self._transport_prototypes, *decoder_args)
-                                   if hasattr(sts.NeuralObservationDecoder, 'decode_compact') else None)
-        self._transport_layouts = {}
-        self._transport_choice = None
-        self._compact_globals = None
         self.indices = []
         self.payload = None
         self.global_fields = None
@@ -115,8 +104,6 @@ class NativeSearchBatch:
             self.global_fields = {key: np.stack([f[key] for f in fields]) for key in fields[0]}
             self._decoder_globals = {key: value for key, value in self.global_fields.items()
                                      if key in self._decoder_keys}
-            self._compact_globals = self._compact_root_fields()
-            self._transport_choice = None
             relics = self.global_fields['relics']
             self._relic_widths = np.maximum(1, np.max(
                 (relics != 0) * np.arange(1, relics.shape[1]+1), axis=1))
@@ -133,7 +120,7 @@ class NativeSearchBatch:
     def observations(self, rows=None):
         return self._decode_observations(rows=rows)
 
-    def _decode_observations(self, destination=None, rows=None, *, compact=False):
+    def _decode_observations(self, destination=None, rows=None):
         started = time.perf_counter()
         self._ensure_card_stats()
         payload = self._decoder_payload()
@@ -145,8 +132,7 @@ class NativeSearchBatch:
                         'legal_policy_ids', 'language_ids', 'language_features'):
                 if key in payload:
                     payload[key] = np.asarray(payload[key])[rows]
-        result = (self._transport_decoder.decode_compact(payload, self._compact_globals, destination)
-                  if compact else self.decoder.decode(payload, self._decoder_globals, destination))
+        result = self.decoder.decode(payload, self._decoder_globals, destination)
         if self.public_context:
             from env.core.outer_return import MISC_SCALE
             if self.payload.get('outer_return_schema') != 1:
@@ -243,63 +229,6 @@ class NativeSearchBatch:
         """Fill caller-owned contiguous arrays before their next device upload."""
         self._decode_observations(destination, rows)
 
-    def _compact_root_fields(self):
-        if self._transport_decoder is None:
-            return None
-        result = {}
-        for key, value in self._decoder_globals.items():
-            dtype = self._transport_prototypes[key].dtype
-            if dtype == np.uint8:
-                raw = np.rint(value * encode.UPGRADE_SCALE)
-                if (not np.all(np.isfinite(raw)) or raw.min(initial=0) < 0
-                        or raw.max(initial=0) > 255
-                        or not np.array_equal(raw.astype(np.float32) / encode.UPGRADE_SCALE, value)):
-                    return None
-                result[key] = raw.astype(dtype)
-            elif dtype == np.int16:
-                if value.min(initial=0) < 0 or value.max(initial=0) > 32767:
-                    return None
-                result[key] = value.astype(dtype)
-            else:
-                result[key] = value
-        return result
-
-    def _can_transport_compact(self):
-        if self._transport_choice is not None:
-            return self._transport_choice
-        self._transport_choice = False
-        if self._compact_globals is None:
-            return False
-        layout = _nosl_compact_lut()['layout']
-        hand = 6 + layout['player_status_count'] + encode.COMBAT_COUNTERS + 1 + 30 + 5 * layout['monster_status_count']
-        select = hand + 20 + 3 * layout['card_count']
-        scalars = self.payload['scalars']
-        upgrades = [scalars[:, hand:hand+20:2], scalars[:, select+4:select+100],
-                    scalars[:, select+196:select+198]]
-        if 'language_features' in self.payload:
-            # These are sums across equal cards, so even individually byte-
-            # sized upgrades can overflow a pile's aggregate. Fall back exactly.
-            upgrades.append(self.payload['language_features'][..., 2])
-        for value in upgrades:
-            if (not np.all(np.isfinite(value)) or value.min(initial=0) < 0
-                    or value.max(initial=0) > 255 or np.any(value != np.rint(value))):
-                return False
-        self._transport_choice = True
-        return True
-
-    def transport_layout(self, rows=None):
-        compact = self._can_transport_compact()
-        if not compact:
-            return self.observation_layout(rows), False
-        count = self.rows if rows is None else len(rows)
-        if count not in self._transport_layouts:
-            self._transport_layouts[count] = {key: np.broadcast_to(value, (count, *value.shape))
-                                            for key, value in self._transport_prototypes.items()}
-        return self._transport_layouts[count], True
-
-    def write_transport(self, destination, rows=None):
-        self._decode_observations(destination, rows, compact=self._can_transport_compact())
-
     def _ensure_card_stats(self):
         layout = _nosl_compact_lut()['layout']
         hand_start = (6 + int(layout['player_status_count'])
@@ -316,13 +245,10 @@ class NativeSearchBatch:
         if needed > self._card_stats['damage'].shape[1]:
             self._card_stats = _nosl_card_stats(needed)
             self.decoder.set_card_stats(self._card_stats)
-            if self._transport_decoder is not None:
-                self._transport_decoder.set_card_stats(self._card_stats)
 
     def advance(self, logits, values):
         self.leaves[np.asarray(self.payload['owners'], dtype=np.intp)] += 1
         self.payload = self.pool.advance(values, logits, self.language)
-        self._transport_choice = None
         self._record_timings()
 
     def _record_timings(self):
@@ -348,7 +274,6 @@ class NativeSearchBatch:
             self.envs[index].nosl_is_az_cpp_abort()
         self.indices = []
         self.payload = self.global_fields = None
-        self._compact_globals = self._transport_choice = None
 
     def close(self):
         if self.pool is not None:

@@ -5,8 +5,6 @@
 #include <cmath>
 #include <cstring>
 #include <map>
-#include <limits>
-#include <type_traits>
 
 namespace py = pybind11;
 namespace {
@@ -27,15 +25,6 @@ public:
     void setCardStats(py::dict stats) { stats_ = std::move(stats); }
 
     py::dict decode(py::dict packed, py::dict globals, py::object destination) const {
-        return decodeImpl<std::int64_t, float>(packed, globals, destination);
-    }
-
-    py::dict decodeCompact(py::dict packed, py::dict globals, py::object destination) const {
-        return decodeImpl<std::int16_t, std::uint8_t>(packed, globals, destination);
-    }
-
-    template<class Category, class Upgrade>
-    py::dict decodeImpl(py::dict packed, py::dict globals, py::object destination) const {
         Array<std::int32_t> cat(packed["categorical"]), prefix(packed["selection_prefix"]), legal(packed["legal_policy_ids"]);
         Array<float> scalar(packed["scalars"]);
         Array<std::int64_t> owners(packed["owners"]);
@@ -87,32 +76,22 @@ public:
         };
         auto i = [&](const char *key) {
             auto &array=arrays.at(key);
-            if (!array.dtype().is(py::dtype::of<Category>())) throw std::invalid_argument("native category observation dtype mismatch");
-            return static_cast<Category *>(array.mutable_data());
+            if (!array.dtype().is(py::dtype::of<std::int64_t>())) throw std::invalid_argument("native category observation dtype mismatch");
+            return static_cast<std::int64_t *>(array.mutable_data());
         };
-        auto u = [&](const char *key) {
-            auto &array=arrays.at(key);
-            if (!array.dtype().is(py::dtype::of<Upgrade>())) throw std::invalid_argument("native upgrade observation dtype mismatch");
-            return static_cast<Upgrade *>(array.mutable_data());
-        };
-        auto &indicesArray=arrays.at("select_native_indices");
-        if (!indicesArray.dtype().is(py::dtype::of<std::int64_t>()))
-            throw std::invalid_argument("native selection handle dtype mismatch");
-        auto *selectIndices=static_cast<std::int64_t *>(indicesArray.mutable_data());
         auto *hand=i("hand_ids"), *monster=i("monster_id"), *moves=i("monster_move"),
              *intents=i("monster_intent_cat"), *potions=i("potions"),
              *context=i("select_context"), *selectIds=i("select_card_ids"),
-             *zone=i("select_zone"), *relics=i("relics"),
+             *selectIndices=i("select_native_indices"), *zone=i("select_zone"), *relics=i("relics"),
              *selectedIds=arrays.count("selected_card_ids") ? i("selected_card_ids") : nullptr;
         auto *player=f("player_scalars"), *pb=f("player_buffs"), *cb=f("combat_counters"),
              *boundary=f("post_enemy_turn_boundary"), *mon=f("monster_scalars"), *mb=f("monster_buffs"),
-             *hc=f("hand_costs"), *hd=f("hand_damage"), *hb=f("hand_block"),
+             *hu=f("hand_upgrades"), *hc=f("hand_costs"), *hd=f("hand_damage"), *hb=f("hand_block"),
              *draw=f("draw_counts"), *discard=f("discard_counts"), *exhaust=f("exhaust_counts"),
              *pick=f("pick_remaining"), *zero=f("can_pick_zero"), *any=f("can_pick_any"),
-             *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
-             *relicCounters=f("relic_counters"), *gold=f("gold");
-        auto *hu=u("hand_upgrades"), *su=u("select_card_upgrades"),
-             *selectedUpgrades=arrays.count("selected_card_upgrades") ? u("selected_card_upgrades") : nullptr;
+             *su=f("select_card_upgrades"), *sc=f("select_card_costs"), *selected=f("select_hand_mask"),
+             *relicCounters=f("relic_counters"), *gold=f("gold"),
+             *selectedUpgrades=arrays.count("selected_card_upgrades") ? f("selected_card_upgrades") : nullptr;
         const auto selectedWidth=selectedIds ? arrays.at("selected_card_ids").shape(1) : 0;
         if ((selectedIds == nullptr) != (selectedUpgrades == nullptr) ||
             (selectedIds && (selectedWidth<2 || arrays.at("selected_card_upgrades").shape(1)!=selectedWidth)))
@@ -138,16 +117,8 @@ public:
         const bool language=packed.contains("language_ids");
         Array<std::int32_t> languageIds;
         Array<float> languageFeatures;
-        Category *langIds[2]{};
-        float *langCount[2]{}, *langUpgraded[2]{};
-        Upgrade *langUpgrades[2]{};
-        auto writeUpgrade=[&](Upgrade *target, py::ssize_t index, float value) {
-            if constexpr (std::is_same_v<Upgrade, std::uint8_t>) {
-                if (!std::isfinite(value) || value<0 || value>255 || value!=std::nearbyint(value))
-                    throw std::invalid_argument("native byte upgrade is outside 0..255");
-                target[index]=static_cast<std::uint8_t>(value);
-            } else target[index]=value/upgradeScale;
-        };
+        std::int64_t *langIds[2]{};
+        float *langCount[2]{}, *langUpgraded[2]{}, *langUpgrades[2]{};
         int slots=0;
         if (language) {
             languageIds=Array<std::int32_t>(packed["language_ids"]); languageFeatures=Array<float>(packed["language_features"]);
@@ -159,7 +130,7 @@ public:
             langIds[0]=i("draw_card_ids"); langIds[1]=i("discard_card_ids");
             langCount[0]=f("draw_card_counts"); langCount[1]=f("discard_card_counts");
             langUpgraded[0]=f("draw_card_upgraded_counts"); langUpgraded[1]=f("discard_card_upgraded_counts");
-            langUpgrades[0]=u("draw_card_upgrades"); langUpgrades[1]=u("discard_card_upgrades");
+            langUpgrades[0]=f("draw_card_upgrades"); langUpgrades[1]=f("discard_card_upgrades");
         }
         bool *mask=width_ ? static_cast<bool *>(arrays.at("combat_legal").mutable_data()) : nullptr;
         for (auto item : globals) {
@@ -186,8 +157,6 @@ public:
                     " enum is outside its exported word table");
             }
             const auto encoded = map.data()[value];
-            if (encoded < 0 || encoded > std::numeric_limits<Category>::max())
-                throw std::invalid_argument("native category exceeds transport range");
             if (encoded == 0 && value != 0 && !(allowOneAsPad && value == 1)) {
                 throw std::invalid_argument(std::string("native ") + field +
                     " identity maps to PAD");
@@ -259,7 +228,7 @@ public:
                 const float up=s[selectStart+196+k];
                 if (!std::isfinite(up) || up<0 || up!=std::nearbyint(up) || (c[224+k]==0 && up!=0))
                     throw std::invalid_argument("native selected GRID upgrades are invalid");
-                if (selectedUpgrades) writeUpgrade(selectedUpgrades,r*selectedWidth+k,up);
+                if (selectedUpgrades) selectedUpgrades[r*selectedWidth+k]=up/upgradeScale;
                 else if (up != 0) throw std::invalid_argument(
                     "observation contract cannot represent selected GRID upgrades");
             }
@@ -268,7 +237,7 @@ public:
                 if (c[127+k] < 0 || c[127+k] > 65536)
                     throw std::invalid_argument("native selection handle is outside its declared range");
                 selectIndices[r*96+k]=c[127+k];
-                writeUpgrade(su,r*96+k,s[selectStart+4+k]); sc[r*96+k]=s[selectStart+100+k]/energyScale;
+                su[r*96+k]=s[selectStart+4+k]/upgradeScale; sc[r*96+k]=s[selectStart+100+k]/energyScale;
             }
             auto *p=player+r*6;
             p[0]=std::min(s[0],hpScale)/hpScale; p[1]=std::min(s[1],hpScale)/hpScale;
@@ -295,7 +264,7 @@ public:
                 if (!std::isfinite(upgrade) || upgrade < 0.0f ||
                     upgrade != std::nearbyint(upgrade) || upgrade >= damage.shape(1))
                     throw std::invalid_argument("native hand upgrade is outside the printed-card table");
-                writeUpgrade(hu,pos,upgrade); hc[pos]=s[handStart+2*k+1]/energyScale;
+                hu[pos]=upgrade/upgradeScale; hc[pos]=s[handStart+2*k+1]/energyScale;
                 const auto level=static_cast<py::ssize_t>(upgrade);
                 const auto slot=hand[pos]*damage.shape(1)+level;
                 hd[pos]=damage.data()[slot]/dmgScale; hb[pos]=block.data()[slot]/blockScale;
@@ -305,12 +274,8 @@ public:
             std::memcpy(exhaust+r*cards,s+pileStart+2*cards,cards*sizeof(float));
             for (int pile=0; pile<(language?2:0); ++pile) for (int k=0; k<slots; ++k) {
                 const auto src=(r*2+pile)*slots+k, dst=r*slots+k;
-                const auto id=languageIds.data()[src];
-                if (id<0 || id>std::numeric_limits<Category>::max())
-                    throw std::invalid_argument("native language ID exceeds transport range");
-                langIds[pile][dst]=id; langCount[pile][dst]=languageFeatures.data()[src*3];
-                langUpgraded[pile][dst]=languageFeatures.data()[src*3+1];
-                writeUpgrade(langUpgrades[pile],dst,languageFeatures.data()[src*3+2]);
+                langIds[pile][dst]=languageIds.data()[src]; langCount[pile][dst]=languageFeatures.data()[src*3];
+                langUpgraded[pile][dst]=languageFeatures.data()[src*3+1]; langUpgrades[pile][dst]=languageFeatures.data()[src*3+2]/upgradeScale;
             }
             pick[r]=s[selectStart]/pickScale; zero[r]=s[selectStart+1]; any[r]=s[selectStart+2];
             if (autoregressive_) {
@@ -340,7 +305,5 @@ void bindNeuralObservation(py::module_ &module) {
         .def(py::init<py::dict,py::dict,py::dict,py::dict,py::dict,int,int,bool>())
         .def("set_card_stats", &NeuralObservationDecoder::setCardStats)
         .def("decode",&NeuralObservationDecoder::decode, py::arg("packed"),
-             py::arg("globals"), py::arg("destination")=py::none())
-        .def("decode_compact",&NeuralObservationDecoder::decodeCompact, py::arg("packed"),
              py::arg("globals"), py::arg("destination")=py::none());
 }

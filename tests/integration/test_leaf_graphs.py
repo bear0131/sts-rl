@@ -11,44 +11,6 @@ from rl.search.native import forward_leaves
 pytestmark = pytest.mark.native
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason='compact transport replay requires CUDA')
-def test_compact_transport_restores_exact_inputs_across_eviction_and_weight_updates():
-    import gc
-    from env.core.encode import UPGRADE_SCALE
-
-    class Core(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.weight = torch.nn.Parameter(torch.tensor(1.))
-
-        def combat_actor_critic(self, obs, **kwargs):
-            assert obs['hand_ids'].dtype == torch.int64
-            assert obs['hand_upgrades'].dtype == torch.float32
-            result = torch.cat((obs['hand_ids'].float(), obs['hand_upgrades']), dim=1) * self.weight
-            return result, result[:, 0]
-
-    core = Core().cuda().eval()
-    cache = CombatLeafGraphs(core, 'cuda', capacity=2, batch_multiple=32)
-    saved = []
-    for iteration, count in enumerate((256, 31, 65, 256, 17, 31)):
-        with torch.no_grad():
-            core.weight.fill_(iteration+1)
-        ids = (np.arange(count, dtype=np.int16) + 17)[:, None]
-        upgrades = np.arange(count, dtype=np.uint8)[:, None]
-        actual, _ = cache(dict(hand_ids=ids, hand_upgrades=upgrades), 1, compact=True)
-        expected = np.concatenate((ids.astype(np.float32), upgrades.astype(np.float32) / UPGRADE_SCALE), axis=1) * (iteration+1)
-        assert actual.tobytes() == expected.tobytes()
-        saved.append((actual, expected))
-        del ids, upgrades
-        gc.collect()
-        torch._C._cuda_clearCublasWorkspaces()
-        torch.cuda.empty_cache()
-    cache.clear()
-    assert cache.evictions > 0
-    for actual, expected in saved:
-        assert actual.tobytes() == expected.tobytes()
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='direct native graph inputs require CUDA')
 @pytest.mark.parametrize('contract', ['legacy', 'joint-v2', 'autoregressive-v2', 'boss'])
 def test_native_writer_matches_materialized_model_inputs(combat_factory, contract):
