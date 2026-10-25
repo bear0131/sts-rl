@@ -121,7 +121,7 @@
     "max_grad_norm": 0.5,
     "batch_size_per_rank": 102400,
     "max_global_samples_per_optimizer_update": 409600,
-    "micro_batch_size": 8192,
+    "micro_batch_size": 16384,
     "optimizer_updates_per_round": 40,
     "policy_loss_coefficient": 1.0,
     "value_loss_coefficient": 0.5,
@@ -185,7 +185,7 @@
     "segment_max_wall_seconds": null,
     "continuation": "same-process resident; full-state recovery only after a real fault or user stop"
   },
-  "notice": "COMBAT15: fresh <=25 percent lower model with COMBAT06 manual outcome means, original raw-Q search and 384 x 512 x world4 workload. Frozen 876 upper. Performance batch settings require bounded measurement.",
+  "notice": "COMBAT15: fresh <=25 percent lower with COMBAT06 manual outcome means, raw-Q/cscale1 and 384x512xworld4 unchanged. Microbatch16384 selected after bounded production-shape trials; inference128 retained because256 showed no consistent benefit. Frozen876 upper; resident continuous, no scheduled restart.",
   "lower_geometry": {
     "width": 128,
     "layers": 3,

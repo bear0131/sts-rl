@@ -470,4 +470,4 @@
 
 | COMBAT-CONTINUOUS | 已完成并生产验收 | 13/11同一进程长驻：显式--continuous，无轮数或时长终止，无自动换段manager；各自完整状态一次性恢复、首新周期及同进程连续两轮全SHA/W&B通过。保留定期两代保存、协调STOP、真实故障恢复与30分钟健康检查；源目标/seed/训练参数不变，详见worklog/2026-10-25.md及管理树13/11 active-training.json。 |
 
-| COMBAT15 | 小manual模型准备/远端验收待执行 | COMBAT06 means目标、raw-Q/384x512x4/seed9001000不变；fresh lower128/3/4参数<=25%；仅microbatch/推理batch有界实测后决定。停止13/14和保全由管理树执行，新实验同进程长驻。 |
+| COMBAT15 | 四机CPU/GPU门禁及批量实测通过，正式首周期待验收 | COMBAT06 means目标、raw-Q/384x512x4/seed9001000不变；fresh lower128/3/4参数<=25%；仅microbatch/推理batch有界实测后决定。停止13/14和保全由管理树执行，新实验同进程长驻。 |
