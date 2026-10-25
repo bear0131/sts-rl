@@ -7,14 +7,58 @@
 #include <stdexcept>
 #include <string>
 #include <cmath>
+#include <memory>
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
 
 using namespace sts;
 
+struct QueueCapture {
+    std::shared_ptr<int> payload;
+    int *copies;
+    QueueCapture(std::shared_ptr<int> value, int &count) : payload(std::move(value)), copies(&count) {}
+    QueueCapture(const QueueCapture &other) : payload(other.payload), copies(other.copies) { ++*copies; }
+    QueueCapture(QueueCapture &&) = default;
+    void operator()(BattleContext &bc) { bc.player.block += (*payload)++; }
+};
+
 static void require(bool condition, const char *message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+static void checkActionQueueOwnership(int variant) {
+    GameContext world(CharacterClass::IRONCLAD, 42, 0);
+    BattleContext context;
+    context.init(world, MonsterEncounter::CULTIST);
+    context.player.block = 0;
+    ActionQueue<4> queue;
+    int copies = 0;
+    auto payload = std::make_shared<int>(3);
+    std::weak_ptr<int> lifetime = payload;
+    queue.pushBack(Action(QueueCapture(payload, copies)));
+    payload.reset();
+    const int copiesBeforePop = copies;
+    auto action = queue.popFront();
+    require(queue.isEmpty(), "popped callback remained queued");
+    require(copies == copiesBeforePop, "pop copied the callback capture");
+    require(!lifetime.expired(), "pop destroyed the returned callback capture");
+    action(context);
+    require(context.player.block == 3, "moved callback changed execution");
+    action = nullptr;
+    require(lifetime.expired(), "inactive slot retains the popped callback capture");
+    for (int round = 0; round < 12; ++round) {
+        queue.pushBack(Action([round](BattleContext &bc) { bc.player.block += round; }));
+        if (variant) queue.pushFront(Action([](BattleContext &bc) { bc.player.block *= 2; }));
+        auto fork = queue;
+        auto drain = [](ActionQueue<4> &q, BattleContext &bc) {
+            while (!q.isEmpty()) q.popFront()(bc);
+        };
+        BattleContext other = context;
+        drain(queue, context);
+        drain(fork, other);
+        require(context.player.block == other.player.block, "ring reuse changed copied queue execution");
+    }
 }
 
 static std::vector<RelicId> &pool(GameContext &gc, RelicTier tier) {
@@ -961,6 +1005,11 @@ int main(int argc, char **argv) {
     if (argc != 4) return 2;
     try {
         const std::string mode(argv[1]);
+        if (mode == "queue-ownership") {
+            checkActionQueueOwnership(std::stoi(argv[2]));
+            std::cout << "PASS" << std::endl;
+            return 0;
+        }
         if (mode == "wing-boots-map") {
             checkWingBootsMap(std::stoi(argv[2]), std::stoi(argv[3]));
             std::cout << "PASS" << std::endl;

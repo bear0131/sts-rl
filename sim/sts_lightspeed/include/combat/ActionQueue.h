@@ -107,7 +107,9 @@ namespace sts {
 #ifdef sts_asserts
         assert(size > 0 );
 #endif
-        ActionFunction a = arr[front];
+        // The slot has left the queue: transfer its callback instead of copying
+        // it and retaining a dead capture in every later BattleContext clone.
+        ActionFunction a = std::move(arr[front]);
         ++front;
         --size;
         if (front >= capacity) {
