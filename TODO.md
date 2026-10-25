@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT15-ROLLOUT | 实施中：用户授权暂停与优化 | 内层搜索/解码/CPU-GPU传输可大幅调整，冻结外层876及其观测保持；完整状态保全、语义/旧checkpoint兼容、GPU生命周期与同硬件固定工作量完整rollout对照后恢复。证据管理COMBAT15目录rollout-optimization，详见worklog/2026-10-26.md。 |
 | COMBAT14 | 用户要求停止69，完整状态保全 | 为新COMBAT15让出物理2/3；正常exit0非hardtimeout且退出，最后68/69两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT13 | 用户要求停止159，完整状态保全 | 为新COMBAT15让出物理0/1；正常exit0非hardtimeout且退出，最后158/159两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
