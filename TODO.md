@@ -6,7 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT15 | 准备中：用户要求停13/14，重训小模型COMBAT06 | 四机单组、人工胜负/HP与Boss0.9目标、冻结876，全部内层参数<=原06的25%，从零初始化；原13/14协调STOP及全状态保全。原06统计/搜索参数作基线，microbatch/推理批量有界实测后定，完整CPU/GPU生命周期与首生产周期验收；同进程长驻、无自动换段。入口runs/local/combat15-small-manual-20261025，详情见最新worklog。 |
+| COMBAT15 | 四机小模型COMBAT06已启动，首完整生产周期通过 | 独立fresh resident，原人工means/Boss0.9/rawQ/384x512x4/seed9001000；全部内层860956/3929756=21.908638%，128宽3层4头，micro16384/infer128。固定758e84b，四机CPU174/GPU20；首786432/U40/全SHA/384环境重放+次轮128/W&B passed。13停159、14停69完整保全，不恢复；同进程长驻无计划换段。管理入口runs/local/combat15-small-manual-20261025/active-training.json，验收first-cycle-acceptance.json，详见worklog/2026-10-26.md。 |
 | COMBAT-POLICY-METRICS | 只读统计完成，因果未识别 | 用户检查top1 agreement/entropy/policy loss与胜率关系并提出nenvs×nsteps混杂。11个run共874条真实完整W&B记录；逐run剔除前20轮/重启前三轮并要求满episode窗口，manual/11/12/13/14的top1与胜率r=.929/.892/.760/.881/.900，但三指标同进程相邻轮差分相关绝对值均<=.226。核实旧05–09为384×512×4、10–14为96×256×2且实际global增量恒定，U40未变；不能混合尺度/年龄/窗口作因果归因。CE=目标熵+KL读数核对，熵与loss高度冗余。追加TRAIN47 881完整轮核对：统计代码和Q变换实现一致，但旧Q不归一化/cscale1与新归一化/cscale.1目标不同；后50轮top1约86.96%，当前manual/13/14尾10轮60.24/56.36/54.23%，KL差距亦增大。训练量、约3轮对23轮回放周转及冻结上层导致的状态分布均混杂，尚未量化各自贡献。追加证据runs/local/train47-policy-agreement-20261025/comparison.json。证据runs/local/policy-performance-analysis-20261025/history.json、statistics.json、workload-and-definitions.json及对照图；现役13/14参数、进程及自动化未改。 |
 | COMBAT-CREDIT | 详细调研完成，未实施 | 用户关注“最后赢了，究竟哪些决策有贡献”。适用env/core/run_env.py、env/search/nosl_sampler.py、rl/algorithms/accumulating_ppo.py和nosl_replay.py。已核对HCA/COCOA/RUDDER/CCA原文与生产14代码，定义固定续行策略下的动作胜率增益、区分随机结果与因果贡献。候选为先第三幕Boss反事实分支审计，再比较事后归因与普通Q基线；需完整胜败轨迹/真实行为概率/策略版本/可恢复状态、无窥视隐状态抽样、置信度及同算力对照。补充价值序列差分/TD(lambda)与GAE的区分、终局误差锚定及与MC监督的等价边界；动作优势可负，不是把1正数分摊给各状态；已核对CAR直接学习各步权重及meta-gradient更新后独立结果评估，任意非负归一化权重不必服从lambda几何衰减，权重不能当因果功劳。现役13/14和P(win)乘条件value不改，实验尚未授权启动；详见worklog/2026-10-25.md的COMBAT-CREDIT小节。 |
 | COMBAT14 | 用户要求停止69，完整状态保全 | 四机让位COMBAT15；原trainer/supervisor正常exit0非hardtimeout且实际退出；最后两代完整状态逐文件SHA和压缩读回verified，原根和依赖保留。禁止自动恢复。证据runs/local/combat15-small-manual-20261025/previous-experiments-preserved.json及对应archive收据。 |
@@ -476,4 +476,4 @@
 
 | TRAIN46 | 按用户要求暂停；147轮全状态只读保护 | 切换模型搜索前正常停在共同115605504/147轮，四rank完整read_bundle/SHA、跨rank模型双Adam通过，upper Adam1470/lower Adam空。终点只读snapshot及STOP保留，旧38轮29884416锚点保持；终点窗口157/400=39.25%、开箱99%、条件领取97.25%（非独立评测）。小时automation train46-1已迁移TRAIN47，禁止自动恢复46；native-build-rulefast是47共享固定依赖不得删除。见worklog/2026-10-09.md#train47-source-stop-and-runtime-preset。 |
 
-| COMBAT-CONTINUOUS | 新COMBAT15准备中，13/14已停止保全 | 用户最新要求重训小模型COMBAT06；新实验仍同进程长驻，无自动换段。旧13停159、14停69；不恢复旧训练。COMBAT15首生产周期和实际常驻身份验收待执行。 |
+| COMBAT-CONTINUOUS | COMBAT15 world4同进程长驻已验收 | 显式--continuous，无轮数/时长上限、无自动换段manager；每轮完整两代保存，用户STOP/真实故障完整恢复保留。旧13/14已按用户停止保全，11/manual/12及更早任务保持停止。combat05仅每30分钟只读监控COMBAT15，实际入口与验收见COMBAT15，不按旧20轮或18000秒重启。 |
