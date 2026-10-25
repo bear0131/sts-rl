@@ -2357,13 +2357,17 @@ NoslNeuralSearchSession::nextBatch(int maxLeaves) {
                 break;
             }
 
-            if (config_.fixedWorldline && !edge->children.empty()) {
+            if (config_.fixedWorldline) {
                 // This is a tree, not a transposition table: an edge owns one
                 // action history. Fixed mode copies the same root RNG and
                 // hidden piles on every simulation, so replaying that history
-                // reaches the same successor. Retain its original public key
-                // for snapshots, but do not reconstruct/sort/hash it again.
+                // reaches the same successor. The key is private to this edge
+                // and never compared with another path; zero names its sole
+                // child, including for tree snapshots. No state hash is needed.
                 // The action above still executes; values are never cached.
+                if (edge->children.empty()) {
+                    edge->children.emplace(0, std::make_unique<Node>());
+                }
                 node = edge->children.begin()->second.get();
             } else {
                 auto childKey = publicStateKey(state, &stateKeyScratch_, config_.mergeEquivalentActions);
