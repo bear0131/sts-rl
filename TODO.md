@@ -6,8 +6,8 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
-| COMBAT14 | 已部署并首完整生产周期验收 | 显式lower_geometry=128宽3层4头，checkpoint/replay架构身份隔离；真实全部内层860700/3929244=21.904977%，原13目标/seed/teacher/其余参数保持。两机CPU各171passed、GPU各19passed，首49152/U40/完整保存+次轮128/全SHA/96环境独立重放/W&B推进通过；固定生产94fe2fc3，新resident物理2/3无累计上限/不自动换段。11已暂停175保全，13原进程保持。管理入口combat01-worktree/runs/local/combat14-small-conditional-20261025。 |
-| COMBAT13 | 长驻训练已验收，无计划换段 | 物理[0, 1]现役combat13-unscaled-conditional-20261025-resident/ring30600，trainer622530/588092，固定2ea7fa1a；从自身完整41全状态恢复，首42及同进程连续两轮/全SHA审计43通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat13-unscaled-conditional-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
+| COMBAT14 | 用户要求停止69，完整状态保全 | 为新COMBAT15让出物理2/3；正常exit0非hardtimeout且退出，最后68/69两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
+| COMBAT13 | 用户要求停止159，完整状态保全 | 为新COMBAT15让出物理0/1；正常exit0非hardtimeout且退出，最后158/159两代逐文件SHA和压缩读回verified，原root及依赖保留。禁止自动恢复；证据管理树COMBAT15 previous-experiments-preserved.json。 |
 | COMBAT12 | 原尺度六曲线已启动，Linux/GPU及首完整生产周期通过 | env/core/finite_curves.py 与 configs/train/combat12_six_curves_raw_876_2x5090.json；生产cf2c5a5，仅取消full08倍率，同241tensor/空Adam-replay，独立bank/payoff。物理0+1替换11，人工组持续。两机CPU各157pass/1deselected、GPU各17pass/9deselected，首49152完整采样/U40/全状态保存及下轮128、组内SHA/96环境独立重放/W&B通过；真实12段末续接尚待验证。唯一运行入口和持续TODO在管理树runs/local/combat01-worktree。 |
 | COMBAT10 | 双组准备中 | 用户确认96×256×2，物理0+1曲线、2+3人工COMBAT06 HP/Boss0.9；strict-paper Q norm/c_scale0.1、MSE系数1，小偷索引修复；相同初始化与公共超参，历史escape监督差异披露。35轮/18000秒，独立run/空Adam/replay；验收组内rank隔离、全CPU/GPU/两轮恢复与首完整生产/下一轮。管理证据combat01-worktree/runs/local/combat10-strict-pair-20261024。 |
 | COMBAT09 | 单位补偿门禁中，未启动 | 基于08生产396ef57，仅统一搜索Q×2与条件MSE×4，BCE/actor/标签/模型和初始241tensor不变；已知THIEF缺陷不混修。独立35轮/18000秒段，门禁及完整保存边界切换，保护旧恢复状态；原单位搜索和loss/梯度等价、两轮恢复与四机生命周期验收。 |
@@ -468,6 +468,6 @@
 
 | COMBAT11 | 长驻训练已验收，无计划换段 | 物理[2, 3]现役combat11-six-curves-20261025-resident/ring30602，trainer609823/592894，固定dda7d013；从自身完整114全状态恢复，首115及同进程连续两轮/全SHA审计116通过。--continuous，无轮数/时长上限，保留完整两代保存和协调STOP；旧续段manager退出，禁止恢复20轮/18000秒自动换段。目标/seed/Adam/replay/96环境/原W&B保持；唯一入口runs/local/combat11-six-curves-20261025/active-training.json。证据resident-first-cycle-acceptance.json和13目录resident-final-audit-report.json/resident-final-health.json；原源档及依赖保全。 |
 
-| COMBAT-CONTINUOUS | 已完成并生产验收 | 13/11同一进程长驻：显式--continuous，无轮数或时长终止，无自动换段manager；各自完整状态一次性恢复、首新周期及同进程连续两轮全SHA/W&B通过。保留定期两代保存、协调STOP、真实故障恢复与30分钟健康检查；源目标/seed/训练参数不变，详见worklog/2026-10-25.md及管理树13/11 active-training.json。 |
+| COMBAT-CONTINUOUS | COMBAT15 world4同进程长驻已验收 | 显式--continuous，无轮数/时长上限、无自动换段manager；每轮完整两代保存，用户STOP/真实故障完整恢复保留。旧13/14已按用户停止保全，11/manual/12及更早任务保持停止。combat05仅每30分钟只读监控COMBAT15，实际入口与验收见COMBAT15，不按旧20轮或18000秒重启。 |
 
-| COMBAT15 | 四机CPU/GPU门禁及批量实测通过，正式首周期待验收 | COMBAT06 means目标、raw-Q/384x512x4/seed9001000不变；fresh lower128/3/4参数<=25%；仅microbatch/推理batch有界实测后决定。停止13/14和保全由管理树执行，新实验同进程长驻。 |
+| COMBAT15 | 四机小模型COMBAT06已启动，首完整生产周期通过 | 独立fresh resident，原人工means/Boss0.9/rawQ/384x512x4/seed9001000；全部内层860956/3929756=21.908638%，128宽3层4头，micro16384/infer128。固定758e84b，四机CPU174/GPU20；首786432/U40/全SHA/384环境重放+次轮128/W&B passed。13停159、14停69完整保全，不恢复；同进程长驻无计划换段。管理入口runs/local/combat15-small-manual-20261025/active-training.json，验收first-cycle-acceptance.json，详见worklog/2026-10-26.md。 |
