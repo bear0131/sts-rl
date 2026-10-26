@@ -80,14 +80,21 @@ class QuickBackend(SimGameEnv):
 
 @pytest.mark.parametrize('objective', [outer.OBJECTIVE, outer.FINITE_OBJECTIVE,
                                      'combat-outcome-quantiles-v1', 'combat-outcome-means-v1',
-                                     'combat-outcome-means-v1-continuous'])
+                                     'combat-outcome-means-v1-continuous',
+                                     'combat-outcome-means-v1-full-or-zero',
+                                     'combat-outcome-means-v1-real-hp'])
 def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_bank, tmp_path, monkeypatch, capsys, objective):
     continuous = objective.endswith('-continuous')
     objective = objective.removesuffix('-continuous')
+    boss_ablation = next((mode for mode in ('full-or-zero', 'real-hp') if objective.endswith('-'+mode)), None)
+    if boss_ablation:
+        objective = objective.removesuffix('-'+boss_ablation)
     control = objective not in outer.SCALAR_OBJECTIVES
     finite = objective == outer.FINITE_OBJECTIVE
     means = objective == 'combat-outcome-means-v1'
     outer_material = dict(outer_material, objective=objective)
+    if boss_ablation:
+        outer_material['boss_ablation'] = boss_ablation
     if finite:
         outer_material['finite_curve_bank'] = finite_curve_bank
     def make_env(*_):
@@ -173,6 +180,12 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     restored_env = make_env()
     restored = AccumulatingMaskablePPO.load(output, env=restored_env, device='cpu')
     assert restored.policy.core.teacher.assert_integrity() == teacher
+    if boss_ablation:
+        assert restored.policy.core.config.boss_win_weight == 1.
+        assert restored.outer_return_contract['boss_ablation']['hp_target'] == boss_ablation
+        other = copy.deepcopy(restored._ensure_nosl_is_az_replay().objective_identity)
+        other.pop('boss_ablation')
+        assert other != restored.outer_return_contract
     value_key = 'means.win.weight' if means else ('distribution.win.weight' if control else 'scalar.2.weight')
     for key in ('transformer.layers.0.linear1.weight', value_key, 'end.weight', 'context.2.weight'):
         assert not torch.equal(lower_before[key], restored.policy.core.combat.state_dict()[key]), key
@@ -203,6 +216,33 @@ def test_real_outer_two_rounds_payload_and_resume(outer_material, finite_curve_b
     state['objective_identity'] = dict(state['objective_identity'], gamma=.99)
     with pytest.raises(ValueError, match='objective identity'):
         replay.load_state_dict(state)
+    if objective == 'combat-outcome-means-v1' and not boss_ablation and not continuous:
+        from experiments.launchers.boss_ablation import fork_bundle
+        import hashlib
+        original_hash = hashlib.sha256((bundle/'learner.pt').read_bytes()).hexdigest()
+        for mode in ('full-or-zero', 'real-hp'):
+            fork = tmp_path/('fork-'+mode)
+            receipt = fork_bundle(bundle, fork, rank=0, world_size=1, mode=mode)
+            assert receipt['model_and_adam_members_identical']
+            fork_env = make_env()
+            branch = AccumulatingMaskablePPO.load(fork/'model.zip', env=fork_env, device='cpu')
+            restore_learner(branch, fork, rank=0, world_size=1)
+            assert branch._recovery_environment_restored
+            assert branch.policy.core.boss_ablation == mode
+            assert branch.policy.core.config.boss_win_weight == 1.
+            branch_replay = branch._ensure_nosl_is_az_replay()
+            assert not branch_replay.observations['combat_is_boss'][:branch_replay.size].any()
+            assert branch.policy.core.teacher.assert_integrity() == teacher
+            assert len(branch.policy.optimizer.state) == len(restored.policy.optimizer.state)
+            for key,value in restored.policy.state_dict().items():
+                if isinstance(value,torch.Tensor):
+                    torch.testing.assert_close(value,branch.policy.state_dict()[key],rtol=0,atol=0)
+                else:
+                    assert value == branch.policy.state_dict()[key]
+            with pytest.raises(ValueError,match='identity|contract'):
+                restore_learner(branch,bundle,rank=0,world_size=1)
+            fork_env.close()
+        assert hashlib.sha256((bundle/'learner.pt').read_bytes()).hexdigest()==original_hash
     restored_env.close()
     argv[argv.index('--checkpoint') + 1] = str(bundle/'model.zip')
     argv[argv.index('--updates') + 1] = '1'

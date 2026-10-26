@@ -1,0 +1,29 @@
+{
+  "schema": "combat06-boss-ablation-protocol-v1",
+  "base_profile": "configs/train/combat_two_means_876_4x5090.json",
+  "parent": "COMBAT06 complete round 99 / global 77856768",
+  "scope": "all Boss rooms, Acts 1-3",
+  "search": "Boss leaf value P(win), exact terminal win 1 / loss 0; non-Boss unchanged",
+  "experiments": {
+    "full-or-zero": {
+      "boss_hp_label": "observed terminal maximum HP / 200 on win, zero on loss; no clipping",
+      "boss_hp_loss": "MSE on both outcomes"
+    },
+    "real-hp": {
+      "boss_hp_label": "original pre-settlement min(HP,200)/200",
+      "boss_hp_loss": "original win-masked MSE"
+    }
+  },
+  "shared": {
+    "win_loss": "BCE unchanged",
+    "nonboss_hp_loss": "original real HP, win-masked MSE",
+    "teacher_and_observations": "frozen 876, unchanged",
+    "architecture": "original 256/4/8; both sigmoid heads retained",
+    "initialization": "each experiment forks the same complete parent model/Adam/RNG/environment",
+    "replay": "retain non-Boss rows, filter old Boss replay and pending only in fork",
+    "statistics": "all other COMBAT06 sampling/search/update hyperparameters unchanged",
+    "hp_head_range": "original sigmoid [0,1]; labels above 1 are retained, so saturation remains possible"
+  },
+  "resident": {"continuous": true, "rounds": null, "max_seconds": null, "automatic_next_experiment": false},
+  "acceptance": {"first_complete_round_and_next_progress": true, "observation_budget_seconds": 1800}
+}

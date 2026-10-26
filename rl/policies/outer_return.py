@@ -55,17 +55,24 @@ def load_initialization_material(directory, *, manifest_sha256, source_sha256):
 
 
 class OuterCombatNetwork(EntityCombatNetwork):
-    def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE):
+    def __init__(self, source, source_space, space, *, initialization='random', objective=OBJECTIVE,
+                 boss_ablation=None):
         if objective not in (*SCALAR_OBJECTIVES, *OUTCOME_CONTRACTS):
             raise ValueError('unsupported frozen-upper lower objective')
         if objective in OUTCOME_CONTRACTS and initialization != 'random':
             raise ValueError('TRAIN47 context control requires a fresh random lower')
         self.objective = objective
+        if boss_ablation not in (None, 'full-or-zero', 'real-hp') or (
+                boss_ablation is not None and objective != MEAN_CONTRACT):
+            raise ValueError('boss ablation requires the two-mean combat objective')
+        self.boss_ablation = boss_ablation
         if initialization not in ('random', '876'):
             raise ValueError('lower initialization must be random or 876')
         config = replace(source.config, auxiliary_loss_coef=0.) if objective in SCALAR_OBJECTIVES else source.config
         if objective == MEAN_CONTRACT:
             config = replace(config, auxiliary_loss_coef=0., mean_loss_coef=0.)
+        if boss_ablation is not None:
+            config = replace(config, boss_win_weight=1.)
         # Scalar objectives only encode the boss flag. Outcome objectives retain
         # the source's fight-local Boss utility when combining their predictions.
         super().__init__(source_space, config, card_embedding=deepcopy(source.card))
@@ -124,6 +131,8 @@ class OuterCombatNetwork(EntityCombatNetwork):
             _, outputs = self.means(state)
             weight = obs['combat_is_boss'].float() * self.config.boss_win_weight
             outputs['boss_win_weight'] = weight
+            if self.boss_ablation == 'full-or-zero':
+                outputs['hp_all_outcomes'] = obs['combat_is_boss'].float()
             return win_hp_utility(outputs['win_logits'].sigmoid(), outputs['hp_mean'], weight), outputs
         with torch.autocast(device_type=state.device.type, enabled=False):
             return self.scalar(state.float()), {}
@@ -138,14 +147,15 @@ class OuterReturnCore(EntityCombatCore):
     frozen_upper = True
 
     def __init__(self, source, source_space, space, *, source_sha256, lower_initialization='random',
-                 objective=OBJECTIVE, finite_curve_bank=None):
+                 objective=OBJECTIVE, finite_curve_bank=None, boss_ablation=None):
         nn.Module.__init__(self)
         if not CONTEXT_KEYS <= space.spaces.keys():
             raise ValueError('outer-return policy requires public run context')
         self.lower_initialization = lower_initialization
         self.training_objective = objective
+        self.boss_ablation = boss_ablation
         self.combat = OuterCombatNetwork(source.combat, source_space, space,
-            initialization=lower_initialization, objective=objective)
+            initialization=lower_initialization, objective=objective, boss_ablation=boss_ablation)
         self.config = self.combat.config
         self.autoregressive_actions = True
         self.teacher = FrozenUpperTeacher(source, source_space, source_sha256=source_sha256)
@@ -185,8 +195,10 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return super().obs_to_tensor(observation)
 
     def __init__(self, *args, material_directory, material_sha256, source_sha256,
-                 lower_initialization='random', objective=OBJECTIVE, finite_curve_bank=None, **kwargs):
+                 lower_initialization='random', objective=OBJECTIVE, finite_curve_bank=None,
+                 boss_ablation=None, **kwargs):
         self.objective = objective
+        self.boss_ablation = boss_ablation
         self.finite_curve_bank_data = deepcopy(finite_curve_bank)
         self.material_directory = str(material_directory)
         self.material_sha256 = material_sha256
@@ -199,7 +211,8 @@ class OuterReturnPolicy(EntityCombatPolicy):
             manifest_sha256=self.material_sha256, source_sha256=self.source_sha256)
         self.core = OuterReturnCore(source, source_space, self.observation_space,
             source_sha256=self.source_sha256, lower_initialization=self.lower_initialization,
-            objective=self.objective, finite_curve_bank=self.finite_curve_bank_data)
+            objective=self.objective, finite_curve_bank=self.finite_curve_bank_data,
+            boss_ablation=self.boss_ablation)
         self.entity_config = asdict(self.core.config)
         self.optimizer = self.optimizer_class(self.core.combat.parameters(),
             lr=lr_schedule(1), **self.optimizer_kwargs)
@@ -208,4 +221,4 @@ class OuterReturnPolicy(EntityCombatPolicy):
         return dict(super()._get_constructor_parameters(), material_directory=self.material_directory,
                     material_sha256=self.material_sha256, source_sha256=self.source_sha256,
                     lower_initialization=self.lower_initialization, objective=self.objective,
-                    finite_curve_bank=self.finite_curve_bank_data)
+                    finite_curve_bank=self.finite_curve_bank_data, boss_ablation=self.boss_ablation)

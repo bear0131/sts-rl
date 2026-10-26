@@ -25,18 +25,53 @@ def metrics_for(contract):
 
 
 def mean_outcome_loss(outputs, targets, values):
-    """Exactly BCE + survivor HP MSE, with the common logical-batch denominator.
+    """BCE + HP MSE with a common denominator and an explicit supervision mask.
 
-    Losses contain no information about HP conditional on victory. Their HP
-    gradient is zero; do not label survivor HP as zero on a death.
+    Legacy/ordinary HP is conditional on victory. The full-or-zero Boss
+    ablation explicitly supervises both outcomes instead.
+    ``hp_given_win`` remains the historical metric name for checkpoint/log
+    compatibility; the ablation identity specifies its changed Boss meaning.
     """
     win = targets[:, 0].float()
     logits = outputs['win_logits'].float().flatten()
     hp = outputs['hp_mean'].float().flatten()
     bce = F.binary_cross_entropy_with_logits(logits, win, reduction='none')
-    hp_mse = (hp - values.float().flatten()).square() * win
+    # Explicit Boss ablation: unconditional full-or-zero HP; ordinary fights
+    # and legacy checkpoints continue to supervise HP on wins only.
+    all_outcomes = outputs.get('hp_all_outcomes')
+    hp_weight = win if all_outcomes is None else torch.maximum(win, all_outcomes.float().flatten())
+    hp_mse = (hp - values.float().flatten()).square() * hp_weight
     return bce + hp_mse, dict(win_bce=bce, hp_mse=hp_mse,
         win_probability=logits.sigmoid(), win_target=win, hp_given_win=hp)
+
+
+def boss_ablation_target(mode, *, boss, outcome, value, terminal_max_hp=None):
+    """Actual exit maximum HP / 200 on Boss wins, zero on losses; no clipping."""
+    if mode not in (None, 'full-or-zero', 'real-hp'):
+        raise ValueError('unknown Boss ablation')
+    if mode != 'full-or-zero' or not boss:
+        return value
+    if outcome == 'loss':
+        return 0.
+    if outcome != 'win' or terminal_max_hp is None or not np.isfinite(terminal_max_hp) or terminal_max_hp <= 0:
+        raise ValueError('full-or-zero Boss label requires observed outcome and terminal maximum HP')
+    return float(terminal_max_hp) / 200.
+
+
+def boss_ablation_identity(identity, mode):
+    """Version the search and label changes together, without changing geometry."""
+    from copy import deepcopy
+    if mode not in ('full-or-zero', 'real-hp') or identity['objective'] != MEAN_CONTRACT:
+        raise ValueError('Boss ablation requires two-mean identity')
+    identity = deepcopy(identity)
+    identity['boss_win_weight'] = 1.
+    identity['boss_ablation'] = dict(version=1, scope='boss-room', search='win-probability',
+        hp_target=mode, hp_scale=200., terminal_hp_cap=None if mode == 'full-or-zero' else 200.,
+        hp_loss_mask='all-boss-outcomes' if mode == 'full-or-zero' else 'wins-only')
+    if mode == 'full-or-zero':
+        identity.update(value_head='win-probability-and-context-hp-mean-v1',
+                        loss='win-bce-plus-hp-mse-all-boss-survivor-nonboss-v1')
+    return identity
 
 
 def transition_features(obs):

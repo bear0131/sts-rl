@@ -28,6 +28,17 @@ Boss权重，输出胜率与获胜时HP效用均值两个数，不含分位数�
 新head/loss身份进入checkpoint及replay合同，不能沿用分位数或有限曲线的replay。
 当前仅支持冻结上层、resident native、A0战士Act1–3实验；2号单HP均值尚未实施。
 
+Boss消融复用上述两头与训练入口，`OuterReturnPolicy.boss_ablation` 可取
+`full-or-zero` 或 `real-hp`。两者在全部Boss房间都用纯胜率搜索，搜索遇到真实胜负
+也只回传1/0；普通战斗不变。前者Boss血量标签为胜利时实际终局maxHP/200或失败0，
+胜败均参加HP MSE；后者保留原真实血量标签和胜利掩码。故前者Boss血量头不再表示
+“获胜条件下的血量”，历史`hp_given_win`指标名仅为兼容，解释以身份合同为准。
+标签不裁切；原sigmoid头仍限于[0,1]，maxHP超过200时存在饱和限制。
+协议在`configs/train/combat_boss_win_ablation_4x5090.json`。离线
+`experiments.launchers.boss_ablation.fork_bundle`生成新身份的完整分支，保留模型/Adam、
+RNG与环境journal，仅过滤旧Boss replay/pending；原档不变。使用现有
+`rl.training.distributed_sb3 --fork-state`及新的run/W&B身份启动，两种模式分别从同一原档开始。
+
 COMBAT05 的 `combat-finite-upper-curves-v1` 是独立目标实验：下层沿 COMBAT01 的随机
 scalar actor/critic/context 架构，整个下层共同训练；876 上层仍永久冻结。战斗真实结算
 之后，按原始 encounter、Act、胜利/玩家逃跑出口、持有药水数和 HP/maxHP 查询有限

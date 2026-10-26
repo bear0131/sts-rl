@@ -886,6 +886,7 @@ class SlayTheSpireEnv(gym.Env):
         if boundary_observation is not None:
             transition_info["nosl_value_boundary_observation"] = boundary_observation
         if include_terminal and terminal_state is not None:
+            transition_info['nosl_value_terminal_max_hp'] = float(terminal_state['player']['max_hp'])
             transition_info["nosl_value_terminal_observation"] = (
                 self._native_leaf_observation(terminal_state, combat_only=True)
             )
@@ -1129,6 +1130,8 @@ class SlayTheSpireEnv(gym.Env):
         )
         if terminal_observation is not None:
             info["nosl_value_terminal_observation"] = terminal_observation
+        if 'nosl_value_terminal_max_hp' in (transition_info or {}):
+            info['nosl_value_terminal_max_hp'] = transition_info['nosl_value_terminal_max_hp']
         if "nosl_value_terminal_target" in (transition_info or {}):
             info["nosl_value_terminal_target"] = float(
                 transition_info["nosl_value_terminal_target"]

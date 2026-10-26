@@ -42,6 +42,10 @@ def contract(model):
         if objective == MEAN_CONTRACT:
             identity.update(value_head='win-probability-and-conditional-hp-mean-v1',
                             loss='win-bce-plus-win-masked-hp-mse-v1')
+            mode = getattr(model.policy.core, 'boss_ablation', None)
+            if mode is not None:
+                from rl.algorithms.combat_distribution import boss_ablation_identity
+                identity = boss_ablation_identity(identity, mode)
         else:
             identity['quantiles'] = config.quantiles
     return identity

@@ -115,3 +115,35 @@ def test_disabled_transition_target_ignores_restored_pending_fight_labels():
     outcome_targets(samples, 'win', include_transition=False)
     np.testing.assert_array_equal(samples[0]['combat_targets'],
                                   np.array([1, 0, 0, 0, 0, 0, 0, 0, 0], np.float32))
+
+
+def test_boss_full_or_zero_labels_use_terminal_maximum_without_clipping():
+    from rl.algorithms.combat_distribution import boss_ablation_target as target
+    assert target('full-or-zero', boss=True, outcome='win', value=.05, terminal_max_hp=83) == .415
+    assert target('full-or-zero', boss=True, outcome='win', value=.05, terminal_max_hp=220) == 1.1
+    assert target('full-or-zero', boss=True, outcome='loss', value=0) == 0
+    assert target('full-or-zero', boss=False, outcome='win', value=.05) == .05
+    assert target('real-hp', boss=True, outcome='win', value=.05) == .05
+    for outcome in ('escape', 'truncated', 'win'):
+        with pytest.raises(ValueError, match='observed outcome'):
+            target('full-or-zero', boss=True, outcome=outcome, value=0)
+
+
+def test_boss_loss_hp_gradient_and_nonboss_loss_mask_microbatch_invariance():
+    hp = torch.tensor([[.2], [.3], [.4], [.5]], requires_grad=True)
+    logits = torch.zeros(4, 1, requires_grad=True)
+    targets = torch.zeros(4, 9); targets[[0, 2], 0] = 1
+    labels = torch.tensor([.4, 0., .1, 0.])
+    boss = torch.tensor([[1.], [1.], [0.], [0.]])
+    def backward(parts):
+        hp.grad = logits.grad = None
+        for part in parts:
+            loss, _ = mean_outcome_loss(dict(win_logits=logits[part], hp_mean=hp[part],
+                hp_all_outcomes=boss[part]), targets[part], labels[part])
+            (loss.sum()/4).backward()
+        return hp.grad.clone(), logits.grad.clone()
+    whole = backward([slice(None)])
+    micro = backward([slice(0, 1), slice(1, 4)])
+    torch.testing.assert_close(whole[0], torch.tensor([[-.1], [.15], [.15], [0.]]))
+    for a, b in zip(whole, micro):
+        torch.testing.assert_close(a, b)

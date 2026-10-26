@@ -69,12 +69,12 @@ def _append_nosl_value_only_sample(
 
 
 def _fill_nosl_combat_value_targets(
-    samples: list[dict], final_hp: float
+    samples: list[dict], final_hp: float, *, clip_hp: bool = True
 ) -> int:
     """Assign one normalized terminal-HP target to every root in a fight."""
-    target = float(np.clip(final_hp, 0.0, 1.0))
-    if not np.isfinite(target):
-        raise ValueError("final combat HP must be finite")
+    target = float(np.clip(final_hp, 0.0, 1.0) if clip_hp else final_hp)
+    if not np.isfinite(target) or target < 0:
+        raise ValueError("final combat HP must be finite and nonnegative")
     for sample in samples:
         sample["value_target"] = target
     return len(samples)
@@ -1718,6 +1718,13 @@ class AccumulatingMaskablePPO(MaskablePPO):
                 target = next_hp[env_index]
                 if np.isfinite(terminal_target):
                     target = terminal_target
+                mode = getattr(getattr(self.policy, 'core', None), 'boss_ablation', None)
+                if mode is not None:
+                    from rl.algorithms.combat_distribution import boss_ablation_target
+                    target = boss_ablation_target(mode,
+                        boss=bool(pending and pending[0]['observation']['combat_is_boss'][0]),
+                        outcome=infos[env_index].get('nosl_value_terminal_outcome'), value=target,
+                        terminal_max_hp=infos[env_index].get('nosl_value_terminal_max_hp'))
                 future_hp = float(target)
                 if np.isfinite(future_hp):
                     for sample in pending:
@@ -1730,7 +1737,8 @@ class AccumulatingMaskablePPO(MaskablePPO):
                         rollout_hp_order_count += 1
                         if estimated_value > current_hp and current_hp >= future_hp:
                             rollout_hp_order_matches += 1
-                completed = _fill_nosl_combat_value_targets(pending, target)
+                completed = _fill_nosl_combat_value_targets(
+                    pending, target, clip_hp=mode != 'full-or-zero')
                 self._nosl_is_az_samples.extend(pending)
                 completed_combat_roots += completed
                 completed_combats += 1
