@@ -74,6 +74,10 @@ class NativeRootObservationBatch:
             if env.outer_return_context:
                 fields['outer_deck_misc'][:] = permanent_misc(env.thick.gc, env.thick.bc)
         result = self.decoder.decode(payload, globals)
+        # The canonical encoder leaves untargetable monsters' power rows at
+        # positive zero. Multiplying a negative native power by a zero mask
+        # instead produces -0.0, which is numerically equal but not byte-equal.
+        result['monster_buffs'][result['monster_scalars'][:, :, 0] == 0] = 0
         # The public canonical schema hides Exploder's explosion damage, as
         # CommunicationMod does. Keep search leaves' existing projection and
         # actual simulator damage unchanged, including on dead retained slots.

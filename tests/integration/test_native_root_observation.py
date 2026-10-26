@@ -18,6 +18,7 @@ def assert_roots(encoder, envs):
         for key, value in reference.items():
             assert actual[key].dtype == value.dtype
             np.testing.assert_array_equal(actual[key][row], value, err_msg=f'{row}/{key}')
+            assert actual[key][row].tobytes() == value.tobytes(), f'{row}/{key} bytes'
     return actual
 
 
@@ -82,6 +83,19 @@ def test_exploder_public_intent_hides_explosion_without_changing_native_damage(c
     assert env.thick.bc.to_dict() == before
 
 
+def test_dead_monster_negative_power_keeps_canonical_positive_zero(combat_factory):
+    env = combat_factory(['DEFEND_RED']*10, encounter='Two Louse', seed=42,
+                         combat_action_contract='autoregressive-v2')
+    env.thick.bc.apply_custom_state({'monsters': [
+        {'hp': 0, 'powers': [('STRENGTH', -1)]}, {}]})
+    env._invalidate_backend_cache()
+    before = env.thick.bc.to_dict()
+    assert dict(before['monsters'][0]['powers'])['Strength'] == -1
+    batch = assert_roots(NativeRootObservationBatch(env), [env])
+    assert not np.signbit(batch['monster_buffs'][0, 0]).any()
+    assert env.thick.bc.to_dict() == before
+
+
 def test_root_batch_full_run_observations_and_public_context():
     envs=[SlayTheSpireEnv(combat_action_contract='autoregressive-v2',
              card_language=True, global_map_view=True, deck_size_observation=True,
@@ -117,6 +131,7 @@ def test_root_packer_rejects_bad_identity_and_preserves_state(combat_factory):
 def assert_nested_equal(left, right):
     if isinstance(left, np.ndarray):
         np.testing.assert_array_equal(left, right)
+        assert left.dtype == right.dtype and left.tobytes() == right.tobytes()
     elif isinstance(left, dict):
         assert left.keys() == right.keys()
         for key in left:
