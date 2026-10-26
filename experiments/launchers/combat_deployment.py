@@ -31,6 +31,101 @@ def write(path, data):
     Path(path).write_text(json.dumps(data, indent=2, allow_nan=False), encoding='utf-8')
 
 
+def round_stop_decision(completed_step, target_round, slots_per_round):
+    """One-shot STOP window for the pinned save-after-stop-check trainer.
+
+    Publishing N-1 means its stop check has already passed. A STOP now is
+    consumed after update N, before its complete save. This is not a schedule.
+    """
+    if (type(target_round) is not int or target_round < 2 or
+            type(slots_per_round) is not int or slots_per_round < 1 or
+            type(completed_step) is not int or completed_step < 0 or
+            completed_step % slots_per_round):
+        raise ValueError('invalid complete-round boundary')
+    completed_round = completed_step // slots_per_round
+    if completed_round >= target_round:
+        raise ValueError('requested STOP window already passed')
+    return 'request-stop' if completed_round == target_round - 1 else 'wait'
+
+
+def request_stop_after_round(spec_path):
+    """Watch one pinned live run and issue one user-requested coordinated STOP.
+
+    Run separately from the trainer. Never starts/restarts training, kills a
+    process, or changes STOP on identity failure or watcher timeout.
+    """
+    import psutil
+    spec_path = Path(spec_path).resolve()
+    spec = read(spec_path)
+    root = Path(spec['root']).resolve()
+    run = root/'runs'/spec['run_id']
+    receipt = spec_path.with_suffix('.receipt.json')
+    lock = spec_path.with_suffix('.lock')
+    # Persistent exclusive lock is deliberate: a second invocation must be
+    # reviewed, including after a crash, rather than silently rearming.
+    with lock.open('x', encoding='utf-8') as stream:
+        json.dump({'pid': os.getpid(), 'created': psutil.Process().create_time()}, stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    deadline = time.monotonic() + spec['watcher_timeout_seconds']
+    stop = run/'STOP'
+    expected = spec['identity']
+    trainer_file = root/'rl/training/distributed_sb3.py'
+    def identity_check():
+        process = psutil.Process(expected['trainer'])
+        supervisor = psutil.Process(expected['supervisor'])
+        if (abs(process.create_time()-expected['created']) > .02 or
+                abs(supervisor.create_time()-expected['supervisor_created']) > .02 or
+                process.ppid() != supervisor.pid or Path(process.cwd()).resolve() != root or
+                process.cmdline() != spec['command'] or
+                '--continuous' not in process.cmdline() or
+                digest(trainer_file) != spec['trainer_source_sha256']):
+            raise ValueError('pinned trainer identity/source changed')
+        if (read(run/'rank0.pid.json')['trainer'] != process.pid or
+                (run/'rank0.exit.json').exists()):
+            raise ValueError('trainer exited or PID record changed')
+    try:
+        identity_check()
+        write(receipt, dict(status='armed', target_round=spec['target_round'],
+                            pid=os.getpid(), created=psutil.Process().create_time()))
+        while True:
+            identity_check()
+            if stop.exists():
+                raise ValueError('an independent STOP already exists')
+            steps = []
+            for path in (run/'recovery/rank0').glob('step-*/manifest.json'):
+                try:
+                    manifest = read(path)
+                except FileNotFoundError:
+                    continue  # normal rolling-generation removal
+                if (manifest['run_id'] != spec['run_id'] or manifest['rank'] != 0 or
+                        manifest['world_size'] != 4 or manifest['schema_version'] != 2):
+                    raise ValueError('recovery manifest identity changed')
+                steps.append(manifest['global_step'])
+            completed = max(steps, default=0)
+            decision = round_stop_decision(completed, spec['target_round'], spec['slots_per_round'])
+            if decision == 'request-stop':
+                latest = run/f'recovery/rank0/step-{completed:012d}/manifest.json'
+                if time.time() - latest.stat().st_mtime > spec.get('max_boundary_age_seconds', 15):
+                    raise ValueError('boundary observation stale; refusing uncertain stop window')
+                identity_check()
+                with stop.open('x', encoding='utf-8') as stream:
+                    json.dump(dict(reason='explicit one-time user experiment boundary',
+                                   target_round=spec['target_round'], completed_step=completed,
+                                   identity=expected), stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                write(receipt, dict(status='stop-requested', completed_step=completed,
+                                    target_round=spec['target_round'], requested_at=time.time()))
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError('one-time watcher expired without changing training')
+            time.sleep(spec.get('poll_seconds', 5))
+    except BaseException as error:
+        write(receipt, dict(status='failed', error=repr(error), target_round=spec['target_round']))
+        raise
+
+
 def run_ssh_script(command, script, timeout):
     # Windows text-mode pipes translate LF to CRLF, which becomes literal CR
     # in POSIX paths and commands. Keep the wire protocol UTF-8/LF on all hosts.

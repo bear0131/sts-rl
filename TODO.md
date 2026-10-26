@@ -6,6 +6,7 @@
 
 | ID | 状态 | 范围 / 验收 |
 |---|---|---|
+| COMBAT17 | 等待COMBAT16完整第50轮后fresh启动 | 用户明确一次切换：先COMBAT16完整50/global39321600正常保存退出，再独立新初始训练real-hp Boss辅助头；Boss搜索仍纯P(win)，原获胜mask真实HP/200标签，普通战斗和冻结876/观测不变。同seed、无A训练状态继承。验收精确停止门槛/完整保全、fresh初始、首轮完整状态；禁止周期切组。证据runs/local/combat17-boss-aux-hp-20261027。 |
 | COMBAT16 | fresh训练已启动，首轮完整验收通过 | 用户明确从零开始：COMBAT06原配置、随机大内层256/4/8，109内层张量与原06未训练initial相同；step0/空Adam回放/新环境，冻结876及观测不变。Boss赢maxHP/200败0均监督、搜索纯胜率，普通战斗不变。00:27首1/global786432及40Adam/四机SHA/384环境重放/W&B通过；00:29最终身份与空间通过，仍同进程continuous无预算。B真实HP监督也重新初始化，未启动。旧错误续训已停止隔离。唯一ledger/helper在runs/local/combat16-boss-win-fresh-20261027，生产pin2b95268e/native72；详worklog/2026-10-27.md。 |
 | COMBAT06-ROLLOUT | 用户已完整暂停99；仅保全，不作新实验起点 | 固定生产9318a94e/native72/2025文件，原大模型及全部观测/目标/搜索参数保持。完整384×512/128sim两组同机rollout平均减少6.33%，全观测/动作/标签字节及非耗时搜索/graph次数一致。12:37从自身完整31恢复，12:50首32/global25165824完整采样/U40/保存及下轮128、全文件SHA/组内lower和Adam1280/满replay/384环境独立重放/W&B通过；12:52最终身份/源码/空间通过，观察进程已退出、pending空。旧30/31完整压缩档和依赖保留，不重跑本次测试/迁移/启动。管理唯一ledger及证据runs/local/combat06-rollout-optimization-20261026，生产pin不随日志提交改变。 |
 | COMBAT06-RESUME | 已从25续训至31，优化后现役入口转COMBAT06-ROLLOUT | 原大模型/人工means/876/384×512/128sim/U40/micro8192保持，native897→3fb只迁身份，四机201 CPU/43 GPU及原25全状态/384环境重放通过。该旧root于用户授权优化时正常停31，全30/31压缩恢复档与依赖保留；随后完整迁移至COMBAT06-ROLLOUT的新root并通过32首周期验收。原06-resume ledger仅历史，不再据此启动；当前唯一入口及生产pin见COMBAT06-ROLLOUT。见worklog/2026-10-26.md。 |

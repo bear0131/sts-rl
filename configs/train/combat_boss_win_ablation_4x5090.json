@@ -33,5 +33,13 @@
   "acceptance": {
     "first_complete_round_and_next_progress": true,
     "observation_budget_seconds": 1800
+  },
+  "one_time_user_transition": {
+    "from_mode": "full-or-zero",
+    "after_complete_round": 50,
+    "after_complete_global_step": 39321600,
+    "to_mode": "real-hp",
+    "initialization": "fresh; never import A trained state",
+    "repeat": false
   }
 }
