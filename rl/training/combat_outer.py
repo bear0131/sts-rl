@@ -19,6 +19,8 @@ def construct(args, profile):
                     material_sha256=args.material_sha256, source_sha256=profile['source']['model_sha256'],
                     lower_initialization=profile['contract']['lower_init'],
                     objective=profile['contract']['objective_id'])
+    if 'boss_ablation' in profile['contract']:
+        material['boss_ablation'] = profile['contract']['boss_ablation']
     if material['objective'] == FINITE_OBJECTIVE:
         bank_path = args.material_directory / 'curve-bank.json'
         if hashlib.sha256(bank_path.read_bytes()).hexdigest() != profile['contract']['curve_bank_file_sha256']:

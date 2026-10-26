@@ -34,10 +34,11 @@ Boss消融复用上述两头与训练入口，`OuterReturnPolicy.boss_ablation` 
 胜败均参加HP MSE；后者保留原真实血量标签和胜利掩码。故前者Boss血量头不再表示
 “获胜条件下的血量”，历史`hp_given_win`指标名仅为兼容，解释以身份合同为准。
 标签不裁切；原sigmoid头仍限于[0,1]，maxHP超过200时存在饱和限制。
-协议在`configs/train/combat_boss_win_ablation_4x5090.json`。离线
-`experiments.launchers.boss_ablation.fork_bundle`生成新身份的完整分支，保留模型/Adam、
-RNG与环境journal，仅过滤旧Boss replay/pending；原档不变。使用现有
-`rl.training.distributed_sb3 --fork-state`及新的run/W&B身份启动，两种模式分别从同一原档开始。
+协议在`configs/train/combat_boss_win_ablation_4x5090.json`。本实验使用
+`configs/train/combat_boss_full_or_zero_876_4x5090.json` 经已有
+`--prepare-combat-outer` 构造随机内层、step0、空Adam和回放；训练不传resume/fork。
+第二组也用相同seed重新初始化，仅改变Boss HP监督模式。已停止的错误续训分支
+只作为审计记录保存，不作为这两组实验的初始化或对照数据。
 
 COMBAT05 的 `combat-finite-upper-curves-v1` 是独立目标实验：下层沿 COMBAT01 的随机
 scalar actor/critic/context 架构，整个下层共同训练；876 上层仍永久冻结。战斗真实结算

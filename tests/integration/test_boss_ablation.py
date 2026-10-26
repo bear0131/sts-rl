@@ -10,6 +10,45 @@ from rl.algorithms.combat_distribution import MEAN_CONTRACT, boss_ablation_targe
 pytestmark = [pytest.mark.native, pytest.mark.timeout(90)]
 
 
+@pytest.mark.parametrize('mode', [None, 'full-or-zero', 'real-hp'])
+def test_fresh_preparation_has_no_training_state(outer_material, tmp_path, monkeypatch, mode):
+    import json
+    from pathlib import Path
+    from rl.training.combat_outer import prepare
+    from rl.training.distributed_sb3 import build_parser
+    from rl.policies.checkpoint import load_checkpoint
+    monkeypatch.setenv('STS_OUTER_MATERIAL_DIR', outer_material['material_directory'])
+    profile = json.loads(Path('configs/train/combat_two_means_876_4x5090.json').read_text())
+    profile['source']['model_sha256'] = outer_material['source_sha256']
+    if mode is not None:
+        profile['contract']['boss_ablation'] = mode
+    profile['training'].update(batch_size_per_rank=8, micro_batch_size=4,
+                               optimizer_updates_per_round=1)
+    profile['training']['replay']['capacity_per_rank'] = 64
+    profile_path = tmp_path / 'profile.json'
+    profile_path.write_text(json.dumps(profile))
+    output = tmp_path / 'initial.zip'
+    args = build_parser().parse_args(['--rank', '0', '--world-size', '1',
+        '--prepare-combat-outer', str(profile_path), '--material-directory',
+        outer_material['material_directory'], '--material-sha256',
+        outer_material['material_sha256'], '--output', str(output), '--device', 'cpu',
+        '--native-search-threads', '2'])
+    prepare(args)
+    model = load_checkpoint(output, device='cpu', inference_only=False)
+    assert model.num_timesteps == 0 and model.seed == 9001000
+    assert not model.policy.optimizer.state
+    assert model._ensure_nosl_is_az_replay().size == 0
+    assert model.policy.core.lower_initialization == 'random'
+    assert model.policy.core.boss_ablation == mode
+    assert all(p.requires_grad for p in model.policy.core.combat.parameters())
+    assert all(not p.requires_grad for p in model.policy.core.teacher.parameters())
+    assert model.outer_return_contract['boss_win_weight'] == (1. if mode else .9)
+    if mode:
+        assert model.outer_return_contract['boss_ablation']['hp_target'] == mode
+    else:
+        assert 'boss_ablation' not in model.outer_return_contract
+
+
 @pytest.mark.parametrize('mode', ['full-or-zero', 'real-hp'])
 def test_boss_pure_win_leaf_and_unchanged_nonboss_and_teacher(frozen_upper_source, mode):
     source, space, env, obs = frozen_upper_source
